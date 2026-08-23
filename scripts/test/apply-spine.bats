@@ -181,6 +181,140 @@ spine() {
   [[ "${output}" == *"no hash for hooks/a.sh"* ]]
 }
 
+# T13 — spine_find_removed_files (retirement selection off the manifest `retired` map)
+#
+# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates
+# pass/fail. Every assertion below `return 1`s on mismatch, so each one fails the test
+# on its own rather than being skipped past by the one after it.
+
+# Build a manifest at $1 over root $2 whose `retired` map is the raw JSON object $3
+# and whose files[] are $4.. (relative to $2). The map is passed as JSON rather than
+# derived, because half these fixtures exist to drive a map the generator would never
+# produce (a shipped-and-retired path, a malformed hash list).
+build_manifest_retired() {
+  local manifest="$1" root="$2" retired="$3"
+  shift 3
+  build_manifest "${manifest}" "${root}" "$@"
+  jq --argjson r "${retired}" '. + {retired: $r}' -- "${manifest}" >"${manifest}.tmp"
+  mv -f -- "${manifest}.tmp" "${manifest}"
+}
+
+# Echo a JSON object mapping $1 to a one-element list holding the live sha256 of
+# ${LIVE}/$1 — the provenance-clean shape, stated once so a fixture cannot drift from
+# the file it describes by hand-copying a hash.
+retired_map_live() {
+  jq -n --arg p "$1" --arg h "$(sha256_of "${LIVE}/$1")" '{($p): [$h]}'
+}
+
+@test "#13 retired: a pristine retired file is selected" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/test/gone.bats" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_map_live "scripts/test/gone.bats")" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "scripts/test/gone.bats" ]] || return 1
+}
+
+@test "#13 retired: a path still in files[] is a tripwire row, never selected" {
+  seed_file "${NEW}" "scripts/tool.sh" "shipped"
+  seed_file "${LIVE}" "scripts/tool.sh" "shipped"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_map_live "scripts/tool.sh")" "scripts/tool.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"MALFORMED"* ]] || return 1
+  [[ "${output}" == *"retired AND shipped"* ]] || return 1
+  [[ -f "${LIVE}/scripts/tool.sh" ]] || return 1
+}
+
+@test "#13 retired: a live hash outside the recorded list is preserved with its row" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/lib/edited.sh" "vendor-body"
+  local map
+  map="$(retired_map_live "scripts/lib/edited.sh")"
+  printf '%s' "user edited this" >"${LIVE}/scripts/lib/edited.sh"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" "${map}" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"user-modified, preserved"* ]] || return 1
+  [[ "${output}" == *"scripts/lib/edited.sh"* ]] || return 1
+  [[ "$(cat "${LIVE}/scripts/lib/edited.sh")" == "user edited this" ]] || return 1
+}
+
+@test "#13 retired: a merge-claimed path is excluded silently" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "agents/dev-gone.md" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_map_live "agents/dev-gone.md")" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"agents/dev-gone.md"* ]] || return 1
+}
+
+@test "#13 retired: a migrations-family path is excluded with its named row" {
+  local mig="monitor/prisma/migrations/20200101_init/migration.sql"
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "${mig}" "CREATE TABLE t();"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_map_live "${mig}")" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"family-excluded, never removed"* ]] || return 1
+  [[ "${output}" == *"${mig}"* ]] || return 1
+}
+
+@test "#13 retired: a path already absent from the live install is a silent no-op" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    '{"scripts/lib/never-here.sh":["'"$(printf 'a%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"never-here.sh"* ]] || return 1
+}
+
+@test "#13 retired: a symlink at a retired path is skipped with its named row" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_link "${LIVE}" "scripts/lib/linked.sh" "../../elsewhere.sh"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    '{"scripts/lib/linked.sh":["'"$(printf 'b%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"not a regular file (symlink)"* ]] || return 1
+  [[ -L "${LIVE}/scripts/lib/linked.sh" ]] || return 1
+}
+
+@test "#13 retired: a malformed hash list is a loud row and the pass continues" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/lib/bad.sh" "vendor-body"
+  seed_file "${LIVE}" "scripts/lib/good.sh" "other-body"
+  local good
+  good="$(retired_map_live "scripts/lib/good.sh")"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(jq -n --argjson g "${good}" '$g + {"scripts/lib/bad.sh": []}')" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"scripts/lib/bad.sh carries no non-empty 64-hex hash list"* ]] || return 1
+  [[ "${output}" == *"scripts/lib/good.sh"* ]] || return 1
+}
+
+@test "#13 retired: a manifest with no retired map emits one no-op row and selects nothing" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/lib/stale.sh" "vendor-body"
+  build_manifest "${WORK}/manifest.json" "${NEW}" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"carries no retired map"* ]] || return 1
+  [[ -f "${LIVE}/scripts/lib/stale.sh" ]] || return 1
+}
+
+@test "#13 retired: the un-moved record path is the baseline state dir's own" {
+  run spine spine_retired_unmoved_path
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "${STATE}/retired-unmoved.txt" ]] || return 1
+}
+
+
 # T11 — spine_stage_and_verify
 
 @test "T11 stage: staged copies verify against the manifest hashes" {

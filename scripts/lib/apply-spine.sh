@@ -291,6 +291,98 @@ spine_find_changed_files() {
   done < <(jq -r '.files[]' -- "${manifest}")
 }
 
+# T13 — vendor-retirement selection off the manifest `retired` map
+
+# Echo the path of the un-moved record the sweep writes and doctor reads — one
+# derivation for both, since a reader that resolved the state dir differently would
+# report an empty residue on exactly the install that redirected it. Arg: $1 =
+# optional state-dir override, the same precedence as spine_baseline_dir.
+spine_retired_unmoved_path() {
+  printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-unmoved.txt"
+}
+
+# Emit (one relative path per line) every path this release RETIRED that is safe to
+# sweep from the live install. The map carries the whole provenance: `retired[path]`
+# is the set of hashes the vendor ever shipped for that path, so a live file matching
+# one is vendor content and a live file matching none is a user edit that survives.
+# Detection only — the CALLER moves the files (the same split as
+# spine_find_changed_files -> update_commit_callback).
+#
+# A rejected path emits its own named stderr row: absent from stdout, a rejected path
+# and a path the map never carried read identically. Two rejections stay silent by
+# design — a merge-claimed path belongs to another deploy consumer and was never a
+# candidate, and an absent file has nothing to report.
+#
+# The two exclusion arms are asked in sequence rather than by one predicate, because
+# they differ in whether they are worth a row: spine_is_excluded_path answers the
+# merge claim, and spine_is_retired_excluded_path can then only be true through its
+# migrations arm — so the family row is derived from the single definition rather
+# than from a second copy of the pattern.
+#
+# Args: $1 = new-release manifest.json · $2 = live install root. Returns 0 whenever
+# the manifest is readable: one unusable entry must not cancel the pass.
+spine_find_removed_files() {
+  local manifest="$1" install_root="$2"
+  local path target live hashes new_files
+  spine_require_tools jq || return 1
+  if [[ ! -f "${manifest}" ]]; then
+    printf 'apply-spine: retired scan needs a manifest: %s\n' "${manifest}" >&2
+    return 1
+  fi
+  if [[ "$(jq -r '.retired | type' -- "${manifest}")" != 'object' ]]; then
+    printf 'apply-spine: retired: this manifest carries no retired map — nothing to remove\n' >&2
+    return 0
+  fi
+  new_files="$(jq -r '.files[]' -- "${manifest}")" || return 1
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # Tripwire: the generator guarantees retired and files[] are disjoint, so a path
+    # in both is a malformed manifest rather than a removal decision to act on.
+    case $'\n'"${new_files}"$'\n' in
+      *$'\n'"${path}"$'\n'*)
+        printf 'apply-spine: retired MALFORMED — %s is retired AND shipped; skipped\n' "${path}" >&2
+        continue
+        ;;
+      *) ;;
+    esac
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_excluded_path "${path}"; then
+      continue
+    fi
+    # shellcheck disable=SC2310
+    if spine_is_retired_excluded_path "${path}"; then
+      printf 'apply-spine: retired family-excluded, never removed — %s\n' "${path}" >&2
+      continue
+    fi
+    hashes="$(jq -r --arg p "${path}" '
+      .retired[$p] as $v
+      | if ($v | type) == "array" and ($v | length) > 0
+          and (all($v[]; type == "string" and test("^[0-9a-f]{64}$")))
+        then ($v | join("\n"))
+        else ""
+        end' -- "${manifest}")"
+    if [[ -z "${hashes}" ]]; then
+      printf 'apply-spine: retired MALFORMED — %s carries no non-empty 64-hex hash list; skipped\n' "${path}" >&2
+      continue
+    fi
+    target="${install_root}/${path}"
+    if [[ -L "${target}" ]]; then
+      printf 'apply-spine: retired skip, not a regular file (symlink) — %s\n' "${path}" >&2
+      continue
+    fi
+    [[ -e "${target}" ]] || continue
+    if [[ ! -f "${target}" ]]; then
+      printf 'apply-spine: retired skip, not a regular file — %s\n' "${path}" >&2
+      continue
+    fi
+    live="$(spine_sha256_of "${target}")" || return 1
+    case $'\n'"${hashes}"$'\n' in
+      *$'\n'"${live}"$'\n'*) printf '%s\n' "${path}" ;;
+      *) printf 'apply-spine: retired user-modified, preserved — %s\n' "${path}" >&2 ;;
+    esac
+  done < <(jq -r '.retired | keys[]' -- "${manifest}")
+}
+
 # T11 — staged apply + rollback
 
 # Phase 1: copy each changed file from the new-release tree into a staging dir

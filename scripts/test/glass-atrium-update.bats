@@ -75,8 +75,16 @@ write_manifest() {
     files="${files}$(printf '%s' "${p}" | jq -R .),"
     hashes="${hashes}$(printf '%s' "${p}" | jq -R .):$(sha256_of "${NEWSRC}/${p}" | jq -R .),"
   done
-  printf '{"version":"1.0.0","files":[%s],"hashes":{%s}}\n' \
-    "${files%,}" "${hashes%,}" >"${out}"
+  # RETIRED_JSON is opt-in: a manifest with NO retired key is the shape every other
+  # fixture needs, and it is also the shape AC1b.3 drives, so the key appears only
+  # where a test sets the variable.
+  if [[ -n "${RETIRED_JSON:-}" ]]; then
+    printf '{"version":"1.0.0","files":[%s],"hashes":{%s},"retired":%s}\n' \
+      "${files%,}" "${hashes%,}" "${RETIRED_JSON}" >"${out}"
+  else
+    printf '{"version":"1.0.0","files":[%s],"hashes":{%s}}\n' \
+      "${files%,}" "${hashes%,}" >"${out}"
+  fi
 }
 
 # Seed the charter pair as the live tree carries it: a real file plus the link row
@@ -2152,33 +2160,258 @@ rm -rf /tmp/everything
   [[ "$output" != *"dev-b"* ]] || return 1
 }
 
-# vendor drops (Rule 1: the release replaces, it never deletes)
+# retirement sweep (amended Rule 1: the bundle is authoritative for removal too)
+#
+# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates
+# pass/fail. Every assertion below `return 1`s on mismatch, so each one fails the test
+# on its own rather than being skipped past by the one after it.
 
-# A file the release stops shipping is LEFT IN PLACE. The prior code selected a
-# still-pristine dropped file and moved it to a Trash sink; that sweep is gone, so
-# the accepted residue is pinned here rather than discovered on a live install.
-@test "a vendor-dropped file is LEFT IN PLACE and no removal is reported" {
-  # baseline (prior vendor) ships hooks/old.sh; the new release DROPS it while
-  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash, which is
-  # exactly the provenance-clean case the removed sweep acted on.
-  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" # hooks/old.sh DROPPED
+# Echo a JSON object mapping each argument to a one-element list holding the live
+# sha256 of ${INSTALL}/<path> — the provenance-clean shape. Derived rather than
+# hand-written so a fixture cannot drift from the file it describes.
+retired_live_map() {
+  local rel entries=""
+  for rel in "$@"; do
+    entries="${entries}$(printf '%s' "${rel}" | jq -R .):[$(sha256_of "${INSTALL}/${rel}" | jq -R .)],"
+  done
+  printf '{%s}\n' "${entries%,}"
+}
 
+# Drive the updater through the source-tree seam with the sweep's own sandbox seams
+# pinned: the Trash sink and the facade home both inside the per-test dir, so no run
+# can reach ~/.Trash or the real ~/.claude.
+run_update_sweep() {
   run env \
     GA_ROOT="${INSTALL}" \
+    GA_TARGET_HOME="${FARM}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_TRASH_DIR="${TRASH}" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
+}
 
-  [ "$status" -eq 0 ] || return 1
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # sync still applied
-  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1    # dropped file untouched
-  [[ "$output" != *"vendor-dropped file removed"* ]] || return 1           # nothing reported
+# Create the sweep sandbox dirs. Called by each sweep test rather than by setup(), so
+# the suite's other 100-odd tests keep the environment they were written against.
+sweep_sandbox() {
+  TRASH="${WORK}/trash"
+  FARM="${WORK}/farm"
+  mkdir -p "${TRASH}" "${FARM}"
+}
+
+# Echo the single per-run sink under the Trash dir, or the empty string when the run
+# created none. A per-run sink is timestamped, so the count is the assertion and the
+# name never is.
+sink_dir() {
+  local d
+  for d in "${TRASH}"/glass-atrium-update-removed-*; do
+    [[ -d "${d}" ]] && printf '%s\n' "${d}"
+  done
+}
+
+# Install a launcher stub that records its argv, so the hook-binding retirement is
+# observable without a real launcher in the sandbox.
+seed_launcher_stub() {
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexit 0\n' "${WORK}/launcher.log" \
+    >"${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+}
+
+@test "#14 retired: two provenance-clean paths are MOVED into one per-run sink" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/test/x.bats" "stale-test"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/keep.sh" "untouched"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/test/x.bats" "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired file removed → Trash: scripts/test/x.bats"* ]] || return 1
+  [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=2 preserved=0 family-skipped=0 unmoved=0"* ]] || return 1
+  [[ ! -e "${INSTALL}/scripts/test/x.bats" ]] || return 1
+  [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+  [[ "$(cat "${INSTALL}/scripts/keep.sh")" == "untouched" ]] || return 1
+  [[ "$(sink_dir | wc -l | tr -d ' ')" == "1" ]] || return 1
+  [[ "$(cat "$(sink_dir)/scripts/test/x.bats")" == "stale-test" ]] || return 1
+  [[ "$(cat "$(sink_dir)/scripts/lib/y.sh")" == "stale-lib" ]] || return 1
+}
+
+@test "#14 retired: a USER-MODIFIED retired file is PRESERVED (provenance guard)" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "vendor-body"
+  local map
+  map="$(retired_live_map "scripts/lib/y.sh")"
+  printf '%s' "user edited this" >"${INSTALL}/scripts/lib/y.sh"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="${map}" write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"user-modified, preserved — scripts/lib/y.sh"* ]] || return 1
+  [[ "${output}" == *"removed=0 preserved=1 family-skipped=0 unmoved=0"* ]] || return 1
+  [[ "$(cat "${INSTALL}/scripts/lib/y.sh")" == "user edited this" ]] || return 1
+}
+
+@test "#14 retired: a manifest with no retired key removes nothing and says so once" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "vendor-body"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"carries no retired map"* ]] || return 1
+  [[ "${output}" != *"retired file removed"* ]] || return 1
+  [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a second run of the same release reports zero removals" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"removed=1"* ]] || return 1
+
+  run_update_sweep
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"retired file removed"* ]] || return 1
+  [[ "${output}" == *"removed=0 preserved=0 family-skipped=0 unmoved=0"* ]] || return 1
+}
+
+@test "#14 retired: a migrations-family retired path is never moved" {
+  sweep_sandbox
+  local mig="monitor/prisma/migrations/20200101_init/migration.sql"
+  seed_file "${INSTALL}" "${mig}" "CREATE TABLE t();"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "${mig}")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"family-excluded, never removed — ${mig}"* ]] || return 1
+  [[ "${output}" == *"removed=0 preserved=0 family-skipped=1 unmoved=0"* ]] || return 1
+  [[ -f "${INSTALL}/${mig}" ]] || return 1
+}
+
+@test "#14 retired: a failed move WARNs, records the path, and the finalize steps still run" {
+  sweep_sandbox
+  # A FILE where the sink's parent must be: mkdir -p under it cannot succeed, so every
+  # move fails at the same named row without needing a permission trick.
+  TRASH="${WORK}/trash-is-a-file"
+  printf '%s' "not a dir" >"${TRASH}"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"WARN: retired file NOT moved — scripts/lib/y.sh"* ]] || return 1
+  [[ "${output}" == *"removed=0 preserved=0 family-skipped=0 unmoved=1"* ]] || return 1
+  [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+  [[ "$(cat "${STATE}/update-state/retired-unmoved.txt")" == "scripts/lib/y.sh" ]] || return 1
+  # The finalize steps that follow the sweep still ran — the whole point of the
+  # non-fatal WARN. Their own rows are the measurement.
+  [[ "${output}" == *"mirror"* ]] || return 1
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1
+}
+
+@test "#14 retired: a drop-only release sweeps on the no-content-change path" {
+  sweep_sandbox
+  # Nothing to sync: the one shipped row is already byte-identical, so the run takes
+  # the already-up-to-date early return — which reaches the same finalize sequence.
+  seed_file "${INSTALL}" "scripts/tool.sh" "same"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "same"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
+  [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a removed hooks/<name> retires its binding, an un-moved one does not" {
+  sweep_sandbox
+  seed_launcher_stub
+  seed_file "${INSTALL}" "hooks/gone.sh" "stale-hook"
+  seed_file "${INSTALL}" "hooks/lib/nested.sh" "nested-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "hooks/gone.sh" "hooks/lib/nested.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired settings.json binding(s) for removed hook(s): gone.sh"* ]] || return 1
+  grep -q "retire-hook-bindings gone.sh" "${WORK}/launcher.log" || return 1
+  # The nested lib was removed too, but it is not a BOUND hook and must not appear.
+  grep -q "nested.sh" "${WORK}/launcher.log" && return 1
+  return 0
+}
+
+@test "#14 retired: a removed file under a mirrored root retires its farm link" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "rules/gone.md" "stale-rule"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  mkdir -p "${FARM}/rules" "${FARM}/scripts/lib"
+  ln -sfn "${INSTALL}/rules/gone.md" "${FARM}/rules/gone.md"
+  printf '%s' "a real user file" >"${FARM}/scripts/lib/y.sh"
+  RETIRED_JSON="$(retired_live_map "rules/gone.md" "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired mirror link removed: ${FARM}/rules/gone.md"* ]] || return 1
+  [[ ! -e "${FARM}/rules/gone.md" ]] || return 1
+  # scripts/lib is not a mirrored root AND the facade entry is a real file — neither
+  # arm may touch it.
+  [[ "$(cat "${FARM}/scripts/lib/y.sh")" == "a real user file" ]] || return 1
+}
+
+@test "#14 retired: S-KEEP shapes on disk survive a sweep untouched" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "monitor/__pycache__/mod.cpython-311.pyc" "bytecode"
+  seed_file "${INSTALL}" "monitor/src/generated/client.ts" "generated"
+  seed_file "${INSTALL}" "monitor/.env" "SECRET=1"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"removed=1"* ]] || return 1
+  [[ "$(cat "${INSTALL}/monitor/__pycache__/mod.cpython-311.pyc")" == "bytecode" ]] || return 1
+  [[ "$(cat "${INSTALL}/monitor/src/generated/client.ts")" == "generated" ]] || return 1
+  [[ "$(cat "${INSTALL}/monitor/.env")" == "SECRET=1" ]] || return 1
 }
 
 # ---------------------------------------------------------------------------

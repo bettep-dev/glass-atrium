@@ -48,9 +48,12 @@
 #   6. CLEANUP: a trap releases the lock on EVERY exit path (success, failure,
 #      SIGINT/SIGTERM).
 #
-# No deletion pass, deliberately: the bundle is authoritative for REPLACEMENT, so a
-# file this release stops shipping is left where it is — accepted residue, since the
-# new manifest no longer carries a row for it.
+# Deletion pass, provenance-gated: the bundle is authoritative for REPLACEMENT and
+# for REMOVAL. A path carried by the manifest's `retired` map is moved to a per-run
+# Trash sink when the live file's sha256 is one the vendor shipped for that path; a
+# hash outside that set is a user edit and the file stays where it is. A move that
+# fails is a named WARN and never fatal — the un-moved path is recorded for doctor
+# and the run completes its remaining finalize steps.
 #
 # Replacement scope: the path-pattern refusal that used to partition the changed set
 # is gone and nothing in this file replaces it. Two mechanisms still route a row away
@@ -3028,13 +3031,185 @@ update_report_uncovered_paths() {
   return 0
 }
 
-# The merge → base-content-capture → baseline-capture finalize sequence, shared by
-# the main post-apply path and the already-up-to-date early return. One order
-# constraint is load-bearing: update_capture_base_content
-# reads the merge's own outcome ledger to decide which bodies may advance, so it
-# runs after the merge and before update_capture_baseline advances the hash anchor
-# — a base left at the OLD anchor re-conflicts an already-merged region on the next
-# same-release run.
+# ---------------------------------------------------------------------------
+# Retirement sweep — the removal half of the amended Rule 1
+# ---------------------------------------------------------------------------
+
+# The Trash dir the sweep moves retired files into. ATRIUM_UPDATE_TRASH_DIR
+# overrides it for hermetic tests; default ${HOME}/.Trash. rm is FORBIDDEN for
+# source and config (File Deletion Policy), so every removal below is a move.
+update_trash_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_TRASH_DIR:-${HOME}/.Trash}"
+}
+
+# Move each selected path into the per-run Trash sink, preserving its relative path
+# so one run's removals form a single recovery bundle. Reads the removal set + sink
+# from globals (the same carrier pattern as update_commit_callback) and answers on
+# two more: the moved set drives the mirror-link and hook-binding retirements, the
+# un-moved set drives the record doctor reads.
+#
+# A failed move is one named WARN and the loop continues. The alternative — abort —
+# would leave the run short of its mode enforcement, farm refresh and hook wiring,
+# so one immovable file would cost the whole finalize rather than one row.
+_update_removal_commit_callback() {
+  local path src dest
+  _update_removal_moved=""
+  _update_removal_unmoved=""
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    src="${_update_removal_root}/${path}"
+    # Already gone (concurrent sweep / manual delete) → nothing to move.
+    [[ -e "${src}" ]] || continue
+    dest="${_update_removal_dest}/${path}"
+    if mkdir -p -- "$(dirname -- "${dest}")" && mv -f -- "${src}" "${dest}"; then
+      update_log "retired file removed → Trash: ${path}"
+      _update_removal_moved="${_update_removal_moved}${path}"$'\n'
+    else
+      update_log "WARN: retired file NOT moved — ${path} (mv into ${dest} failed)"
+      _update_removal_unmoved="${_update_removal_unmoved}${path}"$'\n'
+    fi
+  done <<<"${_update_removal_paths}"
+}
+
+# Retire the ~/.claude facade link of a path the sweep just moved. Only the three
+# mirrored roots carry per-file links; every other path returns before touching the
+# facade. The -L guard is the whole safety of the step: a REAL file at the facade
+# path is a user's own and is never this pass's to remove, and a link left pointing
+# at the moved file is the dangling row the farm's own prune is opt-in about.
+# Arg: $1 = manifest-relative path.
+update_retire_mirror_link() {
+  local path="$1" link
+  case "${path}" in
+    agents/* | rules/* | skills/*) ;;
+    *) return 0 ;;
+  esac
+  link="$(farm_target_home)/${path}"
+  [[ -L "${link}" ]] || return 0
+  if rm -f -- "${link}"; then
+    update_log "retired mirror link removed: ${link}"
+  else
+    update_log "WARN: retired mirror link NOT removed — ${link}"
+  fi
+}
+
+# Retire the settings.json BINDINGS of any HOOK files the sweep just moved. A
+# dropped hooks/<name> whose event->hook binding LINGERS still points at the absent
+# file → the hook ERRORS when its event fires. wire_hooks only ADDS bindings, so the
+# launcher's targeted `retire-hook-bindings` subcommand (a jq surgical per-basename
+# removal) is invoked — through the SAME launcher-subprocess model as
+# update_wire_hooks_post_apply (sourcing ga-core.sh in-process collides on readonly
+# GA_ROOT + bare log()/die()). Best-effort + LOUD: a retire failure WARNs (the file
+# is already removed; doctor's hook-binding check surfaces a dangling binding) and
+# NEVER rolls back the applied sync. Args: $1 = MOVED paths (newline-separated) ·
+# $2 = live install root.
+update_retire_swept_hook_bindings() {
+  local removed_paths="$1" root="$2" path launcher
+  local basenames=()
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # a BOUND hook is a TOP-LEVEL hooks/<basename> file — bindings key on the flat
+    # basename, so hooks/lib/*, hooks/test/* etc. are never bound and are skipped.
+    case "${path}" in
+      hooks/*/*) continue ;; # nested (lib/test/…) — not a bound hook
+      hooks/*) basenames+=("${path#hooks/}") ;;
+      *) continue ;; # non-hook file
+    esac
+  done <<<"${removed_paths}"
+  [[ "${#basenames[@]}" -gt 0 ]] || return 0
+  launcher="${root}/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing (${launcher}) — could NOT retire the settings.json binding(s) for removed hook(s): ${basenames[*]}; run '${launcher} retire-hook-bindings ${basenames[*]}' after repairing the install"
+    return 0
+  fi
+  # if-condition suppresses set -e; a launcher die/non-zero is a plain rc here (never
+  # aborts the parent) → WARN, do not roll back the already-applied sync.
+  if "${launcher}" retire-hook-bindings "${basenames[@]}"; then
+    update_log "retired settings.json binding(s) for removed hook(s): ${basenames[*]}"
+  else
+    update_log "WARN: retire of settings.json binding(s) for removed hook(s) FAILED (${basenames[*]}) — the dropped hook file(s) were removed but a dangling binding may remain; run '${launcher} retire-hook-bindings ${basenames[*]}' manually"
+  fi
+}
+
+# Drive the retirement sweep for a completed apply. Selection is the spine's
+# retired-map predicate; the policy is here — the move into a per-run sink, the
+# facade-link retirement, the hook-binding retirement, and the record a failed move
+# leaves behind for doctor.
+#
+# The pass returns 0 on every path, including a selection failure and a failed move:
+# residue is a reportable state, not a reason to strand a landed apply before its
+# remaining finalize steps.
+#
+# Args: $1 = new manifest · $2 = live install root.
+update_sweep_removed_files() {
+  local manifest="$1" root="$2"
+  local removed rows_file row path ts record
+  local removed_n=0 preserved_n=0 family_n=0 unmoved_n=0
+  record="$(spine_retired_unmoved_path)"
+  rows_file="$(mktemp -t glass-atrium-retired-rows.XXXXXX)"
+  # The spine's named rows arrive on stderr so stdout stays the path list; they are
+  # replayed through update_log so ONE prefix carries the whole pass, and counted
+  # here so the summary row is derived from the rows rather than recomputed.
+  if ! removed="$(spine_find_removed_files "${manifest}" "${root}" 2>"${rows_file}")"; then
+    update_log "WARN: retired selection failed — the retirement pass is skipped and any residue stays in place"
+    rm -f -- "${rows_file}"
+    return 0
+  fi
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    update_log "${row#apply-spine: }"
+    case "${row}" in
+      *'user-modified, preserved'*) preserved_n=$((preserved_n + 1)) ;;
+      *'family-excluded'*) family_n=$((family_n + 1)) ;;
+      *) ;;
+    esac
+  done <"${rows_file}"
+  rm -f -- "${rows_file}"
+
+  if [[ -n "${removed}" ]]; then
+    # Per-run sink: a timestamped subdir so one run's removals form a single recovery
+    # bundle and same-basename drops never collide.
+    ts="$(date +%Y%m%d-%H%M%S)"
+    _update_removal_root="${root}"
+    _update_removal_dest="$(update_trash_dir)/glass-atrium-update-removed-${ts}_$$"
+    _update_removal_paths="${removed}"
+    _update_removal_commit_callback
+    # grep -c prints 0 and exits 1 on no match, so the status is dropped rather than
+    # the count (the `|| echo 0` form would append a SECOND zero to grep's own).
+    removed_n="$(printf '%s' "${_update_removal_moved}" | grep -c . || true)"   # GA-ABSORB[benign]: zero match exits 1
+    unmoved_n="$(printf '%s' "${_update_removal_unmoved}" | grep -c . || true)" # GA-ABSORB[benign]: zero match exits 1
+    [[ -n "${removed_n}" ]] || removed_n=0
+    [[ -n "${unmoved_n}" ]] || unmoved_n=0
+    if [[ -n "${_update_removal_moved}" ]]; then
+      while IFS= read -r path; do
+        [[ -n "${path}" ]] || continue
+        update_retire_mirror_link "${path}"
+      done <<<"${_update_removal_moved}"
+      # Only the MOVED set: a binding whose hook file is still present must stay.
+      update_retire_swept_hook_bindings "${_update_removal_moved}" "${root}"
+    fi
+  fi
+
+  if [[ "${unmoved_n}" -gt 0 ]]; then
+    mkdir -p -- "$(dirname -- "${record}")"
+    printf '%s' "${_update_removal_unmoved}" >"${record}"
+    update_log "WARN: ${unmoved_n} retired file(s) left in place — recorded for doctor at ${record}"
+  else
+    # Rewritten each run, so a stale record from a previous run's failure must go the
+    # moment the retry succeeds — otherwise doctor reports a residue that is gone.
+    rm -f -- "${record}"
+  fi
+  update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n}"
+}
+
+# The merge → base-content-capture → retirement-sweep → baseline-capture finalize
+# sequence, shared by the main post-apply path and the already-up-to-date early
+# return, which is how a drop-only release still sweeps. Two order constraints are
+# load-bearing: update_capture_base_content reads the merge's own outcome ledger to
+# decide which bodies may advance, so it runs after the merge and before
+# update_capture_baseline advances the hash anchor — a base left at the OLD anchor
+# re-conflicts an already-merged region on the next same-release run; and the sweep
+# runs BETWEEN them, so a sweep that leaves residue behind never strands the merge
+# ledger at the old base on its way to the retry.
 # The merge step also emits the resolved-gap core.autoagent_proposals record, so this
 # shared path — not the headless-only update_job section — is why an INTERACTIVE run
 # reaches Postgres (boundary note at the top of the file).
@@ -3051,6 +3226,7 @@ update_finalize_merge_and_anchors() {
   # the ledger and resets it.
   update_dispatch_roster_merge "${new_dir}" "${manifest}" "${root}"
   update_capture_base_content "${new_dir}"
+  update_sweep_removed_files "${manifest}" "${root}"
   update_capture_baseline "${manifest}"
   update_ticker_stop
 }

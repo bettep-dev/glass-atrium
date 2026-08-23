@@ -826,8 +826,39 @@ run_doctor() {
     fi
   fi
 
+  # 19. retired-residue surface. The retirement sweep moves a vendor-dropped file to Trash, and a
+  #     move that fails is deliberately NON-fatal — aborting there would cost the run its mode
+  #     enforcement, farm refresh and hook wiring for one immovable file. The WARN scrolls past with
+  #     the rest of the deploy, so the sweep records each un-moved path and this section is what
+  #     reads it back. WARN, never FAIL: the remedy is a hand move to Trash, and residue must not
+  #     abort an install through the preflight alias.
+  #     The record is re-checked rather than trusted: a path whose file is now gone was resolved by
+  #     hand and its line is dropped, so a cleared residue stops reporting without anyone editing
+  #     the record. Silence when the record is absent is the normal install and needs no line.
+  local retired_residue=0
+  local residue_record="" residue_path="" residue_kept=""
+  # shellcheck disable=SC2311
+  residue_record="$(spine_retired_unmoved_path)"
+  if [[ -f "${residue_record}" ]]; then
+    while IFS= read -r residue_path; do
+      [[ -n "${residue_path}" ]] || continue
+      if [[ -e "${GA_ROOT}/${residue_path}" ]]; then
+        log "  warn : retired file still in place — ${residue_path} (the update could not move it to Trash; move it by hand, then re-run doctor)"
+        residue_kept="${residue_kept}${residue_path}"$'\n'
+        retired_residue=$((retired_residue + 1))
+      fi
+    done <"${residue_record}"
+    if [[ -n "${residue_kept}" ]]; then
+      printf '%s' "${residue_kept}" >"${residue_record}"
+      log "         record: ${residue_record}"
+    else
+      rm -f -- "${residue_record}"
+      log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -835,7 +866,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue — see above) =="
     fi
     return 0
   fi
