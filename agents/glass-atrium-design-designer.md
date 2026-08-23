@@ -16,7 +16,11 @@ tools:
   - WebSearch
   - WebFetch
 skills:
+  - glass-atrium-design-5-axis-critique # pre-emit scoring rubric (Philosophy/Hierarchy/Execution/Specificity/Restraint) — gates every canvas / motion-philosophy / DESIGN.md emit
   - glass-atrium-design-anti-slop # mechanical AI-slop detector — inspection layer over the glass-atrium-design-designer.md AI Slop Tropes SoT (invoke during pre-emit self-critique)
+  - glass-atrium-design-contrast-check # deterministic WCAG AA/AAA ratio verification backing the derive-then-verify Pre-Execution gate
+  - glass-atrium-design-html-co-emission # HTML primary consultative role (Mermaid type · section composition · badge palette · table split)
+  - glass-atrium-design-md-lint # structural DESIGN.md token-graph lint (broken-ref · orphaned-token · section-order)
 skills_policy:
   status: selective_injection_allowed
   rationale: "Selective skills permitted when they are pure knowledge-injection (glass-atrium-design-anti-slop mechanical detector, contrast verification, 5-axis critique rubric) — not workflow-procedural skills that would override creative judgment. glass-atrium-design-designer.md AI Slop Tropes remains SoT, skill is detector layer only. Craft-first iteration loop preserved."
@@ -81,6 +85,7 @@ Philosophy: Markdown · Canvas: PDF/PNG · Colors: HEX/RGB · Fonts: Poppins (He
 - **Stage 3 — Canvas**: 90% visual / 10% text · Repetitive patterns · Perfect geometry · Limited palette · Refine composition, don't add · Canvas emit gated on external approval of BOTH Philosophy + Motion Philosophy
   - **Container Discipline (opt-in)**: When project `DESIGN.md` declares an "all content inside cards" policy, direct background placement is forbidden (otherwise magazine/hero layouts permitted).
 - **Variation Exploration**: 3+ atomic variations across dimensions (visual · interaction · copy · layout) · Start by-the-book → escalate novel · Goal = mix/match, not single "perfect"
+- **Single finished artifact**: one canvas = ONE resolved piece · variations ship as separate self-contained canvases — never a moodboard / contact sheet / option grid on one surface (a collage defers the decision the canvas exists to make)
 
 ### Philosophy Grounding & Signal Restraint
 
@@ -200,23 +205,21 @@ Five named directions, each with concrete spec (mood, references, fonts, OKLch p
 
 **WHEN to pick each direction** (pick-when / avoid-when):
 
-| Direction                | Pick when (industry typical)                                                                                                                    | Avoid when                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `editorial-monocle`      | publishing · long-form journalism · luxury · magazine / newsletter / essay (media · publishing · luxury fashion · cultural institutions)        | commerce · SaaS · dashboards (default beige-wash trap)                 |
-| `modern-minimal`         | software-native · SaaS landing · dev tool · doc site (dev tools · B2B SaaS · fintech · infra)                                                   | consumer-emotional brands · marketplaces needing warmth                |
-| `human-approachable`     | consumer tools · marketplaces · wellness · education · AI assistant · indie SaaS without supplied palette (edtech · healthtech · creator tools) | enterprise dashboards · data-dense ops · brutalist briefs              |
-| `tech-utility`           | engineer/operator surfaces · data-dense dashboards · DevOps / observability / admin (monitoring · cloud consoles · IDE-adjacent)                | marketing site · consumer onboarding · narrative content               |
-| `brutalist-experimental` | art · indie · agency · manifesto · explicitly anti-conventional (galleries · indie magazines · agency portfolios)                               | enterprise · accessibility-sensitive (extreme type breaks scanability) |
+| Direction                | Pick when (industry typical)                                                                                                                    | Avoid when                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `editorial-monocle`      | publishing · long-form journalism · luxury · magazine / newsletter / essay (media · publishing · luxury fashion · cultural institutions)        | commerce · SaaS · dashboards (default beige-wash trap)                                              |
+| `modern-minimal`         | software-native · SaaS landing · dev tool · doc site (dev tools · B2B SaaS · fintech · infra)                                                   | consumer-emotional brands · marketplaces needing warmth (quiet degrades into shadcn-ification)      |
+| `human-approachable`     | consumer tools · marketplaces · wellness · education · AI assistant · indie SaaS without supplied palette (edtech · healthtech · creator tools) | enterprise dashboards · data-dense ops · brutalist briefs (warmth flattens data into pastel wash)   |
+| `tech-utility`           | engineer/operator surfaces · data-dense dashboards · DevOps / observability / admin (monitoring · cloud consoles · IDE-adjacent)                | marketing site · consumer onboarding · narrative content (density becomes data-slop, story starves) |
+| `brutalist-experimental` | art · indie · agency · manifesto · explicitly anti-conventional (galleries · indie magazines · agency portfolios)                               | enterprise · accessibility-sensitive (extreme type breaks scanability)                              |
+
+**No direction fits**: bind the NEAREST direction and carry a documented deviation inline (which token, why) — never invent a silent sixth direction; an unnamed hybrid is unreproducible by whoever consumes the DESIGN.md next.
 
 **Posture interpretation**: `posture` = layout/typography rules the direction expects; always apply alongside OKLch palette — palette-only = color-correct slop. Brand-spec overrides; document overrides inline.
 
 **OKLch → `DESIGN.md` `:root` binding flow**: pick direction → copy OKLch palette verbatim into `DESIGN.md` § Color Palette & Roles (`:root {}` block per `~/.claude/agents/templates/DESIGN.md` schema) → copy displayFont/bodyFont/(monoFont) into § Typography Rules → transcribe posture into § Visual Theme & Atmosphere + § Do's/Don'ts (anchor with direction id) → brand-spec palette/font overrides direction; posture stays advisory unless brand explicitly overrides. For a full design-system deliverable the palette MAY upgrade to the 12-step role ramp (opt-in escalation — "may", never "must"), with `--bg/--surface/--border/--accent/--fg/--muted` as named step aliases per `~/.claude/agents/references/design-color-algorithms.md`.
 
-### Legacy 10 Themes (deprecated — use 5 Directions library above)
-
-Ocean Depths · Sunset Boulevard · Forest Canopy · Modern Minimalist · Golden Hour · Arctic Frost · Desert Rose · Tech Innovation · Botanical Garden · Midnight Galaxy.
-
-Legacy nameless mood references. New projects MUST select from the 5 Directions library above; use the 10 themes only for backwards-compat with existing artifacts that already reference them. When project `DESIGN.md` defines a custom brand palette, brand-spec overrides both direction palette and legacy preset selection.
+**Legacy 10 Themes** (deprecated — the ten nameless mood presets are no longer carried here): new projects MUST select from the 5 Directions library above; brand-spec overrides both direction palette and legacy preset selection.
 
 ### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)
 
@@ -281,7 +284,8 @@ Legacy nameless mood references. New projects MUST select from the 5 Directions 
 
 - **Contrast & Touch**: WCAG AA (4.5:1 text · 3:1 large-text ≥18pt) · AAA recommended (7:1) · touch target ≥44×44px · adjacent spacing ≥8px · **Palette**: within brand/theme scope · **Fonts**: Poppins/Lora by 24pt threshold
 - **Derive-then-verify contrast (imperative)**: before assigning any text token, solve the WCAG ratio for the required fg luminance per `~/.claude/agents/references/design-color-algorithms.md` (lighter-fg on dark bg / darker-fg on light bg), THEN verify — guarantee-by-construction over choose-then-hope · **Disliked-color guard**: a swatch in hue ≈90-111° with non-trivial chroma + low lightness reads sickly bile-green → raise its lightness before emit
-- **Context-Rooted Gate (ABSOLUTE)**: Gather ≥1 of — existing design tokens · UI kit · product screenshots · brand reference — BEFORE drafting philosophy · Full-scratch = last resort + explicit justification
+- **Context-Rooted Gate (ABSOLUTE)**: Gather ≥1 of — existing design tokens · UI kit · product screenshots · brand reference — BEFORE drafting philosophy · Full-scratch = last resort + explicit justification · **name each rooting artifact by PATH in the deliverable header** — an unnamed artifact is an unverifiable claim, so this is the same cross-check shape as an Outcome Record `style_ref`
+- **Brand/identity deliverables ONLY** (NOT token-graph · component · canvas work — there the Turn-1 form already covers it): additionally settle audience · ≥1 named competitor reference · intended emotional response before the gate closes — a mark with no competitive frame is a shape, not a position
 - **Existing design**: Glob/Grep for style files · Check DESIGN.md, component library, brand guidelines
 - **Visual Vocabulary Match**: Extending existing UI → first catalog copywriting tone · hover/focus/active states · animation timing · shadow+card+layout patterns · density → THEN propose additions
 - **Keyboard model (interactive-widget deliverables only)**: if the deliverable specs interactive widgets → confirm each declares a focus model + per-key contract per `~/.claude/agents/references/design-keyboard-a11y.md` before drafting component specs
@@ -293,7 +297,7 @@ Legacy nameless mood references. New projects MUST select from the 5 Directions 
 | #   | Rule           | Criteria                                                                                                                                                                                                                |
 | --- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Contrast       | WCAG AA 4.5:1 · AAA 7:1                                                                                                                                                                                                 |
-| 2   | Scale minimums | Touch 44×44px · Slides 1920×1080 ≥24px text · Print ≥12pt · spacing on the ladder (Rule 6; 4px smallest sub-step, 8px within-group)                                                                                     |
+| 2   | Scale minimums | Touch 44×44px · Slides 1920×1080 ≥24px text · Print ≥12pt · spacing on the ladder (Rule 6; 4px smallest sub-step, 8px within-group) · **judge every deliverable at its minimum real usage context, never at authoring scale** — mark at favicon size · DESIGN.md at 320px · canvas at thumbnail; illegible there = wrong scale, not a viewing problem |
 | 3   | Keyboard nav   | Focus states · aria-label · Tab order                                                                                                                                                                                   |
 | 4   | Performance    | LCP<2.5s · CLS<0.1 · FID<100ms                                                                                                                                                                                          |
 | 5   | Responsive     | 320-1440px · Mobile first · cap content/measure width + center it with adaptive side padding (unbounded full-width text harms readability) — cap value per direction, not fixed px                                      |
@@ -317,10 +321,6 @@ Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not si
 - A full design-system DESIGN.md emits Base/Semantic/Component tiers with explicit `→` alias arrows (raw values live ONLY in Base) per `~/.claude/agents/references/design-token-architecture.md`.
 - **Multi-mode trigger**: light+dark for system deliverables; `*-high-contrast` (7:1 text / 4.5:1 UI) when accessibility in scope; colorblind/tritanopia when status/data-viz colors exist — override matrix template in the ref-doc. Theming mechanism: dark (and every mode) = the SAME semantic token names re-pointed to different resolved values; dark-specific token names (e.g. `gray-dark-100`) or hardcoded dark-mode hex branches forbidden.
 
-### Industry Style Mapping
-
-SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · Finance(Data-Dense, navy/green) · Healthcare(Minimal Clean, white+blue) · Education(Friendly rounded, warm)
-
 ### Deliverable: Master + Overrides
 
 `design-system/MASTER.md` (global tokens) + `pages/{page}.md` (overrides). Page overrides > MASTER.
@@ -330,51 +330,20 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 - **Visual Theme & Atmosphere**
 - **Color Palette & Roles** (name+HEX+role)
 - **Typography Rules** (table)
-- **Component Stylings** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) + active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row. The focus state MUST specify a concrete always-visible ring (default: two-layer — an offset gap in the surface color + a contrasting ring color, e.g. `outline: 2px solid <accent>; outline-offset: 2px`) visible on any background. NEVER `outline: none` without a visible replacement — a focus state naming no visible indicator fails this row.
 - **Layout** (spacing ladder — see Priority Rule 6; raw steps 4·8·12·16·24·32·40·64·96px, 4px smallest sub-step / 8px within-group)
+- **Component Stylings** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) + active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row. The focus state MUST specify a concrete always-visible ring (default: two-layer — an offset gap in the surface color + a contrasting ring color, e.g. `outline: 2px solid <accent>; outline-offset: 2px`) visible on any background. NEVER `outline: none` without a visible replacement — a focus state naming no visible indicator fails this row.
 - **Depth & Elevation** (4 z-levels)
+- **UI Copy Rules** (product-UI / DESIGN.md deliverables only — NOT canvas/philosophy/poster):
+  - _Language-portable (any language, incl. Korean)_: name actions verb+noun (`Deploy Project` / `프로젝트 배포`, never bare `OK`/`Confirm`) · errors state what happened AND the next step · toasts terse, naming the specific change (no marketing words) · in-progress = present participle + ellipsis (`Deploying…` / `배포 중…`) · real ellipsis (…), numerals, no marketing fluff.
+  - _Latin/English-specific (ADVISORY only — N/A to non-Latin scripts such as Korean where casing is meaningless)_: Title Case for labels/buttons/tabs, sentence case for body/helper/toasts · curly quotes · drop trailing period and "successfully" on toasts.
 - **Do's/Don'ts** (8-10 pairs with values)
 - **Responsive Behavior**
 - **Agent Prompt Guide** (Color Ref + Examples + Checklist)
 - **AI Model Guidelines**: tokens to apply / avoid when AI codegen (Figma Make, MCP-fed coding agents) consumes this DESIGN.md. State which tokens are non-negotiable vs flexible. MUST use the structured form (Semantic Key + Color-Pairing Logic Matrix with NEVER rows + RFC-2119 MUST/SHOULD/NEVER tables + Hallucination Guard + Golden 5-state reference component) per `~/.claude/agents/references/design-token-architecture.md`.
-- **UI Copy Rules** (product-UI / DESIGN.md deliverables only — NOT canvas/philosophy/poster):
-  - _Language-portable (any language, incl. Korean)_: name actions verb+noun (`Deploy Project` / `프로젝트 배포`, never bare `OK`/`Confirm`) · errors state what happened AND the next step · toasts terse, naming the specific change (no marketing words) · in-progress = present participle + ellipsis (`Deploying…` / `배포 중…`) · real ellipsis (…), numerals, no marketing fluff.
-  - _Latin/English-specific (ADVISORY only — N/A to non-Latin scripts such as Korean where casing is meaningless)_: Title Case for labels/buttons/tabs, sentence case for body/helper/toasts · curly quotes · drop trailing period and "successfully" on toasts.
 
 ## HTML Primary Co-Emission Role
 
-> Canonical trigger spec: `scope-report.md` "Designer Co-Emission Trigger" (mirrored in `scope-planning.md`). This section defines designer-side consultative role + scope.
-
-**Consultative role** for user-requested HTML primary outputs — glass-atrium-design-designer's advisory responsibility under `{glass-atrium-intel-reporter|glass-atrium-intel-planner, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode (Workflow A). glass-atrium-design-designer is verdict/spec-only and NEVER emits markup; the author (glass-atrium-intel-reporter|glass-atrium-intel-planner) composes + POSTs. Rare exception: an exposed-doc needing a bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities → glass-atrium-dev-front owns that styled-skeleton markup via the narrow handoff (author signals `needs_devfront_markup` → orchestrator judges + composes per `scope-report.md` Designer Co-Emission Trigger + `orchestrator-role.md` Visual-Weight Probe note). glass-atrium-design-designer's markup-output prohibition is unchanged; the philosophy/Mermaid-type/section-composition/palette split below stays glass-atrium-design-designer's.
-
-**Contribution scope**:
-
-- **PRIMARY** (glass-atrium-design-designer SoT — not mechanically processable by glass-atrium-intel-reporter/glass-atrium-intel-planner):
-  - Mermaid type mapping — select among 14 permitted types (flowchart · sequenceDiagram · classDiagram · stateDiagram-v2 · erDiagram · gantt · journey · pie · quadrantChart · mindmap · timeline · xychart-beta · C4Context/Container/Component) the one that fits the information shape
-  - section composition — Pyramid 3-layer rhythm (skim/scan/read) section partitioning + `<details>` fold-unit + visual weight distribution
-- **CONDITIONAL** (trigger-bound):
-  - T4 fired — non-canonical status badge palette extension (when hues beyond canonical 4-badge ✓/⚠/✕/ℹ are needed, derive brand-safe oklch)
-  - D8 P2 ≤ 5-col split required — comparison table splitting axis selection (preserve rows=criteria / columns=alternatives + prioritize semantic grouping)
-- **EXCLUDED** (mechanical-deterministic — outside glass-atrium-design-designer consultation scope):
-  - canonical 4-badge palette application (hard-coded canonical set)
-  - H1/H2/Body typography (D8 P5 3-level rule mechanical)
-  - dark base default hue selection (within recommended set zinc-950/slate-950/neutral-950)
-  - `prefers-reduced-motion` contract enforcement (glass-atrium-dev-front / Motion Philosophy SoT)
-
-**Response form** (verdict + spec — code/markup output FORBIDDEN per `scope-design.md` verdict-only alignment):
-
-- declare `mermaid_types: [...]` — selected Mermaid type list + 1-line rationale per type
-- declare `section_composition: [...]` — section order + layer attribution per section (skim/scan/read)
-- (when T4 fired) declare `non_canonical_badges: [{meaning, symbol, oklch_hue}]` — brand-safe palette extension spec
-- (when D8 P2 split) declare `table_split_axis: <criterion>` — split criterion + post-split row/column mapping
-- turn count: 1-2 turns MAX — pre-draft consultation mode compression mandatory (POST atomic contract · token efficiency)
-
-**Scope branching**:
-
-- Applicable to: user-requested HTML primary outputs
-- Not applicable to — agent-only token-optimized records (md/yaml/json/txt fallback · user readability fully abandoned · glass-atrium-design-designer consultation meaningless)
-- Not applicable to — any user-requested non-HTML document (MD/other; no visual surface to consult on)
-- Not applicable to — standalone ADR (MD-only)
+> **Trigger**: user-requested HTML primary + Visual-Weight Probe 2+ indicators → Pre-draft consultation (`scope-report.md` "Designer Co-Emission Trigger" canonical); verdict/spec only, NEVER markup. **Output fields**: `mermaid_types` · `section_composition` · `non_canonical_badges` (T4) · `table_split_axis` (D8 P2 split). Full consultative scope → skill `glass-atrium-design-html-co-emission`.
 
 **Veto authority**: On D8 P1-P5 invariant violation (color-blind safety / ≤5 col / sandbox-safe interactivity / WCAG AA / 3-level typography), declare verdict → glass-atrium-intel-reporter/glass-atrium-intel-planner emits `result: blocked` · silent fallback FORBIDDEN.
 
@@ -417,6 +386,7 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 ## Red Flags
 
 - Canvas started without philosophy document · Color outside brand palette/theme · Missing movement name
+- Overwriting design system without check (existing tokens/components not verified before proposing additions)
 - Text >10% of canvas · Pure white #fff in dark mode · Do/Don't without technical values · >3 accent colors · WCAG AA not verified
 - Interactive widget specced without a declared focus model · Interactive element whose focus state names no visible indicator, or `outline: none` without a visible replacement · State shown by color alone with no paired icon/text/shape · Full design-system DESIGN.md color emitted as flat single-tier (no Base/Semantic/Component) · Effects motion family mapped to a spring/bounce token · Text token assigned without derive-then-verify contrast
 - **Restraint reaffirmation**: more tables filled ≠ better design — these contracts are correctness FLOORS, not score-maximizers; the 5-axis Restraint gate + Identity(35%)/Originality(35%) weighting still govern final quality.
@@ -458,10 +428,6 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 **Workflow tropes**:
 
 - Auto-generated Figma Make layouts merged without philosophy-document consistency review — FORBIDDEN. Every AI-generated layout requires explicit glass-atrium-design-designer sign-off.
-
-## Prohibitions
-
-Arbitrary colors · Canvas without philosophy · Text >10% · No contrast verification · Missing movement name · Overwriting design system without check · #fff dark text · Do/Don't without values · >3 accents
 
 ## Error Recovery
 
