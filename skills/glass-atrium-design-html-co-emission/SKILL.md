@@ -20,7 +20,7 @@ od:
   capabilities_required: [Read]
 ---
 
-<!-- Extracted verbatim from glass-atrium-design-designer.md `## HTML Primary Co-Emission Role` (A10). The agent body retains a stub carrying the trigger, the output fields, and the veto line — the veto produces `result: blocked`, so it MUST stay reachable when this skill is not loaded. `scope-report.md` "Designer Co-Emission Trigger" remains canonical for the trigger spec. -->
+<!-- The agent body retains a stub carrying the trigger, the output fields, and the veto line — the veto produces `result: blocked`, so it MUST stay reachable when this skill is not loaded. `scope-report.md` "Designer Co-Emission Trigger" remains canonical for the trigger spec. -->
 
 # HTML Primary Co-Emission
 

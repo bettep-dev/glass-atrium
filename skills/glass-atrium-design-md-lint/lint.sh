@@ -93,7 +93,7 @@ CANONICAL_SECTIONS = [
     ("component",),                                        # §6
     ("motion", "interaction"),                             # §7
     ("voice", "brand", "ui copy", "copy rules"),           # §8
-    ("anti-pattern", "anti", "forbidden", "don'ts", "donts"),  # §9
+    ("anti-pattern", "anti", "forbidden", "don'ts"),           # §9
 ]
 
 # A reference looks like `var(--token)` (CSS custom property), `{tier.token.path}`
