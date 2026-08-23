@@ -19,9 +19,12 @@
 # Run via: bats test/doctor-retired-residue.bats
 # Requires: bats, bash 3.2+
 #
-# Hermetic: GA_TARGET_HOME, GA_DATA_ROOT and ATRIUM_UPDATE_STATE_DIR point at throwaway temp dirs, a
-# nonexistent manifest-gen skips the §8 hashing and an echo-OK claude stub neutralises the auth
-# advisory's live probe. No ~/.claude or ~/.glass-atrium state is read or written.
+# Hermetic: GA_TARGET_HOME, GA_DATA_ROOT, ATRIUM_UPDATE_STATE_DIR and AUTOAGENT_BACKUP_DIR point at
+# throwaway temp dirs, a nonexistent manifest-gen skips the §8 hashing and an echo-OK claude stub
+# neutralises the auth advisory's live probe. No ~/.claude or ~/.glass-atrium state is read or
+# written. The doctor still reads GA_ROOT for the residue paths themselves — that is the surface
+# under test — so every assertion below reads THIS SECTION's own lines, never an aggregate the rest
+# of the run contributes to.
 #
 # BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
 #   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
@@ -53,6 +56,7 @@ SH
   export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
   export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"            # echo-OK stub → no live claude -p probe
   RECORD="${STATE}/retired-unmoved.txt"
+  BACKUP_DIR="${STATE}/agents-bak"
 }
 
 teardown() {
@@ -61,13 +65,19 @@ teardown() {
   [[ -n "${STATE:-}" && -d "${STATE}" ]] && rm -rf -- "${STATE}" || true
 }
 
-# Drive the REAL doctor with the target, runtime-data and updater-state seams at the sandbox. A
-# sandboxed tree fails other sections, so every assertion is on this section's own verdict LINES
-# rather than on $status.
+# Drive the REAL doctor with the target, runtime-data, updater-state and backup-dir seams at the
+# sandbox. AUTOAGENT_BACKUP_DIR is the var the merge-decline PRODUCER honours, so pointing it at the
+# sandbox moves §15's record derivation off GA_ROOT/agents — left unseamed, a live install's own
+# declines log is read and fails the run from inside a test that calls itself hermetic.
+#
+# Other sections still fail on a sandboxed tree, so every assertion reads this section's OWN verdict
+# lines: not $status, and not the PASS-with-warnings summary either — that summary is emitted only
+# on the PASS branch, so keying on it lets an unrelated section's FAIL decide this section's verdict.
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}" \
     ATRIUM_MONITOR_PORT="1" \
+    AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" \
     run "${REAL_GA}" doctor
 }
 
@@ -94,7 +104,9 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has "warn : retired file still in place — ${PRESENT_PATH}" || return 1
   assert_output_lacks "FAIL : retired file still in place" || return 1
-  assert_output_has "retired-residue" || return 1
+  # The record's own follow-up line: an unresolved entry is KEPT and its location named, so the
+  # operator has somewhere to look after the WARN scrolls past.
+  assert_output_has "record: ${RECORD}" || return 1
 }
 
 # ── AC2 — a resolved line is dropped, a live one survives ─────────────────────────────────────

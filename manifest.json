@@ -1515,7 +1515,7 @@
     "test/doctor-inject-drop-seam.bats": "c55069c93e8f8508fdf8cda2f6e1a31e1406cb0221769beec84ace56c65e9268",
     "test/doctor-launchd-deploy-drift.bats": "6f004336b45deacffe7e9ca32ece9c20079ced6d46c846194975a9bd6930c3c8",
     "test/doctor-registry-orphan.bats": "28fefe5e045f99147e2e40378e250ecb6a1252731ddcb04ad0eafb7d4e5ad731",
-    "test/doctor-retired-residue.bats": "472a4fb0c973560cc00a851d3afdabaad8d53507bd2a23de899540328d2e205b",
+    "test/doctor-retired-residue.bats": "4a673e8e1399bb1d36a030ae1e2f459707bbd9aa4793d825f654d95a72785149",
     "test/doctor-sha-ifs-split.bats": "911c8818be9ab325da6a464a229fde0e5ae540cd96513d7be919d2a1c5823d11",
     "test/essential-symlinks-migration.bats": "4e6e9c2c065d5a830af039d0ff328aef664866c27ad61bb769d34098fee01370",
     "test/fakechat-port-cleanup.bats": "24a93beaf41921ba50af3a8cba28f3dff19d70c76e0e54f30b57fe90b949a648",
