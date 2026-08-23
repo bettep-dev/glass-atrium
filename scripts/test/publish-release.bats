@@ -20,11 +20,15 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_PUBLISH="${GA}/scripts/publish-release.sh"
 REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
 REAL_CONFIG="${GA}/scripts/lib/atrium-config.sh"
+# generate-manifest.sh sources the spine for the retired-map family bar, so the
+# --check gate this suite exercises needs the library present in the sandbox.
+REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 
 setup() {
   [[ -f "${REAL_PUBLISH}" ]] || skip "publish-release.sh not found: ${REAL_PUBLISH}"
   [[ -f "${REAL_GENMAN}" ]] || skip "generate-manifest.sh not found: ${REAL_GENMAN}"
   [[ -f "${REAL_CONFIG}" ]] || skip "atrium-config.sh not found: ${REAL_CONFIG}"
+  [[ -f "${REAL_SPINE}" ]] || skip "apply-spine.sh not found: ${REAL_SPINE}"
 
   # pwd -P resolves /var -> /private/var so GA_ROOT (pwd -P inside the script)
   # matches the paths the test computes.
@@ -37,6 +41,7 @@ setup() {
   cp "${REAL_PUBLISH}" "${SCRIPT}"
   cp "${REAL_GENMAN}" "${WORK}/scripts/generate-manifest.sh"
   cp "${REAL_CONFIG}" "${WORK}/scripts/lib/atrium-config.sh"
+  cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
 
   # An in-scope tracked file (feeds the manifest) + an out-of-scope tracked file
   # (root, absent from generate-manifest SCOPE_PATHS) used to dirty the tree
@@ -133,4 +138,20 @@ teardown() {
   run "${SCRIPT}" publish --out "${OUT}"
   [[ "${status}" -eq 4 ]] || return 1
   [[ "${output}" == *"manifest --check FAILED"* ]] || return 1
+}
+
+@test "publish: a manifest without the retired key fails verify_manifest (exit 4)" {
+  # The always-emit rule is what lets a release consumer assert the key rather than
+  # branch on its absence, so a manifest missing it is not publishable. The gate is
+  # the same --check verify_manifest already runs — no second assertion path.
+  jq 'del(.retired)' "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm 'drop retired key'
+
+  run "${SCRIPT}" publish --out "${OUT}"
+  [[ "${status}" -eq 4 ]] || return 1
+  [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
+  [[ "${output}" == *"manifest --check FAILED"* ]] || return 1
+  [[ ! -e "${OUT}/glass-atrium-bundle-${MANIFEST_VERSION}.tar.gz" ]] || return 1
 }

@@ -8,6 +8,14 @@
 # must still carry one, so an entry whose reference is gone is dropped rather than left
 # to fossilise.
 #
+# A name that becomes tracked RETIREMENT DATA leaves this list. The manifest `retired`
+# map and the seed fixture that produces it record dropped paths BY PATH, so the four
+# strings a retired path spells — the three basenames and the hyphenated pause-flag
+# phrase that is a substring of one of them — are values a regenerated data file carries
+# by design, not claims about the tree. Policing them here would red on every
+# regeneration. The mechanisms stay covered by their identifiers (SENSITIVE_REFUSAL_LIB,
+# APPLY_GATE_LIB, PAUSE_FLAG_LIB, update_pause_) and by the spaced prose phrase.
+#
 # Retained entries and why each keeps its reference:
 #   autoagent/lib/git-txn.sh
 #     do-not-edit surface; its transaction header names the two-phase apply wrapper
@@ -20,15 +28,8 @@
 #     the path-sync mention IS the assertion that the second path mode is a usage error
 #   scripts/test/update-deletion-shape-tripwire.bats
 #   scripts/test/update-resolved-gap-recording.bats
-#   test/update-restore-base-reversal.bats
 #     each is another change's declared target and is corrected there; when that lands,
 #     the fossil direction below reds and the row comes out
-#   hooks/test/corpus/blocked_9599.js
-#   hooks/test/corpus/passed_9599_resubmit.js
-#   hooks/test/corpus/variant_A.js
-#   hooks/test/corpus/variant_resubmit.js
-#     recorded proposal fixtures — the text is captured classifier input, never a claim
-#     about the tree, so rewriting it would falsify the fixture
 #
 # Repo-only: the scan is `git grep` over tracked files, so a consumer install skips.
 
@@ -65,7 +66,6 @@ sensitive_check_path
 sensitive_check_diff
 sensitive_path_ok
 sensitive_diff_ok
-sensitive-refusal.sh
 SENSITIVE_REFUSAL_LIB
 gate_render_diff
 gate_read_answer
@@ -73,10 +73,8 @@ gate_prompt_confirm
 gate_build_nonagent_records
 gate_confirm_changes
 gate_apply_confirmed
-apply-gate.sh
 APPLY_GATE_LIB
 update_pause_
-update-pause-flag.sh
 PAUSE_FLAG_LIB
 spine_apply
 spine_find_removed_files
@@ -92,7 +90,6 @@ _SYNC_EXEMPT_RELPATHS
 path-sync
 confirm gate
 pause flag
-pause-flag
 NAMES
 }
 
@@ -102,13 +99,8 @@ autoagent/daemon_cycle.py
 autoagent/lib/autoagent_pause.py
 autoagent/lib/git-txn.sh
 autoagent/test/test_sensitive_patterns.py
-hooks/test/corpus/blocked_9599.js
-hooks/test/corpus/passed_9599_resubmit.js
-hooks/test/corpus/variant_A.js
-hooks/test/corpus/variant_resubmit.js
 scripts/test/update-deletion-shape-tripwire.bats
 scripts/test/update-resolved-gap-recording.bats
-test/update-restore-base-reversal.bats
 PATHS
 }
 

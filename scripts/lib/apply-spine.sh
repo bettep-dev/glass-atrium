@@ -209,6 +209,27 @@ spine_is_excluded_path() {
   spine_is_merge_claimed_path "$1"
 }
 
+# Predicate: is this path barred from the manifest `retired` map? Returns 0
+# (barred) / 1 (eligible). ONE definition for three consumers — the generator
+# that appends to the map, the seed derivation that reproduces it from history,
+# and the updater pass that reads it — because a family the generator refuses to
+# record and the updater still agrees to remove is a map that claims what it
+# cannot do.
+#
+# Applied Prisma migration files are coupled to database state recorded on the
+# install, so removing one desynchronises an install that predates a squash.
+# Merge-claimed paths are barred for a different reason: they are user-editable
+# by contract, and the removal predicate skips them anyway.
+#
+# The family pattern is a local, not a top-level constant: this file's contract is
+# function definitions and no top-level state.
+spine_is_retired_excluded_path() {
+  local path="$1"
+  local migrations_re='^monitor/prisma/migrations/.*/migration\.sql$'
+  [[ "${path}" =~ ${migrations_re} ]] && return 0
+  spine_is_merge_claimed_path "${path}"
+}
+
 # Emit (one relative path per line) every manifest path claimed by NEITHER deploy
 # consumer — the merge does not reach it and the spine excludes it, so no path
 # ever hash-verifies it and a deploy reports success without having considered it.

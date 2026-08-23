@@ -59,6 +59,9 @@ make_gen_fixture() {
   FIX="${SANDBOX}/genfix"
   mkdir -p "${FIX}/scripts/lib" "${FIX}/hooks" "${FIX}/agents"
   cp -p -- "${GA}/scripts/generate-manifest.sh" "${FIX}/scripts/generate-manifest.sh"
+  # the generator sources the spine for the retired-map family bar and refuses
+  # (exit 7) without it, so the fixture root carries the library too.
+  cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${FIX}/scripts/lib/apply-spine.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"

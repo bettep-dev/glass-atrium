@@ -1,0 +1,91 @@
+{
+  "rules/GLASS_ATRIUM_GLOBAL_RULES.md": [
+    "38710ee8eaf9b4cd190879c166725cb85db57f8c0cd74fe4c57b04aa7c70f433",
+    "c391267588b5a7573e1d14bf0fede981bc94d63b1f2b07f9c2db39d6e8399232"
+  ],
+  "rules/GLOBAL_RULES.md": [
+    "26329819e534d2f05cbffd1a9e6f8a1b67ecca2675c145d4975fe98e041c755a"
+  ],
+  "rules/core-compliance-matrix.md": [
+    "1860fd2ecac764cee30f18452fd6710fb3623ca7e2ab9666dc8d8aa6a3ec538e",
+    "aa0dcb754f9a764f31188ae5676a27a33cf635eca207dea06713cd698b25bedd"
+  ],
+  "rules/core-git-workflow.md": [
+    "9f15b9971bd7283cbc3f418b3ff990b68f4aff6709f2db312bf57fcc0f689b42",
+    "bbf00b31d7011e9b1ab3f10e5f63dbc56c0e4a96a62c58647cbd39b6cd0d8386"
+  ],
+  "rules/core-learning-log.md": [
+    "3ab599ab417f26d07fabb8c20bbf47a70dba2eab1cd51a4043f2cd8efac1f4c0",
+    "8eee99d6244a41a62df8477d7d89da24f4f687cc9d8c54940ded19ec80f65c25"
+  ],
+  "rules/core-outcome-record.md": [
+    "4f1c34bc7b19ff144af6eb253b30fe2bacc92a98a642188c367c51a7a3855745",
+    "99afbe869143a633573a11e555eef94e720164f500eb6d40e699e781b730b626"
+  ],
+  "rules/core-security.md": [
+    "314c6bf45c7b0822568b126a69027b19371ecc4a286eadaf87c76850ed80af8e",
+    "7916e511d5fb24e7ab10b96b4993fa31a7b5ac34a7f2693043de68da30f92692"
+  ],
+  "rules/core-wiki-reference.md": [
+    "6070a1081576f86d362c3a6354e3069e8a51a206d104f496ae8dbd87c1fa968e",
+    "ac1cac4b4d34172eb56fa20bde12dd3656e2c6fa07d6f22d4f95e1f024b52e19"
+  ],
+  "rules/orchestrator-role.md": [
+    "0674f645ff3bf155ec461c9da2f0f1888570a80996a5d892b8ebc8f747e0f5a3",
+    "6d9b831f4b9344de2e193e58194c4d423089da9663dc5d972d359bea555161d3",
+    "e0047773bf0c4dd998810ef8af454fe4ecdd06e7d0eac2071633d7e143af9374",
+    "efb45ec37082c3c34fb74be473576bbf36b6dd409cee5876bd7cf04bb144a839"
+  ],
+  "rules/scope-orchestrator.md": [
+    "d95e3d8228dd4e287d76911632c69a9642c4d19caf6163c573b4127f3bee803f"
+  ],
+  "rules/shared-self-improve-hygiene.md": [
+    "2b8d4a3a28929659b23c2f1097cae6264f1ff7ad23d15a1efc16b9d825343f06",
+    "bd9c7344bc63fe81780ef4804ce9be9c3ba84c334605b1f5dcd471a9de9b257a"
+  ],
+  "scripts/lib/apply-gate.sh": [
+    "2dafc76d49c2f18e8ce37b0a388e31ab7f45b80b2b019b61e1f7b95a15312b17",
+    "44e8e924b67c8a5b764169f1eb2eb9bd61ea1976b065185ce9369ac6a2607698",
+    "c6efde43da34e736bfb44051ad1229eda504ca4a517baf207a8d782eea52f832",
+    "d1a8230f5fd39d9658e71a127a2ad4df58a67e60412c08d697060c6e3297c2ba"
+  ],
+  "scripts/lib/sensitive-refusal.sh": [
+    "4a1f1094e403eb9dbe5da37048e69cf02fcf4ce3642eb7b594d49f22035ab877",
+    "907ce90f068a10194f0d857584542cdc0f82bf0e2cc15c0863b0cc8e022d4794",
+    "9fe5617777f12851194fafc2eab0292842c5f4d737b28dc54c14cdc4b40580b1",
+    "ab0495696ce3fdea793665652f4a2209c39bfb9b6f511dbddebc71af4ccf7225",
+    "b4d30bb68471249a47bb20720b66cdd54b045b094b02859f39d37872466a4393"
+  ],
+  "scripts/lib/update-pause-flag.sh": [
+    "2d7b35044398f01dde65c90f21dadd575dde5feef68316d9be9f496d422a5fb1",
+    "3302207d888414f0764c6f336e126cbb80df817c23f7e079a2761f11dc56ba7d",
+    "3a7fd3f488368c73a19634a9992c97304837a9154c0ebb8b94d3e2af67a9d406",
+    "762f88c9930886f150b2a418c22f4a3f096b130794587f699a30d16bcdf41b3f",
+    "77f8b80e81118cef03394e531f14ee54ea95cc60cbd453c48dc0067ea6a5c618",
+    "ce75a28e751a5d75c0a51f2cbdc6cd84e0783a0c4abf753be13932ca78180783"
+  ],
+  "scripts/lib/vendor-digest.sh": [
+    "46e51686dab7d9f3eb361dd0ef1bc79ce3c463a9b1cb8a57ff2d96e6f60bf14d"
+  ],
+  "scripts/test/apply-gate.bats": [
+    "8d46b4f339c98ac6deaf81e4e7339fd70060accb8862132c4eb4002bb7654997",
+    "f718b750850c7d5df82f3f2edaaa20c0c8e0f9d1b81a8225eb44e660ce83ddca"
+  ],
+  "scripts/test/update-charter-sync-exemption.bats": [
+    "371df92955b62d2f3216e2165f233051d61db3195c3e979ec2fec2e354aa3080",
+    "c9d59fa6fe0d95773868291c7fe5f865530572a01c32b66d229ba3f47fb67611",
+    "f96fb5fa437fc906683b206f33695036509fa0ad840616c25795377f94809cdc"
+  ],
+  "scripts/test/update-pause-flag.bats": [
+    "c2e3e96cfd3660894009452d180d2ffcf1682674c01a71cabf226497c0891326"
+  ],
+  "scripts/test/vendor-region-digest.bats": [
+    "56d72ec1c8c32695a584ca54842da52a1936a13f0f4ba4c117997ee4aacb94d0"
+  ],
+  "skills/glass-atrium-update/SKILL.md": [
+    "1dd7461417a2070814be4e4719d3c3bbdba591bd20d4aa1a0846c793f65040df"
+  ],
+  "skills/glass-atrium-update/update.sh": [
+    "547c32bf399962da9b937596f85443091c28e123e55bd2a8cb3281eb4304f43f"
+  ]
+}
