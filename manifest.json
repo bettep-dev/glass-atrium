@@ -1533,7 +1533,7 @@
     "test/hook-bindings-executable.bats": "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158",
     "test/hook-matcher-shape-invariant.bats": "52fa587a2f061f8dda31a42e86415c48cc1254d3627df435d1d4f5d138b1a451",
     "test/hook-repoint-dualdir.bats": "f0bf2afd3a66c0b69f76bb28ab01dc11b62769468413221187ffe12e798b7b56",
-    "test/install-acceptance.sh": "2cd4785d5afc8339bd662046fb7348f4bb0bc4da66ec469b95fd70446db308de",
+    "test/install-acceptance.sh": "fe2e4cbca3a98fed19fe2407e3e8ea0c7a7964985ef62c8675aea4ffbff17d31",
     "test/install-bootstrap-subcommand.bats": "890aee10327784c12272fe6e3d75c0718fba21be99192209efa94c8bed6d72a4",
     "test/install-orphan-ownership-exec-harness.sh": "c43cb63c66f1fa252c77dc361dec50b8d6dbb4bc60f7ac87ad3ecf0184c4b904",
     "test/install-orphan-ownership.bats": "4f64196d53ea805c37bc9b31ead1b106781d7ea5ab01ee5e619342349add5d15",

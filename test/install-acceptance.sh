@@ -38,6 +38,11 @@ hdr() { printf '\n===== %s =====\n' "$1"; }
 # rewrites a direct child (scheduled_tasks.lock etc.) during the run.
 REAL_SETTINGS_HASH_BEFORE="$(shasum "${REAL_CLAUDE}/settings.json" 2>/dev/null | awk '{print $1}' || echo MISSING)"
 REAL_CONFIG_HASH_BEFORE="$(shasum "${REAL_CONFIG}" 2>/dev/null | awk '{print $1}' || echo MISSING)"
+# The base@install anchor is the one install-written path GA_TARGET_HOME does NOT
+# redirect (spine_baseline_dir keys on ATRIUM_UPDATE_STATE_DIR), so it needs its own
+# before/after guard — STEP 8's symlink+backup scan cannot see a rewrite of it.
+REAL_BASELINE="${HOME}/.claude/data/update/baseline-manifest.json"
+REAL_BASELINE_HASH_BEFORE="$(shasum "${REAL_BASELINE}" 2>/dev/null | awk '{print $1}' || echo MISSING)"
 
 # --- sandbox setup ------------------------------------------------------------
 SANDBOX="$(mktemp -d -t ga-accept.XXXXXX)"
@@ -53,6 +58,12 @@ export GA_CONFIG_TOML="${CONFIG_OUT}"
 export GA_SKIP_DB_SETUP=1
 # hermetic sandbox — rendered plists land here, never in the real repo's rendered/
 export GA_PLIST_OUT="${SANDBOX}/launchd-plists"
+# hermetic sandbox — run_install captures the base@install baseline anchor + seeds the
+# base-agents content store into spine_baseline_dir, which resolves via
+# ATRIUM_UPDATE_STATE_DIR and NOT GA_TARGET_HOME; without this override the sandbox run
+# rewrites the REAL ~/.claude/data/update (a sandbox install of another release would
+# rewind the machine's update baseline).
+export ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/update-state"
 trap 'rm -rf -- "${SANDBOX}"' EXIT
 
 printf 'SANDBOX=%s\n' "${SANDBOX}"
@@ -324,6 +335,10 @@ LEAKS=$((LEAKS + TOP_NEW))
 [[ "${LEAKS}" -eq 0 ]] \
   && ok "zero GA symlinks/artifacts created in real ~/.claude during the run" \
   || no "${LEAKS} GA artifact(s) leaked into real ~/.claude"
+REAL_BASELINE_HASH_AFTER="$(shasum "${REAL_BASELINE}" 2>/dev/null | awk '{print $1}' || echo MISSING)"
+[[ "${REAL_BASELINE_HASH_AFTER}" == "${REAL_BASELINE_HASH_BEFORE}" ]] \
+  && ok "real base@install baseline anchor UNCHANGED (sha ${REAL_BASELINE_HASH_BEFORE})" \
+  || no "real baseline anchor REWRITTEN ${REAL_BASELINE_HASH_BEFORE} -> ${REAL_BASELINE_HASH_AFTER}"
 REAL_CONFIG_HASH_AFTER="$(shasum "${REAL_CONFIG}" 2>/dev/null | awk '{print $1}' || echo MISSING)"
 [[ "${REAL_CONFIG_HASH_AFTER}" == "${REAL_CONFIG_HASH_BEFORE}" ]] \
   && ok "real config.toml UNCHANGED (sha ${REAL_CONFIG_HASH_BEFORE})" \
