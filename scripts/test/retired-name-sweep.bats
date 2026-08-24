@@ -8,18 +8,12 @@
 # must still carry one, so an entry whose reference is gone is dropped rather than left
 # to fossilise.
 #
-# A name leaves this list for either of two reasons. It becomes tracked RETIREMENT DATA:
-# the manifest `retired` map and the seed fixture that produces it record dropped paths
-# BY PATH, so the four strings a retired path spells — the three basenames and the
-# hyphenated pause-flag phrase that is a substring of one of them — are values a
-# regenerated data file carries by design, not claims about the tree, and policing them
-# here would red on every regeneration. Those mechanisms stay covered by their
-# identifiers (SENSITIVE_REFUSAL_LIB, APPLY_GATE_LIB, PAUSE_FLAG_LIB, update_pause_) and
-# by the spaced prose phrase. Or it becomes a LIVE name again: the retirement sweep
-# (spine_find_removed_files, update_sweep_removed_files, update_trash_dir,
-# update_retire_swept_hook_bindings, _update_removal_commit_callback) is defined once
-# more under the amended Rule 1, so a list still carrying those five would name every
-# file that implements them.
+# A string that RETIREMENT DATA spells is not eligible for this list: the manifest `retired`
+# map and the seed fixture that produces it record dropped paths BY PATH, so those basenames
+# are values a regenerated data file carries by design rather than claims about the tree, and
+# policing them here would red on every regeneration. The mechanisms behind them stay covered
+# by their identifiers (SENSITIVE_REFUSAL_LIB, APPLY_GATE_LIB, PAUSE_FLAG_LIB, update_pause_)
+# and by the spaced prose phrase.
 #
 # Retained entries and why each keeps its reference:
 #   autoagent/lib/git-txn.sh

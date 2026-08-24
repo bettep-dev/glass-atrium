@@ -826,17 +826,17 @@ run_doctor() {
     fi
   fi
 
-  # 19. retired-residue surface. The retirement sweep moves a vendor-dropped file to Trash, and a
-  #     move that fails is deliberately NON-fatal — aborting there would cost the run its mode
-  #     enforcement, farm refresh and hook wiring for one immovable file. The WARN scrolls past with
-  #     the rest of the deploy, so the sweep records each un-moved path and this section is what
-  #     reads it back. WARN, never FAIL: the remedy is a hand move to Trash, and residue must not
-  #     abort an install through the preflight alias.
+  # 19. retired-residue surface. A move the retirement sweep cannot make is non-fatal by design
+  #     (update_sweep_removed_files states why), so its WARN scrolls past with the rest of the
+  #     deploy and the sweep records each un-moved path — this section reads that record back.
+  #     WARN, never FAIL: the remedy is a hand move to Trash, and residue must not abort an install
+  #     through the preflight alias.
   #     The record is re-checked rather than trusted: a path whose file is now gone was resolved by
   #     hand and its line is dropped, so a cleared residue stops reporting without anyone editing
   #     the record. Silence when the record is absent is the normal install and needs no line.
   local retired_residue=0
   local residue_record="" residue_path="" residue_kept=""
+  # intentional (SC2311 fires only because the lib has no file-scope set -e).
   # shellcheck disable=SC2311
   residue_record="$(spine_retired_unmoved_path)"
   if [[ -f "${residue_record}" ]]; then

@@ -315,8 +315,7 @@ build_retired_json() {
       printf '%s\t%s\n' "${path}" "${hash}"
     done < <(read_manifest_retired_lines)
     retired_dropped_lines
-  } | LC_ALL=C sort -u | jq -R 'split("\t")' \
-    | jq -s 'group_by(.[0]) | map({key: .[0][0], value: (map(.[1]) | unique)}) | from_entries'
+  } | LC_ALL=C sort -u | spine_build_retired_map
 }
 
 # Structural validation of a manifest FILE against the invariants a regeneration

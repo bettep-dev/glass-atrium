@@ -230,6 +230,16 @@ spine_is_retired_excluded_path() {
   spine_is_merge_claimed_path "${path}"
 }
 
+# Shape a `<path>\t<sha256>` stream on stdin into the manifest `retired` map —
+# {path: [hash, ...]}, hashes deduped and ordered. ONE definition for the two
+# writers, the generator that appends to the map and the seed derivation that
+# reproduces it from history: a fixture shaped differently from the generated map
+# reads as a delta on the very --check it exists to satisfy.
+spine_build_retired_map() {
+  jq -R 'split("\t")' \
+    | jq -s 'group_by(.[0]) | map({key: .[0][0], value: (map(.[1]) | unique)}) | from_entries'
+}
+
 # Emit (one relative path per line) every manifest path claimed by NEITHER deploy
 # consumer — the merge does not reach it and the spine excludes it, so no path
 # ever hash-verifies it and a deploy reports success without having considered it.

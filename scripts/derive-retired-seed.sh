@@ -119,8 +119,7 @@ main() {
     echo "derive-retired-seed: no manifest.json anywhere in history" >&2
     exit 6
   }
-  seed_lines | LC_ALL=C sort -u | jq -R 'split("\t")' \
-    | jq -s 'group_by(.[0]) | map({key: .[0][0], value: (map(.[1]) | unique)}) | from_entries'
+  seed_lines | LC_ALL=C sort -u | spine_build_retired_map
 }
 
 main

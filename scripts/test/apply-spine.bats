@@ -202,7 +202,7 @@ build_manifest_retired() {
 # Echo a JSON object mapping $1 to a one-element list holding the live sha256 of
 # ${LIVE}/$1 — the provenance-clean shape, stated once so a fixture cannot drift from
 # the file it describes by hand-copying a hash.
-retired_map_live() {
+retired_live_map() {
   jq -n --arg p "$1" --arg h "$(sha256_of "${LIVE}/$1")" '{($p): [$h]}'
 }
 
@@ -210,7 +210,7 @@ retired_map_live() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "scripts/test/gone.bats" "vendor-body"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    "$(retired_map_live "scripts/test/gone.bats")" "hooks/keep.sh"
+    "$(retired_live_map "scripts/test/gone.bats")" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "scripts/test/gone.bats" ]] || return 1
@@ -220,7 +220,7 @@ retired_map_live() {
   seed_file "${NEW}" "scripts/tool.sh" "shipped"
   seed_file "${LIVE}" "scripts/tool.sh" "shipped"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    "$(retired_map_live "scripts/tool.sh")" "scripts/tool.sh"
+    "$(retired_live_map "scripts/tool.sh")" "scripts/tool.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"MALFORMED"* ]] || return 1
@@ -232,7 +232,7 @@ retired_map_live() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "scripts/lib/edited.sh" "vendor-body"
   local map
-  map="$(retired_map_live "scripts/lib/edited.sh")"
+  map="$(retired_live_map "scripts/lib/edited.sh")"
   printf '%s' "user edited this" >"${LIVE}/scripts/lib/edited.sh"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" "${map}" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
@@ -246,7 +246,7 @@ retired_map_live() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "agents/dev-gone.md" "vendor-body"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    "$(retired_map_live "agents/dev-gone.md")" "hooks/keep.sh"
+    "$(retired_live_map "agents/dev-gone.md")" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"agents/dev-gone.md"* ]] || return 1
@@ -257,7 +257,7 @@ retired_map_live() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "${mig}" "CREATE TABLE t();"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    "$(retired_map_live "${mig}")" "hooks/keep.sh"
+    "$(retired_live_map "${mig}")" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"family-excluded, never removed"* ]] || return 1
@@ -289,7 +289,7 @@ retired_map_live() {
   seed_file "${LIVE}" "scripts/lib/bad.sh" "vendor-body"
   seed_file "${LIVE}" "scripts/lib/good.sh" "other-body"
   local good
-  good="$(retired_map_live "scripts/lib/good.sh")"
+  good="$(retired_live_map "scripts/lib/good.sh")"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
     "$(jq -n --argjson g "${good}" '$g + {"scripts/lib/bad.sh": []}')" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
@@ -313,7 +313,6 @@ retired_map_live() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "${STATE}/retired-unmoved.txt" ]] || return 1
 }
-
 
 # T11 — spine_stage_and_verify
 

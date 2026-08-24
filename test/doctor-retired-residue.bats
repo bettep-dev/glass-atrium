@@ -1,10 +1,9 @@
 #!/usr/bin/env bats
 # doctor-retired-residue.bats — pins run_doctor's retired-residue section.
 #
-# WHY THIS SECTION EXISTS: the retirement sweep moves a vendor-dropped file to Trash, and a move it
-# cannot make is deliberately a WARN rather than an exit — aborting there would cost the run its
-# mode enforcement, farm refresh and hook wiring for one immovable file. That WARN scrolls past with
-# the rest of the deploy, so the sweep records each un-moved path and this section reads it back.
+# WHY THIS SECTION EXISTS: a move the sweep cannot make is a WARN rather than an exit
+# (update_sweep_removed_files states why), and that WARN scrolls past with the rest of the deploy —
+# so the sweep records each un-moved path and this section reads the record back.
 #
 # GRAMMAR: the record is one manifest-relative path per line, written by
 # update_sweep_removed_files at the path spine_retired_unmoved_path() resolves — the SAME helper the
@@ -54,7 +53,7 @@ exit 0
 SH
   chmod +x "${TARGET}/bin/claude"
   export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
-  export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"            # echo-OK stub → no live claude -p probe
+  export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p probe
   RECORD="${STATE}/retired-unmoved.txt"
   BACKUP_DIR="${STATE}/agents-bak"
 }
