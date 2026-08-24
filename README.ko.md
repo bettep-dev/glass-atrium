@@ -146,7 +146,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 ### 제거
 
-메뉴에서 **Uninstall** 을 선택하세요. 설치된 심링크를 제거하고 GA 데이터베이스를 드롭해 기존 Claude 시스템에서 아트리움을 깨끗이 떼어냅니다. 사용자 소유 파일은 그대로 두며, `~/.claude` 쪽에는 아트리움 잔여물이 남지 않습니다. 다만 실제 파일이 있는 `~/.glass-atrium` 폴더는 남습니다 — `config.toml` 과 업데이트 기준선은 `--purge-config` 를 주지 않는 한 보존됩니다. 또한 **데이터베이스는 백업을 남긴 뒤에 삭제되며**(덤프는 `~/.glass-atrium/backups/postgres/` 에 보관), 재설치하면 새로 만들어집니다. 백업이 자동으로 복원되지는 않으므로, 이전 데이터가 필요하면 `pg_restore` 로 직접 복원하세요.
+메뉴에서 **Uninstall** 을 선택하세요. 데몬을 멈춘 뒤 `~/.claude` 쪽에서 아트리움이 깔아 둔 심링크와 빈 디렉터리 껍데기, `settings.json` 의 훅 연결(원본은 `settings.json.ga-backup.<시각>` 으로 옆에 남습니다), 셸 rc 의 PATH 줄을 걷어내고 GA 데이터베이스를 드롭합니다. 사용자 소유 파일은 그대로 둡니다. 다만 `~/.claude` 가 완전히 비지는 **않습니다** — 업데이트 기준선(`~/.claude/data/update/baseline-manifest.json`)과 base@install 에이전트 원본 보관소(`~/.claude/data/update/base-agents/`)는 기본적으로 남습니다. 재설치했을 때 사용자가 손댄 에이전트 편집 내용을 3-앵커 병합으로 이어 가기 위한 기준점이기 때문입니다. `--purge-config` 를 주면 `config.toml` 과 기준선 파일까지 휴지통으로 옮기지만(지우는 게 아니라 옮깁니다), `base-agents/` 보관소는 어느 모드에서도 남습니다. 메뉴의 제거 후 정리 물음은 `config.toml` 만 다루므로, 기준선까지 비우려면 터미널에서 `glass-atrium uninstall --purge-config` 를 실행하세요. 실제 파일이 있는 `~/.glass-atrium` 폴더도 남습니다. 또한 **데이터베이스는 백업을 남긴 뒤에 삭제되며**(덤프는 `~/.glass-atrium/backups/postgres/` 에 보관), 재설치하면 새로 만들어집니다. 백업이 자동으로 복원되지는 않으므로, 이전 데이터가 필요하면 `pg_restore` 로 직접 복원하세요.
 
 ### 아트리움 모니터 문서 작성 방법
 
