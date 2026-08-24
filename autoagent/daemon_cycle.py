@@ -551,6 +551,30 @@ _FAIL_RATE_LABEL_PREFIXES = (
     "에이전트 지침 개선 후보",
 )
 
+# Intake exclusion set. These families report an OPERATIONAL COUNTER — turns spent
+# past a budget, outcomes recorded as negative — not an instruction defect, so no
+# sentence added to an agent body can decrement either. That is why the applied
+# patches never abated them and the repeat-apply cap (APPLY_CAP_THRESHOLD) fired
+# and parked the rows instead. Excluding at intake stops the regeneration at its
+# source; the counters keep recording, and abating them stays a human design
+# decision, NOT another patch.
+# Membership is equality against the STABLE pattern_signature core (never remapped
+# per G2), so the SOFT display remap cannot move a row in or out of the set.
+NON_PROMPTABLE_LABELS = frozenset(
+    {
+        # learning-aggregator.py BUDGET_OVERAGE_LABEL — copied verbatim rather than
+        # imported (daemon_cycle.py does not import the aggregator); keep in sync.
+        "budget-overage concentration",
+        PATTERN1_FAIL_LABEL_EN,
+        PATTERN1_FAIL_LABEL_KO,
+    }
+)
+# Reason literal carried by the intake skip row (stderr WARN + loop event).
+NON_PROMPTABLE_REASON = (
+    "non-promptable signal: an operational counter no agent-body sentence can "
+    "abate — skipped at intake; abatement needs a human design decision"
+)
+
 # Pattern-1 DISPLAY label decouple (mirror of learning-aggregator.py P3a). The
 # title "repeated failure by same agent" / "동일 에이전트 반복 실패" is a FACTUAL
 # MISLABEL under the fleet-wide result=fail=0 regime: the trigger is keyed on a SOFT
@@ -1924,6 +1948,8 @@ def read_user_pending_patterns(
         - rows targeting agent='전체' or 'ALL' (cross-cutting → not patchable here)
         - roster-mismatch rows — agent is not an agents/*.md stem: stderr WARN
           + loop-event emit, never a silent drop (Precondition Loud-Fail)
+        - NON_PROMPTABLE_LABELS rows — the signal is an operational counter no
+          patch can abate: stderr WARN + loop-event emit, never a silent drop
 
     Returns at most `limit` entries, tier-normalized to 'user-pending'.
     """
@@ -1948,6 +1974,20 @@ def read_user_pending_patterns(
         # Skip cross-cutting "전체"/ALL — not actionable per agent file.
         if agent in {"전체", "ALL", "all", ""}:
             continue
+        # signature = "<label>|<agent>" (aggregator UPSERT contract).
+        signature = row["pattern_signature"]
+        label = signature.rsplit("|", 1)[0]
+        # Excluded before proposal generation: a proposal against a counter can
+        # only re-park, so it is dropped here loudly rather than generated.
+        if label in NON_PROMPTABLE_LABELS:
+            _warn_pattern_skip(
+                agent,
+                signature,
+                event_ts,
+                eval_result="non-promptable",
+                reason=NON_PROMPTABLE_REASON,
+            )
+            continue
         # Intake defense-in-depth — when the roster is known (glob succeeded), an
         # `agent` value that is not a real agents/*.md stem (e.g. a task_type
         # 'bug-fix' leaked into the column) cannot produce a landable patch →
@@ -1963,12 +2003,10 @@ def read_user_pending_patterns(
                 continue
             agent = alias
         discovered = row["discovered_date"]
-        signature = row["pattern_signature"]
         patterns.append(
             Pattern(
                 date=discovered.isoformat() if discovered else "",
-                # signature = "<label>|<agent>" (aggregator UPSERT contract).
-                label=signature.rsplit("|", 1)[0],
+                label=label,
                 frequency=str(row["frequency"]),
                 agent=agent,
                 status=row["status"],

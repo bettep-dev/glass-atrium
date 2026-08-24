@@ -6,6 +6,9 @@
 # re-diffed the already-merged region against a stale base and wrote literal git
 # conflict markers into the live agent file. Three pins:
 #   * the end-to-end second run (no markers, no content change);
+#   * the capture ORDERING around the retirement sweep: the base advances before the
+#     sweep runs and the baseline is captured after it, so a sweep that cannot move a
+#     file leaves neither anchor stranded;
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
 #   * a conflicting region, twice: once with the retired gap-policy switch exported
@@ -159,6 +162,54 @@ run_update() {
   # an always-created empty file would make "no declines" and "never recorded"
   # indistinguishable at exactly the moment an operator is asking which it was.
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
+}
+
+@test "base-content capture survives a FAILED retired sweep (ordering pin)" {
+  # The sweep sits between the base-content capture and the baseline capture, and it
+  # is deliberately non-fatal: a move it cannot make is a WARN, not an exit. Both
+  # halves of that are pinned here — the capture ahead of it has already advanced the
+  # landed merge past the stale anchor, and the baseline capture behind it still runs,
+  # so a residue problem never strands the run mid-finalize.
+  mkdir -p "${NEWSRC}/agents" "${STATE}/update-state/base-agents"
+  printf 'RELEASE body' >"${NEWSRC}/agents/dev-a.md"
+  printf 'BASE v0' >"${STATE}/update-state/base-agents/dev-a.md"
+  # A retired path that exists, is pristine, and cannot be moved: the Trash dir is a
+  # FILE, so the sink's mkdir -p fails at every path.
+  mkdir -p "${INSTALL}/scripts/lib"
+  printf 'stale-lib' >"${INSTALL}/scripts/lib/y.sh"
+  printf 'not a dir' >"${WORK}/trash-is-a-file"
+  jq -n --arg h "$(shasum -a 256 -- "${INSTALL}/scripts/lib/y.sh" | awk '{print $1}')" \
+    '{version:"1.0.0", files:[], hashes:{}, retired:{"scripts/lib/y.sh":[$h]}}' \
+    >"${WORK}/manifest.json"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash-is-a-file" \
+    bash -c '
+      source "'"${SKILL}"'"
+      source "'"${REAL_LIB_ROOT}"'/scripts/lib/apply-spine.sh"
+      # a merge that LANDED dev-a.md — the outcome ledger is the carrier the
+      # capture reads to decide which files may advance.
+      update_merge_agent_editable_regions() {
+        _update_agent_outcomes_file="'"${WORK}"'/agent-outcomes.ledger"
+        printf "agents/dev-a.md\n" >"${_update_agent_outcomes_file}"
+      }
+      update_dispatch_roster_merge() { :; }
+      update_ticker_start() { :; }
+      update_ticker_stop() { :; }
+      update_finalize_merge_and_anchors \
+        "'"${NEWSRC}"'" "'"${WORK}"'/manifest.json" "'"${INSTALL}"'"
+    '
+
+  [ "$status" -eq 0 ] || return 1 # the failed sweep is a WARN, never a fatal
+  [[ "${output}" == *"WARN: retired file NOT moved — scripts/lib/y.sh"* ]] || return 1
+  # the landed merge advanced past the stale anchor BEFORE the sweep ran …
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
+  # … and the step AFTER the sweep still ran.
+  [[ -f "${STATE}/update-state/baseline-manifest.json" ]] || return 1
+  [[ "$(cat "${STATE}/update-state/retired-unmoved.txt")" == "scripts/lib/y.sh" ]] || return 1
 }
 
 @test "the retired gap-policy switch is inert: the contested decline is durable, names the working repair pair, and NEVER writes markers into the live body" {

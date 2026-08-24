@@ -12,9 +12,13 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
+# The generator sources the spine for the retired-map family bar, so the sandbox
+# needs the real library at the path the copied script resolves.
+REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
+  [[ -f "${REAL_SPINE}" ]] || skip "apply-spine.sh not found: ${REAL_SPINE}"
   # pwd -P resolves /var -> /private/var so GA_ROOT (pwd -P inside the script)
   # matches the paths the test computes.
   WORK="$(cd -- "$(mktemp -d -t genman-bats.XXXXXX)" && pwd -P)"
@@ -22,6 +26,7 @@ setup() {
   MANIFEST="${WORK}/manifest.json"
   mkdir -p "${WORK}/scripts/lib" "${WORK}/agents" "${WORK}/rules"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
+  cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
@@ -53,10 +58,10 @@ seed_manifest() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, files, hashes, modes" {
+@test "generate: top-level key order is version, files, hashes, modes, retired" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,files,hashes,modes" ]]
+  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,files,hashes,modes,retired" ]]
 }
 
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {
@@ -258,4 +263,172 @@ seed_test_roots() {
   bundled="$(jq -r '.files[] | select(endswith(".bats"))' "${MANIFEST}" | grep -c '\.bats$')"
   [[ "${tracked}" -gt 0 ]]
   [[ "${bundled}" -eq "${tracked}" ]]
+}
+
+# --- retired map -------------------------------------------------------------
+# The map records what the vendor STOPPED shipping, so every fixture below moves a
+# path out of (or back into) the tracked set and reads what the regeneration then
+# writes. Fixtures are single-commit-per-step repos with no packed history: the
+# carry-forward reads the committed manifest and `git ls-files`, never a log, which
+# is what lets --check run on the depth-1 checkouts CI and the release path use.
+
+# Ship one in-scope library file, commit it, and stamp it into the manifest.
+# Echoes its recorded hash so a caller can assert the retired provenance later.
+ship_lib_a() {
+  printf '# lib a\n' >"${WORK}/scripts/lib/a.sh"
+  git -C "${WORK}" add scripts/lib/a.sh
+  git -C "${WORK}" commit -qm add-a
+  "${SCRIPT}" >/dev/null
+  jq -r '.hashes["scripts/lib/a.sh"]' "${MANIFEST}"
+}
+
+@test "retired: a committed path git no longer tracks is retired at its committed hash" {
+  local shipped
+  shipped="$(ship_lib_a)"
+  [[ "${shipped}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"RETIRED + scripts/lib/a.sh"* ]] || return 1
+  [[ "$(jq -r '.retired["scripts/lib/a.sh"] | join(",")' "${MANIFEST}")" == "${shipped}" ]] || return 1
+  # the dropped path leaves the deploy rows entirely — retired is not a files[] row
+  jq -e 'any(.files[]; . == "scripts/lib/a.sh") | not' "${MANIFEST}" >/dev/null || return 1
+  jq -e '(.hashes | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+  jq -e '(.modes | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+}
+
+@test "retired: a path that left files[] by exclusion rule or gitignore is NOT retired" {
+  # arm 1 — tracked, but the exclusion pattern now claims it. The manifest row is
+  # hand-stamped because a path cannot be both listed and excluded by generation.
+  mkdir -p "${WORK}/scripts/lib/archive"
+  printf '# archived\n' >"${WORK}/scripts/lib/archive/old.sh"
+  git -C "${WORK}" add scripts/lib/archive/old.sh
+  # arm 2 — untracked via `git rm --cached` behind a new ignore entry, still on disk.
+  printf '# lib b\n' >"${WORK}/scripts/lib/b.sh"
+  git -C "${WORK}" add scripts/lib/b.sh
+  git -C "${WORK}" commit -qm 'seed both arms'
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" rm -q --cached scripts/lib/b.sh
+  printf 'scripts/lib/b.sh\n' >"${WORK}/.gitignore"
+  git -C "${WORK}" add .gitignore
+  git -C "${WORK}" commit -qm 'untrack b behind gitignore'
+  jq '.files += ["scripts/lib/archive/old.sh"]
+      | .hashes["scripts/lib/archive/old.sh"] = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"RETIRED +"* ]] || return 1
+  [[ -f "${WORK}/scripts/lib/b.sh" ]] || return 1
+  jq -e '(.retired | has("scripts/lib/archive/old.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+  jq -e '(.retired | has("scripts/lib/b.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+}
+
+@test "retired: a second drop of the same path appends, dedupes and sorts its hashes" {
+  local shipped prior
+  shipped="$(ship_lib_a)"
+  # an earlier shipped hash the map already carries, plus a duplicate of the
+  # current one so the dedupe arm is exercised in the same regeneration.
+  prior="00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff"
+  jq --arg p "${prior}" --arg s "${shipped}" \
+    '.retired = {"scripts/lib/a.sh": [$s, $p]}' "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(jq -r '.retired["scripts/lib/a.sh"] | length' "${MANIFEST}")" == "2" ]] || return 1
+  [[ "$(jq -r '.retired["scripts/lib/a.sh"] | join(",")' "${MANIFEST}")" == "${prior},${shipped}" ]] || return 1
+}
+
+@test "retired: a re-shipped path is DROPPED from the map (disjoint from files[])" {
+  local shipped
+  shipped="$(ship_lib_a)"
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+  "${SCRIPT}" >/dev/null
+  jq -e '.retired | has("scripts/lib/a.sh")' "${MANIFEST}" >/dev/null || return 1
+
+  printf '# lib a again\n' >"${WORK}/scripts/lib/a.sh"
+  git -C "${WORK}" add scripts/lib/a.sh
+  git -C "${WORK}" commit -qm reship-a
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  jq -e '(.retired | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+  jq -e 'any(.files[]; . == "scripts/lib/a.sh")' "${MANIFEST}" >/dev/null || return 1
+  # the re-shipped provenance is the NEW hash, not the retired one
+  [[ "$(jq -r '.hashes["scripts/lib/a.sh"]' "${MANIFEST}")" != "${shipped}" ]] || return 1
+}
+
+@test "retired: an empty map is still emitted as a key" {
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  jq -e 'has("retired")' "${MANIFEST}" >/dev/null || return 1
+  [[ "$(jq -c '.retired' "${MANIFEST}")" == "{}" ]] || return 1
+}
+
+@test "--check: exit 1 with a RETIRED-ADDITIONS block and a RETIRED delta line" {
+  ship_lib_a >/dev/null
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"RETIRED-ADDITIONS (1):"* ]] || return 1
+  [[ "${output}" == *"+ scripts/lib/a.sh"* ]] || return 1
+  [[ "${output}" == *"RETIRED delta"* ]] || return 1
+}
+
+@test "--check: exit 1 when the manifest carries no retired key at all" {
+  "${SCRIPT}"
+  jq 'del(.retired)' "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
+}
+
+@test "--validate: rejects a retired key that is also a files[] entry" {
+  "${SCRIPT}"
+  local victim
+  victim="$(jq -r '.files[0]' "${MANIFEST}")"
+  jq --arg v "${victim}" \
+    '.retired = {($v): ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${WORK}/bad.json"
+  run "${SCRIPT}" --validate "${WORK}/bad.json"
+  [[ "${status}" -eq 6 ]] || return 1
+  [[ "${output}" == *"FAILED structural validation"* ]] || return 1
+}
+
+@test "--validate: rejects a retired key in the barred migrations family" {
+  "${SCRIPT}"
+  jq '.retired = {"monitor/prisma/migrations/20260101000000_x/migration.sql": ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${WORK}/bad.json"
+  run "${SCRIPT}" --validate "${WORK}/bad.json"
+  [[ "${status}" -eq 6 ]] || return 1
+}
+
+@test "--validate: rejects a retired value that is not a non-empty 64-hex array" {
+  "${SCRIPT}"
+  jq '.retired = {"scripts/lib/gone.sh": []}' "${MANIFEST}" >"${WORK}/empty.json"
+  run "${SCRIPT}" --validate "${WORK}/empty.json"
+  [[ "${status}" -eq 6 ]] || return 1
+  jq '.retired = {"scripts/lib/gone.sh": ["not-a-hash"]}' "${MANIFEST}" >"${WORK}/nothex.json"
+  run "${SCRIPT}" --validate "${WORK}/nothex.json"
+  [[ "${status}" -eq 6 ]] || return 1
+  jq '.retired = {"scripts/lib/gone.sh": "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"}' \
+    "${MANIFEST}" >"${WORK}/scalar.json"
+  run "${SCRIPT}" --validate "${WORK}/scalar.json"
+  [[ "${status}" -eq 6 ]] || return 1
+}
+
+@test "--validate: accepts the manifest the generator just wrote" {
+  "${SCRIPT}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"valid"* ]] || return 1
 }

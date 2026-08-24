@@ -11,6 +11,14 @@
 #                        not executables only, so every landing surface (tar
 #                        extract, spine cp -p, agent-merge copy) has a map target.
 #                        Additive optional key: pre-modes consumers ignore it.
+#   retired              REMOVAL LIST — {path: [sha256, ...]} naming every path the
+#                        vendor once shipped and no longer does, with every hash it
+#                        ever shipped for that path. ALWAYS present ({} when empty)
+#                        so a reader can assert the key instead of guessing whether
+#                        an old generator wrote it. Disjoint from files[] by
+#                        construction: a re-shipped path is a shipped path and its
+#                        provenance is its new hash, so its entry is DROPPED the
+#                        moment the path returns to files[].
 # files[] stays a string array (NOT files-as-objects) so every `jq -r '.files[]'`
 # consumer (ga-core.sh read/remove_manifest_links + doctor, validate-compliance-matrix,
 # acceptance/e2e) works UNCHANGED; hashes adds integrity + O(1) hashes["agents/foo.md"] lookup.
@@ -51,16 +59,32 @@
 # under multiple matchers, each tracked independently, e.g. validate-secret-scan
 # under BOTH Write|Edit AND Bash).
 #
+# Retired-map contract. A committed files[] path is appended to `retired` only
+# when git no longer knows the path at all: absent from the RAW whole-repo
+# `git ls-files` (before SCOPE_PATHS narrowing and before EXCLUDE_RE) AND absent
+# from the working tree. Both arms are load-bearing, and each closes a way a path
+# can leave files[] while the vendor still ships it — a widened EXCLUDE_RE, a
+# narrowed SCOPE_PATHS or a differently-regenerated branch leave the path tracked,
+# and a `git rm --cached` behind a new .gitignore entry leaves it on disk. Neither
+# arm reads git history, so generation and --check work on a depth-1 checkout.
+# Barred families (spine_is_retired_excluded_path) never enter the map at all.
+#
 # Output is LC_ALL=C sorted and written atomically (temp + jq re-validation + mv).
 #
 # Usage:
 #   generate-manifest.sh           regenerate manifest.json in place
 #   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta on
-#                                  orphan/missing paths, VERSION mismatch, OR per-file
-#                                  HASH mismatch (content changed, path unchanged)
+#                                  orphan/missing paths, VERSION mismatch, per-file
+#                                  HASH mismatch (content changed, path unchanged),
+#                                  an ABSENT retired key, OR a retired-map delta
+#   generate-manifest.sh --validate FILE
+#                                  structural validation of an arbitrary manifest
+#                                  against the same invariants the regeneration
+#                                  asserts on its temp before the swap
 #
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
-# 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation.
+# 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
+# manifest that fails structural validation · 7=apply-spine.sh not found.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -73,6 +97,17 @@ readonly ATRIUM_VERSION="1.0.1"
 GA_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 readonly GA_ROOT
 readonly MANIFEST="${GA_ROOT}/manifest.json"
+
+# The retired-map family bar lives with the updater's other path predicates so one
+# definition serves the generator, the seed derivation and the removal pass.
+# apply-spine.sh is a pure function library: sourcing it has no side effect.
+readonly SPINE_LIB="${GA_ROOT}/scripts/lib/apply-spine.sh"
+[[ -f "${SPINE_LIB}" ]] || {
+  echo "generate-manifest: ${SPINE_LIB} required (retired-map family predicate)" >&2
+  exit 7
+}
+# shellcheck source=/dev/null
+source "${SPINE_LIB}"
 
 # Manifest scope — the paths hashed + bundled + integrity-verified. A new
 # top-level entry must be added here DELIBERATELY (policy change), never inferred.
@@ -229,6 +264,87 @@ read_manifest_mode_lines() {
     | LC_ALL=C sort
 }
 
+# Emit the tracked manifest's retired map as compact JSON. `// {}` tolerates a
+# pre-retired manifest; --check reports that absence as its own divergence row.
+read_manifest_retired() {
+  jq -c '.retired // {}' -- "${MANIFEST}"
+}
+
+# Emit the tracked manifest's retired map as `<path>\t<sha256>` lines, one per
+# recorded hash, sorted — the flat shape the carry-forward filters row by row.
+read_manifest_retired_lines() {
+  jq -r '(.retired // {}) | to_entries[] | .key as $k | .value[] | "\($k)\t\(.)"' \
+    -- "${MANIFEST}" | LC_ALL=C sort
+}
+
+# Every path git tracks anywhere in the repo, sorted — the "the vendor still ships
+# this" oracle. Deliberately unscoped and unfiltered; the rationale is the
+# retired-map contract note in the header.
+raw_tracked_paths() {
+  git -C "${GA_ROOT}" ls-files | LC_ALL=C sort
+}
+
+# Emit `<path>\t<sha256>` for each committed files[] path the vendor has dropped —
+# the newly retired set. Each line is also announced on stderr, once, on the single
+# regeneration that performs the transition: the path leaves files[] in that same
+# write, so the next run's committed files[] no longer offers it.
+retired_dropped_lines() {
+  local raw path hash
+  raw=$'\n'"$(raw_tracked_paths)"$'\n'
+  while IFS=$'\t' read -r path hash; do
+    [[ -n "${path}" ]] || continue
+    if [[ "${raw}" == *$'\n'"${path}"$'\n'* ]]; then continue; fi
+    if [[ -e "${GA_ROOT}/${path}" ]]; then continue; fi
+    if spine_is_retired_excluded_path "${path}"; then continue; fi
+    printf '%s\t%s\n' "${path}" "${hash}"
+  done < <(read_manifest_hash_lines)
+}
+
+# Emit the retired map the current tree calls for, as compact JSON. Arg $1 = the
+# generated files[] list, newline-separated. Carried-forward entries lose their row
+# when the path returns to files[] (the disjointness invariant) or when it belongs
+# to a barred family; dropped paths are appended, hashes deduped and sorted.
+build_retired_json() {
+  local shipped="$1" shipped_set path hash
+  shipped_set=$'\n'"${shipped}"$'\n'
+  {
+    while IFS=$'\t' read -r path hash; do
+      [[ -n "${path}" ]] || continue
+      if [[ "${shipped_set}" == *$'\n'"${path}"$'\n'* ]]; then continue; fi
+      if spine_is_retired_excluded_path "${path}"; then continue; fi
+      printf '%s\t%s\n' "${path}" "${hash}"
+    done < <(read_manifest_retired_lines)
+    retired_dropped_lines
+  } | LC_ALL=C sort -u | spine_build_retired_map
+}
+
+# Structural validation of a manifest FILE against the invariants a regeneration
+# must satisfy before its temp replaces the live manifest: version stamped, files
+# non-empty, one 64-hex hash and one octal mode per file, and a retired map that is
+# an object, disjoint from files[], free of barred migration paths, and whose every
+# value is a non-empty array of 64-hex strings.
+validate_manifest_file() {
+  jq -e '
+    (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
+    and (.files | type == "array" and length > 0)
+    and (.hashes | type == "object")
+    and ((.hashes | length) == (.files | length))
+    and (.hashes | to_entries | all(.value | test("^[0-9a-f]{64}$")))
+    and (.modes | type == "object")
+    and ((.modes | length) == (.files | length))
+    and (.modes | to_entries | all(.value | test("^[0-7]{3,4}$")))
+    and (.retired | type == "object")
+    and ((.files | map({(.): true}) | add // {}) as $shipped
+         | .retired | keys | all($shipped[.] == null))
+    and (.retired | keys
+         | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
+    and (.retired | to_entries | all(
+           (.value | type == "array")
+           and (.value | length > 0)
+           and (.value | all(type == "string" and test("^[0-9a-f]{64}$")))))
+  ' -- "$1" >/dev/null 2>&1
+}
+
 # Both modes read the tracked manifest — --check compares against it, and a
 # regeneration replaces it. An absent one is a broken tree, never a fresh start.
 require_manifest() {
@@ -241,6 +357,7 @@ require_manifest() {
 run_check() {
   local orphans missing mismatches manifest_version gen_count rc=0
   local modes_count mode_mismatches files
+  local committed_retired generated_retired dropped dropped_count
   require_manifest
 
   # Single git ls-files pass — the sorted list feeds the count, both comm diffs,
@@ -311,6 +428,28 @@ run_check() {
     rc=1
   fi
 
+  # retired gate — key presence first (the always-emit rule is what lets every
+  # downstream reader assert the key), then the paths this run would add, then the
+  # whole-map comparison that also catches a stale entry the carry-forward drops.
+  committed_retired="$(jq -c '.retired // empty' -- "${MANIFEST}")"
+  if [[ -z "${committed_retired}" ]]; then
+    echo "generate-manifest --check: RETIRED key ABSENT — the manifest must always carry a retired map" >&2
+    rc=1
+    committed_retired='{}'
+  fi
+  dropped="$(retired_dropped_lines | cut -f1 | LC_ALL=C sort -u)"
+  if [[ -n "${dropped}" ]]; then
+    dropped_count="$(printf '%s\n' "${dropped}" | wc -l | tr -d ' ')"
+    echo "generate-manifest --check: RETIRED-ADDITIONS (${dropped_count}):" >&2
+    printf '%s\n' "${dropped}" | sed 's/^/  + /' >&2
+    rc=1
+  fi
+  generated_retired="$(build_retired_json "${files}")"
+  if [[ "$(jq -S -c . <<<"${committed_retired}")" != "$(jq -S -c . <<<"${generated_retired}")" ]]; then
+    echo "generate-manifest --check: RETIRED delta (committed=$(jq -r 'length' <<<"${committed_retired}") keys, generated=$(jq -r 'length' <<<"${generated_retired}") keys)" >&2
+    rc=1
+  fi
+
   if [[ "${rc}" -eq 0 ]]; then
     echo "generate-manifest --check: manifest matches generated set (${gen_count} files, version ${ATRIUM_VERSION}, hashes + both directions clean)"
   else
@@ -319,8 +458,19 @@ run_check() {
   return "${rc}"
 }
 
+# One loud stderr row per path this regeneration retires. Separate from the map
+# build so the announcement is not repeated by --check, which reports the same set
+# as its own RETIRED-ADDITIONS block.
+announce_retired_additions() {
+  local path hash
+  while IFS=$'\t' read -r path hash; do
+    [[ -n "${path}" ]] || continue
+    echo "generate-manifest: RETIRED + ${path} (${hash})" >&2
+  done < <(retired_dropped_lines)
+}
+
 run_generate() {
-  local count tmp files files_json hashes_json modes_json
+  local count tmp files files_json hashes_json modes_json retired_json retired_count
   require_manifest
   # Single git ls-files pass — the sorted list feeds count, files_json, and BOTH
   # emitters (one pass instead of four independent re-runs).
@@ -341,36 +491,32 @@ run_generate() {
   hashes_json="$(printf '%s\n' "${files}" | emit_hash_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
   # modes = {path: octal}, same per-line merge as hashes (FB-2 enforcement SoT).
   modes_json="$(printf '%s\n' "${files}" | emit_mode_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
+  # retired = carried-forward committed entries + this run's dropped paths. Built
+  # BEFORE the swap so it reads the committed files[]/retired, not the new ones.
+  announce_retired_additions
+  retired_json="$(build_retired_json "${files}")"
+  retired_count="$(jq -r 'length' <<<"${retired_json}")"
   tmp="${MANIFEST}.ga-gen.$$"
   jq -n \
     --arg ver "${ATRIUM_VERSION}" \
     --argjson files "${files_json}" \
     --argjson hashes "${hashes_json}" \
     --argjson modes "${modes_json}" \
-    '{version: $ver, files: $files, hashes: $hashes, modes: $modes}' \
+    --argjson retired "${retired_json}" \
+    '{version: $ver, files: $files, hashes: $hashes, modes: $modes, retired: $retired}' \
     >"${tmp}"
 
   # re-validate before the swap — a malformed temp must never replace the live
-  # manifest. Invariants: version stamped, files non-empty array, hashes an
-  # object with one 64-hex entry per file (uses the wire_hooks atomic-write
-  # contract: temp + validate + mv).
-  jq -e '
-    (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
-    and (.files | type == "array" and length > 0)
-    and (.hashes | type == "object")
-    and ((.hashes | length) == (.files | length))
-    and (.hashes | to_entries | all(.value | test("^[0-9a-f]{64}$")))
-    and (.modes | type == "object")
-    and ((.modes | length) == (.files | length))
-    and (.modes | to_entries | all(.value | test("^[0-7]{3,4}$")))
-  ' -- "${tmp}" >/dev/null 2>&1 || {
+  # manifest (the wire_hooks atomic-write contract: temp + validate + mv).
+  # shellcheck disable=SC2310  # a false rc is the abort path below, which is the whole point of the guard
+  validate_manifest_file "${tmp}" || {
     rm -f -- "${tmp}"
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
     exit 6
   }
 
   mv -f -- "${tmp}" "${MANIFEST}"
-  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes, ${count} modes)"
+  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes, ${count} modes, ${retired_count} retired)"
   refresh_deployed_farm
 }
 
@@ -408,9 +554,21 @@ refresh_deployed_farm() {
 
 case "${1:-}" in
   --check) run_check ;;
+  --validate)
+    [[ -n "${2:-}" && -f "${2}" ]] || {
+      echo "usage: ${0##*/} --validate <manifest.json>" >&2
+      exit 2
+    }
+    # shellcheck disable=SC2310  # a false rc is this branch's reported outcome
+    validate_manifest_file "${2}" || {
+      echo "generate-manifest --validate: ${2} FAILED structural validation" >&2
+      exit 6
+    }
+    echo "generate-manifest --validate: ${2} valid"
+    ;;
   "") run_generate ;;
   *)
-    echo "usage: ${0##*/} [--check]" >&2
+    echo "usage: ${0##*/} [--check | --validate <manifest.json>]" >&2
     exit 2
     ;;
 esac
