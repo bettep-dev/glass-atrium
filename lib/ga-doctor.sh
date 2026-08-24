@@ -836,7 +836,7 @@ run_doctor() {
   #     the record. Silence when the record is absent is the normal install and needs no line.
   local retired_residue=0
   local residue_record="" residue_path="" residue_kept=""
-  # intentional (SC2311 fires only because the lib has no file-scope set -e).
+  # spine_retired_unmoved_path is a pure printf resolver (exits 0) → the masked errexit is vacuous.
   # shellcheck disable=SC2311
   residue_record="$(spine_retired_unmoved_path)"
   if [[ -f "${residue_record}" ]]; then
