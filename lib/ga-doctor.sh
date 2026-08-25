@@ -857,6 +857,54 @@ run_doctor() {
     fi
   fi
 
+  # 20. settings permissions coverage. Registration kind B (report-only): no counter, no term in the
+  #     warning total, exit code unchanged. settings.template.json ships the RECOMMENDED permissions
+  #     shape and nothing applies it — wire_hooks owns hooks and never touches permissions — so a
+  #     live settings.json drifts from the template with no surface reporting the distance. The live
+  #     file is READ here and never written; permissions stay user-owned.
+  #     Direction is template -> live ONLY. A live-only rule is the user's own choice, so reporting
+  #     it would be the alarm fatigue that trains an operator to ignore the whole block.
+  #     The match is a LITERAL string compare, so an equivalent rule worded differently reads as
+  #     missing — the block says that itself, because an operator who mistakes this for a security
+  #     verdict silences it by pasting rules they never wanted.
+  local perms_template="${GA_ROOT}/settings.template.json"
+  if [[ -n "${GA_DOCTOR_SKIP_PERMISSIONS:-}" ]]; then
+    # Suppression is announced rather than silent: an invisible suppression is a new invisible drift.
+    log "  note : settings permissions coverage suppressed (GA_DOCTOR_SKIP_PERMISSIONS set) — unset it to see the report"
+  elif ! command -v jq >/dev/null 2>&1 || [[ ! -f "${perms_template}" ]]; then
+    log "  note : settings permissions coverage skipped — needs jq and ${perms_template}"
+  elif [[ ! -f "${SETTINGS_JSON}" ]]; then
+    log "  note : no live settings.json (${SETTINGS_JSON}) — permissions coverage not compared"
+  elif ! jq -e 'type == "object"' -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
+    log "  note : live settings.json unparseable (${SETTINGS_JSON}) — permissions coverage not compared"
+  else
+    local perms_key perms_rule perms_live perms_total perms_present perms_missing
+    log "  info : settings permissions coverage vs ${perms_template} (report-only; the live file is never written)"
+    log "         basis: literal string match of each template rule — a differently worded equivalent reads as missing, and a live-only rule is never reported; this is template coverage, not a security-gap claim"
+    for perms_key in deny ask; do
+      perms_total=0
+      perms_present=0
+      perms_missing=""
+      # Newline-fenced haystack: one jq read per key, then a literal containment test per rule.
+      perms_live=$'\n'"$(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${SETTINGS_JSON}" 2>/dev/null || true)"$'\n'
+      while IFS= read -r perms_rule; do
+        [[ -n "${perms_rule}" ]] || continue
+        perms_total=$((perms_total + 1))
+        if [[ "${perms_live}" == *$'\n'"${perms_rule}"$'\n'* ]]; then
+          perms_present=$((perms_present + 1))
+        else
+          perms_missing="${perms_missing}${perms_missing:+, }${perms_rule}"
+        fi
+      done < <(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${perms_template}" 2>/dev/null || true)
+      [[ "${perms_total}" -gt 0 ]] || continue
+      if [[ -n "${perms_missing}" ]]; then
+        log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present — missing: ${perms_missing}"
+      else
+        log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present"
+      fi
+    done
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
