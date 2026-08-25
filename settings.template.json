@@ -5,7 +5,8 @@
     "  Claude Code's permission layer denies via the permissions.deny array; an allow-list negation is",
     "  not the documented deny mechanism, so \"Bash(*)\" + \"!Bash(rm:*)\" in allow does NOT reliably block",
     "  rm at the permission layer (the block-dangerous-commands.sh hook is a SEPARATE, later gate).",
-    "FIX: declare rm rules in permissions.deny (below). deny is evaluated with precedence over allow.",
+    "FIX: declare rm rules in permissions.deny (below).",
+    "  deny is evaluated first, then ask, then allow — first match wins (deny → ask → allow).",
     "APPLY: merge ONLY the \"permissions\" object into your existing ~/.claude/settings.json (never wipe",
     "  other keys). wire_hooks (lib/ga-config-hooks.sh) never touches permissions, so this stays manual.",
     "LIVE-VERIFY (see the \"live_verify\" key): confirm rm is blocked at the PERMISSION layer, not merely",
@@ -35,9 +36,9 @@
     "  is an equivalent bypass vector but collides with legitimate portability use (e.g. python3 -c date",
     "  math on BSD/GNU divergence), so it stays for the block-dangerous-commands.sh + enforce-harness-",
     "  critical.sh backstops rather than a blanket permission-layer deny.",
-    "NPM PUBLISH: the release rules in core-git-workflow.md are prose only and reach the git surface (merge",
-    "  needs explicit user approval) — Bash(npm publish:*) is the mechanical second layer for the publish step",
-    "  they do not reach; the packages here are private, so an agent has no legitimate use for it.",
+    "NPM PUBLISH: Bash(npm publish:*) sits in permissions.ask — a user-approval gate (same shape as the LLM06",
+    "  explicit-approval principle), not a hard deny. Leading-token matching: foo && npm publish / npx npm publish",
+    "  do NOT match; a Layer-3 PreToolUse(Bash) command-string scan is a follow-up candidate, out of scope here.",
     "REDIRECT INEXPRESSIBILITY (T21): 'a redirect INTO a harness path' (echo x > ~/.claude/hooks/y) is",
     "  INEXPRESSIBLE as a Bash(<prefix>:*) deny — the > operator and its path target appear anywhere in the",
     "  command, not as a leading prefix the matcher anchors on. That pattern therefore lives ONLY in",
@@ -104,7 +105,9 @@
       "Bash(bash -c:*)",
       "Bash(sh -c:*)",
       "Bash(zsh -c:*)",
-      "Bash(eval:*)",
+      "Bash(eval:*)"
+    ],
+    "ask": [
       "Bash(npm publish:*)"
     ]
   },
@@ -115,7 +118,8 @@
     "   hook fires. A pass = rm cannot execute. Contrast with the pre-fix state, where '!Bash(rm:*)' sat",
     "   inside permissions.allow and rm was NOT permission-denied (only the hook, if present, caught it).",
     "4. Positive control: Bash: ls /tmp — MUST still be permitted (deny is scoped to rm only).",
-    "5. Repeat 2-4 for the publish row: request Bash: npm publish --dry-run — EXPECT a permission-layer DENY",
-    "   before any hook fires. Positive control: Bash: npm ls — MUST still be permitted."
+    "5. For the publish row: from a scratch package dir (package.json with private:true), request",
+    "   Bash: npm publish --dry-run — EXPECT a permission PROMPT (ask), not an auto-deny: decline → not",
+    "   executed, approve → executed. Positive control: Bash: npm ls — MUST still be permitted."
   ]
 }
