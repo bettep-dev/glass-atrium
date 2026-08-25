@@ -1438,7 +1438,7 @@
     "scripts/wiki-metrics.sh": "b0662cd73c3a0ba459091b1d545b4eb147d4b4f66c465fb3b1d3dc7737b76672",
     "scripts/wiki-query.sh": "b97958bf508287a1c9ba294bad0958a03ccd073e6b4f9be647935a795afb7e33",
     "scripts/wiki-schema.sql": "07201ed6aeabc80ceda994bebe18d3fd45d036b81424887f1c8d967319ab236f",
-    "scripts/wiki-staleness.sh": "fbf36e6983e9a3b78e43ebb321136a612f9051040fe9ece7b0af6f588cb93411",
+    "scripts/wiki-staleness.sh": "945817381e1cd6b57eb79bdfda010dd2710d2aaf1c732db1a18e1f8749486fa7",
     "scripts/wiki-sync.sh": "c1bbcd38f2c1d261a0e54e4fe25a4345751c9353164aa7bb197df37d29263503",
     "scripts/wiki_daemon_cycle.py": "83ad210cfd699c7b9d2bb9a4d44e8f99f4f2faf73c122d0d5f68359fe74fba02",
     "scripts/wiki_deadlinks.py": "ec4ca8e406a6bfa788466cc93b9e39ee23e5c4aeac848f455ad9d46f2f97e370",
