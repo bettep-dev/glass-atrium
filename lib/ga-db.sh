@@ -24,6 +24,68 @@ SELECT 1 FROM pg_database WHERE datname=:'dbname'
 SQL
 }
 
+# Prisma's applied-migration history table. The datasource declares three schemas but the
+# connection string carries no `schema=` parameter, so the history lands on the default search path
+# — public. GA_MIGRATION_HISTORY_TABLE re-points it for an install that DOES pin a search path;
+# every reader prints the name it read, so a mis-pointed override reads as an absent table rather
+# than as a silent pass.
+# SECURITY: an identifier cannot be bound as a parameter, so the name is interpolated into SQL —
+# constrain it to a bare [schema.]table first, and refuse (rc 1) rather than substitute a default.
+_pg_migration_history_table() {
+  local table="${GA_MIGRATION_HISTORY_TABLE:-public._prisma_migrations}"
+  case "${table}" in
+    "" | *[!A-Za-z0-9_.]* | *..* | .* | *.)
+      printf 'GA_MIGRATION_HISTORY_TABLE is not a plain [schema.]table name: %s\n' "${table}" >&2
+      return 1
+      ;;
+    *) ;; # a bare [schema.]name — accepted
+  esac
+  printf '%s' "${table}"
+}
+
+# History-table existence read ($1 = database). to_regclass yields NULL — an empty -tA field — when
+# the table is absent, so "this database was never migrated" stays distinguishable from "the server
+# was unreachable": psql is the LAST command, so its non-zero rc surfaces to the caller's capture,
+# and an EMPTY stdout on rc 0 means absent. SECURITY: the table name travels as a VALUE here
+# (-v tbl + the :'tbl' quoted substitution over STDIN), never as SQL-string concat.
+_pg_migration_table_probe() {
+  local table
+  # shellcheck disable=SC2310,SC2311  # rc-capturing form: a refused override returns 1 here
+  table="$(_pg_migration_history_table)" || return 1
+  psql -h "${PG_SOCKET}" -d "$1" -v tbl="${table}" -tA 2>/dev/null <<'SQL'
+SELECT to_regclass(:'tbl')::text
+SQL
+}
+
+# Applied-history rows ($1 = database): migration_name, finished_at, rolled_back_at, unit-separator
+# delimited. The separator is NOT whitespace on purpose — an empty timestamp is the very signal the
+# applied predicate reads, and a whitespace IFS collapses consecutive delimiters so the empty field
+# would vanish on read-back. psql is the LAST command, so an unreachable server keeps its rc.
+_pg_migration_history_probe() {
+  local table
+  # shellcheck disable=SC2310,SC2311  # rc-capturing form: a refused override returns 1 here
+  table="$(_pg_migration_history_table)" || return 1
+  psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<SQL
+SELECT migration_name, coalesce(finished_at::text, ''), coalesce(rolled_back_at::text, '') FROM ${table} ORDER BY migration_name
+SQL
+}
+
+# Classify history rows read on STDIN, one `applied <name>` / `failed <name>` line out per row.
+# APPLIED = finished_at non-empty AND rolled_back_at empty. Counting migration_name alone would
+# read a failed or rolled-back attempt as applied — the false-green this whole surface exists to
+# prevent, because re-applying never clears such a row.
+get_migration_states() {
+  local name finished rolled_back
+  while IFS=$'\x1f' read -r name finished rolled_back; do
+    [[ -n "${name}" ]] || continue
+    if [[ -n "${finished}" && -z "${rolled_back}" ]]; then
+      printf 'applied %s\n' "${name}"
+    else
+      printf 'failed %s\n' "${name}"
+    fi
+  done
+}
+
 # same-name conflict recreate gate (--recreate-db)
 # Backs up + drops + recreates an EXISTING DB. SANDBOX-ONLY by construction:
 #   * refuses on the live DB 'glass_atrium' unless GA_DB_NAME points the whole DB path at a

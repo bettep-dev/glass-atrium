@@ -905,6 +905,81 @@ run_doctor() {
     done
   fi
 
+  # 21. pending Prisma migrations. Registration kind A (counted warning): the counter below joins
+  #     the warning total AND the PASS breakdown. `glass-atrium update` rebuilds the monitor and
+  #     restarts it without applying migrations, so new server code can run over an unmigrated
+  #     database with no surface saying so — this section is that surface, and it only READS.
+  #     Four states are notes with no counter, kept apart on purpose: the documented opt-out, the
+  #     documented psql-less mode, a database that does not exist YET, and a server this run could
+  #     not reach. An ABSENT history table is NOT one of them — that is a database which has never
+  #     been migrated, which is the exposure itself, so it warns with every migration pending.
+  #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
+  #     would fold an unreachable server into "database absent" and report a healthy install as
+  #     fully pending forever.
+  local mig_pending=0
+  local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
+  local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
+  local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
+  local mig_table_name=""
+  # shellcheck disable=SC2310,SC2311  # a refused GA_MIGRATION_HISTORY_TABLE leaves the name empty
+  mig_table_name="$(_pg_migration_history_table 2>/dev/null || true)"
+  if [[ -d "${mig_dir}" ]]; then
+    # Directories only: migration_lock.toml sits beside them and is not a migration.
+    for mig_entry in "${mig_dir}"/*/; do
+      [[ -d "${mig_entry}" ]] || continue
+      mig_name="${mig_entry%/}"
+      mig_expected="${mig_expected}${mig_name##*/}"$'\n'
+      mig_total=$((mig_total + 1))
+    done
+  fi
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : pending-migration check skipped (GA_SKIP_DB_SETUP set) — apply with 'glass-atrium db-setup'"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : pending-migration check skipped — psql not found (supported mode; install PostgreSQL to see migration state)"
+  elif [[ "${mig_total}" -eq 0 ]]; then
+    log "  note : pending-migration check skipped — no migration directories under ${mig_dir}"
+  elif ! mig_probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run cannot tell applied from pending"
+  elif [[ "${mig_probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no migrations applied yet, and none pending until it is created ('glass-atrium db-setup')"
+  elif ! mig_table="$(_pg_migration_table_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — the history read against '${DB_NAME}' failed"
+  elif [[ -z "${mig_table}" ]]; then
+    mig_pending="${mig_total}"
+    log "  warn : migration history table ${mig_table_name:-public._prisma_migrations} absent in '${DB_NAME}' — all ${mig_total} migration(s) pending; apply with 'glass-atrium db-setup'"
+  elif ! mig_rows="$(_pg_migration_history_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — reading ${mig_table} in '${DB_NAME}' failed"
+  else
+    # shellcheck disable=SC2312  # the classifier is a pure printf loop and always exits 0
+    while IFS=' ' read -r mig_state mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      if [[ "${mig_state}" == "applied" ]]; then
+        mig_applied="${mig_applied}${mig_name}"$'\n'
+      else
+        mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
+        mig_failed_count=$((mig_failed_count + 1))
+      fi
+    done < <(get_migration_states <<<"${mig_rows}")
+    # Newline-fenced haystack, so one applied name cannot match another's suffix.
+    mig_applied=$'\n'"${mig_applied}"
+    while IFS= read -r mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]] && continue
+      mig_missing="${mig_missing}${mig_missing:+, }${mig_name}"
+      mig_pending=$((mig_pending + 1))
+    done <<<"${mig_expected}"
+    if [[ "${mig_pending}" -gt 0 ]]; then
+      log "  warn : ${mig_pending} migration(s) pending against '${DB_NAME}' (history: ${mig_table}) — the updater rebuilds the monitor but applies nothing; run 'glass-atrium db-setup'"
+      log "         pending: ${mig_missing}"
+    else
+      log "  ok   : all ${mig_total} migration(s) applied (history: ${mig_table})"
+    fi
+    if [[ "${mig_failed_count}" -gt 0 ]]; then
+      log "         failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -912,7 +987,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -920,7 +995,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration — see above) =="
     fi
     return 0
   fi
