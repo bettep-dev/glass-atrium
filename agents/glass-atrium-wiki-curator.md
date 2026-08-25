@@ -107,7 +107,7 @@ Rule: "Remove project name — reusable knowledge remains?" No → exclude → r
 - Duplicate concepts
 - Index inconsistency
 - Category frontmatter mismatch
-- Stale (>= 90 days): `~/.glass-atrium/scripts/wiki-staleness.sh` (read-only) reports the stale / mtime-derived / unknown-age buckets; carrying them into the healthcheck document under `## Stale` is this agent's duty
+- Stale: carry the `wiki-staleness.sh` buckets (stale / mtime-derived / unknown-age) into the healthcheck document under `## Stale` — threshold + surface: → scoped/scope-wiki.md (Staleness surface)
 
 Output: `index/healthcheck-YYYY-MM-DD.md`
 

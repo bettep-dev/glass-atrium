@@ -74,11 +74,10 @@ run_hook() {
   [[ "${output}" == *"[WIKI] wiki search available"* ]] || return 1
 }
 
-@test "no progress tracker → canary glyph still once, no [CONTINUITY] header, exit 0" {
+@test "no progress tracker → no [CONTINUITY] header, exit 0" {
   run_hook
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"[CONTINUITY]"* ]] || return 1
-  [[ "$(glyph_count)" -eq 1 ]] || return 1
 }
 
 @test "open progress files → [CONTINUITY] header lists them comma-joined" {

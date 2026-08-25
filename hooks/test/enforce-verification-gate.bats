@@ -45,10 +45,7 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
-  # Surfaces 4+5 are advisories on the PASS paths (see header), so every prompt whose case asserts
-  # an EMPTY output carries this declaration AND keeps it under both Deep-review thresholds — one
-  # path, none of them under a sensitive prefix. Canonical ` · ` grammar — a fixture reads as an
-  # example, so it stays canonical even though the path itself is incidental.
+  # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header.
   SCOPE_DECL="[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
 }
 

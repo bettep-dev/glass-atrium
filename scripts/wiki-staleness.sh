@@ -33,8 +33,7 @@ readonly SEP=$'\x1f'
 
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 NOTES_DIR="${WIKI_ROOT}/notes"
-# 90 days: the curator re-review trigger on `updated:`, distinct from the 1-year read-time
-# cross-verification trigger on `collected:` (core-wiki-reference.md).
+# Threshold role (90-day `updated:` vs 1-year `collected:`): see core-wiki-reference.md.
 THRESHOLD_DAYS="${WIKI_STALE_DAYS:-90}"
 TOP_N="${WIKI_STALE_TOP_N:-10}"
 
@@ -98,10 +97,8 @@ record() {
 }
 
 report_bucket() {
-  local title="${1}" bucket="${2}" count=0
-  if [[ -s "${bucket}" ]]; then
-    count="$(wc -l <"${bucket}" | tr -d '[:space:]')"
-  fi
+  local title="${1}" bucket="${2}" count
+  count="$(wc -l <"${bucket}" | tr -d '[:space:]')"
   printf '## %s\n' "${title}"
   printf 'count: %s\n' "${count}"
   if [[ "${count}" -gt 0 && "${TOP_N}" -gt 0 ]]; then
@@ -157,8 +154,7 @@ parse_args() {
 # One awk pass over the whole corpus: a per-file fork costs more than the scan itself.
 collect_fields() {
   local notes=() note
-  find "${NOTES_DIR}" -maxdepth 1 -type f -name '*.md' >"${WORK_DIR}/notes.found"
-  sort "${WORK_DIR}/notes.found" >"${WORK_DIR}/notes.list"
+  find "${NOTES_DIR}" -maxdepth 1 -type f -name '*.md' | sort >"${WORK_DIR}/notes.list"
   while IFS= read -r note; do
     notes+=("${note}")
   done <"${WORK_DIR}/notes.list"
@@ -169,21 +165,15 @@ collect_fields() {
   fi
   awk -v sep="${SEP}" '
     function flush() { if (cur != "") { printf "%s%s%s%s%s\n", cur, sep, updated, sep, created } }
-    FNR == 1 { flush(); cur = FILENAME; updated = ""; created = ""; fm = ($0 == "---") ? 1 : 0; next }
+    FNR == 1 { flush(); seen[FILENAME]; cur = FILENAME; updated = ""; created = ""; fm = ($0 == "---") ? 1 : 0; next }
     fm && $0 == "---" { fm = 0; next }
     fm && sub(/^updated:[[:space:]]*/, "") { updated = $0; sub(/[[:space:]]+$/, "", updated); next }
     fm && sub(/^created:[[:space:]]*/, "") { created = $0; sub(/[[:space:]]+$/, "", created); next }
-    END { flush() }
+    # awk never fires FNR==1 on a zero-byte note, so such a file emits no row and would drop out of
+    # every bucket and count. Re-add the unseen paths with empty date fields — they then take the
+    # mtime fallback, the same route as any note carrying no date field.
+    END { flush(); for (i = 1; i < ARGC; i++) { if (!(ARGV[i] in seen)) { printf "%s%s%s\n", ARGV[i], sep, sep } } }
   ' "${notes[@]}" >"${WORK_DIR}/fields"
-
-  # awk never fires FNR==1 on a zero-byte note, so such a file emits no row and would drop out of
-  # every bucket and count. Re-add the missing paths with empty date fields — they then take the
-  # mtime fallback, the same route as any note carrying no date field.
-  cut -d "${SEP}" -f1 "${WORK_DIR}/fields" >"${WORK_DIR}/fields.paths"
-  awk -v sep="${SEP}" '
-    NR == FNR { seen[$0]; next }
-    !($0 in seen) { printf "%s%s%s\n", $0, sep, sep }
-  ' "${WORK_DIR}/fields.paths" "${WORK_DIR}/notes.list" >>"${WORK_DIR}/fields"
 }
 
 classify_notes() {

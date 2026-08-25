@@ -382,7 +382,7 @@ monitor `/api/clauded-docs` POST validator enforces 4 structural gates beyond pa
 - **Gate 2 (HTML5 baseline)**: `html_body` MUST contain `<!doctype html>` + `<meta charset>` + `<meta viewport>`. Missing any → code `html_structure_invalid`. Already included in Canonical HTML Skeleton (§Canonical HTML Skeleton) — DO NOT strip when authoring.
 - **Gate 3 (D8 P2 server enforcement)**: comparison tables ≤5 columns hard-enforced server-side (not just glass-atrium-qa-code-reviewer LLM judgment). Multi-config measurement tables exceeding 5 columns MUST be split per config. Violation → code `d8_p2_violation`.
 - **Gate 4 (placeholder residue)**: server hard-rejects residual author scaffolding in `html_body` — code `placeholder_residue`. **Pre-emit self-check MUST**: before POSTing, scan the body for residual `{{...}}` template placeholders / `[FILL]` markers / scaffolding stubs and remove them. Catching these locally prevents a 400 round-trip.
-- **Sensitivity self-check (MUST, prose rule — not a server gate)**: sensitivity self-check before POST on every exposed HTML primary — record `sensitivity_scan: clear | N items (category §locator …)` in turn-0; count + category + locator only, never quote flagged content; a finding blocks the POST until the user confirms; rule: `scope-report.md` Output Format Routing.
+- **Sensitivity self-check (MUST, prose rule — not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms — trigger, `sensitivity_scan:` grammar and reporting limits: `scope-report.md` Output Format Routing.
 
 ## Content Quality Bars (per deliverable type)
 <!-- EDITABLE:BEGIN -->

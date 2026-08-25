@@ -363,7 +363,6 @@ warn_deep_review() {
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
   count="$(printf '%s' "${files}" | grep -c '[^[:space:]]' || true)"
-  [[ "${count}" =~ ^[0-9]+$ ]] || return 0
   prefix="$(scope_files_sensitive_prefix "${files}")"
   if ((count < DEEP_REVIEW_FILE_THRESHOLD)) && [[ -z "${prefix}" ]]; then
     return 0

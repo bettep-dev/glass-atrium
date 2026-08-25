@@ -291,7 +291,7 @@ planner-specific summary (full detail in glass-atrium-intel-reporter.md):
 - Typography: 3 levels MAX (H1 `text-2xl` / H2 `text-lg` / Body `text-base`) · 4+ level hierarchy FORBIDDEN · heading-skip FORBIDDEN · color palette ≤7 semantic colors (Miller's law)
 - Line-head prohibition (Korean kinsoku): closing-paren / hyphen / period / comma cannot start a line · Korean line-height 1.6-1.7 (W3C KLREQ 160%)
 - **Pre-emit placeholder self-check (MUST)**: before POSTing a user-requested HTML primary, scan `html_body` for residual `{{...}}` template placeholders / `[FILL]` markers / author scaffolding stubs and remove them — the server hard-rejects residue via the `placeholder_residue` gate, so this local check prevents a 400 round-trip.
-- **Sensitivity self-check (MUST, prose rule — not a server gate)**: sensitivity self-check before POST on every exposed HTML primary — record `sensitivity_scan: clear | N items (category §locator …)` in turn-0; count + category + locator only, never quote flagged content; a finding blocks the POST until the user confirms; rule: `scope-report.md` Output Format Routing.
+- **Sensitivity self-check (MUST, prose rule — not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms — trigger, `sensitivity_scan:` grammar and reporting limits: `scope-report.md` Output Format Routing.
 
 ### Decision Matrix (planner-specific — MUST when Alternatives requirement applies)
 
