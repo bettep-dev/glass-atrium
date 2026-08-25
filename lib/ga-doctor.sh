@@ -170,13 +170,16 @@ run_doctor() {
   if [[ "${unbound}" -gt 0 ]]; then
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
     log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
-    log "       NOTE: this doctor check is read-only and never writes settings.json. Add each missing binding BY HAND (example above) — a full installer run is NOT the reflex remedy: it reconciles EVERY Atrium binding at once, a far wider mutation than the gap reported here."
+    log "       NOTE: this doctor check is read-only and never writes settings.json. Add each missing binding BY HAND (example above) — a full installer run is NOT the reflex remedy: it reconciles EVERY Atrium binding at once, a far wider mutation than the gap reported here. Either way the new binding stays INERT until you start a NEW session: Claude Code snapshots hook bindings at session start."
   fi
   if [[ "${nonexec}" -gt 0 ]]; then
     log "  ---- ${nonexec} wired hook(s) missing the executable bit — bound but permanently inert ----"
     log "       fix: chmod +x ${GA_ROOT}/hooks/<hook>.sh (or re-run 'glass-atrium install' to redeploy)"
     fail=1
   fi
+  # Registration kind B (report-only): its log line only — no counter, no warning total, no PASS
+  # breakdown term, exit code unchanged.
+  _doctor_report_rewire_marker
 
   # 7. target-side deploy reconciliation — symmetric inverse of §4. §4 checks manifest entry ->
   #    SOURCE present; this checks manifest entry -> TARGET installed (a symlink under TARGET_HOME
@@ -1015,6 +1018,57 @@ INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 # dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
 # deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
 # The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
+# Days a hook-rewire marker is reported before doctor retires it. Window length is the ONLY thing
+# that clears the marker (see the helper below).
+GA_REWIRE_NOTICE_WINDOW_DAYS="${GA_REWIRE_NOTICE_WINDOW_DAYS:-7}"
+
+# Report the pending hook-rewire marker wire_hooks/retire_hook_binding leave behind, and retire it
+# once its window has passed.
+#
+# WHAT IS REPORTED IS THE NOTICE LIFECYCLE, NOT ACTIVATION. "An artifact newer than the marker
+# means the new binding is live" is FALSE: Claude Code snapshots bindings at session start, so a
+# session that began BEFORE the rewire keeps firing the OLD binding and keeps touching the same
+# fired-logs. The observation therefore says "some hook ran", never "the new wiring took". That is
+# why the marker survives an observation and expires ONLY on the window — and why no per-binding
+# artifact mapping is attempted: the five fired-log names have no derivable relation to their hook
+# basenames, so such a map would be a hand-maintained filename table.
+# The candidate set is a GLOB plus the inject diagnostic log, never a filename list.
+_doctor_report_rewire_marker() {
+  local marker="${GA_DATA_ROOT}/data/hook-rewire-pending"
+  [[ -f "${marker}" ]] || return 0
+
+  local written now
+  written="$(awk -F= '/^epoch=/ { print $2; exit }' "${marker}")" || written=""
+  # An unreadable/absent epoch falls back to the file's own mtime — an unagedable marker must still
+  # age out rather than become permanent.
+  if [[ ! "${written}" =~ ^[0-9]+$ ]]; then
+    written="$(stat_mtime "${marker}")" || return 0
+  fi
+  now="$(date +%s)"
+
+  if [[ $((now - written)) -gt $((GA_REWIRE_NOTICE_WINDOW_DAYS * 86400)) ]]; then
+    rm -f -- "${marker}"
+    return 0
+  fi
+
+  local newest=0 artifact mtime
+  for artifact in "${GA_DATA_ROOT}"/data/*-fired.log "${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"; do
+    [[ -f "${artifact}" ]] || continue
+    mtime="$(stat_mtime "${artifact}")" || continue
+    if [[ "${mtime}" -gt "${newest}" ]]; then
+      newest="${mtime}"
+    fi
+  done
+
+  local detail
+  detail="$(awk '!/^epoch=/ { print; exit }' "${marker}")" || detail=""
+  if [[ "${newest}" -gt "${written}" ]]; then
+    log "  info : hook rewire pending — hook activity observed since the rewire (${detail:-changes recorded}); this does NOT prove the new binding is live, because Claude Code snapshots bindings at session start and a pre-rewire session keeps firing the OLD one. Start a NEW session; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
+  else
+    log "  info : hook rewire pending — NO hook activity observed since the rewire (${detail:-changes recorded}). Start a NEW session to activate the bindings; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
+  fi
+}
+
 _drop_window_cutoff_date() {
   local days="${1}"
   date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
