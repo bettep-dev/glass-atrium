@@ -96,10 +96,11 @@ frontmatter_block() {
   require_settings_template
   # Membership only — a total-row-count assertion would go red on the next
   # legitimate row addition.
-  run jq -e '.permissions.ask | index("Bash(npm publish:*)")' "${SETTINGS}"
-  [[ "${status}" -eq 0 ]]
-  # deny-negative LAST: a row left in both arrays would be deny-shadowed.
-  run jq -e '.permissions.deny | index("Bash(npm publish:*)") == null' "${SETTINGS}"
+  # Both memberships in ONE jq whose status check is the LAST command: bats takes
+  # the final command as the verdict, and a bare [[ ]] mid-body cannot fail a test.
+  # The deny-negative half is what catches a row left in both arrays (deny-shadowed).
+  run jq -e '(.permissions.ask | index("Bash(npm publish:*)")) != null
+             and (.permissions.deny | index("Bash(npm publish:*)")) == null' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
 }
 
