@@ -23,6 +23,11 @@
 #      prompt carries no [SCOPE] declaration. Advisory-first deliberately: a prompt scan cannot tell a
 #      declaration from a mention of one, so promotion to exit 2 waits on accumulated false-positive
 #      data plus an explicit user decision. Emitted on the PASS paths only, after every verdict above.
+#   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
+#      DEEP_REVIEW_FILE_THRESHOLD or more paths, or any path under DEEP_REVIEW_SENSITIVE_PREFIXES,
+#      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
+#      reports. Counts through the shared scope_decl_files parser; an unparseable declaration is
+#      silence, never a guess. The routing decision itself stays orchestrator prose (honor-system).
 #
 # Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
 #   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
@@ -101,6 +106,11 @@ fi
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
+# The `[SCOPE]` declaration parser is shared with validate-scope-drift.sh and track-outcome.sh — one
+# parser, so surface 5 below cannot disagree with them about what a declared path is.
+# shellcheck source=lib/scope-match.sh
+source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
 # prune-session-spawns.sh only sweeps WHOLE stale files across sessions — it cannot bound
@@ -119,6 +129,13 @@ fi
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
 readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+
+# Deep-review override (surface 5): a declaration listing this many paths, or any path under one of
+# these prefixes, outweighs the writer-reported confidence when the review is composed. The prose SoT
+# is skills/glass-atrium-ops-orchestrator.md → Quality Gates; these two constants are the code copy
+# of the same values, never a second policy.
+readonly DEEP_REVIEW_FILE_THRESHOLD=10
+readonly DEEP_REVIEW_SENSITIVE_PREFIXES='hooks/ settings*.json rules/ agents/ autoagent/'
 
 # emit_gate_trace VERDICT SUBAGENT_TYPE — append one block firing-trace line, FAIL-SAFE.
 # The block verdict is ALWAYS decided and emitted before this runs. Every failure mode (unwritable
@@ -313,15 +330,63 @@ has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 # the user's instruction is honor-system, the same ceiling as its sibling tokens.
 has_scope_token() { has_token "${1}" '[SCOPE]'; }
 
-# Surface 4 emitter. Called from the PASS paths only so a fault in this newest check can never turn
-# one of the blocks above into a pass.
-warn_scope_missing() {
+# Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
+# array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
+# against the cwd. Args: $1=newline-separated declared paths. Always returns 0.
+scope_files_sensitive_prefix() {
+  local files="${1}" path prefix
+  local -a prefixes=()
+  IFS=' ' read -r -a prefixes <<<"${DEEP_REVIEW_SENSITIVE_PREFIXES}"
+  for prefix in "${prefixes[@]}"; do
+    while IFS= read -r path; do
+      [[ -n "${path}" ]] || continue
+      # shellcheck disable=SC2254  # unquoted on purpose — the constant carries glob patterns.
+      case "${path}" in
+        ${prefix}*)
+          printf '%s' "${prefix}"
+          return 0
+          ;;
+        *) ;;
+      esac
+    done <<<"${files}"
+  done
+  return 0
+}
+
+# Surface 5 emitter — the file-count / sensitive-path Deep-review advisory. Counts through the shared
+# scope_decl_files parser: an absent, unparseable or empty declaration is SILENCE (fail-open), never a
+# guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
+warn_deep_review() {
+  local scope_line files count prefix prefix_note=""
+  scope_line="$(printf '%s\n' "${prompt_full}" | grep -m1 -F '[SCOPE]' || true)"
+  [[ -n "${scope_line}" ]] || return 0
+  files="$(scope_decl_files "${scope_line}")"
+  [[ -n "${files}" ]] || return 0
+  count="$(printf '%s' "${files}" | grep -c '[^[:space:]]' || true)"
+  [[ "${count}" =~ ^[0-9]+$ ]] || return 0
+  prefix="$(scope_files_sensitive_prefix "${files}")"
+  if ((count < DEEP_REVIEW_FILE_THRESHOLD)) && [[ -z "${prefix}" ]]; then
+    return 0
+  fi
+  if [[ -n "${prefix}" ]]; then
+    prefix_note=", one of them under the sensitive prefix ${prefix}"
+  fi
+  printf '[enforce-verification-gate] This delegation declares %d [SCOPE] file(s)%s — compose a Deep (4-pass) review of the result regardless of the writer-reported confidence (thresholds: skills/glass-atrium-ops-orchestrator.md → Quality Gates). Advisory only — the declaration is counted here, the routing decision is not enforced.\n' \
+    "${count}" "${prefix_note}" >&2
+}
+
+# Surfaces 4+5 emitter. Called from the PASS paths only so a fault in these newest checks can never
+# turn one of the blocks above into a pass. A missing declaration is nudged; a present one is sized.
+warn_scope_advisories() {
+  [[ "${orchestrator_origin}" == true ]] || return 0
   # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
-  if [[ "${orchestrator_origin}" == true ]] && ! has_scope_token "${prompt_full}"; then
+  if ! has_scope_token "${prompt_full}"; then
     printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
+    return 0
   fi
+  warn_deep_review
 }
 
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
@@ -458,7 +523,7 @@ if references_plan "${prompt_full}"; then
   fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
-    warn_scope_missing
+    warn_scope_advisories
     exit 0
   fi
   # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
@@ -483,7 +548,7 @@ fi
 
 # shellcheck disable=SC2310
 if has_simple_task_token "${prompt_full}"; then
-  warn_scope_missing
+  warn_scope_advisories
   exit 0
 fi
 
