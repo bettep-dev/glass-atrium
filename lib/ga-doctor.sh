@@ -858,6 +858,12 @@ run_doctor() {
   fi
 
   if [[ "${fail}" -eq 0 ]]; then
+    # Warning-summary registration contract — a new doctor row declares ONE kind.
+    # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
+    #   three at once and in the same position; appending to the tail is the safe placement.
+    # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
+    #   unchanged. C (wording): the existing row's log line only.
+    # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
     local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
