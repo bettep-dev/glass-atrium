@@ -4,6 +4,11 @@
 #
 # emit_error EXEMPT: this hook only injects context via stdout and has no error path.
 # Even if the progress-tracker source fails, silent fallback (skip the block itself).
+#
+# [INJECTION CANARY] the ORCHESTRATOR_INIT block emits one visible, printable, single-code-point
+# BMP glyph (never zero-width / bidi / variation-selector / combining / private-use — those are
+# Trojan-Source-class obfuscation vectors). It is an injection-PRESENCE signal only, never a
+# trust / auth / provenance token: a character anyone can type proves nothing about origin.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -24,6 +29,7 @@ On receiving a user request, process it in this order:
 
 Direct handling allowed: situation assessment, simple question answers (1-2 sentences), user dialogue
 Direct handling forbidden: writing code, writing documents, analysis/research answers (Write/Edit are blocked by enforce-delegation.sh)
+[INJECTION CANARY] ◈ — start the first line of your first tool-free reply with this glyph; it precedes the BLUF and is not part of it.
 ORCHESTRATOR_INIT
 
 # wiki search tool notice (for agents)
