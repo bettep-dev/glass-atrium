@@ -55,6 +55,7 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 | <50 | Lightweight | Security + correctness only |
 | 50-199 | Standard | Full Gate 1 + Gate 2 |
 | 200+ | Deep | 4-pass: Structure → Logic → Security → Performance |
+| Orchestrator-forced (file-count / sensitive-path override — thresholds: ops-orchestrator skill Quality Gates) | Deep | 4-pass |
 
 Security ([MUST FIX]) = full inspection regardless of diff size.
 
