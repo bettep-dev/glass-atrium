@@ -10,6 +10,7 @@ Applies to all agents. [ALL]
 - **Non-Bash fallback (agents without `Bash` in their spawn-frozen tool allowlist — e.g. glass-atrium-intel-researcher, glass-atrium-sec-guard)**: the `wiki-query.sh` CLI is unavailable to them (LLM06 spawn-time freeze), so check the wiki by Grep / Read directly over the notes at `~/.glass-atrium/wiki/notes/` (and `raw/`) — the `index/wiki.sqlite` BM25 index is binary and NOT Grep-readable, so scan the markdown notes (still using Korean + English synonyms).
 - Use Korean + English synonyms in parallel ("쿼리 재작성" AND "query rewriting") — wiki-query.sh is BM25 + grep based (NOT semantic search), so synonym omission causes false negatives.
 - Verify the `collected:` field or frontmatter date on found documents → for documents older than 1 year, web cross-verification of currency is recommended.
+- Threshold roles are distinct: the 1-year rule above is a READ-time cross-verification trigger on `collected:`, while the 90-day staleness threshold (`~/.glass-atrium/scripts/wiki-staleness.sh`, read-only) is a curator re-review trigger on `updated:`.
 - Cite referenced wiki documents in your response as `Existing wiki checked: [[concept-name]]` (citation tracking).
 - When a related wiki document is found, **READ IT** and build on the existing knowledge (prevents duplicate research).
 - Simple / urgent tasks MAY skip the wiki reference step.
