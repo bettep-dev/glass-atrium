@@ -7,7 +7,8 @@
 #      LLM06 spawn-freeze surface — frontmatter is the enforced tool grant).
 #   2. Inline shell-interpreter negations present + EXPRESSIBLE as command-prefix
 #      matchers in settings.template.json permissions.deny — they close a
-#      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`.
+#      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`;
+#      the npm publish row sits in permissions.ask (user-approval gate).
 #   3. The redirect-into-harness pattern is INEXPRESSIBLE as a command-prefix
 #      matcher (so it is absent from the settings deny) and is instead specified
 #      in enforce-harness-critical.sh's redirect regex (asserted by a direct
@@ -91,11 +92,15 @@ frontmatter_block() {
   [[ "$(printf '%s\n' "${output}" | grep -c .)" -eq 4 ]]
 }
 
-@test "settings deny carries the npm publish row (external-effect verb)" {
+@test "settings ask carries the npm publish row; deny no longer does (external-effect verb → user-approval gate)" {
   require_settings_template
   # Membership only — a total-row-count assertion would go red on the next
   # legitimate deny addition.
-  run jq -e '.permissions.deny | index("Bash(npm publish:*)")' "${SETTINGS}"
+  run jq -e '.permissions.ask | index("Bash(npm publish:*)")' "${SETTINGS}"
+  [[ "${status}" -eq 0 ]]
+  # deny-negative LAST: a row left in both arrays would be deny-shadowed, and
+  # bats takes the final command as the verdict.
+  run jq -e '.permissions.deny | index("Bash(npm publish:*)") == null' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -104,7 +109,7 @@ frontmatter_block() {
   # A '> harness-path' redirect cannot be a command-prefix matcher: the > operator
   # and its target appear anywhere in the command, not at the leading-token anchor.
   # Proof: no deny row references a harness path — such a matcher would be inert.
-  run jq -r '.permissions.deny[] | select(test("\\.claude|\\.glass-atrium"))' "${SETTINGS}"
+  run jq -r '(.permissions.deny + (.permissions.ask // []))[] | select(test("\\.claude|\\.glass-atrium"))' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
   [[ -z "${output}" ]]
 }
