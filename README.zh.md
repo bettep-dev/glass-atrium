@@ -8,8 +8,7 @@
 由单个编排器（orchestrator）统一监督和掌控一支专业智能体队伍，绝不让智能体之间相互移交任务、最终陷入失控。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<!-- CI badge gated until the repo is public and the owner/repo slug is final:
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) -->
+[![CI](https://github.com/bettep-dev/glass-atrium/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple)
 ![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=nodedotjs&logoColor=white)
 ![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql&logoColor=white)
@@ -52,7 +51,7 @@ Glass Atrium 是一个配置与工具层，能把 Claude Code CLI 变成一套�
 
 在此之上，它还增添了以下五样东西——仅凭默认安装，它们便会绑成一套统一一致的系统：
 
-- 一支**按能力进行路由的专业智能体队伍**（按技术栈划分的开发者，外加 QA、企划、研究、设计、安全、wiki、元层），取代单一的通用提示词；
+- 一支**按能力进行路由的专业智能体队伍**（按技术栈划分的开发者，外加 QA、企划、研究、报告、设计、安全、wiki、元层），取代单一的通用提示词；
 - 一套**分层规则系统**，用一份矩阵定义哪个智能体加载哪些规则；
 - 一条**生命周期钩子（hook）流水线**，在每一个工具边界上*机械地*强制执行这些规则（密钥、危险命令、预算、产出物）；
 - 一块**实时监控仪表盘**（Atrium Monitor），把所有成本、结果与智能体事件集中呈现于一处；
@@ -89,8 +88,8 @@ Glass Atrium 建立在 **Manager Pattern（中心化的管理者模式）** 之�
 1. **你向编排器（主会话）**请求某件事——修复 bug、企划功能、撰写报告。
 2. **编排器进行调查与分解**之后，参照能力注册表，组建一支专业智能体团队并确定执行顺序。
 3. **它逐一委派子任务**——每一次委派都会在实际执行动作*之前*先经过 **PreToolUse 钩子**（拦截危险命令、扫描密钥、标记越界范围、计划验证门）。
-4. **专业智能体执行工作**——在 **SubagentStart 钩子**所注入的自身范围规则，以及强制生效的轮次/工具预算之内完成。较长的任务不会在预算耗尽时被强行中断，而是记录下进度、停在一个可恢复的状态。
-5. **结果被记录。**每个智能体都会发出一个 `[COMPLETION]` 块，**PostToolUse 钩子**将其捕获为结果记录。
+4. **专业智能体执行工作**——在 **SubagentStart 钩子**所注入的自身范围规则之内完成。轮次预算是派生（spawn）时刻施加的硬上限，而工具预算只是发出告警的建议性计量。较长的任务在触及上限之前先记下进度、停在一个可恢复的状态，这是设计出来的自律，而非机械保证——一旦自律没有守住，硬上限就会在作业途中把它切断。
+5. **结果被记录。**每个智能体都会发出一个 `[COMPLETION]` 块，**子智能体结束时刻的钩子（SubagentStop）**将其捕获为结果记录。
 6. **编排器进行汇总**——把已验证的结果汇成单一答复；若出现失败，则运行恢复循环。
 7. **一切皆可观测。**所有成本、结果与智能体事件都会实时流向 PostgreSQL 和 Atrium Monitor。
 8. **系统自行改进。**后台守护进程读取结果记录与纠正信号，自动为智能体指令打补丁——无需改动哪怕一行提示词。
@@ -108,7 +107,7 @@ Glass Atrium 建立在 **Manager Pattern（中心化的管理者模式）** 之�
 
 ## 内部构成要素
 
-- **专业智能体队伍** — 按能力注册表（`agent-registry.json`）而非关键字进行路由（涵盖按技术栈划分的开发者、QA、企划/研究/报告、设计/音频、安全、wiki、元层）。
+- **专业智能体队伍** — 按能力注册表（`agent-registry.json`）而非关键字进行路由（涵盖按技术栈划分的开发者、QA、企划/研究/报告、设计、安全、wiki、元层）。
 - **分层规则系统** — 用一份明确的合规矩阵，把全局宪章（`agents/GLASS_ATRIUM_GLOBAL_RULES.md`）、核心横切规则（`rules/`）与按范围划分的规则（`scoped/`）绑在一起。
 - **生命周期钩子流水线** — 一组钩子脚本（`hooks/`），在每一个工具边界上机械地强制执行密钥、危险命令、预算与结果记录。
 - **自我改进循环** — autoagent 守护进程（`autoagent/`）把累积的结果记录与纠正信号转化为智能体指令补丁，只有安全的部分才会自动应用。应用之前会先把原文另存一份，一旦出问题便原样回滚。除了这些指令补丁之外，每当开始新任务时，它还会把先前学到的成功与失败模式直接注入到该智能体的会话中，立即加以复用。
@@ -129,19 +128,25 @@ Glass Atrium 的技能**不是**由用户调用的命令，而是一个内部质
 
 ## 快速开始
 
-**前置要求**：macOS · Claude Code CLI。其余一切都由安装 TUI 征得同意后自动探测并安装。
+**前置要求**：macOS（Apple Silicon 与 Intel 均支持） · **已登录的 Claude 订阅账号**。包括 Claude Code CLI 在内的其余依赖，都由安装 TUI 征得同意后探测并安装，但有两步需要你亲自完成——批准 Xcode Command Line Tools 的安装对话框，以及 `claude` 登录（若未通过，安装就会停在这里）。
+
+一次同意即可安装的东西：`postgresql@18` · `node@24` · `bun` · 支持 FTS5 的 `sqlite` · `tmux`/`jq`/`git`/`curl`/`lsof`/`rsync` · `claude` CLI · Python 库（`psycopg`、`psycopg2-binary`、`PyYAML`）。已经装好的会被跳过，因此首次安装的耗时大多取决于 Homebrew 的下载与监控端的构建。
 
 ```sh
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-交互式菜单打开后，请选择 **Install**——安装完成后，依赖与守护进程会自动配置并运行，仪表盘可在 `http://127.0.0.1:16145` 访问。
+交互式菜单打开后，请选择 **Install**——安装完成后，依赖与守护进程会自动配置并运行，仪表盘可在 `http://127.0.0.1:16145` 访问。安装必须通过健康门（health gate）才算结束，之后你也可以随时用 `glass-atrium doctor` 或监控的 **System health** 界面再次确认状态。
 
 > **请把安装好的文件夹留在原处。** 安装程序会下载发布包、解压到 `~/.glass-atrium` 文件夹，再以**按文件的符号链接群**（前文所述的方式）与 Claude 配置目录相连。真实文件就存放在这里，因此一旦移动或删除该文件夹，这些链接便会失效。
 
+### 更新
+
+有新版本发布时，仪表盘工具栏上会出现 **Update available** 徽章——点一下便就地完成更新，在终端里用 `glass-atrium update` 也是同一件事。更新会取回 GitHub 发布包，并按两条规则进行：**发布包会替换清单（manifest）中列出的所有文件**，而 `agents/*.md` 只合并 EDITABLE 区域，从而保住你改动过的内容（措辞发生冲突时，由模型仲裁者裁定）。发布包**对删除同样拥有权限**——清单 `retired` 名单上的文件会被移入废纸篓，但若其哈希是厂商从未分发过的，就会被视为用户的编辑而原样保留。
+
 ### 卸载
 
-在菜单中选择 **Uninstall**。它会移除已安装的符号链接并删除 GA 数据库，把 Atrium 从你既有的 Claude 系统中干净地剥离，既不改动任何用户自有文件，也不留下残余痕迹。但请注意，**数据库会先留下备份再删除**（转储保存在 `~/.glass-atrium/backups/postgres/`），重新安装时会创建一个新的数据库。备份不会自动恢复，如需旧数据，请用 `pg_restore` 手动恢复。
+在菜单中选择 **Uninstall**。它会先停下守护进程，再从 `~/.claude` 一侧清除 Atrium 铺设的符号链接与空目录外壳、`settings.json` 里的钩子接线（原文会以 `settings.json.ga-backup.<时间>` 留在旁边）以及 shell rc 中的 PATH 行，然后删除 GA 数据库。用户自有文件不会被改动。但 `~/.claude` 并**不会**被彻底清空——更新基线（`~/.claude/data/update/baseline-manifest.json`）与 base@install 的智能体原文保管处（`~/.claude/data/update/base-agents/`）默认会保留下来，因为重新安装时，正是靠这些基准点才能通过三锚点合并接续你对智能体所做的编辑。加上 `--purge-config` 会连 `config.toml` 与基线文件一并移入废纸篓（是移动，而不是删除），但 `base-agents/` 保管处在任何模式下都会留存。菜单中卸载后的清理询问只涉及 `config.toml`，因此若想连基线一起清空，请在终端执行 `glass-atrium uninstall --purge-config --yes`。存放真实文件的 `~/.glass-atrium` 文件夹同样会保留。此外，**数据库会先留下备份再删除**（转储保存在 `~/.glass-atrium/backups/postgres/`），重新安装时会创建一个新的数据库。备份不会自动恢复，如需旧数据，请用 `pg_restore` 手动恢复。
 
 ### 如何撰写 Atrium Monitor 文档
 
@@ -152,7 +157,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - 默认是监控中**隐藏的「仅智能体可见」的 token 优化记录**——会根据内容形态在 md、yaml、json、txt 中挑选，是一份供日后再查的内部记录。
 - 而当你明确表达共享、阅览的意图，比如「**做成 HTML**」「**做成网页文档**」「**用于团队共享**」，就会生成一份可供人阅读和共享的 **HTML 文档**（一个带暗色主题、图表与表格的单一文件）。
 
-两种格式都会出现在 Atrium Monitor 的**文档管理**界面中，可在「进行中／已完成」状态之间切换，也可以用同一主题的新文档替换旧文档。
+两种格式都会出现在 Atrium Monitor 的 **Documents**（文档）界面中，可在「进行中／已完成」状态之间切换，也可以用同一主题的新文档替换旧文档。
 
 即便你没有专门请求文档，只要系统判断某段内容值得留存，也可能留下一份仅智能体可见的记录。
 
@@ -186,8 +191,8 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="学习" width="100%"></p>
 <p align="center"><em>学习 — 展示自我改进提案看板（待处理/已应用/已拒绝），以及置信度与预检结果。</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="架构图" width="100%"></p>
-<p align="center"><em>架构图 — 在维护中的 Mermaid 架构图上叠加了实时状态。</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
+<p align="center"><em>System map — 在维护中的 Mermaid 架构图上叠加了实时状态。</em></p>
 
 ## 许可证
 
