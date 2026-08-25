@@ -52,6 +52,22 @@ seed_manifest() {
   printf '{"files":[],"hashes":{}}\n' >"${MANIFEST}"
 }
 
+# Untrack every in-scope path so git ls-files returns nothing the generator can
+# collect; the physical files stay (BASH_SOURCE still resolves) and manifest.json
+# stays tracked, because an untracked manifest is a different refusal (exit 5).
+# Enumerated from git rather than a fixed path list — a newly seeded root artifact
+# would otherwise silently refill the set this scenario needs empty.
+untrack_in_scope() {
+  local rel
+  local -a tracked=()
+  while IFS= read -r rel; do
+    [[ "${rel}" == "manifest.json" ]] || tracked+=("${rel}")
+  done < <(git -C "${WORK}" ls-files)
+  if [[ "${#tracked[@]}" -gt 0 ]]; then
+    git -C "${WORK}" rm -q --cached -- "${tracked[@]}"
+  fi
+}
+
 @test "generate: stamps top-level version matching ATRIUM_VERSION" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
@@ -189,17 +205,14 @@ seed_manifest() {
 
 @test "--check: exit 6 on an empty generated set" {
   "${SCRIPT}"
-  # untrack every in-scope path so git ls-files returns nothing in scope; the
-  # script copy stays physically present (BASH_SOURCE still resolves) but
-  # untracked, so the generated set is empty.
-  git -C "${WORK}" rm -q -r --cached agents rules scripts
+  untrack_in_scope
   run "${SCRIPT}" --check
   [[ "${status}" -eq 6 ]]
   [[ "${output}" == *"EMPTY"* ]]
 }
 
 @test "generate: exit 6 on an empty generated set (refuses to write)" {
-  git -C "${WORK}" rm -q -r --cached agents rules scripts
+  untrack_in_scope
   run "${SCRIPT}"
   [[ "${status}" -eq 6 ]]
   [[ "${output}" == *"EMPTY"* ]]

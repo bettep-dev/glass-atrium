@@ -259,11 +259,27 @@ seed_fully_applied() {
 # ── AC5 — branch 5: an absent history table is every migration pending, and IS a warning ───────
 
 @test "AC5: an absent history table warns that every migration is pending" {
+  seed_fully_applied
+  run_doctor_sandbox
+  local base
+  base="$(warn_total_of_output)" || return 1
+
   stub_out table ''
   run_doctor_sandbox
   assert_output_has "migration history table" || return 1
   assert_output_has "3 migration(s) pending" || return 1
   assert_output_lacks "undetermined" || return 1
+  # kind A: this branch's pending count must reach the warning total and the PASS
+  # breakdown too — a warn line printed beside a 0-warning summary is the false
+  # green the registration contract exists to prevent.
+  local pending
+  pending="$(warn_total_of_output)" || return 1
+  [[ "${pending}" -eq $((base + 3)) ]] || {
+    echo "the table-absent branch did not feed the warning total: ${base} -> ${pending} (expected +3)" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  assert_output_has "3 pending-migration" || return 1
 }
 
 # ── AC6 — branch 6: the table exists with no rows at all — same pending set, own wording ───────
