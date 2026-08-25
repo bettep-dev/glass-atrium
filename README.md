@@ -8,8 +8,7 @@
 A single orchestrator watches over and reins in a fleet of specialist agents, and never allows the kind of setup where agents pass work back and forth among themselves until it spirals out of control.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<!-- CI badge gated until the repo is public and the owner/repo slug is final:
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) -->
+[![CI](https://github.com/bettep-dev/glass-atrium/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple)
 ![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=nodedotjs&logoColor=white)
 ![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql&logoColor=white)
@@ -52,7 +51,7 @@ The "glass atrium" in the name is also a lens for seeing the system. Rather than
 
 On top of that, a default install alone bundles in five things that come together as one coherent system:
 
-- a **capability-routed fleet of specialist agents** (developers per stack, plus QA, planning, research, design, security, wiki, and meta) in place of a single general-purpose prompt;
+- a **capability-routed fleet of specialist agents** (developers per stack, plus QA, planning, research, reporting, design, security, wiki, and meta) in place of a single general-purpose prompt;
 - a **layered rule system** that spells out, in a matrix, exactly which agent loads which rules;
 - a **lifecycle hook pipeline** that enforces those rules (secrets, dangerous commands, budgets, outcomes) *mechanically* at every tool boundary;
 - a **real-time monitoring dashboard** (the Atrium Monitor) that gathers every cost, outcome, and agent event in one place;
@@ -89,8 +88,8 @@ A single request moves through the system like this:
 1. **You ask the orchestrator** (the main session) for something — fix a bug, plan a feature, write a report.
 2. **The orchestrator investigates and decomposes** the request, then consults the capability registry to assemble a team of specialist agents and an execution order.
 3. **It delegates each sub-task** — every delegation clears the **PreToolUse hooks** (dangerous-command blocking, secret scanning, scope-drift flagging, plan-verification gate) *before* the action actually runs.
-4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**, and within enforced turn and tool budgets. Rather than being cut off abruptly when a budget runs out, a long task records its progress and pauses in a resumable state.
-5. **Outcomes are recorded.** Each agent emits a `[COMPLETION]` block, and the **PostToolUse hook** captures it as an Outcome Record.
+4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**. The turn budget is a hard cap applied at spawn time; the tool budget is an advisory meter that only warns. A long task pausing in a resumable state, with its progress written down, before it reaches that limit is designed discipline rather than a mechanical guarantee — where the discipline does not hold, the hard cap cuts the work off mid-flight.
+5. **Outcomes are recorded.** Each agent emits a `[COMPLETION]` block, and the **SubagentStop hook** captures it as an Outcome Record.
 6. **The orchestrator synthesizes** — folding the verified results into one answer, or running the recovery loop when something fails.
 7. **Everything is observable.** Every cost, outcome, and agent event streams into PostgreSQL and the Atrium Monitor in real time.
 8. **The system improves itself.** A background daemon reads the outcome records and correction signals and patches the agent instructions automatically — without you editing a single line of any prompt.
@@ -108,7 +107,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 
 ## What's inside
 
-- **Fleet of specialist agents** — routed by a capability registry (`agent-registry.json`) rather than by keyword (developers per stack, plus QA, planning · research · reporting, design · audio, security, wiki, and meta).
+- **Fleet of specialist agents** — routed by a capability registry (`agent-registry.json`) rather than by keyword (developers per stack, plus QA, planning · research · reporting, design, security, wiki, and meta).
 - **Layered rule system** — a global charter (`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), all bound together by an explicit compliance matrix.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong. Separately from those instruction patches, whenever a new task starts it injects the success and failure patterns learned earlier straight into that agent's session, so they are reused right away.
@@ -129,19 +128,25 @@ They load globally at session start, and Claude activates them on its own to sui
 
 ## Quickstart
 
-**Prerequisites**: macOS · Claude Code CLI. Everything else is detected and installed automatically by the install TUI, with your consent.
+**Prerequisites**: macOS (Apple Silicon and Intel alike) · a **logged-in Claude subscription account**. Every other dependency, the Claude Code CLI included, is detected and installed by the install TUI with your consent — but two steps are yours to take: approving the Xcode Command Line Tools install dialog, and logging in with `claude` (the install stops right here if that does not go through).
+
+What a single consent can install: `postgresql@18` · `node@24` · `bun` · `sqlite` with FTS5 support · `tmux`/`jq`/`git`/`curl`/`lsof`/`rsync` · the `claude` CLI · the Python libraries (`psycopg` · `psycopg2-binary` · `PyYAML`). Anything already present is skipped, so most of a first install's time goes to Homebrew downloads and the monitor build.
 
 ```sh
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:16145`.
+When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:16145`. The install is not finished until it clears a health gate, and you can re-check that state at any point afterwards with `glass-atrium doctor` or the monitor's **System health** screen.
 
 > **Leave the installed folder where it is.** The installer downloads a release bundle, unpacks it into the `~/.glass-atrium` folder, and links it into your Claude config directory through a **per-file symlink farm** (the method described earlier). The real files live here, so moving or deleting the folder breaks the links.
 
+### Update
+
+When a new release lands, an **Update available** badge appears in the dashboard toolbar — click it and the update is applied on the spot; `glass-atrium update` does the same thing from the terminal. Applying one pulls the GitHub release bundle and proceeds by two rules: **the bundle replaces every file carried in the manifest**, and `agents/*.md` are merged on their EDITABLE regions only, so the edits you made survive (where the wording collides, a model arbiter decides). The bundle **holds authority over deletion too** — a file on the manifest's `retired` list is moved to the Trash, unless its hash is one the vendor never shipped, in which case it is read as your own edit and left alone.
+
 ### Uninstall
 
-Choose **Uninstall** from the menu. It removes the installed symlinks and drops the GA database to cleanly detach the Atrium from your existing Claude system, leaving your own files untouched and no residue behind. Note that **the database is backed up before it is deleted** (the dump is kept in `~/.glass-atrium/backups/postgres/`), and a reinstall creates a fresh one. The backup is not restored automatically — if you need the old data, restore it yourself with `pg_restore`.
+Choose **Uninstall** from the menu. It stops the daemons, then strips from the `~/.claude` side the symlinks the Atrium laid down, the empty directory shells, the hook wiring in `settings.json` (the original is left beside it as `settings.json.ga-backup.<timestamp>`) and the PATH line in your shell rc, and drops the GA database. Your own files are left untouched. What it does **not** do is empty `~/.claude` completely — the update baseline (`~/.claude/data/update/baseline-manifest.json`) and the base@install store of original agents (`~/.claude/data/update/base-agents/`) stay by default, because they are the reference points that let a reinstall carry your own agent edits forward through a 3-anchor merge. Passing `--purge-config` moves `config.toml` and the baseline file to the Trash as well (moved, not deleted), but the `base-agents/` store survives in every mode. The menu's post-uninstall cleanup question covers `config.toml` only, so to clear the baseline too, run `glass-atrium uninstall --purge-config --yes` from the terminal. The `~/.glass-atrium` folder holding the real files also remains. And **the database is backed up before it is deleted** (the dump is kept in `~/.glass-atrium/backups/postgres/`), with a reinstall creating a fresh one. The backup is not restored automatically — if you need the old data, restore it yourself with `pg_restore`.
 
 ### How to write Atrium Monitor documents
 

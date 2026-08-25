@@ -8,8 +8,7 @@
 하나의 오케스트레이터가 전문 에이전트 부대를 감시하고 통제하며, 에이전트끼리 작업을 주고받다 통제 불능에 빠지는 구조는 절대 허용하지 않습니다.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<!-- CI badge gated until the repo is public and the owner/repo slug is final:
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) -->
+[![CI](https://github.com/bettep-dev/glass-atrium/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple)
 ![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=nodedotjs&logoColor=white)
 ![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql&logoColor=white)
@@ -52,7 +51,7 @@ Glass Atrium은 Claude Code CLI를 조율되고 관측 가능하며 스스로 �
 
 여기에 더해, 기본 설치만으로 하나의 일관된 시스템으로 묶이는 다섯 가지를 보탭니다:
 
-- 범용 프롬프트 하나로 모든 걸 처리하는 대신, **역량을 기준으로 라우팅하는 전문 에이전트 부대** (개발자는 스택별로, 그 밖에 QA·기획·리서치·디자인·보안·위키·메타);
+- 범용 프롬프트 하나로 모든 걸 처리하는 대신, **역량을 기준으로 라우팅하는 전문 에이전트 부대** (개발자는 스택별로, 그 밖에 QA·기획·리서치·리포트·디자인·보안·위키·메타);
 - 어느 에이전트가 어떤 규칙을 불러올지 매트릭스로 정의하는 **계층화된 규칙 시스템**;
 - 모든 도구 경계에서 그 규칙(시크릿·위험 명령·예산·결과물)을 *기계적으로* 강제하는 **라이프사이클 훅 파이프라인**;
 - 모든 비용과 결과, 에이전트 이벤트를 한곳에 모아 보여 주는 **실시간 모니터링 대시보드** (Atrium Monitor);
@@ -89,8 +88,8 @@ Glass Atrium에서 오케스트레이터는 전체 맥락을 혼자 쥔 채, 모
 1. **사용자가 오케스트레이터(메인 세션)에게** 무언가를 요청합니다 — 버그 수정, 기능 기획, 보고서 작성.
 2. **오케스트레이터가 조사하고 분해한** 뒤, 역량 레지스트리를 참조해 전문 에이전트 팀과 실행 순서를 짭니다.
 3. **각 하위 작업을 위임합니다** — 모든 위임은 실제 실행 *전에* PreToolUse 훅(위험 명령 차단·시크릿 스캔·범위 이탈 표시·계획 검증 게이트)을 통과합니다.
-4. **전문 에이전트가 작업을 수행합니다** — SubagentStart 훅이 주입한 자기 범위 규칙과 강제된 턴·도구 예산 안에서. 긴 작업은 예산 한계에서 강제 종료되는 대신, 진행 상황을 기록하고 재개 가능한 상태로 정지합니다.
-5. **결과가 기록됩니다.** 각 에이전트가 `[COMPLETION]` 블록을 내보내면, PostToolUse 훅이 이를 결과 기록으로 포착합니다.
+4. **전문 에이전트가 작업을 수행합니다** — SubagentStart 훅이 주입한 자기 범위 규칙 안에서. 턴 예산은 스폰 시점에 걸리는 하드 캡이고, 도구 예산은 경고만 내보내는 권고 계측입니다. 긴 작업이 한계에 닿기 전에 진행 상황을 남기고 재개 가능한 상태로 멈추는 것은 설계된 규율이지 기계적 보장이 아니며, 지켜지지 않으면 하드 캡이 작업 도중에 끊습니다.
+5. **결과가 기록됩니다.** 각 에이전트가 `[COMPLETION]` 블록을 내보내면, 서브에이전트 종료 시점 훅(SubagentStop)이 이를 결과 기록으로 포착합니다.
 6. **오케스트레이터가 종합합니다** — 검증된 결과를 하나의 답변으로 묶고, 실패가 나면 복구 루프를 돌립니다.
 7. **모든 것이 관측됩니다.** 모든 비용과 결과, 에이전트 이벤트가 PostgreSQL과 Atrium Monitor로 실시간 스트리밍됩니다.
 8. **시스템은 스스로 개선됩니다.** 백그라운드 데몬이 결과 기록과 교정 신호를 읽어 에이전트 지침을 자동으로 패치합니다 — 프롬프트를 한 줄도 손대지 않아도 됩니다.
@@ -108,7 +107,7 @@ Glass Atrium에서 오케스트레이터는 전체 맥락을 혼자 쥔 채, 모
 
 ## 내부 구성 요소
 
-- **전문 에이전트 부대** — 키워드가 아니라 역량 레지스트리(`agent-registry.json`)로 라우팅됩니다(스택별 개발자에 QA, 기획·리서치·리포트, 디자인·오디오, 보안, 위키, 메타까지).
+- **전문 에이전트 부대** — 키워드가 아니라 역량 레지스트리(`agent-registry.json`)로 라우팅됩니다(스택별 개발자에 QA, 기획·리서치·리포트, 디자인, 보안, 위키, 메타까지).
 - **계층화된 규칙 시스템** — 전역 헌장(`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), 핵심 횡단 규칙(`rules/`), 범위별 규칙(`scoped/`)을 명시적인 컴플라이언스 매트릭스로 묶습니다.
 - **라이프사이클 훅 파이프라인** — 모든 도구 경계에서 시크릿·위험 명령·예산·결과 기록을 기계적으로 강제하는 훅 스크립트 모음(`hooks/`).
 - **자기개선 루프** — autoagent 데몬(`autoagent/`)이 쌓인 결과 기록과 교정 신호를 에이전트 지침 패치로 바꾸고, 안전한 것만 자동 적용합니다. 적용 전 원본을 보관해 두었다가 문제가 생기면 되돌립니다. 지침 패치와 별개로, 새 작업을 시작할 때는 과거 학습된 성공·실패 패턴을 해당 에이전트의 세션에 직접 주입해 곧바로 재사용합니다.
@@ -129,19 +128,25 @@ Glass Atrium의 스킬은 사용자가 호출하는 명령이 **아니라**, 내
 
 ## 빠른 시작
 
-**사전 요구사항**: macOS · Claude Code CLI. 나머지는 모두 설치 TUI가 동의를 받아 자동으로 탐지하고 설치합니다.
+**사전 요구사항**: macOS(Apple Silicon·Intel 모두 지원) · **로그인된 Claude 구독 계정**. Claude Code CLI를 포함한 나머지 의존성은 설치 TUI가 동의를 받아 탐지·설치하지만, 두 단계는 사용자가 직접 밟아야 합니다 — Xcode Command Line Tools 설치 대화상자 승인, 그리고 `claude` 로그인(통과하지 못하면 설치가 여기서 멈춥니다).
+
+동의 한 번으로 설치될 수 있는 것: `postgresql@18` · `node@24` · `bun` · FTS5 지원 `sqlite` · `tmux`/`jq`/`git`/`curl`/`lsof`/`rsync` · `claude` CLI · 파이썬 라이브러리(`psycopg`·`psycopg2-binary`·`PyYAML`). 이미 있는 것은 건너뛰므로, 첫 설치 시간은 대부분 Homebrew 내려받기와 모니터 빌드에 좌우됩니다.
 
 ```sh
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-대화형 메뉴가 열리면 **Install** 을 선택하세요 — 설치가 끝나면 의존성과 데몬이 자동으로 설정·실행되고, 대시보드는 `http://127.0.0.1:16145` 에서 접근할 수 있습니다.
+대화형 메뉴가 열리면 **Install** 을 선택하세요 — 설치가 끝나면 의존성과 데몬이 자동으로 설정·실행되고, 대시보드는 `http://127.0.0.1:16145` 에서 접근할 수 있습니다. 설치는 헬스 게이트를 통과해야 끝나며, 이후에도 `glass-atrium doctor` 또는 모니터의 **System health** 화면에서 상태를 다시 확인할 수 있습니다.
 
 > **설치된 폴더는 그대로 두세요.** 설치 프로그램은 릴리스 번들을 내려받아 `~/.glass-atrium` 폴더에 풀어 놓고, **파일 단위 심링크 팜**(앞서 설명한 방식)으로 Claude 설정 디렉터리와 연결합니다. 실제 파일이 여기 있으므로, 폴더를 옮기거나 지우면 링크가 끊어집니다.
 
+### 업데이트
+
+새 릴리스가 나오면 대시보드 툴바에 **Update available** 배지가 뜹니다 — 배지를 누르면 그 자리에서 적용되고, 터미널에서는 `glass-atrium update` 로도 같은 일을 합니다. 적용은 GitHub 릴리스 번들을 받아 두 가지 규칙으로 이뤄집니다: **번들이 매니페스트에 실린 모든 파일을 교체**하고, `agents/*.md` 는 EDITABLE 영역만 병합해 사용자가 손댄 내용을 보존합니다(문구가 맞부딪히면 모델 중재자가 판정). 번들은 **삭제에 대해서도 권한을 갖습니다** — 매니페스트의 `retired` 목록에 오른 파일은 휴지통으로 옮겨지되, 벤더가 배포한 적 없는 해시라면 사용자 편집으로 보고 그대로 둡니다.
+
 ### 제거
 
-메뉴에서 **Uninstall** 을 선택하세요. 설치된 심링크를 제거하고 GA 데이터베이스를 드롭해 기존 Claude 시스템에서 아트리움을 깨끗이 떼어냅니다. 사용자 소유 파일은 그대로 두고, 잔여물도 남기지 않습니다. 단, **데이터베이스는 백업을 남긴 뒤에 삭제되며**(덤프는 `~/.glass-atrium/backups/postgres/` 에 보관), 재설치하면 새로 만들어집니다. 백업이 자동으로 복원되지는 않으므로, 이전 데이터가 필요하면 `pg_restore` 로 직접 복원하세요.
+메뉴에서 **Uninstall** 을 선택하세요. 데몬을 멈춘 뒤 `~/.claude` 쪽에서 아트리움이 깔아 둔 심링크와 빈 디렉터리 껍데기, `settings.json` 의 훅 연결(원본은 `settings.json.ga-backup.<시각>` 으로 옆에 남습니다), 셸 rc 의 PATH 줄을 걷어내고 GA 데이터베이스를 드롭합니다. 사용자 소유 파일은 그대로 둡니다. 다만 `~/.claude` 가 완전히 비지는 **않습니다** — 업데이트 기준선(`~/.claude/data/update/baseline-manifest.json`)과 base@install 에이전트 원본 보관소(`~/.claude/data/update/base-agents/`)는 기본적으로 남습니다. 재설치했을 때 사용자가 손댄 에이전트 편집 내용을 3-앵커 병합으로 이어 가기 위한 기준점이기 때문입니다. `--purge-config` 를 주면 `config.toml` 과 기준선 파일까지 휴지통으로 옮기지만(지우는 게 아니라 옮깁니다), `base-agents/` 보관소는 어느 모드에서도 남습니다. 메뉴의 제거 후 정리 물음은 `config.toml` 만 다루므로, 기준선까지 비우려면 터미널에서 `glass-atrium uninstall --purge-config --yes` 를 실행하세요. 실제 파일이 있는 `~/.glass-atrium` 폴더도 남습니다. 또한 **데이터베이스는 백업을 남긴 뒤에 삭제되며**(덤프는 `~/.glass-atrium/backups/postgres/` 에 보관), 재설치하면 새로 만들어집니다. 백업이 자동으로 복원되지는 않으므로, 이전 데이터가 필요하면 `pg_restore` 로 직접 복원하세요.
 
 ### 아트리움 모니터 문서 작성 방법
 
@@ -152,7 +157,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - 기본값은 모니터에서 **숨겨지는 "에이전트 전용" 토큰 최적화 기록**입니다 — 내용의 형태에 따라 md·yaml·json·txt 중에서 고르며, 나중에 참고할 내부용 기록입니다.
 - "**HTML로**", "**웹 문서로**", "**팀 공유용으로**" 처럼 공유하거나 열람할 의도를 분명히 밝히면, 사람이 보고 공유할 수 있는 **HTML 문서**가 만들어집니다(다크 테마와 다이어그램, 표가 있는 단일 파일).
 
-두 형식 모두 Atrium Monitor의 **문서 관리** 화면에 나타나며, 진행/완료 상태를 오갈 수 있고 같은 주제의 새 문서로 이전 문서를 대체할 수 있습니다.
+두 형식 모두 Atrium Monitor의 **Documents**(문서) 화면에 나타나며, 진행/완료 상태를 오갈 수 있고 같은 주제의 새 문서로 이전 문서를 대체할 수 있습니다.
 
 문서를 따로 요청하지 않더라도, 기록해 둘 만하다고 판단되면 에이전트 전용 기록이 남을 수 있습니다.
 
@@ -186,8 +191,8 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="학습" width="100%"></p>
 <p align="center"><em>학습 — 자가개선 제안 보드(대기/적용/거부)와 신뢰도, 사전검사 결과를 표시합니다.</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="설계도" width="100%"></p>
-<p align="center"><em>설계도 — 유지되는 Mermaid 아키텍처 다이어그램에 라이브 상태 오버레이를 더했습니다.</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
+<p align="center"><em>System map — 유지되는 Mermaid 아키텍처 다이어그램에 라이브 상태 오버레이를 더했습니다.</em></p>
 
 ## 라이선스
 
