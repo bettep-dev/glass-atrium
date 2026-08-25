@@ -112,3 +112,16 @@ assert_lacks() {
     assert_lacks "${body}" 'stale-101.md' &&
     assert_lacks "${body}" 'stale-100.md'
 }
+
+@test "a zero-byte note is counted, not dropped: it takes the mtime fallback" {
+  seed_five_notes
+  : >"${NOTES}/f-empty.md"
+  set_mtime f-empty.md 100
+  run "${SCRIPT}" --notes-dir "${NOTES}"
+  local body
+  body="$(section 'mtime-derived')"
+  [ "${status}" -eq 0 ] &&
+    assert_has "${body}" 'count: 2' &&
+    assert_has "${body}" 'f-empty.md' &&
+    assert_has "${body}" 'd-no-date.md'
+}

@@ -175,6 +175,15 @@ collect_fields() {
     fm && sub(/^created:[[:space:]]*/, "") { created = $0; sub(/[[:space:]]+$/, "", created); next }
     END { flush() }
   ' "${notes[@]}" >"${WORK_DIR}/fields"
+
+  # awk never fires FNR==1 on a zero-byte note, so such a file emits no row and would drop out of
+  # every bucket and count. Re-add the missing paths with empty date fields — they then take the
+  # mtime fallback, the same route as any note carrying no date field.
+  cut -d "${SEP}" -f1 "${WORK_DIR}/fields" >"${WORK_DIR}/fields.paths"
+  awk -v sep="${SEP}" '
+    NR == FNR { seen[$0]; next }
+    !($0 in seen) { printf "%s%s%s\n", $0, sep, sep }
+  ' "${WORK_DIR}/fields.paths" "${WORK_DIR}/notes.list" >>"${WORK_DIR}/fields"
 }
 
 classify_notes() {

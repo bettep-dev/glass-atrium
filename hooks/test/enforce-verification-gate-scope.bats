@@ -108,3 +108,16 @@ plain_paths() {
   [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
   [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "depth advisory without a declaration -- ${output}" >&2; return 1; }
 }
+
+# --- drift guard: the skill's prose threshold and the hook's constant are one number -----------
+
+@test "the skill's Deep-review file threshold matches the hook constant" {
+  local skill="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+  [[ -f "${skill}" ]] || skip "skill not found: ${skill}"
+  local from_skill from_hook
+  from_skill="$(grep -o 'lists ≥ [0-9][0-9]* paths' "${skill}" | head -1 | sed 's/[^0-9]//g')"
+  from_hook="$(grep -o '^readonly DEEP_REVIEW_FILE_THRESHOLD=[0-9][0-9]*' "${HOOK_SH}" | sed 's/.*=//')"
+  [[ -n "${from_skill}" ]] || { echo "threshold prose not found in ${skill}" >&2; return 1; }
+  [[ -n "${from_hook}" ]] || { echo "DEEP_REVIEW_FILE_THRESHOLD not found in ${HOOK_SH}" >&2; return 1; }
+  [[ "${from_skill}" == "${from_hook}" ]] || { echo "drift: skill=${from_skill} hook=${from_hook}" >&2; return 1; }
+}

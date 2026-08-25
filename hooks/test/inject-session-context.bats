@@ -131,3 +131,15 @@ run_hook() {
   [[ "${cp}" -lt 65024 || "${cp}" -gt 65039 ]] || return 1
   [[ "${cp}" -lt 57344 || "${cp}" -gt 63743 ]] || return 1
 }
+
+@test "canary: the glyph is defined in exactly one file across hooks/rules/scoped/agents/skills" {
+  run_hook
+  [[ "${status}" -eq 0 ]] || return 1
+  local g root hits
+  g="$(canary_glyph)"
+  [[ -n "${g}" ]] || return 1
+  root="${BATS_TEST_DIRNAME}/../.."
+  [[ -d "${root}/skills" ]] || skip "search roots absent: ${root}"
+  hits="$(cd "${root}" && grep -rlF -- "${g}" hooks rules scoped agents skills 2>/dev/null | sort)"
+  [[ "${hits}" == 'hooks/inject-session-context.sh' ]] || { echo "glyph found in: ${hits}" >&2; return 1; }
+}
