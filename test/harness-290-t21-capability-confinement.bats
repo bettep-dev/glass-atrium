@@ -33,6 +33,7 @@ META_PROMPT="${GA}/agents/glass-atrium-meta-prompt-engineer.md"
 # consumer install exactly as in the checkout — the rows below need no skip guard.
 SETTINGS="${GA}/settings.template.json"
 HOOK_SH="${GA}/hooks/enforce-harness-critical.sh"
+MANIFEST="${GA}/manifest.json"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -125,5 +126,15 @@ frontmatter_block() {
   run jq -e '.permissions.deny | index("Bash(rm:*)")' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
   run jq -e '.permissions.deny | index("Bash(rm -rf:*)")' "${SETTINGS}"
+  [[ "${status}" -eq 0 ]]
+}
+
+@test "committed manifest carries the three shipped root artifacts" {
+  # The sandbox membership row runs against a synthetic tree, so it stays green in
+  # the state this row exists for: SCOPE_PATHS fixed, manifest.json never regenerated.
+  # Membership only — a count assertion would go red on the next legitimate addition.
+  run jq -e '(.files | index("settings.template.json")) != null
+             and (.files | index("LICENSE")) != null
+             and (.files | index("LICENSES-THIRD-PARTY.md")) != null' "${MANIFEST}"
   [[ "${status}" -eq 0 ]]
 }
