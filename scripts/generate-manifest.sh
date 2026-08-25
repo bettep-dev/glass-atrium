@@ -132,6 +132,13 @@ readonly -a SCOPE_PATHS=(
   "lib"
   "monitor"
   "requirements.txt"
+  # Root artifacts. The release tarball is tar'd from the manifest-derived file list,
+  # so a non-member cannot reach a user at all: the licence pair ships because shipped
+  # docs link it, and settings.template.json ships because its recommended permissions
+  # shape is the user's manual-merge reference (never auto-applied).
+  "LICENSE"
+  "LICENSES-THIRD-PARTY.md"
+  "settings.template.json"
   # Root executable-suite dir. hooks/test, scripts/test, autoagent/test ride their
   # parent scope entries above; the root test/ has no parent, so it needs an explicit
   # entry to enter git ls-files scope. Install-internal (run in place by the

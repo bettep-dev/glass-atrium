@@ -30,6 +30,11 @@ setup() {
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
+  # Root artifacts the bundle must carry. SCOPE_PATHS membership is only observable
+  # once git tracks them here — generate_files() takes its file set from git ls-files.
+  printf 'license text\n' >"${WORK}/LICENSE"
+  printf '# third-party notices\n' >"${WORK}/LICENSES-THIRD-PARTY.md"
+  printf '{"permissions":{"deny":[]}}\n' >"${WORK}/settings.template.json"
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
   git -C "${WORK}" config user.name bats
@@ -431,4 +436,17 @@ ship_lib_a() {
   run "${SCRIPT}" --validate "${MANIFEST}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"valid"* ]] || return 1
+}
+
+@test "generate: root LICENSE pair and permissions template are manifest members" {
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]]
+  local rel
+  for rel in LICENSE LICENSES-THIRD-PARTY.md settings.template.json; do
+    run jq -e --arg f "${rel}" '.files | index($f)' "${MANIFEST}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "not a manifest member: ${rel}"
+      return 1
+    }
+  done
 }

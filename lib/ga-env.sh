@@ -151,6 +151,12 @@ ga_init_env() {
     # ~/.glass-atrium/docs/assets/bulldog-braille.txt (GA_ROOT-anchored), so a
     # ~/.claude symlink would be dead weight (Claude Code never discovers docs/).
     "docs/assets/bulldog-braille.txt"
+    # Root artifacts — bundled but install-internal. A ~/.claude/settings.template.json
+    # would sit beside the real settings.json as a confusion surface, and Claude Code
+    # discovers no licence file, so both links would be dead weight.
+    "LICENSE"
+    "LICENSES-THIRD-PARTY.md"
+    "settings.template.json"
   )
   readonly SYMLINK_EXCLUDE_EXACT
 

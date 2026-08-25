@@ -90,9 +90,12 @@ run_ga() {
   seed_src "autoagent/daemon-cycle.sh"       # newly-excluded surface
   seed_src "agent-registry.json"             # excluded surface
   seed_src "test/root-suite.bats"            # root test/ — bundled, run in place, never farmed
+  seed_src "LICENSE"                         # root artifacts — bundled, never farmed
+  seed_src "LICENSES-THIRD-PARTY.md"
+  seed_src "settings.template.json"
   write_manifest "agents/dev-x.md" "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh" \
     "scripts/wiki-sync.sh" "autoagent/daemon-cycle.sh" "agent-registry.json" \
-    "test/root-suite.bats"
+    "test/root-suite.bats" "LICENSE" "LICENSES-THIRD-PARTY.md" "settings.template.json"
 
   # precondition: no rules subdir yet
   [[ ! -e "${TARGET}/rules" ]]
@@ -114,6 +117,11 @@ run_ga() {
   [[ ! -e "${TARGET}/agent-registry.json" ]]
   # root test/ rides the SYMLINK_EXCLUDE_PREFIXES "test/" prefix — bundled but never symlinked
   [[ ! -e "${TARGET}/test" ]]
+  # Root artifacts ride SYMLINK_EXCLUDE_EXACT: a ~/.claude/settings.template.json
+  # beside the real settings.json is a confusion surface, and the licence pair has
+  # no ~/.claude consumer. One chained final command — bats gates on the LAST one.
+  [[ ! -e "${TARGET}/LICENSE" ]] && [[ ! -e "${TARGET}/LICENSES-THIRD-PARTY.md" ]] &&
+    [[ ! -e "${TARGET}/settings.template.json" ]]
 }
 
 # === 2. UNINSTALL symmetry for the foldered layout ===========================
