@@ -62,7 +62,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Spawn only when: (1) tasks are parallelizable AND independent, (2) single-agent capacity confirmed insufficient.
 - Concurrent children > 3 → verify rate-limit headroom before fan-out.
 - **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06). Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
-- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies. Layering detail: `rules/glass-atrium/orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`.
+- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies. Layering detail: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`.
 - Detail: `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget`.
 
 ## 3-Tier Boundary [ALL]
@@ -132,7 +132,7 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 - Excessive politeness / parrot repetition · Over-summarization / verbose explanation (3+ paragraphs without code)
 - Out-of-scope modifications · Empty apologies / excessive disclaimers · False confidence / silent acceptance (fix it or flag it)
 - **Chained-arrow run-on narration** — ONE sentence joining 4+ stages with `→` / `·` connectors; the paragraph-count trigger above structurally cannot fire on a one-sentence shape, so it is named separately here
-- Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `rules/glass-atrium/orchestrator-role.md` → `### Reply Form Contract` — honor-system (no hook reads reply text); the response-language rule above is unaffected
+- Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` — honor-system (no hook reads reply text); the response-language rule above is unaffected
 - ※ Mandatory comments per shared-comment-logging.md are exempt
 
 ## System Prompt Protection [ALL]

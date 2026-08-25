@@ -62,7 +62,7 @@ A grep count of the absorption idioms is a POPULATION, not a defect set: the lar
 ## Cross-References
 
 - `core-git-workflow.md` — commit message rules · `--no-verify` / `--no-gpg-sign` prohibition · dangerous commands procedure
-- `orchestrator-role.md` — Self-Improvement User-Approval Trigger (safety-only) · Harness Path Protection
+- `orchestrator-role.md` — Harness Path Protection · `skills/glass-atrium-ops-orchestrator.md` — Self-Improvement User-Approval Trigger (safety-only)
 - `core-learning-log.md` — Instruction Improvement Approval Tier (Tier 1 Auto + Tier 2 Safety) · CTM/EPM bucket
 - `core-security.md` — LLM06 Agent Tool Authorization · reuses the High-impact actions definition
 - monitor `/api/improvement` — SoT routes (routes/improvement.ts + types/improvement.ts + screens/improvement.jsx)
