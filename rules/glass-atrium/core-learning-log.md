@@ -32,7 +32,7 @@ The self-improvement loop (daemon_cycle.py) user-approval queue is **safety-only
   - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules, or any change to `core-learning-log.md` — the Tier-2 trigger list's own home
 - **non-safety quality issue** (rule-scope misapplication / minor instruction tuning, etc.) → absorbed by Tier 1 Auto + LLM retry — creating a user pending queue forbidden
 
-> Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `orchestrator-role.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here
+> Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `skills/glass-atrium-ops-orchestrator.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here
 
 ## Solution History (OPRO-style)
 

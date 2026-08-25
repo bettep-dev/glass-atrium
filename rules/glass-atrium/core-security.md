@@ -18,6 +18,7 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - Executing commands, queries, or dynamic code based on user input is **STRICTLY FORBIDDEN** (injection risk)
 - SQL raw queries → **parameterized binding is REQUIRED** · string concatenation is FORBIDDEN
 - User-supplied URLs → validate against an allowlist · prevent open redirects
+- Open-redirect check = parse the URL with the platform URL parser (`new URL()` / `urllib.parse`) and compare its **origin** to the allowlist · string-prefix / `startsWith` comparison is FORBIDDEN — bypass classes it misses: backslash (`https://trusted.com\@evil.com`) and protocol-relative `//evil.com`
 
 ## Prompt & Tool Input Security [LLM01:2025]
 
@@ -53,6 +54,7 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - Endpoints bypassing authentication middleware → MUST have an explicit allowlist + be subject to code review
 - Authorization checks MUST occur at the controller/router level (before entering business logic)
 - JWT/sessions → verify httpOnly, secure, and sameSite settings
+- Auth-flow redirects → carry error state as a fixed opaque code only (e.g. `?error=auth_failed`) · human-readable detail stays server-side — a redirect URL leaks through the `Referer` header and access logs (OWASP A09)
 
 ## Execution Security
 

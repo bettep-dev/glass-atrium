@@ -101,12 +101,13 @@ tags: [<tags>]
 Project code snippets · One-off debugging logs · Plain API reference copies
 Rule: "Remove project name — reusable knowledge remains?" No → exclude → register `[skipped: <reason>]` in master-index
 
-### 5 Health Checks
+### 6 Health Checks
 - Missing backlinks
 - Orphans
 - Duplicate concepts
 - Index inconsistency
 - Category frontmatter mismatch
+- Stale: carry the `wiki-staleness.sh` buckets (stale / mtime-derived / unknown-age) into the healthcheck document under `## Stale` — threshold + surface: → scoped/scope-wiki.md (Staleness surface)
 
 Output: `index/healthcheck-YYYY-MM-DD.md`
 
@@ -140,7 +141,7 @@ Pattern: `wiki-lock.sh with wiki-compile 120 -- <reindex-cmd>` (extended timeout
 ### Index Updates
 - master-index.md: <N> added · topic-map.md: <N> updated
 ### Health Check (optional)
-- Missing backlinks / Orphans / Duplicates / Index inconsistency / Category mismatch: <N>
+- Missing backlinks / Orphans / Duplicates / Index inconsistency / Category mismatch / Stale: <N>
 ```
 
 ## Completeness Contract

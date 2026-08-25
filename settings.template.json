@@ -35,6 +35,9 @@
     "  is an equivalent bypass vector but collides with legitimate portability use (e.g. python3 -c date",
     "  math on BSD/GNU divergence), so it stays for the block-dangerous-commands.sh + enforce-harness-",
     "  critical.sh backstops rather than a blanket permission-layer deny.",
+    "NPM PUBLISH: the release rules in core-git-workflow.md are prose only and reach the git surface (merge",
+    "  needs explicit user approval) — Bash(npm publish:*) is the mechanical second layer for the publish step",
+    "  they do not reach; the packages here are private, so an agent has no legitimate use for it.",
     "REDIRECT INEXPRESSIBILITY (T21): 'a redirect INTO a harness path' (echo x > ~/.claude/hooks/y) is",
     "  INEXPRESSIBLE as a Bash(<prefix>:*) deny — the > operator and its path target appear anywhere in the",
     "  command, not as a leading prefix the matcher anchors on. That pattern therefore lives ONLY in",
@@ -101,7 +104,8 @@
       "Bash(bash -c:*)",
       "Bash(sh -c:*)",
       "Bash(zsh -c:*)",
-      "Bash(eval:*)"
+      "Bash(eval:*)",
+      "Bash(npm publish:*)"
     ]
   },
   "live_verify": [
@@ -110,6 +114,8 @@
     "3. EXPECT: the call is DENIED at the permission layer (permission prompt / auto-deny), BEFORE any",
     "   hook fires. A pass = rm cannot execute. Contrast with the pre-fix state, where '!Bash(rm:*)' sat",
     "   inside permissions.allow and rm was NOT permission-denied (only the hook, if present, caught it).",
-    "4. Positive control: Bash: ls /tmp — MUST still be permitted (deny is scoped to rm only)."
+    "4. Positive control: Bash: ls /tmp — MUST still be permitted (deny is scoped to rm only).",
+    "5. Repeat 2-4 for the publish row: request Bash: npm publish --dry-run — EXPECT a permission-layer DENY",
+    "   before any hook fires. Positive control: Bash: npm ls — MUST still be permitted."
   ]
 }

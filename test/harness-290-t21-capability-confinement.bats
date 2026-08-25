@@ -91,6 +91,14 @@ frontmatter_block() {
   [[ "$(printf '%s\n' "${output}" | grep -c .)" -eq 4 ]]
 }
 
+@test "settings deny carries the npm publish row (external-effect verb)" {
+  require_settings_template
+  # Membership only — a total-row-count assertion would go red on the next
+  # legitimate deny addition.
+  run jq -e '.permissions.deny | index("Bash(npm publish:*)")' "${SETTINGS}"
+  [[ "${status}" -eq 0 ]]
+}
+
 @test "redirect-into-harness is INEXPRESSIBLE in settings deny (no harness-path entry)" {
   require_settings_template
   # A '> harness-path' redirect cannot be a command-prefix matcher: the > operator

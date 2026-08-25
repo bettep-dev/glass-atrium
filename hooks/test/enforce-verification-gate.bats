@@ -16,6 +16,10 @@
 #        it only means that a case asserting EMPTY output must declare a [SCOPE] line, exactly as the
 #        [PLAN-SUBSET] nudge made those cases carry a [PLAN-SUBSET] token. "A pass is silent" is the
 #        contract those cases hold — silence for a spawn that is compliant on EVERY surface.
+#     5) deep-review ADVISORY (stderr, exit 0) — a carried [SCOPE] listing >= 10 paths or ANY path
+#        under a sensitive prefix. Also owned by enforce-verification-gate-scope.bats; here it means
+#        an EMPTY-output case must additionally declare a scope UNDER both thresholds, since a
+#        compliant spawn that happens to declare a hooks/ path is legitimately advised.
 #   Non-DEV / plan-bearing / token-bearing spawns exit 0 (zero false-block for the entry-miss branch).
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
 #
@@ -41,9 +45,8 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
-  # Surface 4 is an advisory on the PASS paths (see header), so every prompt whose case asserts an
-  # EMPTY output carries this declaration. Canonical ` · ` grammar — a fixture is read as an example.
-  SCOPE_DECL="[SCOPE] files=hooks/a.sh · deliverable=fix · out=none"
+  # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header.
+  SCOPE_DECL="[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
 }
 
 # The ONE Agent-envelope builder. $1=subagent_type $2=prompt; $3=agent_id and $4=hook_event_name

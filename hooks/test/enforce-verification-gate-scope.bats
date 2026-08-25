@@ -70,3 +70,54 @@ run_gate() {
   [[ "${status}" -eq 2 ]] || { echo "entry block lost, status was ${status}" >&2; return 1; }
   [[ "${output}" == *"VGATE-ENTRY-001"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
 }
+
+# --- surface 5: Deep-review advisory on a carried [SCOPE] declaration -------------------------
+
+DEEP_PHRASE='Deep (4-pass)'
+
+# $1=count. Prints `files=` paths, none of them under a sensitive prefix.
+plain_paths() {
+  local n="${1}" i out=""
+  for ((i = 1; i <= n; i++)); do
+    out="${out}monitor/src/f${i}.ts, "
+  done
+  printf '%s' "${out%, }"
+}
+
+@test "a [SCOPE] under the file-count threshold stays silent about review depth" {
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=$(plain_paths 9) · deliverable=feature · out=none"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
+  [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "nudged below the threshold -- ${output}" >&2; return 1; }
+}
+
+@test "a [SCOPE] at the file-count threshold asks for a Deep review" {
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=$(plain_paths 10) · deliverable=feature · out=none"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
+  [[ "${output}" == *"${DEEP_PHRASE}"* ]] || { echo "no depth advisory -- ${output}" >&2; return 1; }
+}
+
+@test "a single sensitive-prefix path asks for a Deep review" {
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=hooks/x.sh · deliverable=bug-fix · out=none"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
+  [[ "${output}" == *"${DEEP_PHRASE}"* ]] || { echo "no depth advisory -- ${output}" >&2; return 1; }
+  [[ "${output}" == *"hooks/"* ]] || { echo "matched prefix not named -- ${output}" >&2; return 1; }
+}
+
+@test "no [SCOPE] declaration leaves the depth advisory silent" {
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST}"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
+  [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "depth advisory without a declaration -- ${output}" >&2; return 1; }
+}
+
+# --- drift guard: the skill's prose threshold and the hook's constant are one number -----------
+
+@test "the skill's Deep-review file threshold matches the hook constant" {
+  local skill="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+  [[ -f "${skill}" ]] || skip "skill not found: ${skill}"
+  local from_skill from_hook
+  from_skill="$(grep -o 'lists ≥ [0-9][0-9]* paths' "${skill}" | head -1 | sed 's/[^0-9]//g')"
+  from_hook="$(grep -o '^readonly DEEP_REVIEW_FILE_THRESHOLD=[0-9][0-9]*' "${HOOK_SH}" | sed 's/.*=//')"
+  [[ -n "${from_skill}" ]] || { echo "threshold prose not found in ${skill}" >&2; return 1; }
+  [[ -n "${from_hook}" ]] || { echo "DEEP_REVIEW_FILE_THRESHOLD not found in ${HOOK_SH}" >&2; return 1; }
+  [[ "${from_skill}" == "${from_hook}" ]] || { echo "drift: skill=${from_skill} hook=${from_hook}" >&2; return 1; }
+}
