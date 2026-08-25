@@ -86,8 +86,20 @@ epoch_of_ymd() {
   fi
 }
 
+# GNU `stat -f` is --file-system, not a format string: it prints a filesystem block on stdout AND
+# exits non-zero, so a `||` chain would prepend that block to the mtime. Probe the flavour instead.
+if stat -f '%m' . >/dev/null 2>&1; then
+  readonly STAT_FLAVOUR='bsd'
+else
+  readonly STAT_FLAVOUR='gnu'
+fi
+
 epoch_of_mtime() {
-  stat -f '%m' "${1}" 2>/dev/null || stat -c '%Y' "${1}" 2>/dev/null || true # GA-ABSORB[benign]: BSD stat rejects the GNU flag and vice versa, so the first failure IS the portability branch
+  if [[ "${STAT_FLAVOUR}" == 'bsd' ]]; then
+    stat -f '%m' "${1}" 2>/dev/null || true # GA-ABSORB[handled@epoch_of_mtime caller]: an unstattable note yields empty output and routes to the unknown-age bucket
+  else
+    stat -c '%Y' "${1}" 2>/dev/null || true # GA-ABSORB[handled@epoch_of_mtime caller]: same empty-output routing on the GNU branch
+  fi
 }
 
 # Bucket rows are `epoch SEP label SEP age SEP basename`, sorted oldest-first at report time.
