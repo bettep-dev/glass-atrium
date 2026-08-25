@@ -1529,7 +1529,7 @@
     "test/ga-db-sql-binding.bats": "b23b12bf6cb8c7232e8bf976e008c7a58fa6011d7c69837c8905b0d01a7fef50",
     "test/ga-split-extract.sh": "50be2baed6643826f9b6d7bf65cc0049a951deebb6c4999505eb7e313de44994",
     "test/ga-split-verify.sh": "a992932e8c2ec767a42cc59ff5e711da917e1b498ed841a978d34ccadea98c18",
-    "test/harness-290-t21-capability-confinement.bats": "6b17a9416aa701ee1af0e79820cdf0f41831196366c400d6e2ae06b3d29a7bd1",
+    "test/harness-290-t21-capability-confinement.bats": "49e496aeb039461375f18405adab85f764d28dd408eae5d82edac60df850b10f",
     "test/headless-auth-selftest-cred-isolation.bats": "30d865c1f7bb984a5ea7d08a02215c01532afe2998593f51d7649cbcb9565b89",
     "test/headless-auth-selftest-quota.bats": "402d5a8e15607dc3375ae3fe302ad3b9241e9a92a487eaebef815917084dad7c",
     "test/headless-auth-selftest-timeout.bats": "daf63b3354cf723fda539712be95c6e287d0a406b301610050b398ccb32d7547",
