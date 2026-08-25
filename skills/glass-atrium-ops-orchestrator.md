@@ -210,6 +210,8 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
 
 **Confidence-based routing**: confidence=low → automatic glass-atrium-qa-code-reviewer deployment · confidence=medium + security code → glass-atrium-qa-code-reviewer deployment · TDD absolute rules always apply regardless of confidence
 
+**Orchestrator-forced Deep-review override (deterministic, independent of writer confidence — threshold + prefix list live ONCE here, the SoT)**: When a delegation's `[SCOPE] files=` lists ≥ 10 paths, or any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/` — the orchestrator shall compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review regardless of the writer's self-reported confidence. Applies to EVERY such delegation, not only the first in a cycle. No doc-only skip tier exists: a rule-file change is reviewed, never exempted. Other prose files carry a pointer to this clause, never a copy of the threshold; the `hooks/enforce-verification-gate.sh` advisory leg holds the same value as a named constant (code, not prose) and reports counts + matched prefix only. Honest backing: the routing decision is orchestrator honor-system and the hook leg is advisory-only + presence-only (stderr, exit 0, silent without a `[SCOPE]` line) — describing this override as "enforced" is FORBIDDEN.
+
 **Error recovery**: 3 failures → halt + report to user `[default, adjustable]` (infinite retry forbidden) · checkpoint-based resumption
 
 **Team termination**: Complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → reflect in MEMORY.md → **instruction upgrade review**
