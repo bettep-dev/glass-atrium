@@ -10,7 +10,7 @@
 #      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`;
 #      the npm publish row sits in permissions.ask (user-approval gate).
 #   3. The redirect-into-harness pattern is INEXPRESSIBLE as a command-prefix
-#      matcher (so it is absent from the settings deny) and is instead specified
+#      matcher (so it is absent from the settings deny/ask) and is instead specified
 #      in enforce-harness-critical.sh's redirect regex (asserted by a direct
 #      hook invocation that blocks such a redirect).
 #
@@ -95,21 +95,19 @@ frontmatter_block() {
 @test "settings ask carries the npm publish row; deny no longer does (external-effect verb → user-approval gate)" {
   require_settings_template
   # Membership only — a total-row-count assertion would go red on the next
-  # legitimate deny addition.
+  # legitimate row addition.
   run jq -e '.permissions.ask | index("Bash(npm publish:*)")' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
-  # deny-negative LAST: a row left in both arrays would be deny-shadowed, and
-  # bats takes the final command as the verdict.
+  # deny-negative LAST: a row left in both arrays would be deny-shadowed.
   run jq -e '.permissions.deny | index("Bash(npm publish:*)") == null' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
 }
 
-@test "redirect-into-harness is INEXPRESSIBLE in settings deny (no harness-path entry)" {
+@test "redirect-into-harness is INEXPRESSIBLE in settings deny/ask (no harness-path entry)" {
   require_settings_template
   # A '> harness-path' redirect cannot be a command-prefix matcher: the > operator
   # and its target appear anywhere in the command, not at the leading-token anchor.
-  # Proof: no deny row references a harness path — such a matcher would be inert.
-  run jq -r '(.permissions.deny + (.permissions.ask // []))[] | select(test("\\.claude|\\.glass-atrium"))' "${SETTINGS}"
+  run jq -r '(.permissions.deny + .permissions.ask)[] | select(test("\\.claude|\\.glass-atrium"))' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
   [[ -z "${output}" ]]
 }
