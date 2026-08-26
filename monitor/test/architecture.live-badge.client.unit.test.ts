@@ -27,8 +27,11 @@ const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
 interface DaemonLiveStatus {
   daemon_name: string;
   status: string;
+  // 서버가 임계를 적용해 낸 판정 — /api/architecture/live 와 /api/health/daemons 가 같은 이름으로 냄.
+  effective_status?: string;
   node_ids: string[];
   last_run_at?: string | null;
+  // 화면이 읽지 않는 원자료. 두 값이 있어도 tone 이 움직이지 않는다는 것이 아래 단언 대상임.
   expected_cadence_minutes?: number;
   staleness_minutes?: number;
 }
@@ -132,6 +135,8 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
 
 const { helpers: arch, code: archCode } = await loadArch();
 
+// 기본값은 서버가 임계 미만에서 내는 모양 — 판정이 마지막 상태와 같음.
+// 초과 구간은 `effective_status` 를 명시해 덮어씀.
 const daemon = (
   name: string,
   status: string,
@@ -139,6 +144,7 @@ const daemon = (
 ): DaemonLiveStatus => ({
   daemon_name: name,
   status,
+  effective_status: status,
   node_ids: ["cron"],
   last_run_at: null,
   ...extra,
@@ -208,6 +214,36 @@ test("AC-15(a) 빈/누락 입력은 빈 행 목록 (throw 없음)", () => {
   assert.strictEqual(arch.getLiveDaemonRows([]).length, 0);
   assert.strictEqual(arch.getLiveDaemonRows(null).length, 0);
   assert.strictEqual(arch.getLiveDaemonRows(undefined).length, 0);
+});
+
+// --- AC-T2: 판정은 서버 필드에서만 옴 (화면 재계산 삭제) ---
+
+test("AC-T2 초과 판정은 서버 필드에서 tone·라벨로 그대로 나옴", () => {
+  const [row] = arch.getLiveDaemonRows([
+    daemon("autoagent", "ok", { effective_status: "stale" }),
+  ]);
+  assert.strictEqual(row.tone, "crit");
+  assert.strictEqual(row.statusLabel, "Overdue");
+});
+
+test("AC-T2 cadence 를 넘긴 staleness 가 있어도 화면은 판정을 올리지 않음", () => {
+  // 삭제된 재계산이 되살아나면 tone 이 warn 으로 밀리고 이 단언이 붉어짐.
+  const [row] = arch.getLiveDaemonRows([
+    daemon("autoagent", "ok", {
+      expected_cadence_minutes: 1440,
+      staleness_minutes: 2160,
+    }),
+  ]);
+  assert.strictEqual(row.tone, "ok");
+  assert.strictEqual(row.statusLabel, "Healthy");
+});
+
+test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으로 남김", () => {
+  const [row] = arch.getLiveDaemonRows([
+    { daemon_name: "autoagent", status: "ok", node_ids: [] },
+  ]);
+  assert.strictEqual(row.tone, "info");
+  assert.strictEqual(row.statusLabel, "—");
 });
 
 // --- AC-13: 순수 스케일 산식 — 하향 클램프가 되살아나면 붉어짐 ---

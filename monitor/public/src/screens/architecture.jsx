@@ -914,7 +914,8 @@ function DetailModal({
 }
 
 function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
-	const { Pill, formatRelativeTime, daemonStatusLabel } = window.UI;
+	const { Pill, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
+		window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
 	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
 
@@ -928,8 +929,10 @@ function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
 				{info.type && <Pill>{NODE_TYPE_LABEL[info.type] || info.type}</Pill>}
 				{info.layer_label && <Pill>Layer: {info.layer_label}</Pill>}
 				{daemons.map((daemon) => (
-					<Pill key={daemon.daemon_name} tone={daemonEffectiveTone(daemon)}>
-						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
+					<Pill
+						key={daemon.daemon_name}
+						tone={daemonStatusTone(daemon.effective_status)}>
+						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.effective_status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
 					</Pill>
 				))}
 			</div>
@@ -1332,28 +1335,6 @@ function clearCanvasSizingAR(root) {
 	canvas.style.flex = "";
 }
 
-// 데몬 표시 tone — 공유 SoT(window.UI.daemonStatusTone, A2) + 서버 선언 cadence 초과 시 ok→warn 격상 (F35).
-function daemonEffectiveTone(d) {
-	const base = window.UI.daemonStatusTone(d?.status);
-	const cadence = Number(d?.expected_cadence_minutes);
-	const staleness = Number(d?.staleness_minutes);
-	if (
-		base === "ok" &&
-		Number.isFinite(cadence) &&
-		Number.isFinite(staleness) &&
-		staleness > cadence
-	) {
-		return "warn";
-	}
-	return base;
-}
-
-// 칩 상태 라벨 — status enum 라벨이 기본 · ok-이지만-stale 격상분은 'Overdue' 로 모순 라벨 차단.
-function daemonChipLabelAR(daemon, tone) {
-	if (daemon?.status === "ok" && tone === "warn") return "Overdue";
-	return window.UI.daemonStatusLabel(daemon?.status);
-}
-
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
 //   한 노드에 복수 daemon 바인딩 시(cron) last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
 function buildLiveDaemonsByNodeId(daemons) {
@@ -1371,11 +1352,12 @@ function buildLiveDaemonsByNodeId(daemons) {
 // 라이브 상태 표의 행 목록 — daemon 1개 = 1행. 표현 계층과 무관한 순수 파생.
 function getLiveDaemonRows(daemons) {
 	return (daemons || []).map((d) => {
-		const tone = daemonEffectiveTone(d);
+		// 서버가 임계를 적용해 낸 판정만 읽음 — 화면이 다시 재면 같은 입력에 답이 둘이 됨.
+		const verdict = d?.effective_status;
 		return {
 			name: d?.daemon_name || "—",
-			tone,
-			statusLabel: daemonChipLabelAR(d, tone),
+			tone: window.UI.daemonStatusTone(verdict),
+			statusLabel: window.UI.daemonStatusLabel(verdict),
 			nodeIds: Array.isArray(d?.node_ids) ? d.node_ids : [],
 			lastRunAt: d?.last_run_at || null,
 		};
