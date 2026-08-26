@@ -5,6 +5,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
 import {
@@ -115,8 +116,6 @@ test("canonical drawn is inside its whole budget", () => {
   const report = getBudgetReport(drawn, ASSIGNED_GRADE);
   assert.notEqual(report.state, "fail", JSON.stringify(report.violations));
 });
-
-import { readFileSync } from "node:fs";
 
 test("AC-4 (adversarial) 체인 줄은 화살표 토큰마다 1엣지 — 체이닝으로 엣지 상한을 우회할 수 없음", () => {
   assert.equal(getMermaidCensus('flowchart LR\n    a["A"] --> b["B"] --> c["C"]').edgeCount, 2);

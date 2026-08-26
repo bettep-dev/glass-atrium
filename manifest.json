@@ -1402,7 +1402,7 @@
     "scripts/test/glass-atrium-update-idempotency.bats": "d5a8c672635ea2df03d144355201de15be489b8acb0bcc5098002a141607e495",
     "scripts/test/glass-atrium-update.bats": "5be116b700dcdea746f136e055fd857022567f101899f47fb52649ca76685ae5",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
-    "scripts/test/manifest-check-clean.bats": "71f3de82062eaf09327c8b8731b3abba4dbc406e1332bf0c206336da7bdb3cf2",
+    "scripts/test/manifest-check-clean.bats": "15630a8364909ca2b0ab0b33e5414434d5e28fc0eb8c544ac2b39682b76eb366",
     "scripts/test/manifest-drift-exclusion.bats": "1d990ae848192488e16fa879d1e67caea1340efec255ec98b308d9406f261e08",
     "scripts/test/manifest-mode-integrity.bats": "050cb6fd235d10d93fe6393136c1d9c69a0f6eb8697d69f602d10585846669e6",
     "scripts/test/migrate-claude-to-ga-data.bats": "71d7ad10246670c9f81877345789643fff13e83a57c2d1702d263fe8b4c1a87c",

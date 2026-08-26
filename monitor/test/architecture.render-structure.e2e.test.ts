@@ -40,6 +40,9 @@ const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
 // 링이 켜졌던 tone 클래스 — 표현이 제거됐으므로 화면에 공유 상수가 없음.
 // 이 목록은 "되살아나면 붉어진다" 는 회귀 자물쇠이며 하네스가 소유함.
+// 한계: 목록은 SoT 결합이 없는 하네스 리터럴이라 이름이 바뀐 링은 잡지 못함.
+// 그래서 아래 AC-15(b) 는 접두사 패턴 다리를 함께 검사함 — 그 다리도 `arch-node-live-`
+// 접두사 유지에 의존하므로, 접두사까지 바꾼 복원은 두 다리 모두 통과함(잔여 한계).
 const LIVE_TONE_CLASSES = [
 	"arch-node-live-ok",
 	"arch-node-live-warn",
@@ -208,4 +211,13 @@ test("AC-15(b) rendered SVG carries no live ring tone class", async () => {
 		{ canvas: selectors.canvas, tones: LIVE_TONE_CLASSES },
 	);
 	assert.equal(toneCount, 0, `live tone classes present: ${LIVE_TONE_CLASSES.join(", ")}`);
+
+	// 이름이 바뀐 링까지 잡는 두 번째 다리 — 리터럴 목록이 아니라 접두사 패턴.
+	// SVG 요소의 className 은 SVGAnimatedString 이므로 class 속성을 직접 읽음.
+	const patternCount = await page.evaluate((canvas) => {
+		const els = Array.from(document.querySelectorAll(`${canvas} svg *`));
+		return els.filter((el) => /arch-node-live-/.test(el.getAttribute("class") || ""))
+			.length;
+	}, selectors.canvas);
+	assert.equal(patternCount, 0, "arch-node-live-* class pattern present on a rendered node");
 });

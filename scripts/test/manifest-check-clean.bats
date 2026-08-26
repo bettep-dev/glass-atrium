@@ -11,9 +11,17 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 
+# 전제 미충족을 skip 으로 흡수하지 않고 붉게 실패시킴 — 두 파일 모두 manifest 추적
+# 대상이므로 부재는 깨진 트리이며, skip 은 AC-17 단언을 조용히 무력화함.
 setup() {
-  [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
-  [[ -f "${REAL_SPINE}" ]] || skip "apply-spine.sh not found: ${REAL_SPINE}"
+  if [[ ! -f "${REAL_SCRIPT}" ]]; then
+    echo "broken tree: generate-manifest.sh missing at ${REAL_SCRIPT}" >&2
+    return 1
+  fi
+  if [[ ! -f "${REAL_SPINE}" ]]; then
+    echo "broken tree: apply-spine.sh missing at ${REAL_SPINE}" >&2
+    return 1
+  fi
 }
 
 teardown() {
@@ -32,7 +40,7 @@ make_sandbox() {
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
   git -C "${WORK}" config user.name bats
-  git -C "${WORK}" add -A
+  git -C "${WORK}" add scripts agents manifest.json
   git -C "${WORK}" commit -qm init
   "${WORK}/scripts/generate-manifest.sh" >/dev/null
 }
