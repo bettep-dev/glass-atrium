@@ -115,12 +115,18 @@ interface NodeMeasurement {
   scrollWidth: number;
   clientWidth: number;
   boxWidth: number;
+  boxLeft: number;
+  // 스크롤 컨테이너의 padding-box 왼쪽 모서리 = 스크롤 원점. scrollLeft 는 음수가 될 수
+  // 없으므로 이 지점보다 왼쪽에 놓인 내용은 어떤 스크롤로도 닿지 않음.
+  originLeft: number;
 }
 
 /** 라벨과 뷰포트는 다리마다 다름 — 기본값은 AC-T22 의 채택 타입 전수 × 좁은 뷰포트. */
 interface MeasureOptions {
   labels?: readonly string[];
   viewportWidth?: number;
+  /** 스크롤 원점을 소유한 요소. 미지정이면 문서 자신의 원점(0). */
+  originSelector?: string;
 }
 
 let browser: Browser;
@@ -185,6 +191,31 @@ function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
   );
 }
 
+/**
+ * 전체화면 뷰어의 실제 계층 — 본문 wrap 이 .doc-fs-split 의 1번 컬럼이고 그 옆에 메타
+ * 레일이 있음. 그래서 본문 컬럼은 뷰포트가 아니라 (뷰포트 − 레일) 안에서 중앙에 놓임.
+ * buildViewerHarness 는 레일이 없어 두 중심이 우연히 겹치므로, 뷰포트 기준 breakout 의
+ * 이탈이 그 하네스에서는 보이지 않음.
+ *
+ * body margin 0 은 앱 셸(Tailwind preflight)과 같은 전제 — 100vw 컨테이너가 8px 밀려
+ * 가로 스크롤바를 만드는 하네스 고유 잡음을 없앰.
+ */
+function buildFullscreenHarness(css: string, nodes: string): string {
+  return (
+    "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">" +
+    "<style>body{margin:0}</style>" +
+    `<style>${css}</style>` +
+    "</head><body>" +
+    '<div class="detail-fullscreen"><div class="doc-fs-container"><div class="doc-fs-body">' +
+    '<div class="doc-fs-split">' +
+    '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+    nodes +
+    "</div></div></div>" +
+    '<aside class="doc-fs-meta-side"></aside>' +
+    "</div></div></div></div></body></html>"
+  );
+}
+
 /** 페이지 안의 pre.mermaid 를 ViewerBodyCD 와 같은 방식으로 렌더한 뒤 계측. */
 async function measureRenderedNodes(
   html: string,
@@ -193,6 +224,7 @@ async function measureRenderedNodes(
   options: MeasureOptions = {},
 ): Promise<NodeMeasurement[]> {
   const labels = options.labels ?? FIXTURE_TYPES;
+  const originSelector = options.originSelector ?? null;
 
   const context = await browser.newContext({
     viewport: { width: options.viewportWidth ?? NARROW_VIEWPORT_WIDTH, height: 900 },
@@ -229,33 +261,46 @@ async function measureRenderedNodes(
       assert.equal(renderError, null, `뷰어 하네스 렌더 실패: ${renderError}`);
     }
 
-    return await page.evaluate((types) => {
+    return await page.evaluate((args) => {
       // 콜백은 chromium 에서 돎 — tsconfig lib 이 ES2022(DOM 없음)라 브라우저 타입은 국소 선언으로 받음.
       type DiagramNode = {
         querySelector: (sel: string) => { getAttribute: (name: string) => string | null } | null;
-        getBoundingClientRect: () => { width: number };
+        getBoundingClientRect: () => { width: number; left: number };
         scrollWidth: number;
         clientWidth: number;
       };
       const g = globalThis as unknown as {
-        document: { querySelectorAll: (sel: string) => ArrayLike<DiagramNode> };
-        getComputedStyle: (el: DiagramNode) => { overflowX: string };
+        document: {
+          querySelectorAll: (sel: string) => ArrayLike<DiagramNode>;
+          querySelector: (sel: string) => DiagramNode | null;
+        };
+        getComputedStyle: (el: DiagramNode) => { overflowX: string; borderLeftWidth: string };
       };
+
+      const originEl =
+        args.originSelector === null ? null : g.document.querySelector(args.originSelector);
+      const originLeft =
+        originEl === null
+          ? 0
+          : originEl.getBoundingClientRect().left +
+            (Number.parseFloat(g.getComputedStyle(originEl).borderLeftWidth) || 0);
 
       const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
       return nodes.map((node, i) => {
         const svg = node.querySelector("svg");
         return {
-          type: types[i] ?? `node-${i}`,
+          type: args.types[i] ?? `node-${i}`,
           svgPresent: svg !== null,
           svgStyleAttr: svg?.getAttribute("style") ?? "",
           overflowX: g.getComputedStyle(node).overflowX,
           scrollWidth: node.scrollWidth,
           clientWidth: node.clientWidth,
           boxWidth: node.getBoundingClientRect().width,
+          boxLeft: node.getBoundingClientRect().left,
+          originLeft,
         };
       });
-    }, labels);
+    }, { types: labels as readonly string[], originSelector });
   } finally {
     await page.close();
     await context.close();
@@ -373,6 +418,11 @@ const PRESET_VIEWPORT_WIDTH = 1800;
 // 뷰어 .doc-fs-body-inner 와 같은 컬럼 규칙 — 내보내기 픽스처가 이것을 그대로 씀.
 const DOC_COLUMN_CSS = "width:min(90%,1280px);margin-inline:auto";
 
+// 뷰어 .doc-fs-body-wrap 과 같은 기준 상자 — 내보내기에는 메타 레일이 없어 body 가 그 자리를
+// 맡음(html-export.ts 가 body 를 질의 컨테이너로 선언). 프리셋 폭이 기준 상자에서 나오므로,
+// 두 경로의 기준 상자 내용 폭이 같을 때에만 같은 프리셋이 같은 px 로 떨어짐.
+const DOC_CONTAINER_CSS = "padding:24px clamp(32px,4vw,72px) 32px";
+
 // 나열 순서가 곧 폭의 오름차순임(본문폭 < 넓게 < 전폭).
 const SIZE_PRESETS = ["doc-diagram-body", "doc-diagram-wide", "doc-diagram-full"] as const;
 
@@ -409,7 +459,7 @@ function measureExportPresets(): Promise<NodeMeasurement[]> {
   ).join("");
   const body =
     '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>diagram size presets</title>' +
-    `<style>.doc-column{${DOC_COLUMN_CSS}}</style></head>` +
+    `<style>body{${DOC_CONTAINER_CSS}}.doc-column{${DOC_COLUMN_CSS}}</style></head>` +
     `<body><main class="doc-column">${nodes}</main></body></html>`;
 
   exportPresetCache = renderSelfContainedHtml(body, "html").then((html) =>
@@ -466,4 +516,44 @@ test("AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 
       `${preset}: 내보내기 폭(${exported.get(preset)}px) 이 뷰어 폭(${viewer.get(preset)}px) 과 다름`,
     );
   }
+});
+
+// 전체화면 배치에서의 breakout 이탈 — 폭 사다리만 재면 놓치는 다리.
+// 프리셋이 본문 컬럼 밖으로 나가는 것 자체는 의도이나, 스크롤 컨테이너의 원점보다
+// 왼쪽으로 나간 부분은 어떤 스크롤로도 닿지 않아 그대로 소실됨.
+let fullscreenPresetCache: Promise<NodeMeasurement[]> | null = null;
+
+function measureFullscreenPresets(): Promise<NodeMeasurement[]> {
+  if (fullscreenPresetCache !== null) return fullscreenPresetCache;
+
+  fullscreenPresetCache = measureRenderedNodes(
+    buildFullscreenHarness(getViewerDocBodyCss(), PRESET_NODES),
+    getViewerMermaidConfig(),
+    SIZE_PRESETS.map(() => PRESET_SOURCE),
+    {
+      labels: SIZE_PRESETS,
+      viewportWidth: PRESET_VIEWPORT_WIDTH,
+      originSelector: ".doc-fs-body-wrap",
+    },
+  );
+  return fullscreenPresetCache;
+}
+
+test("AC-T23 뷰어 전체화면: 프리셋이 스크롤 원점 왼쪽으로 새지 않음", async () => {
+  const measurements = await measureFullscreenPresets();
+
+  assert.equal(measurements.length, SIZE_PRESETS.length);
+  for (const m of measurements) {
+    assert.ok(m.svgPresent, `${m.type}: <svg> 가 렌더되지 않음`);
+    assert.ok(
+      m.boxLeft >= m.originLeft - 0.5,
+      `${m.type}: 왼쪽 모서리 ${m.boxLeft}px 가 스크롤 원점 ${m.originLeft}px 보다 왼쪽 — ` +
+        "스크롤로 닿을 수 없는 영역이라 그만큼 잘려 사라짐",
+    );
+  }
+});
+
+test("AC-T23 뷰어 전체화면: 세 프리셋의 렌더 폭이 서로 구분됨", async () => {
+  // 위 단언만 두면 세 프리셋을 전부 본문폭으로 눌러도 초록임 — 사다리를 같은 배치에서 함께 요구함.
+  assertPresetLadder(getPresetWidths(await measureFullscreenPresets()), "뷰어 전체화면");
 });
