@@ -1,0 +1,31 @@
+# Reader census for config.toml.example — one row per template key.
+#
+# Fields (pipe-separated; `|` cannot occur in a section literal, a key, a path or
+# an anchor, and unlike TAB it keeps an empty field on read-back):
+#   section | key | reader file | anchor literal | exemption backlog id
+#
+# A row carries EITHER a reader (+ the anchor literal that proves the read site,
+# a semantically stable token rather than a line number) OR an exemption backlog
+# id naming the item that will wire the key. A row with neither is the dead-key
+# state the template's own header forbids, and the suite rejects it.
+[daemon.autoagent-cycle]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
+[daemon.autoagent-daemon]|mode|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "mode"|
+[daemon.daemon-daily-restart]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
+[daemon.monitor-log-rotate]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
+[daemon.monitor]|mode|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "mode"|
+[daemon.pg-backup]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
+[daemon.wiki-compile]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
+[daemon.wiki-daemon]|mode|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "mode"|
+[meta]|timezone|scripts/render-launchd-plists.sh|require_toml_value "[meta]" "timezone"|
+[paths]|backup_dir|||G-05
+[paths]|claude_bin|scripts/render-launchd-plists.sh|extract_toml_value "[paths]" "claude_bin"|
+[paths]|log_root|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "log_root"|
+[paths]|monitor|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "monitor"|
+[paths]|monitor_docs_html_root|scripts/render-monitor-env.sh|[paths].monitor_docs_html_root|
+[paths]|node_bin|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "node_bin"|
+[paths]|root|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "root"|
+[paths]|target_home|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "target_home"|
+[ports]|autoagent_fakechat|lib/ga-daemons.sh|autoagent_fakechat|
+[ports]|monitor|scripts/lib/atrium-config.sh|atrium_config_port '[ports]' 'monitor'|
+[ports]|wiki_fakechat|lib/ga-daemons.sh|wiki_fakechat|
+[release]|repo|scripts/publish-release.sh|[release].repo|

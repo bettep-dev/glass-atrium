@@ -34,6 +34,55 @@ atrium_toml_get() {
   ' "${config_file}"
 }
 
+# Key enumeration: emits one sorted `<section literal><TAB><key>` pair per line
+# for the TOML file in $1 (default: the resolved config.toml). The section stays
+# a bracket literal because both consumer parsers take it verbatim as their
+# first arg — a dot-flattened string cannot be turned back into that pair.
+# Comment lines are dropped whole: the template documents `time = "HH:MM"` in
+# prose, and a `/=/` scan would emit that as a key of whatever section is open.
+atrium_toml_keys() {
+  local config_file="${1:-$(atrium_config_file)}"
+  [[ -f "${config_file}" ]] || return 0
+  # shellcheck disable=SC2312  # awk's status is irrelevant: no match is an empty key set, not an error
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*\[/ { cur = $0; gsub(/[[:space:]]/, "", cur); next }
+    cur == "" { next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=/ {
+      key = $0
+      sub(/^[[:space:]]*/, "", key)
+      sub(/[[:space:]]*=.*$/, "", key)
+      printf "%s\t%s\n", cur, key
+    }
+  ' "${config_file}" | LC_ALL=C sort -u
+}
+
+# Optional-key enumeration: same record format as atrium_toml_keys, restricted to the
+# keys a bare `# ga:optional` line directly above them declares legitimately absent
+# from a rendered config.toml. Kept beside the enumerator so a drift consumer never
+# grows a second parser of the marker convention.
+atrium_toml_optional_keys() {
+  local config_file="${1:-$(atrium_config_file)}"
+  [[ -f "${config_file}" ]] || return 0
+  # shellcheck disable=SC2312  # same as above: an unmarked template is an empty set, not a failure
+  awk '
+    /^[[:space:]]*\[/ { cur = $0; gsub(/[[:space:]]/, "", cur); mark = 0; next }
+    /^[[:space:]]*#[[:space:]]*ga:optional[[:space:]]*$/ { mark = 1; next }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=/ {
+      if (mark && cur != "") {
+        key = $0
+        sub(/^[[:space:]]*/, "", key)
+        sub(/[[:space:]]*=.*$/, "", key)
+        printf "%s\t%s\n", cur, key
+      }
+      mark = 0
+      next
+    }
+    { mark = 0 }
+  ' "${config_file}" | LC_ALL=C sort -u
+}
+
 # Defaulted read: configured value when present, else $3 verbatim.
 atrium_config_get() {
   local section="$1" key="$2" default="$3" val

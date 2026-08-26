@@ -982,6 +982,44 @@ run_doctor() {
     fi
   fi
 
+  # 22. config.toml key drift vs the shipped template. Registration kind B (report-only): its log
+  #     lines only — no counter, no term in the warning total, exit code unchanged. render_config
+  #     returns early once no unexpanded ${HOME} token remains, so a key added to or removed from
+  #     the template never reaches an existing install and nothing compares the two key sets.
+  #     Direction is template -> live ONLY: a live-only key is the user's own, and reporting it
+  #     would red every healthy install. KEY NAMES ONLY — resolve_config_binaries rewrites
+  #     node_bin/claude_bin per host, so a value compare would red every healthy install too.
+  #     A key carrying the template's `# ga:optional` marker is legitimately absent (stock default
+  #     or unconfigured) and is skipped. Both files are READ; config.toml stays user-owned.
+  local cfgkey_template="${GA_ROOT}/config.toml.example"
+  if [[ ! -f "${cfgkey_template}" ]]; then
+    log "  note : config key drift skipped — no template at ${cfgkey_template}"
+  elif [[ ! -f "${CONFIG_TOML}" ]]; then
+    # Announced rather than silent: a skipped comparison nobody hears is the drift channel again.
+    log "  note : no rendered config.toml (${CONFIG_TOML}) — config key drift not compared"
+  else
+    local cfgkey_pair cfgkey_live cfgkey_optional cfgkey_missing="" cfgkey_count=0
+    # Newline-fenced haystacks, so one pair can never match another's suffix.
+    # shellcheck disable=SC2311,SC2312
+    cfgkey_live=$'\n'"$(atrium_toml_keys "${CONFIG_TOML}")"$'\n'
+    # shellcheck disable=SC2311,SC2312
+    cfgkey_optional=$'\n'"$(atrium_toml_optional_keys "${cfgkey_template}")"$'\n'
+    # shellcheck disable=SC2312  # enumerator status is masked by design: an unreadable template is the branch above
+    while IFS= read -r cfgkey_pair; do
+      [[ -n "${cfgkey_pair}" ]] || continue
+      [[ "${cfgkey_live}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
+      [[ "${cfgkey_optional}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
+      cfgkey_missing="${cfgkey_missing}${cfgkey_missing:+, }${cfgkey_pair%%$'\t'*}.${cfgkey_pair##*$'\t'}"
+      cfgkey_count=$((cfgkey_count + 1))
+    done < <(atrium_toml_keys "${cfgkey_template}")
+    if [[ "${cfgkey_count}" -gt 0 ]]; then
+      log "  note : config key drift — ${cfgkey_count} template key(s) absent from ${CONFIG_TOML} (report-only; re-render or add them by hand)"
+      log "         missing: ${cfgkey_missing}"
+    else
+      log "  ok   : config.toml carries every template key not marked '# ga:optional'"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
