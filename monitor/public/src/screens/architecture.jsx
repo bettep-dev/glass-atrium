@@ -11,11 +11,10 @@ const {
 
 // Constants
 
-// 가독 fit floor — 초기 줌의 선호 하한 (작은 그래프를 너무 작게 굳히지 않음) · widthFit 보다 클 땐 widthFit 으로 상한 클램프되어 우측 클리핑 0.
+// 가독 하한 — 그래프 크기와 무관한 고정 상수. 폭-fit 이 더 작아도 이 아래로 내려가지 않음.
 const LEGIBLE_FIT_FLOOR = 0.6;
 
-// svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 함. 넓은 LR 그래프의 전폭 fit 비율이 floor 미만일 때
-//   라이브러리가 zoom() 호출을 minZoom 으로 되끌어올려 우측이 다시 잘리는 것을 차단 (전폭 fit 우선, 과도한 사용자 줌아웃만 방지).
+// svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
 const ROLE_LABEL = {
@@ -80,57 +79,14 @@ const EDGE_TYPE_LABEL = {
 	triggers: "Triggers",
 };
 
-// tone → SVG node 라이브 ring 클래스. daemonEffectiveTone 결과를 그대로 키로 사용 (neutral/info = ring 없음).
-const LIVE_TONE_CLASS = {
-	ok: "arch-node-live-ok",
-	warn: "arch-node-live-warn",
-	crit: "arch-node-live-crit",
+// 화면에 그려지는 단일 canonical 맵 — 서버 CANONICAL_MAP.slug 와 같은 값.
+const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
+
+// 캔버스·탭 컨트롤 셀렉터 SoT — 구조 하네스가 window.ARCH_SELECTORS 로 같은 문자열을 읽음.
+const ARCH_SELECTORS = {
+	canvas: ".arch-mermaid-canvas",
+	tabControl: '[role="tab"], .arch-tab-btn',
 };
-
-// ring tone severity 순위 — 복수 daemon fold 시 최악값 선택용. neutral/info = ring 없음(0).
-const LIVE_TONE_RANK = { crit: 3, warn: 2, ok: 1 };
-
-// 탭 정의 (백엔드 diagram id 와 매칭) — order = 사용자 멘탈 모델 순서.
-const TAB_ORDER = [
-	"v2-overview-entry",
-	"v2-overview-data",
-	"v2-hooks",
-	"v2-loops-learn",
-	"v2-loops-autoagent",
-	"v2-team-orchestration",
-	"v2-team-docs",
-];
-const TAB_LABEL_FALLBACK = {
-	"v2-overview-entry": "Entry & coordination",
-	"v2-overview-data": "Data, docs & learning",
-	"v2-hooks": "Hook pipeline",
-	"v2-loops-learn": "Learning loop",
-	"v2-loops-autoagent": "Self-improvement loop",
-	"v2-team-orchestration": "Team coordination",
-	"v2-team-docs": "Team & doc storage",
-};
-
-// 다이어그램별 1줄 목적 — 탭 tooltip + 활성 탭 하단 목적 라인. API description 부재 시 fallback.
-const TAB_PURPOSE = {
-	"v2-overview-entry": "How external input wakes the orchestrator and reaches the agent team.",
-	"v2-overview-data": "Where hook signals land and how data, docs and learning are stored.",
-	"v2-hooks": "The serial PreTool gate family that guards every tool call.",
-	"v2-loops-learn": "Four stages that accumulate task outcomes into reusable patterns.",
-	"v2-loops-autoagent": "How accumulated patterns promote into applied self-improvements.",
-	"v2-team-orchestration": "The orchestrator's 4-phase workflow and verification gates.",
-	"v2-team-docs": "Document authoring, completion and storage after coordination.",
-};
-
-// 활성 다이어그램의 1줄 목적 — API description 첫 문장 우선, 부재 시 정적 맵.
-function diagramPurposeAR(diagram) {
-	if (!diagram) return "";
-	const desc = typeof diagram.description === "string" ? diagram.description.trim() : "";
-	if (desc) {
-		const firstSentence = desc.split(/(?<=[.。])\s/)[0];
-		return truncateText(firstSentence || desc, 140);
-	}
-	return TAB_PURPOSE[diagram.id] || "";
-}
 
 // Top-level Screen
 
@@ -151,9 +107,6 @@ function ScreenArchitecture(
 	});
 
 	const [refreshTick, setRefreshTick] = useStateAR(0);
-
-	// 활성 탭 (diagram.id) — 첫 fetch 후 첫 다이어그램으로 자동 설정.
-	const [activeId, setActiveId] = useStateAR(null);
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
@@ -200,33 +153,11 @@ function ScreenArchitecture(
 
 	// ── derived data ──────────────────────────────────────────────────────────
 
-	const diagrams = useMemoAR(() => {
-		const all =
-			diagState.status === "ready" ? diagState.data?.diagrams || [] : [];
-		// TAB_ORDER 우선 정렬, 그 외는 끝에 부착
-		const indexed = new Map(all.map((d) => [d.id, d]));
-		const ordered = [];
-		for (const id of TAB_ORDER) {
-			if (indexed.has(id)) {
-				ordered.push(indexed.get(id));
-				indexed.delete(id);
-			}
-		}
-		for (const d of indexed.values()) ordered.push(d);
-		return ordered;
+	// 화면은 canonical 맵 한 장만 그림 — 나머지 여섯은 미렌더 source 레코드로 서버에 남음.
+	const activeDiagram = useMemoAR(() => {
+		const all = diagState.status === "ready" ? diagState.data?.diagrams || [] : [];
+		return all.find((d) => d.id === CANONICAL_DIAGRAM_ID) || null;
 	}, [diagState.status, diagState.data]);
-
-	// 첫 fetch 후 activeId 미설정 → 첫 다이어그램으로 자동 설정.
-	useEffectAR(() => {
-		if (activeId) return;
-		if (diagrams.length === 0) return;
-		setActiveId(diagrams[0].id);
-	}, [activeId, diagrams]);
-
-	const activeDiagram = useMemoAR(
-		() => diagrams.find((d) => d.id === activeId) || null,
-		[diagrams, activeId],
-	);
 
 	// node.id → info (탐색용 — 상세 패널이 from/to 노드 라벨을 표시할 때 사용).
 	const nodeIndex = useMemoAR(() => {
@@ -277,32 +208,23 @@ function ScreenArchitecture(
 		return { roles, nodeTypes, edgeTypes };
 	}, [activeDiagram]);
 
-	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 가 ring 점등의 유일 근거 (F32).
+	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 기반. 소비자는 노드 상세 드로어의 daemon pill.
 	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
 	const liveDaemonsByNodeId = useMemoAR(() => {
 		if (liveState.status !== "ready") return new Map();
 		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
 	}, [liveState.status, liveState.data]);
 
-	const handleSelectNode = useCallbackAR(
-		(nodeId) => {
-			if (!nodeId) return;
-			setDetail({ kind: "node", payload: { id: nodeId }, diagramId: activeId });
-		},
-		[activeId],
-	);
+	const handleSelectNode = useCallbackAR((nodeId) => {
+		if (!nodeId) return;
+		setDetail({
+			kind: "node",
+			payload: { id: nodeId },
+			diagramId: CANONICAL_DIAGRAM_ID,
+		});
+	}, []);
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
-
-	const handleTabChange = useCallbackAR(
-		(id) => {
-			if (id === activeId) return;
-			setDetail(null); // 탭 변경 시 상세 자동 닫기 (서로 다른 다이어그램이라 컨텍스트 끊김)
-			setLegendFocus(null); // 탭 변경 시 범례 포커스 해제 (노드 집합이 달라져 무효)
-			setActiveId(id);
-		},
-		[activeId],
-	);
 
 	// 범례 항목 토글 — 같은 항목 재클릭 시 해제, 다른 항목 클릭 시 교체.
 	const toggleLegendFocus = useCallbackAR((dim, key) => {
@@ -361,22 +283,8 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					// 라이브 ring stroke 은 severity 토큰 소비 — !important 는 mermaid 주입 SVG 노드 스타일 override 위해 보존 필수.
-					".arch-mermaid-canvas .node.arch-node-live-ok rect, .arch-mermaid-canvas .node.arch-node-live-ok polygon { stroke: rgb(var(--ok)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-warn rect, .arch-mermaid-canvas .node.arch-node-live-warn polygon { stroke: rgb(var(--warn)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-crit rect, .arch-mermaid-canvas .node.arch-node-live-crit polygon { stroke: rgb(var(--crit)) !important; stroke-width: 2.5 !important; } " +
-					// 탭은 단일 스크롤 행 — 줄바꿈(wrap) 시 캔버스 높이 잠식 → nowrap + 가로 스크롤. inactive=--dim(아래), active 반전(아래).
-					".arch-tabs-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; } " +
-					".arch-tab-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; " +
-					"background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); color: rgb(var(--dim)); " +
-					"font-size: var(--fs-body); cursor: pointer; transition: all .12s; font-family: Pretendard, system-ui, sans-serif; } " +
-					".arch-tab-btn:hover { color: rgb(var(--ink)); background: rgb(var(--elev)); } " +
-					".arch-tab-btn.active { background: rgb(var(--ink)); color: rgb(var(--surface)); border-color: rgb(var(--ink)); font-weight: 600; } " +
-					'.arch-tab-btn .arch-tab-counts { font-family: "JetBrains Mono", monospace; font-size: var(--fs-micro); opacity: 0.75; } ' +
 					".arch-legend-swatch-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; } " +
 					".arch-legend-swatch-line { width: 16px; height: 2px; flex-shrink: 0; } " +
-					// 활성 탭 1줄 목적 — 탭 스트립 바로 아래, 캔버스 폭 미점유.
-					".arch-tab-purpose { flex-shrink: 0; margin-bottom: 6px; font-size: var(--fs-meta); color: rgb(var(--dim)); line-height: 1.4; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -394,9 +302,18 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas.legend-focus .node.legend-hit { opacity: 1; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
+					// 라이브 상태 표 — 노드 링 점등을 대체하는 표면.
+					".arch-live-table-wrap { flex-shrink: 0; max-height: 220px; overflow: auto; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
+					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
+					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
+					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
+					// 설명 산문 — 접힘 없이 상시 노출.
+					".arch-prose { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; padding: 8px 10px; } " +
+
 					// 신규 모션 게이트 — skeleton pulse + 노드/범례 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
-					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item, .arch-tab-btn { animation: none !important; transition: none !important; } }"}
+					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -434,25 +351,24 @@ function ScreenArchitecture(
 				{/* 상단: 라이브 상태 가로 컴팩트 스트립 (좌측 컬럼 폐기 → 캔버스 폭 회수) */}
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
-				{/* 본체: 탭 + Mermaid 캔버스 (가용 폭 100%) */}
+				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
-					<DiagramTabs
-						diagrams={diagrams}
-						activeId={activeId}
-						activeDiagram={activeDiagram}
-						onChange={handleTabChange}
-					/>
 					<DiagramCanvasCard
 						diagState={diagState}
 						activeDiagram={activeDiagram}
 						nodeByLabel={nodeByLabel}
 						nodeIndex={nodeIndex}
-						liveDaemonsByNodeId={liveDaemonsByNodeId}
 						legendFocus={legendFocus}
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
 					/>
 				</div>
+
+				{/* 라이브 상태 표 — 노드 링 표현을 대체함. daemon 1개 = 1행. */}
+				<LiveDaemonTable state={liveState} />
+
+				{/* 설명 전문 — 접힘 없이 상시 노출. SVG aria-describedby 타깃. */}
+				<DiagramProse diagram={activeDiagram} />
 
 				{/* 하단: 범례 접이식 (기본 닫힘 → 캔버스 폭/높이 미점유) */}
 				<LegendDetails
@@ -477,45 +393,6 @@ function ScreenArchitecture(
 	);
 }
 
-// Tabs row
-
-function DiagramTabs({ diagrams, activeId, activeDiagram, onChange }) {
-	if (diagrams.length === 0) {
-		return (
-			<div className="arch-tabs-row">
-				<span className="fs-meta text-faint">Loading diagrams…</span>
-			</div>
-		);
-	}
-	return (
-		<>
-			<div
-				className="arch-tabs-row"
-				role="tablist"
-				aria-label="Select a diagram"
-			>
-				{diagrams.map((d) => {
-					const active = d.id === activeId;
-					const label = d.title || TAB_LABEL_FALLBACK[d.id] || d.id;
-					return (
-						<button
-							key={d.id}
-							type="button"
-							role="tab"
-							aria-selected={active}
-							title={diagramPurposeAR(d) || label}
-							className={`arch-tab-btn ${active ? "active" : ""}`}
-							onClick={() => onChange(d.id)}
-						>
-							<span>{label}</span>
-						</button>
-					);
-				})}
-			</div>
-		</>
-	);
-}
-
 // Diagram canvas card (Mermaid native rendering)
 
 function DiagramCanvasCard({
@@ -523,7 +400,6 @@ function DiagramCanvasCard({
 	activeDiagram,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 	onRetry,
@@ -536,7 +412,6 @@ function DiagramCanvasCard({
 					activeDiagram={activeDiagram}
 					nodeByLabel={nodeByLabel}
 					nodeIndex={nodeIndex}
-					liveDaemonsByNodeId={liveDaemonsByNodeId}
 					legendFocus={legendFocus}
 					onSelectNode={onSelectNode}
 					onRetry={onRetry}
@@ -551,7 +426,6 @@ function DiagramBody({
 	activeDiagram,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 	onRetry,
@@ -602,10 +476,8 @@ function DiagramBody({
 			diagramId={activeDiagram.id}
 			source={source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
-			diagramDescription={activeDiagram.description || ""}
 			nodeByLabel={nodeByLabel}
 			nodeIndex={nodeIndex}
-			liveDaemonsByNodeId={liveDaemonsByNodeId}
 			legendFocus={legendFocus}
 			onSelectNode={onSelectNode}
 		/>
@@ -619,10 +491,8 @@ function MermaidCanvas({
 	diagramId,
 	source,
 	diagramTitle,
-	diagramDescription,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 }) {
@@ -676,7 +546,7 @@ function MermaidCanvas({
 		};
 	}, [source, diagramId]);
 
-	// SVG 가 DOM 에 들어간 직후 — 라이브 상태 클래스 부착 + 라벨 매칭으로 backend node id 를 dataset 에 저장.
+	// SVG 가 DOM 에 들어간 직후 — 라벨 매칭으로 backend node id 를 dataset 에 저장 (노드 클릭 → 상세).
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
@@ -688,19 +558,9 @@ function MermaidCanvas({
 			if (!labelText) return;
 			const norm = normalizeLabelAR(labelText);
 			const matchedId = nodeByLabel.get(norm) || null;
-			if (matchedId) {
-				el.setAttribute("data-arch-node-id", matchedId);
-				// 스키마 node id = `${diagramId}.${mermaidId}` · 바인딩 키 = unscoped mermaid id → suffix 매칭 (F32).
-				const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(matchedId));
-				// 이전 폴링 tick 의 ring 잔존 제거 후 현재 tone 재부착.
-				el.classList.remove(...Object.values(LIVE_TONE_CLASS));
-				// 복수 daemon 바인딩 시 최악 severity 를 ring 근거로 채택 (F39).
-				const tone = worstDaemonTone(daemons);
-				const liveClass = tone ? LIVE_TONE_CLASS[tone] : null;
-				if (liveClass) el.classList.add(liveClass);
-			}
+			if (matchedId) el.setAttribute("data-arch-node-id", matchedId);
 		});
-	}, [renderState.status, renderState.svgHtml, nodeByLabel, liveDaemonsByNodeId]);
+	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -948,23 +808,6 @@ function MermaidCanvas({
 				</div>
 			</div>
 
-			{/* SVG aria-describedby 타깃 — 다이어그램 목적 설명. <details> 로 시각 노출 겸함. */}
-			<details className="arch-legend-details" style={{ marginTop: 6 }}>
-				<summary>
-					<span className="fs-micro font-mono text-faint uppercase tracking-wider">
-						About this diagram
-					</span>
-				</summary>
-				<div
-					id="arch-svg-desc"
-					className="fs-meta text-dim leading-snug"
-					style={{ padding: "8px 10px" }}
-				>
-					{diagramDescription ||
-						diagramPurposeAR({ id: diagramId }) ||
-						"No description available."}
-				</div>
-			</details>
 		</>
 	);
 }
@@ -1058,6 +901,65 @@ function LiveChip({ tone, label, title }) {
 			<StatusDot status={tone} />
 			<span className="text-dim">{label}</span>
 		</span>
+	);
+}
+
+// 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
+
+function LiveDaemonTable({ state }) {
+	const { StatusDot, formatRelativeTime } = window.UI;
+
+	if (state.status !== "ready") return null;
+
+	const rows = getLiveDaemonRows(state.data?.daemons);
+	if (rows.length === 0) return null;
+
+	return (
+		<div className="arch-live-table-wrap">
+			<table className="arch-live-table">
+				<thead>
+					<tr>
+						<th scope="col">Job</th>
+						<th scope="col">Status</th>
+						<th scope="col">Last run</th>
+						<th scope="col">Nodes</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((row) => (
+						<tr key={row.name}>
+							<th scope="row" className="text-ink font-mono">
+								{row.name}
+							</th>
+							<td>
+								<span className="inline-flex items-center gap-1.5">
+									<StatusDot status={row.tone} />
+									{row.statusLabel}
+								</span>
+							</td>
+							<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
+							<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</div>
+	);
+}
+
+// 설명 산문 — 전문 상시 노출. SVG aria-describedby 타깃.
+
+function DiagramProse({ diagram }) {
+	const description = diagram?.description || "";
+	return (
+		<section className="arch-prose" aria-label="About this diagram">
+			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+				About this diagram
+			</div>
+			<div id="arch-svg-desc" className="fs-meta text-dim leading-snug">
+				{description || "No description available."}
+			</div>
+		</section>
 	);
 }
 
@@ -1526,8 +1428,15 @@ function handleErrorAR(err, setter) {
 	});
 }
 
-// svg-pan-zoom 초기 줌을 contain-fit + floor 클램프 절대 스케일로 직접 적용 (라이브러리 fit:true 는 floor 무시 → 넓은 LR 그래프 과축소).
-// 단계: resize() pane 갱신 → targetAbs = clamp(contain-fit, floor, 1) → 상대 zoom(R) → pan(viewBox 원점 상쇄 + 정렬) → 짧은 그래프는 컨테이너 높이 축소.
+// 초기 줌 절대 스케일 — 인자만으로 계산(DOM·instance 미참조). 하한은 폭-fit 으로 내려 클램프되지 않음.
+function getLegibleFitScaleAR(paneW, paneH, graphW, graphH) {
+	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return LEGIBLE_FIT_FLOOR;
+	const containFit = Math.min(paneW / graphW, paneH / graphH);
+	return Math.max(Math.min(containFit, 1), LEGIBLE_FIT_FLOOR);
+}
+
+// svg-pan-zoom 초기 줌을 절대 스케일로 직접 적용 (라이브러리 fit:true 는 하한을 무시함).
+// 단계: resize() pane 갱신 → targetAbs = getLegibleFitScaleAR → 상대 zoom(R) → pan(viewBox 원점 상쇄 + 정렬).
 function applyLegibleFitAR(instance, root) {
 	// 이전 탭의 short-graph clamp 를 측정 전 제거 → getSizes() 가 실제 전체 pane 측정 (early-return 가드보다 위 배치 필수).
 	clearCanvasSizingAR(root);
@@ -1544,13 +1453,7 @@ function applyLegibleFitAR(instance, root) {
 	const realH = s.viewBox?.height || 0;
 	if (realW <= 0 || realH <= 0 || s.width <= 0 || s.height <= 0) return;
 
-	// contain-fit = 폭·높이 둘 다 들어가는 최대 비율. floor 로 가독 하한 보장, 1 로 과확대 차단.
-	const widthFit = s.width / realW;
-	const containFit = Math.min(widthFit, s.height / realH);
-	// 가독 floor 가 widthFit 보다 크면 그래프가 pane 폭을 넘쳐 우측이 잘림 → floor 를 widthFit 으로 상한 클램프해
-	//   targetAbs ≤ widthFit 보장 (전폭 항상 수용, 우측 클리핑 0). 넓은 LR 그래프는 floor 대신 전폭 fit 우선.
-	const effectiveFloor = Math.min(LEGIBLE_FIT_FLOOR, widthFit);
-	const targetAbs = Math.max(Math.min(containFit, 1), effectiveFloor);
+	const targetAbs = getLegibleFitScaleAR(s.width, s.height, realW, realH);
 
 	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
 	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
@@ -1628,20 +1531,18 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-// 노드에 바인딩된 daemon 들의 effective tone 중 최악 severity 반환 — ring 클래스 근거 (F39).
-//   전부 neutral/info(ring 없음) 이거나 목록이 비면 null.
-function worstDaemonTone(daemons) {
-	let worst = null;
-	let worstRank = 0;
-	for (const d of daemons || []) {
+// 라이브 상태 표의 행 목록 — daemon 1개 = 1행. 표현 계층과 무관한 순수 파생.
+function getLiveDaemonRows(daemons) {
+	return (daemons || []).map((d) => {
 		const tone = daemonEffectiveTone(d);
-		const rank = LIVE_TONE_RANK[tone] || 0;
-		if (rank > worstRank) {
-			worstRank = rank;
-			worst = tone;
-		}
-	}
-	return worst;
+		return {
+			name: d?.daemon_name || "—",
+			tone,
+			statusLabel: daemonChipLabelAR(d, tone),
+			nodeIds: Array.isArray(d?.node_ids) ? d.node_ids : [],
+			lastRunAt: d?.last_run_at || null,
+		};
+	});
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).
@@ -1651,11 +1552,6 @@ function unscopedNodeIdAR(nodeId) {
 	return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 }
 
-function truncateText(s, max) {
-	if (typeof s !== "string") return "";
-	if (s.length <= max) return s;
-	return s.slice(0, max - 1) + "…";
-}
 
 // 라벨 정규화 — mermaid SVG 텍스트와 backend node label 간 fuzzy 매칭용.
 //   공백/줄바꿈/탭 → 단일 공백 1개로, 양끝 trim, lowercase.
@@ -1680,3 +1576,4 @@ function extractMermaidNodeLabelAR(nodeEl) {
 }
 
 window.ScreenArchitecture = ScreenArchitecture;
+window.ARCH_SELECTORS = ARCH_SELECTORS;

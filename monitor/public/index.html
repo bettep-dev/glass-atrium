@@ -59,7 +59,7 @@
 <!-- svg-pan-zoom 3.6.2 — Mermaid 가 생성한 SVG 에 휠 zoom + 드래그 pan + 더블클릭 zoom-in + 컨트롤 아이콘 부여. window.svgPanZoom 으로 노출. -->
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js"></script>
 <script>
-  // dark theme + 폰트 + 전체 너비 fit. startOnLoad:false → architecture.jsx 가 탭 변경 시 수동 render.
+  // dark theme + 폰트 + 전체 너비 fit. startOnLoad:false → architecture.jsx 가 canonical 맵 1장을 수동 render.
   // securityLevel:'loose' — mermaid_source 는 백엔드가 옵시디언 vault 에서 직접 읽은 internal source (외부 사용자 입력 아님).
   window.mermaid?.initialize({
     startOnLoad: false,

@@ -1,10 +1,9 @@
 // Unit tests for the client-side cron-node live-badge fold in
 // public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id
 // (cron: daily-restart-autoagent + daily-restart-wiki, per DAEMON_NODE_BINDINGS).
-// buildLiveDaemonsByNodeId must keep a LIST per node id so no status is dropped,
-// and worstDaemonTone must fold the bound daemons to their worst EFFECTIVE severity
-// for the ring class. Pre-fix, the Map was `set(nid, d)` (last-writer-wins) — one
-// daemon silently vanished and the drawer showed a single pill.
+// buildLiveDaemonsByNodeId must keep a LIST per node id so no status is dropped.
+// Pre-fix, the Map was `set(nid, d)` (last-writer-wins) — one daemon silently
+// vanished and the drawer showed a single pill.
 //
 // Runner: npx tsx --test test/architecture.live-badge.client.unit.test.ts
 //
@@ -37,9 +36,6 @@ interface ArchHelpers {
   buildLiveDaemonsByNodeId: (
     daemons: DaemonLiveStatus[] | null | undefined,
   ) => Map<string, DaemonLiveStatus[]>;
-  worstDaemonTone: (
-    daemons: DaemonLiveStatus[] | null | undefined,
-  ) => string | null;
   daemonEffectiveTone: (d: Partial<DaemonLiveStatus>) => string;
 }
 
@@ -106,11 +102,6 @@ async function loadArch(): Promise<ArchHelpers> {
     "function",
     "buildLiveDaemonsByNodeId must be reachable",
   );
-  assert.strictEqual(
-    typeof h.worstDaemonTone,
-    "function",
-    "worstDaemonTone must be reachable",
-  );
   return h;
 }
 
@@ -168,54 +159,4 @@ test("empty / null daemon input yields an empty map (no throw)", () => {
   assert.strictEqual(arch.buildLiveDaemonsByNodeId([]).size, 0);
   assert.strictEqual(arch.buildLiveDaemonsByNodeId(null).size, 0);
   assert.strictEqual(arch.buildLiveDaemonsByNodeId(undefined).size, 0);
-});
-
-// --- worstDaemonTone: the ring shows the worst bound severity ---
-
-test("ok + crit folds to crit (worst severity drives the ring)", () => {
-  const daemons = [daemon("a", "ok"), daemon("b", "error")];
-  assert.strictEqual(arch.worstDaemonTone(daemons), "crit");
-  // order-independent
-  assert.strictEqual(arch.worstDaemonTone([...daemons].reverse()), "crit");
-});
-
-test("ok + warn folds to warn", () => {
-  assert.strictEqual(
-    arch.worstDaemonTone([daemon("a", "ok"), daemon("b", "partial")]),
-    "warn",
-  );
-});
-
-test("fold uses EFFECTIVE tone — an ok-but-overdue daemon escalates the ring to warn", () => {
-  // status 'ok' but staleness (120) > cadence (60) → daemonEffectiveTone → 'warn'.
-  const overdue = daemon("b", "ok", {
-    expected_cadence_minutes: 60,
-    staleness_minutes: 120,
-  });
-  assert.strictEqual(arch.daemonEffectiveTone(overdue), "warn");
-  assert.strictEqual(
-    arch.worstDaemonTone([daemon("a", "ok"), overdue]),
-    "warn",
-  );
-});
-
-test("all-healthy fold stays ok", () => {
-  assert.strictEqual(
-    arch.worstDaemonTone([daemon("a", "ok"), daemon("b", "ok")]),
-    "ok",
-  );
-});
-
-test("quota_exceeded folds to warn ring (T3 re-tone)", () => {
-  // quota_exceeded → warn → map ring tone (이전 neutral/no-ring 대체).
-  assert.strictEqual(
-    arch.worstDaemonTone([daemon("a", "quota_exceeded")]),
-    "warn",
-  );
-});
-
-test("info-only / empty bindings produce no ring (null)", () => {
-  assert.strictEqual(arch.worstDaemonTone([daemon("a", "missing")]), null);
-  assert.strictEqual(arch.worstDaemonTone([]), null);
-  assert.strictEqual(arch.worstDaemonTone(undefined), null);
 });
