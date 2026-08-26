@@ -106,18 +106,6 @@ const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env"
 export const NEEDS_AUTH_REMEDIATION =
   `Run ${GA_ROOT_DIR}/glass-atrium and choose "Token Setup" (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN`;
 
-// Why hard-coded daemon list: status cards render in fixed order.
-// daily-restart runs are role-qualified (one row per restarted daemon) so each
-// role gets its own card; legacy merged 'daily-restart' rows are history-only
-// (readable via daemon-payload, no active card). weekly-clear stays retired —
-// daily-restart covers all context resets (historical rows + enum preserved).
-const DAEMON_BOARD: ReadonlyArray<DaemonStatusCard["daemon_name"]> = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-];
-
 export interface DaemonRow {
   daemon_name: string;
   last_run_at: Date | null;
@@ -171,7 +159,8 @@ async function handleDaemons(
     // DISTINCT ON yields the latest row per daemon by started_at desc — index-friendly
     // (matches @@index([daemonName, runDate(sort: Desc)]) in schema). cost_guard_state
     // is null for non-autoagent daemons by design (PG schema confirms).
-    // WHERE clause aligns with DAEMON_BOARD.
+    // The name filter must cover the resolver's daemon set.
+    // A name it omits returns no row → that card reads 'missing' while live reads the truth.
     // The install anchor rides along because a never-fired daemon has no staleness figure
     // to judge by — only the system's own age separates dead from not-yet-installed.
     const [rows, installAnchor] = await Promise.all([
@@ -189,7 +178,7 @@ async function handleDaemons(
     ]);
 
     // Single existence STAT of the shared claude-auth.env, once per response (never
-    // per DAEMON_BOARD row) — the absence corroborator for the needs_auth proxy.
+    // per daemon card) — the absence corroborator for the needs_auth proxy.
     const secretsAbsent = await isSecretsFileAbsent(request);
 
     const now = new Date();
@@ -211,9 +200,9 @@ async function handleDaemons(
 }
 
 /**
- * Rows → the fixed four-card board, pure so the verdict is testable without a DB.
- * Every card is emitted even when its daemon has no row — an absent daemon is a state to
- * report, not a row to omit.
+ * Rows → one card per daemon the verdict resolver reports on, pure so the verdict is
+ * testable without a DB. Every card is emitted even when its daemon has no row — an absent
+ * daemon is a state to report, not a row to omit.
  */
 export function buildDaemonStatusCards(
   rows: DaemonRow[],
@@ -225,16 +214,10 @@ export function buildDaemonStatusCards(
   for (const row of rows) {
     byName.set(row.daemon_name, row);
   }
-  // /api/architecture/live resolves its verdict through this same function, so the two
-  // routes cannot drift apart. Recomputing the rule here would lose the never-fired
-  // escalation, whose input is the install anchor rather than a staleness figure.
-  const verdictByName = new Map(
-    resolveDaemonStatuses(rows, now.getTime(), installAnchor).map((daemon) => [
-      daemon.daemon_name,
-      daemon.effective_status,
-    ]),
-  );
-  return DAEMON_BOARD.map((name) => {
+  // The resolver's output is the board itself — no verdict and no daemon name can drift from live.
+  // Recomputing the rule here would lose the never-fired escalation (input: install anchor, not staleness).
+  return resolveDaemonStatuses(rows, now.getTime(), installAnchor).map((resolved) => {
+    const name = resolved.daemon_name;
     const row = byName.get(name);
     const lastRunAt = row?.last_run_at ?? null;
     const rule = DAEMON_CRON_SCHEDULE[name];
@@ -264,7 +247,7 @@ export function buildDaemonStatusCards(
       daemon_name: name,
       last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
       last_status: lastStatus,
-      effective_status: verdictByName.get(name) ?? "missing",
+      effective_status: resolved.effective_status,
       expected_next_at:
         rule === undefined ? null : nextOccurrenceUtc(rule, DAY_BUCKET_TIMEZONE, now),
       cost_guard_state: costGuardState,

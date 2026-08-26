@@ -3,6 +3,8 @@
 
 export type DaemonLiveStatus = {
 	daemon_name: string;
+	// Transitional duplicate of effective_status, which is the verdict of record.
+	// Drops with its last reader: src/server/routes/dashboard.ts `buildDaemonStatusItems`.
 	status: string;
 	// Cross-route daemon verdict — /api/health/daemons carries the same field name.
 	// Overdue ⇒ 'stale' · otherwise the last reported status · never reported ⇒ 'missing'.

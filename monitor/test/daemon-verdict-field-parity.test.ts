@@ -167,3 +167,45 @@ test("every health card carries a non-empty verdict (no null for a client to fil
     assert.notStrictEqual(verdict, "", `${card.daemon_name} verdict must not be empty`);
   }
 });
+
+// The blind spot the per-daemon cases above cannot reach: they exercise one daemon, so a
+// board name the resolver never judged slips through as a plain 'missing' card while the
+// live route carries the real verdict. These three pin the daemon SET rather than a verdict.
+
+const RESOLVED_NAMES = resolveDaemonStatuses([], NOW, null).map((d) => d.daemon_name);
+
+test("the health card board is the resolver's daemon set, not a list of its own", () => {
+  const src = repoRead("src/server/routes/health-detail.ts");
+  assert.match(
+    src,
+    /return resolveDaemonStatuses\(/,
+    "the card board must come from the resolver, so there is nothing to keep in step with it",
+  );
+  assert.doesNotMatch(
+    src,
+    /\bDAEMON_BOARD\b/,
+    "a board constant is that second list — the payload allowlist is a different, legacy-inclusive set",
+  );
+});
+
+test("the card board mirrors the resolver, daemon for daemon and verdict for verdict", () => {
+  const rows = ranAt(60, "partial");
+  const cards = buildDaemonStatusCards(healthRows(rows), new Date(NOW), null, false);
+  assert.deepStrictEqual(
+    cards.map((card) => [card.daemon_name, card[VERDICT_FIELD]]),
+    resolveDaemonStatuses(rows, NOW, null).map((d) => [d.daemon_name, d[VERDICT_FIELD]]),
+    "a name only one side knows is the drift the card's fallback used to print as 'missing'",
+  );
+});
+
+test("the daemon query filters on exactly the names the resolver reports on", () => {
+  const clause = repoRead("src/server/routes/health-detail.ts").match(
+    /WHERE daemon_name IN \(([^)]*)\)/,
+  );
+  assert.ok(clause, "the daemon query must filter by name");
+  assert.deepStrictEqual(
+    [...clause[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
+    [...RESOLVED_NAMES].sort(),
+    "a name missing from the filter returns no row, and its card reads 'missing' while live reads the truth",
+  );
+});
