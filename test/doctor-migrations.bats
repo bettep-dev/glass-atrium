@@ -17,8 +17,8 @@
 #
 # NO DATABASE IS CONTACTED. Every psql invocation resolves to a recording stub placed ahead of
 # PATH; the stub reads the SQL from stdin, picks a canned answer per query kind and exits with a
-# per-scenario code. The one row that needs psql to be ABSENT (AC2) runs with every directory
-# holding a real psql filtered out of PATH.
+# per-scenario code. The one row that needs psql to be ABSENT (AC2) runs against a PATH rebuilt as
+# a symlink farm of the real one with psql omitted.
 #
 # BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate — the keyword is read as a tested
 # condition — whereas a plain command's non-zero return IS caught mid-body. Every assertion here
@@ -105,24 +105,25 @@ history_row() {
   printf '%s\x1f%s\x1f%s\n' "$1" "${2:-}" "${3:-}"
 }
 
-# Drop every directory holding a real psql from PATH, so `command -v psql` genuinely fails.
+# A PATH that holds every command the doctor needs but no psql: one directory of symlinks to the
+# real PATH entries, with the psql link removed. Dropping psql's whole DIRECTORY from PATH is not
+# portable — on a Linux runner psql lives in /usr/bin beside bash, so the sandbox loses its own
+# interpreter (`env: 'bash': No such file or directory`, exit 127) before the branch under test is
+# ever reached, while on macOS the same strip leaves /bin intact and the row passes.
 path_without_psql() {
-  local path="${PATH}" found dir out part guard=0
+  local farm="${SANDBOX}/nopsql-bin" part
   local -a parts=()
-  while [[ "${guard}" -lt 10 ]]; do
-    found="$(PATH="${path}" command -v psql 2>/dev/null || true)"
-    [[ -n "${found}" ]] || break
-    dir="$(dirname -- "${found}")"
-    out=""
-    IFS=: read -r -a parts <<<"${path}"
+  if [[ ! -d "${farm}" ]]; then
+    mkdir -p "${farm}"
+    IFS=: read -r -a parts <<<"${PATH}"
     for part in "${parts[@]}"; do
-      [[ "${part}" == "${dir}" ]] && continue
-      out="${out}${out:+:}${part}"
+      [[ -d "${part}" ]] || continue
+      # a name already linked from an earlier entry loses, mirroring PATH precedence
+      ln -s -- "${part}"/* "${farm}/" 2>/dev/null || true
     done
-    path="${out}"
-    guard=$((guard + 1))
-  done
-  printf '%s' "${path}"
+    rm -f -- "${farm}/psql"
+  fi
+  printf '%s' "${farm}"
 }
 
 # Run the REAL run_doctor against the sandbox GA_ROOT in a fresh strict-mode subprocess. GA_DB_NAME
