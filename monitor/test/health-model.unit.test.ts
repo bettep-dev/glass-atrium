@@ -274,11 +274,10 @@ const BAND_MIN = Math.round(
 test("AC-T4 the server threshold moves, the row does not, and the card moves with the verdict", () => {
   const overdue = daemonRow("autoagent", {
     effective_status: "stale",
-    is_stale: true,
     staleness_minutes: BAND_MIN,
   });
   // Only the server threshold widened: same daemon, same last run, same staleness figure.
-  const inside = { ...overdue, effective_status: "ok", is_stale: false };
+  const inside = { ...overdue, effective_status: "ok" };
 
   assert.strictEqual(HealthModel.resolveDaemonDisplayMeta(overdue).tone, "crit");
   assert.strictEqual(
