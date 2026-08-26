@@ -1067,3 +1067,113 @@ test("direction: blocks differing in allowed direction report nothing", () => {
   assert.strictEqual(result.ok, true);
   if (result.ok) assert.deepStrictEqual(result.notices, []);
 });
+
+// T24 (extension) — a `direction` STATEMENT, not only the header token. Two of
+// the seven adopted types declare flow direction on a line of their own
+// (stateDiagram-v2, classDiagram carry no header modifier at all), and a
+// flowchart declares per-subgraph direction the same way. A header-only scan
+// reports nothing for any of the three.
+
+test("direction: a classDiagram declaring direction BT in its body is reported", () => {
+  const result = check(
+    wrapHtml(
+      mermaidBlock(
+        "classDiagram\n" +
+          "  direction BT\n" +
+          "  class OutcomeRecordWriter {\n" +
+          "    +getCompletionBlock(): CompletionBlock\n" +
+          "  }",
+      ),
+    ),
+  );
+  assert.strictEqual(result.ok, true, "report-only — a forbidden direction must NOT fail the document");
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "BT", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: a stateDiagram-v2 declaring direction RL in its body is reported", () => {
+  const result = check(
+    wrapHtml(
+      mermaidBlock(
+        "stateDiagram-v2\n" +
+          "  direction RL\n" +
+          "  [*] --> AwaitingPlanDirectionVerification\n" +
+          "  AwaitingPlanDirectionVerification --> [*]",
+      ),
+    ),
+  );
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: a flowchart subgraph declaring direction RL is reported", () => {
+  const result = check(
+    wrapHtml(
+      mermaidBlock(
+        "flowchart LR\n" +
+          "  subgraph Verification\n" +
+          "    direction RL\n" +
+          "    Reviewer --> Dev\n" +
+          "  end\n" +
+          "  Plan --> Verification",
+      ),
+    ),
+  );
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: an allowed direction statement is silent", () => {
+  // The diagram-container fixtures declare `direction LR` on exactly this line
+  // shape — the extended scan must leave them silent.
+  for (const src of [
+    "classDiagram\n  direction LR\n  class A {\n    +run()\n  }",
+    "stateDiagram-v2\n  direction LR\n  [*] --> Done",
+    "flowchart TB\n  subgraph S\n    direction TD\n    A --> B\n  end",
+  ]) {
+    const result = check(wrapHtml(mermaidBlock(src)));
+    assert.strictEqual(result.ok, true, `allowed direction rejected: ${src}`);
+    if (result.ok) assert.deepStrictEqual(result.notices, [], `unexpected notice for: ${src}`);
+  }
+});
+
+test("direction: a flowchart direction statement outside any subgraph is not scanned", () => {
+  // Scope pin — in flowchart grammar the direction statement is a subgraph
+  // property; at top level mermaid ignores it, so the scan does too.
+  const result = check(
+    wrapHtml(mermaidBlock("flowchart LR\n  direction RL\n  A --> B")),
+  );
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});
+
+test("direction: a header token repeated by a subgraph statement reports once", () => {
+  const result = check(
+    wrapHtml(
+      mermaidBlock(
+        "flowchart RL\n" +
+          "  subgraph S\n" +
+          "    direction RL\n" +
+          "    A --> B\n" +
+          "  end",
+      ),
+    ),
+  );
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
