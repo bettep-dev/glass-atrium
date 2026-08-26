@@ -139,6 +139,40 @@ test(`DaemonStatusCard declares '${VERDICT_FIELD}' — the name the live status 
   );
 });
 
+// Field names that restate the verdict the card already carries. A second one is a second
+// source of truth, and the two disagree exactly where it matters: on the never-fired daemon
+// the boolean reads false while the verdict reads 'stale'.
+const VERDICT_RESTATERS = ["is_stale", "stale", "overdue", "is_overdue"] as const;
+
+// Declared shape and emitted payload are pinned separately — dropping the field from the
+// interface alone would still ship the key to every client.
+test(`a health card carries the verdict once — nothing restates '${VERDICT_FIELD}'`, () => {
+  const block = repoRead("src/server/types/health-detail.ts").match(
+    /export interface DaemonStatusCard \{([\s\S]*?)\n\}/,
+  );
+  assert.ok(block, "types/health-detail.ts must declare interface DaemonStatusCard");
+  const cards = buildDaemonStatusCards(
+    healthRows(ranAt(OVERDUE_MIN + 1, "ok")),
+    new Date(NOW),
+    null,
+    false,
+  );
+  assert.ok(cards.length > 0, "the fixture must produce at least one card to inspect");
+  for (const restater of VERDICT_RESTATERS) {
+    assert.doesNotMatch(
+      block[1],
+      new RegExp(`^\\s*${restater}\\??:`, "m"),
+      `DaemonStatusCard.${restater} declares the verdict a second time`,
+    );
+    for (const card of cards) {
+      assert.ok(
+        !(restater in card),
+        `${card.daemon_name} emits '${restater}' alongside '${VERDICT_FIELD}'`,
+      );
+    }
+  }
+});
+
 // The input classes that can pull the two routes apart: the overdue flip point in both
 // directions, an unreported status, and the never-fired daemon whose escalation depends on
 // the install anchor rather than on a staleness figure it does not have.

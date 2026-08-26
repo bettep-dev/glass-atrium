@@ -34,9 +34,6 @@ export interface DaemonStatusCard {
   expected_next_at: string | null;
   cost_guard_state: CostGuardStateValue | null;
   staleness_minutes: number | null;
-  // Transitional — effective_status wins on disagreement (never-fired dead: false here, 'stale' there).
-  // Drops with its last reader: public/src/data/health-model.js `isDaemonStale`.
-  is_stale: boolean;
   // DB-derived "firing but failing auth" proxy: daemon has recent activity (ran, not stale)
   // AND last run failed (non-ok status OR infra_fault) AND the shared GA-root claude-auth.env
   // is absent. Never-run/disabled stays false (no false remediation); never overloads last_status.
