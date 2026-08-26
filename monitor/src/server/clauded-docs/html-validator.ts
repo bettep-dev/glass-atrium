@@ -15,6 +15,9 @@ import { dirname, resolve } from "node:path";
 
 import { parse } from "node-html-parser";
 
+import { normalizeMermaidSource } from "./mermaid-normalize.js";
+import type { DiagramTypeNotice } from "../types/clauded-docs.js";
+
 // 5 MB ceiling for the validator's input. Above this, return a synthetic
 // "all missing" result so the caller returns 400 without invoking the parser.
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
@@ -96,6 +99,91 @@ export function loadD8Thresholds(jsonPath: string): D8Thresholds {
  */
 export const D8_THRESHOLDS: D8Thresholds = loadD8Thresholds(D8_THRESHOLDS_PATH);
 
+/** One declared diagram type — its name, the mermaid fence keywords that select it, and (adopted only) its one-line purpose. */
+export interface DiagramTypeEntry {
+  type: string;
+  keywords: string[];
+  purpose?: string;
+}
+
+/**
+ * Machine-consumed diagram policy — the `diagram-types.json` SoT shape. The
+ * adopted / excluded lists live in that file ONLY; a second copy in code would
+ * let the validator and the authoring guidance drift apart.
+ */
+export interface DiagramTypes {
+  adopted: readonly DiagramTypeEntry[];
+  excluded: readonly DiagramTypeEntry[];
+  exclusionReason: string;
+  flowDirection: {
+    recommended: string;
+    allowed: readonly string[];
+    forbidden: readonly string[];
+  };
+}
+
+const DIAGRAM_TYPES_PATH = resolve(HERE, "diagram-types.json");
+
+/**
+ * Read + parse + shape-validate the diagram-type JSON SoT, returning a frozen
+ * `DiagramTypes`. Pure relative to the file at `jsonPath` — module init
+ * calls it with the co-located default; tests call it with a temp fixture to
+ * prove the verdict flows from data rather than a code literal.
+ *
+ * Throws on malformed JSON or a missing/ill-shaped list — a corrupt policy SoT
+ * MUST loud-fail at startup, never silently degrade to "nothing is excluded"
+ * (a silent empty list reads exactly like a clean document).
+ *
+ * @param jsonPath - absolute path to the declaration file.
+ * @returns frozen declaration.
+ */
+export function loadDiagramTypes(jsonPath: string): DiagramTypes {
+  const parsed = JSON.parse(readFileSync(jsonPath, "utf8")) as Partial<DiagramTypes>;
+  const adopted = freezeEntries(parsed.adopted, "adopted", jsonPath);
+  const excluded = freezeEntries(parsed.excluded, "excluded", jsonPath);
+  const flow = parsed.flowDirection;
+  if (
+    typeof parsed.exclusionReason !== "string" ||
+    flow === undefined ||
+    typeof flow.recommended !== "string" ||
+    !Array.isArray(flow.allowed) ||
+    !Array.isArray(flow.forbidden)
+  ) {
+    throw new Error(`diagram-types SoT invalid: exclusionReason/flowDirection missing or ill-shaped (${jsonPath})`);
+  }
+  return Object.freeze({
+    adopted,
+    excluded,
+    exclusionReason: parsed.exclusionReason,
+    flowDirection: Object.freeze({
+      recommended: flow.recommended,
+      allowed: Object.freeze([...flow.allowed]),
+      forbidden: Object.freeze([...flow.forbidden]),
+    }),
+  });
+}
+
+/** Shape-guard one declaration list; a non-array or an entry without keywords is a corrupt SoT. */
+function freezeEntries(entries: unknown, field: string, jsonPath: string): readonly DiagramTypeEntry[] {
+  if (!Array.isArray(entries)) {
+    throw new Error(`diagram-types SoT invalid: ${field} missing or not an array (${jsonPath})`);
+  }
+  for (const entry of entries as DiagramTypeEntry[]) {
+    const hasKeywords = Array.isArray(entry?.keywords) && entry.keywords.every((k) => typeof k === "string" && k.length > 0);
+    if (typeof entry?.type !== "string" || entry.type.length === 0 || !hasKeywords) {
+      throw new Error(`diagram-types SoT invalid: ${field} entry missing type/keywords (${jsonPath})`);
+    }
+  }
+  return Object.freeze(entries.map((e: DiagramTypeEntry) => Object.freeze({ ...e })));
+}
+
+/**
+ * Module-init diagram policy — loaded once from the co-located JSON SoT. The
+ * diagram-type gate reads adopted/excluded membership from here, never from a
+ * code literal.
+ */
+export const DIAGRAM_TYPES: DiagramTypes = loadDiagramTypes(DIAGRAM_TYPES_PATH);
+
 /** Placeholder-token scan pattern — residual `{{…}}` template tokens. */
 const PLACEHOLDER_PATTERN = /\{\{[^}]*\}\}/;
 
@@ -163,10 +251,12 @@ export type StyleFinding =
  * - `code: 'd8_style_violation'` — D8 visual style rules violated; `findings`
  *   reports ALL violations (not first-only) as a 2-kind discriminated array.
  *
- * Pipeline order: structure → placeholder → D8 columns → D8 style.
+ * Pipeline order: structure → placeholder → D8 columns → D8 style. A pass then
+ * carries `notices` — REPORT-ONLY findings that describe the document without
+ * rejecting it (excluded diagram types), always present, empty when clean.
  */
 export type HtmlStructureCheck =
-  | { ok: true }
+  | { ok: true; notices: DiagramTypeNotice[] }
   | {
       ok: false;
       code: "html_structure_invalid";
@@ -299,6 +389,10 @@ const FIELD_ORDER: readonly HtmlStructureMissingField[] = [
  *      `{{…}}` outside `<code>`/`<pre>` → 1-based offending line numbers.
  *   3. D8 comparison-table column-cap check (`d8_p2_violation`).
  *   4. D8 style-lint check (`d8_style_violation`). Reports ALL findings.
+ *   5. Diagram-type scan — REPORT-ONLY. An excluded type yields a notice on the
+ *      passing result; it never produces a failure code, because excluded types
+ *      already occur in stored bodies and blocking them would reject documents
+ *      that are already published.
  *
  * Each later stage runs only when every earlier stage passes — guarantees the
  * structure prerequisite is met before semantic / style enforcement.
@@ -316,12 +410,16 @@ const FIELD_ORDER: readonly HtmlStructureMissingField[] = [
  *                     (`D8_THRESHOLDS`); tests inject a fixture-loaded value to
  *                     prove the cap flows from data. Production
  *                     callers omit this argument.
- * @returns `{ ok: true }` when every requirement passes; otherwise a
+ * @param diagramTypes - adopted/excluded diagram policy. Defaults to the
+ *                       module-init JSON SoT (`DIAGRAM_TYPES`); injectable on the
+ *                       same terms as `thresholds`.
+ * @returns `{ ok: true, notices }` when every requirement passes; otherwise a
  *          discriminated failure variant — see `HtmlStructureCheck`.
  */
 export function validateHtmlStructure(
   input: HtmlStructureInput,
   thresholds: D8Thresholds = D8_THRESHOLDS,
+  diagramTypes: DiagramTypes = DIAGRAM_TYPES,
 ): HtmlStructureCheck {
   const { raw, sanitized } = input;
 
@@ -403,7 +501,9 @@ export function validateHtmlStructure(
     return { ok: false, code: "d8_style_violation", findings };
   }
 
-  return { ok: true };
+  // Step 5 — diagram-type scan on the sanitized AST (report-only, see the
+  // pipeline note above). Reached only on an otherwise-clean document.
+  return { ok: true, notices: findDiagramNotices(root, diagramTypes) };
 }
 
 /**
@@ -456,6 +556,66 @@ function countTableColumns(table: QueryableNode): number {
     if (cells.length > max) max = cells.length;
   }
   return max;
+}
+
+/** Frontmatter fence of a mermaid source — a leading `---` block precedes the type line. */
+const DIAGRAM_FRONTMATTER_FENCE = "---";
+
+/** Leading identifier of a mermaid type line (`flowchart LR` → `flowchart`, `block-beta` → `block-beta`). */
+const DIAGRAM_KEYWORD_PATTERN = /^[A-Za-z][A-Za-z0-9-]*/;
+
+/**
+ * Scan the sanitized AST's diagram nodes and report every block whose type is
+ * on the declaration's EXCLUDED list. Adopted and unlisted types report
+ * nothing — the gate states exclusion, it does not enumerate approval.
+ *
+ * Node selection mirrors the render contract (`pre.mermaid, .mermaid`) used by
+ * both render surfaces, so a block the reader sees is a block this scans.
+ *
+ * @param types - declaration SoT; excluded membership is read from it alone.
+ * @returns notices in DOM order, one per offending block.
+ */
+function findDiagramNotices(root: QueryableNode, types: DiagramTypes): DiagramTypeNotice[] {
+  const excludedByKeyword = new Map<string, string>();
+  for (const entry of types.excluded) {
+    for (const keyword of entry.keywords) excludedByKeyword.set(keyword.toLowerCase(), entry.type);
+  }
+
+  const notices: DiagramTypeNotice[] = [];
+  const blocks = root.querySelectorAll("pre.mermaid, .mermaid");
+  for (let i = 0; i < blocks.length; i += 1) {
+    const keyword = getDiagramKeyword(blocks[i].text);
+    if (keyword === null) continue;
+    const type = excludedByKeyword.get(keyword);
+    if (type !== undefined) {
+      notices.push({ code: "diagram_type_excluded", type, blockIndex: i + 1 });
+    }
+  }
+  return notices;
+}
+
+/**
+ * Lowercased diagram-type keyword of a mermaid source, or `null` when no type
+ * line exists. Skips a leading frontmatter block and `%%` directives/comments —
+ * the same preamble mermaid's own detectType skips.
+ *
+ * Acc directives sitting above the type line are relocated by the shared
+ * normalizer first, so this reads the same type line the renderer resolves.
+ */
+function getDiagramKeyword(source: string): string | null {
+  const lines = normalizeMermaidSource(source).split(/\r\n|\n/);
+  let cursor = 0;
+  if (lines[0] !== undefined && lines[0].trim() === DIAGRAM_FRONTMATTER_FENCE) {
+    const close = lines.findIndex((line, idx) => idx > 0 && line.trim() === DIAGRAM_FRONTMATTER_FENCE);
+    if (close > 0) cursor = close + 1;
+  }
+  for (; cursor < lines.length; cursor += 1) {
+    const trimmed = lines[cursor].trim();
+    if (trimmed.length === 0 || trimmed.startsWith("%%")) continue;
+    const keyword = DIAGRAM_KEYWORD_PATTERN.exec(trimmed);
+    return keyword === null ? null : keyword[0].toLowerCase();
+  }
+  return null;
 }
 
 /**

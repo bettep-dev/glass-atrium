@@ -7,9 +7,17 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+
+import {
+  type DiagramTypes,
+  D8_THRESHOLDS,
+  loadDiagramTypes,
+  validateHtmlStructure,
+} from "../src/server/clauded-docs/html-validator.js";
 
 // mermaid 기본 진입점(mermaid.core.mjs)은 내장 다이어그램을 등록하지 않아
 // detectType 이 전부 THROW 함(실측). 전체 번들을 직접 들여와 초기화함.
@@ -71,6 +79,45 @@ function typeNames(entries: DiagramTypeEntry[]): string[] {
 
 function allKeywords(entries: DiagramTypeEntry[]): string[] {
   return entries.flatMap((e) => e.keywords);
+}
+
+/** 저장 본문의 다이어그램 노드 모양 — 렌더 계약(`pre.mermaid, .mermaid`)과 같음. */
+function wrapMermaid(src: string): string {
+  return [
+    "<!doctype html>",
+    '<html lang="ko">',
+    "<head>",
+    '<meta charset="utf-8">',
+    "<title>diagram fixture</title>",
+    "</head>",
+    "<body><main><h1>d</h1>",
+    `<pre class="mermaid">${src}</pre>`,
+    "</main></body>",
+    "</html>",
+  ].join("\n");
+}
+
+/** 통과 판정의 소견 목록을 타입명 배열로 눌러 비교함. 실패 판정이면 그 자체가 오류임. */
+function assertNoticeTypes(result: ReturnType<typeof validateHtmlStructure>, expected: string[]): void {
+  assert.strictEqual(result.ok, true, `보고 전용이어야 함 — 판정: ${JSON.stringify(result)}`);
+  if (result.ok) assert.deepStrictEqual(result.notices.map((n) => n.type), expected);
+}
+
+/** 임시 선언 JSON 을 써서 경로를 넘기고, 끝나면 지움. */
+function withTempJson(body: unknown, run: (path: string) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), "diagram-types-"));
+  try {
+    const path = join(dir, "diagram-types.json");
+    writeFileSync(path, JSON.stringify(body));
+    run(path);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** 임시 선언을 모듈과 같은 로더로 읽어 주입 인자로 넘김. */
+function withFixture(body: DiagramTypes, run: (loaded: DiagramTypes) => void): void {
+  withTempJson(body, (path) => run(loadDiagramTypes(path)));
 }
 
 test("선언 파일이 D5 채택 타입 전부를 담음", () => {
@@ -153,19 +200,53 @@ test("흐름 방향 정책이 정합적임", () => {
   for (const d of ["RL", "BT"]) assert.ok(forbiddenSet.has(d), `금지 방향 누락: ${d}`);
 });
 
-test("채택 정책 선언이 저장소에 단 한 곳뿐임", () => {
-  // AC-T20 의 실패 조건 — 같은 채택/제외 목록이 코드에 다시 선언되면 RED.
-  // mermaid-normalize.ts 의 MERMAID_TYPE_KEYWORDS 는 "타입 줄 인식용" 광의
-  // 목록이지 채택 정책이 아니므로 이 검사에 걸리지 않음(실측).
-  const policySymbol = /(ADOPTED|EXCLUDED)_DIAGRAM|DIAGRAM_(ADOPTED|EXCLUDED)/i;
-  const offenders: string[] = [];
-  for (const root of ["src", "public/src"]) {
-    const base = join(MONITOR_ROOT, root);
-    for (const rel of readdirSync(base, { recursive: true, encoding: "utf8" })) {
-      if (!/\.(ts|jsx|js)$/.test(rel)) continue;
-      const full = join(base, rel);
-      if (policySymbol.test(readFileSync(full, "utf8"))) offenders.push(join(root, rel));
-    }
-  }
-  assert.deepStrictEqual(offenders, [], "채택 정책 목록이 JSON 밖에 다시 선언됨");
+test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에 넣으면 소견이 생김", () => {
+  // AC-T20 의 "한 곳만 읽음" 을 심볼 이름이 아니라 거동으로 잼. erDiagram 은
+  // 배포본에서 채택이므로 소견이 없어야 하고, 같은 타입을 제외로 옮긴 선언을
+  // 주입하면 같은 본문이 소견을 냄 — 판정이 파일에서 흘러나온다는 증거임.
+  const html = wrapMermaid("erDiagram\n  A ||--o{ B : has");
+  assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), []);
+
+  withFixture(
+    {
+      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
+      excluded: [{ type: "erDiagram", keywords: ["erDiagram"] }],
+      exclusionReason: "fixture",
+      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
+    },
+    (injected) => {
+      assertNoticeTypes(
+        validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
+        ["erDiagram"],
+      );
+    },
+  );
+});
+
+test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에서 빼면 소견이 사라짐", () => {
+  // 반대 방향. pie 는 배포본에서 제외이므로 소견이 1건이고, 제외를 비운 선언을
+  // 주입하면 같은 본문이 소견 0건이 됨.
+  const html = wrapMermaid('pie title Share\n  "a" : 40');
+  assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), ["pie"]);
+
+  withFixture(
+    {
+      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
+      excluded: [],
+      exclusionReason: "fixture",
+      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
+    },
+    (injected) => {
+      assertNoticeTypes(
+        validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
+        [],
+      );
+    },
+  );
+});
+
+test("loadDiagramTypes 가 망가진 선언을 조용히 삼키지 않음", () => {
+  withTempJson({ adopted: [] }, (path) => {
+    assert.throws(() => loadDiagramTypes(path), /excluded/);
+  });
 });
