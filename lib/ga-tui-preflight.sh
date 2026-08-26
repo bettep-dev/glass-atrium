@@ -1039,8 +1039,9 @@ _preflight_fakechat_boxed() {
 # the grouped consent already covered installing the python libs, and the retry is
 # `pip install --user --break-system-packages` — USER site-packages, not system, the
 # low-risk PEP-668 escape hatch — so the override auto-proceeds, logged VISIBLY (a
-# system-policy override, no longer a blocking prompt). requirements.txt is the package
-# SoT; the command builders target only the genuinely-missing subset for a fast re-run.
+# system-policy override, no longer a blocking prompt). requirements.txt declares the
+# package set and GA_PYTHON_IMPORTS executes it; the command builders target only the
+# genuinely-missing subset for a fast re-run.
 # Returns 0 on success; on a retry FAILURE it returns that rc so the caller warns and
 # continues (non-fatal — a manual install path exists).
 preflight_install_python_libs() {

@@ -1,10 +1,10 @@
-# Glass Atrium — Python runtime dependencies (the SoT for the bootstrap's
-# python-libs step in lib/ga-deps.sh / the glass-atrium entry point).
+# Glass Atrium — Python dependency DECLARATION set.
 #
-# Installed by the dependency-bootstrap preflight via:
-#   python3 -m pip install --user -r requirements.txt
-# On a PEP-668 externally-managed-environment failure, the preflight retries
-# (with consent) by appending --break-system-packages.
+# This file declares the runtime package set and has no runtime consumer. The
+# EXECUTED set is the GA_PYTHON_IMPORTS array in lib/ga-deps.sh, which the
+# dependency-bootstrap preflight installs. test/python-deps-parity.bats binds
+# the two, so adding a package means editing BOTH — the suite stays red until
+# it does.
 #
 # Two psycopg generations are intentionally BOTH present — they are NOT redundant:
 #   * psycopg2-binary — psycopg v2, imported as `import psycopg2`

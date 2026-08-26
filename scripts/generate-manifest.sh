@@ -32,7 +32,7 @@
 #              SYMLINK_EXCLUDE_PREFIXES/EXACT filters them out): hooks/ scoped/,
 #              agent-registry.json + the glass-atrium launcher, lib/ (the
 #              install/update ENGINE the launcher SOURCES), config.toml.example,
-#              requirements.txt, monitor/ (dashboard built + run in place; its
+#              monitor/ (dashboard built + run in place; its
 #              gitignored data/node_modules/dist + monitor/test/* auto-excluded),
 #              docs/assets/bulldog-braille.txt (the ONE shipped TUI art asset the
 #              launcher WHOLESALE-loads at runtime — its build-time generator .py +
@@ -43,6 +43,8 @@
 #              prefix to stay install-internal, the three sub-roots ride their parent
 #              prefixes). Without lib/ + monitor/ a fresh no-.git bundle is
 #              dead-on-arrival (launcher source + monitor build/run have no target).
+#              requirements.txt ships in that same bundle as a DECLARATION set with no
+#              runtime consumer; the executed set is GA_PYTHON_IMPORTS in lib/ga-deps.sh.
 #   EXCLUDE    dev-only: monitor/test/ (dashboard .test.ts, NOT the harness suite —
 #              no other pattern here catches .test.ts, .ts != .js), *.test.js basenames,
 #              */archive/*, publish-release.sh (maintainer/CI-only). Untracked/gitignored
