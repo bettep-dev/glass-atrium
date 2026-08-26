@@ -90,6 +90,8 @@ const ARCH_SELECTORS = {
 	desc: `#${ARCH_DESC_ID}`,
 };
 
+const DESC_FALLBACK = "No description available.";
+
 // Top-level Screen
 
 function ScreenArchitecture(
@@ -313,6 +315,9 @@ function ScreenArchitecture(
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
 					// 설명 산문 — 접힘 없이 상시 노출.
 					".arch-prose { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; padding: 8px 10px; } " +
+					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
+					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
+					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
 					// 신규 모션 게이트 — skeleton pulse + 노드/범례 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
 					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item { animation: none !important; transition: none !important; } }"}
@@ -364,6 +369,11 @@ function ScreenArchitecture(
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
 					/>
+				</div>
+
+				{/* 접근성 설명 — 산문 섹션과 독립된 aria-describedby 타깃. */}
+				<div id={ARCH_DESC_ID} className="arch-desc-a11y">
+					{activeDiagram?.description || DESC_FALLBACK}
 				</div>
 
 				<LiveDaemonTable state={liveState} />
@@ -949,7 +959,7 @@ function LiveDaemonTable({ state }) {
 	);
 }
 
-// 설명 산문 — 전문 상시 노출. SVG aria-describedby 타깃.
+// 설명 산문 — 전문 상시 노출.
 
 function DiagramProse({ diagram }) {
 	return (
@@ -957,8 +967,8 @@ function DiagramProse({ diagram }) {
 			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
 				About this diagram
 			</div>
-			<div id={ARCH_DESC_ID} className="fs-meta text-dim leading-snug">
-				{diagram?.description || "No description available."}
+			<div className="fs-meta text-dim leading-snug">
+				{diagram?.description || DESC_FALLBACK}
 			</div>
 		</section>
 	);
