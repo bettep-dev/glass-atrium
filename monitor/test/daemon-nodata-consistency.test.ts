@@ -2,8 +2,10 @@
 // Drives health-model.js (health/dashboard) from the REAL ui.jsx DAEMON_STATUS_TONE
 // table (architecture's SoT), so a divergence between the two screens fails the suite.
 // Proves: a never-reported daemon → info 'No data' on BOTH surfaces; an overdue daemon
-// → crit; a within-cadence daemon → its real status. health-model reads window.UI at
-// call time (JSX not importable in node) → stub built from parsed ui.jsx source.
+// → crit; a within-cadence daemon → its real status. Each case is driven by the server's
+// effective_status, the field both surfaces read, so the two cannot diverge on a rule of
+// their own. health-model reads window.UI at call time (JSX not importable in node) →
+// stub built from parsed ui.jsx source.
 // Runner: npx tsx --test test/daemon-nodata-consistency.test.ts
 
 import test from "node:test";
@@ -69,12 +71,14 @@ await import("../public/src/data/health-model.js");
 const HealthModel = stubWindow.HealthModel;
 assert.ok(HealthModel, "health-model.js must register window.HealthModel");
 
+// effective_status is the server verdict: overdue ⇒ 'stale' · otherwise the reported
+// status · never reported ⇒ 'missing'. Fixtures pair it with the last_status it would
+// really accompany, so a client that judged for itself would disagree with the pair.
 function daemon(overrides: Record<string, unknown> = {}) {
   return {
     daemon_name: "autoagent",
     last_status: "ok",
-    staleness_minutes: 60, // well under the 2160-min (36h) threshold
-    is_stale: false,
+    effective_status: "ok",
     ...overrides,
   };
 }
@@ -90,7 +94,9 @@ test("ui.jsx SoT: missing → info 'No data', stale → crit 'Overdue'", () => {
 
 test("never-reported daemon (null last_status row) → info 'No data' via shared SoT", () => {
   lookups.length = 0;
-  const meta = HealthModel.resolveDaemonDisplayMeta(daemon({ last_status: null }));
+  const meta = HealthModel.resolveDaemonDisplayMeta(
+    daemon({ last_status: null, effective_status: "missing" }),
+  );
   assert.deepStrictEqual(
     meta,
     TONE_TABLE.missing,
@@ -115,16 +121,27 @@ test("null daemon (no card row) → same info 'No data' as a null-status row", (
   );
 });
 
-test("overdue/stale daemon → crit (stale precedence over last_status)", () => {
+test("overdue daemon → crit 'Overdue' via the server verdict, outranking last_status", () => {
+  lookups.length = 0;
   const meta = HealthModel.resolveDaemonDisplayMeta(
-    daemon({ last_status: "ok", staleness_minutes: 3000 }), // > 2160 threshold
+    daemon({ last_status: "ok", effective_status: "stale" }),
   );
-  assert.strictEqual(meta.tone, "crit");
+  assert.deepStrictEqual(
+    meta,
+    TONE_TABLE.stale,
+    "health's overdue meta must equal architecture's 'stale' mapping",
+  );
+  assert.deepStrictEqual(meta, { tone: "crit", label: "Overdue" });
+  // Delegation proof: the verdict is handed to window.UI, not re-judged from a threshold.
+  assert.ok(
+    lookups.some(([kind, s]) => kind === "tone" && s === "stale"),
+    "must delegate tone to window.UI.daemonStatusTone('stale')",
+  );
 });
 
 test("within-cadence daemon → its real last_status mapping (no downgrade)", () => {
   const meta = HealthModel.resolveDaemonDisplayMeta(
-    daemon({ last_status: "ok", staleness_minutes: 60 }),
+    daemon({ last_status: "ok", effective_status: "ok" }),
   );
   assert.deepStrictEqual(meta, TONE_TABLE.ok);
   assert.deepStrictEqual(meta, { tone: "ok", label: "Healthy" });
