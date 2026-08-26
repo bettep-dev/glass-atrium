@@ -4,6 +4,8 @@
 
 import { fileURLToPath } from "node:url";
 
+import type { DetailGrade } from "./content-budget.js";
+
 // 7 v2 mermaid 다이어그램. slug 는 frontend TAB_ORDER 와 1:1 매칭.
 export interface DiagramSource {
 	id: number;
@@ -414,3 +416,52 @@ export const DAEMON_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> =
 // 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
 // import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
 export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
+
+export type DiagramSlug = (typeof DIAGRAMS)[number]["slug"];
+
+// 화면에 실제로 그려지는 단일 canonical 맵. 예산(content-budget)은 이 drawn 문자열에만 걸리고 source 7편은 무수정으로 남음
+// — daemon-binding · flow-extractor parity · verify-arch Stage-2 · 7-카운트 불변식이 계속 source 를 대상으로 함.
+// 편집 규칙: 라벨/산문 수정은 언제나 mermaid_source 에 적용하고 drawn 은 감축을 다시 적용해 재생성함.
+export interface CanonicalMap {
+	slug: DiagramSlug;
+	mermaid_drawn: string;
+	detail: DetailGrade;
+	// drawn 에서 빠진 source 노드 id. 각 항목의 실재/부재는 예산 테스트가 검사하나 목록의 완전성은 기계가 보지 못함.
+	omitted_node_ids: readonly string[];
+}
+
+export const CANONICAL_MAP: CanonicalMap = {
+	slug: "v2-overview-entry",
+	detail: "balanced",
+	// 감축(T9): 다른 다이어그램으로 넘어가는 경계 노드 3종과 그 엣지를 뺌 — 나머지 여섯 편이 그려지지 않으므로 도착지 없는 표식임.
+	mermaid_drawn: `flowchart LR
+    subgraph entry["External inputs"]
+        repo[Project repository]
+        user[User utterance]
+    end
+
+    subgraph daemon["Scheduled background jobs (daemons)"]
+        autoagent_d[Self-improvement daemon]
+        wiki_d[Wiki daemon]
+        cron["Scheduled background jobs"]
+    end
+
+    subgraph orch["Orchestrator (main session)"]
+        main_session["Plans the work, then assigns it"]
+    end
+
+    subgraph agents["Specialist agents"]
+        agent_layer["Specialist agents (23)"]
+    end
+
+    subgraph hooks["Safety checks & tracking"]
+        hook_pipeline["Hook pipeline (safety checks + tracking)"]
+    end
+
+    repo --> orch
+    user --> orch
+    daemon --> orch
+    orch -- "assigns work" --> agents
+    agents -- "tool calls" --> hooks`,
+	omitted_node_ids: ["to_data", "from_improvement", "to_html_gate"],
+};

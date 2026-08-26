@@ -4,6 +4,8 @@
 
 // Mirrors dashboard.ts DaemonStatusValue — duplicated locally per "Module
 // independence" (small util duplication > fragile cross-route imports).
+import type { BudgetReport } from "../architecture/content-budget.js";
+
 export type DaemonStatusValue =
   | "ok"
   | "partial"
@@ -157,3 +159,8 @@ export type HealthDetailErrorBody =
   // DB-rejected client input (SQLSTATE class 22/23) — db-failure.ts taxonomy split.
   | { error: "invalid_input"; reason: string }
   | { error: "invalid_param"; param: string };
+
+export interface HealthArchitectureBudgetResponse extends BudgetReport {
+	slug: string;
+	omitted_node_ids: string[];
+}

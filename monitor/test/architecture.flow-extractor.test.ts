@@ -238,9 +238,10 @@ const CLASSIFICATION_ORACLE: Record<
   string,
   { edges: Record<string, number>; nodes: Record<string, number>; roles: Record<string, number> }
 > = {
+  // canonical 맵은 payload 가 drawn 을 실어 나름 — 이 오라클 한 줄만 drawn 계측이고 나머지 여섯은 source 계측임.
   "v2-overview-entry": {
-    edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
-    nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
+    edges: { control_flow: 5 },
+    nodes: { agent: 6, daemon: 3, hook: 2, store: 1 },
     roles: { execution: 4, orchestration: 2 },
   },
   "v2-overview-data": {
