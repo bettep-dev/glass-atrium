@@ -120,7 +120,6 @@ export interface BudgetMeasure {
 	metric: string;
 	measured: number;
 	cap: number;
-	ratio: number;
 	state: BudgetState;
 }
 
@@ -138,7 +137,7 @@ const PROXY_NOTE =
 	"(on-screen readability is judged by human review). The omitted_node_ids ledger is checked for " +
 	"existence/absence of each listed id, never for completeness of the list. subgraph_depth is an " +
 	"invariant, not a volume metric: it is judged by measured > cap alone and is exempt from the ratio " +
-	"band, so its ratio field carries no state meaning (ratio 1.0 stays pass).";
+	"band (depth equal to the cap stays pass).";
 
 /** 비율 밴드 — ratio > 1.0 fail · 0.9 ≤ ratio ≤ 1.0 warn · ratio < 0.9 pass. */
 function getRatioState(ratio: number): BudgetState {
@@ -148,13 +147,12 @@ function getRatioState(ratio: number): BudgetState {
 }
 
 function getMeasure(metric: string, measured: number, cap: number): BudgetMeasure {
-	const ratio = cap === 0 ? Number.POSITIVE_INFINITY : measured / cap;
-	return { metric, measured, cap, ratio, state: getRatioState(ratio) };
+	return { metric, measured, cap, state: getRatioState(measured / cap) };
 }
 
 // subgraph 깊이는 볼륨이 아니라 회귀 잠금 불변식 — 비율 밴드에 넣으면 상한과 같은 정상값이 영구 warn 이 됨.
 function getDepthMeasure(measured: number, cap: number): BudgetMeasure {
-	return { metric: "subgraph_depth", measured, cap, ratio: measured / cap, state: measured > cap ? "fail" : "pass" };
+	return { metric: "subgraph_depth", measured, cap, state: measured > cap ? "fail" : "pass" };
 }
 
 const STATE_RANK: Readonly<Record<BudgetState, number>> = { pass: 0, warn: 1, fail: 2 };

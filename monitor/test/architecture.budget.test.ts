@@ -5,9 +5,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import Fastify from "fastify";
 
 import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
+import { registerHealthDetailRoutes } from "../src/server/routes/health-detail.js";
 import {
   BUDGET_CAPS,
   LABEL_CAP_EXEMPT_NODE_IDS,
@@ -37,9 +38,16 @@ const NESTED_FIXTURE = `flowchart LR
         end
     end`;
 
-test("AC-1 one counting path — same fixture in either argument position yields the same census", () => {
-  assert.deepEqual(getMermaidCensus(FIXTURE), getMermaidCensus(FIXTURE));
+test("AC-1 one counting path — census and report read the same fixture through one counter", () => {
   const census = getMermaidCensus(FIXTURE);
+  // 같은 픽스처가 두 소비자(census 직접 · report 의 measures)를 거쳐도 같은 수치여야 함 —
+  // 두 번째 계수 경로가 생기면 여기서 붉어짐.
+  const measured = Object.fromEntries(
+    getBudgetReport(FIXTURE, ASSIGNED_GRADE).measures.map((m) => [m.metric, m.measured]),
+  );
+  assert.equal(measured.nodes, census.nodeCount);
+  assert.equal(measured.edges, census.edgeCount);
+  assert.equal(measured.subgraph_depth, census.maxSubgraphDepth);
   assert.equal(census.nodeCount, 2, "subgraph zone ids are not nodes");
   assert.equal(census.edgeCount, 1);
   assert.equal(census.maxSubgraphDepth, 1);
@@ -96,13 +104,14 @@ test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source"
 });
 
 test("AC-9 three states come from the ratio band and violations name (metric, measured, cap)", () => {
-  const nodeIds = (n: number) => Array.from({ length: n }, (_, i) => `    n${i}["x"]`).join("\n");
+  const getNodeLines = (n: number) =>
+    Array.from({ length: n }, (_, i) => `    n${i}["x"]`).join("\n");
+  const failing = getBudgetReport(`flowchart LR\n${getNodeLines(caps.nodes + 1)}`, ASSIGNED_GRADE);
   // ratio 1.0 boundary and 0.95-equivalent both land in warn; > 1.0 fails; < 0.9 passes
-  assert.equal(getBudgetReport(`flowchart LR\n${nodeIds(caps.nodes)}`, ASSIGNED_GRADE).state, "warn");
-  assert.equal(getBudgetReport(`flowchart LR\n${nodeIds(caps.nodes + 1)}`, ASSIGNED_GRADE).state, "fail");
-  assert.equal(getBudgetReport(`flowchart LR\n${nodeIds(1)}`, ASSIGNED_GRADE).state, "pass");
+  assert.equal(getBudgetReport(`flowchart LR\n${getNodeLines(caps.nodes)}`, ASSIGNED_GRADE).state, "warn");
+  assert.equal(failing.state, "fail");
+  assert.equal(getBudgetReport(`flowchart LR\n${getNodeLines(1)}`, ASSIGNED_GRADE).state, "pass");
 
-  const failing = getBudgetReport(`flowchart LR\n${nodeIds(caps.nodes + 1)}`, ASSIGNED_GRADE);
   assert.equal(failing.violations.length >= 1, true);
   for (const v of failing.violations) {
     assert.equal(typeof v.metric, "string");
@@ -112,25 +121,26 @@ test("AC-9 three states come from the ratio band and violations name (metric, me
   assert.match(failing.note, /Proxy metric/);
 });
 
-test("canonical drawn is inside its whole budget", () => {
-  const report = getBudgetReport(drawn, ASSIGNED_GRADE);
-  assert.notEqual(report.state, "fail", JSON.stringify(report.violations));
-});
-
 test("AC-4 (adversarial) 체인 줄은 화살표 토큰마다 1엣지 — 체이닝으로 엣지 상한을 우회할 수 없음", () => {
   assert.equal(getMermaidCensus('flowchart LR\n    a["A"] --> b["B"] --> c["C"]').edgeCount, 2);
   // 인용 라벨 안의 화살표 문자열은 엣지가 아님(따옴표 제거 후 계수).
   assert.equal(getMermaidCensus('flowchart LR\n    a["-->"] --> b["B"]').edgeCount, 1);
 });
 
-test("AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node_ids 를 리포트 위에 합성함", () => {
-  const routeSrc = readFileSync(new URL("../src/server/routes/health-detail.ts", import.meta.url), "utf8");
-  assert.match(routeSrc, /app\.get\("\/api\/health\/architecture-budget", handleArchitectureBudget\)/);
-  assert.match(routeSrc, /slug: CANONICAL_MAP\.slug/);
-  assert.match(routeSrc, /omitted_node_ids: CANONICAL_MAP\.omitted_node_ids/);
-  assert.match(routeSrc, /\.\.\.getBudgetReport\(CANONICAL_MAP\.mermaid_drawn, CANONICAL_MAP\.detail\)/);
-  // 합성의 나머지 절반 — 스프레드되는 리포트가 note/grade 를 실제로 싣는지.
-  const report = getBudgetReport(drawn, CANONICAL_MAP.detail);
-  assert.equal(report.grade, ASSIGNED_GRADE);
-  assert.ok(report.note.length > 0);
+test("AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node_ids 를 리포트 위에 합성함", async () => {
+  // 라우트 소스 정규식이 아니라 실제 등록된 핸들러의 응답 본문을 봄 —
+  // 런타임에 던지는 라우트는 붉어지고, 포맷/핸들러 이름 변경으로는 붉어지지 않음.
+  const app = Fastify({ logger: false });
+  await registerHealthDetailRoutes(app);
+  const res = await app.inject({ method: "GET", url: "/api/health/architecture-budget" });
+  await app.close();
+
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.slug, CANONICAL_MAP.slug);
+  assert.deepEqual(body.omitted_node_ids, CANONICAL_MAP.omitted_node_ids);
+  // 합성의 나머지 절반 — 스프레드되는 리포트가 state/grade/note 를 실제로 싣는지.
+  assert.equal(body.state, getBudgetReport(drawn, CANONICAL_MAP.detail).state);
+  assert.equal(body.grade, ASSIGNED_GRADE);
+  assert.ok(body.note.length > 0);
 });

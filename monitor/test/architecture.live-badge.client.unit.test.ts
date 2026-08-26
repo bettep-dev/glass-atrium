@@ -62,12 +62,10 @@ const DAEMON_STATUS_TONE: Record<string, { tone: string; label: string }> = {
   quota_exceeded: { tone: "warn", label: "Usage limit" },
 };
 
-// AC-12 단언 대상 — 컴파일 산출물 원문. 부재 단언은 sandbox 전역이 아니라 이 텍스트를 봄
-// (제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
-let ARCH_CODE = "";
-
 // Build once, evaluate in a sandbox — the real top-level helper declarations.
-async function loadArch(): Promise<ArchHelpers> {
+// 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
+// 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
+async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
   const built = await esbuild.build({
     entryPoints: [ARCH_SRC],
     bundle: false,
@@ -81,7 +79,6 @@ async function loadArch(): Promise<ArchHelpers> {
     format: "esm",
   });
   const code = built.outputFiles[0].text;
-  ARCH_CODE = code;
 
   // React stub — every hook returns a benign default; the (uninvoked) component
   // bodies touch React, so the stubs never actually drive a render.
@@ -130,10 +127,10 @@ async function loadArch(): Promise<ArchHelpers> {
     "function",
     "getLegibleFitScaleAR must be reachable (AC-13 instrument)",
   );
-  return h;
+  return { helpers: h, code };
 }
 
-const arch = await loadArch();
+const { helpers: arch, code: archCode } = await loadArch();
 
 const daemon = (
   name: string,
@@ -229,7 +226,7 @@ const FIT_GRID: Array<[number, number, number, number]> = [
 ];
 
 test("AC-13 하한 상수가 화면 선언과 일치", () => {
-  assert.match(ARCH_CODE, /LEGIBLE_FIT_FLOOR\s*=\s*0\.6\b/);
+  assert.match(archCode, /LEGIBLE_FIT_FLOOR\s*=\s*0\.6\b/);
 });
 
 test("AC-13 픽스처 격자는 폭-fit 이 하한 미만인 조합을 포함함", () => {
@@ -261,10 +258,10 @@ test("AC-13 비정상 치수는 하한으로 떨어짐 (0/음수/NaN)", () => {
 // --- AC-12: 설명 축약 경로와 하드코드 목적 맵이 둘 다 부재 ---
 
 test("AC-12(a) 설명 축약 경로가 컴파일 산출물에 없음", () => {
-  assert.doesNotMatch(ARCH_CODE, /\btruncateText\b/);
-  assert.doesNotMatch(ARCH_CODE, /\bdiagramPurposeAR\b/);
+  assert.doesNotMatch(archCode, /\btruncateText\b/);
+  assert.doesNotMatch(archCode, /\bdiagramPurposeAR\b/);
 });
 
 test("AC-12(b) 하드코드 목적 문자열 맵이 컴파일 산출물에 없음", () => {
-  assert.doesNotMatch(ARCH_CODE, /\bTAB_PURPOSE\b/);
+  assert.doesNotMatch(archCode, /\bTAB_PURPOSE\b/);
 });

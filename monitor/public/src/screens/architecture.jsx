@@ -905,10 +905,13 @@ function LiveChip({ tone, label, title }) {
 
 function LiveDaemonTable({ state }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
+	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 daemon 배열을 다시 훑지 않음.
+	const rows = useMemoAR(
+		() => (state.status === "ready" ? getLiveDaemonRows(state.data?.daemons) : []),
+		[state.status, state.data],
+	);
 
 	if (state.status !== "ready") return null;
-
-	const rows = getLiveDaemonRows(state.data?.daemons);
 	if (rows.length === 0) return null;
 
 	return (

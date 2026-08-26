@@ -11,9 +11,9 @@ import path from "node:path";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { Prisma } from "../../generated/prisma/client.js";
 import { getBudgetReport } from "../architecture/content-budget.js";
 import { CANONICAL_MAP } from "../architecture/diagrams-source.js";
-import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import {

@@ -2,10 +2,10 @@
 // tree / wiki daily reports). Named "health-detail" because /api/health is a
 // separate liveness probe with a different shape — the module mirrors the route filename.
 
-// Mirrors dashboard.ts DaemonStatusValue — duplicated locally per "Module
-// independence" (small util duplication > fragile cross-route imports).
 import type { BudgetReport } from "../architecture/content-budget.js";
 
+// Mirrors dashboard.ts DaemonStatusValue — duplicated locally per "Module
+// independence" (small util duplication > fragile cross-route imports).
 export type DaemonStatusValue =
   | "ok"
   | "partial"

@@ -27,10 +27,7 @@ import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
 import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
-import type {
-	ArchitectureLiveResponse,
-	SystemDiagrams,
-} from "../src/server/types/architecture.js";
+import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -112,14 +109,11 @@ before(async () => {
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
-	const payloadRes = await app.inject({
-		method: "GET",
-		url: "/api/architecture/diagrams",
-	});
-	const payload = payloadRes.json() as SystemDiagrams;
+	// 라우트 왕복 대신 같은 생산자를 직접 부름 — 위 라우트가 쓰는 진입점과 동일.
+	const { doc } = await getArchitecture(app.log);
 	const canonical =
-		payload.diagrams.find((d) => d.id === CANONICAL_DIAGRAM_ID) ??
-		payload.diagrams[0];
+		doc.diagrams.diagrams.find((d) => d.id === CANONICAL_DIAGRAM_ID) ??
+		doc.diagrams.diagrams[0];
 	assert.ok(canonical, "diagrams payload must carry the canonical entry");
 	expectedDescription = getNormalized(canonical.description || "");
 
@@ -128,17 +122,19 @@ before(async () => {
 	await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 
 	// 페이지 수준 네트워크 전제 — CDN 런타임이 실제로 로드돼야 세 단언이 성립함.
-	await page
-		.waitForFunction(() => Boolean((window as never as { mermaid?: unknown }).mermaid), null, {
-			timeout: 30_000,
-		})
-		.catch(() => undefined);
-	const runtimeReady = await page.evaluate(() =>
-		Boolean(
-			(window as never as { mermaid?: unknown; React?: unknown }).mermaid &&
-				(window as never as { React?: unknown }).React,
-		),
-	);
+	const runtimeReady = await page
+		.waitForFunction(
+			() => {
+				const w = window as never as { mermaid?: unknown; React?: unknown };
+				return Boolean(w.mermaid && w.React);
+			},
+			null,
+			{ timeout: 30_000 },
+		)
+		.then(
+			() => true,
+			() => false,
+		);
 	assert.equal(
 		runtimeReady,
 		true,
