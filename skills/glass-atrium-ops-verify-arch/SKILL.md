@@ -10,7 +10,9 @@ The Atrium system diagrams live in a single source of truth — `~/.glass-atrium
 - **Machine layer** — calls `computeArchDrift()` for a deterministic count diff. Catches count-movement drift only.
 - **Semantic layer** — LLM checks the machine cannot do: orphan nodes, diagram-prose vs actual-behavior mismatch, a new agent missing from the team-orchestration graph, broken cross-references, and a per-node "does this have a real counterpart?" pass. Catches count-invariant drift (e.g. an agent's role changed but the count stayed 23).
 
-These two layers are complementary — the machine layer is the L1 badge's logic; this skill is the L2 deep on-demand action. The audit output is a single actionable fix report. On a deliberate human invocation (no `--dry-run`), the skill then runs **Stage 4 — Apply**: it delegates the count/semantic edits, a gated build, and a restart to a foreground `glass-atrium-dev-node` agent, then re-verifies that the drift cleared. Apply is the default on invocation; `--dry-run` reports only. The human invocation itself is the approval gate — apply never runs from a daemon and the main session never edits the files directly.
+These two layers are complementary — the machine layer is the L1 badge's logic; this skill is the L2 deep on-demand action. **Both branches consume the same contract**: `stale` + `diffs` from `/api/architecture/live` (`computeArchDrift()`'s return shape). The L1 badge reads it to decide whether to show `최신화 필요`; this L2 skill reads it as its Stage-1 instrument and as its Stage-4 success oracle. That field shape is a fixed external contract — do not re-shape it, and do not substitute a hand-rolled count for it in either branch.
+
+**What the screen draws vs. what this skill audits** — the architecture screen draws a single canonical map (`CANONICAL_MAP.mermaid_drawn` in `diagrams-source.ts`, substituted into the payload at `parser.ts` for the canonical slug only). The audit target is unchanged and is NOT that drawn string: it is the `mermaid_source` of all 7 records, including the six that are source-only unrendered records (they still feed daemon-binding, flow-extractor parity, this skill's Stage-2 audit, and the 7-count compile invariant). The audit output is a single actionable fix report. On a deliberate human invocation (no `--dry-run`), the skill then runs **Stage 4 — Apply**: it delegates the count/semantic edits, a gated build, and a restart to a foreground `glass-atrium-dev-node` agent, then re-verifies that the drift cleared. Apply is the default on invocation; `--dry-run` reports only. The human invocation itself is the approval gate — apply never runs from a daemon and the main session never edits the files directly.
 
 ## Scope — Atrium system only (binding invariant)
 
@@ -64,7 +66,7 @@ The result shape is `ArchDriftResult`:
 
 ### Stage 2 — Semantic completeness (LLM, count-invariant drift)
 
-The machine stage cannot see meaning. Read `diagrams-source.ts` (7 diagrams — slugs `v2-overview-entry`, `v2-overview-data`, `v2-hooks`, `v2-loops-learn`, `v2-loops-autoagent`, `v2-team-orchestration`, `v2-team-docs`) and run these checks. Apply the Atrium-scope boundary above to every check.
+The machine stage cannot see meaning. Read the `mermaid_source` string of every record in `diagrams-source.ts` — the audit target is the full 7-record source set (six of them are no longer drawn on screen; audit them anyway). `CANONICAL_MAP.mermaid_drawn` is a derived artifact and is NEVER the Stage-2 audit target. The 7 slugs are `v2-overview-entry`, `v2-overview-data`, `v2-hooks`, `v2-loops-learn`, `v2-loops-autoagent`, `v2-team-orchestration`, `v2-team-docs`. Run these checks over all of them. Apply the Atrium-scope boundary above to every check.
 
 - **Orphan nodes** — a diagram node (agent, hook, loop, file) with no real Atrium counterpart on disk. Cross-check each labeled node against `~/.glass-atrium/{agents,hooks,rules,scoped,skills}/` and `~/Library/LaunchAgents/com.glass-atrium.*`. A node naming a since-removed asset is an orphan.
 - **Prose ↔ behavior mismatch** — a node label or `description` sentence that describes behavior the system no longer performs (e.g. "summarize every 3 tool calls" scaffolding the model self-updates instead, a renamed route, a relocated gate). Flag the specific diagram slug + the stale sentence.
@@ -95,7 +97,7 @@ Fix list (actionable):
 ```
 
 - Every machine diff maps to a concrete `arch-invariants.ts` update (`claimed -> actual`).
-- Every semantic finding maps to a concrete `diagrams-source.ts` node/prose edit, naming the diagram slug.
+- Every semantic finding maps to a concrete `diagrams-source.ts` **`mermaid_source`** node/prose edit, naming the diagram slug — never a `mermaid_drawn` edit.
 - In `--dry-run` mode the report is the final output — no edit follows. In default mode the report is the input spec for Stage 4.
 
 ### Stage 4 — Apply (default on human invocation; skipped under `--dry-run`)
@@ -117,12 +119,15 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 **4. Assemble the glass-atrium-dev-node delegation package.** The main session composes (does not execute) the edit spec:
 - **COUNT spec** — for each `computeArchDrift()` diff, set `ARCH_INVARIANTS[<key>] = <actual>` in `arch-invariants.ts`. A `hooks.<Event>` dot-notation key targets the nested object field (`ARCH_INVARIANTS.hooks.<Event>`). The diffs ARE the fix spec — mechanical, exact.
 - **CONTENT spec** — translate each Stage-2 semantic finding into a diagram slug + the stale sentence/label + the replacement text, at the anchored locations from the fix report. This is an LLM-judgment edit.
+- **CONTENT edit target (binding — the canonical map holds a SECOND string)** — every CONTENT edit is applied to that record's **`mermaid_source`**. The canonical map's `mermaid_drawn` is NEVER edited directly; it is regenerated by re-applying the reduction ladder to the updated `mermaid_source`. The rule as the plan fixes it: **편집은 언제나 source 에 하고, canonical 맵의 drawn 은 감축 사다리를 다시 적용해 재생성함** — "always edit the source; the canonical map's drawn artifact is regenerated by re-applying the reduction ladder". Editing only the source silently drifts the drawn string; editing only the drawn string leaves the source stale. Re-applying the ladder means: reduce the updated `mermaid_source` to the recorded `detail` grade, drop exactly the nodes listed in `omitted_node_ids` (update that list if the edit added or removed one), and keep the budget test green.
+- **Mandatory companion check** — a `mermaid_source` label edit is a flow-extractor input change, so the flow-extractor parity test (`monitor/test/architecture.flow-extractor.test.ts`) is a required companion; the content-budget test (`monitor/test/architecture.budget.test.ts`) covers the regenerated drawn string.
 - **stale-gating boundary (R5)** — `compute-arch-drift.ts` does NOT import `diagrams-source.ts`, so CONTENT (prose / node-label / xref) edits do NOT affect the `stale` flag. `stale:false` is gated **solely on the COUNT fix to `arch-invariants.ts`**; the CONTENT replacements are verified independently by grep, not by re-running drift.
 - **Constraints to pass through** — Changelog ban (no Wave/CID/date comment added to either file) · current-state-only invariants. Carry these verbatim into the delegation.
 
 **5. Foreground delegation → `glass-atrium-dev-node`** (`~/.glass-atrium/` is harness-adjacent → background FORBIDDEN). The agent performs, in order:
 - a. apply the COUNT assignments in `arch-invariants.ts`
-- b. apply the CONTENT edits in `diagrams-source.ts`
+- b. apply the CONTENT edits to the **`mermaid_source`** strings in `diagrams-source.ts` — never to `CANONICAL_MAP.mermaid_drawn`
+- b2. if a CONTENT edit touched the canonical slug's `mermaid_source`, regenerate `CANONICAL_MAP.mermaid_drawn` by re-applying the reduction ladder (see the CONTENT edit-target rule in step 4), then run the flow-extractor parity + content-budget tests
 - c. build — `cd ~/.glass-atrium/monitor && npm run build` (chain = `tsc && build:assets && build:client`)
 - d. **build gate (R7)** — run `launchctl kickstart -k gui/$(id -u)/com.glass-atrium.monitor` **only if `npm run build` exited 0** (explicit `&&` or `$?` check). If any chain stage is non-zero, abort BEFORE kickstart and branch to step 6 rollback.
 
@@ -139,7 +144,9 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 - **R1 success oracle**: do NOT assert "dist mtime unchanged". With `noEmitOnError` unset, `tsc` partially writes `dist/*.js` even on a type error, so an mtime-invariant oracle false-fails. Rollback success = **(a)** the two src `.ts` files' `git -C ~/.glass-atrium diff` == 0 (or matches the step-3 snapshot) **AND (b)** `launchctl kickstart` never fired on the failed build. The dist partial write is harmless (gitignored; the next clean build overwrites it).
 - Report "build failed, apply rolled back".
 
-**7. Re-verify readiness poll (R4).** After kickstart the monitor restarts via SIGKILL (Fastify must re-bind `:16145`). Do NOT issue a single immediate curl — a connection-refused during the boot race would be mis-read as false-stale. Instead **poll/retry** `/api/architecture/live` until HTTP 200 + a fresh value (≤~10s, short interval). Success oracle = `stale:false`.
+**7. Re-verify readiness poll (R4).** After kickstart the monitor restarts via SIGKILL (Fastify must re-bind `:16145`). Do NOT issue a single immediate curl — a connection-refused during the boot race would be mis-read as false-stale. Instead **poll/retry** `/api/architecture/live` until HTTP 200 + a fresh value (≤~10s, short interval).
+
+**Success oracle (two halves — do not conflate them).** `stale:false` from `/api/architecture/live` is the COUNT half only, and it is gated solely on the `arch-invariants.ts` write (R5: `compute-arch-drift.ts` imports neither diagram artifact, so no CONTENT edit and no canonical-map reduction can move it). The CONTENT half has its own oracle: grep the replacement text in the edited `mermaid_source`, plus a green flow-extractor parity test and — when the canonical slug was touched — a regenerated `mermaid_drawn` with a green content-budget test. A run that reports `stale:false` while the drawn string still carries the stale label has passed half an oracle.
 
 **8. Post-apply summary (MANDATORY).** Show the user: the files changed, the applied value per diff, the semantic-edit slugs (CONTENT is an LLM edit — surface all of it for human confirmation), and the re-verify result.
 
@@ -154,6 +161,7 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 - **Edits only in Stage 4, only on deliberate human invocation, only via foreground glass-atrium-dev-node** — the main session never edits `diagrams-source.ts` / `arch-invariants.ts` in-session (Write/Edit blocked by enforce-delegation + Harness Path Protection). An edit happens ONLY in Stage 4, ONLY when a human ran `/glass-atrium-ops-verify-arch` without `--dry-run`, ONLY through a foreground `glass-atrium-dev-node` delegation. NEVER silently, NEVER from a daemon, NEVER backgrounded. Under `--dry-run` no edit occurs at all.
 - **No count re-implementation** — always call `computeArchDrift()`; never hand-roll the count or the Atrium-ownership filter in this skill.
 - **No pollution counting** — never count `~/.claude/` plugins, user MCP, or plugin skill namespaces as Atrium assets.
+- **No `mermaid_drawn` edit** — CONTENT edits go to `mermaid_source` only; the canonical map's drawn string is regenerated by re-applying the reduction ladder, never hand-edited. A direct drawn edit desynchronises the two strings the module now holds for the canonical map.
 - **No cached drift** — read the count live each run; a stale last-audit value defeats the audit's purpose.
 - **No kickstart on a failed build (R7)** — `launchctl kickstart` runs only after `npm run build` exits 0; a non-zero build aborts to rollback before any restart.
 - **No unscoped rollback (R2)** — build-fail rollback restores only the two SoT file paths; `git restore .` / `git checkout .` is forbidden (would clobber unrelated dirty files).
@@ -170,6 +178,8 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 - Re-verify read as a single immediate curl instead of a poll/retry → R4 boot-race false-stale risk.
 - A fix instruction that appends a changelog line to `diagrams-source.ts` / `arch-invariants.ts`.
 - Semantic findings emitted without first running the machine stage (the report must carry both layers).
+- A CONTENT edit written into `CANONICAL_MAP.mermaid_drawn`, or a canonical-slug `mermaid_source` edit landed without regenerating the drawn string → the two strings have drifted apart.
+- A Stage-2 audit that walked only the drawn canonical map instead of all 7 `mermaid_source` records.
 
 ## Verification
 
@@ -180,7 +190,8 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 - [ ] **Actionable fix list**: each finding maps to a named file + exact change (invariant value or diagram slug edit).
 - [ ] **Mode honored**: `--dry-run` produced a report only (zero edit/build/kickstart, two SoT files unchanged); default mode proceeded to Stage 4.
 - [ ] **Foreground delegation**: Stage 4 edits/build/restart ran via a foreground `glass-atrium-dev-node` agent — never edited in-session, never backgrounded, never daemon-triggered.
-- [ ] **Apply correctness**: COUNT diffs written to `arch-invariants.ts` (`hooks.<Event>` → nested field); CONTENT findings written to `diagrams-source.ts` at the anchored locations and grep-verified.
+- [ ] **Apply correctness**: COUNT diffs written to `arch-invariants.ts` (`hooks.<Event>` → nested field); CONTENT findings written to the `mermaid_source` strings in `diagrams-source.ts` at the anchored locations and grep-verified.
+- [ ] **Drawn regenerated, not edited**: no edit landed in `CANONICAL_MAP.mermaid_drawn`; if the canonical slug's `mermaid_source` changed, the drawn string was regenerated by re-applying the reduction ladder and the flow-extractor parity + content-budget tests are green.
 - [ ] **Build gate (R7)**: `launchctl kickstart` fired only after `npm run build` exit 0; a non-zero build aborted to rollback before any restart.
 - [ ] **Rollback safety (R1/R2)**: on build failure, only the two SoT paths were `git restore`d (no unscoped restore); success oracle = two `.ts` diffs == 0 (or step-3 snapshot) AND kickstart never fired — NOT a dist-mtime check.
 - [ ] **Re-verify poll (R4)**: `/api/architecture/live` polled/retried to HTTP 200 + fresh value (≤~10s); success oracle `stale:false` confirmed (COUNT-gated).
