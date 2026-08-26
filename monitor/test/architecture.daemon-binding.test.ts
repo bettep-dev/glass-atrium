@@ -175,7 +175,7 @@ test("AC-T4 map and health board render one verdict per daemon, in every input c
 
 // The threshold is a module constant no test can rebind, so the wider world is the payload the
 // server WOULD emit at that multiplier: its own rule re-applied to real output, moving every
-// field the threshold decides — the verdict on both payloads, `is_stale` on the card — and
+// field the threshold decides — the one verdict field each payload carries — and
 // nothing else. staleness_minutes and last_run_at stay exactly as reported, which is the point:
 // a screen re-deriving the verdict from those cannot move, and that is the failure to catch.
 function getVerdictAt(
@@ -200,7 +200,7 @@ function getCardsAt(rows: DaemonAggRow[], multiplier: number): DaemonStatusCard[
   return healthCards(rows, null).map((card) => {
     if (card.staleness_minutes === null) return card;
     const verdict = getVerdictAt(card.staleness_minutes, card.last_status, multiplier);
-    return { ...card, effective_status: verdict, is_stale: verdict === "stale" };
+    return { ...card, effective_status: verdict };
   });
 }
 
