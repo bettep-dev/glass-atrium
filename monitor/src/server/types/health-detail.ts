@@ -161,6 +161,6 @@ export type HealthDetailErrorBody =
   | { error: "invalid_param"; param: string };
 
 export interface HealthArchitectureBudgetResponse extends BudgetReport {
-	slug: string;
-	omitted_node_ids: string[];
+  slug: string;
+  omitted_node_ids: readonly string[];
 }

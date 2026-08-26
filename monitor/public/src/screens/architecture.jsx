@@ -310,7 +310,6 @@ function ScreenArchitecture(
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
 					// 설명 산문 — 접힘 없이 상시 노출.
 					".arch-prose { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; padding: 8px 10px; } " +
-
 					// 신규 모션 게이트 — skeleton pulse + 노드/범례 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
 					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item { animation: none !important; transition: none !important; } }"}
@@ -364,10 +363,8 @@ function ScreenArchitecture(
 					/>
 				</div>
 
-				{/* 라이브 상태 표 — 노드 링 표현을 대체함. daemon 1개 = 1행. */}
 				<LiveDaemonTable state={liveState} />
 
-				{/* 설명 전문 — 접힘 없이 상시 노출. SVG aria-describedby 타깃. */}
 				<DiagramProse diagram={activeDiagram} />
 
 				{/* 하단: 범례 접이식 (기본 닫힘 → 캔버스 폭/높이 미점유) */}
@@ -807,7 +804,6 @@ function MermaidCanvas({
 					Click a box for details
 				</div>
 			</div>
-
 		</>
 	);
 }
@@ -950,14 +946,13 @@ function LiveDaemonTable({ state }) {
 // 설명 산문 — 전문 상시 노출. SVG aria-describedby 타깃.
 
 function DiagramProse({ diagram }) {
-	const description = diagram?.description || "";
 	return (
 		<section className="arch-prose" aria-label="About this diagram">
 			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
 				About this diagram
 			</div>
 			<div id="arch-svg-desc" className="fs-meta text-dim leading-snug">
-				{description || "No description available."}
+				{diagram?.description || "No description available."}
 			</div>
 		</section>
 	);
@@ -1551,7 +1546,6 @@ function unscopedNodeIdAR(nodeId) {
 	const idx = nodeId.lastIndexOf(".");
 	return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 }
-
 
 // 라벨 정규화 — mermaid SVG 텍스트와 backend node label 간 fuzzy 매칭용.
 //   공백/줄바꿈/탭 → 단일 공백 1개로, 양끝 trim, lowercase.

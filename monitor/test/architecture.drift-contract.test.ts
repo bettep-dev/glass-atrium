@@ -10,8 +10,6 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import type { ArchDiff, ArchDriftResult } from "../src/server/architecture/compute-arch-drift.js";
-
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "../..");
 const ROUTE_SRC = readFileSync(path.join(REPO_ROOT, "monitor/src/server/routes/architecture.ts"), "utf8");
@@ -37,15 +35,10 @@ test("AC-10 (i) both keys exist on the live response and come from the drift res
 test("AC-10 (ii) stale is boolean and diffs is an array of ArchDiff", () => {
   assert.match(DRIFT_SRC, /stale: boolean;/);
   assert.match(DRIFT_SRC, /diffs: ArchDiff\[\];/);
-  const sample: ArchDriftResult = { stale: false, diffs: [] };
-  assert.equal(typeof sample.stale, "boolean");
-  assert.ok(Array.isArray(sample.diffs));
 });
 
 test("AC-10 (iii) every key the skill reads exists on the diff element", () => {
-  const diff: ArchDiff = { key: "hooks.PreToolUse", claimed: 1, actual: 2 };
   for (const key of SKILL_DIFF_KEYS) {
-    assert.ok(key in diff, `verify-arch reads diff key '${key}' — missing from ArchDiff`);
     assert.match(DRIFT_SRC, new RegExp(`\\n\\t${key}: `), `ArchDiff must declare '${key}'`);
   }
   for (const key of SKILL_TOP_KEYS) {
@@ -56,6 +49,5 @@ test("AC-10 (iii) every key the skill reads exists on the diff element", () => {
 });
 
 test("the new budget health surface is additive — it does not replace the live drift consumer", () => {
-  const routes = readFileSync(path.join(REPO_ROOT, "monitor/src/server/routes/architecture.ts"), "utf8");
-  assert.match(routes, /app\.get\("\/api\/architecture\/live", handleLive\)/);
+  assert.match(ROUTE_SRC, /app\.get\("\/api\/architecture\/live", handleLive\)/);
 });

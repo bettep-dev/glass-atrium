@@ -81,14 +81,13 @@ test("AC-5 drawn node label chars <= its grade cap outside the literal exemption
 
 test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", () => {
   assert.ok(canonicalSource !== undefined);
-  const source = canonicalSource.mermaid_source;
-  const sourceCount = getMermaidCensus(source).nodeCount;
-  const drawnCount = getMermaidCensus(drawn).nodeCount;
-  if (drawnCount < sourceCount) {
+  const sourceCensus = getMermaidCensus(canonicalSource.mermaid_source);
+  const drawnCensus = getMermaidCensus(drawn);
+  if (drawnCensus.nodeCount < sourceCensus.nodeCount) {
     assert.ok(CANONICAL_MAP.omitted_node_ids.length > 0, "reduction happened but the ledger is empty");
   }
-  const sourceIds = new Set(getMermaidCensus(source).nodes.map((n) => n.id));
-  const drawnIds = new Set(getMermaidCensus(drawn).nodes.map((n) => n.id));
+  const sourceIds = new Set(sourceCensus.nodes.map((n) => n.id));
+  const drawnIds = new Set(drawnCensus.nodes.map((n) => n.id));
   for (const id of CANONICAL_MAP.omitted_node_ids) {
     assert.ok(sourceIds.has(id), `omitted id '${id}' does not exist in the source`);
     assert.ok(!drawnIds.has(id), `omitted id '${id}' is still drawn`);

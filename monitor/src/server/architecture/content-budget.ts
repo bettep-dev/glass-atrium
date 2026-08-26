@@ -7,8 +7,6 @@ export interface MermaidNode {
 	id: string;
 	// 마크업(따옴표·HTML 태그·shape 구분자) 제거 후의 라벨 문자열.
 	label: string;
-	// `[/ … /]` 평행사변형 shape = 다른 다이어그램으로 넘어가는 경계 노드.
-	boundary: boolean;
 }
 
 export interface MermaidCensus {
@@ -16,7 +14,6 @@ export interface MermaidCensus {
 	nodeCount: number;
 	edgeCount: number;
 	maxSubgraphDepth: number;
-	maxLabelChars: number;
 }
 
 const OPENERS: Readonly<Record<string, string>> = { "[": "]", "(": ")", "{": "}" };
@@ -81,11 +78,7 @@ export function getMermaidCensus(mermaid: string): MermaidCensus {
 			const span = getBracketSpan(line, openIdx);
 			const inner = span.text;
 			if (!byId.has(id)) {
-				byId.set(id, {
-					id,
-					label: getLabelText(inner),
-					boundary: line[openIdx] === "[" && inner.trim().startsWith("/"),
-				});
+				byId.set(id, { id, label: getLabelText(inner) });
 			}
 			NODE_DEF.lastIndex = span.end;
 			match = NODE_DEF.exec(line);
@@ -98,7 +91,6 @@ export function getMermaidCensus(mermaid: string): MermaidCensus {
 		nodeCount: nodes.length,
 		edgeCount,
 		maxSubgraphDepth,
-		maxLabelChars: nodes.reduce((max, n) => Math.max(max, n.label.length), 0),
 	};
 }
 

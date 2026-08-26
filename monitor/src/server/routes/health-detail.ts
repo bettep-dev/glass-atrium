@@ -28,11 +28,11 @@ import {
 } from "../schedule-next-fire.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
-  HealthArchitectureBudgetResponse,
   CostGuardStateValue,
   DaemonPayloadEntry,
   DaemonStatusCard,
   DaemonStatusValue,
+  HealthArchitectureBudgetResponse,
   HealthDaemonPayloadResponse,
   HealthDaemonsResponse,
   HealthDetailErrorBody,
@@ -827,11 +827,12 @@ function invalidParam(name: string): HealthDetailErrorBody {
 
 // 그려지는 canonical 맵의 콘텐츠 예산 표면 — 계수 규칙과 상한 표는 content-budget 단일 SoT 에서만 옴.
 // 기존 소비자(verify-arch 의 /api/architecture/live stale·diffs)를 대체하지 않고 추가되는 표면임.
+const ARCHITECTURE_BUDGET: HealthArchitectureBudgetResponse = {
+  slug: CANONICAL_MAP.slug,
+  omitted_node_ids: CANONICAL_MAP.omitted_node_ids,
+  ...getBudgetReport(CANONICAL_MAP.mermaid_drawn, CANONICAL_MAP.detail),
+};
+
 async function handleArchitectureBudget(): Promise<HealthArchitectureBudgetResponse> {
-  const report = getBudgetReport(CANONICAL_MAP.mermaid_drawn, CANONICAL_MAP.detail);
-  return {
-    slug: CANONICAL_MAP.slug,
-    omitted_node_ids: [...CANONICAL_MAP.omitted_node_ids],
-    ...report,
-  };
+  return ARCHITECTURE_BUDGET;
 }
