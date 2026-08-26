@@ -149,6 +149,8 @@ PY
 }
 
 @test "parity: requirements.txt declaration set == GA_PYTHON_IMPORTS executed set" {
+  command -v python3 >/dev/null 2>&1 \
+    || skip "python3 absent — the PEP-503 normalization has no runner"
   local declared executed
   declared="$(_dist_names <"${GA_ROOT}/requirements.txt")"
   executed="$(_array_pip_names | _dist_names)"
@@ -162,10 +164,17 @@ PY
 @test "prose: no tracked file claims requirements.txt is read at runtime or is the install source" {
   git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || skip "Repo-only: the scan is \`git grep\` over tracked files, so a consumer install skips"
+  command -v python3 >/dev/null 2>&1 \
+    || skip "python3 absent — the sentence-unit scanner has no runner"
+  # This assertion file is not a product claim: its header and its own @test title carry the
+  # anchor and the predicate in order to DESCRIBE the ban, so scanning itself is a guaranteed
+  # self-hit. The exclusion sits after the union so it covers the appended declarations too.
+  local self_rel='test/python-deps-parity.bats'
   local -a files=()
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] && files+=("${rel}")
-  done < <({ git -C "${GA_ROOT}" grep -lF 'requirements.txt' -- .; printf 'requirements.txt\nrequirements-dev.txt\n'; } | sort -u)
+  done < <({ git -C "${GA_ROOT}" grep -lF 'requirements.txt' -- .; printf 'requirements.txt\nrequirements-dev.txt\n'; } \
+    | grep -vxF "${self_rel}" | sort -u)
   run _prose_claim_scan "${files[@]}"
   if [[ "${status}" -ne 0 ]]; then
     printf 'runtime-consumption claims still present:\n%s\n' "${output}" >&2

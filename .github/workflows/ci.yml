@@ -234,6 +234,10 @@ jobs:
               - 'scoped/**'
               - 'skills/**'
               - '**/*.md'
+              - 'requirements.txt'
+              - 'requirements-dev.txt'
+              - 'config.toml.example'
+              - '.github/workflows/ci.yml'
             python:
               - 'autoagent/**'
               - '**/*.py'
