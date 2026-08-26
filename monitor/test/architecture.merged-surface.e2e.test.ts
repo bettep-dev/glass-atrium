@@ -22,7 +22,11 @@ import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, {
+	type FastifyInstance,
+	type FastifyReply,
+	type FastifyRequest,
+} from "fastify";
 import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
@@ -85,22 +89,33 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 	};
 }
 
-// 자기개선 큐 픽스처 — 화면이 실제로 읽는 필드만 담음. 전체 응답 타입은 화면이 보지 않는
-// 수십 개 필드를 요구하므로, Pick 으로 읽기 계약만 묶어 둠(필드명이 바뀌면 컴파일에서 걸림).
+/**
+ * 자기개선 큐 픽스처 — 화면이 실제로 읽는 필드만 담음.
+ * 전체 응답 타입은 화면이 보지 않는 수십 개 필드를 요구하므로, Pick 으로 읽기 계약만 묶어 둠.
+ * 필드명이 바뀌면 컴파일에서 걸림.
+ */
 type ProposalStub = Pick<ImprovementProposalRow, "id" | "status">;
 type PatternStub = Pick<
 	ImprovementLearningLogRow,
 	"pattern_signature" | "frequency" | "last_updated"
 >;
 
+// 화면이 두 저장소를 각각 읽으므로 실패도 각각 심을 수 있어야 함.
+type QueueStore = "improvement" | "learningLog";
+
 interface QueueFixture {
 	improvement: { proposals: ProposalStub[]; actionable_proposals: ProposalStub[] };
 	learningLog: { patterns: PatternStub[] };
+	// 라우트가 500 으로 끊을 저장소 — 화면 fetch 를 중단이 아닌 거부로 만듦.
+	failedStores: QueueStore[];
 }
 
 // 화면이 두 사실에 붙이는 출처 표식 — 조인이 아니라 나란히 놓았음을 DOM 에서 읽는 키.
 const QUEUE_SOURCE_PROPOSALS = "autoagent-proposals";
 const QUEUE_SOURCE_LEARNING = "learning-log";
+
+// 큐 실패 경보가 스스로를 부르는 이름 — 총 alert 수는 트리에 다른 경보가 많아 아무것도 재지 못함.
+const QUEUE_ALERT_NEEDLE = "self-improvement queue";
 
 const QUEUE_PENDING = 3;
 const QUEUE_SIGNATURE = "T27_TOP_SIGNAL";
@@ -113,15 +128,19 @@ function getQueueFixture(overrides: Partial<QueueFixture> = {}): QueueFixture {
 	return {
 		improvement: { proposals: [], actionable_proposals: [] },
 		learningLog: { patterns: [] },
+		failedStores: [],
 		...overrides,
 	};
 }
 
-// AC-T27 픽스처. pending 3건은 두 배열에 걸쳐 있고 id 1 이 겹침 — 단순 합산이면 4 가 나옴.
-// 빈도 최댓값 행을 응답 정렬(last_updated DESC)의 둘째에 둠 — 첫 행을 집으면 붉어짐.
+/**
+ * AC-T27 픽스처. pending 3건은 두 배열에 걸쳐 있고 id 1 이 겹침 — 단순 합산이면 4 가 나옴.
+ * 빈도 최댓값 행을 응답 정렬(last_updated DESC)의 둘째에 둠 — 첫 행을 집으면 붉어짐.
+ */
 function getQueueLoadedFixture(): QueueFixture {
 	const now = Date.now();
 	return {
+		failedStores: [],
 		improvement: {
 			proposals: [
 				{ id: 1, status: "pending" },
@@ -149,6 +168,16 @@ function getQueueLoadedFixture(): QueueFixture {
 			],
 		},
 	};
+}
+
+/**
+ * 로드 실패 픽스처 — 데이터는 loaded 와 같게 두고 끊을 저장소만 지정함.
+ * 부분 실패에서 살아남은 쪽이 실제로 그려지는지 재려면 데이터가 있어야 함.
+ */
+function getQueueFailedFixture(
+	failedStores: QueueStore[] = ["improvement", "learningLog"],
+): QueueFixture {
+	return { ...getQueueLoadedFixture(), failedStores };
 }
 
 function getDriftDiff(key: string): ArchDriftDiff {
@@ -256,8 +285,18 @@ before(async () => {
 	});
 	app.get("/api/architecture/live", async () => liveFixture);
 	// 자기개선 두 저장소 — 화면이 각각 따로 읽으므로 라우트도 따로 둠.
-	app.get("/api/improvement", async () => queueFixture.improvement);
-	app.get("/api/improvement/learning-log", async () => queueFixture.learningLog);
+	app.get("/api/improvement", async (_req: FastifyRequest, reply: FastifyReply) =>
+		queueFixture.failedStores.includes("improvement")
+			? reply.code(500).send({ error: "queue fixture failure" })
+			: queueFixture.improvement,
+	);
+	app.get(
+		"/api/improvement/learning-log",
+		async (_req: FastifyRequest, reply: FastifyReply) =>
+			queueFixture.failedStores.includes("learningLog")
+				? reply.code(500).send({ error: "queue fixture failure" })
+				: queueFixture.learningLog,
+	);
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -512,8 +551,11 @@ test("AC-T18(c) the drift banner survives beside the writer alert", async () => 
 	);
 });
 
-// 자기개선 큐 표면 탐침 — 출처 표식이 붙은 사실 요소만 읽음. 컨테이너 클래스는
-// .arch-live-strip 이 아니어야 함(AC-T18 의 칩 부재 단언과 로드 실패 경보가 그 클래스를 씀).
+/**
+ * 자기개선 큐 표면 탐침 — 출처 표식이 붙은 사실 요소만 읽음.
+ * 컨테이너 클래스는 .arch-live-strip 이 아니어야 함 — 그 클래스는 AC-T18 의 칩 부재 단언과
+ * live 로드 실패 경보의 자리임.
+ */
 async function getQueueProbe() {
 	// 부재는 아래 단언이 문장으로 보고함 — 여기서 던지면 붉은 이유가 타임아웃으로 바뀜.
 	await page
@@ -523,8 +565,8 @@ async function getQueueProbe() {
 			() => false,
 		);
 
-	// evaluate 본문에 이름 붙은 내부 함수를 두지 않음 — tsx 의 keepNames 가 __name 래퍼를
-	// 심는데 그 헬퍼는 브라우저 컨텍스트에 없음. 접힘 판정은 그래서 루프로 폄.
+	// evaluate 본문에 이름 붙은 내부 함수 금지 — tsx 의 keepNames 가 브라우저에 없는 __name 래퍼를 심음.
+	// 접힘 판정을 루프로 편 이유임.
 	return await page.evaluate(() => {
 		const strip = document.querySelector(".arch-queue-strip");
 		if (!strip) return { found: false, childCount: -1, nested: false, facts: [] };
@@ -643,5 +685,68 @@ test("AC-T27 the two stores sit side by side, never merged into one claim", asyn
 			signalNamesPending: false,
 		},
 		`queue strip rendered as: pending="${pending.text}" · signal="${signal.text}"`,
+	);
+});
+
+/**
+ * 큐 실패 표면 탐침 — 큐를 이름으로 부르는 alert 와 그 안의 복구 컨트롤을 함께 셈.
+ * 둘을 따로 재면 경보만 있고 되돌릴 길이 없는 상태가 초록으로 지나감.
+ */
+async function getQueueFailureProbe() {
+	return await page.evaluate((key) => {
+		const alerts = Array.from(document.querySelectorAll('[role="alert"]')).filter((el) =>
+			(el.textContent || "").includes(key),
+		);
+		let retries = 0;
+		for (const el of alerts) retries += el.querySelectorAll("button").length;
+		return { alerts: alerts.length, retries };
+	}, QUEUE_ALERT_NEEDLE);
+}
+
+test("AC-T27 a rejected queue fetch raises exactly one alert naming the queue", async () => {
+	await openMap(getLiveFixture(), getQueueFailedFixture());
+	// 두 저장소가 모두 죽으면 사실 요소가 하나도 없어 getQueueProbe 의 대기가 걸리지 않음 —
+	// 경보 등장을 여기서 기다려 붉은 이유가 경쟁이 되지 않게 함. 부재는 아래 단언이 문장으로 보고함.
+	await page.waitForSelector(".arch-queue-error", { timeout: 10_000 }).then(
+		() => true,
+		() => false,
+	);
+
+	assert.deepEqual(
+		await getQueueFailureProbe(),
+		{ alerts: 1, retries: 1 },
+		"both stores failing must name the queue in exactly one alert carrying a retry — a silent empty strip makes 'nothing pending' and 'could not load' indistinguishable",
+	);
+
+	// 부분 실패 — 살아남은 저장소는 그대로 보이고 경보는 여전히 한 건임.
+	await openMap(getLiveFixture(), getQueueFailedFixture(["learningLog"]));
+	const probe = await getQueueProbe();
+	const pending = probe.facts.find((f) => f.source === QUEUE_SOURCE_PROPOSALS);
+
+	assert.deepEqual(
+		{
+			alerts: (await getQueueFailureProbe()).alerts,
+			pendingRendered: Boolean(pending?.text.includes(`${QUEUE_PENDING} pending`)),
+			signalRendered: probe.facts.some((f) => f.source === QUEUE_SOURCE_LEARNING),
+		},
+		{ alerts: 1, pendingRendered: true, signalRendered: false },
+		"one store's failure must raise the alert without erasing the store that answered",
+	);
+});
+
+// 실패 표면이 성공 경로로 새지 않았음을 잠금 — AC-T18(c) 와 같은 성격의 불변식 다리라
+// 오늘도 초록이고, 경보가 상시 노출로 바뀌어야만 붉어짐.
+test("AC-T27 the loaded queue raises no failure alert", async () => {
+	await openMap(getLiveFixture(), getQueueLoadedFixture());
+	const probe = await getQueueProbe();
+
+	assert.deepEqual(
+		{
+			alerts: (await getQueueFailureProbe()).alerts,
+			factCount: probe.facts.length,
+			childCount: probe.childCount,
+		},
+		{ alerts: 0, factCount: 2, childCount: 2 },
+		"a fully loaded queue must render the two facts and nothing else — no error surface",
 	);
 });
