@@ -17,36 +17,6 @@ const LEGIBLE_FIT_FLOOR = 0.6;
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
-const ROLE_LABEL = {
-	entry: "Entry",
-	orchestration: "Coordination",
-	execution: "Execution",
-	data: "Data",
-	feedback: "Feedback",
-	monitoring: "Monitoring",
-	gateway: "Gateway",
-};
-
-const ROLE_BORDER = {
-	entry: "#38bdf8",
-	orchestration: "#a78bfa",
-	execution: "#4ade80",
-	data: "#fbbf24",
-	feedback: "#f472b6",
-	monitoring: "#f87171",
-	gateway: "#94a3b8",
-};
-
-const NODE_TYPE_BG = {
-	agent: "#1e293b",
-	hook: "#312e81",
-	script: "#1e3a8a",
-	daemon: "#7c2d12",
-	store: "#713f12",
-	external: "#374151",
-	gateway: "#1f2937",
-};
-
 const NODE_TYPE_LABEL = {
 	agent: "Agent",
 	hook: "Hook",
@@ -68,17 +38,6 @@ const EDGE_COLORS = {
 	triggers: "#4ade80",
 };
 
-const EDGE_TYPE_LABEL = {
-	control_flow: "Controls",
-	data_flow: "Data",
-	fires_event: "Event",
-	writes_to: "Writes",
-	reads_from: "Reads",
-	monitors: "Watches",
-	escalates_to: "Escalates",
-	triggers: "Triggers",
-};
-
 // 화면이 선호하는 canonical 맵 id — 서버 CANONICAL_MAP.slug 와 같은 값이지만, 불일치는 payload 로 흡수함.
 const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
@@ -89,6 +48,12 @@ const ARCH_SELECTORS = {
 	tabControl: '[role="tab"], .arch-tab-btn',
 	desc: `#${ARCH_DESC_ID}`,
 };
+
+const DESC_FALLBACK = "No description available.";
+
+// 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스. 최다 빈도는 표 전체가 아니라
+// 이 최근 슬라이스 안에서 고름(읽기 경로가 표 전체 최댓값을 내주지 않음).
+const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 
 // Top-level Screen
 
@@ -108,13 +73,16 @@ function ScreenArchitecture(
 		error: null,
 	});
 
+	// 자기개선 큐 두 사실 — 각각 독립적으로 null 가능. 한 저장소가 실패해도 다른 쪽은 그대로 보임.
+	const [queueState, setQueueState] = useStateAR({
+		pendingCount: null,
+		topSignal: null,
+	});
+
 	const [refreshTick, setRefreshTick] = useStateAR(0);
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
-
-	// 범례 포커스 — { dim: "role"|"type", key } 또는 null. 클릭 시 해당 분류 노드 강조·나머지 dim.
-	const [legendFocus, setLegendFocus] = useStateAR(null);
 
 	const diagAbortRef = useRefAR(null);
 	const liveAbortRef = useRefAR(null);
@@ -149,6 +117,26 @@ function ScreenArchitecture(
 				if (!ctrl.signal.aborted) setLiveState({ status: "ready", data, error: null });
 			})
 			.catch((err) => handleErrorAR(err, setLiveState));
+
+		return () => ctrl.abort();
+	}, [refreshTick]);
+
+	// 자기개선 큐 — 두 저장소를 각각 읽어 각각 담음. 잇는 키(pattern_label ↔ pattern_signature)의
+	// 대응이 확인되지 않아 조인하지 않음. allSettled 라 한쪽 실패가 다른 쪽 값을 지우지 않음.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+
+		Promise.allSettled([
+			fetchJsonAR("/api/improvement", ctrl.signal),
+			fetchJsonAR(LEARNING_LOG_URL, ctrl.signal),
+		]).then(([queue, log]) => {
+			if (ctrl.signal.aborted) return;
+			setQueueState({
+				pendingCount:
+					queue.status === "fulfilled" ? getPendingCountAR(queue.value) : null,
+				topSignal: log.status === "fulfilled" ? getTopSignalAR(log.value) : null,
+			});
+		});
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
@@ -196,21 +184,6 @@ function ScreenArchitecture(
 		return m;
 	}, [activeDiagram]);
 
-	// 활성 diagram 에 실제 존재하는 role/node-type/edge-type 집합 — 범례를 실제 사용분으로만 노출.
-	const legendUsedSets = useMemoAR(() => {
-		const roles = new Set();
-		const nodeTypes = new Set();
-		const edgeTypes = new Set();
-		if (!activeDiagram) return { roles, nodeTypes, edgeTypes };
-		for (const layer of activeDiagram.layers || []) {
-			if (layer.role) roles.add(layer.role);
-			for (const node of layer.nodes || []) if (node.type) nodeTypes.add(node.type);
-		}
-		for (const flow of activeDiagram.flows || [])
-			if (flow.edge_type) edgeTypes.add(flow.edge_type);
-		return { roles, nodeTypes, edgeTypes };
-	}, [activeDiagram]);
-
 	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 기반. 소비자는 노드 상세 드로어의 daemon pill.
 	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
 	const liveDaemonsByNodeId = useMemoAR(() => {
@@ -229,18 +202,18 @@ function ScreenArchitecture(
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
 
-	// 범례 항목 토글 — 같은 항목 재클릭 시 해제, 다른 항목 클릭 시 교체.
-	const toggleLegendFocus = useCallbackAR((dim, key) => {
-		setLegendFocus((prev) =>
-			prev && prev.dim === dim && prev.key === key ? null : { dim, key },
-		);
-	}, []);
-
 	// 설계도 카운트 드리프트(구조 정합성) — daemon status(런타임 헬스)와 별개 신호.
 	//   live 응답 ready 시점에만 신뢰. diffs = [{ key, claimed, actual }].
 	const driftStale =
 		liveState.status === "ready" && liveState.data?.stale === true;
 	const driftDiffs = driftStale ? liveState.data?.diffs || [] : [];
+
+	// 이중기록이 끊긴 writer — 상시 칩을 대신하는 조건부 경보의 유일한 근거.
+	//   live 응답 ready 시점에만 신뢰. 빈 배열이면 배너가 DOM 에 없음.
+	const offWriters =
+		liveState.status === "ready"
+			? (liveState.data?.writers || []).filter((w) => !w.dual_write_active)
+			: [];
 
 	// 거버넌스 멤버십 — 컴플라이언스 매트릭스가 이름 댄 문서의 부재 목록(총계 아님).
 	const governance =
@@ -261,18 +234,10 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					".arch-live-strip-group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; } " +
-					".arch-live-strip-sep { width: 1px; height: 16px; background: rgb(var(--line)); flex-shrink: 0; } " +
-					".arch-live-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; " +
-					'background: rgb(var(--elev)); font-size: var(--fs-meta); font-family: "JetBrains Mono", monospace; white-space: nowrap; } ' +
-					// 범례 접이식 — 기본 닫힘. summary 클릭으로 노출, 캔버스 폭 미점유.
-					".arch-legend-details { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
-					".arch-legend-details > summary { cursor: pointer; padding: 6px 10px; font-size: var(--fs-meta); color: rgb(var(--dim)); " +
-					"list-style: none; user-select: none; display: flex; align-items: center; gap: 8px; } " +
-					".arch-legend-details > summary::-webkit-details-marker { display: none; } " +
-					".arch-legend-details[open] > summary { border-bottom: 1px solid rgb(var(--line)); } " +
-					// 펼친 범례 = 3그룹 가로 분배 (캔버스 높이 미잠식, 하단 1회성 노출).
-					".arch-legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 18px; padding: 10px; align-items: start; } " +
+					// 자기개선 큐 스트립 — 상시 노출. 좁은 폭에서는 두 사실이 줄바꿈으로 쌓임.
+					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
+					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
@@ -286,8 +251,6 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					".arch-legend-swatch-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; } " +
-					".arch-legend-swatch-line { width: 16px; height: 2px; flex-shrink: 0; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -295,14 +258,6 @@ function ScreenArchitecture(
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
-					// 범례 항목 = focusable 버튼. 클릭/Enter → 해당 role 강조, 나머지 노드 dim (context-dim).
-					".arch-legend-item { width: 100%; min-width: 0; text-align: left; background: none; border: none; padding: 1px 2px; border-radius: 4px; cursor: pointer; transition: background-color .12s; } " +
-					".arch-legend-item:hover { background: rgb(var(--elev)); } " +
-					".arch-legend-item:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
-					".arch-legend-item.active { background: rgb(var(--accent) / 0.12); } " +
-					// 범례 포커스 시 비대상 노드 dim — 색 정보는 유지, 대비만 낮춤 (severity flood 아님).
-					".arch-mermaid-canvas.legend-focus .node:not(.legend-hit) { opacity: 0.28; } " +
-					".arch-mermaid-canvas.legend-focus .node.legend-hit { opacity: 1; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
 					// 라이브 상태 표 — 노드 링 점등을 대체하는 표면.
@@ -313,9 +268,12 @@ function ScreenArchitecture(
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
 					// 설명 산문 — 접힘 없이 상시 노출.
 					".arch-prose { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; padding: 8px 10px; } " +
-					// 신규 모션 게이트 — skeleton pulse + 노드/범례 transition 정지 (§8.4 계약).
+					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
+					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
+					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
+					// 신규 모션 게이트 — skeleton pulse + 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
-					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item { animation: none !important; transition: none !important; } }"}
+					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -340,6 +298,8 @@ function ScreenArchitecture(
 			<div className="arch-page">
 				{/* 구조 드리프트 배너(설계도 카운트 mismatch) — daemon LiveStrip(런타임 헬스)과
             별개 영역. stale 일 때만 노출, info-tone 으로 daemon-down warn-tone 과 구별. */}
+				{offWriters.length > 0 && <DualWriteBannerAR writers={offWriters} />}
+
 				{driftStale && <DriftBannerAR diffs={driftDiffs} />}
 
 				{/* 거버넌스 문서 부재 — 이름을 부르는 경고. 카운트 드리프트보다 상위 심각도(warn-tone). */}
@@ -350,8 +310,12 @@ function ScreenArchitecture(
 					/>
 				)}
 
-				{/* 상단: 라이브 상태 가로 컴팩트 스트립 (좌측 컬럼 폐기 → 캔버스 폭 회수) */}
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
+
+				<QueueStrip
+					pendingCount={queueState.pendingCount}
+					topSignal={queueState.topSignal}
+				/>
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
@@ -359,24 +323,19 @@ function ScreenArchitecture(
 						diagState={diagState}
 						activeDiagram={activeDiagram}
 						nodeByLabel={nodeByLabel}
-						nodeIndex={nodeIndex}
-						legendFocus={legendFocus}
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
 					/>
 				</div>
 
+				{/* 접근성 설명 — 산문 섹션과 독립된 aria-describedby 타깃. */}
+				<div id={ARCH_DESC_ID} className="arch-desc-a11y">
+					{activeDiagram?.description || DESC_FALLBACK}
+				</div>
+
 				<LiveDaemonTable state={liveState} />
 
 				<DiagramProse diagram={activeDiagram} />
-
-				{/* 하단: 범례 접이식 (기본 닫힘 → 캔버스 폭/높이 미점유) */}
-				<LegendDetails
-					activeDiagram={activeDiagram}
-					legendUsedSets={legendUsedSets}
-					legendFocus={legendFocus}
-					onToggleFocus={toggleLegendFocus}
-				/>
 			</div>
 
 			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
@@ -399,8 +358,6 @@ function DiagramCanvasCard({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 	onRetry,
 }) {
@@ -411,8 +368,6 @@ function DiagramCanvasCard({
 					diagState={diagState}
 					activeDiagram={activeDiagram}
 					nodeByLabel={nodeByLabel}
-					nodeIndex={nodeIndex}
-					legendFocus={legendFocus}
 					onSelectNode={onSelectNode}
 					onRetry={onRetry}
 				/>
@@ -425,8 +380,6 @@ function DiagramBody({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 	onRetry,
 }) {
@@ -477,8 +430,6 @@ function DiagramBody({
 			source={source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
-			nodeIndex={nodeIndex}
-			legendFocus={legendFocus}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -492,8 +443,6 @@ function MermaidCanvas({
 	source,
 	diagramTitle,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -583,36 +532,6 @@ function MermaidCanvas({
 		}
 		titleEl.textContent = diagramTitle;
 	}, [renderState.status, renderState.svgHtml, diagramTitle]);
-
-	// 범례 포커스 — 선택된 분류(role/type)에 속한 노드만 강조, 나머지 dim. legendFocus 변동마다 재적용.
-	useEffectAR(() => {
-		if (renderState.status !== "ready") return;
-		const root = containerRef.current;
-		if (!root) return;
-		const canvas = root.closest(".arch-mermaid-canvas");
-		if (!canvas) return;
-
-		const svgNodes = root.querySelectorAll("g.node");
-		if (!legendFocus) {
-			canvas.classList.remove("legend-focus");
-			svgNodes.forEach((el) => el.classList.remove("legend-hit"));
-			return;
-		}
-
-		canvas.classList.add("legend-focus");
-		svgNodes.forEach((el) => {
-			const id = el.getAttribute("data-arch-node-id");
-			const info = id ? nodeIndex.get(id) : null;
-			const value =
-				legendFocus.dim === "role" ? info?.layer_role : info?.type;
-			el.classList.toggle("legend-hit", value === legendFocus.key);
-		});
-	}, [
-		renderState.status,
-		renderState.svgHtml,
-		legendFocus,
-		nodeIndex,
-	]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
 	useEffectAR(() => {
@@ -817,11 +736,10 @@ function ArchIconTargetAR() {
 	return <Icon name="target" size={15} />;
 }
 
-// Top live strip — 데몬·Writer·최근활동 요약을 가로 1줄 칩으로 압축 (캔버스 가로폭 회수 목적).
+// Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
+//   같은 페치가 드리프트·거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 셋의 예고이기도 함.
 
 function LiveStrip({ state, onRetry }) {
-	const { formatRelativeTime } = window.UI;
-
 	if (state.status === "loading") {
 		return (
 			<div className="arch-live-strip" aria-busy="true">
@@ -852,54 +770,38 @@ function LiveStrip({ state, onRetry }) {
 		);
 	}
 
-	const data = state.data;
-	const daemons = data?.daemons || [];
-	const writers = data?.writers || [];
-	const recent = data?.recent_activity || {};
-
-	const okWriters = writers.filter((w) => w.dual_write_active).length;
-	const offWriters = writers.filter((w) => !w.dual_write_active);
-
-	return (
-		<div className="arch-live-strip">
-			<div className="arch-live-strip-group">
-				<LiveChip
-					tone={offWriters.length === 0 ? "ok" : "crit"}
-					label={`Writer ${okWriters}/${writers.length}`}
-				/>
-				{offWriters.map((w) => (
-					<LiveChip key={w.writer_name} tone="crit" label={w.writer_name} />
-				))}
-			</div>
-
-			<div className="arch-live-strip-sep" />
-
-			<div className="arch-live-strip-group">
-				<LiveChip
-					tone="info"
-					label={`cost ${recent.cost_events_last_hour ?? 0}`}
-				/>
-				<LiveChip
-					tone="info"
-					label={`agent ${recent.agent_events_last_hour ?? 0}`}
-				/>
-				<LiveChip
-					tone="info"
-					label={`outcome ${recent.last_outcome_at ? formatRelativeTime(recent.last_outcome_at) : "—"}`}
-				/>
-			</div>
-		</div>
-	);
+	// ready 는 렌더할 것이 없음 — 칩이 사라졌고 이중기록 경보는 페이지 상단 배너로 나감.
+	return null;
 }
 
-function LiveChip({ tone, label, title }) {
-	const { StatusDot } = window.UI;
-	// 공용 StatusDot 으로 통일 — 칩마다 ad-hoc 6px dot 발산 방지 (단일 크기/톤 SoT).
+// 자기개선 큐 상태 — 두 저장소의 사실을 나란히 놓되 하나로 합치지 않음(잇는 키의 대응 미확인).
+// 접힘 컨트롤 없이 상시 노출. 컨테이너를 .arch-live-strip 과 나눠 씀 — 그 클래스는 live 로드
+// 실패 경보와 스켈레톤의 자리임.
+
+function QueueStrip({ pendingCount, topSignal }) {
+	const { formatRelativeTime } = window.UI;
+
+	if (pendingCount === null && topSignal === null) return null;
+
 	return (
-		<span className="arch-live-chip" title={title || undefined}>
-			<StatusDot status={tone} />
-			<span className="text-dim">{label}</span>
-		</span>
+		<section className="arch-queue-strip" aria-label="Self-improvement queue">
+			{pendingCount !== null && (
+				<div className="arch-queue-fact" data-queue-source="autoagent-proposals">
+					<span className="fs-micro text-faint">Approval queue</span>
+					<span className="fs-meta text-ink">{pendingCount} pending</span>
+				</div>
+			)}
+			{topSignal && (
+				<div className="arch-queue-fact" data-queue-source="learning-log">
+					<span className="fs-micro text-faint">Top learned signal</span>
+					<span className="fs-meta font-mono text-ink">{topSignal.signature}</span>
+					<span className="fs-meta text-dim">seen {topSignal.frequency}×</span>
+					<span className="fs-meta text-dim">
+						updated {formatRelativeTime(topSignal.lastUpdated)}
+					</span>
+				</div>
+			)}
+		</section>
 	);
 }
 
@@ -949,7 +851,7 @@ function LiveDaemonTable({ state }) {
 	);
 }
 
-// 설명 산문 — 전문 상시 노출. SVG aria-describedby 타깃.
+// 설명 산문 — 전문 상시 노출.
 
 function DiagramProse({ diagram }) {
 	return (
@@ -957,141 +859,10 @@ function DiagramProse({ diagram }) {
 			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
 				About this diagram
 			</div>
-			<div id={ARCH_DESC_ID} className="fs-meta text-dim leading-snug">
-				{diagram?.description || "No description available."}
+			<div className="fs-meta text-dim leading-snug">
+				{diagram?.description || DESC_FALLBACK}
 			</div>
 		</section>
-	);
-}
-
-// Bottom legend — 접이식 (기본 닫힘). 레이어·노드·엣지 범례 + 설명.
-
-function LegendDetails({
-	activeDiagram,
-	legendUsedSets,
-	legendFocus,
-	onToggleFocus,
-}) {
-	return (
-		<details className="arch-legend-details">
-			<summary>
-				<span className="fs-micro font-mono text-faint uppercase tracking-wider">
-					Legend
-				</span>
-			</summary>
-			<div className="arch-legend-grid">
-				{legendUsedSets.roles.size > 0 && (
-					<LegendBlock
-						title="Layers"
-						dim="role"
-						legendFocus={legendFocus}
-						onToggleFocus={onToggleFocus}
-						items={Object.keys(ROLE_BORDER)
-							.filter((r) => legendUsedSets.roles.has(r))
-							.map((r) => ({
-								swatch: "box",
-								color: ROLE_BORDER[r],
-								label: ROLE_LABEL[r] || r,
-								hint: r,
-							}))}
-					/>
-				)}
-
-				{legendUsedSets.nodeTypes.size > 0 && (
-					<LegendBlock
-						title="Node types"
-						dim="type"
-						legendFocus={legendFocus}
-						onToggleFocus={onToggleFocus}
-						items={Object.keys(NODE_TYPE_BG)
-							.filter((t) => legendUsedSets.nodeTypes.has(t))
-							.map((t) => ({
-								swatch: "box",
-								color: NODE_TYPE_BG[t],
-								label: NODE_TYPE_LABEL[t] || t,
-								hint: t,
-							}))}
-					/>
-				)}
-
-				{/* 엣지 타입은 노드가 아니므로 dim 대상 아님 — 정적 범례 (클릭 무동작). */}
-				{legendUsedSets.edgeTypes.size > 0 && (
-					<LegendBlock
-						title="Edge types"
-						items={Object.keys(EDGE_COLORS)
-							.filter((e) => legendUsedSets.edgeTypes.has(e))
-							.map((e) => ({
-								swatch: "line",
-								color: EDGE_COLORS[e],
-								label: EDGE_TYPE_LABEL[e] || e,
-								hint: e,
-							}))}
-					/>
-				)}
-			</div>
-		</details>
-	);
-}
-
-function LegendBlock({ title, items, dim, legendFocus, onToggleFocus }) {
-	// dim 미지정(엣지 타입) → 정적 행. dim 지정 → 클릭/Enter 로 해당 분류 노드 포커스 토글.
-	const interactive = Boolean(dim);
-	return (
-		<div>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
-				{title}
-			</div>
-			<div className="flex flex-col gap-0.5">
-				{items.map((it) => {
-					const swatch =
-						it.swatch === "line" ? (
-							<span
-								aria-hidden="true"
-								className="arch-legend-swatch-line"
-								style={{ background: it.color }}
-							/>
-						) : (
-							<span
-								aria-hidden="true"
-								className="arch-legend-swatch-box"
-								style={{ background: it.color }}
-							/>
-						);
-					const rowContent = (
-						<>
-							{swatch}
-							<span className="text-dim flex-1 truncate">{it.label}</span>
-						</>
-					);
-					if (!interactive) {
-						return (
-							<div
-								key={it.hint}
-								className="flex items-center gap-2 fs-meta"
-							>
-								{rowContent}
-							</div>
-						);
-					}
-					const active =
-						legendFocus &&
-						legendFocus.dim === dim &&
-						legendFocus.key === it.hint;
-					return (
-						<button
-							key={it.hint}
-							type="button"
-							aria-pressed={Boolean(active)}
-							className={`arch-legend-item flex items-center gap-2 fs-meta ${active ? "active" : ""}`}
-							onClick={() => onToggleFocus(dim, it.hint)}
-							title={`Focus ${it.label} nodes`}
-						>
-							{rowContent}
-						</button>
-					);
-				})}
-			</div>
-		</div>
 	);
 }
 
@@ -1327,6 +1098,40 @@ function MembershipBannerAR({ absent, sourceMissing }) {
 	);
 }
 
+// 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 드리프트 info-tone 과 구별.
+// 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부른다.
+function DualWriteBannerAR({ writers }) {
+	const { Icon, Badge } = window.UI;
+	return (
+		<div
+			role="alert"
+			className="rounded-md border p-3 flex items-start gap-3"
+			style={{
+				background: "rgb(var(--crit) / 0.08)",
+				borderColor: "rgb(var(--crit) / 0.4)",
+			}}
+		>
+			<Icon name="warn" size={16} className="text-crit mt-0.5" />
+			<div className="flex-1 min-w-0">
+				<div className="fs-body font-medium text-ink">
+					Dual-write stopped — these writers are not recording
+				</div>
+				{/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */}
+				<div className="fs-meta text-dim mt-1">
+					Marker scan found no dual-write block, or could not read the file.
+				</div>
+				<div className="flex flex-wrap gap-1.5 mt-2">
+					{(writers || []).map((w) => (
+						<Badge key={w.writer_name} role="status" tone="crit" glyph={false}>
+							{w.writer_name}
+						</Badge>
+					))}
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // 설계도 카운트 드리프트 배너 — role=alert 재사용 · info-tone(구조 정합성 nudge)으로 daemon-down crit/warn(런타임 헬스)과 시각 분리.
 // diffs = [{ key, claimed, actual }] — mismatch 항목별 주장↔실측 노출.
 function DriftBannerAR({ diffs }) {
@@ -1418,6 +1223,37 @@ async function fetchJsonAR(url, signal) {
 		);
 	}
 	return res.json();
+}
+
+// pending 수 — 두 배열의 합집합을 id 로 중복 제거함. proposals 는 limit 로 잘리고
+// actionable_proposals 는 safety tier 만 담아, 한쪽만으로는 pending 을 과소 계수함.
+function getPendingCountAR(data) {
+	const rows = [
+		...(Array.isArray(data?.proposals) ? data.proposals : []),
+		...(Array.isArray(data?.actionable_proposals) ? data.actionable_proposals : []),
+	];
+	const ids = new Set();
+	for (const row of rows) {
+		if (row && row.status === "pending") ids.add(row.id);
+	}
+	return ids.size;
+}
+
+// 최다 빈도 패턴 1건 — 응답은 last_updated DESC 정렬이라 빈도 최댓값은 직접 훑어야 나옴.
+function getTopSignalAR(data) {
+	const rows = Array.isArray(data?.patterns) ? data.patterns : [];
+	let top = null;
+	for (const row of rows) {
+		if (!row || !row.pattern_signature) continue;
+		if (!top || Number(row.frequency || 0) > Number(top.frequency || 0)) top = row;
+	}
+	if (!top) return null;
+
+	return {
+		signature: top.pattern_signature,
+		frequency: Number(top.frequency || 0),
+		lastUpdated: top.last_updated || null,
+	};
 }
 
 function handleErrorAR(err, setter) {
