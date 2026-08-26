@@ -178,6 +178,13 @@ function ScreenArchitecture(
 		liveState.status === "ready" && liveState.data?.stale === true;
 	const driftDiffs = driftStale ? liveState.data?.diffs || [] : [];
 
+	// 이중기록이 끊긴 writer — 상시 칩을 대신하는 조건부 경보의 유일한 근거.
+	//   live 응답 ready 시점에만 신뢰. 빈 배열이면 배너가 DOM 에 없음.
+	const offWriters =
+		liveState.status === "ready"
+			? (liveState.data?.writers || []).filter((w) => !w.dual_write_active)
+			: [];
+
 	// 거버넌스 멤버십 — 컴플라이언스 매트릭스가 이름 댄 문서의 부재 목록(총계 아님).
 	const governance =
 		liveState.status === "ready" ? liveState.data?.governance : null;
@@ -197,10 +204,6 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					".arch-live-strip-group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; } " +
-					".arch-live-strip-sep { width: 1px; height: 16px; background: rgb(var(--line)); flex-shrink: 0; } " +
-					".arch-live-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; " +
-					'background: rgb(var(--elev)); font-size: var(--fs-meta); font-family: "JetBrains Mono", monospace; white-space: nowrap; } ' +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
@@ -261,6 +264,8 @@ function ScreenArchitecture(
 			<div className="arch-page">
 				{/* 구조 드리프트 배너(설계도 카운트 mismatch) — daemon LiveStrip(런타임 헬스)과
             별개 영역. stale 일 때만 노출, info-tone 으로 daemon-down warn-tone 과 구별. */}
+				{offWriters.length > 0 && <DualWriteBannerAR writers={offWriters} />}
+
 				{driftStale && <DriftBannerAR diffs={driftDiffs} />}
 
 				{/* 거버넌스 문서 부재 — 이름을 부르는 경고. 카운트 드리프트보다 상위 심각도(warn-tone). */}
@@ -271,7 +276,6 @@ function ScreenArchitecture(
 					/>
 				)}
 
-				{/* 상단: 라이브 상태 가로 컴팩트 스트립 (좌측 컬럼 폐기 → 캔버스 폭 회수) */}
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
@@ -693,11 +697,10 @@ function ArchIconTargetAR() {
 	return <Icon name="target" size={15} />;
 }
 
-// Top live strip — 데몬·Writer·최근활동 요약을 가로 1줄 칩으로 압축 (캔버스 가로폭 회수 목적).
+// Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
+//   같은 페치가 드리프트·거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 셋의 예고이기도 함.
 
 function LiveStrip({ state, onRetry }) {
-	const { formatRelativeTime } = window.UI;
-
 	if (state.status === "loading") {
 		return (
 			<div className="arch-live-strip" aria-busy="true">
@@ -728,55 +731,8 @@ function LiveStrip({ state, onRetry }) {
 		);
 	}
 
-	const data = state.data;
-	const daemons = data?.daemons || [];
-	const writers = data?.writers || [];
-	const recent = data?.recent_activity || {};
-
-	const okWriters = writers.filter((w) => w.dual_write_active).length;
-	const offWriters = writers.filter((w) => !w.dual_write_active);
-
-	return (
-		<div className="arch-live-strip">
-			<div className="arch-live-strip-group">
-				<LiveChip
-					tone={offWriters.length === 0 ? "ok" : "crit"}
-					label={`Writer ${okWriters}/${writers.length}`}
-				/>
-				{offWriters.map((w) => (
-					<LiveChip key={w.writer_name} tone="crit" label={w.writer_name} />
-				))}
-			</div>
-
-			<div className="arch-live-strip-sep" />
-
-			<div className="arch-live-strip-group">
-				<LiveChip
-					tone="info"
-					label={`cost ${recent.cost_events_last_hour ?? 0}`}
-				/>
-				<LiveChip
-					tone="info"
-					label={`agent ${recent.agent_events_last_hour ?? 0}`}
-				/>
-				<LiveChip
-					tone="info"
-					label={`outcome ${recent.last_outcome_at ? formatRelativeTime(recent.last_outcome_at) : "—"}`}
-				/>
-			</div>
-		</div>
-	);
-}
-
-function LiveChip({ tone, label, title }) {
-	const { StatusDot } = window.UI;
-	// 공용 StatusDot 으로 통일 — 칩마다 ad-hoc 6px dot 발산 방지 (단일 크기/톤 SoT).
-	return (
-		<span className="arch-live-chip" title={title || undefined}>
-			<StatusDot status={tone} />
-			<span className="text-dim">{label}</span>
-		</span>
-	);
+	// ready 는 렌더할 것이 없음 — 칩이 사라졌고 이중기록 경보는 페이지 상단 배너로 나감.
+	return null;
 }
 
 // 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
@@ -1067,6 +1023,40 @@ function MembershipBannerAR({ absent, sourceMissing }) {
 						))}
 					</div>
 				)}
+			</div>
+		</div>
+	);
+}
+
+// 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 드리프트 info-tone 과 구별.
+// 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부른다.
+function DualWriteBannerAR({ writers }) {
+	const { Icon, Badge } = window.UI;
+	return (
+		<div
+			role="alert"
+			className="rounded-md border p-3 flex items-start gap-3"
+			style={{
+				background: "rgb(var(--crit) / 0.08)",
+				borderColor: "rgb(var(--crit) / 0.4)",
+			}}
+		>
+			<Icon name="warn" size={16} className="text-crit mt-0.5" />
+			<div className="flex-1 min-w-0">
+				<div className="fs-body font-medium text-ink">
+					Dual-write stopped — these writers are not recording
+				</div>
+				{/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */}
+				<div className="fs-meta text-dim mt-1">
+					Marker scan found no dual-write block, or could not read the file.
+				</div>
+				<div className="flex flex-wrap gap-1.5 mt-2">
+					{(writers || []).map((w) => (
+						<Badge key={w.writer_name} role="status" tone="crit" glyph={false}>
+							{w.writer_name}
+						</Badge>
+					))}
+				</div>
 			</div>
 		</div>
 	);

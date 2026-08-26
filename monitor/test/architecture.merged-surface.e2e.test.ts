@@ -32,6 +32,7 @@ import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
+	WriterLiveStatus,
 } from "../src/server/types/architecture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -321,4 +322,113 @@ test("AC-T19 no interaction attaches the node-dim classes", async () => {
 		NODE_DIM_SELECTOR,
 	);
 	assert.equal(dimmed, 0, `${clicked} clicks left ${dimmed} element(s) carrying ${NODE_DIM_SELECTOR}`);
+});
+
+// 상시 칩이 렌더하던 정확한 라벨 — 기본 픽스처(writers 빈 배열 · 최근활동 0) 기준.
+// 맨 단어(cost/agent/outcome)는 다이어그램 노드 라벨과 충돌하므로(diagrams-source 의
+// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 로드 실패 경보와
+// 로딩 스켈레톤이 같은 .arch-live-strip 을 쓰고 둘 다 남기 때문임.
+const CHIP_LABELS = ["Writer 0/0", "cost 0", "agent 0", "outcome \u2014"];
+
+// 실제 로스터 이름 — composeWriters(live-overlay.ts:383-387)가 내보내는 원소 모양과 같음.
+// 마커 스캔 실패도 dual_write_active:false 로 떨어지므로 경보는 그 기본값에서도 떠야 함.
+const OFF_WRITER = "outcome-record";
+const ON_WRITER = "cost-tracker";
+
+function getWriter(name: string, dualWriteActive: boolean): WriterLiveStatus {
+	return {
+		writer_name: name,
+		dual_write_active: dualWriteActive,
+		recent_failures_24h: 0,
+	};
+}
+
+// 이름을 본문에 담은 alert 만 셈 — 트리에 role=alert 가 이미 여럿이라 총수는 무엇도 재지 못함.
+async function countAlertsNaming(needle: string): Promise<number> {
+	return await page.evaluate(
+		(key) =>
+			Array.from(document.querySelectorAll('[role="alert"]')).filter((el) =>
+				(el.textContent || "").includes(key),
+			).length,
+		needle,
+	);
+}
+
+test("AC-T18(a) the ready map renders no live chips", async () => {
+	await openMap(getLiveFixture());
+
+	// 두 사실을 한 단언으로 묶음 — 따로 세우면 앞 단언이 걸릴 때 뒤 다리가 측정되지 않음.
+	const found = await page.evaluate((labels) => {
+		const text = document.body.innerText || "";
+		return {
+			chips: document.querySelectorAll(".arch-live-chip").length,
+			labels: labels.filter((label) => text.includes(label)),
+		};
+	}, CHIP_LABELS);
+
+	assert.deepEqual(
+		found,
+		{ chips: 0, labels: [] },
+		"live chip surface still rendered on the ready map",
+	);
+});
+
+test("AC-T18(b) an inactive writer raises exactly one alert naming it", async () => {
+	await openMap(
+		getLiveFixture({
+			writers: [getWriter(OFF_WRITER, false), getWriter(ON_WRITER, true)],
+		}),
+	);
+
+	assert.equal(
+		await countAlertsNaming(OFF_WRITER),
+		1,
+		`inactive ${OFF_WRITER} must be named by exactly one alert`,
+	);
+	// 정상 writer 까지 부르면 경보가 상시 칩으로 되돌아간 것임.
+	assert.equal(
+		await countAlertsNaming(ON_WRITER),
+		0,
+		`active ${ON_WRITER} must not be named by any alert`,
+	);
+});
+
+test("AC-T18(b) no writer alert exists while dual-write is active", async () => {
+	await openMap(
+		getLiveFixture({
+			writers: [getWriter(OFF_WRITER, true), getWriter(ON_WRITER, true)],
+		}),
+	);
+	assert.equal(
+		await countAlertsNaming(OFF_WRITER),
+		0,
+		`all-active roster must raise no alert naming ${OFF_WRITER}`,
+	);
+
+	await openMap(getLiveFixture({ writers: [] }));
+	assert.equal(
+		await countAlertsNaming(OFF_WRITER),
+		0,
+		`empty roster must raise no alert naming ${OFF_WRITER}`,
+	);
+});
+
+// 새 경보가 기존 배너를 밀어내지 않았음을 잠금 — 둘이 동시에 뜨는 픽스처로 잼.
+// 오늘 초록인 불변식 다리이고, 변위가 일어나야만 붉어짐.
+test("AC-T18(c) the drift banner survives beside the writer alert", async () => {
+	const driftKey = "T18_DRIFT_KEY";
+
+	await openMap(
+		getLiveFixture({
+			stale: true,
+			diffs: [getDriftDiff(driftKey)],
+			writers: [getWriter(OFF_WRITER, false)],
+		}),
+	);
+
+	assert.equal(
+		await countAlertsNaming(driftKey),
+		1,
+		`writer alert must not displace the drift banner carrying ${driftKey}`,
+	);
 });
