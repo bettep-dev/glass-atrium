@@ -1,9 +1,9 @@
 // Field-parity pin for the aligned daemon verdict: /api/architecture/live and
 // /api/health/daemons must name the verdict identically and flip it at the one server
-// threshold. This is the producer (live) half — the live route emits `effective_status`
-// and its overdue leg keys on cadence × STALE_MULTIPLIER read from the shared schedule
-// module, so a threshold change moves this file instead of leaving it behind. The
-// consumer half asserts the same field name against types/health-detail.ts.
+// threshold. Both halves live here — each route's overdue leg keys on cadence ×
+// STALE_MULTIPLIER read from the shared schedule module, so a threshold change moves this
+// file instead of leaving it behind, and the two verdicts are compared per input class
+// rather than asserted separately.
 // Runner: npx tsx --test test/daemon-verdict-field-parity.test.ts
 
 import test from "node:test";
@@ -15,6 +15,10 @@ import {
   resolveDaemonStatuses,
   type DaemonAggRow,
 } from "../src/server/architecture/live-overlay.js";
+import {
+  buildDaemonStatusCards,
+  type DaemonRow,
+} from "../src/server/routes/health-detail.js";
 import {
   DAEMON_CRON_SCHEDULE,
   STALE_MULTIPLIER,
@@ -48,6 +52,23 @@ function verdictOf(rows: DaemonAggRow[], installAnchor: Date | null = null): str
     (d) => d.daemon_name === DAEMON,
   );
   assert.ok(found, `daemon '${DAEMON}' must be present in the resolved set`);
+  return found[VERDICT_FIELD];
+}
+
+// The health card's row carries one column the live aggregate does not; both verdict legs
+// read the same three.
+function healthRows(rows: DaemonAggRow[]): DaemonRow[] {
+  return rows.map((row) => ({ ...row, cost_guard_state: null }));
+}
+
+function cardVerdictOf(rows: DaemonAggRow[], installAnchor: Date | null = null): string {
+  const found = buildDaemonStatusCards(
+    healthRows(rows),
+    new Date(NOW),
+    installAnchor,
+    false,
+  ).find((card) => card.daemon_name === DAEMON);
+  assert.ok(found, `daemon '${DAEMON}' must be present on the health board`);
   return found[VERDICT_FIELD];
 }
 
@@ -104,4 +125,45 @@ test("health-detail.ts takes the threshold from the same module instead of copyi
     /\bconst\s+STALE_MULTIPLIER\b/,
     "a local copy would let the two routes call the same daemon overdue at different points",
   );
+});
+
+test(`DaemonStatusCard declares '${VERDICT_FIELD}' — the name the live status carries`, () => {
+  const block = repoRead("src/server/types/health-detail.ts").match(
+    /export interface DaemonStatusCard \{([\s\S]*?)\n\}/,
+  );
+  assert.ok(block, "types/health-detail.ts must declare interface DaemonStatusCard");
+  assert.match(
+    block[1],
+    new RegExp(`^\\s*${VERDICT_FIELD}:`, "m"),
+    "a differently-named field is exactly the mismatch this suite exists to catch",
+  );
+});
+
+// The input classes that can pull the two routes apart: the overdue flip point in both
+// directions, an unreported status, and the never-fired daemon whose escalation depends on
+// the install anchor rather than on a staleness figure it does not have.
+const VERDICT_CASES: ReadonlyArray<
+  readonly [string, DaemonAggRow[], Date | null, string]
+> = [
+  ["overdue run", ranAt(OVERDUE_MIN + 1, "ok"), null, "stale"],
+  ["the flip point itself", ranAt(OVERDUE_MIN, "ok"), null, "ok"],
+  ["within cadence", ranAt(60, "partial"), null, "partial"],
+  ["ran, status unreported", ranAt(60, null), null, "missing"],
+  ["never fired, fresh install", [], null, "missing"],
+  ["never fired past a full cadence window", [], minutesAgo(CADENCE_MIN + 1), "stale"],
+];
+
+test("both routes carry the same verdict for the same daemon in every input class", () => {
+  for (const [label, rows, anchor, expected] of VERDICT_CASES) {
+    assert.strictEqual(verdictOf(rows, anchor), expected, `${label}: live route`);
+    assert.strictEqual(cardVerdictOf(rows, anchor), expected, `${label}: health card`);
+  }
+});
+
+test("every health card carries a non-empty verdict (no null for a client to fill in)", () => {
+  for (const card of buildDaemonStatusCards([], new Date(NOW), null, false)) {
+    const verdict = card[VERDICT_FIELD];
+    assert.strictEqual(typeof verdict, "string", `${card.daemon_name} verdict must be a string`);
+    assert.notStrictEqual(verdict, "", `${card.daemon_name} verdict must not be empty`);
+  }
 });

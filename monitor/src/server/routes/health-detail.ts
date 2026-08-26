@@ -14,6 +14,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
 import { getBudgetReport } from "../architecture/content-budget.js";
 import { CANONICAL_MAP } from "../architecture/diagrams-source.js";
+import {
+  queryInstallAnchor,
+  resolveDaemonStatuses,
+} from "../architecture/live-overlay.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import {
@@ -114,7 +118,7 @@ const DAEMON_BOARD: ReadonlyArray<DaemonStatusCard["daemon_name"]> = [
   "daily-restart-wiki",
 ];
 
-interface DaemonRow {
+export interface DaemonRow {
   daemon_name: string;
   last_run_at: Date | null;
   last_status: string | null;
@@ -168,65 +172,28 @@ async function handleDaemons(
     // (matches @@index([daemonName, runDate(sort: Desc)]) in schema). cost_guard_state
     // is null for non-autoagent daemons by design (PG schema confirms).
     // WHERE clause aligns with DAEMON_BOARD.
-    const rows = await prisma.$queryRaw<DaemonRow[]>`
-      SELECT DISTINCT ON (daemon_name)
-        daemon_name::text AS daemon_name,
-        started_at AS last_run_at,
-        status::text AS last_status,
-        cost_guard_state::text AS cost_guard_state
-      FROM core.daemon_runs
-      WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
-      ORDER BY daemon_name, started_at DESC
-    `;
-    const byName = new Map<string, DaemonRow>();
-    for (const row of rows) {
-      byName.set(row.daemon_name, row);
-    }
+    // The install anchor rides along because a never-fired daemon has no staleness figure
+    // to judge by — only the system's own age separates dead from not-yet-installed.
+    const [rows, installAnchor] = await Promise.all([
+      prisma.$queryRaw<DaemonRow[]>`
+        SELECT DISTINCT ON (daemon_name)
+          daemon_name::text AS daemon_name,
+          started_at AS last_run_at,
+          status::text AS last_status,
+          cost_guard_state::text AS cost_guard_state
+        FROM core.daemon_runs
+        WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
+        ORDER BY daemon_name, started_at DESC
+      `,
+      queryInstallAnchor(prisma),
+    ]);
 
     // Single existence STAT of the shared claude-auth.env, once per response (never
     // per DAEMON_BOARD row) — the absence corroborator for the needs_auth proxy.
     const secretsAbsent = await isSecretsFileAbsent(request);
 
     const now = new Date();
-    const daemons: DaemonStatusCard[] = DAEMON_BOARD.map((name) => {
-      const row = byName.get(name);
-      const lastRunAt = row?.last_run_at ?? null;
-      const rule = DAEMON_CRON_SCHEDULE[name];
-      const stalenessMinutes =
-        lastRunAt === null ? null : Math.floor((now.getTime() - lastRunAt.getTime()) / 60_000);
-      const isStale =
-        rule === undefined || stalenessMinutes === null
-          ? false
-          : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER;
-      // Narrow PG `status::text` → DaemonStatusValue union (unknown → null).
-      const lastStatus = narrowDaemonStatus(row?.last_status ?? null);
-      // Spec: cost_guard_state is for autoagent only; other daemons report null.
-      // Narrow PG `cost_guard_state::text` → CostGuardStateValue union (unknown → null).
-      const costGuardState =
-        name === "autoagent" ? narrowCostGuardState(row?.cost_guard_state ?? null) : null;
-
-      // needs_auth firing proxy (A-D2) — pure seam, unit-tested without a DB.
-      const needsAuth = deriveNeedsAuth({
-        lastRunAt,
-        isStale,
-        lastStatus,
-        costGuardState,
-        secretsAbsent,
-      });
-
-      return {
-        daemon_name: name,
-        last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
-        last_status: lastStatus,
-        expected_next_at:
-          rule === undefined ? null : nextOccurrenceUtc(rule, DAY_BUCKET_TIMEZONE, now),
-        cost_guard_state: costGuardState,
-        staleness_minutes: stalenessMinutes,
-        is_stale: isStale,
-        needs_auth: needsAuth,
-        needs_auth_remediation: needsAuth ? NEEDS_AUTH_REMEDIATION : null,
-      };
-    });
+    const daemons = buildDaemonStatusCards(rows, now, installAnchor, secretsAbsent);
 
     request.log.info(
       {
@@ -241,6 +208,72 @@ async function handleDaemons(
   } catch (error) {
     return failWithDb(request, reply, "/api/health/daemons", error);
   }
+}
+
+/**
+ * Rows → the fixed four-card board, pure so the verdict is testable without a DB.
+ * Every card is emitted even when its daemon has no row — an absent daemon is a state to
+ * report, not a row to omit.
+ */
+export function buildDaemonStatusCards(
+  rows: DaemonRow[],
+  now: Date,
+  installAnchor: Date | null,
+  secretsAbsent: boolean,
+): DaemonStatusCard[] {
+  const byName = new Map<string, DaemonRow>();
+  for (const row of rows) {
+    byName.set(row.daemon_name, row);
+  }
+  // /api/architecture/live resolves its verdict through this same function, so the two
+  // routes cannot drift apart. Recomputing the rule here would lose the never-fired
+  // escalation, whose input is the install anchor rather than a staleness figure.
+  const verdictByName = new Map(
+    resolveDaemonStatuses(rows, now.getTime(), installAnchor).map((daemon) => [
+      daemon.daemon_name,
+      daemon.effective_status,
+    ]),
+  );
+  return DAEMON_BOARD.map((name) => {
+    const row = byName.get(name);
+    const lastRunAt = row?.last_run_at ?? null;
+    const rule = DAEMON_CRON_SCHEDULE[name];
+    const stalenessMinutes =
+      lastRunAt === null ? null : Math.floor((now.getTime() - lastRunAt.getTime()) / 60_000);
+    const isStale =
+      rule === undefined || stalenessMinutes === null
+        ? false
+        : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER;
+    // Narrow PG `status::text` → DaemonStatusValue union (unknown → null).
+    const lastStatus = narrowDaemonStatus(row?.last_status ?? null);
+    // Spec: cost_guard_state is for autoagent only; other daemons report null.
+    // Narrow PG `cost_guard_state::text` → CostGuardStateValue union (unknown → null).
+    const costGuardState =
+      name === "autoagent" ? narrowCostGuardState(row?.cost_guard_state ?? null) : null;
+
+    // needs_auth firing proxy (A-D2) — pure seam, unit-tested without a DB.
+    const needsAuth = deriveNeedsAuth({
+      lastRunAt,
+      isStale,
+      lastStatus,
+      costGuardState,
+      secretsAbsent,
+    });
+
+    return {
+      daemon_name: name,
+      last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
+      last_status: lastStatus,
+      effective_status: verdictByName.get(name) ?? "missing",
+      expected_next_at:
+        rule === undefined ? null : nextOccurrenceUtc(rule, DAY_BUCKET_TIMEZONE, now),
+      cost_guard_state: costGuardState,
+      staleness_minutes: stalenessMinutes,
+      is_stale: isStale,
+      needs_auth: needsAuth,
+      needs_auth_remediation: needsAuth ? NEEDS_AUTH_REMEDIATION : null,
+    };
+  });
 }
 
 // 2. /api/health/wiki-reports
@@ -517,7 +550,7 @@ async function handleHookFailures(
     // Both validated before embedding (days=allowlist, limit=integer clamp).
     const intervalLiteral = Prisma.raw(`INTERVAL '${days} days'`);
     const limitLiteral = Prisma.raw(String(limit));
-    const [rows, recencyRows, breakdownRows] = await Promise.all([
+    const [rows, recencyRows, breakdownRows, lastFailureRows] = await Promise.all([
       prisma.$queryRaw<HookFailureRow[]>`
         SELECT
           id,
@@ -553,7 +586,14 @@ async function handleHookFailures(
         GROUP BY error_kind, hook_name, target_table
         ORDER BY cnt DESC, error_kind ASC, hook_name ASC
       `,
+      // Deliberately unwindowed — inside the days predicate this would go null on a quiet
+      // window, which reads as "never failed" rather than "not lately".
+      prisma.$queryRaw<Array<{ last_failure_ts: Date | null }>>`
+        SELECT MAX(failure_ts) AS last_failure_ts
+        FROM core.hook_failures
+      `,
     ]);
+    const lastFailureTs = lastFailureRows[0]?.last_failure_ts ?? null;
     const recency = recencyRows[0];
     const count24h = recency === undefined ? 0 : bigintToNumber(recency.count_24h);
     const unretriedCount24h =
@@ -585,6 +625,7 @@ async function handleHookFailures(
       error_kind_breakdown: buildHookErrorKindBreakdown(breakdownRows),
       count_24h: count24h,
       unretried_count_24h: unretriedCount24h,
+      last_failure_ts: lastFailureTs === null ? null : lastFailureTs.toISOString(),
       timezone: "UTC",
     };
   } catch (error) {
