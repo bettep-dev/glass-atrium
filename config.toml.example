@@ -7,11 +7,17 @@
 # in Phase 5. Do NOT edit the rendered config.toml by hand for path values —
 # change them here and re-render, or set the documented override env vars.
 #
-# Single upper SoT. Downstream artifacts (daemon-config.json / .env / launchd
-# plists) are RENDER OUTPUTS of this file — edit here, re-render downstream.
+# Single upper SoT. Downstream artifacts (.env / launchd plists) are RENDER
+# OUTPUTS of this file — edit here, re-render downstream. Daemon budgets and the
+# Haiku model id are NOT rendered from here: daemon-config.json holds them and the
+# Atrium Monitor dashboard writes that file at runtime — edit them there.
 #
 # Dead-key removal: keys with zero consumers are NOT exposed. `budget.max_turns`
 # is dropped — it is not wired to any `claude -p` call site. Do NOT re-add it.
+#
+# Optional-key marker: a bare `# ga:optional` line directly above a key declares
+# that key legitimately absent from a rendered config.toml (stock default or
+# unconfigured), so the doctor key-drift check skips it instead of reporting it.
 #
 # NOT externalized here: the PostgreSQL socket DATABASE_URL. It is a Unix-socket
 # peer-auth connection (host=/tmp, owner=$USER <your-user>, no password) bound to
@@ -19,8 +25,6 @@
 # monitor/.env.
 
 [meta]
-# user-exposed brand — system = Glass Atrium, monitor web = Atrium Monitor
-project = "glass-atrium"
 # IANA tz — all daemon schedules + log timestamps resolve against this.
 # 'auto' (the default) detects the host zone at render time from the TZ-immune
 # /etc/localtime symlink (macOS /var/db/timezone/zoneinfo/, Linux
@@ -35,7 +39,9 @@ monitor = 16145
 # fakechat channel-plugin HTTP servers (daemon inject endpoints, 127.0.0.1-
 # bound) — consumed by the daemon bootstrap/healthcheck/inject scripts; keys
 # absent → stock defaults below
+# ga:optional
 autoagent_fakechat = 8787
+# ga:optional
 wiki_fakechat = 8788
 
 [paths]
@@ -60,20 +66,12 @@ node_bin = "/opt/homebrew/bin/node"
 # claude CLI — consumers (wiki-daily-compile.sh) fall back to `command -v
 # claude` → /opt/homebrew/bin → /usr/local/bin when the key is absent or the
 # configured path is not executable
+# ga:optional
 claude_bin = "/opt/homebrew/bin/claude"
 # log root stays under the target home, the backup root under the GA data root
 # (lib/ga-db.sh) — both outside the relocate allowlist, never folded under monitor/
 log_root = "${HOME}/.claude/logs"
 backup_dir = "${HOME}/.glass-atrium/backups/postgres"
-
-[budget]
-# Per-call USD ceilings passed VERBATIM to `claude -p --max-budget-usd <value>`.
-# STRING values (not TOML floats) — a float 0.5 serializes without the trailing
-# zero and drifts from the validated "0.50" literal (round-trip preservation).
-haiku_max_budget_usd = "0.50"
-pre_verify_max_budget_usd = "0.50"
-# Haiku model id (daemon LLM tier) — tracks settings.json model aliasing
-haiku_model = "claude-haiku-4-5"
 
 [release]
 # GitHub release transport repo slug (owner/repo). Consumers: scripts/publish-
@@ -81,6 +79,7 @@ haiku_model = "claude-haiku-4-5"
 # ATRIUM_RELEASE_REPO env → this key → unconfigured. The repo must already exist
 # on GitHub before the first real `publish --execute`. Keys absent → unconfigured
 # (release status shows "unknown", no badge); set this before publishing.
+# ga:optional
 repo = "<owner>/<repo>"
 
 # --- daemon schedules (8 launchd jobs, com.glass-atrium.* namespace) ---

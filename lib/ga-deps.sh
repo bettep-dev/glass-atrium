@@ -975,9 +975,9 @@ EOF
 }
 
 # ga_cmd_python_libs_user — the PRIMARY pip install line (--user, no system mutation).
-# Sources the package set from requirements.txt is the SoT, but the install line
-# targets only the genuinely-missing subset so a re-run is a fast no-op. Empty when
-# nothing is missing.
+# The package set comes from the GA_PYTHON_IMPORTS array (requirements.txt is the
+# matching declaration set), and the install line targets only the genuinely-missing
+# subset so a re-run is a fast no-op. Empty when nothing is missing.
 ga_cmd_python_libs_user() {
   local pkgs
   pkgs="$(ga_python_packages_joined)"

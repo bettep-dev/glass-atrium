@@ -234,6 +234,10 @@ jobs:
               - 'scoped/**'
               - 'skills/**'
               - '**/*.md'
+              - 'requirements.txt'
+              - 'requirements-dev.txt'
+              - 'config.toml.example'
+              - '.github/workflows/ci.yml'
             python:
               - 'autoagent/**'
               - '**/*.py'
@@ -584,7 +588,7 @@ jobs:
   # installs pytest. pytest natively collects the unittest-style files too, so a
   # single invocation covers every scripts/test/test_*.py — none of which any CI
   # job read before. Dependencies come from requirements-dev.txt (CI-only) so the
-  # end-user bootstrap manifest requirements.txt never ships a test package.
+  # shipped requirements.txt declaration set never carries a test package.
   # scripts/ is put on sys.path by scripts/test/conftest.py, so the invocation
   # needs no cwd/PYTHONPATH contortion.
   # ---------------------------------------------------------------------------

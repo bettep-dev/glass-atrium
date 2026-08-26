@@ -175,9 +175,10 @@ fi
 # --- AC1: sandbox-manifest GA symlinks created (farmed subset minus 1 collision) ---
 hdr "STEP 2 / AC1 — symlink farm"
 # The farm is a SUBSET of the manifest: install-internal surfaces (lib/, monitor/,
-# hooks/, scoped/, scripts/, autoagent/, config.toml.example, requirements.txt,
+# hooks/, scoped/, scripts/, autoagent/, config.toml.example,
 # agent-registry.json, glass-atrium) are bundled + hash-verified but consumed in
-# place from ~/.glass-atrium and NEVER symlinked into ~/.claude. So the expectation
+# place from ~/.glass-atrium and NEVER symlinked into ~/.claude. requirements.txt rides
+# that same exclusion as a declaration set with no runtime consumer. So the expectation
 # is DERIVED — run every sandbox-manifest rel through the ENGINE's OWN filter
 # (is_symlink_excluded), never a hardcoded count minus one; an inline mirror of
 # SYMLINK_EXCLUDE_* would go stale as the exclusion set evolves. Mirrors the

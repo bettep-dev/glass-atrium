@@ -437,8 +437,9 @@ run_symlink_farm() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
-    # install-internal payload (lib/ engine, config template, requirements) is bundled +
-    # hash-verified but consumed in place from GA_ROOT — never a ~/.claude symlink. Skip it here
+    # install-internal payload (lib/ engine, config template) is bundled + hash-verified but
+    # consumed in place from GA_ROOT — never a ~/.claude symlink; the requirements declaration
+    # set is bundled the same way and likewise never symlinked. Skip it here
     # (is_symlink_excluded is a stdout verdict → SC2311 masking intentional; no file-scope set -e).
     # shellcheck disable=SC2310,SC2311,SC2312
     if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then

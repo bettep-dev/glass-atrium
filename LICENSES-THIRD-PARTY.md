@@ -143,7 +143,8 @@ All other imports across the tracked `*.py` files are Python standard library or
 repo-local modules — with two exceptions, both outside the distributed runtime surface.
 The first is **test-only**: `pytest` (MIT), imported by the `scripts/test` pytest suites
 and pinned in the CI-only `requirements-dev.txt`, which the end-user bootstrap never
-installs (it reads `requirements.txt` alone). The second is **build-time-only**:
+installs (its python-libs step targets the `GA_PYTHON_IMPORTS` set in `lib/ga-deps.sh`,
+for which `requirements.txt` is the matching declaration set). The second is **build-time-only**:
 `docs/assets/bulldog-braille-gen.py`
 imports `Pillow` (PIL) to pre-render the TUI bulldog art. It is never bundled, installed, or
 run at runtime — the launcher ships only its pre-generated `docs/assets/bulldog-braille.txt`
