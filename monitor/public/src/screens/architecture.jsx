@@ -1095,12 +1095,11 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 	);
 }
 
-// 거버넌스 멤버십 배너 — 매트릭스가 선언한 scope/rule 문서가 사라졌을 때 그 이름을 부른다.
-// 총계 배지는 무엇이 없어졌는지 말하지 못하므로 이름 목록이 곧 신호다.
-// 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone 과 아이콘,
-// 문구, 배지 목록만 달리한 같은 상자임. tone 은 CSS 변수명으로 그대로 들어가므로
-// 새 tone 은 그 이름의 변수가 tokens.css 에 있어야 함. 아이콘 색 클래스는 리터럴 표로 둠 —
-// 조립한 클래스명은 클래스 스캐너가 보지 못함.
+/**
+ * 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
+ * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
+ * 아이콘 색 클래스는 리터럴 표 — 조립한 클래스명은 클래스 스캐너가 보지 못함.
+ */
 const BANNER_TONE_TEXT_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
@@ -1141,6 +1140,10 @@ function AlertBannerAR({ tone, icon, title, note, badges }) {
 	);
 }
 
+/**
+ * 거버넌스 멤버십 배너 — 매트릭스가 선언한 scope/rule 문서가 사라졌을 때 그 이름을 부른다.
+ * 총계 배지는 무엇이 없어졌는지 말하지 못하므로 이름 목록이 곧 신호다.
+ */
 function MembershipBannerAR({ absent, sourceMissing }) {
 	const names = (absent || []).map((name) => ({ key: name, label: name }));
 	return (
