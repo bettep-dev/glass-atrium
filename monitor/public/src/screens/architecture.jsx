@@ -51,6 +51,10 @@ const ARCH_SELECTORS = {
 
 const DESC_FALLBACK = "No description available.";
 
+// 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스. 최다 빈도는 표 전체가 아니라
+// 이 최근 슬라이스 안에서 고름(읽기 경로가 표 전체 최댓값을 내주지 않음).
+const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
+
 // Top-level Screen
 
 function ScreenArchitecture(
@@ -67,6 +71,12 @@ function ScreenArchitecture(
 		status: "loading",
 		data: null,
 		error: null,
+	});
+
+	// 자기개선 큐 두 사실 — 각각 독립적으로 null 가능. 한 저장소가 실패해도 다른 쪽은 그대로 보임.
+	const [queueState, setQueueState] = useStateAR({
+		pendingCount: null,
+		topSignal: null,
 	});
 
 	const [refreshTick, setRefreshTick] = useStateAR(0);
@@ -107,6 +117,26 @@ function ScreenArchitecture(
 				if (!ctrl.signal.aborted) setLiveState({ status: "ready", data, error: null });
 			})
 			.catch((err) => handleErrorAR(err, setLiveState));
+
+		return () => ctrl.abort();
+	}, [refreshTick]);
+
+	// 자기개선 큐 — 두 저장소를 각각 읽어 각각 담음. 잇는 키(pattern_label ↔ pattern_signature)의
+	// 대응이 확인되지 않아 조인하지 않음. allSettled 라 한쪽 실패가 다른 쪽 값을 지우지 않음.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+
+		Promise.allSettled([
+			fetchJsonAR("/api/improvement", ctrl.signal),
+			fetchJsonAR(LEARNING_LOG_URL, ctrl.signal),
+		]).then(([queue, log]) => {
+			if (ctrl.signal.aborted) return;
+			setQueueState({
+				pendingCount:
+					queue.status === "fulfilled" ? getPendingCountAR(queue.value) : null,
+				topSignal: log.status === "fulfilled" ? getTopSignalAR(log.value) : null,
+			});
+		});
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
@@ -204,6 +234,10 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					// 자기개선 큐 스트립 — 상시 노출. 좁은 폭에서는 두 사실이 줄바꿈으로 쌓임.
+					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
+					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
@@ -277,6 +311,11 @@ function ScreenArchitecture(
 				)}
 
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
+
+				<QueueStrip
+					pendingCount={queueState.pendingCount}
+					topSignal={queueState.topSignal}
+				/>
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
@@ -735,6 +774,37 @@ function LiveStrip({ state, onRetry }) {
 	return null;
 }
 
+// 자기개선 큐 상태 — 두 저장소의 사실을 나란히 놓되 하나로 합치지 않음(잇는 키의 대응 미확인).
+// 접힘 컨트롤 없이 상시 노출. 컨테이너를 .arch-live-strip 과 나눠 씀 — 그 클래스는 live 로드
+// 실패 경보와 스켈레톤의 자리임.
+
+function QueueStrip({ pendingCount, topSignal }) {
+	const { formatRelativeTime } = window.UI;
+
+	if (pendingCount === null && topSignal === null) return null;
+
+	return (
+		<section className="arch-queue-strip" aria-label="Self-improvement queue">
+			{pendingCount !== null && (
+				<div className="arch-queue-fact" data-queue-source="autoagent-proposals">
+					<span className="fs-micro text-faint">Approval queue</span>
+					<span className="fs-meta text-ink">{pendingCount} pending</span>
+				</div>
+			)}
+			{topSignal && (
+				<div className="arch-queue-fact" data-queue-source="learning-log">
+					<span className="fs-micro text-faint">Top learned signal</span>
+					<span className="fs-meta font-mono text-ink">{topSignal.signature}</span>
+					<span className="fs-meta text-dim">seen {topSignal.frequency}×</span>
+					<span className="fs-meta text-dim">
+						updated {formatRelativeTime(topSignal.lastUpdated)}
+					</span>
+				</div>
+			)}
+		</section>
+	);
+}
+
 // 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
 
 function LiveDaemonTable({ state }) {
@@ -1153,6 +1223,37 @@ async function fetchJsonAR(url, signal) {
 		);
 	}
 	return res.json();
+}
+
+// pending 수 — 두 배열의 합집합을 id 로 중복 제거함. proposals 는 limit 로 잘리고
+// actionable_proposals 는 safety tier 만 담아, 한쪽만으로는 pending 을 과소 계수함.
+function getPendingCountAR(data) {
+	const rows = [
+		...(Array.isArray(data?.proposals) ? data.proposals : []),
+		...(Array.isArray(data?.actionable_proposals) ? data.actionable_proposals : []),
+	];
+	const ids = new Set();
+	for (const row of rows) {
+		if (row && row.status === "pending") ids.add(row.id);
+	}
+	return ids.size;
+}
+
+// 최다 빈도 패턴 1건 — 응답은 last_updated DESC 정렬이라 빈도 최댓값은 직접 훑어야 나옴.
+function getTopSignalAR(data) {
+	const rows = Array.isArray(data?.patterns) ? data.patterns : [];
+	let top = null;
+	for (const row of rows) {
+		if (!row || !row.pattern_signature) continue;
+		if (!top || Number(row.frequency || 0) > Number(top.frequency || 0)) top = row;
+	}
+	if (!top) return null;
+
+	return {
+		signature: top.pattern_signature,
+		frequency: Number(top.frequency || 0),
+		lastUpdated: top.last_updated || null,
+	};
 }
 
 function handleErrorAR(err, setter) {

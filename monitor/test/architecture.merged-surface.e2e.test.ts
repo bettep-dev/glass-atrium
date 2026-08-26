@@ -34,6 +34,10 @@ import type {
 	ArchDriftDiff,
 	WriterLiveStatus,
 } from "../src/server/types/architecture.js";
+import type {
+	ImprovementLearningLogRow,
+	ImprovementProposalRow,
+} from "../src/server/types/improvement.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -81,6 +85,72 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 	};
 }
 
+// 자기개선 큐 픽스처 — 화면이 실제로 읽는 필드만 담음. 전체 응답 타입은 화면이 보지 않는
+// 수십 개 필드를 요구하므로, Pick 으로 읽기 계약만 묶어 둠(필드명이 바뀌면 컴파일에서 걸림).
+type ProposalStub = Pick<ImprovementProposalRow, "id" | "status">;
+type PatternStub = Pick<
+	ImprovementLearningLogRow,
+	"pattern_signature" | "frequency" | "last_updated"
+>;
+
+interface QueueFixture {
+	improvement: { proposals: ProposalStub[]; actionable_proposals: ProposalStub[] };
+	learningLog: { patterns: PatternStub[] };
+}
+
+// 화면이 두 사실에 붙이는 출처 표식 — 조인이 아니라 나란히 놓았음을 DOM 에서 읽는 키.
+const QUEUE_SOURCE_PROPOSALS = "autoagent-proposals";
+const QUEUE_SOURCE_LEARNING = "learning-log";
+
+const QUEUE_PENDING = 3;
+const QUEUE_SIGNATURE = "T27_TOP_SIGNAL";
+const QUEUE_FREQUENCY = 73;
+const QUEUE_RECENT_SIGNATURE = "T27_RECENT_SIGNAL";
+// formatRelativeTime(ui.jsx)이 2시간 전 instant 에 붙이는 라벨.
+const QUEUE_UPDATED_LABEL = "2h ago";
+
+function getQueueFixture(overrides: Partial<QueueFixture> = {}): QueueFixture {
+	return {
+		improvement: { proposals: [], actionable_proposals: [] },
+		learningLog: { patterns: [] },
+		...overrides,
+	};
+}
+
+// AC-T27 픽스처. pending 3건은 두 배열에 걸쳐 있고 id 1 이 겹침 — 단순 합산이면 4 가 나옴.
+// 빈도 최댓값 행을 응답 정렬(last_updated DESC)의 둘째에 둠 — 첫 행을 집으면 붉어짐.
+function getQueueLoadedFixture(): QueueFixture {
+	const now = Date.now();
+	return {
+		improvement: {
+			proposals: [
+				{ id: 1, status: "pending" },
+				{ id: 2, status: "applied" },
+			],
+			actionable_proposals: [
+				{ id: 1, status: "pending" },
+				{ id: 3, status: "pending" },
+				{ id: 4, status: "pending" },
+				{ id: 5, status: "snoozed" },
+			],
+		},
+		learningLog: {
+			patterns: [
+				{
+					pattern_signature: QUEUE_RECENT_SIGNATURE,
+					frequency: 4,
+					last_updated: new Date(now - 60_000).toISOString(),
+				},
+				{
+					pattern_signature: QUEUE_SIGNATURE,
+					frequency: QUEUE_FREQUENCY,
+					last_updated: new Date(now - 2 * 3_600_000).toISOString(),
+				},
+			],
+		},
+	};
+}
+
 function getDriftDiff(key: string): ArchDriftDiff {
 	return { key, claimed: 1, actual: 2 };
 }
@@ -99,11 +169,16 @@ let selectors: { canvas: string; tabControl: string; desc: string };
 
 // 라이브 라우트가 요청 시점에 읽는 가변 픽스처 — openMap 이 케이스별로 갈아끼움.
 let liveFixture: ArchitectureLiveResponse;
+let queueFixture: QueueFixture;
 
 // 케이스별 live 픽스처를 심고 화면을 다시 세움. about:blank 경유는 같은 URL 재방문이
 // same-document 로 흡수되어 재요청이 일어나지 않는 경우를 막기 위함.
-async function openMap(live: ArchitectureLiveResponse): Promise<void> {
+async function openMap(
+	live: ArchitectureLiveResponse,
+	queue: QueueFixture = getQueueFixture(),
+): Promise<void> {
 	liveFixture = live;
+	queueFixture = queue;
 	await page.goto("about:blank");
 	await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 
@@ -166,6 +241,7 @@ async function getDescProbe() {
 before(async () => {
 	// 라우트 핸들러 안에서 만들면 전제 위반이 500 으로 바뀌어 테스트가 초록으로 통과함 — before 에서 한 번만 만듦.
 	liveFixture = getLiveFixture();
+	queueFixture = getQueueFixture();
 	app = Fastify({ logger: false });
 	await app.register(fastifyStatic, {
 		root: PUBLIC_ROOT,
@@ -179,6 +255,9 @@ before(async () => {
 		return doc.diagrams;
 	});
 	app.get("/api/architecture/live", async () => liveFixture);
+	// 자기개선 두 저장소 — 화면이 각각 따로 읽으므로 라우트도 따로 둠.
+	app.get("/api/improvement", async () => queueFixture.improvement);
+	app.get("/api/improvement/learning-log", async () => queueFixture.learningLog);
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -430,5 +509,139 @@ test("AC-T18(c) the drift banner survives beside the writer alert", async () => 
 		await countAlertsNaming(driftKey),
 		1,
 		`writer alert must not displace the drift banner carrying ${driftKey}`,
+	);
+});
+
+// 자기개선 큐 표면 탐침 — 출처 표식이 붙은 사실 요소만 읽음. 컨테이너 클래스는
+// .arch-live-strip 이 아니어야 함(AC-T18 의 칩 부재 단언과 로드 실패 경보가 그 클래스를 씀).
+async function getQueueProbe() {
+	// 부재는 아래 단언이 문장으로 보고함 — 여기서 던지면 붉은 이유가 타임아웃으로 바뀜.
+	await page
+		.waitForSelector(".arch-queue-strip [data-queue-source]", { timeout: 10_000 })
+		.then(
+			() => true,
+			() => false,
+		);
+
+	// evaluate 본문에 이름 붙은 내부 함수를 두지 않음 — tsx 의 keepNames 가 __name 래퍼를
+	// 심는데 그 헬퍼는 브라우저 컨텍스트에 없음. 접힘 판정은 그래서 루프로 폄.
+	return await page.evaluate(() => {
+		const strip = document.querySelector(".arch-queue-strip");
+		if (!strip) return { found: false, childCount: -1, nested: false, facts: [] };
+
+		const facts = Array.from(
+			strip.querySelectorAll<HTMLElement>("[data-queue-source]"),
+		);
+
+		const rows = [];
+		for (const el of facts) {
+			// 확장 조작이 필요한 상태인지 — 닫힌 details / hidden / aria-expanded=false 조상.
+			let collapsed = false;
+			for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+				if (node.tagName === "DETAILS" && !(node as HTMLDetailsElement).open) {
+					collapsed = true;
+					break;
+				}
+				if (node.hasAttribute("hidden") || node.getAttribute("aria-expanded") === "false") {
+					collapsed = true;
+					break;
+				}
+			}
+
+			const rect = el.getBoundingClientRect();
+			rows.push({
+				source: el.getAttribute("data-queue-source") || "",
+				text: (el.innerText || "").replace(/\s+/g, " ").trim(),
+				width: rect.width,
+				height: rect.height,
+				collapsed,
+			});
+		}
+
+		let nested = false;
+		for (const a of facts) {
+			for (const b of facts) {
+				if (a !== b && a.contains(b)) nested = true;
+			}
+		}
+
+		return { found: true, childCount: strip.children.length, nested, facts: rows };
+	});
+}
+
+test("AC-T27 pending count, top signal and its last update all show with nothing expanded", async () => {
+	await openMap(getLiveFixture(), getQueueLoadedFixture());
+	const probe = await getQueueProbe();
+
+	assert.equal(
+		probe.found,
+		true,
+		"map must render an always-on self-improvement queue surface (.arch-queue-strip)",
+	);
+	const pending = probe.facts.find((f) => f.source === QUEUE_SOURCE_PROPOSALS);
+	const signal = probe.facts.find((f) => f.source === QUEUE_SOURCE_LEARNING);
+	assert.ok(
+		pending && signal,
+		`both queue facts must render — got sources [${probe.facts.map((f) => f.source).join(", ")}]`,
+	);
+
+	// 세 정보를 한 단언으로 묶음 — 따로 세우면 앞이 걸릴 때 뒤 다리가 측정되지 않음.
+	assert.deepEqual(
+		{
+			pendingCount: pending.text.includes(`${QUEUE_PENDING} pending`),
+			signature: signal.text.includes(QUEUE_SIGNATURE),
+			frequency: signal.text.includes(String(QUEUE_FREQUENCY)),
+			lastUpdated: signal.text.includes(QUEUE_UPDATED_LABEL),
+			// 최다 빈도가 아니라 최신 행을 집으면 이 이름이 나타남.
+			pickedRecentInstead: signal.text.includes(QUEUE_RECENT_SIGNATURE),
+			collapsed: pending.collapsed || signal.collapsed,
+			zeroBox:
+				pending.width <= 0 ||
+				pending.height <= 0 ||
+				signal.width <= 0 ||
+				signal.height <= 0,
+		},
+		{
+			pendingCount: true,
+			signature: true,
+			frequency: true,
+			lastUpdated: true,
+			pickedRecentInstead: false,
+			collapsed: false,
+			zeroBox: false,
+		},
+		`queue facts rendered as: pending="${pending.text}" · signal="${signal.text}"`,
+	);
+});
+
+test("AC-T27 the two stores sit side by side, never merged into one claim", async () => {
+	await openMap(getLiveFixture(), getQueueLoadedFixture());
+	const probe = await getQueueProbe();
+
+	assert.equal(probe.found, true, "queue surface must render before joint-ness can be judged");
+	const pending = probe.facts.find((f) => f.source === QUEUE_SOURCE_PROPOSALS);
+	const signal = probe.facts.find((f) => f.source === QUEUE_SOURCE_LEARNING);
+	assert.ok(pending && signal, "both queue facts must render");
+
+	// childCount === factCount 가 사이에 낀 연결 문구가 없음을 잠금 — 두 사실 외에
+	// 아무 것도 스트립에 살지 않아야 조인된 서술이 끼어들 자리가 없음.
+	assert.deepEqual(
+		{
+			factCount: probe.facts.length,
+			childCount: probe.childCount,
+			nested: probe.nested,
+			sources: probe.facts.map((f) => f.source).sort(),
+			pendingNamesSignature: pending.text.includes(QUEUE_SIGNATURE),
+			signalNamesPending: /pending/i.test(signal.text),
+		},
+		{
+			factCount: 2,
+			childCount: 2,
+			nested: false,
+			sources: [QUEUE_SOURCE_LEARNING, QUEUE_SOURCE_PROPOSALS].sort(),
+			pendingNamesSignature: false,
+			signalNamesPending: false,
+		},
+		`queue strip rendered as: pending="${pending.text}" · signal="${signal.text}"`,
 	);
 });
