@@ -34,6 +34,7 @@ import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
   CostGuardStateValue,
   DaemonPayloadEntry,
+  DaemonRunSummary,
   DaemonStatusCard,
   DaemonStatusValue,
   HealthArchitectureBudgetResponse,
@@ -470,6 +471,7 @@ async function handleDaemonPayload(
       daemon_name: row.daemon_name,
       payload: row.payload,
       payload_size_bytes: row.payload_size_bytes,
+      summary: deriveRunSummary(row.payload),
     }));
 
     request.log.info(
@@ -486,6 +488,66 @@ async function handleDaemonPayload(
   } catch (error) {
     return failWithDb(request, reply, "/api/health/daemon-payload", error);
   }
+}
+
+// Failure carriers measured across the stored corpus: every top-level array whose elements
+// carry a non-empty `error` (autoagent `patches[]` · wiki `compilations[]`), plus the
+// `doctor` block, which is the only carrier on a cycle where no single item failed.
+// Nested string-array carriers stay out — wiki `dedup_proposals.errors` holds a routine
+// cost-guard drain notice on nearly every run, which would read every run as failing.
+// Exported for the derivation fixtures in the daemon-payload route test.
+export function deriveRunSummary(payload: unknown): DaemonRunSummary {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { verdict: "unknown", error_signatures: [] };
+  }
+  const counts = new Map<string, number>();
+  const doctorMessage = getDoctorFailureMessage((payload as { doctor?: unknown }).doctor);
+  if (doctorMessage !== null) {
+    counts.set(doctorMessage, 1);
+  }
+  for (const value of Object.values(payload)) {
+    if (!Array.isArray(value)) {
+      continue;
+    }
+    for (const item of value) {
+      const message = getItemErrorMessage(item);
+      if (message === null) {
+        continue;
+      }
+      counts.set(message, (counts.get(message) ?? 0) + 1);
+    }
+  }
+  const signatures = [...counts]
+    .map(([message, count]) => ({ message, count }))
+    .sort((a, b) => b.count - a.count || a.message.localeCompare(b.message));
+  return { verdict: signatures.length > 0 ? "fail" : "ok", error_signatures: signatures };
+}
+
+// doctor reports the cycle-level verdict, so a bare exit code has to become readable text
+// here — the drilldown row shows reasons, not raw payload fields.
+function getDoctorFailureMessage(doctor: unknown): string | null {
+  if (typeof doctor !== "object" || doctor === null) {
+    return null;
+  }
+  const { verdict, rc } = doctor as { verdict?: unknown; rc?: unknown };
+  const label = typeof verdict === "string" ? verdict : null;
+  const code = typeof rc === "number" && Number.isFinite(rc) ? rc : null;
+  if ((label === null || label === "ok") && (code === null || code === 0)) {
+    return null;
+  }
+  return `doctor verdict: ${label ?? "fail"}${code === null ? "" : ` (rc=${code})`}`;
+}
+
+function getItemErrorMessage(item: unknown): string | null {
+  if (typeof item !== "object" || item === null) {
+    return null;
+  }
+  const { error } = item as { error?: unknown };
+  if (typeof error !== "string") {
+    return null;
+  }
+  const message = error.trim();
+  return message === "" ? null : message;
 }
 
 // 5. /api/health/hook-failures
