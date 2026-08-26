@@ -10,7 +10,7 @@ import {
   inferFlowNodeType,
   type ExtractedFlow,
 } from "../src/server/architecture/flow-extractor.js";
-import { DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
+import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
 import {
   getArchitecture,
   resetArchitectureCache,
@@ -338,4 +338,29 @@ test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그�
     histogram(out.subgraphs.map((s) => roleForSyntheticSubgraph(s.label))),
     CANONICAL_SOURCE_ORACLE.roles,
   );
+});
+
+// 방향 토큰 재작성기 — 헤더 첫 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).
+function withDirection(mermaid: string, direction: string): string {
+  assert.match(mermaid, /^\s*(?:flowchart|graph)\s+\S+/i, "canonical must open with a flowchart header");
+  return mermaid.replace(/^(\s*(?:flowchart|graph))\s+\S+/i, `$1 ${direction}`);
+}
+
+test("방향 비의존: canonical drawn 은 LR/TD 에서 동일한 nodes/edges/subgraphs/unmapped 를 냄", () => {
+  const drawn = CANONICAL_MAP.mermaid_drawn;
+  const lr = withDirection(drawn, "LR");
+  const td = withDirection(drawn, "TD");
+  assert.notEqual(lr, td, "direction rewrite must produce two distinct strings");
+  assert.deepEqual(td.split("\n").slice(1), lr.split("\n").slice(1), "rewrite must touch only the header line");
+
+  const fromLr = extract(lr);
+  const fromTd = extract(td);
+  // 공허한 통과 방지 — 빈 추출끼리 같다는 결론은 방향 비의존의 증거가 아님.
+  assert.ok(fromLr.nodes.length > 0 && fromLr.edges.length > 0, "canonical must extract nodes and edges");
+  assert.deepEqual(fromTd.nodes, fromLr.nodes);
+  assert.deepEqual(fromTd.edges, fromLr.edges);
+  assert.deepEqual(fromTd.subgraphs, fromLr.subgraphs);
+  assert.deepEqual(fromTd.unmappedLabels, fromLr.unmappedLabels);
+  // 체크인된 방향의 실물도 같은 추출 — 헤더 방향이 무엇이든 그래프 구조가 고정임.
+  assert.deepEqual(extract(drawn).edges, fromLr.edges);
 });

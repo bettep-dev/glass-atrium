@@ -144,3 +144,27 @@ test("AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node
   assert.equal(body.grade, ASSIGNED_GRADE);
   assert.ok(body.note.length > 0);
 });
+
+// 방향 토큰 재작성기 — 헤더 첫 줄의 방향만 바꾸고 본문은 손대지 않음(두 테스트 파일에 각자 두어 픽스처처럼 자립시킴).
+function withDirection(mermaid: string, direction: string): string {
+  assert.match(mermaid, /^\s*(?:flowchart|graph)\s+\S+/i, "canonical must open with a flowchart header");
+  return mermaid.replace(/^(\s*(?:flowchart|graph))\s+\S+/i, `$1 ${direction}`);
+}
+
+test("AC-10 계수는 레이아웃 방향에 비의존 — 같은 canonical 콘텐츠가 LR/TD 에서 같은 census·report 를 냄", () => {
+  const lr = withDirection(drawn, "LR");
+  const td = withDirection(drawn, "TD");
+  // 두 문자열이 실제로 달라야 비교가 성립함 — 같으면 자기 자신과 비교하는 공허한 통과가 됨.
+  assert.notEqual(lr, td, "direction rewrite must produce two distinct strings");
+  // 재작성이 헤더 한 줄만 건드렸다는 확인 — 본문이 달라지면 아래 동일성은 방향 비의존의 증거가 못 됨.
+  assert.deepEqual(td.split("\n").slice(1), lr.split("\n").slice(1), "rewrite must touch only the header line");
+
+  const censusLr = getMermaidCensus(lr);
+  assert.ok(censusLr.nodeCount > 0 && censusLr.edgeCount > 0, "fixture must carry countable content");
+  // 노드/엣지/라벨/깊이 전부 — 계수기가 방향 토큰을 읽기 시작하면 여기서 붉어짐.
+  assert.deepEqual(getMermaidCensus(td), censusLr);
+  assert.deepEqual(getBudgetReport(td, ASSIGNED_GRADE), getBudgetReport(lr, ASSIGNED_GRADE));
+  // 체크인된 방향의 실물도 같은 수치 — 방향을 바꿔도 예산 리포트 숫자는 고정임.
+  assert.deepEqual(getMermaidCensus(drawn), censusLr);
+  assert.deepEqual(getBudgetReport(drawn, ASSIGNED_GRADE), getBudgetReport(lr, ASSIGNED_GRADE));
+});

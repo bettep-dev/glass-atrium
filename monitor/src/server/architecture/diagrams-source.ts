@@ -434,7 +434,10 @@ export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
 	detail: "balanced",
 	// 감축(T9): 다른 다이어그램으로 넘어가는 경계 노드 3종과 그 엣지를 뺌 — 나머지 여섯 편이 그려지지 않으므로 도착지 없는 표식임.
-	mermaid_drawn: `flowchart LR
+	// 방향은 수직(TD) 고정 — 렌더 pane 은 폭만 제약(측정 1150px)되고 높이는 `max-height: none` 로 자유로움.
+	// LR 은 랭크가 가로로 누적돼 1212px 로 넘쳐 우측 67px 이 잘렸음(콘텐츠를 줄이는 대신 방향을 눕힘).
+	// 되돌리려면 폭 초과를 먼저 재측정할 것 — 미관 사유의 LR 복귀는 같은 클리핑을 되살림.
+	mermaid_drawn: `flowchart TD
     subgraph entry["External inputs"]
         repo[Project repository]
         user[User utterance]
