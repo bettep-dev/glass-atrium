@@ -94,16 +94,20 @@ const KNOWN_HOOK_ERROR_KINDS: ReadonlySet<HookErrorKindValue> = new Set([
 const HOME_DIR = process.env.HOME ?? homedir();
 const SETTINGS_PATH = path.join(HOME_DIR, ".claude", "settings.json");
 
-// GA-root headless-OAuth secrets file — existence STAT only (never opened/read).
-// Honors the same GA_ROOT override the launcher uses (its GA_ROOT resolution):
-// ${GA_ROOT:-$HOME/.glass-atrium}/secrets/claude-auth.env.
+/**
+ * GA-root headless-OAuth secrets file — existence STAT only (never opened/read).
+ * Honors the same GA_ROOT override the launcher uses (its GA_ROOT resolution):
+ * ${GA_ROOT:-$HOME/.glass-atrium}/secrets/claude-auth.env.
+ */
 const GA_ROOT_DIR = process.env.GA_ROOT ?? path.join(HOME_DIR, ".glass-atrium");
 const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env");
 
-// needs_auth recovery pointer — names the concrete GA_ROOT-aware launcher command
-// so the card is actionable (a GA_ROOT override yields the real absolute path).
-// env-var NAME + instruction only, never the token value (core-security.md Secret
-// Management). Exported for the no-secret-content test.
+/**
+ * needs_auth recovery pointer — names the concrete GA_ROOT-aware launcher command
+ * so the card is actionable (a GA_ROOT override yields the real absolute path).
+ * env-var NAME + instruction only, never the token value (core-security.md Secret
+ * Management). Exported for the no-secret-content test.
+ */
 export const NEEDS_AUTH_REMEDIATION =
   `Run ${GA_ROOT_DIR}/glass-atrium and choose "Token Setup" (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN`;
 
@@ -253,7 +257,6 @@ export function buildDaemonStatusCards(
         rule === undefined ? null : nextOccurrenceUtc(rule, DAY_BUCKET_TIMEZONE, now),
       cost_guard_state: costGuardState,
       staleness_minutes: stalenessMinutes,
-      is_stale: isStale,
       needs_auth: needsAuth,
       needs_auth_remediation: needsAuth ? NEEDS_AUTH_REMEDIATION : null,
     };
@@ -490,12 +493,14 @@ async function handleDaemonPayload(
   }
 }
 
-// Failure carriers measured across the stored corpus: every top-level array whose elements
-// carry a non-empty `error` (autoagent `patches[]` · wiki `compilations[]`), plus the
-// `doctor` block, which is the only carrier on a cycle where no single item failed.
-// Nested string-array carriers stay out — wiki `dedup_proposals.errors` holds a routine
-// cost-guard drain notice on nearly every run, which would read every run as failing.
-// Exported for the derivation fixtures in the daemon-payload route test.
+/**
+ * Failure carriers measured across the stored corpus: every top-level array whose elements
+ * carry a non-empty `error` (autoagent `patches[]` · wiki `compilations[]`), plus the
+ * `doctor` block, which is the only carrier on a cycle where no single item failed.
+ * Nested string-array carriers stay out — wiki `dedup_proposals.errors` holds a routine
+ * cost-guard drain notice on nearly every run, which would read every run as failing.
+ * Exported for the derivation fixtures in the daemon-payload route test.
+ */
 export function deriveRunSummary(payload: unknown): DaemonRunSummary {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return { verdict: "unknown", error_signatures: [] };
@@ -523,8 +528,10 @@ export function deriveRunSummary(payload: unknown): DaemonRunSummary {
   return { verdict: signatures.length > 0 ? "fail" : "ok", error_signatures: signatures };
 }
 
-// doctor reports the cycle-level verdict, so a bare exit code has to become readable text
-// here — the drilldown row shows reasons, not raw payload fields.
+/**
+ * doctor reports the cycle-level verdict, so a bare exit code has to become readable text
+ * here — the drilldown row shows reasons, not raw payload fields.
+ */
 function getDoctorFailureMessage(doctor: unknown): string | null {
   if (typeof doctor !== "object" || doctor === null) {
     return null;
