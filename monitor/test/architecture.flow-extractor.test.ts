@@ -309,3 +309,13 @@ test("SoT parity: 다이어그램별 edge_type/node type/layer role 히스토그
     );
   }
 });
+
+// canonical 슬러그의 source 계측 — 위 payload 오라클 행은 drawn 을 재므로, verify-arch Stage-4 가 쓰는
+// mermaid_source 쪽 라벨/키워드 재분류 감시망이 비어 있음. 이 행이 그 구간을 메움.
+const CANONICAL_SOURCE_EDGE_ORACLE: Record<string, number> = { control_flow: 6, data_flow: 1, writes_to: 1 };
+
+test("canonical mermaid_source 의 edge_type 히스토그램 == source oracle", () => {
+  const src = DIAGRAMS.find((d) => d.slug === "v2-overview-entry");
+  assert.ok(src !== undefined);
+  assert.deepEqual(histogram(extract(src.mermaid_source).edges.map((e) => e.edge_type)), CANONICAL_SOURCE_EDGE_ORACLE);
+});

@@ -79,7 +79,7 @@ const EDGE_TYPE_LABEL = {
 	triggers: "Triggers",
 };
 
-// 화면에 그려지는 단일 canonical 맵 — 서버 CANONICAL_MAP.slug 와 같은 값.
+// 화면이 선호하는 canonical 맵 id — 서버 CANONICAL_MAP.slug 와 같은 값이지만, 불일치는 payload 로 흡수함.
 const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
 // 캔버스·탭 컨트롤 셀렉터 SoT — 구조 하네스가 window.ARCH_SELECTORS 로 같은 문자열을 읽음.
@@ -156,7 +156,8 @@ function ScreenArchitecture(
 	// 화면은 canonical 맵 한 장만 그림 — 나머지 여섯은 미렌더 source 레코드로 서버에 남음.
 	const activeDiagram = useMemoAR(() => {
 		const all = diagState.status === "ready" ? diagState.data?.diagrams || [] : [];
-		return all.find((d) => d.id === CANONICAL_DIAGRAM_ID) || null;
+		// 서버가 canonical slug 를 바꾸면 id 매칭이 비므로 payload 첫 장으로 낙하 → 빈 화면 대신 지도를 유지함.
+		return all.find((d) => d.id === CANONICAL_DIAGRAM_ID) || all[0] || null;
 	}, [diagState.status, diagState.data]);
 
 	// node.id → info (탐색용 — 상세 패널이 from/to 노드 라벨을 표시할 때 사용).
@@ -675,7 +676,7 @@ function MermaidCanvas({
 				}
 				panZoomRef.current = null;
 			}
-			// destroy 되는 탭의 short-graph clamp 가 재사용 캔버스 DOM 에 잔존 → 다음 그래프 측정 오염 차단.
+			// 정리되는 렌더의 short-graph clamp 가 재사용 캔버스 DOM 에 잔존 → 다음 그래프 측정 오염 차단.
 			clearCanvasSizingAR(root);
 		};
 	}, [renderState.status, renderState.svgHtml]);
@@ -1433,7 +1434,7 @@ function getLegibleFitScaleAR(paneW, paneH, graphW, graphH) {
 // svg-pan-zoom 초기 줌을 절대 스케일로 직접 적용 (라이브러리 fit:true 는 하한을 무시함).
 // 단계: resize() pane 갱신 → targetAbs = getLegibleFitScaleAR → 상대 zoom(R) → pan(viewBox 원점 상쇄 + 정렬).
 function applyLegibleFitAR(instance, root) {
-	// 이전 탭의 short-graph clamp 를 측정 전 제거 → getSizes() 가 실제 전체 pane 측정 (early-return 가드보다 위 배치 필수).
+	// 직전 렌더의 short-graph clamp 를 측정 전 제거 → getSizes() 가 실제 전체 pane 측정 (early-return 가드보다 위 배치 필수).
 	clearCanvasSizingAR(root);
 	if (!instance || typeof instance.getSizes !== "function") return;
 	// pane 측정 dims 강제 갱신 (init 시점 stale 폭 방어).

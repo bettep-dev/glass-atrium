@@ -17,8 +17,8 @@ export interface MermaidCensus {
 }
 
 const OPENERS: Readonly<Record<string, string>> = { "[": "]", "(": ")", "{": "}" };
-// 라벨 안의 인용 구간을 지운 뒤 남는 화살표 토큰 — 한 줄 = 한 엣지.
-const ARROW = /-->|\.->|--[->]|===?>|---/;
+// 라벨 안의 인용 구간을 지운 뒤 남는 화살표 토큰 — 토큰 1개 = 엣지 1개(`A --> B --> C` 체인 줄은 2엣지).
+const ARROW = /-->|\.->|--[->]|===?>|---/g;
 const NODE_DEF = /(^|[\s;])([A-Za-z0-9_-]+)([[({])/g;
 
 /** opener 위치에서 대응 closer 까지 읽어 라벨 원문과 종료 위치를 돌려줌. */
@@ -48,7 +48,7 @@ function getLabelText(raw: string): string {
 /**
  * 계수 규칙(단일 경로) — 어떤 mermaid 문자열에도 동일하게 적용됨.
  * 노드 = shape opener 를 동반한 선언 1건(`subgraph` 존 선언과 엣지 전용 참조는 제외 · 중복 id 는 1회).
- * 엣지 = 인용 구간 제거 후 화살표 토큰이 남는 줄 수.
+ * 엣지 = 인용 구간 제거 후 남은 화살표 토큰 수(줄 수가 아님 — 추출기가 지원하는 체인 줄이 상한을 우회 못 함).
  */
 export function getMermaidCensus(mermaid: string): MermaidCensus {
 	const byId = new Map<string, MermaidNode>();
@@ -68,7 +68,7 @@ export function getMermaidCensus(mermaid: string): MermaidCensus {
 			depth = Math.max(0, depth - 1);
 			continue;
 		}
-		if (ARROW.test(line.replace(/"[^"]*"/g, ""))) edgeCount += 1;
+		edgeCount += (line.replace(/"[^"]*"/g, "").match(ARROW) ?? []).length;
 
 		NODE_DEF.lastIndex = 0;
 		let match = NODE_DEF.exec(line);
@@ -136,7 +136,9 @@ export interface BudgetReport {
 const PROXY_NOTE =
 	"Proxy metric: node/edge/label counts are the upstream lever of legibility, not legibility itself " +
 	"(on-screen readability is judged by human review). The omitted_node_ids ledger is checked for " +
-	"existence/absence of each listed id, never for completeness of the list.";
+	"existence/absence of each listed id, never for completeness of the list. subgraph_depth is an " +
+	"invariant, not a volume metric: it is judged by measured > cap alone and is exempt from the ratio " +
+	"band, so its ratio field carries no state meaning (ratio 1.0 stays pass).";
 
 /** 비율 밴드 — ratio > 1.0 fail · 0.9 ≤ ratio ≤ 1.0 warn · ratio < 0.9 pass. */
 function getRatioState(ratio: number): BudgetState {

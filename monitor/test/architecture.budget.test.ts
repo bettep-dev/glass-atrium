@@ -115,3 +115,23 @@ test("canonical drawn is inside its whole budget", () => {
   const report = getBudgetReport(drawn, ASSIGNED_GRADE);
   assert.notEqual(report.state, "fail", JSON.stringify(report.violations));
 });
+
+import { readFileSync } from "node:fs";
+
+test("AC-4 (adversarial) 체인 줄은 화살표 토큰마다 1엣지 — 체이닝으로 엣지 상한을 우회할 수 없음", () => {
+  assert.equal(getMermaidCensus('flowchart LR\n    a["A"] --> b["B"] --> c["C"]').edgeCount, 2);
+  // 인용 라벨 안의 화살표 문자열은 엣지가 아님(따옴표 제거 후 계수).
+  assert.equal(getMermaidCensus('flowchart LR\n    a["-->"] --> b["B"]').edgeCount, 1);
+});
+
+test("AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node_ids 를 리포트 위에 합성함", () => {
+  const routeSrc = readFileSync(new URL("../src/server/routes/health-detail.ts", import.meta.url), "utf8");
+  assert.match(routeSrc, /app\.get\("\/api\/health\/architecture-budget", handleArchitectureBudget\)/);
+  assert.match(routeSrc, /slug: CANONICAL_MAP\.slug/);
+  assert.match(routeSrc, /omitted_node_ids: CANONICAL_MAP\.omitted_node_ids/);
+  assert.match(routeSrc, /\.\.\.getBudgetReport\(CANONICAL_MAP\.mermaid_drawn, CANONICAL_MAP\.detail\)/);
+  // 합성의 나머지 절반 — 스프레드되는 리포트가 note/grade 를 실제로 싣는지.
+  const report = getBudgetReport(drawn, CANONICAL_MAP.detail);
+  assert.equal(report.grade, ASSIGNED_GRADE);
+  assert.ok(report.note.length > 0);
+});
