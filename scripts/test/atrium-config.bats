@@ -206,8 +206,7 @@ DRIVER
   template_keys
   [[ "${status}" -eq 0 ]]
   [[ -n "${output}" ]]
-  run bash -c 'printf "%s\n" "$1" | LC_ALL=C sort -u | diff -u - <(printf "%s\n" "$1")' _ "${output}"
-  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "$(printf '%s\n' "${output}" | LC_ALL=C sort -u)" ]]
 }
 
 @test "atrium_toml_keys: dotted section keeps its bracket literal (no flattening)" {

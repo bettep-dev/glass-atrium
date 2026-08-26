@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SETTINGS_JSON/CONFIG_TOML/EXPECTED_HOOK_BINDINGS/GENERATE_MANIFEST/DRY_RUN) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
+# shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SETTINGS_JSON/CONFIG_TOML/CONFIG_TOML_EXAMPLE/EXPECTED_HOOK_BINDINGS/GENERATE_MANIFEST/DRY_RUN) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — doctor/preflight diagnostics + verify-clean parity + post-install liveness domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # doctor / preflight
@@ -991,9 +991,8 @@ run_doctor() {
   #     node_bin/claude_bin per host, so a value compare would red every healthy install too.
   #     A key carrying the template's `# ga:optional` marker is legitimately absent (stock default
   #     or unconfigured) and is skipped. Both files are READ; config.toml stays user-owned.
-  local cfgkey_template="${GA_ROOT}/config.toml.example"
-  if [[ ! -f "${cfgkey_template}" ]]; then
-    log "  note : config key drift skipped — no template at ${cfgkey_template}"
+  if [[ ! -f "${CONFIG_TOML_EXAMPLE}" ]]; then
+    log "  note : config key drift skipped — no template at ${CONFIG_TOML_EXAMPLE}"
   elif [[ ! -f "${CONFIG_TOML}" ]]; then
     # Announced rather than silent: a skipped comparison nobody hears is the drift channel again.
     log "  note : no rendered config.toml (${CONFIG_TOML}) — config key drift not compared"
@@ -1003,15 +1002,15 @@ run_doctor() {
     # shellcheck disable=SC2311,SC2312
     cfgkey_live=$'\n'"$(atrium_toml_keys "${CONFIG_TOML}")"$'\n'
     # shellcheck disable=SC2311,SC2312
-    cfgkey_optional=$'\n'"$(atrium_toml_optional_keys "${cfgkey_template}")"$'\n'
+    cfgkey_optional=$'\n'"$(atrium_toml_optional_keys "${CONFIG_TOML_EXAMPLE}")"$'\n'
     # shellcheck disable=SC2312  # enumerator status is masked by design: an unreadable template is the branch above
     while IFS= read -r cfgkey_pair; do
       [[ -n "${cfgkey_pair}" ]] || continue
       [[ "${cfgkey_live}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
       [[ "${cfgkey_optional}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
-      cfgkey_missing="${cfgkey_missing}${cfgkey_missing:+, }${cfgkey_pair%%$'\t'*}.${cfgkey_pair##*$'\t'}"
+      cfgkey_missing="${cfgkey_missing}${cfgkey_missing:+, }${cfgkey_pair/$'\t'/.}"
       cfgkey_count=$((cfgkey_count + 1))
-    done < <(atrium_toml_keys "${cfgkey_template}")
+    done < <(atrium_toml_keys "${CONFIG_TOML_EXAMPLE}")
     if [[ "${cfgkey_count}" -gt 0 ]]; then
       log "  note : config key drift — ${cfgkey_count} template key(s) absent from ${CONFIG_TOML} (report-only; re-render or add them by hand)"
       log "         missing: ${cfgkey_missing}"

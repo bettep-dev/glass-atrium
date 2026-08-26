@@ -73,7 +73,7 @@ CLAIM = re.compile(
 def regions(path, lines):
     """(lines, is_comment) tuples — a maximal comment run, a markdown list item or
     paragraph, or a bare code line."""
-    out, cur, cur_comment = [], [], False
+    out, cur = [], []
     if path.endswith('.md'):
         for i, raw in enumerate(lines, 1):
             s = raw.strip()
@@ -93,15 +93,14 @@ def regions(path, lines):
         s = raw.strip()
         if s.startswith('#'):
             cur.append((i, s.lstrip('#').strip()))
-            cur_comment = True
             continue
         if cur:
-            out.append((cur, cur_comment))
-            cur, cur_comment = [], False
+            out.append((cur, True))
+            cur = []
         if s:
             out.append(([(i, s)], False))
     if cur:
-        out.append((cur, cur_comment))
+        out.append((cur, True))
     return out
 
 

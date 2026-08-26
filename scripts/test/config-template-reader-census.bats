@@ -47,11 +47,11 @@ census_rows() {
 }
 
 @test "AC1 every template key has exactly one census row" {
-  local pair hits missing=""
+  local pair hits rows missing=""
+  rows="$(census_rows)"
   while IFS= read -r pair; do
     [[ -n "${pair}" ]] || continue
-    hits="$(census_rows | grep -c -F -- "${pair}|" || true)"
-    [[ -n "${hits}" ]] || hits=0
+    hits="$(printf '%s\n' "${rows}" | grep -c -F -- "${pair}|" || true)"
     [[ "${hits}" -eq 1 ]] || missing="${missing}${missing:+, }${pair}(rows=${hits})"
   done < <(template_pairs)
   [[ -z "${missing}" ]] || {
