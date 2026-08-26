@@ -48,7 +48,8 @@ const LIVE_TONE_CLASSES = [
 
 // 링 조건을 급전하는 고정 픽스처 — 바인딩된 daemon 이 critical.
 // 링 부재가 데이터 부재의 부작용이 아니라 표현 제거의 결과임을 성립시킴.
-const BOUND_DAEMON = "autoagent-daemon";
+// 값은 DAEMON_NODE_BINDINGS 의 실제 키여야 함 — 키가 아니면 node_ids 가 비어 전제가 무너짐.
+const BOUND_DAEMON = "autoagent";
 
 function getLiveFixture(): ArchitectureLiveResponse {
 	const nodeIds = [...(DAEMON_NODE_BINDINGS[BOUND_DAEMON] ?? [])];
@@ -90,9 +91,12 @@ let serverUrl: string;
 let browser: Browser;
 let page: Page;
 let expectedDescription: string;
-let selectors: { canvas: string; tabControl: string };
+let selectors: { canvas: string; tabControl: string; desc: string };
+let liveFixture: ArchitectureLiveResponse;
 
 before(async () => {
+	// 라우트 핸들러 안에서 만들면 전제 위반이 500 으로 바뀌어 테스트가 초록으로 통과함 — before 에서 한 번만 만듦.
+	liveFixture = getLiveFixture();
 	app = Fastify({ logger: false });
 	await app.register(fastifyStatic, {
 		root: PUBLIC_ROOT,
@@ -105,7 +109,7 @@ before(async () => {
 		const { doc } = await getArchitecture(request.log);
 		return doc.diagrams;
 	});
-	app.get("/api/architecture/live", async () => getLiveFixture());
+	app.get("/api/architecture/live", async () => liveFixture);
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -143,12 +147,15 @@ before(async () => {
 
 	selectors = await page.evaluate(
 		() =>
-			(window as never as { ARCH_SELECTORS: { canvas: string; tabControl: string } })
-				.ARCH_SELECTORS,
+			(
+				window as never as {
+					ARCH_SELECTORS: { canvas: string; tabControl: string; desc: string };
+				}
+			).ARCH_SELECTORS,
 	);
 	assert.ok(
-		selectors && selectors.canvas && selectors.tabControl,
-		"screen must expose window.ARCH_SELECTORS (canvas + tabControl SoT)",
+		selectors && selectors.canvas && selectors.tabControl && selectors.desc,
+		"screen must expose window.ARCH_SELECTORS (canvas + tabControl + desc SoT)",
 	);
 
 	// 렌더 완료 대기 — canvas 안에 svg 가 붙을 때까지.
@@ -161,10 +168,10 @@ after(async () => {
 });
 
 test("AC-11 description renders in full at first paint", async () => {
-	const exposed = await page.evaluate(() => {
-		const el = document.querySelector("#arch-svg-desc") as HTMLElement | null;
+	const exposed = await page.evaluate((sel) => {
+		const el = document.querySelector(sel.desc) as HTMLElement | null;
 		return el ? el.innerText : "";
-	});
+	}, selectors);
 	const normalized = getNormalized(exposed);
 	assert.ok(expectedDescription.length > 0, "payload description must be non-empty");
 	assert.equal(

@@ -61,8 +61,22 @@ scan_denylist() {
 }
 
 @test "AC-16: no tracked repo path matches the third-party denylist" {
-  local out status=0
-  out="$(git -C "${GA}" ls-files | scan_denylist)" || status=$?
+  local out paths status=0
+  # AC-16 은 repo 추적 집합에 대한 검사 — 소비자 설치본에는 git 트리가 없어 수행 자체가 불가함.
+  # (sibling manifest-check-clean.bats 와 같은 형태의 repo-only 가드.)
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+    skip "not a git work tree (consumer install — repo-only check)"
+  # 파이프로 이으면 상태가 scan_denylist 것으로 덮여 git 실패(설치본 = 비-repo)가 삼켜지고
+  # 0건을 훑고도 통과함 — 목록을 먼저 잡아 비었으면 붉게 실패시킴.
+  paths="$(git -C "${GA}" ls-files)" || {
+    printf 'git ls-files failed in %s — the scan would be vacuous\n' "${GA}" >&2
+    return 1
+  }
+  [[ -n "${paths}" ]] || {
+    printf 'git ls-files returned no paths in %s — the scan would be vacuous\n' "${GA}" >&2
+    return 1
+  }
+  out="$(printf '%s\n' "${paths}" | scan_denylist)" || status=$?
   [[ "${status}" -eq 0 ]] || {
     printf 'third-party paths tracked:\n%s\n' "${out}" >&2
     return 1

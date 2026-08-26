@@ -5,11 +5,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractFlows, type ExtractedFlow } from "../src/server/architecture/flow-extractor.js";
+import {
+  extractFlows,
+  inferFlowNodeType,
+  type ExtractedFlow,
+} from "../src/server/architecture/flow-extractor.js";
 import { DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
 import {
   getArchitecture,
   resetArchitectureCache,
+  roleForSyntheticSubgraph,
 } from "../src/server/architecture/parser.js";
 
 const silentLogger = { warn() {}, info() {} };
@@ -312,10 +317,25 @@ test("SoT parity: 다이어그램별 edge_type/node type/layer role 히스토그
 
 // canonical 슬러그의 source 계측 — 위 payload 오라클 행은 drawn 을 재므로, verify-arch Stage-4 가 쓰는
 // mermaid_source 쪽 라벨/키워드 재분류 감시망이 비어 있음. 이 행이 그 구간을 메움.
-const CANONICAL_SOURCE_EDGE_ORACLE: Record<string, number> = { control_flow: 6, data_flow: 1, writes_to: 1 };
+// 세 축 모두 실음 — edge 만 재면 canonical 의 mermaid_source node type/layer role 재분류가 무계측으로 남음.
+const CANONICAL_SOURCE_ORACLE: {
+  edges: Record<string, number>;
+  nodes: Record<string, number>;
+  roles: Record<string, number>;
+} = {
+  edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
+  nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
+  roles: { execution: 3, orchestration: 2 },
+};
 
-test("canonical mermaid_source 의 edge_type 히스토그램 == source oracle", () => {
+test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그램 == source oracle", () => {
   const src = DIAGRAMS.find((d) => d.slug === "v2-overview-entry");
   assert.ok(src !== undefined);
-  assert.deepEqual(histogram(extract(src.mermaid_source).edges.map((e) => e.edge_type)), CANONICAL_SOURCE_EDGE_ORACLE);
+  const out = extract(src.mermaid_source);
+  assert.deepEqual(histogram(out.edges.map((e) => e.edge_type)), CANONICAL_SOURCE_ORACLE.edges);
+  assert.deepEqual(histogram(out.nodes.map((n) => inferFlowNodeType(n))), CANONICAL_SOURCE_ORACLE.nodes);
+  assert.deepEqual(
+    histogram(out.subgraphs.map((s) => roleForSyntheticSubgraph(s.label))),
+    CANONICAL_SOURCE_ORACLE.roles,
+  );
 });

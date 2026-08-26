@@ -42,7 +42,7 @@ test("AC-10 (iii) every key the skill reads exists on the diff element", () => {
   const archDiffBody = DRIFT_SRC.match(/export interface ArchDiff \{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.notEqual(archDiffBody, "", "ArchDiff interface block must be locatable");
   for (const key of SKILL_DIFF_KEYS) {
-    assert.match(archDiffBody, new RegExp(`\\n\\t${key}: `), `ArchDiff must declare '${key}'`);
+    assert.match(archDiffBody, new RegExp(`^\\s*${key}: `, "m"), `ArchDiff must declare '${key}'`);
   }
   for (const key of SKILL_TOP_KEYS) {
     assert.ok(SKILL_SRC.includes(`'${key}'`), `skill Stage-1 must still consume '${key}'`);

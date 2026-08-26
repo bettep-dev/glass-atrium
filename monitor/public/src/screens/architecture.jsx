@@ -83,9 +83,11 @@ const EDGE_TYPE_LABEL = {
 const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
 // 캔버스·탭 컨트롤 셀렉터 SoT — 구조 하네스가 window.ARCH_SELECTORS 로 같은 문자열을 읽음.
+const ARCH_DESC_ID = "arch-svg-desc";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
+	desc: `#${ARCH_DESC_ID}`,
 };
 
 // Top-level Screen
@@ -571,7 +573,7 @@ function MermaidCanvas({
 
 		svgEl.setAttribute("role", "img");
 		svgEl.setAttribute("aria-label", `${diagramTitle} architecture diagram`);
-		svgEl.setAttribute("aria-describedby", "arch-svg-desc");
+		svgEl.setAttribute("aria-describedby", ARCH_DESC_ID);
 
 		// 내장 <title> 갱신 — 호버 tooltip + 보조 a11y 채널.
 		let titleEl = svgEl.querySelector(":scope > title");
@@ -955,7 +957,7 @@ function DiagramProse({ diagram }) {
 			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
 				About this diagram
 			</div>
-			<div id="arch-svg-desc" className="fs-meta text-dim leading-snug">
+			<div id={ARCH_DESC_ID} className="fs-meta text-dim leading-snug">
 				{diagram?.description || "No description available."}
 			</div>
 		</section>

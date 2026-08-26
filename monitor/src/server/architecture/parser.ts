@@ -146,7 +146,8 @@ function slugifyMermaidId(mermaidId: string): string {
 }
 
 // Heuristic role for a mermaid subgraph unmapped by the v1 layer table.
-function roleForSyntheticSubgraph(label: string): LayerRole {
+// Exported so the source-side parity oracle can measure the same classifier on mermaid_source labels.
+export function roleForSyntheticSubgraph(label: string): LayerRole {
   const lc = label.toLowerCase();
   if (lc.includes("게이트") || lc.includes("gate")) {
     return "gateway";

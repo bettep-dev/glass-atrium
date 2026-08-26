@@ -62,5 +62,8 @@ make_sandbox() {
 }
 
 @test "AC-17: generate-manifest.sh --check exits 0 on this repo" {
+  # 소비자 설치본에는 .git 이 없어 generate-manifest.sh 가 exit 3 으로 끝남 — repo 전용 검사임.
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+    skip "not a git work tree (consumer install — repo-only check)"
   run -0 "${REAL_SCRIPT}" --check
 }
