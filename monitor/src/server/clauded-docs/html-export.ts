@@ -180,14 +180,22 @@ const MERMAID_INIT_CONFIG = {
     cScaleLabel6: "#e5e7eb", cScaleLabel7: "#e5e7eb", cScaleLabel8: "#e5e7eb",
     cScaleLabel9: "#e5e7eb", cScaleLabel10: "#e5e7eb", cScaleLabel11: "#e5e7eb",
   },
+  // useMaxWidth:true stamps an inline max-width onto the emitted <svg> → it outranks any container rule.
+  // The key sits on BaseDiagramConfig and does NOT inherit — every adopted type (diagram-types.json) needs its own.
   flowchart: {
     htmlLabels: true,
     curve: "basis",
     padding: 12,
     nodeSpacing: 50,
     rankSpacing: 60,
-    useMaxWidth: true,
+    useMaxWidth: false,
   },
+  sequence: { useMaxWidth: false },
+  state: { useMaxWidth: false },
+  er: { useMaxWidth: false },
+  class: { useMaxWidth: false },
+  gitGraph: { useMaxWidth: false },
+  c4: { useMaxWidth: false },
   securityLevel: "loose",
 } as const;
 
@@ -484,6 +492,11 @@ const WEBFONT_HOST_HINTS: readonly string[] = [
   "cdn.tailwindcss.com",
 ];
 
+// mermaid runs with useMaxWidth off → the <svg> keeps its intrinsic width and this container absorbs the overflow.
+const DIAGRAM_CONTAINER_STYLE =
+  "pre.mermaid,.mermaid{overflow-x:auto}" +
+  "pre.mermaid>svg,.mermaid>svg{max-width:none}";
+
 /**
  * Removes CDN <script src> / runtime inline scripts + webfont <link>/@import
  * refs from the serialized HTML, leaving the Tailwind-injected <style> and the
@@ -541,6 +554,10 @@ export function stripCdnScriptsAndFonts(html: string): string {
     "afterbegin",
     `<!--${OFFLINE_FONTS_COMMENT}--><!--${MERMAID_VERSION_COMMENT}-->`,
   );
+
+  // Export pages get neither the viewer's .doc-body-isolation block nor SHELL_STYLE → the width rule ships here.
+  // beforeend, not afterbegin — a later sheet wins specificity ties with the stored body's own styles.
+  head.insertAdjacentHTML("beforeend", `<style>${DIAGRAM_CONTAINER_STYLE}</style>`);
 
   // node-html-parser toString() drops the DOCTYPE → prepend unconditionally,
   // guarding double-prepend in case a future version preserves it.
