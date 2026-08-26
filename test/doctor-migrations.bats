@@ -13,6 +13,7 @@
 #   AC3  probe rc=0, no such database  -> nothing pending yet   (not a warning)
 #   AC4  probe rc!=0, server unreachable -> undetermined        (not a warning, distinct wording)
 #   AC5  history table absent          -> every migration pending (a WARNING, not "undetermined")
+#   AC10 failed row beside a full set  -> a kind-B note, and the pending counter stays 0
 #
 # NO DATABASE IS CONTACTED. Every psql invocation resolves to a recording stub placed ahead of
 # PATH; the stub reads the SQL from stdin, picks a canned answer per query kind and exits with a
@@ -364,4 +365,36 @@ seed_fully_applied() {
     return 1
   }
   assert_output_has "2 pending-migration" || return 1
+}
+
+# ── AC10 — a failed row beside a fully-applied set is a note, never a counted pending ──────────
+
+@test "AC10: a failed history row beside a full applied set stays a note and moves no total" {
+  seed_fully_applied
+  run_doctor_sandbox
+  local base
+  base="$(warn_total_of_output)" || return 1
+
+  # Every on-disk migration is applied AND a rolled-back row survives beside them under a name the
+  # migrations directory no longer holds — the state Prisma leaves after `migrate resolve
+  # --rolled-back` plus a re-apply. Nothing here is pending, so the note must not reach the total.
+  stub_out history "$(
+    history_row 20260101000000_alpha 2026-01-01T00:00:00Z
+    history_row 20260202000000_beta 2026-02-02T00:00:00Z
+    history_row 20260303000000_gamma 2026-03-03T00:00:00Z
+    history_row 20251212000000_legacy 2025-12-12T00:00:00Z 2025-12-13T00:00:00Z
+  )"
+  run_doctor_sandbox
+  assert_output_has "all 3 migration(s) applied" || return 1
+  assert_output_has "note : failed/rolled-back history row(s): 1" || return 1
+  assert_output_has "20251212000000_legacy" || return 1
+  assert_output_lacks "migration(s) pending" || return 1
+  assert_output_lacks "1 pending-migration" || return 1
+  local withfailed
+  withfailed="$(warn_total_of_output)" || return 1
+  [[ "${withfailed}" -eq "${base}" ]] || {
+    echo "a failed history row was counted as a warning: ${base} -> ${withfailed}" >&2
+    echo "${output}" >&2
+    return 1
+  }
 }

@@ -14,6 +14,7 @@
 #   AC4  warning count                 -> identical with and without the reported gap (kind B)
 #   AC5  GA_DOCTOR_SKIP_PERMISSIONS    -> zero detail rows, ONE suppression line, count still equal
 #   AC6  the basis wording             -> the block says it is a literal match, not a security claim
+#   AC7  the live file's bytes         -> identical after a run that reported a gap (never writes)
 #
 # Hermetic: GA_ROOT is a throwaway sandbox passed to ga_init_env in a subprocess, the target home,
 # runtime-data root and update state dir are temp dirs, the manifest generator path does not exist
@@ -252,4 +253,24 @@ warn_total_of_output() {
   run_doctor_sandbox
   assert_output_has "literal string match" || return 1
   assert_output_has "not a security-gap claim" || return 1
+}
+
+# ── AC7 — the never-mutates half of the report-only guarantee, asserted on the bytes ───────────
+
+@test "AC7: a run that reports a coverage gap leaves the live settings.json byte-identical" {
+  # A gapped live file is the one the section has the most reason to "help" by rewriting, so the
+  # comparison runs on exactly that input rather than on an already-covered file.
+  seed_live "$(printf '%s\n' 'Bash(rm:*)')" ""
+  cp -- "${TARGET}/settings.json" "${SANDBOX}/settings.before.json"
+  run_doctor_sandbox
+  assert_output_has "missing:" || return 1
+  [[ -f "${TARGET}/settings.json" ]] || {
+    echo "the live settings.json no longer exists after a doctor run" >&2
+    return 1
+  }
+  cmp -s -- "${SANDBOX}/settings.before.json" "${TARGET}/settings.json" || {
+    echo "doctor mutated the live settings.json:" >&2
+    diff -- "${SANDBOX}/settings.before.json" "${TARGET}/settings.json" >&2 || true
+    return 1
+  }
 }

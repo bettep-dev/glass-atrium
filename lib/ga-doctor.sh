@@ -908,10 +908,15 @@ run_doctor() {
   #     the warning total AND the PASS breakdown. `glass-atrium update` rebuilds the monitor and
   #     restarts it without applying migrations, so new server code can run over an unmigrated
   #     database with no surface saying so — this section is that surface, and it only READS.
-  #     Four states are notes with no counter, kept apart on purpose: the documented opt-out, the
-  #     documented psql-less mode, a database that does not exist YET, and a server this run could
-  #     not reach. An ABSENT history table is NOT one of them — that is a database which has never
-  #     been migrated, which is the exposure itself, so it warns with every migration pending.
+  #     Four branch states are notes with no counter, kept apart on purpose: the documented opt-out,
+  #     the documented psql-less mode, a database that does not exist YET, and a server this run
+  #     could not reach. An ABSENT history table is NOT one of them — that is a database which has
+  #     never been migrated, which is the exposure itself, so it warns with every migration pending.
+  #     A fifth no-counter state rides ALONGSIDE either verdict rather than replacing it: a
+  #     failed/rolled-back history row, registration kind B (report-only), printed as its own
+  #     `note :` line. Prisma leaves such a row behind after `migrate resolve --rolled-back` plus a
+  #     re-apply, so it can accompany a fully-applied set — the prefix keeps an `ok` verdict beside
+  #     a `0 pending-migration` breakdown readable as one report, not as an unowned warning.
   #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
   #     would fold an unreachable server into "database absent" and report a healthy install as
   #     fully pending forever.
@@ -973,7 +978,7 @@ run_doctor() {
       log "  ok   : all ${mig_total} migration(s) applied (history: ${mig_table})"
     fi
     if [[ "${mig_failed_count}" -gt 0 ]]; then
-      log "         failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+      log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
     fi
   fi
 
