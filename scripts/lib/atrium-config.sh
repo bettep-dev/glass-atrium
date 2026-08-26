@@ -34,6 +34,55 @@ atrium_toml_get() {
   ' "${config_file}"
 }
 
+# Key enumeration: emits one sorted `<section literal><TAB><key>` pair per line
+# for the TOML file in $1 (default: the resolved config.toml). The section stays
+# a bracket literal because both consumer parsers take it verbatim as their
+# first arg — a dot-flattened string cannot be turned back into that pair.
+atrium_toml_keys() {
+  local config_file="${1:-$(atrium_config_file)}"
+  [[ -f "${config_file}" ]] || return 0
+  _atrium_toml_scan_keys "${config_file}" 0
+}
+
+# Optional-key enumeration: same record format as atrium_toml_keys, restricted to the
+# keys a bare `# ga:optional` line directly above them declares legitimately absent
+# from a rendered config.toml. Kept beside the enumerator so a drift consumer never
+# grows a second parser of the marker convention.
+atrium_toml_optional_keys() {
+  local config_file="${1:-$(atrium_config_file)}"
+  [[ -f "${config_file}" ]] || return 0
+  _atrium_toml_scan_keys "${config_file}" 1
+}
+
+# Private scanner behind both enumerators — one copy of the TOML grammar, so a
+# widened key charclass can never make the all-keys and optional-keys views
+# disagree (an optional key would then surface as drift). Args: $1 = file that
+# exists · $2 = 1 to emit only `# ga:optional`-marked keys, 0 to emit every key.
+# Comment lines are dropped whole: the template documents `time = "HH:MM"` in
+# prose, and a `/=/` scan would emit that as a key of whatever section is open.
+# The marker rule sits above the generic comment skip; a comment line always
+# starts with '#' and never '[', so the section rule leads without ambiguity.
+_atrium_toml_scan_keys() {
+  local config_file="$1" marked_only="$2"
+  # shellcheck disable=SC2312  # awk's status is irrelevant: no match is an empty key set, not an error
+  awk -v marked_only="${marked_only}" '
+    /^[[:space:]]*\[/ { cur = $0; gsub(/[[:space:]]/, "", cur); mark = 0; next }
+    /^[[:space:]]*#[[:space:]]*ga:optional[[:space:]]*$/ { mark = 1; next }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=/ {
+      if (cur != "" && (!marked_only || mark)) {
+        key = $0
+        sub(/^[[:space:]]*/, "", key)
+        sub(/[[:space:]]*=.*$/, "", key)
+        printf "%s\t%s\n", cur, key
+      }
+      mark = 0
+      next
+    }
+    { mark = 0 }
+  ' "${config_file}" | LC_ALL=C sort -u
+}
+
 # Defaulted read: configured value when present, else $3 verbatim.
 atrium_config_get() {
   local section="$1" key="$2" default="$3" val

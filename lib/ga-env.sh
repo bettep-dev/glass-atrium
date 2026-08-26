@@ -104,8 +104,9 @@ ga_init_env() {
   # symlink-farm exclusion — INSTALL-INTERNAL manifest entries that are BUNDLED + per-file hash-verified
   # (they ship + doctor §4 checks their presence) yet are NEVER symlinked into ~/.claude, because they are
   # consumed IN PLACE from ~/.glass-atrium: lib/ga-core.sh + lib/ga-deps.sh are SOURCED by the launcher from
-  # its own dir; config.toml.example is the render_config template; requirements.txt is the python-deps
-  # source; monitor/ is the dashboard the bootstrap BUILDS (`cd monitor && npm run build`) + RUNS in place
+  # its own dir; config.toml.example is the render_config template; requirements.txt is a shipped
+  # declaration set with no runtime consumer; monitor/ is the dashboard the bootstrap BUILDS
+  # (`cd monitor && npm run build`) + RUNS in place
   # (`node dist/server/main.js`, launchd-repointed to ${GA_ROOT}/monitor) — a ~/.claude/monitor or
   # ~/.claude/lib link would be wrong (nothing there sources them). Prefix globs + exact basenames,
   # TARGET_HOME-relative (mirrors the COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).

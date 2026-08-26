@@ -161,3 +161,87 @@ resolver_call() {
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "1" ]]
 }
+
+# --- atrium_toml_keys(): key enumeration + two-consumer round-trip ---
+
+TEMPLATE="${GA}/config.toml.example"
+
+# Emits the template's (section literal, key) pairs, one TAB-separated pair per line.
+template_keys() {
+  run bash -c 'source "$1"; atrium_toml_keys "$2"' _ "${REAL_LIB}" "${TEMPLATE}"
+}
+
+# Resolves every enumerated pair through one consumer parser and prints the
+# pairs that come back empty. $1 = get|plist — "plist" reuses the extractor
+# lifted verbatim from render-launchd-plists.sh (never a copy of its awk).
+resolve_all() {
+  local mode="$1" fn_src=""
+  [[ "${mode}" == "plist" ]] \
+    && fn_src="$(sed -n '/^extract_toml_value() {$/,/^}$/p' "${GA}/scripts/render-launchd-plists.sh")"
+  cat >"${WORK}/resolve.sh" <<'DRIVER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "${REAL_LIB}"
+if [[ "${MODE}" == "plist" ]]; then
+  eval "${PLIST_FN_SRC}"
+  reader() { extract_toml_value "$1" "$2"; }
+else
+  reader() { atrium_toml_get "$1" "$2"; }
+fi
+count=0
+tab="$(printf '\t')"
+while IFS="${tab}" read -r section key; do
+  count=$((count + 1))
+  [[ -n "$(reader "${section}" "${key}")" ]] \
+    || printf 'UNRESOLVED %s %s\n' "${section}" "${key}"
+done < <(atrium_toml_keys "${TEMPLATE}")
+((count > 0)) || printf 'NO_PAIRS_EMITTED\n'
+DRIVER
+  run env REAL_LIB="${REAL_LIB}" MODE="${mode}" PLIST_FN_SRC="${fn_src}" \
+    TEMPLATE="${TEMPLATE}" CONFIG_TOML="${TEMPLATE}" ATRIUM_CONFIG_TOML="${TEMPLATE}" \
+    bash "${WORK}/resolve.sh"
+}
+
+@test "atrium_toml_keys: emits sorted TAB-separated (section literal, key) pairs" {
+  template_keys
+  [[ "${status}" -eq 0 ]]
+  [[ -n "${output}" ]]
+  [[ "${output}" == "$(printf '%s\n' "${output}" | LC_ALL=C sort -u)" ]]
+}
+
+@test "atrium_toml_keys: dotted section keeps its bracket literal (no flattening)" {
+  template_keys
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"[daemon.pg-backup]"$'\t'"time"* ]]
+  [[ "${output}" != *"daemon.pg-backup.time"* ]]
+}
+
+@test "atrium_toml_keys: a comment line carrying '=' emits no phantom key" {
+  template_keys
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"[release]"$'\t'"time"* ]]
+  [[ "${output}" != *"[release]"$'\t'"mode"* ]]
+}
+
+@test "atrium_toml_keys: quoted value containing '=' does not split the key" {
+  cat >"${WORK}/config.toml" <<'TOML'
+[meta]
+# banner = "not a key"
+project = "a=b"
+TOML
+  run bash -c 'source "$1"; atrium_toml_keys "$2"' _ "${REAL_LIB}" "${WORK}/config.toml"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "[meta]"$'\t'"project" ]]
+}
+
+@test "round-trip: every template pair resolves non-empty via atrium_toml_get" {
+  resolve_all get
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "round-trip: every template pair resolves non-empty via the plist extractor" {
+  resolve_all plist
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}

@@ -36,8 +36,20 @@ registry_warns
 arbiter_warns
 retired_residue'
 
-# Cycle-1 rows declared kind B (report-only) — promoting one to a counter is the regression.
-KIND_B_PATTERN='permission|rewire'
+# Rows declared kind B (report-only) — promoting one to a counter is the regression. These are
+# IDENTIFIER stems, not section titles: the check greps the operand and reference NAMES, so a
+# token no identifier can carry asserts nothing (the retired `permission` was exactly that —
+# section 20's names are all `perms_`). The fossil assertion pins each stem to a real name.
+KIND_B_STEMS='perms
+rewire
+cfgkey'
+
+# One synthetic operand per registered stem, in stem order — the promotion the guard must catch.
+KIND_B_SYNTHETIC='perms_missing
+rewire_pending
+cfgkey_missing'
+
+KIND_B_PATTERN="$(printf '%s\n' "${KIND_B_STEMS}" | tr '\n' '|' | sed 's/|$//')"
 
 anchor_count() {
   grep -c -F -- "$1" "${DOCTOR}" || true
@@ -98,6 +110,38 @@ summary_refs() {
     | grep -Ei -- "${KIND_B_PATTERN}" || true)"
   [[ -z "${promoted}" ]] || {
     printf 'KIND-B ROW PROMOTED TO A COUNTER: %s\n' "${promoted}" >&2
+    return 1
+  }
+}
+
+@test "kind B guard binds: a synthetic promotion of every registered stem is caught" {
+  local unmatched stem_count synth_count
+  unmatched="$(printf '%s\n' "${KIND_B_SYNTHETIC}" | grep -Eiv -- "${KIND_B_PATTERN}" || true)"
+  [[ -z "${unmatched}" ]] || {
+    printf 'REGISTERED STEM MATCHES NOT EVEN ITS OWN SYNTHETIC OPERAND: %s\n' "${unmatched}" >&2
+    return 1
+  }
+  stem_count="$(printf '%s\n' "${KIND_B_STEMS}" | grep -c .)"
+  synth_count="$(printf '%s\n' "${KIND_B_SYNTHETIC}" | grep -c .)"
+  [[ "${stem_count}" == "${synth_count}" ]] || {
+    printf 'SYNTHETIC LIST FELL BEHIND THE PATTERN — stems=%s synthetics=%s\n' \
+      "${stem_count}" "${synth_count}" >&2
+    return 1
+  }
+}
+
+@test "kind B fossils: every registered stem exists as an identifier fragment in ga-doctor.sh" {
+  local tokens stem missing=""
+  tokens="$(grep -oE '[A-Za-z_][A-Za-z0-9_]*' "${DOCTOR}" | sort -u)"
+  while IFS= read -r stem; do
+    [[ -n "${stem}" ]] || continue
+    printf '%s\n' "${tokens}" | grep -qF -- "${stem}" || missing="${missing}${stem} "
+  done <<EOF
+${KIND_B_STEMS}
+EOF
+  [[ -z "${missing}" ]] || {
+    printf 'REGISTERED STEM WITH NO IDENTIFIER IN %s (row deleted or renamed): %s\n' \
+      "${DOCTOR}" "${missing}" >&2
     return 1
   }
 }

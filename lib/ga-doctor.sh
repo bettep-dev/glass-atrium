@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SETTINGS_JSON/CONFIG_TOML/EXPECTED_HOOK_BINDINGS/GENERATE_MANIFEST/DRY_RUN) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
+# shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SETTINGS_JSON/CONFIG_TOML/CONFIG_TOML_EXAMPLE/EXPECTED_HOOK_BINDINGS/GENERATE_MANIFEST/DRY_RUN) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — doctor/preflight diagnostics + verify-clean parity + post-install liveness domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # doctor / preflight
@@ -979,6 +979,43 @@ run_doctor() {
     fi
     if [[ "${mig_failed_count}" -gt 0 ]]; then
       log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+  fi
+
+  # 22. config.toml key drift vs the shipped template. Registration kind B (report-only): its log
+  #     lines only — no counter, no term in the warning total, exit code unchanged. render_config
+  #     returns early once no unexpanded ${HOME} token remains, so a key added to or removed from
+  #     the template never reaches an existing install and nothing compares the two key sets.
+  #     Direction is template -> live ONLY: a live-only key is the user's own, and reporting it
+  #     would red every healthy install. KEY NAMES ONLY — resolve_config_binaries rewrites
+  #     node_bin/claude_bin per host, so a value compare would red every healthy install too.
+  #     A key carrying the template's `# ga:optional` marker is legitimately absent (stock default
+  #     or unconfigured) and is skipped. Both files are READ; config.toml stays user-owned.
+  if [[ ! -f "${CONFIG_TOML_EXAMPLE}" ]]; then
+    log "  note : config key drift skipped — no template at ${CONFIG_TOML_EXAMPLE}"
+  elif [[ ! -f "${CONFIG_TOML}" ]]; then
+    # Announced rather than silent: a skipped comparison nobody hears is the drift channel again.
+    log "  note : no rendered config.toml (${CONFIG_TOML}) — config key drift not compared"
+  else
+    local cfgkey_pair cfgkey_live cfgkey_optional cfgkey_missing="" cfgkey_count=0
+    # Newline-fenced haystacks, so one pair can never match another's suffix.
+    # shellcheck disable=SC2311,SC2312
+    cfgkey_live=$'\n'"$(atrium_toml_keys "${CONFIG_TOML}")"$'\n'
+    # shellcheck disable=SC2311,SC2312
+    cfgkey_optional=$'\n'"$(atrium_toml_optional_keys "${CONFIG_TOML_EXAMPLE}")"$'\n'
+    # shellcheck disable=SC2312  # enumerator status is masked by design: an unreadable template is the branch above
+    while IFS= read -r cfgkey_pair; do
+      [[ -n "${cfgkey_pair}" ]] || continue
+      [[ "${cfgkey_live}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
+      [[ "${cfgkey_optional}" == *$'\n'"${cfgkey_pair}"$'\n'* ]] && continue
+      cfgkey_missing="${cfgkey_missing}${cfgkey_missing:+, }${cfgkey_pair/$'\t'/.}"
+      cfgkey_count=$((cfgkey_count + 1))
+    done < <(atrium_toml_keys "${CONFIG_TOML_EXAMPLE}")
+    if [[ "${cfgkey_count}" -gt 0 ]]; then
+      log "  note : config key drift — ${cfgkey_count} template key(s) absent from ${CONFIG_TOML} (report-only; re-render or add them by hand)"
+      log "         missing: ${cfgkey_missing}"
+    else
+      log "  ok   : config.toml carries every template key not marked '# ga:optional'"
     fi
   fi
 
