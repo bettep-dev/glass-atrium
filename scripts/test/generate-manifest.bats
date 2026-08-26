@@ -456,8 +456,7 @@ ship_lib_a() {
   [[ "${status}" -eq 0 ]]
   local rel
   for rel in LICENSE LICENSES-THIRD-PARTY.md settings.template.json; do
-    run jq -e --arg f "${rel}" '.files | index($f)' "${MANIFEST}"
-    [[ "${status}" -eq 0 ]] || {
+    jq -e --arg f "${rel}" 'any(.files[]; . == $f)' "${MANIFEST}" >/dev/null || {
       echo "not a manifest member: ${rel}"
       return 1
     }

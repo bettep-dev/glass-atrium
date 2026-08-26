@@ -900,11 +900,7 @@ run_doctor() {
         fi
       done < <(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${perms_template}" 2>/dev/null || true)
       [[ "${perms_total}" -gt 0 ]] || continue
-      if [[ -n "${perms_missing}" ]]; then
-        log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present — missing: ${perms_missing}"
-      else
-        log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present"
-      fi
+      log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present${perms_missing:+ — missing: ${perms_missing}}"
     done
   fi
 
@@ -923,9 +919,6 @@ run_doctor() {
   local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
   local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
   local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
-  local mig_table_name=""
-  # shellcheck disable=SC2310,SC2311  # a refused GA_MIGRATION_HISTORY_TABLE leaves the name empty
-  mig_table_name="$(_pg_migration_history_table 2>/dev/null || true)"
   if [[ -d "${mig_dir}" ]]; then
     # Directories only: migration_lock.toml sits beside them and is not a migration.
     for mig_entry in "${mig_dir}"/*/; do
@@ -950,7 +943,8 @@ run_doctor() {
     log "  note : pending migrations undetermined — the history read against '${DB_NAME}' failed"
   elif [[ -z "${mig_table}" ]]; then
     mig_pending="${mig_total}"
-    log "  warn : migration history table ${mig_table_name:-public._prisma_migrations} absent in '${DB_NAME}' — all ${mig_total} migration(s) pending; apply with 'glass-atrium db-setup'"
+    # shellcheck disable=SC2312  # reached only after the same call succeeded inside _pg_migration_table_probe
+    log "  warn : migration history table $(_pg_migration_history_table) absent in '${DB_NAME}' — all ${mig_total} migration(s) pending; apply with 'glass-atrium db-setup'"
   elif ! mig_rows="$(_pg_migration_history_probe "${DB_NAME}")"; then
     log "  note : pending migrations undetermined — reading ${mig_table} in '${DB_NAME}' failed"
   else
@@ -1018,6 +1012,13 @@ INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 # dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
 # deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
 # The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
+_drop_window_cutoff_date() {
+  local days="${1}"
+  date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
+  date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null && return 0
+  return 1
+}
+
 # Days a hook-rewire marker is reported before doctor retires it. Window length is the ONLY thing
 # that clears the marker (see the helper below).
 GA_REWIRE_NOTICE_WINDOW_DAYS="${GA_REWIRE_NOTICE_WINDOW_DAYS:-7}"
@@ -1067,13 +1068,6 @@ _doctor_report_rewire_marker() {
   else
     log "  info : hook rewire pending — NO hook activity observed since the rewire (${detail:-changes recorded}). Start a NEW session to activate the bindings; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
   fi
-}
-
-_drop_window_cutoff_date() {
-  local days="${1}"
-  date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
-  date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null && return 0
-  return 1
 }
 
 # Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar

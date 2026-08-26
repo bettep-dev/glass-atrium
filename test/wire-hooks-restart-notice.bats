@@ -190,6 +190,10 @@ summary_warns() {
   grep -q 'retired=[1-9]' "${MARKER}" || return 1
 }
 
+# Make-it-red recipe for AC5: INVERT the activity comparison in _doctor_report_rewire_marker
+# (`-gt` -> `-le`), which reddens AC5 and AC6 together because they are the two sides of that one
+# comparison. Reverting the artifact glob to a fixed filename reddens AC6 ALONE — an unseen
+# artifact is exactly what AC5 already expects, so that recipe never falsifies this test.
 @test "AC5: an artifact OLDER than the marker reports no activity and keeps the marker" {
   local now
   now="$(date +%s)"
@@ -233,11 +237,11 @@ summary_warns() {
   local base_status="${status}" base_warns
   base_warns="$(summary_warns)"
 
+  # No artifact seeding: neither report branch touches a counter, and the asserted substring is
+  # common to both wordings — the branch AC8 does not distinguish is fixture it does not need.
   local now
   now="$(date +%s)"
   write_marker "${now}"
-  : >"${DATA}/data/zz-arbitrary-probe-fired.log"
-  set_mtime "${DATA}/data/zz-arbitrary-probe-fired.log" "$((now + 60))"
 
   run_doctor_sandbox
   assert_has "hook activity observed since the rewire" || return 1

@@ -211,12 +211,22 @@ seed_fully_applied() {
   run_doctor_sandbox "${nopsql}"
   assert_output_has "pending-migration check skipped — psql not found" || return 1
   assert_output_lacks "migration(s) pending" || return 1
-  local warns
-  warns="$(warn_total_of_output)" || return 1
-  [[ "${warns}" -ge 0 ]] || return 1
+  local skipped
+  skipped="$(warn_total_of_output)" || return 1
   # the stub must not have been consulted either — the branch is decided before any query
   [[ ! -f "${STUB_STATE}/calls.log" ]] || {
     echo "psql was queried on the psql-absent path: $(cat -- "${STUB_STATE}/calls.log")" >&2
+    return 1
+  }
+
+  # The comparand runs LAST on purpose: it consults the stub, so measuring the green total first
+  # would create calls.log and make the check above unfailable.
+  seed_fully_applied
+  run_doctor_sandbox
+  local base
+  base="$(warn_total_of_output)" || return 1
+  [[ "${skipped}" -eq "${base}" ]] || {
+    echo "the psql-less mode moved the warning total: ${base} -> ${skipped}" >&2
     return 1
   }
 }
@@ -224,30 +234,39 @@ seed_fully_applied() {
 # ── AC3 — branch 3: the database does not exist yet, which is not a pending migration ──────────
 
 @test "AC3: an absent database reports nothing-applied-yet, not a warning" {
+  seed_fully_applied
+  run_doctor_sandbox
+  local base
+  base="$(warn_total_of_output)" || return 1
+
   stub_out exists ''
   run_doctor_sandbox
   assert_output_has "no migrations applied yet" || return 1
   assert_output_lacks "migration(s) pending" || return 1
   assert_output_lacks "undetermined" || return 1
+  local absent
+  absent="$(warn_total_of_output)" || return 1
+  [[ "${absent}" -eq "${base}" ]] || {
+    echo "an absent database was counted as a warning: ${base} -> ${absent}" >&2
+    return 1
+  }
 }
 
 # ── AC4 — branch 4: an unreachable server is undetermined, worded differently from AC3 ─────────
 
 @test "AC4: a failed existence probe is undetermined and distinct from the absent-database note" {
-  stub_rc exists 2
-  run_doctor_sandbox
-  assert_output_has "pending migrations undetermined" || return 1
-  assert_output_lacks "no migrations applied yet" || return 1
-  assert_output_lacks "migration(s) pending" || return 1
-
+  # One run per scenario: the existence probe fails first, so a history seeded after it is never
+  # consulted and a second undetermined run would repeat the first exactly.
   seed_fully_applied
-  rm -f -- "${STUB_STATE}/exists.rc"
   run_doctor_sandbox
   local green
   green="$(warn_total_of_output)" || return 1
 
   stub_rc exists 2
   run_doctor_sandbox
+  assert_output_has "pending migrations undetermined" || return 1
+  assert_output_lacks "no migrations applied yet" || return 1
+  assert_output_lacks "migration(s) pending" || return 1
   local undetermined
   undetermined="$(warn_total_of_output)" || return 1
   [[ "${undetermined}" -eq "${green}" ]] || {
