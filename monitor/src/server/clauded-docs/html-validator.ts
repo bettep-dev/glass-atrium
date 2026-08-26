@@ -168,13 +168,16 @@ function freezeEntries(entries: unknown, field: string, jsonPath: string): reado
   if (!Array.isArray(entries)) {
     throw new Error(`diagram-types SoT invalid: ${field} missing or not an array (${jsonPath})`);
   }
-  for (const entry of entries as DiagramTypeEntry[]) {
-    const hasKeywords = Array.isArray(entry?.keywords) && entry.keywords.every((k) => typeof k === "string" && k.length > 0);
-    if (typeof entry?.type !== "string" || entry.type.length === 0 || !hasKeywords) {
-      throw new Error(`diagram-types SoT invalid: ${field} entry missing type/keywords (${jsonPath})`);
-    }
-  }
-  return Object.freeze(entries.map((e: DiagramTypeEntry) => Object.freeze({ ...e })));
+  return Object.freeze(
+    (entries as DiagramTypeEntry[]).map((entry) => {
+      const hasKeywords =
+        Array.isArray(entry?.keywords) && entry.keywords.every((k) => typeof k === "string" && k.length > 0);
+      if (typeof entry?.type !== "string" || entry.type.length === 0 || !hasKeywords) {
+        throw new Error(`diagram-types SoT invalid: ${field} entry missing type/keywords (${jsonPath})`);
+      }
+      return Object.freeze({ ...entry });
+    }),
+  );
 }
 
 /**
@@ -577,11 +580,8 @@ function countTableColumns(table: QueryableNode): number {
 /** Frontmatter fence of a mermaid source — a leading `---` block precedes the type line. */
 const DIAGRAM_FRONTMATTER_FENCE = "---";
 
-/** Leading identifier of a mermaid type line (`flowchart LR` → `flowchart`, `block-beta` → `block-beta`). */
-const DIAGRAM_KEYWORD_PATTERN = /^[A-Za-z][A-Za-z0-9-]*/;
-
-/** Direction modifier of a mermaid type line (`graph RL;` → `RL`) — the five mermaid flow directions. */
-const DIAGRAM_DIRECTION_PATTERN = /^[A-Za-z][A-Za-z0-9-]*[ \t]+(TB|TD|BT|RL|LR)\b/i;
+/** Mermaid type line — leading identifier plus the direction modifier when one is declared. */
+const DIAGRAM_DECLARATION_PATTERN = /^([A-Za-z][A-Za-z0-9-]*)(?:[ \t]+(TB|TD|BT|RL|LR)\b)?/i;
 
 /**
  * Scan the sanitized AST's diagram nodes and report every block whose type is
@@ -613,16 +613,17 @@ function findDiagramNotices(root: QueryableNode, types: DiagramTypes): DiagramNo
   for (let i = 0; i < blocks.length; i += 1) {
     const typeLine = getDiagramTypeLine(blocks[i].text);
     if (typeLine === null) continue;
+    const declaration = DIAGRAM_DECLARATION_PATTERN.exec(typeLine);
+    if (declaration === null) continue;
     const blockIndex = i + 1;
 
-    const keyword = DIAGRAM_KEYWORD_PATTERN.exec(typeLine);
-    const type = keyword === null ? undefined : excludedByKeyword.get(keyword[0].toLowerCase());
+    const type = excludedByKeyword.get(declaration[1].toLowerCase());
     if (type !== undefined) {
       notices.push({ code: "diagram_type_excluded", type, blockIndex });
     }
 
-    const direction = getFlowDirection(typeLine);
-    if (direction !== null && forbiddenDirections.has(direction)) {
+    const direction = declaration[2]?.toUpperCase();
+    if (direction !== undefined && forbiddenDirections.has(direction)) {
       notices.push({ code: "diagram_flow_direction", direction, blockIndex });
     }
   }
@@ -650,12 +651,6 @@ function getDiagramTypeLine(source: string): string | null {
     return trimmed;
   }
   return null;
-}
-
-/** Upper-cased direction token declared on a type line, or `null` when the line declares none. */
-function getFlowDirection(typeLine: string): string | null {
-  const match = DIAGRAM_DIRECTION_PATTERN.exec(typeLine);
-  return match === null ? null : match[1].toUpperCase();
 }
 
 /**

@@ -492,12 +492,10 @@ const WEBFONT_HOST_HINTS: readonly string[] = [
   "cdn.tailwindcss.com",
 ];
 
-// mermaid runs with useMaxWidth off → the <svg> keeps its intrinsic width and this container absorbs the overflow.
-// Size presets: the two breakout widths resolve against the nearest query container, never the viewport. The
-// export carries no metadata rail, so `body` is the column the viewer's scroll wrap plays (clauded-docs.jsx);
-// the two paths share container semantics, so equal columns yield equal widths for the same preset class.
-// A viewport basis would be wrong on any layout whose column is off-centre — the breakout escapes past the
-// scroll origin there, and negative scroll offsets do not exist.
+// mermaid runs with useMaxWidth off → the <svg> keeps its intrinsic width and this container absorbs it.
+// Breakout presets size against the nearest query container, never the viewport.
+// A viewport basis escapes past the scroll origin on any off-centre column, and negative offsets do not exist.
+// `body` is that container here — the column the viewer's scroll wrap plays (clauded-docs.jsx).
 // The negative margin-inline pulls the node out of the column while keeping it centred on it.
 const DIAGRAM_CONTAINER_STYLE =
   "body{container-type:inline-size}" +

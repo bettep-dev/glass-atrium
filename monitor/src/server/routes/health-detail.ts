@@ -28,7 +28,6 @@ import {
   nextOccurrenceUtc,
   DAEMON_CRON_SCHEDULE,
   STALE_MULTIPLIER,
-  expectedIntervalMinutes,
 } from "../schedule-next-fire.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
@@ -164,10 +163,10 @@ async function handleDaemons(
     // DISTINCT ON yields the latest row per daemon by started_at desc — index-friendly
     // (matches @@index([daemonName, runDate(sort: Desc)]) in schema). cost_guard_state
     // is null for non-autoagent daemons by design (PG schema confirms).
-    // The name filter must cover the resolver's daemon set.
-    // A name it omits returns no row → that card reads 'missing' while live reads the truth.
-    // The install anchor rides along because a never-fired daemon has no staleness figure
-    // to judge by — only the system's own age separates dead from not-yet-installed.
+    // The filter must cover the resolver's daemon set — an omitted name returns no row.
+    // Its card would then read 'missing' while live reads the truth.
+    // The install anchor rides along: a never-fired daemon has no staleness to judge by.
+    // Only the system's own age separates dead from not-yet-installed.
     const [rows, installAnchor] = await Promise.all([
       prisma.$queryRaw<DaemonRow[]>`
         SELECT DISTINCT ON (daemon_name)
@@ -220,18 +219,18 @@ export function buildDaemonStatusCards(
     byName.set(row.daemon_name, row);
   }
   // The resolver's output is the board itself — no verdict and no daemon name can drift from live.
-  // Recomputing the rule here would lose the never-fired escalation (input: install anchor, not staleness).
+  // Its staleness figures are the ones this card reports, not a second run of the same arithmetic.
   return resolveDaemonStatuses(rows, now.getTime(), installAnchor).map((resolved) => {
     const name = resolved.daemon_name;
     const row = byName.get(name);
     const lastRunAt = row?.last_run_at ?? null;
     const rule = DAEMON_CRON_SCHEDULE[name];
-    const stalenessMinutes =
-      lastRunAt === null ? null : Math.floor((now.getTime() - lastRunAt.getTime()) / 60_000);
+    const stalenessMinutes = resolved.staleness_minutes;
+    // Overdue by the clock, deliberately not the verdict — needs_auth keys on firing.
+    // A run whose reported status is 'stale' inside its cadence is still firing.
     const isStale =
-      rule === undefined || stalenessMinutes === null
-        ? false
-        : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER;
+      stalenessMinutes !== null &&
+      stalenessMinutes > resolved.expected_cadence_minutes * STALE_MULTIPLIER;
     // Narrow PG `status::text` → DaemonStatusValue union (unknown → null).
     const lastStatus = narrowDaemonStatus(row?.last_status ?? null);
     // Spec: cost_guard_state is for autoagent only; other daemons report null.
@@ -250,7 +249,7 @@ export function buildDaemonStatusCards(
 
     return {
       daemon_name: name,
-      last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
+      last_run_at: resolved.last_run_at,
       last_status: lastStatus,
       effective_status: resolved.effective_status,
       expected_next_at:
