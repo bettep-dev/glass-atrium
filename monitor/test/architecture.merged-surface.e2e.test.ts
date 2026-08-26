@@ -36,6 +36,7 @@ import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
+	DaemonLiveStatus,
 	WriterLiveStatus,
 } from "../src/server/types/architecture.js";
 import type {
@@ -357,6 +358,43 @@ test("AC-T15 description node is visually hidden yet still rendered", async () =
 	assert.ok(
 		getNormalized(probe.text).length > 0,
 		`target #${probe.id} must stay rendered — innerText is empty, so the node left the render tree`,
+	);
+});
+
+// 산문 섹션이 자기를 부르던 세 자리 — 섹션 클래스 · 접근성 라벨 · 눈에 보이던 헤딩 문구.
+// 한 자리만 세면 나머지 둘이 남아도 초록이 됨.
+const PROSE_SECTION_SELECTOR = ".arch-prose";
+const PROSE_HEADING = "About this diagram";
+
+test("AC-T17 the map renders no About this diagram prose section", async () => {
+	await openMap(getLiveFixture());
+
+	const probe = await page.evaluate(
+		({ selector, heading }) => ({
+			sections: document.querySelectorAll(selector).length,
+			labelled: document.querySelectorAll(`[aria-label="${heading}"]`).length,
+			// 대소문자를 접고 셈 — innerText 는 text-transform 을 반영하므로 uppercase 헤딩은 원문 리터럴과 안 맞음.
+			headings:
+				(document.body.innerText || "").toUpperCase().split(heading.toUpperCase()).length - 1,
+		}),
+		{ selector: PROSE_SECTION_SELECTOR, heading: PROSE_HEADING },
+	);
+
+	assert.deepEqual(
+		probe,
+		{ sections: 0, labelled: 0, headings: 0 },
+		`prose section must be gone from all three of its surfaces — ${PROSE_SECTION_SELECTOR}, aria-label="${PROSE_HEADING}" and the visible heading text`,
+	);
+
+	// AC-T17 의 둘째 절 — 설명 전문은 T15 의 은닉 컨테이너에 남아야 함.
+	// 산문과 함께 설명까지 지우면 aria-describedby 가 끊겨 AC-11 이 무너짐.
+	const desc = await getDescProbe();
+
+	assert.equal(desc.found, true, `aria-describedby target #${desc.id} must survive the prose removal`);
+	assert.equal(
+		getNormalized(desc.text).length,
+		expectedDescription.length,
+		`target #${desc.id} exposes ${getNormalized(desc.text).length} chars vs payload ${expectedDescription.length}`,
 	);
 });
 
@@ -703,7 +741,7 @@ async function getQueueFailureProbe() {
 	}, QUEUE_ALERT_NEEDLE);
 }
 
-test("AC-T27 a rejected queue fetch raises exactly one alert naming the queue", async () => {
+test("T27-fix a rejected queue fetch raises exactly one alert naming the queue", async () => {
 	await openMap(getLiveFixture(), getQueueFailedFixture());
 	// 두 저장소가 모두 죽으면 사실 요소가 하나도 없어 getQueueProbe 의 대기가 걸리지 않음 —
 	// 경보 등장을 여기서 기다려 붉은 이유가 경쟁이 되지 않게 함. 부재는 아래 단언이 문장으로 보고함.
@@ -736,7 +774,7 @@ test("AC-T27 a rejected queue fetch raises exactly one alert naming the queue", 
 
 // 실패 표면이 성공 경로로 새지 않았음을 잠금 — AC-T18(c) 와 같은 성격의 불변식 다리라
 // 오늘도 초록이고, 경보가 상시 노출로 바뀌어야만 붉어짐.
-test("AC-T27 the loaded queue raises no failure alert", async () => {
+test("T27-fix the loaded queue raises no failure alert", async () => {
 	await openMap(getLiveFixture(), getQueueLoadedFixture());
 	const probe = await getQueueProbe();
 
@@ -748,5 +786,141 @@ test("AC-T27 the loaded queue raises no failure alert", async () => {
 		},
 		{ alerts: 0, factCount: 2, childCount: 2 },
 		"a fully loaded queue must render the two facts and nothing else — no error surface",
+	);
+});
+
+/**
+ * AC-T5 — fault 데몬의 바인딩 노드에만 상태 링이 붙음 (ADR-4 의 fault 한정 되돌림).
+ * 여기서는 어느 노드가 켜졌는지를 재고, 리터럴 톤 3종의 개수 대조는 T6 이 render-structure 에서 맡음.
+ * 대조군 데몬을 함께 심는 이유: fault 하나만으로는 링이 자기 노드 밖으로 새지 않았음을 못 잼.
+ */
+const RING_CRIT_CLASS = "arch-node-live-crit";
+const OK_DAEMON = "wiki";
+
+function getDaemon(name: string, effectiveStatus: string): DaemonLiveStatus {
+	const nodeIds = [...(DAEMON_NODE_BINDINGS[name] ?? [])];
+	assert.ok(
+		nodeIds.length > 0,
+		`fixture precondition: ${name} must carry node bindings`,
+	);
+	return {
+		daemon_name: name,
+		status: effectiveStatus,
+		effective_status: effectiveStatus,
+		last_run_at: null,
+		staleness_minutes: null,
+		node_ids: nodeIds,
+		expected_cadence_minutes: 60,
+	};
+}
+
+// 그려진 노드 중 해당 데몬에 바인딩된 것 — 캔버스는 canonical 맵 하나뿐이라
+// 바인딩 id 전부가 렌더되지는 않음. 기대값을 상수로 적으면 맵 감축에 조용히 어긋남.
+function getRenderedBound(rendered: string[], daemonName: string): string[] {
+	const bound = new Set(DAEMON_NODE_BINDINGS[daemonName] ?? []);
+	return rendered.filter((id) => bound.has(id.slice(id.lastIndexOf(".") + 1)));
+}
+
+async function getRingProbe(): Promise<{
+	rendered: string[];
+	ringed: string[];
+	ringClasses: string[];
+}> {
+	return await page.evaluate((canvas) => {
+		const rendered: string[] = [];
+		const ringed: string[] = [];
+		const ringClasses: string[] = [];
+
+		for (const el of Array.from(document.querySelectorAll(`${canvas} g.node`))) {
+			const nodeId = el.getAttribute("data-arch-node-id");
+			if (nodeId) rendered.push(nodeId);
+
+			// 접두사로 읽음 — 톤 이름을 바꿔 되살리는 경우까지 이 다리가 잡음.
+			const hits = (el.getAttribute("class") || "")
+				.split(/\s+/)
+				.filter((c) => c.startsWith("arch-node-live-"));
+			if (hits.length === 0) continue;
+
+			ringed.push(nodeId || "(unmatched node)");
+			ringClasses.push(...hits);
+		}
+		return { rendered, ringed, ringClasses };
+	}, selectors.canvas);
+}
+
+test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "stale"), getDaemon(OK_DAEMON, "ok")],
+		}),
+	);
+	const probe = await getRingProbe();
+	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
+
+	assert.ok(
+		faultNodes.length > 0,
+		`canonical map must render at least one ${BOUND_DAEMON} node`,
+	);
+	assert.ok(
+		getRenderedBound(probe.rendered, OK_DAEMON).length > 0,
+		`canonical map must render at least one ${OK_DAEMON} node — the ok leg is vacuous without it`,
+	);
+	assert.deepEqual(
+		probe.ringed.slice().sort(),
+		faultNodes.slice().sort(),
+		"the ring must land on exactly the fault daemon's rendered bound nodes",
+	);
+	assert.deepEqual(
+		[...new Set(probe.ringClasses)],
+		[RING_CRIT_CLASS],
+		"a stale verdict must light the crit ring and nothing else",
+	);
+});
+
+test("AC-T5 a healthy roster lights no node at all", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(OK_DAEMON, "ok")],
+		}),
+	);
+	const probe = await getRingProbe();
+
+	assert.ok(
+		getRenderedBound(probe.rendered, BOUND_DAEMON).length > 0,
+		"bound nodes must be rendered — otherwise the zero below counts nothing",
+	);
+	assert.deepEqual(
+		probe.ringed,
+		[],
+		"a healthy roster must leave every node unlit — this is the un-reverted half of AC-15(b)",
+	);
+});
+
+// 링이 기존 경보를 밀어내지 않았음을 잠금 — 셋이 동시에 뜨는 픽스처로 잼.
+test("AC-T5 the ring displaces neither the drift banner nor the writer alert", async () => {
+	const driftKey = "T5_DRIFT_KEY";
+
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "stale")],
+			stale: true,
+			diffs: [getDriftDiff(driftKey)],
+			writers: [getWriter(OFF_WRITER, false)],
+		}),
+	);
+
+	assert.ok(
+		(await getRingProbe()).ringed.length > 0,
+		"fault fixture must light a node — otherwise the two legs below prove nothing",
+	);
+	assert.equal(
+		await countAlertsNaming(driftKey),
+		1,
+		`drift banner carrying ${driftKey} must survive beside the ring`,
+	);
+	assert.equal(
+		await countAlertsNaming(OFF_WRITER),
+		1,
+		`writer alert naming ${OFF_WRITER} must survive beside the ring`,
 	);
 });
