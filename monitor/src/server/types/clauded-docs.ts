@@ -416,6 +416,18 @@ export interface D8P2ViolationErrorBody {
   };
 }
 
+// Report-only validator notice — surfaced ALONGSIDE a passing structure check,
+// never as a 4xx. `type` is the declared name from diagram-types.json (the sole
+// adopted/excluded SoT), `blockIndex` the 1-based DOM position of the offending
+// diagram node so the author can locate it without re-scanning.
+export type DiagramNoticeCode = "diagram_type_excluded";
+
+export interface DiagramTypeNotice {
+  code: DiagramNoticeCode;
+  type: string;
+  blockIndex: number;
+}
+
 // Per-id audit entry for POST /html-export — written into the zip's
 // _manifest.json AND carried in the zero-included `export_failed` envelope.
 export interface HtmlExportManifestEntry {

@@ -493,9 +493,16 @@ const WEBFONT_HOST_HINTS: readonly string[] = [
 ];
 
 // mermaid runs with useMaxWidth off → the <svg> keeps its intrinsic width and this container absorbs the overflow.
+// Size presets: the two breakout widths resolve against the viewport rather than the document column, so the
+// viewer (clauded-docs.jsx) and this shell reproduce the same width for the same preset class.
+// The negative margin-inline pulls the node out of the column while keeping it centred on it.
 const DIAGRAM_CONTAINER_STYLE =
   "pre.mermaid,.mermaid{overflow-x:auto}" +
-  "pre.mermaid>svg,.mermaid>svg{max-width:none}";
+  "pre.mermaid>svg,.mermaid>svg{max-width:none}" +
+  ".mermaid.doc-diagram-body{width:100%}" +
+  ".mermaid.doc-diagram-wide{width:min(100vw - 4rem,1600px);" +
+  "margin-inline:calc(50% - min(50vw - 2rem,800px))}" +
+  ".mermaid.doc-diagram-full{width:100vw;margin-inline:calc(50% - 50vw)}";
 
 /**
  * Removes CDN <script src> / runtime inline scripts + webfont <link>/@import
