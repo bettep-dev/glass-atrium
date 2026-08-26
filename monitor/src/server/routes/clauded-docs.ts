@@ -37,7 +37,7 @@ import {
 } from "../clauded-docs/html-export.js";
 import { sanitizeHtmlBody } from "../clauded-docs/sanitize.js";
 import { stripIllegalControlChars } from "../clauded-docs/control-chars.js";
-import { validateHtmlStructure } from "../clauded-docs/html-validator.js";
+import { validateHtmlStructure, type DiagramNotice } from "../clauded-docs/html-validator.js";
 import { BIGM_PROBE_SQL, buildSearchSql } from "../clauded-docs/search-sql.js";
 import {
   assertPathInsideRoot,
@@ -394,6 +394,39 @@ async function fetchAndValidatePredecessor(
 }
 
 /**
+ * HTML write (POST/PUT) 2xx envelope — the detail payload plus the validator's
+ * report-only notices. `notices` is always present and empty on a clean body,
+ * so a consumer branches on length alone.
+ */
+type HtmlWriteResponse = GetClaudedDocResponse & { notices: DiagramNotice[] };
+
+/**
+ * Compose the HTML write envelope — a 2xx detail payload gains `notices`, an
+ * error body passes through untouched.
+ */
+function buildWriteResponse(
+  result: GetClaudedDocResponse | ClaudedDocsErrorBody,
+  notices: DiagramNotice[],
+): HtmlWriteResponse | ClaudedDocsErrorBody {
+  return "error" in result ? result : { ...result, notices };
+}
+
+/**
+ * Emit one structured line per report-only notice. A notice rides no 4xx, so
+ * the response envelope and this log are its only channels to the author.
+ */
+function logDiagramNotices(
+  request: FastifyRequest,
+  route: string,
+  method: string,
+  notices: DiagramNotice[],
+): void {
+  for (const notice of notices) {
+    request.log.warn({ route, method, ...notice }, "clauded-doc diagram notice (report-only)");
+  }
+}
+
+/**
  * HTML primary flow.
  * sanitize → structure validate → SHA256 + indexable plaintext → FS atomic write → DB insert.
  *
@@ -409,7 +442,7 @@ async function handleCreateHtmlBody(
   // validated predecessor id (null = chain root). When set, insertClaudedDocRow
   // auto-transitions predecessor doc_status='done' in a single-statement CTE.
   supersedesId: bigint | null,
-): Promise<GetClaudedDocResponse | ClaudedDocsErrorBody> {
+): Promise<HtmlWriteResponse | ClaudedDocsErrorBody> {
   const start = Date.now();
 
   const audience: AudienceLiteral | null = parsed.audience ?? null;
@@ -421,8 +454,8 @@ async function handleCreateHtmlBody(
   // runs on sanitized HTML so DOMPurify's script/event-handler removal cannot
   // mask a missing element. Raw input is passed for the doctype + charset
   // checks because DOMPurify strips both (declaration / <meta> tag).
-  const structureOk = validateStructureOrReply(reply, { raw: htmlBody, sanitized });
-  if (!structureOk) return reply as never;
+  const notices = validateStructureOrReply(reply, { raw: htmlBody, sanitized });
+  if (notices === null) return reply as never;
 
   const conversion = convertForStorageOrReply(request, reply, sanitized);
   if (conversion === null) return reply as never;
@@ -467,10 +500,11 @@ async function handleCreateHtmlBody(
     },
     "clauded-doc created (html primary)",
   );
+  logDiagramNotices(request, "/api/clauded-docs", "POST", notices);
 
   reply.code(201);
   applyHtmlBodyCspHeader(reply);
-  return rowToDetailResponse(inserted, "html", sanitized);
+  return { ...rowToDetailResponse(inserted, "html", sanitized), notices };
 }
 
 /**
@@ -1495,7 +1529,7 @@ async function handleUpdateHtmlBody(
   parsed: UpdateClaudedDocBody,
   existing: ClaudedDocDbRow,
   targetAudience: AudienceLiteral | null,
-): Promise<GetClaudedDocResponse | ClaudedDocsErrorBody> {
+): Promise<HtmlWriteResponse | ClaudedDocsErrorBody> {
   const start = Date.now();
   const htmlBody = parsed.html_body;
   if (typeof htmlBody !== "string") {
@@ -1507,8 +1541,8 @@ async function handleUpdateHtmlBody(
   if (sanitized === null) return reply as never;
 
   // Same order gate as POST (see handleCreate comment).
-  const structureOk = validateStructureOrReply(reply, { raw: htmlBody, sanitized });
-  if (!structureOk) return reply as never;
+  const notices = validateStructureOrReply(reply, { raw: htmlBody, sanitized });
+  if (notices === null) return reply as never;
 
   const conversion = convertForStorageOrReply(request, reply, sanitized);
   if (conversion === null) return reply as never;
@@ -1528,9 +1562,12 @@ async function handleUpdateHtmlBody(
       parsed.doc_status !== undefined &&
       parsed.doc_status !== (existing.doc_status as DocStatusLiteral);
     if (!cascadeNeeded) {
-      return replyNoOpUpdate(request, reply, id, existing);
+      return buildWriteResponse(await replyNoOpUpdate(request, reply, id, existing), notices);
     }
-    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, "html", parsed.expected_hash);
+    return buildWriteResponse(
+      await replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, "html", parsed.expected_hash),
+      notices,
+    );
   }
 
   // Audience re-classification check — issue a new path when the body extension must change.
@@ -1607,9 +1644,10 @@ async function handleUpdateHtmlBody(
     { route: "/api/clauded-docs/:id", method: "PUT", id, durationMs: Date.now() - start },
     "clauded-doc updated (html primary)",
   );
+  logDiagramNotices(request, "/api/clauded-docs/:id", "PUT", notices);
 
   applyHtmlBodyCspHeader(reply);
-  return rowToDetailResponse(updated, "html", sanitized);
+  return { ...rowToDetailResponse(updated, "html", sanitized), notices };
 }
 
 /**
@@ -2041,8 +2079,10 @@ function sanitizeUpdateBody(
 
 /**
  * Run validateHtmlStructure on the (raw + sanitized) body pair. On `ok: false`,
- * populate `reply` with the appropriate 400 envelope and return false. On
- * `ok: true`, return true (caller proceeds).
+ * populate `reply` with the appropriate 400 envelope and return null. On
+ * `ok: true`, return the validator's report-only notices (empty when clean) —
+ * the caller owns them, because a report-only finding has no 4xx to ride on and
+ * would otherwise reach nobody.
  *
  * Four failure paths (at most one code per response — the validator pipeline
  * short-circuits on the first failing stage: structure → placeholder → D8 P2
@@ -2057,14 +2097,15 @@ function sanitizeUpdateBody(
  *     surfaces the full `findings` array (line-anchored + document-level) (P2).
  *
  * No logger is invoked here because every failure is an author error (4xx),
- * not a warning.
+ * not a warning; the notice channel logs at its call site, where the request is
+ * in scope.
  */
 function validateStructureOrReply(
   reply: FastifyReply,
   input: { raw: string; sanitized: string },
-): boolean {
+): DiagramNotice[] | null {
   const check = validateHtmlStructure(input);
-  if (check.ok) return true;
+  if (check.ok) return check.notices;
   if (check.code === "html_structure_invalid") {
     reply.code(400).send({
       error: {
@@ -2073,7 +2114,7 @@ function validateStructureOrReply(
         details: { missing: check.missing },
       },
     });
-    return false;
+    return null;
   }
   // P1 — residual placeholder tokens remain in the body.
   if (check.code === "placeholder_residue") {
@@ -2084,7 +2125,7 @@ function validateStructureOrReply(
         details: { lines: check.lines },
       },
     });
-    return false;
+    return null;
   }
   // P2 — D8 visual style rules violated (full findings array).
   if (check.code === "d8_style_violation") {
@@ -2095,7 +2136,7 @@ function validateStructureOrReply(
         details: { findings: check.findings },
       },
     });
-    return false;
+    return null;
   }
   // D8 P2 — comparison table column-cap exceeded.
   reply.code(400).send({
@@ -2105,7 +2146,7 @@ function validateStructureOrReply(
       details: check.details,
     },
   });
-  return false;
+  return null;
 }
 
 /**

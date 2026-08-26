@@ -846,12 +846,13 @@ function ScreenClaudedDocs(/* { onNav } */) {
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
         .doc-body-isolation pre.mermaid, .doc-body-isolation .mermaid { overflow-x: auto; }
         .doc-body-isolation pre.mermaid > svg, .doc-body-isolation .mermaid > svg { max-width: none; }
-        /* 크기 프리셋 — 본문폭(기본) · 넓게 · 전폭. 넓게/전폭의 폭은 컬럼이 아니라 뷰포트가 정함 → 같은 값을 내보내기 셸(html-export.ts)에 넣으면 두 경로가 같은 폭으로 재현됨.
+        /* 크기 프리셋 — 본문폭(기본) · 넓게 · 전폭. 넓게/전폭의 기준 상자는 뷰포트가 아니라 스크롤 컨테이너(.doc-fs-body-wrap)의 인라인 크기임(cqi).
+           뷰포트 기준이면 전체화면에서 본문 컬럼이 메타 레일만큼 왼쪽으로 치우쳐 breakout 이 스크롤 원점 밖으로 나가고, 그 영역은 scrollLeft 가 음수가 될 수 없어 닿지 않음.
            음수 margin-inline 은 컬럼 밖으로 빼내는 breakout — 폭만 컬럼에서 떼고 중심은 컬럼에 맞춤.
-           전폭은 100vw breakout 의 알려진 한계를 그대로 받음: 세로 스크롤바 폭만큼 가로 넘침이 생김. */
+           내보내기 셸(html-export.ts)은 레일이 없어 body 가 같은 자리의 기준 상자를 맡음 — 단위가 아니라 기준 상자가 같아야 두 경로가 같은 폭으로 재현됨. */
         .doc-body-isolation .mermaid.doc-diagram-body { width: 100%; }
-        .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100vw - 4rem, 1600px); margin-inline: calc(50% - min(50vw - 2rem, 800px)); }
-        .doc-body-isolation .mermaid.doc-diagram-full { width: 100vw; margin-inline: calc(50% - 50vw); }
+        .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100cqi - 4rem, 1600px); margin-inline: calc(50% - min(50cqi - 2rem, 800px)); }
+        .doc-body-isolation .mermaid.doc-diagram-full { width: 100cqi; margin-inline: calc(50% - 50cqi); }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }
@@ -886,8 +887,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
         /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존. */
-        .doc-fs-body-wrap { min-height: 0; padding: 24px clamp(32px, 4vw, 72px) 32px; background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
+           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존.
+           container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: 24px clamp(32px, 4vw, 72px) 32px; background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
         /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px·zinc thumb. */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }

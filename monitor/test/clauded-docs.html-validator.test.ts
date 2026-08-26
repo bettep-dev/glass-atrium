@@ -978,3 +978,92 @@ test("diagram: an excluded type never converts a passing document into a failure
   if (withExcluded.ok) assert.strictEqual(withExcluded.notices.length, 1);
   if (clean.ok) assert.deepStrictEqual(clean.notices, []);
 });
+
+// T24 — flow-direction notices (report-only, same channel as T21). One primary
+// direction per declaration: left→right or top→down. A block declared right→left
+// or bottom→top is reported; the verdict stays a pass.
+
+test("direction: a right→left flowchart is reported once", () => {
+  const result = check(wrapHtml(mermaidBlock("flowchart RL\n  A --> B")));
+  assert.strictEqual(result.ok, true, "report-only — a forbidden direction must NOT fail the document");
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: a bottom→top graph is reported once", () => {
+  const result = check(wrapHtml(mermaidBlock("graph BT\n  A --> B")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "BT", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: left→right and top→down declarations are silent", () => {
+  for (const src of ["flowchart LR\n  A --> B", "graph TD\n  A --> B", "flowchart TB\n  A --> B"]) {
+    const result = check(wrapHtml(mermaidBlock(src)));
+    assert.strictEqual(result.ok, true, `allowed direction rejected: ${src}`);
+    if (result.ok) assert.deepStrictEqual(result.notices, [], `unexpected notice for: ${src}`);
+  }
+});
+
+test("direction: a declaration without a direction token is silent", () => {
+  const result = check(wrapHtml(mermaidBlock("flowchart\n  A --> B")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});
+
+test("direction: a trailing semicolon does not hide the token", () => {
+  const result = check(wrapHtml(mermaidBlock("graph RL;\n  A --> B")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: the token is matched case-insensitively and reported uppercase", () => {
+  const result = check(wrapHtml(mermaidBlock("flowchart rl\n  A --> B")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("direction: type and direction notices share one array in DOM order", () => {
+  const html = wrapHtml(
+    [
+      mermaidBlock("flowchart RL\n  A --> B"),
+      mermaidBlock("gantt\n  title t"),
+    ].join("\n"),
+  );
+  const result = check(html);
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_flow_direction", direction: "RL", blockIndex: 1 },
+      { code: "diagram_type_excluded", type: "gantt", blockIndex: 2 },
+    ]);
+  }
+});
+
+test("direction: blocks differing in allowed direction report nothing", () => {
+  // Deliberate scope pin — each declaration is judged against the declared
+  // allowed set, never against its sibling blocks. AC-T24 asks for the former.
+  const html = wrapHtml(
+    [
+      mermaidBlock("flowchart LR\n  A --> B"),
+      mermaidBlock("graph TD\n  A --> B"),
+    ].join("\n"),
+  );
+  const result = check(html);
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});

@@ -49,6 +49,22 @@ function makeHtmlBody(salt: string): string {
   );
 }
 
+// 다이어그램 블록을 실은 최소 유효 HTML body — 검증기가 스캔하는 노드 형태(pre.mermaid)와
+// 동일하게 실음. sanitize 는 class 를 보존하므로 라우트 경로에서도 같은 노드가 남음.
+function makeHtmlBodyWithDiagram(salt: string, source: string): string {
+  return (
+    "<!doctype html>" +
+    '<html lang="ko">' +
+    '<head><meta charset="utf-8"><title>x</title></head>' +
+    `<body><main><h1>${salt}</h1><pre class="mermaid">${source}</pre></main></body>` +
+    "</html>"
+  );
+}
+
+// 제외 타입(diagram-types.json) 픽스처와 채택 타입 대조군.
+const GANTT_SOURCE = "gantt\n  title Delivery\n  section Wave\n  T21 :a1, 2026-01-01, 3d";
+const FLOWCHART_SOURCE = "flowchart LR\n  A[Start] --> B[End]";
+
 // storage-root 불변식: HTML primary 는 monitor-internal root 하위 · md_copy_path 는 항상 null.
 function assertStorageRoots(response: { html_path: string; md_copy_path: string | null }): void {
   assert.ok(
@@ -1008,6 +1024,75 @@ test("POST /api/clauded-docs: structure-valid HTML still returns 201 (regression
   try {
     assert.strictEqual(detail.title, title);
     assert.match(detail.content_hash, /^[a-f0-9]{64}$/);
+  } finally {
+    await deleteDoc(app, detail.id);
+  }
+});
+
+// T21 보고 전용 소견의 응답 채널 (라우트 통합).
+// 소견은 4xx 가 아니므로 저자가 볼 수 있는 자리는 쓰기 응답 봉투의 notices 배열과
+// 구조화 로그뿐임 — 봉투가 소견을 버리면 보고 전용 검사는 아무에게도 닿지 않음.
+
+test("POST /api/clauded-docs: excluded diagram type → 201 + notices names the type", async () => {
+  const title = makeTitle("diagram-notice-post");
+  const { status, body } = await postCreate(app, {
+    title,
+    author: "tester",
+    html_body: makeHtmlBodyWithDiagram(title, GANTT_SOURCE),
+  });
+
+  assert.strictEqual(status, 201);
+  const detail = body as { id: number; notices?: unknown };
+  try {
+    assert.deepStrictEqual(detail.notices, [
+      { code: "diagram_type_excluded", type: "gantt", blockIndex: 1 },
+    ]);
+  } finally {
+    await deleteDoc(app, detail.id);
+  }
+});
+
+test("POST /api/clauded-docs: adopted diagram type → 201 + notices is an empty array", async () => {
+  const title = makeTitle("diagram-notice-clean");
+  const { status, body } = await postCreate(app, {
+    title,
+    author: "tester",
+    html_body: makeHtmlBodyWithDiagram(title, FLOWCHART_SOURCE),
+  });
+
+  assert.strictEqual(status, 201);
+  const detail = body as { id: number; notices?: unknown };
+  try {
+    // 빈 배열과 필드 부재는 다름 — 소비자가 길이만 보고 판단할 수 있어야 함.
+    assert.deepStrictEqual(detail.notices, []);
+  } finally {
+    await deleteDoc(app, detail.id);
+  }
+});
+
+test("PUT /api/clauded-docs/:id: excluded diagram type → 200 + notices names the type", async () => {
+  const title = makeTitle("diagram-notice-put");
+  const created = await postCreate(app, {
+    title,
+    author: "tester",
+    html_body: makeHtmlBodyWithDiagram(title, FLOWCHART_SOURCE),
+  });
+  assert.strictEqual(created.status, 201);
+  const detail = created.body as { id: number; content_hash: string; notices?: unknown };
+
+  try {
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/clauded-docs/${detail.id}`,
+      payload: {
+        html_body: makeHtmlBodyWithDiagram(`${title}-B`, GANTT_SOURCE),
+        expected_hash: detail.content_hash,
+      },
+    });
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual((res.json() as { notices?: unknown }).notices, [
+      { code: "diagram_type_excluded", type: "gantt", blockIndex: 1 },
+    ]);
   } finally {
     await deleteDoc(app, detail.id);
   }

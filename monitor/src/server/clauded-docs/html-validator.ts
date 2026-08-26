@@ -184,6 +184,21 @@ function freezeEntries(entries: unknown, field: string, jsonPath: string): reado
  */
 export const DIAGRAM_TYPES: DiagramTypes = loadDiagramTypes(DIAGRAM_TYPES_PATH);
 
+/**
+ * Report-only direction finding — a diagram declared in a direction the SoT's
+ * `flowDirection.forbidden` names (right→left, bottom→top). `direction` is the
+ * declared token upper-cased; `blockIndex` the 1-based DOM position, same
+ * locator the type notice uses.
+ */
+export interface DiagramDirectionNotice {
+  code: "diagram_flow_direction";
+  direction: string;
+  blockIndex: number;
+}
+
+/** Every report-only notice a passing check can carry. */
+export type DiagramNotice = DiagramTypeNotice | DiagramDirectionNotice;
+
 /** Placeholder-token scan pattern — residual `{{…}}` template tokens. */
 const PLACEHOLDER_PATTERN = /\{\{[^}]*\}\}/;
 
@@ -253,10 +268,11 @@ export type StyleFinding =
  *
  * Pipeline order: structure → placeholder → D8 columns → D8 style. A pass then
  * carries `notices` — REPORT-ONLY findings that describe the document without
- * rejecting it (excluded diagram types), always present, empty when clean.
+ * rejecting it (excluded diagram types, forbidden flow directions), always
+ * present, empty when clean.
  */
 export type HtmlStructureCheck =
-  | { ok: true; notices: DiagramTypeNotice[] }
+  | { ok: true; notices: DiagramNotice[] }
   | {
       ok: false;
       code: "html_structure_invalid";
@@ -389,10 +405,10 @@ const FIELD_ORDER: readonly HtmlStructureMissingField[] = [
  *      `{{…}}` outside `<code>`/`<pre>` → 1-based offending line numbers.
  *   3. D8 comparison-table column-cap check (`d8_p2_violation`).
  *   4. D8 style-lint check (`d8_style_violation`). Reports ALL findings.
- *   5. Diagram-type scan — REPORT-ONLY. An excluded type yields a notice on the
- *      passing result; it never produces a failure code, because excluded types
- *      already occur in stored bodies and blocking them would reject documents
- *      that are already published.
+ *   5. Diagram scan — REPORT-ONLY. An excluded type, or a flow direction the
+ *      declaration forbids, yields a notice on the passing result; neither
+ *      produces a failure code, because both already occur in stored bodies and
+ *      blocking them would reject documents that are already published.
  *
  * Each later stage runs only when every earlier stage passes — guarantees the
  * structure prerequisite is met before semantic / style enforcement.
@@ -501,8 +517,8 @@ export function validateHtmlStructure(
     return { ok: false, code: "d8_style_violation", findings };
   }
 
-  // Step 5 — diagram-type scan on the sanitized AST (report-only, see the
-  // pipeline note above). Reached only on an otherwise-clean document.
+  // Step 5 — diagram scan on the sanitized AST (report-only, see the pipeline
+  // note above). Reached only on an otherwise-clean document.
   return { ok: true, notices: findDiagramNotices(root, diagramTypes) };
 }
 
@@ -564,45 +580,64 @@ const DIAGRAM_FRONTMATTER_FENCE = "---";
 /** Leading identifier of a mermaid type line (`flowchart LR` → `flowchart`, `block-beta` → `block-beta`). */
 const DIAGRAM_KEYWORD_PATTERN = /^[A-Za-z][A-Za-z0-9-]*/;
 
+/** Direction modifier of a mermaid type line (`graph RL;` → `RL`) — the five mermaid flow directions. */
+const DIAGRAM_DIRECTION_PATTERN = /^[A-Za-z][A-Za-z0-9-]*[ \t]+(TB|TD|BT|RL|LR)\b/i;
+
 /**
  * Scan the sanitized AST's diagram nodes and report every block whose type is
- * on the declaration's EXCLUDED list. Adopted and unlisted types report
- * nothing — the gate states exclusion, it does not enumerate approval.
+ * on the declaration's EXCLUDED list, or whose declared flow direction is on
+ * its FORBIDDEN list. Adopted and unlisted types report nothing, and so does a
+ * block declaring no direction — the gate states exclusion, it does not
+ * enumerate approval.
+ *
+ * Each declaration is judged on its own tokens, never against its sibling
+ * blocks: a document holding one left→right and one top→down diagram is silent,
+ * because both directions are declared allowed.
  *
  * Node selection mirrors the render contract (`pre.mermaid, .mermaid`) used by
  * both render surfaces, so a block the reader sees is a block this scans.
  *
- * @param types - declaration SoT; excluded membership is read from it alone.
- * @returns notices in DOM order, one per offending block.
+ * @param types - declaration SoT; excluded and forbidden membership are read
+ *                from it alone.
+ * @returns notices in DOM order — per block, type before direction.
  */
-function findDiagramNotices(root: QueryableNode, types: DiagramTypes): DiagramTypeNotice[] {
+function findDiagramNotices(root: QueryableNode, types: DiagramTypes): DiagramNotice[] {
   const excludedByKeyword = new Map<string, string>();
   for (const entry of types.excluded) {
     for (const keyword of entry.keywords) excludedByKeyword.set(keyword.toLowerCase(), entry.type);
   }
+  const forbiddenDirections = new Set(types.flowDirection.forbidden.map((d) => d.toUpperCase()));
 
-  const notices: DiagramTypeNotice[] = [];
+  const notices: DiagramNotice[] = [];
   const blocks = root.querySelectorAll("pre.mermaid, .mermaid");
   for (let i = 0; i < blocks.length; i += 1) {
-    const keyword = getDiagramKeyword(blocks[i].text);
-    if (keyword === null) continue;
-    const type = excludedByKeyword.get(keyword);
+    const typeLine = getDiagramTypeLine(blocks[i].text);
+    if (typeLine === null) continue;
+    const blockIndex = i + 1;
+
+    const keyword = DIAGRAM_KEYWORD_PATTERN.exec(typeLine);
+    const type = keyword === null ? undefined : excludedByKeyword.get(keyword[0].toLowerCase());
     if (type !== undefined) {
-      notices.push({ code: "diagram_type_excluded", type, blockIndex: i + 1 });
+      notices.push({ code: "diagram_type_excluded", type, blockIndex });
+    }
+
+    const direction = getFlowDirection(typeLine);
+    if (direction !== null && forbiddenDirections.has(direction)) {
+      notices.push({ code: "diagram_flow_direction", direction, blockIndex });
     }
   }
   return notices;
 }
 
 /**
- * Lowercased diagram-type keyword of a mermaid source, or `null` when no type
- * line exists. Skips a leading frontmatter block and `%%` directives/comments —
- * the same preamble mermaid's own detectType skips.
+ * Trimmed diagram-type line of a mermaid source, or `null` when none exists.
+ * Skips a leading frontmatter block and `%%` directives/comments — the same
+ * preamble mermaid's own detectType skips.
  *
  * Acc directives sitting above the type line are relocated by the shared
  * normalizer first, so this reads the same type line the renderer resolves.
  */
-function getDiagramKeyword(source: string): string | null {
+function getDiagramTypeLine(source: string): string | null {
   const lines = normalizeMermaidSource(source).split(/\r\n|\n/);
   let cursor = 0;
   if (lines[0] !== undefined && lines[0].trim() === DIAGRAM_FRONTMATTER_FENCE) {
@@ -612,10 +647,15 @@ function getDiagramKeyword(source: string): string | null {
   for (; cursor < lines.length; cursor += 1) {
     const trimmed = lines[cursor].trim();
     if (trimmed.length === 0 || trimmed.startsWith("%%")) continue;
-    const keyword = DIAGRAM_KEYWORD_PATTERN.exec(trimmed);
-    return keyword === null ? null : keyword[0].toLowerCase();
+    return trimmed;
   }
   return null;
+}
+
+/** Upper-cased direction token declared on a type line, or `null` when the line declares none. */
+function getFlowDirection(typeLine: string): string | null {
+  const match = DIAGRAM_DIRECTION_PATTERN.exec(typeLine);
+  return match === null ? null : match[1].toUpperCase();
 }
 
 /**
