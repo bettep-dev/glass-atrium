@@ -267,3 +267,58 @@ test("harness supports per-case live fixtures", async () => {
 	);
 	assert.equal(withoutDrift, 0, `clean fixture must render no alert carrying ${driftKey}`);
 });
+
+// 범례 표면 셀렉터 — 컴포넌트가 붙이던 클래스 전부. 하나라도 남으면 UI 가 살아 있음.
+const LEGEND_SELECTORS = [
+	".arch-legend-details",
+	".arch-legend-grid",
+	".arch-legend-item",
+	".arch-legend-swatch-box",
+	".arch-legend-swatch-line",
+];
+
+// 분류별 흐림이 노드에 남기던 클래스 — 캔버스의 legend-focus, 대상 노드의 legend-hit.
+const NODE_DIM_SELECTOR = ".legend-focus, .legend-hit";
+
+test("AC-T19 the map renders no legend surface", async () => {
+	await openMap(getLiveFixture());
+
+	const present = await page.evaluate(
+		(selectors) =>
+			selectors
+				.map((sel) => [sel, document.querySelectorAll(sel).length] as const)
+				.filter(([, count]) => count > 0),
+		LEGEND_SELECTORS,
+	);
+
+	assert.deepEqual(
+		present.map(([sel]) => sel),
+		[],
+		`legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
+	);
+});
+
+test("AC-T19 no interaction attaches the node-dim classes", async () => {
+	await openMap(getLiveFixture());
+
+	// details 가 닫혀 있어도 자식은 DOM 에 있으므로 DOM click 은 도달함 — Playwright 의
+	// 가시성 요구를 우회해야 "어떤 상호작용으로도" 를 실제로 잼.
+	const clicked = await page.evaluate(() => {
+		const root = document.querySelector(".arch-page");
+		if (!root) return -1;
+		const targets = Array.from(
+			root.querySelectorAll<HTMLElement>("button, summary, [aria-pressed]"),
+		);
+		for (const el of targets) el.click();
+		return targets.length;
+	});
+	assert.ok(clicked > 0, "map body must expose clickable controls — 0 clicks measures nothing");
+
+	// 흐림은 React state → effect 경로라 클릭 직후 프레임에는 아직 없음.
+	await page.waitForTimeout(500);
+	const dimmed = await page.evaluate(
+		(sel) => document.querySelectorAll(sel).length,
+		NODE_DIM_SELECTOR,
+	);
+	assert.equal(dimmed, 0, `${clicked} clicks left ${dimmed} element(s) carrying ${NODE_DIM_SELECTOR}`);
+});

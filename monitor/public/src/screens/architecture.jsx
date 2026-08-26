@@ -17,36 +17,6 @@ const LEGIBLE_FIT_FLOOR = 0.6;
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
-const ROLE_LABEL = {
-	entry: "Entry",
-	orchestration: "Coordination",
-	execution: "Execution",
-	data: "Data",
-	feedback: "Feedback",
-	monitoring: "Monitoring",
-	gateway: "Gateway",
-};
-
-const ROLE_BORDER = {
-	entry: "#38bdf8",
-	orchestration: "#a78bfa",
-	execution: "#4ade80",
-	data: "#fbbf24",
-	feedback: "#f472b6",
-	monitoring: "#f87171",
-	gateway: "#94a3b8",
-};
-
-const NODE_TYPE_BG = {
-	agent: "#1e293b",
-	hook: "#312e81",
-	script: "#1e3a8a",
-	daemon: "#7c2d12",
-	store: "#713f12",
-	external: "#374151",
-	gateway: "#1f2937",
-};
-
 const NODE_TYPE_LABEL = {
 	agent: "Agent",
 	hook: "Hook",
@@ -66,17 +36,6 @@ const EDGE_COLORS = {
 	monitors: "#f87171",
 	escalates_to: "#f472b6",
 	triggers: "#4ade80",
-};
-
-const EDGE_TYPE_LABEL = {
-	control_flow: "Controls",
-	data_flow: "Data",
-	fires_event: "Event",
-	writes_to: "Writes",
-	reads_from: "Reads",
-	monitors: "Watches",
-	escalates_to: "Escalates",
-	triggers: "Triggers",
 };
 
 // 화면이 선호하는 canonical 맵 id — 서버 CANONICAL_MAP.slug 와 같은 값이지만, 불일치는 payload 로 흡수함.
@@ -114,9 +73,6 @@ function ScreenArchitecture(
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
-
-	// 범례 포커스 — { dim: "role"|"type", key } 또는 null. 클릭 시 해당 분류 노드 강조·나머지 dim.
-	const [legendFocus, setLegendFocus] = useStateAR(null);
 
 	const diagAbortRef = useRefAR(null);
 	const liveAbortRef = useRefAR(null);
@@ -198,21 +154,6 @@ function ScreenArchitecture(
 		return m;
 	}, [activeDiagram]);
 
-	// 활성 diagram 에 실제 존재하는 role/node-type/edge-type 집합 — 범례를 실제 사용분으로만 노출.
-	const legendUsedSets = useMemoAR(() => {
-		const roles = new Set();
-		const nodeTypes = new Set();
-		const edgeTypes = new Set();
-		if (!activeDiagram) return { roles, nodeTypes, edgeTypes };
-		for (const layer of activeDiagram.layers || []) {
-			if (layer.role) roles.add(layer.role);
-			for (const node of layer.nodes || []) if (node.type) nodeTypes.add(node.type);
-		}
-		for (const flow of activeDiagram.flows || [])
-			if (flow.edge_type) edgeTypes.add(flow.edge_type);
-		return { roles, nodeTypes, edgeTypes };
-	}, [activeDiagram]);
-
 	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 기반. 소비자는 노드 상세 드로어의 daemon pill.
 	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
 	const liveDaemonsByNodeId = useMemoAR(() => {
@@ -230,13 +171,6 @@ function ScreenArchitecture(
 	}, []);
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
-
-	// 범례 항목 토글 — 같은 항목 재클릭 시 해제, 다른 항목 클릭 시 교체.
-	const toggleLegendFocus = useCallbackAR((dim, key) => {
-		setLegendFocus((prev) =>
-			prev && prev.dim === dim && prev.key === key ? null : { dim, key },
-		);
-	}, []);
 
 	// 설계도 카운트 드리프트(구조 정합성) — daemon status(런타임 헬스)와 별개 신호.
 	//   live 응답 ready 시점에만 신뢰. diffs = [{ key, claimed, actual }].
@@ -267,14 +201,6 @@ function ScreenArchitecture(
 					".arch-live-strip-sep { width: 1px; height: 16px; background: rgb(var(--line)); flex-shrink: 0; } " +
 					".arch-live-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; " +
 					'background: rgb(var(--elev)); font-size: var(--fs-meta); font-family: "JetBrains Mono", monospace; white-space: nowrap; } ' +
-					// 범례 접이식 — 기본 닫힘. summary 클릭으로 노출, 캔버스 폭 미점유.
-					".arch-legend-details { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
-					".arch-legend-details > summary { cursor: pointer; padding: 6px 10px; font-size: var(--fs-meta); color: rgb(var(--dim)); " +
-					"list-style: none; user-select: none; display: flex; align-items: center; gap: 8px; } " +
-					".arch-legend-details > summary::-webkit-details-marker { display: none; } " +
-					".arch-legend-details[open] > summary { border-bottom: 1px solid rgb(var(--line)); } " +
-					// 펼친 범례 = 3그룹 가로 분배 (캔버스 높이 미잠식, 하단 1회성 노출).
-					".arch-legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 18px; padding: 10px; align-items: start; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
@@ -288,8 +214,6 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					".arch-legend-swatch-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; } " +
-					".arch-legend-swatch-line { width: 16px; height: 2px; flex-shrink: 0; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -297,14 +221,6 @@ function ScreenArchitecture(
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
-					// 범례 항목 = focusable 버튼. 클릭/Enter → 해당 role 강조, 나머지 노드 dim (context-dim).
-					".arch-legend-item { width: 100%; min-width: 0; text-align: left; background: none; border: none; padding: 1px 2px; border-radius: 4px; cursor: pointer; transition: background-color .12s; } " +
-					".arch-legend-item:hover { background: rgb(var(--elev)); } " +
-					".arch-legend-item:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
-					".arch-legend-item.active { background: rgb(var(--accent) / 0.12); } " +
-					// 범례 포커스 시 비대상 노드 dim — 색 정보는 유지, 대비만 낮춤 (severity flood 아님).
-					".arch-mermaid-canvas.legend-focus .node:not(.legend-hit) { opacity: 0.28; } " +
-					".arch-mermaid-canvas.legend-focus .node.legend-hit { opacity: 1; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
 					// 라이브 상태 표 — 노드 링 점등을 대체하는 표면.
@@ -318,9 +234,9 @@ function ScreenArchitecture(
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
-					// 신규 모션 게이트 — skeleton pulse + 노드/범례 transition 정지 (§8.4 계약).
+					// 신규 모션 게이트 — skeleton pulse + 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
-					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn, .arch-legend-item { animation: none !important; transition: none !important; } }"}
+					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -364,8 +280,6 @@ function ScreenArchitecture(
 						diagState={diagState}
 						activeDiagram={activeDiagram}
 						nodeByLabel={nodeByLabel}
-						nodeIndex={nodeIndex}
-						legendFocus={legendFocus}
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
 					/>
@@ -379,14 +293,6 @@ function ScreenArchitecture(
 				<LiveDaemonTable state={liveState} />
 
 				<DiagramProse diagram={activeDiagram} />
-
-				{/* 하단: 범례 접이식 (기본 닫힘 → 캔버스 폭/높이 미점유) */}
-				<LegendDetails
-					activeDiagram={activeDiagram}
-					legendUsedSets={legendUsedSets}
-					legendFocus={legendFocus}
-					onToggleFocus={toggleLegendFocus}
-				/>
 			</div>
 
 			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
@@ -409,8 +315,6 @@ function DiagramCanvasCard({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 	onRetry,
 }) {
@@ -421,8 +325,6 @@ function DiagramCanvasCard({
 					diagState={diagState}
 					activeDiagram={activeDiagram}
 					nodeByLabel={nodeByLabel}
-					nodeIndex={nodeIndex}
-					legendFocus={legendFocus}
 					onSelectNode={onSelectNode}
 					onRetry={onRetry}
 				/>
@@ -435,8 +337,6 @@ function DiagramBody({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 	onRetry,
 }) {
@@ -487,8 +387,6 @@ function DiagramBody({
 			source={source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
-			nodeIndex={nodeIndex}
-			legendFocus={legendFocus}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -502,8 +400,6 @@ function MermaidCanvas({
 	source,
 	diagramTitle,
 	nodeByLabel,
-	nodeIndex,
-	legendFocus,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -593,36 +489,6 @@ function MermaidCanvas({
 		}
 		titleEl.textContent = diagramTitle;
 	}, [renderState.status, renderState.svgHtml, diagramTitle]);
-
-	// 범례 포커스 — 선택된 분류(role/type)에 속한 노드만 강조, 나머지 dim. legendFocus 변동마다 재적용.
-	useEffectAR(() => {
-		if (renderState.status !== "ready") return;
-		const root = containerRef.current;
-		if (!root) return;
-		const canvas = root.closest(".arch-mermaid-canvas");
-		if (!canvas) return;
-
-		const svgNodes = root.querySelectorAll("g.node");
-		if (!legendFocus) {
-			canvas.classList.remove("legend-focus");
-			svgNodes.forEach((el) => el.classList.remove("legend-hit"));
-			return;
-		}
-
-		canvas.classList.add("legend-focus");
-		svgNodes.forEach((el) => {
-			const id = el.getAttribute("data-arch-node-id");
-			const info = id ? nodeIndex.get(id) : null;
-			const value =
-				legendFocus.dim === "role" ? info?.layer_role : info?.type;
-			el.classList.toggle("legend-hit", value === legendFocus.key);
-		});
-	}, [
-		renderState.status,
-		renderState.svgHtml,
-		legendFocus,
-		nodeIndex,
-	]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
 	useEffectAR(() => {
@@ -971,137 +837,6 @@ function DiagramProse({ diagram }) {
 				{diagram?.description || DESC_FALLBACK}
 			</div>
 		</section>
-	);
-}
-
-// Bottom legend — 접이식 (기본 닫힘). 레이어·노드·엣지 범례 + 설명.
-
-function LegendDetails({
-	activeDiagram,
-	legendUsedSets,
-	legendFocus,
-	onToggleFocus,
-}) {
-	return (
-		<details className="arch-legend-details">
-			<summary>
-				<span className="fs-micro font-mono text-faint uppercase tracking-wider">
-					Legend
-				</span>
-			</summary>
-			<div className="arch-legend-grid">
-				{legendUsedSets.roles.size > 0 && (
-					<LegendBlock
-						title="Layers"
-						dim="role"
-						legendFocus={legendFocus}
-						onToggleFocus={onToggleFocus}
-						items={Object.keys(ROLE_BORDER)
-							.filter((r) => legendUsedSets.roles.has(r))
-							.map((r) => ({
-								swatch: "box",
-								color: ROLE_BORDER[r],
-								label: ROLE_LABEL[r] || r,
-								hint: r,
-							}))}
-					/>
-				)}
-
-				{legendUsedSets.nodeTypes.size > 0 && (
-					<LegendBlock
-						title="Node types"
-						dim="type"
-						legendFocus={legendFocus}
-						onToggleFocus={onToggleFocus}
-						items={Object.keys(NODE_TYPE_BG)
-							.filter((t) => legendUsedSets.nodeTypes.has(t))
-							.map((t) => ({
-								swatch: "box",
-								color: NODE_TYPE_BG[t],
-								label: NODE_TYPE_LABEL[t] || t,
-								hint: t,
-							}))}
-					/>
-				)}
-
-				{/* 엣지 타입은 노드가 아니므로 dim 대상 아님 — 정적 범례 (클릭 무동작). */}
-				{legendUsedSets.edgeTypes.size > 0 && (
-					<LegendBlock
-						title="Edge types"
-						items={Object.keys(EDGE_COLORS)
-							.filter((e) => legendUsedSets.edgeTypes.has(e))
-							.map((e) => ({
-								swatch: "line",
-								color: EDGE_COLORS[e],
-								label: EDGE_TYPE_LABEL[e] || e,
-								hint: e,
-							}))}
-					/>
-				)}
-			</div>
-		</details>
-	);
-}
-
-function LegendBlock({ title, items, dim, legendFocus, onToggleFocus }) {
-	// dim 미지정(엣지 타입) → 정적 행. dim 지정 → 클릭/Enter 로 해당 분류 노드 포커스 토글.
-	const interactive = Boolean(dim);
-	return (
-		<div>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
-				{title}
-			</div>
-			<div className="flex flex-col gap-0.5">
-				{items.map((it) => {
-					const swatch =
-						it.swatch === "line" ? (
-							<span
-								aria-hidden="true"
-								className="arch-legend-swatch-line"
-								style={{ background: it.color }}
-							/>
-						) : (
-							<span
-								aria-hidden="true"
-								className="arch-legend-swatch-box"
-								style={{ background: it.color }}
-							/>
-						);
-					const rowContent = (
-						<>
-							{swatch}
-							<span className="text-dim flex-1 truncate">{it.label}</span>
-						</>
-					);
-					if (!interactive) {
-						return (
-							<div
-								key={it.hint}
-								className="flex items-center gap-2 fs-meta"
-							>
-								{rowContent}
-							</div>
-						);
-					}
-					const active =
-						legendFocus &&
-						legendFocus.dim === dim &&
-						legendFocus.key === it.hint;
-					return (
-						<button
-							key={it.hint}
-							type="button"
-							aria-pressed={Boolean(active)}
-							className={`arch-legend-item flex items-center gap-2 fs-meta ${active ? "active" : ""}`}
-							onClick={() => onToggleFocus(dim, it.hint)}
-							title={`Focus ${it.label} nodes`}
-						>
-							{rowContent}
-						</button>
-					);
-				})}
-			</div>
-		</div>
 	);
 }
 
