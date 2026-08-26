@@ -51,6 +51,14 @@ const ARCH_SELECTORS = {
 
 const DESC_FALLBACK = "No description available.";
 
+// 결함 tone → 캔버스 노드 링 클래스. ok 와 info(no data)는 항목이 없음 — 결함만 짚는 노출이고,
+// 정상 전역 점등은 되돌림 폭이 과함(계획 Non-Goal). 정상 명부는 라이브 상태 표가 냄.
+const FAULT_RING_CLASS = {
+	warn: "arch-node-live-warn",
+	crit: "arch-node-live-crit",
+};
+const FAULT_RING_CLASSES = Object.values(FAULT_RING_CLASS);
+
 // 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스.
 // 최다 빈도는 표 전체가 아니라 이 슬라이스 안에서 고름 — 읽기 경로가 표 전체 최댓값을 내주지 않음.
 const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
@@ -263,6 +271,10 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
+					// 결함 링 — fault 판정 데몬의 바인딩 노드만 점등. ok/no-data 는 규칙 자체가 없음.
+					// focus-visible 규칙보다 앞에 둠 — 특이도가 같아 나중 규칙이 이기고, 포커스 표식이 링을 덮어야 함.
+					".arch-mermaid-canvas .node.arch-node-live-warn rect, .arch-mermaid-canvas .node.arch-node-live-warn polygon { stroke: rgb(var(--warn)) !important; stroke-width: 2.5 !important; } " +
+					".arch-mermaid-canvas .node.arch-node-live-crit rect, .arch-mermaid-canvas .node.arch-node-live-crit polygon { stroke: rgb(var(--crit)) !important; stroke-width: 2.5 !important; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -272,7 +284,7 @@ function ScreenArchitecture(
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
-					// 라이브 상태 표 — 노드 링 점등을 대체하는 표면.
+					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 캔버스 링은 결함만 짚으므로 정상분은 여기서만 보임.
 					".arch-live-table-wrap { flex-shrink: 0; max-height: 220px; overflow: auto; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
 					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
@@ -337,6 +349,7 @@ function ScreenArchitecture(
 						diagState={diagState}
 						activeDiagram={activeDiagram}
 						nodeByLabel={nodeByLabel}
+						liveDaemonsByNodeId={liveDaemonsByNodeId}
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
 					/>
@@ -372,6 +385,7 @@ function DiagramCanvasCard({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
+	liveDaemonsByNodeId,
 	onSelectNode,
 	onRetry,
 }) {
@@ -382,6 +396,7 @@ function DiagramCanvasCard({
 					diagState={diagState}
 					activeDiagram={activeDiagram}
 					nodeByLabel={nodeByLabel}
+					liveDaemonsByNodeId={liveDaemonsByNodeId}
 					onSelectNode={onSelectNode}
 					onRetry={onRetry}
 				/>
@@ -394,6 +409,7 @@ function DiagramBody({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
+	liveDaemonsByNodeId,
 	onSelectNode,
 	onRetry,
 }) {
@@ -444,6 +460,7 @@ function DiagramBody({
 			source={source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
+			liveDaemonsByNodeId={liveDaemonsByNodeId}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -457,6 +474,7 @@ function MermaidCanvas({
 	source,
 	diagramTitle,
 	nodeByLabel,
+	liveDaemonsByNodeId,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -524,6 +542,26 @@ function MermaidCanvas({
 			if (matchedId) el.setAttribute("data-arch-node-id", matchedId);
 		});
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
+
+	// 결함 링 — 서버 판정이 fault 인 데몬의 바인딩 노드에만 클래스를 붙임 (정상 명부는 라이브 표가 맡음).
+	//   위 효과가 심은 data-arch-node-id 를 되읽으므로 선언 순서가 곧 실행 순서임 — 앞으로 옮기면 첫 렌더에서 빈다.
+	//   폴링 tick 마다 다시 도는 유일한 캔버스 효과 — 재렌더 없이 판정만 바뀌는 경로가 여기임.
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const root = containerRef.current;
+		if (!root) return;
+
+		root.querySelectorAll("g.node").forEach((el) => {
+			el.classList.remove(...FAULT_RING_CLASSES);
+			const nodeId = el.getAttribute("data-arch-node-id");
+			if (!nodeId) return;
+
+			const ringClass = getFaultRingClassAR(
+				liveDaemonsByNodeId.get(unscopedNodeIdAR(nodeId)),
+			);
+			if (ringClass) el.classList.add(ringClass);
+		});
+	}, [renderState.status, renderState.svgHtml, nodeByLabel, liveDaemonsByNodeId]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -1412,6 +1450,18 @@ function getLiveDaemonRows(daemons) {
 			lastRunAt: d?.last_run_at || null,
 		};
 	});
+}
+
+// 한 노드에 걸린 daemon 목록 → 링 클래스. 결함이 없으면 null (클래스 자체가 안 붙음).
+//   cron 노드처럼 복수 바인딩인 자리는 최악 severity 하나만 링 근거로 삼음 — 두 겹을 칠할 수 없음.
+function getFaultRingClassAR(daemons) {
+	let hasWarn = false;
+	for (const d of daemons || []) {
+		const tone = window.UI.daemonStatusTone(d?.effective_status);
+		if (tone === "crit") return FAULT_RING_CLASS.crit;
+		if (tone === "warn") hasWarn = true;
+	}
+	return hasWarn ? FAULT_RING_CLASS.warn : null;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).

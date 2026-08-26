@@ -36,6 +36,7 @@ import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
+	DaemonLiveStatus,
 	WriterLiveStatus,
 } from "../src/server/types/architecture.js";
 import type {
@@ -748,5 +749,141 @@ test("AC-T27 the loaded queue raises no failure alert", async () => {
 		},
 		{ alerts: 0, factCount: 2, childCount: 2 },
 		"a fully loaded queue must render the two facts and nothing else — no error surface",
+	);
+});
+
+/**
+ * AC-T5 — fault 데몬의 바인딩 노드에만 상태 링이 붙음 (ADR-4 의 fault 한정 되돌림).
+ * 여기서는 어느 노드가 켜졌는지를 재고, 리터럴 톤 3종의 개수 대조는 T6 이 render-structure 에서 맡음.
+ * 대조군 데몬을 함께 심는 이유: fault 하나만으로는 링이 자기 노드 밖으로 새지 않았음을 못 잼.
+ */
+const RING_CRIT_CLASS = "arch-node-live-crit";
+const OK_DAEMON = "wiki";
+
+function getDaemon(name: string, effectiveStatus: string): DaemonLiveStatus {
+	const nodeIds = [...(DAEMON_NODE_BINDINGS[name] ?? [])];
+	assert.ok(
+		nodeIds.length > 0,
+		`fixture precondition: ${name} must carry node bindings`,
+	);
+	return {
+		daemon_name: name,
+		status: effectiveStatus,
+		effective_status: effectiveStatus,
+		last_run_at: null,
+		staleness_minutes: null,
+		node_ids: nodeIds,
+		expected_cadence_minutes: 60,
+	};
+}
+
+// 그려진 노드 중 해당 데몬에 바인딩된 것 — 캔버스는 canonical 맵 하나뿐이라
+// 바인딩 id 전부가 렌더되지는 않음. 기대값을 상수로 적으면 맵 감축에 조용히 어긋남.
+function getRenderedBound(rendered: string[], daemonName: string): string[] {
+	const bound = new Set(DAEMON_NODE_BINDINGS[daemonName] ?? []);
+	return rendered.filter((id) => bound.has(id.slice(id.lastIndexOf(".") + 1)));
+}
+
+async function getRingProbe(): Promise<{
+	rendered: string[];
+	ringed: string[];
+	ringClasses: string[];
+}> {
+	return await page.evaluate((canvas) => {
+		const rendered: string[] = [];
+		const ringed: string[] = [];
+		const ringClasses: string[] = [];
+
+		for (const el of Array.from(document.querySelectorAll(`${canvas} g.node`))) {
+			const nodeId = el.getAttribute("data-arch-node-id");
+			if (nodeId) rendered.push(nodeId);
+
+			// 접두사로 읽음 — 톤 이름을 바꿔 되살리는 경우까지 이 다리가 잡음.
+			const hits = (el.getAttribute("class") || "")
+				.split(/\s+/)
+				.filter((c) => c.startsWith("arch-node-live-"));
+			if (hits.length === 0) continue;
+
+			ringed.push(nodeId || "(unmatched node)");
+			ringClasses.push(...hits);
+		}
+		return { rendered, ringed, ringClasses };
+	}, selectors.canvas);
+}
+
+test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "stale"), getDaemon(OK_DAEMON, "ok")],
+		}),
+	);
+	const probe = await getRingProbe();
+	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
+
+	assert.ok(
+		faultNodes.length > 0,
+		`canonical map must render at least one ${BOUND_DAEMON} node`,
+	);
+	assert.ok(
+		getRenderedBound(probe.rendered, OK_DAEMON).length > 0,
+		`canonical map must render at least one ${OK_DAEMON} node — the ok leg is vacuous without it`,
+	);
+	assert.deepEqual(
+		probe.ringed.slice().sort(),
+		faultNodes.slice().sort(),
+		"the ring must land on exactly the fault daemon's rendered bound nodes",
+	);
+	assert.deepEqual(
+		[...new Set(probe.ringClasses)],
+		[RING_CRIT_CLASS],
+		"a stale verdict must light the crit ring and nothing else",
+	);
+});
+
+test("AC-T5 a healthy roster lights no node at all", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(OK_DAEMON, "ok")],
+		}),
+	);
+	const probe = await getRingProbe();
+
+	assert.ok(
+		getRenderedBound(probe.rendered, BOUND_DAEMON).length > 0,
+		"bound nodes must be rendered — otherwise the zero below counts nothing",
+	);
+	assert.deepEqual(
+		probe.ringed,
+		[],
+		"a healthy roster must leave every node unlit — this is the un-reverted half of AC-15(b)",
+	);
+});
+
+// 링이 기존 경보를 밀어내지 않았음을 잠금 — 셋이 동시에 뜨는 픽스처로 잼.
+test("AC-T5 the ring displaces neither the drift banner nor the writer alert", async () => {
+	const driftKey = "T5_DRIFT_KEY";
+
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "stale")],
+			stale: true,
+			diffs: [getDriftDiff(driftKey)],
+			writers: [getWriter(OFF_WRITER, false)],
+		}),
+	);
+
+	assert.ok(
+		(await getRingProbe()).ringed.length > 0,
+		"fault fixture must light a node — otherwise the two legs below prove nothing",
+	);
+	assert.equal(
+		await countAlertsNaming(driftKey),
+		1,
+		`drift banner carrying ${driftKey} must survive beside the ring`,
+	);
+	assert.equal(
+		await countAlertsNaming(OFF_WRITER),
+		1,
+		`writer alert naming ${OFF_WRITER} must survive beside the ring`,
 	);
 });
