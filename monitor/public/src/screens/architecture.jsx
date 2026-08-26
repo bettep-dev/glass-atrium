@@ -290,8 +290,6 @@ function ScreenArchitecture(
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
 					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
-					// 설명 산문 — 접힘 없이 상시 노출.
-					".arch-prose { flex-shrink: 0; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; padding: 8px 10px; } " +
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
@@ -355,14 +353,11 @@ function ScreenArchitecture(
 					/>
 				</div>
 
-				{/* 접근성 설명 — 산문 섹션과 독립된 aria-describedby 타깃. */}
 				<div id={ARCH_DESC_ID} className="arch-desc-a11y">
 					{activeDiagram?.description || DESC_FALLBACK}
 				</div>
 
 				<LiveDaemonTable state={liveState} />
-
-				<DiagramProse diagram={activeDiagram} />
 			</div>
 
 			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
@@ -918,21 +913,6 @@ function LiveDaemonTable({ state }) {
 				</tbody>
 			</table>
 		</div>
-	);
-}
-
-// 설명 산문 — 전문 상시 노출.
-
-function DiagramProse({ diagram }) {
-	return (
-		<section className="arch-prose" aria-label="About this diagram">
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
-				About this diagram
-			</div>
-			<div className="fs-meta text-dim leading-snug">
-				{diagram?.description || DESC_FALLBACK}
-			</div>
-		</section>
 	);
 }
 

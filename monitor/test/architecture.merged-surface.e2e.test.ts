@@ -361,6 +361,43 @@ test("AC-T15 description node is visually hidden yet still rendered", async () =
 	);
 });
 
+// 산문 섹션이 자기를 부르던 세 자리 — 섹션 클래스 · 접근성 라벨 · 눈에 보이던 헤딩 문구.
+// 한 자리만 세면 나머지 둘이 남아도 초록이 됨.
+const PROSE_SECTION_SELECTOR = ".arch-prose";
+const PROSE_HEADING = "About this diagram";
+
+test("AC-T17 the map renders no About this diagram prose section", async () => {
+	await openMap(getLiveFixture());
+
+	const probe = await page.evaluate(
+		({ selector, heading }) => ({
+			sections: document.querySelectorAll(selector).length,
+			labelled: document.querySelectorAll(`[aria-label="${heading}"]`).length,
+			// 대소문자를 접고 셈 — innerText 는 text-transform 을 반영하므로 uppercase 헤딩은 원문 리터럴과 안 맞음.
+			headings:
+				(document.body.innerText || "").toUpperCase().split(heading.toUpperCase()).length - 1,
+		}),
+		{ selector: PROSE_SECTION_SELECTOR, heading: PROSE_HEADING },
+	);
+
+	assert.deepEqual(
+		probe,
+		{ sections: 0, labelled: 0, headings: 0 },
+		`prose section must be gone from all three of its surfaces — ${PROSE_SECTION_SELECTOR}, aria-label="${PROSE_HEADING}" and the visible heading text`,
+	);
+
+	// AC-T17 의 둘째 절 — 설명 전문은 T15 의 은닉 컨테이너에 남아야 함.
+	// 산문과 함께 설명까지 지우면 aria-describedby 가 끊겨 AC-11 이 무너짐.
+	const desc = await getDescProbe();
+
+	assert.equal(desc.found, true, `aria-describedby target #${desc.id} must survive the prose removal`);
+	assert.equal(
+		getNormalized(desc.text).length,
+		expectedDescription.length,
+		`target #${desc.id} exposes ${getNormalized(desc.text).length} chars vs payload ${expectedDescription.length}`,
+	);
+});
+
 // 하네스 능력 증명 — 같은 파일 안에서 두 개의 서로 다른 live 픽스처를 심고 화면이
 // 각각 다르게 반응함을 봄. 소재로 드리프트 배너를 고른 이유: AC-T18(c) 가 이 배너의
 // 존속을 잠그므로 뒤 작업이 지우는 표면이 아님.
@@ -704,7 +741,7 @@ async function getQueueFailureProbe() {
 	}, QUEUE_ALERT_NEEDLE);
 }
 
-test("AC-T27 a rejected queue fetch raises exactly one alert naming the queue", async () => {
+test("T27-fix a rejected queue fetch raises exactly one alert naming the queue", async () => {
 	await openMap(getLiveFixture(), getQueueFailedFixture());
 	// 두 저장소가 모두 죽으면 사실 요소가 하나도 없어 getQueueProbe 의 대기가 걸리지 않음 —
 	// 경보 등장을 여기서 기다려 붉은 이유가 경쟁이 되지 않게 함. 부재는 아래 단언이 문장으로 보고함.
@@ -737,7 +774,7 @@ test("AC-T27 a rejected queue fetch raises exactly one alert naming the queue", 
 
 // 실패 표면이 성공 경로로 새지 않았음을 잠금 — AC-T18(c) 와 같은 성격의 불변식 다리라
 // 오늘도 초록이고, 경보가 상시 노출로 바뀌어야만 붉어짐.
-test("AC-T27 the loaded queue raises no failure alert", async () => {
+test("T27-fix the loaded queue raises no failure alert", async () => {
 	await openMap(getLiveFixture(), getQueueLoadedFixture());
 	const probe = await getQueueProbe();
 
