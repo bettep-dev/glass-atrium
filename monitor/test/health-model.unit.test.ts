@@ -5,6 +5,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 // health-model.js reads window.UI at call time — stub must exist BEFORE import.
 // Mirrors ui.jsx DAEMON_STATUS_TONE (the SoT). missing→info per F#38 fix.
@@ -70,12 +72,14 @@ function ready(data: unknown): FetchState {
 }
 const LOADING: FetchState = { status: "loading", data: null, error: null };
 
+// effective_status is the server verdict and the only field the model may read;
+// staleness_minutes rides along so a re-derivation would be visible here.
 function daemonRow(name: string, overrides: Record<string, unknown> = {}) {
   return {
     daemon_name: name,
     last_status: "ok",
+    effective_status: "ok",
     staleness_minutes: 60,
-    is_stale: false,
     ...overrides,
   };
 }
@@ -152,7 +156,10 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
     allHealthyStates({
       daemonState: ready({
         daemons: [
-          daemonRow("autoagent", { last_status: "quota_exceeded" }),
+          daemonRow("autoagent", {
+            last_status: "quota_exceeded",
+            effective_status: "quota_exceeded",
+          }),
           daemonRow("wiki"),
           daemonRow("daily-restart-autoagent"),
           // daily-restart-wiki row absent → card tone 'info' ('No data')
@@ -165,13 +172,13 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
   assert.strictEqual(kpis.degradedCount, 1);
 });
 
-test("stale daemon (threshold exceeded): degraded bucket + staleCount", () => {
+test("stale daemon (server verdict): degraded bucket + staleCount", () => {
   const kpis = assertKpiInvariant(
     allHealthyStates({
       daemonState: ready({
         daemons: [
-          // 36h threshold (2160min) exceeded — stale wins over last_status='ok'.
-          daemonRow("autoagent", { staleness_minutes: 3000 }),
+          // The server called it overdue — that verdict outranks last_status='ok'.
+          daemonRow("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
           daemonRow("wiki"),
           daemonRow("daily-restart-autoagent"),
           daemonRow("daily-restart-wiki"),
@@ -196,13 +203,48 @@ test("hook failures: unretried 24h failure → crit; retried-only → warn (F08)
   assert.strictEqual(warn.okCount, 6);
 });
 
-test("stale daemon: display meta stays crit-toned 'STALE' (Rule 4 — tone unchanged)", () => {
-  // isDaemonStale wins over last_status; the label is unified but the tone MUST stay crit.
+test("stale verdict: display meta comes from the tone table, tone stays crit (Rule 4)", () => {
   const meta = HealthModel.resolveDaemonDisplayMeta(
-    daemonRow("autoagent", { last_status: "ok", staleness_minutes: 3000 }),
+    daemonRow("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
   );
   assert.strictEqual(meta.tone, "crit");
-  assert.strictEqual(meta.label, "STALE");
+  assert.strictEqual(
+    meta.label,
+    "stale",
+    "the stub returns the status it was handed — a local 'STALE' literal would not reach it",
+  );
+});
+
+// --- AC-T3: the daemon verdict is the server's, not a client re-computation ---
+
+test("AC-T3 source: no per-daemon threshold table, no staleness re-derivation", () => {
+  const src = readFileSync(
+    fileURLToPath(new URL("../public/src/data/health-model.js", import.meta.url)),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    src,
+    /DAEMON_STALE_THRESHOLD_MIN/,
+    "a per-daemon threshold table is a second verdict rule competing with the server's",
+  );
+  assert.doesNotMatch(
+    src,
+    /staleness_minutes/,
+    "reading the staleness figure at all is how the client starts judging again",
+  );
+});
+
+test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says", () => {
+  // Past the deleted 2160-min (36h) table, but the server calls it fresh.
+  const fresh = HealthModel.resolveDaemonDisplayMeta(
+    daemonRow("autoagent", { staleness_minutes: 3000, effective_status: "ok" }),
+  );
+  assert.strictEqual(fresh.tone, "ok", "a client override would re-tone this to crit");
+  // Inside that window, but the server escalated it (never-fired past a cadence window).
+  const stale = HealthModel.resolveDaemonDisplayMeta(
+    daemonRow("autoagent", { staleness_minutes: 60, effective_status: "stale" }),
+  );
+  assert.strictEqual(stale.tone, "crit", "the server verdict must survive a low staleness");
 });
 
 test("daemonState not ready: KPI renders '—' sentinels, never fabricated zeros", () => {

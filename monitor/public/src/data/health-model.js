@@ -1,4 +1,4 @@
-// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — health.jsx 표시층·dashboard.jsx 데몬 카드·monitor/test 공용.
+// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — health.jsx 표시층·monitor/test 공용.
 // 카드 tone 과 KPI 버킷을 단일 출처에서 결정 → '정상 N/M' 분모 == 렌더 카드 수 불변식 보장 (F02).
 // window.UI 는 호출 시점 참조 — node 테스트는 import 전 window.UI 스텁 주입으로 로드.
 
@@ -13,29 +13,23 @@ const HEALTH_CARD_DEFS = [
   { id: 'hook-chain',    name: 'Hook Chain',      icon: 'pulse',    kind: 'hook' },
 ];
 
-// daemon 별 staleness 임계 (기대 주기 × 1.5) — server generic 24h 임계 보정.
-// 미정의 daemon → server is_stale 그대로 채택.
-const DAEMON_STALE_THRESHOLD_MIN = {
-  autoagent:                 24 * 60 * 1.5, // daily cycle → 36h (cron KST 04:30 매일 · server expected_next_at 정합)
-  wiki:                      24 * 60 * 1.5, // daily → 36h (wiki-cycle 04:50 KST INSERT)
-  'daily-restart-autoagent': 24 * 60 * 1.5, // daily → 36h (05:30 KST 역할별 행)
-  'daily-restart-wiki':      24 * 60 * 1.5, // daily → 36h (05:30 KST 역할별 행)
-};
-
-function isDaemonStale(d) {
-  if (!d || typeof d !== 'object') return false;
-  const threshold = DAEMON_STALE_THRESHOLD_MIN[d.daemon_name];
-  // 임계 미정의 OR staleness_minutes 숫자 아님 → server 판정 신뢰.
-  if (threshold == null || typeof d.staleness_minutes !== 'number') return d.is_stale === true;
-  return d.staleness_minutes > threshold;
+// 데몬 판정 = 서버의 effective_status 소비 — 지연 여부를 클라가 다시 계산하지 않음.
+// 판정을 못 받은 행(비객체·필드 부재) → 'missing': 모르는 상태를 정상으로 꾸미지 않음.
+function resolveDaemonStatus(d) {
+  if (!d || typeof d !== 'object') return 'missing';
+  const status = d.effective_status;
+  return typeof status === 'string' && status !== '' ? status : 'missing';
 }
 
-// 데몬 행 → 표시 tone/label — stale 판정이 last_status 보다 우선 (crit 'STALE'),
-// null status(실행 행 없음) = 'missing' 매핑 위임 → ui.jsx DAEMON_STATUS_TONE 단일 SoT.
-// 로컬 리터럴 금지: info/'No data' 도 공용 테이블에서만 결정 (screen 간 정합, F04).
+function isDaemonStale(d) {
+  return resolveDaemonStatus(d) === 'stale';
+}
+
+// 데몬 행 → 표시 tone/label — 서버 판정을 그대로 넘겨 매핑만 위임,
+// ui.jsx DAEMON_STATUS_TONE 단일 SoT. 로컬 리터럴 금지: crit/'Overdue' 도 info/'No data' 도
+// 공용 테이블에서만 결정 (screen 간 정합, F04).
 function resolveDaemonDisplayMeta(d) {
-  if (isDaemonStale(d)) return { tone: 'crit', label: 'STALE' };
-  const status = d == null || d.last_status == null ? 'missing' : d.last_status;
+  const status = resolveDaemonStatus(d);
   return { tone: window.UI.daemonStatusTone(status), label: window.UI.daemonStatusLabel(status) };
 }
 
@@ -154,7 +148,6 @@ function toPayloadRows(payload) {
 
 window.HealthModel = {
   HEALTH_CARD_DEFS,
-  DAEMON_STALE_THRESHOLD_MIN,
   isDaemonStale,
   resolveDaemonDisplayMeta,
   resolveCardFacts,
