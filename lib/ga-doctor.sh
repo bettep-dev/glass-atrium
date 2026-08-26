@@ -170,13 +170,16 @@ run_doctor() {
   if [[ "${unbound}" -gt 0 ]]; then
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
     log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
-    log "       NOTE: this doctor check is read-only and never writes settings.json. Add each missing binding BY HAND (example above) — a full installer run is NOT the reflex remedy: it reconciles EVERY Atrium binding at once, a far wider mutation than the gap reported here."
+    log "       NOTE: this doctor check is read-only and never writes settings.json. Add each missing binding BY HAND (example above) — a full installer run is NOT the reflex remedy: it reconciles EVERY Atrium binding at once, a far wider mutation than the gap reported here. Either way the new binding stays INERT until you start a NEW session: Claude Code snapshots hook bindings at session start."
   fi
   if [[ "${nonexec}" -gt 0 ]]; then
     log "  ---- ${nonexec} wired hook(s) missing the executable bit — bound but permanently inert ----"
     log "       fix: chmod +x ${GA_ROOT}/hooks/<hook>.sh (or re-run 'glass-atrium install' to redeploy)"
     fail=1
   fi
+  # Registration kind B (report-only): its log line only — no counter, no warning total, no PASS
+  # breakdown term, exit code unchanged.
+  _doctor_report_rewire_marker
 
   # 7. target-side deploy reconciliation — symmetric inverse of §4. §4 checks manifest entry ->
   #    SOURCE present; this checks manifest entry -> TARGET installed (a symlink under TARGET_HOME
@@ -857,8 +860,136 @@ run_doctor() {
     fi
   fi
 
+  # 20. settings permissions coverage. Registration kind B (report-only): no counter, no term in the
+  #     warning total, exit code unchanged. settings.template.json ships the RECOMMENDED permissions
+  #     shape and nothing applies it — wire_hooks owns hooks and never touches permissions — so a
+  #     live settings.json drifts from the template with no surface reporting the distance. The live
+  #     file is READ here and never written; permissions stay user-owned.
+  #     Direction is template -> live ONLY. A live-only rule is the user's own choice, so reporting
+  #     it would be the alarm fatigue that trains an operator to ignore the whole block.
+  #     The match is a LITERAL string compare, so an equivalent rule worded differently reads as
+  #     missing — the block says that itself, because an operator who mistakes this for a security
+  #     verdict silences it by pasting rules they never wanted.
+  local perms_template="${GA_ROOT}/settings.template.json"
+  if [[ -n "${GA_DOCTOR_SKIP_PERMISSIONS:-}" ]]; then
+    # Suppression is announced rather than silent: an invisible suppression is a new invisible drift.
+    log "  note : settings permissions coverage suppressed (GA_DOCTOR_SKIP_PERMISSIONS set) — unset it to see the report"
+  elif ! command -v jq >/dev/null 2>&1 || [[ ! -f "${perms_template}" ]]; then
+    log "  note : settings permissions coverage skipped — needs jq and ${perms_template}"
+  elif [[ ! -f "${SETTINGS_JSON}" ]]; then
+    log "  note : no live settings.json (${SETTINGS_JSON}) — permissions coverage not compared"
+  elif ! jq -e 'type == "object"' -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
+    log "  note : live settings.json unparseable (${SETTINGS_JSON}) — permissions coverage not compared"
+  else
+    local perms_key perms_rule perms_live perms_total perms_present perms_missing
+    log "  info : settings permissions coverage vs ${perms_template} (report-only; the live file is never written)"
+    log "         basis: literal string match of each template rule — a differently worded equivalent reads as missing, and a live-only rule is never reported; this is template coverage, not a security-gap claim"
+    for perms_key in deny ask; do
+      perms_total=0
+      perms_present=0
+      perms_missing=""
+      # Newline-fenced haystack: one jq read per key, then a literal containment test per rule.
+      perms_live=$'\n'"$(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${SETTINGS_JSON}" 2>/dev/null || true)"$'\n'
+      while IFS= read -r perms_rule; do
+        [[ -n "${perms_rule}" ]] || continue
+        perms_total=$((perms_total + 1))
+        if [[ "${perms_live}" == *$'\n'"${perms_rule}"$'\n'* ]]; then
+          perms_present=$((perms_present + 1))
+        else
+          perms_missing="${perms_missing}${perms_missing:+, }${perms_rule}"
+        fi
+      done < <(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${perms_template}" 2>/dev/null || true)
+      [[ "${perms_total}" -gt 0 ]] || continue
+      log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present${perms_missing:+ — missing: ${perms_missing}}"
+    done
+  fi
+
+  # 21. pending Prisma migrations. Registration kind A (counted warning): the counter below joins
+  #     the warning total AND the PASS breakdown. `glass-atrium update` rebuilds the monitor and
+  #     restarts it without applying migrations, so new server code can run over an unmigrated
+  #     database with no surface saying so — this section is that surface, and it only READS.
+  #     Four branch states are notes with no counter, kept apart on purpose: the documented opt-out,
+  #     the documented psql-less mode, a database that does not exist YET, and a server this run
+  #     could not reach. An ABSENT history table is NOT one of them — that is a database which has
+  #     never been migrated, which is the exposure itself, so it warns with every migration pending.
+  #     A fifth no-counter state rides ALONGSIDE either verdict rather than replacing it: a
+  #     failed/rolled-back history row, registration kind B (report-only), printed as its own
+  #     `note :` line. Prisma leaves such a row behind after `migrate resolve --rolled-back` plus a
+  #     re-apply, so it can accompany a fully-applied set — the prefix keeps an `ok` verdict beside
+  #     a `0 pending-migration` breakdown readable as one report, not as an unowned warning.
+  #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
+  #     would fold an unreachable server into "database absent" and report a healthy install as
+  #     fully pending forever.
+  local mig_pending=0
+  local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
+  local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
+  local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
+  if [[ -d "${mig_dir}" ]]; then
+    # Directories only: migration_lock.toml sits beside them and is not a migration.
+    for mig_entry in "${mig_dir}"/*/; do
+      [[ -d "${mig_entry}" ]] || continue
+      mig_name="${mig_entry%/}"
+      mig_expected="${mig_expected}${mig_name##*/}"$'\n'
+      mig_total=$((mig_total + 1))
+    done
+  fi
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : pending-migration check skipped (GA_SKIP_DB_SETUP set) — apply with 'glass-atrium db-setup'"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : pending-migration check skipped — psql not found (supported mode; install PostgreSQL to see migration state)"
+  elif [[ "${mig_total}" -eq 0 ]]; then
+    log "  note : pending-migration check skipped — no migration directories under ${mig_dir}"
+  elif ! mig_probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run cannot tell applied from pending"
+  elif [[ "${mig_probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no migrations applied yet, and none pending until it is created ('glass-atrium db-setup')"
+  elif ! mig_table="$(_pg_migration_table_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — the history read against '${DB_NAME}' failed"
+  elif [[ -z "${mig_table}" ]]; then
+    mig_pending="${mig_total}"
+    # shellcheck disable=SC2312  # reached only after the same call succeeded inside _pg_migration_table_probe
+    log "  warn : migration history table $(_pg_migration_history_table) absent in '${DB_NAME}' — all ${mig_total} migration(s) pending; apply with 'glass-atrium db-setup'"
+  elif ! mig_rows="$(_pg_migration_history_probe "${DB_NAME}")"; then
+    log "  note : pending migrations undetermined — reading ${mig_table} in '${DB_NAME}' failed"
+  else
+    # shellcheck disable=SC2312  # the classifier is a pure printf loop and always exits 0
+    while IFS=' ' read -r mig_state mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      if [[ "${mig_state}" == "applied" ]]; then
+        mig_applied="${mig_applied}${mig_name}"$'\n'
+      else
+        mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
+        mig_failed_count=$((mig_failed_count + 1))
+      fi
+    done < <(get_migration_states <<<"${mig_rows}")
+    # Newline-fenced haystack, so one applied name cannot match another's suffix.
+    mig_applied=$'\n'"${mig_applied}"
+    while IFS= read -r mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]] && continue
+      mig_missing="${mig_missing}${mig_missing:+, }${mig_name}"
+      mig_pending=$((mig_pending + 1))
+    done <<<"${mig_expected}"
+    if [[ "${mig_pending}" -gt 0 ]]; then
+      log "  warn : ${mig_pending} migration(s) pending against '${DB_NAME}' (history: ${mig_table}) — the updater rebuilds the monitor but applies nothing; run 'glass-atrium db-setup'"
+      log "         pending: ${mig_missing}"
+    else
+      log "  ok   : all ${mig_total} migration(s) applied (history: ${mig_table})"
+    fi
+    if [[ "${mig_failed_count}" -gt 0 ]]; then
+      log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue))
+    # Warning-summary registration contract — a new doctor row declares ONE kind.
+    # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
+    #   three at once and in the same position; appending to the tail is the safe placement.
+    # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
+    #   unchanged. C (wording): the existing row's log line only.
+    # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -866,7 +997,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration — see above) =="
     fi
     return 0
   fi
@@ -891,6 +1022,57 @@ _drop_window_cutoff_date() {
   date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
   date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null && return 0
   return 1
+}
+
+# Days a hook-rewire marker is reported before doctor retires it. Window length is the ONLY thing
+# that clears the marker (see the helper below).
+GA_REWIRE_NOTICE_WINDOW_DAYS="${GA_REWIRE_NOTICE_WINDOW_DAYS:-7}"
+
+# Report the pending hook-rewire marker wire_hooks/retire_hook_binding leave behind, and retire it
+# once its window has passed.
+#
+# WHAT IS REPORTED IS THE NOTICE LIFECYCLE, NOT ACTIVATION. "An artifact newer than the marker
+# means the new binding is live" is FALSE: Claude Code snapshots bindings at session start, so a
+# session that began BEFORE the rewire keeps firing the OLD binding and keeps touching the same
+# fired-logs. The observation therefore says "some hook ran", never "the new wiring took". That is
+# why the marker survives an observation and expires ONLY on the window — and why no per-binding
+# artifact mapping is attempted: the five fired-log names have no derivable relation to their hook
+# basenames, so such a map would be a hand-maintained filename table.
+# The candidate set is a GLOB plus the inject diagnostic log, never a filename list.
+_doctor_report_rewire_marker() {
+  local marker="${GA_DATA_ROOT}/data/hook-rewire-pending"
+  [[ -f "${marker}" ]] || return 0
+
+  local written now
+  written="$(awk -F= '/^epoch=/ { print $2; exit }' "${marker}")" || written=""
+  # An unreadable/absent epoch falls back to the file's own mtime — an unagedable marker must still
+  # age out rather than become permanent.
+  if [[ ! "${written}" =~ ^[0-9]+$ ]]; then
+    written="$(stat_mtime "${marker}")" || return 0
+  fi
+  now="$(date +%s)"
+
+  if [[ $((now - written)) -gt $((GA_REWIRE_NOTICE_WINDOW_DAYS * 86400)) ]]; then
+    rm -f -- "${marker}"
+    return 0
+  fi
+
+  local newest=0 artifact mtime
+  for artifact in "${GA_DATA_ROOT}"/data/*-fired.log "${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"; do
+    [[ -f "${artifact}" ]] || continue
+    mtime="$(stat_mtime "${artifact}")" || continue
+    if [[ "${mtime}" -gt "${newest}" ]]; then
+      newest="${mtime}"
+    fi
+  done
+
+  local detail
+  detail="$(awk '!/^epoch=/ { print; exit }' "${marker}")" || detail=""
+  if [[ "${newest}" -gt "${written}" ]]; then
+    log "  info : hook rewire pending — hook activity observed since the rewire (${detail:-changes recorded}); this does NOT prove the new binding is live, because Claude Code snapshots bindings at session start and a pre-rewire session keeps firing the OLD one. Start a NEW session; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
+  else
+    log "  info : hook rewire pending — NO hook activity observed since the rewire (${detail:-changes recorded}). Start a NEW session to activate the bindings; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
+  fi
 }
 
 # Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar

@@ -272,6 +272,12 @@ rewrite_hook_paths() {
 # COMMAND granularity (matches is_hook_bound's (event, matcher, basename) scope): the drop unit is the COMMAND, never the hook-group OBJECT. A CONSOLIDATED group — several commands under ONE matcher, the idiomatic Claude Code shape — would otherwise lose every sibling command, so the filter assigns INTO the group's command list (matcher and every other group key survive) and removes the group only when its own drop emptied it.
 # DATA-SAFETY (same "only Atrium commands" property as retire_hook_binding): a command is Atrium-owned only when its tilde-normalized path resolves under ${HOME}/.claude/hooks/ or ${HOME}/.glass-atrium/hooks/ — a foreign user hook at any other path is neither a match TARGET nor collateral, because a non-target command inside a matched group is preserved too. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), KEY-PRUNE symmetry, injection-safe (--arg everywhere), IDEMPOTENT (a re-run drops nothing).
 reconcile_stale_hook_matchers() {
+  # Caller transfer of the drop count, by NAMESPACE GLOBAL rather than a stdout return. The two
+  # candidates are not equivalent here: a stdout return forces the sole caller to invoke this in a
+  # command substitution, which is a SUBSHELL — and every `die` in the loop below would then kill
+  # only that subshell while wire_hooks sailed on past a settings.json it had refused to write.
+  # Reset on ENTRY so a return-0 short-circuit reports zero rather than the previous run's count.
+  GA_REWIRE_REMOVED=0
   [[ -f "${SETTINGS_JSON}" ]] || return 0
 
   # expected (event, basename, matcher) key set + its (event, basename) projection.
@@ -386,7 +392,31 @@ reconcile_stale_hook_matchers() {
     log "  dropped stale matcher: ${ev} -> ${base} (matcher=${m:-<none>}) — $((before - after)) command(s), group(s) ${group_before} -> ${group_after}"
   done <<<"${drop}"
 
+  GA_REWIRE_REMOVED="${removed}"
   log "reconcile_stale_hook_matchers: ${removed} stale hook command(s) dropped (backup: ${backup:-none — no mutation})"
+}
+
+# Restart notice + pending marker for a run that CHANGED the hook bindings ($1 added, $2 removed,
+# $3 retired). Claude Code snapshots settings.json bindings at SESSION START, so every change here
+# is inert in the sessions already running — a fact nothing in the tree stated before, which left
+# the mutation half-applied until the user happened to restart for unrelated reasons.
+# CONDITION is the SUM, never `added` alone: a matcher change wires nothing new (added=0) yet drops
+# the old-matcher row, and that needs the same restart.
+# SILENT on a zero-change run — a notice printed on every update is alarm fatigue, and a marker
+# written unconditionally would stop meaning anything.
+# The marker is what doctor reads; the log line alone scrolls away with the installer output.
+note_hook_rewire() {
+  local added="${1:-0}" removed="${2:-0}" retired="${3:-0}"
+  local changed=$((added + removed + retired))
+  [[ "${changed}" -gt 0 ]] || return 0
+  log "  RESTART REQUIRED: ${changed} hook binding change(s) (added ${added}, dropped ${removed}, retired ${retired}) — Claude Code snapshots hook bindings at SESSION START, so they are INERT in every already-running session. Start a NEW session to activate them."
+  local marker_dir="${GA_DATA_ROOT}/data"
+  local marker="${marker_dir}/hook-rewire-pending"
+  mkdir -p -- "${marker_dir}"
+  local now
+  now="$(date +%s)"
+  printf 'epoch=%s\nadded=%s removed=%s retired=%s\n' "${now}" "${added}" "${removed}" "${retired}" >"${marker}"
+  log "  rewire marker written: ${marker} (doctor reports it until the notice window expires)"
 }
 
 # command-granularity census for ONE event ($1 = settings file, $2 = event): hook commands summed across every group under it.
@@ -485,6 +515,7 @@ wire_hooks() {
   reconcile_stale_hook_matchers
 
   log "wire_hooks: ${added} binding(s) added, ${already} already wired (backup: ${backup:-none — no mutation})"
+  note_hook_rewire "${added}" "${GA_REWIRE_REMOVED:-0}" 0
 }
 
 # settings.json un-wire (remove ALL Atrium hook bindings).
@@ -704,6 +735,9 @@ retire_hook_binding() {
   done < <(jq -r 'if (.hooks | type) == "object" then (.hooks | keys[]) else empty end' -- "${SETTINGS_JSON}")
 
   log "retire_hook_binding: ${removed} binding-group(s) retired for ${hook} (backup: ${backup:-none — no mutation})"
+  # Announced HERE, not in wire_hooks: this is a separate operator-invoked entry point with no
+  # caller inside this tree, so a notice centralized in the wire path would never fire for it.
+  note_hook_rewire 0 0 "${removed}"
 }
 
 # config.toml purge (opt-in, mv-to-Trash — never rm a config)

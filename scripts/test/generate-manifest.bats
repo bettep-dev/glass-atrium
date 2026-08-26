@@ -30,6 +30,11 @@ setup() {
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
+  # Root artifacts the bundle must carry. SCOPE_PATHS membership is only observable
+  # once git tracks them here — generate_files() takes its file set from git ls-files.
+  printf 'license text\n' >"${WORK}/LICENSE"
+  printf '# third-party notices\n' >"${WORK}/LICENSES-THIRD-PARTY.md"
+  printf '{"permissions":{"deny":[]}}\n' >"${WORK}/settings.template.json"
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
   git -C "${WORK}" config user.name bats
@@ -45,6 +50,22 @@ teardown() {
 # (files/hashes start empty).
 seed_manifest() {
   printf '{"files":[],"hashes":{}}\n' >"${MANIFEST}"
+}
+
+# Untrack every in-scope path so git ls-files returns nothing the generator can
+# collect; the physical files stay (BASH_SOURCE still resolves) and manifest.json
+# stays tracked, because an untracked manifest is a different refusal (exit 5).
+# Enumerated from git rather than a fixed path list — a newly seeded root artifact
+# would otherwise silently refill the set this scenario needs empty.
+untrack_in_scope() {
+  local rel
+  local -a tracked=()
+  while IFS= read -r rel; do
+    [[ "${rel}" == "manifest.json" ]] || tracked+=("${rel}")
+  done < <(git -C "${WORK}" ls-files)
+  if [[ "${#tracked[@]}" -gt 0 ]]; then
+    git -C "${WORK}" rm -q --cached -- "${tracked[@]}"
+  fi
 }
 
 @test "generate: stamps top-level version matching ATRIUM_VERSION" {
@@ -184,17 +205,14 @@ seed_manifest() {
 
 @test "--check: exit 6 on an empty generated set" {
   "${SCRIPT}"
-  # untrack every in-scope path so git ls-files returns nothing in scope; the
-  # script copy stays physically present (BASH_SOURCE still resolves) but
-  # untracked, so the generated set is empty.
-  git -C "${WORK}" rm -q -r --cached agents rules scripts
+  untrack_in_scope
   run "${SCRIPT}" --check
   [[ "${status}" -eq 6 ]]
   [[ "${output}" == *"EMPTY"* ]]
 }
 
 @test "generate: exit 6 on an empty generated set (refuses to write)" {
-  git -C "${WORK}" rm -q -r --cached agents rules scripts
+  untrack_in_scope
   run "${SCRIPT}"
   [[ "${status}" -eq 6 ]]
   [[ "${output}" == *"EMPTY"* ]]
@@ -431,4 +449,16 @@ ship_lib_a() {
   run "${SCRIPT}" --validate "${MANIFEST}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"valid"* ]] || return 1
+}
+
+@test "generate: root LICENSE pair and permissions template are manifest members" {
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]]
+  local rel
+  for rel in LICENSE LICENSES-THIRD-PARTY.md settings.template.json; do
+    jq -e --arg f "${rel}" 'any(.files[]; . == $f)' "${MANIFEST}" >/dev/null || {
+      echo "not a manifest member: ${rel}"
+      return 1
+    }
+  done
 }
