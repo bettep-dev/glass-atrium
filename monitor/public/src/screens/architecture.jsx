@@ -49,8 +49,6 @@ const ARCH_SELECTORS = {
 	desc: `#${ARCH_DESC_ID}`,
 };
 
-const DESC_FALLBACK = "No description available.";
-
 // 결함 tone → 캔버스 노드 링 클래스. ok 와 info(no data)는 항목이 없음 — 결함만 짚는 노출이고,
 // 정상 전역 점등은 되돌림 폭이 과함(계획 Non-Goal). 정상 명부는 라이브 상태 표가 냄.
 const FAULT_RING_CLASS = {
@@ -343,18 +341,22 @@ function ScreenArchitecture(
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
-					<DiagramCanvasCard
-						diagState={diagState}
-						activeDiagram={activeDiagram}
-						nodeByLabel={nodeByLabel}
-						liveDaemonsByNodeId={liveDaemonsByNodeId}
-						onSelectNode={handleSelectNode}
-						onRetry={triggerRefresh}
-					/>
+					<div className="card arch-col-card">
+						<div className="card-body" style={{ padding: 10 }}>
+							<DiagramBody
+								diagState={diagState}
+								activeDiagram={activeDiagram}
+								nodeByLabel={nodeByLabel}
+								liveDaemonsByNodeId={liveDaemonsByNodeId}
+								onSelectNode={handleSelectNode}
+								onRetry={triggerRefresh}
+							/>
+						</div>
+					</div>
 				</div>
 
 				<div id={ARCH_DESC_ID} className="arch-desc-a11y">
-					{activeDiagram?.description || DESC_FALLBACK}
+					{activeDiagram?.description || "No description available."}
 				</div>
 
 				<LiveDaemonTable state={liveState} />
@@ -375,30 +377,6 @@ function ScreenArchitecture(
 }
 
 // Diagram canvas card (Mermaid native rendering)
-
-function DiagramCanvasCard({
-	diagState,
-	activeDiagram,
-	nodeByLabel,
-	liveDaemonsByNodeId,
-	onSelectNode,
-	onRetry,
-}) {
-	return (
-		<div className="card arch-col-card">
-			<div className="card-body" style={{ padding: 10 }}>
-				<DiagramBody
-					diagState={diagState}
-					activeDiagram={activeDiagram}
-					nodeByLabel={nodeByLabel}
-					liveDaemonsByNodeId={liveDaemonsByNodeId}
-					onSelectNode={onSelectNode}
-					onRetry={onRetry}
-				/>
-			</div>
-		</div>
-	);
-}
 
 function DiagramBody({
 	diagState,
@@ -786,6 +764,27 @@ function ArchIconTargetAR() {
 // Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
 //   같은 페치가 드리프트·거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 셋의 예고이기도 함.
 
+// 스트립 로드 실패 줄 — live 와 큐가 같은 모양을 씀. 컨테이너 클래스는 호출부가 정함:
+// 두 경보는 각자의 클래스(.arch-live-strip / .arch-queue-error)로 구별돼야 함.
+// detail 은 끊긴 원인을 이름으로 부르는 자리 — 없으면 그 줄만 빠짐.
+function StripAlertAR({ className, message, detail, onRetry }) {
+	return (
+		<div className={className} role="alert">
+			<span className="fs-meta text-crit" style={{ flexShrink: 0 }}>
+				{message}
+			</span>
+			{detail && (
+				<span className="fs-meta font-mono text-dim truncate">{detail}</span>
+			)}
+			{onRetry && (
+				<button className="btn ghost sm" onClick={onRetry}>
+					Retry
+				</button>
+			)}
+		</div>
+	);
+}
+
 function LiveStrip({ state, onRetry }) {
 	if (state.status === "loading") {
 		return (
@@ -798,22 +797,12 @@ function LiveStrip({ state, onRetry }) {
 	}
 	if (state.status === "error") {
 		return (
-			<div className="arch-live-strip" role="alert">
-				<span className="fs-meta text-crit" style={{ flexShrink: 0 }}>
-					Couldn't load live data
-				</span>
-				{/* 실제 에러 메시지 노출 — 원인 식별용 */}
-				{state.error && (
-					<span className="fs-meta font-mono text-dim truncate">
-						{state.error}
-					</span>
-				)}
-				{onRetry && (
-					<button className="btn ghost sm" onClick={onRetry}>
-						Retry
-					</button>
-				)}
-			</div>
+			<StripAlertAR
+				className="arch-live-strip"
+				message="Couldn't load live data"
+				detail={state.error}
+				onRetry={onRetry}
+			/>
 		);
 	}
 
@@ -850,21 +839,14 @@ function QueueStrip({ pendingCount, topSignal, errors, onRetry }) {
 					</span>
 				</div>
 			)}
+			{/* 끊긴 저장소를 이름으로 부름 — 어느 쪽이 죽었는지가 복구의 첫 단서임 */}
 			{errors.length > 0 && (
-				<div className="arch-queue-error" role="alert">
-					<span className="fs-meta text-crit" style={{ flexShrink: 0 }}>
-						Couldn't load the self-improvement queue
-					</span>
-					{/* 끊긴 저장소를 이름으로 부름 — 어느 쪽이 죽었는지가 복구의 첫 단서임 */}
-					<span className="fs-meta font-mono text-dim truncate">
-						{errors.join(" · ")}
-					</span>
-					{onRetry && (
-						<button className="btn ghost sm" onClick={onRetry}>
-							Retry
-						</button>
-					)}
-				</div>
+				<StripAlertAR
+					className="arch-queue-error"
+					message="Couldn't load the self-improvement queue"
+					detail={errors.join(" · ")}
+					onRetry={onRetry}
+				/>
 			)}
 		</section>
 	);
@@ -1115,39 +1097,64 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 
 // 거버넌스 멤버십 배너 — 매트릭스가 선언한 scope/rule 문서가 사라졌을 때 그 이름을 부른다.
 // 총계 배지는 무엇이 없어졌는지 말하지 못하므로 이름 목록이 곧 신호다.
-function MembershipBannerAR({ absent, sourceMissing }) {
+// 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone 과 아이콘,
+// 문구, 배지 목록만 달리한 같은 상자임. tone 은 CSS 변수명으로 그대로 들어가므로
+// 새 tone 은 그 이름의 변수가 tokens.css 에 있어야 함. 아이콘 색 클래스는 리터럴 표로 둠 —
+// 조립한 클래스명은 클래스 스캐너가 보지 못함.
+const BANNER_TONE_TEXT_CLASS = {
+	warn: "text-warn",
+	crit: "text-crit",
+	info: "text-info",
+};
+
+function AlertBannerAR({ tone, icon, title, note, badges }) {
 	const { Icon, Badge } = window.UI;
-	const names = absent || [];
+	const items = badges || [];
 	return (
 		<div
 			role="alert"
 			className="rounded-md border p-3 flex items-start gap-3"
 			style={{
-				background: "rgb(var(--warn) / 0.08)",
-				borderColor: "rgb(var(--warn) / 0.4)",
+				background: `rgb(var(--${tone}) / 0.08)`,
+				borderColor: `rgb(var(--${tone}) / 0.4)`,
 			}}
 		>
-			<Icon name="warn" size={16} className="text-warn mt-0.5" />
+			<Icon
+				name={icon}
+				size={16}
+				className={`${BANNER_TONE_TEXT_CLASS[tone]} mt-0.5`}
+			/>
 			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">
-					{sourceMissing
-						? "Governance membership unverifiable — compliance matrix unreadable"
-						: "Governance document missing"}
-				</div>
-				<div className="fs-meta text-dim mt-1">
-					The compliance matrix names these files; they are not on disk.
-				</div>
-				{names.length > 0 && (
+				<div className="fs-body font-medium text-ink">{title}</div>
+				<div className="fs-meta text-dim mt-1">{note}</div>
+				{items.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
-						{names.map((name) => (
-							<Badge key={name} role="status" tone="warn" glyph={false}>
-								{name}
+						{items.map((it) => (
+							<Badge key={it.key} role="status" tone={tone} glyph={false}>
+								{it.label}
 							</Badge>
 						))}
 					</div>
 				)}
 			</div>
 		</div>
+	);
+}
+
+function MembershipBannerAR({ absent, sourceMissing }) {
+	const names = (absent || []).map((name) => ({ key: name, label: name }));
+	return (
+		<AlertBannerAR
+			tone="warn"
+			icon="warn"
+			title={
+				sourceMissing
+					? "Governance membership unverifiable — compliance matrix unreadable"
+					: "Governance document missing"
+			}
+			note="The compliance matrix names these files; they are not on disk."
+			badges={names}
+		/>
 	);
 }
 
@@ -1156,71 +1163,42 @@ function MembershipBannerAR({ absent, sourceMissing }) {
  * 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부름.
  */
 function DualWriteBannerAR({ writers }) {
-	const { Icon, Badge } = window.UI;
+	const names = (writers || []).map((w) => ({
+		key: w.writer_name,
+		label: w.writer_name,
+	}));
 	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">
-					Dual-write stopped — these writers are not recording
-				</div>
-				{/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */}
-				<div className="fs-meta text-dim mt-1">
-					Marker scan found no dual-write block, or could not read the file.
-				</div>
-				<div className="flex flex-wrap gap-1.5 mt-2">
-					{(writers || []).map((w) => (
-						<Badge key={w.writer_name} role="status" tone="crit" glyph={false}>
-							{w.writer_name}
-						</Badge>
-					))}
-				</div>
-			</div>
-		</div>
+		<AlertBannerAR
+			tone="crit"
+			icon="warn"
+			title="Dual-write stopped — these writers are not recording"
+			/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */
+			note="Marker scan found no dual-write block, or could not read the file."
+			badges={names}
+		/>
 	);
 }
 
 // 설계도 카운트 드리프트 배너 — role=alert 재사용 · info-tone(구조 정합성 nudge)으로 daemon-down crit/warn(런타임 헬스)과 시각 분리.
 // diffs = [{ key, claimed, actual }] — mismatch 항목별 주장↔실측 노출.
 function DriftBannerAR({ diffs }) {
-	const { Icon, Badge } = window.UI;
-	const items = diffs || [];
+	const items = (diffs || []).map((d) => ({
+		key: d.key,
+		label: `${d.key} ${d.claimed}→${d.actual}`,
+	}));
 	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--info) / 0.08)",
-				borderColor: "rgb(var(--info) / 0.4)",
-			}}
-		>
-			<Icon name="git" size={16} className="text-info mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">
-					Map out of date — live counts don't match
-				</div>
-				<div className="fs-meta text-dim mt-1">
+		<AlertBannerAR
+			tone="info"
+			icon="git"
+			title="Map out of date — live counts don't match"
+			note={
+				<>
 					Run{" "}
 					<span className="font-mono">/glass-atrium-ops-verify-arch</span> for a deeper check.
-				</div>
-				{items.length > 0 && (
-					<div className="flex flex-wrap gap-1.5 mt-2">
-						{items.map((d) => (
-							<Badge key={d.key} role="status" tone="info" glyph={false}>
-								{`${d.key} ${d.claimed}→${d.actual}`}
-							</Badge>
-						))}
-					</div>
-				)}
-			</div>
-		</div>
+				</>
+			}
+			badges={items}
+		/>
 	);
 }
 

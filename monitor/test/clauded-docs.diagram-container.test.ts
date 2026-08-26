@@ -178,16 +178,26 @@ const TYPE_NODES = FIXTURE_TYPES.map(
   (type) => `<pre class="mermaid" data-type="${type}"></pre>`,
 ).join("");
 
-/** 뷰어 실제 DOM 계층(wrap > inner > isolation)을 그대로 세운 하네스 문서. */
-function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
+/** 하네스 문서 껍데기 — 두 배치가 head 와 body 바깥을 같이 씀. */
+function buildHarnessDocument(css: string, body: string, headExtra = ""): string {
   return (
-    "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">" +
+    '<!doctype html><html lang="ko"><head><meta charset="utf-8">' +
+    headExtra +
     `<style>${css}</style>` +
     "</head><body>" +
+    body +
+    "</body></html>"
+  );
+}
+
+/** 뷰어 실제 DOM 계층(wrap > inner > isolation)을 그대로 세운 하네스 문서. */
+function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
+  return buildHarnessDocument(
+    css,
     '<div class="detail-fullscreen"><div class="doc-fs-body-wrap">' +
-    '<div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
-    nodes +
-    "</div></div></div></div></body></html>"
+      '<div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+      nodes +
+      "</div></div></div></div>",
   );
 }
 
@@ -201,18 +211,16 @@ function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
  * 가로 스크롤바를 만드는 하네스 고유 잡음을 없앰.
  */
 function buildFullscreenHarness(css: string, nodes: string): string {
-  return (
-    "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">" +
-    "<style>body{margin:0}</style>" +
-    `<style>${css}</style>` +
-    "</head><body>" +
+  return buildHarnessDocument(
+    css,
     '<div class="detail-fullscreen"><div class="doc-fs-container"><div class="doc-fs-body">' +
-    '<div class="doc-fs-split">' +
-    '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
-    nodes +
-    "</div></div></div>" +
-    '<aside class="doc-fs-meta-side"></aside>' +
-    "</div></div></div></div></body></html>"
+      '<div class="doc-fs-split">' +
+      '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+      nodes +
+      "</div></div></div>" +
+      '<aside class="doc-fs-meta-side"></aside>' +
+      "</div></div></div></div>",
+    "<style>body{margin:0}</style>",
   );
 }
 
@@ -436,24 +444,46 @@ const PRESET_NODES = SIZE_PRESETS.map(
   (preset) => `<pre class="mermaid ${preset}"></pre>`,
 ).join("");
 
-let viewerPresetCache: Promise<NodeMeasurement[]> | null = null;
-let exportPresetCache: Promise<NodeMeasurement[]> | null = null;
+// 프리셋 계측은 브라우저 왕복이라 다리마다 한 번만 돌리고 여러 test 가 나눠 씀.
+const presetCache = new Map<string, Promise<NodeMeasurement[]>>();
+
+function getPresetMeasurements(
+  key: string,
+  measure: () => Promise<NodeMeasurement[]>,
+): Promise<NodeMeasurement[]> {
+  let cached = presetCache.get(key);
+  if (cached === undefined) {
+    cached = measure();
+    presetCache.set(key, cached);
+  }
+  return cached;
+}
+
+/** 뷰어 쪽 두 배치 — 세우는 하네스와 스크롤 원점만 다르고 나머지 계측 조건은 같음. */
+function measurePresetsIn(
+  key: string,
+  buildHarness: (css: string, nodes: string) => string,
+  originSelector?: string,
+): Promise<NodeMeasurement[]> {
+  return getPresetMeasurements(key, () =>
+    measureRenderedNodes(
+      buildHarness(getViewerDocBodyCss(), PRESET_NODES),
+      getViewerMermaidConfig(),
+      SIZE_PRESETS.map(() => PRESET_SOURCE),
+      {
+        labels: SIZE_PRESETS,
+        viewportWidth: PRESET_VIEWPORT_WIDTH,
+        originSelector,
+      },
+    ),
+  );
+}
 
 function measureViewerPresets(): Promise<NodeMeasurement[]> {
-  if (viewerPresetCache !== null) return viewerPresetCache;
-
-  viewerPresetCache = measureRenderedNodes(
-    buildViewerHarness(getViewerDocBodyCss(), PRESET_NODES),
-    getViewerMermaidConfig(),
-    SIZE_PRESETS.map(() => PRESET_SOURCE),
-    { labels: SIZE_PRESETS, viewportWidth: PRESET_VIEWPORT_WIDTH },
-  );
-  return viewerPresetCache;
+  return measurePresetsIn("viewer", buildViewerHarness);
 }
 
 function measureExportPresets(): Promise<NodeMeasurement[]> {
-  if (exportPresetCache !== null) return exportPresetCache;
-
   const nodes = SIZE_PRESETS.map(
     (preset) => `<pre class="mermaid ${preset}">${PRESET_SOURCE}</pre>`,
   ).join("");
@@ -462,13 +492,14 @@ function measureExportPresets(): Promise<NodeMeasurement[]> {
     `<style>body{${DOC_CONTAINER_CSS}}.doc-column{${DOC_COLUMN_CSS}}</style></head>` +
     `<body><main class="doc-column">${nodes}</main></body></html>`;
 
-  exportPresetCache = renderSelfContainedHtml(body, "html").then((html) =>
-    measureRenderedNodes(html, null, null, {
-      labels: SIZE_PRESETS,
-      viewportWidth: PRESET_VIEWPORT_WIDTH,
-    }),
+  return getPresetMeasurements("export", () =>
+    renderSelfContainedHtml(body, "html").then((html) =>
+      measureRenderedNodes(html, null, null, {
+        labels: SIZE_PRESETS,
+        viewportWidth: PRESET_VIEWPORT_WIDTH,
+      }),
+    ),
   );
-  return exportPresetCache;
 }
 
 /** 프리셋 이름 → 렌더 폭. 노드 순서가 아니라 이름으로 대조하기 위함. */
@@ -521,22 +552,8 @@ test("AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 
 // 전체화면 배치에서의 breakout 이탈 — 폭 사다리만 재면 놓치는 다리.
 // 프리셋이 본문 컬럼 밖으로 나가는 것 자체는 의도이나, 스크롤 컨테이너의 원점보다
 // 왼쪽으로 나간 부분은 어떤 스크롤로도 닿지 않아 그대로 소실됨.
-let fullscreenPresetCache: Promise<NodeMeasurement[]> | null = null;
-
 function measureFullscreenPresets(): Promise<NodeMeasurement[]> {
-  if (fullscreenPresetCache !== null) return fullscreenPresetCache;
-
-  fullscreenPresetCache = measureRenderedNodes(
-    buildFullscreenHarness(getViewerDocBodyCss(), PRESET_NODES),
-    getViewerMermaidConfig(),
-    SIZE_PRESETS.map(() => PRESET_SOURCE),
-    {
-      labels: SIZE_PRESETS,
-      viewportWidth: PRESET_VIEWPORT_WIDTH,
-      originSelector: ".doc-fs-body-wrap",
-    },
-  );
-  return fullscreenPresetCache;
+  return measurePresetsIn("fullscreen", buildFullscreenHarness, ".doc-fs-body-wrap");
 }
 
 test("AC-T23 뷰어 전체화면: 프리셋이 스크롤 원점 왼쪽으로 새지 않음", async () => {
