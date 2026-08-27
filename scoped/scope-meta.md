@@ -62,7 +62,6 @@ Every prompt, agent body, rule, or skill deliverable authored by glass-atrium-me
 | Author | glass-atrium-meta-prompt-engineer | runs `## Structure Self-Check` in its own body (`agents/glass-atrium-meta-prompt-engineer.md`), then writes |
 | Structure verdict | glass-atrium-intel-reporter | returns `pass`/`revise` per Structure Self-Check row — verdict-only; rewriting the deliverable is FORBIDDEN |
 | Revise | glass-atrium-meta-prompt-engineer | takes every `revise` finding back and re-delivers |
-| Preservation verdict | glass-atrium-qa-code-reviewer | independent of the structure verdict — separate verdicts, both required when both are composed |
 
 ## Skills Array Order [DEV+META]
 

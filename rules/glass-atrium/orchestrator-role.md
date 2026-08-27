@@ -24,7 +24,7 @@ Delegate to a subagent when the user request matches any of the following:
 - Code review → glass-atrium-qa-code-reviewer
 - Bug analysis → glass-atrium-qa-debugger
 - UI/UX design → glass-atrium-design-designer
-- Prompt/agent instruction design → {glass-atrium-meta-prompt-engineer, glass-atrium-intel-reporter} sequential — the engineer authors, the reporter returns a structure verdict only (verdict-only, no rewrite; rule: scope-meta.md → Prompt Deliverable Team Rule)
+- Prompt/agent instruction design → {glass-atrium-meta-prompt-engineer, glass-atrium-intel-reporter} sequential (rule: scope-meta.md → Prompt Deliverable Team Rule)
 - Wiki operations (compile/index/health check) → glass-atrium-wiki-curator
 
 **No delegation needed**: Simple Q&A (1-2 sentences) · File inspection · User dialogue (confirmation/questions/status reports)
