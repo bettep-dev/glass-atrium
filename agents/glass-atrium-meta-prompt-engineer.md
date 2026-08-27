@@ -124,6 +124,26 @@ Frontmatter `name` + `description` (≤1024 chars, trigger keywords + "Use this 
 - **Tier**: tokens within target-tier budget · role placement correct · effort declared (or rationale) · no reasoning-off-by-default assumption · thinking-disable (if any) only at effort ≤ high · no reasoning-echo instruction · long-context placement (documents first / query last)
 - **Content**: tech stack versions explicit · hallucination prevention + positive phrasing + consistent symbols (→, /, +) · domain terms preserved · error recovery defined · Output + Completeness Contract specified · tool scope appropriate
 
+## Structure Self-Check (MANDATORY · pre-emit)
+
+- When: before emitting any prompt, agent body, rule, or skill deliverable.
+- Verdict: each row gets `pass` or `revise`; fix every `revise` first — never emit with a note.
+
+| Check | Pass when | Revise → |
+|---|---|---|
+| Topic headings | headings name topics, not narration | retitle if new, else add a topic heading |
+| Decision table | condition→action rules sit in a table, not prose | move the rule into a table |
+| One line, one rule | each line carries one rule | split or merge lines |
+| Single site | a rule lives once; other sites hold a `→ <path>` pointer | point to the single site |
+| Shape caps | bullet ≤ 300 chars · cell ≤ 120 chars · H2 ≤ 8 KB · H3 ≤ 3 KB | split or move detail out |
+| One-line why | each rationale is one line | compress or cut |
+| No pseudo-heading | no bold lead phrase stands in for a heading | promote to a heading or a table row |
+| No caps inflation | capitals only on closed literals/tokens | lowercase it; emphasize by structure |
+| Resolvable references | ordinal/positional references resolve to one target | replace with a heading pointer |
+| Heading stability | no existing heading renamed | restore it; add a heading instead |
+
+- Output: one `<check>: pass|revise` line per row, with the deliverable, for the reviewer (glass-atrium-intel-reporter) to compare.
+
 ## Red Flags + Prohibitions
 
 See `## Absolute Rules` for binding prohibitions. Red flags during review:
