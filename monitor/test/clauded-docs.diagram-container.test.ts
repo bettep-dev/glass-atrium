@@ -23,12 +23,15 @@ import { dirname, resolve } from "node:path";
 
 import { chromium, type Browser } from "playwright";
 
-import { renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
+import { EXPORT_SCREEN, renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+// 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
+// index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유.
+import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
-const VIEWER_INDEX_PATH = resolve(MONITOR_ROOT, "public/index.html");
+const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
@@ -66,9 +69,14 @@ const FIXTURES = new Map<string, string>([
   ],
   [
     "erDiagram",
+    // 두 관계짜리 원본은 ELK 아래에서 455px 로 떨어져 뷰어 컨테이너(382px)는 넘고 내보내기
+    // 컨테이너(464px)는 못 넘었음 — 두 기준 사이에 낀 폭이라 한쪽 다리만 조용히 초록이 됨.
+    // 관계를 넷으로 늘려 두 컨테이너 모두에서 확실히 넘기게 함.
     "erDiagram\n" +
       '  OUTCOME_RECORD ||--o{ CORRECTION_SIGNAL : "produces on revision"\n' +
-      '  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"',
+      '  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"\n' +
+      '  AGENT_REGISTRY_ENTRY ||--o{ DELEGATION_SCOPE_DECLARATION : "declares files and deliverable"\n' +
+      '  CORRECTION_SIGNAL }o--|| DIRECTIVE_HINT_DISTILLATION : "distilled to one English line"',
   ],
   [
     "classDiagram",
@@ -85,6 +93,7 @@ const FIXTURES = new Map<string, string>([
   ],
   [
     "gitGraph",
+    // 730px 렌더 — 내보내기 컨테이너(464px) 대비 +266px · 뷰어 컨테이너(382px) 대비 +348px.
     "gitGraph\n" +
       '  commit id: "wave-one-integration-landed"\n' +
       "  branch feature/diagram-container-width\n" +
@@ -92,7 +101,13 @@ const FIXTURES = new Map<string, string>([
       '  commit id: "per-type-use-max-width-off"\n' +
       "  checkout main\n" +
       "  merge feature/diagram-container-width\n" +
-      '  commit id: "integration-reconcile-both-directions"',
+      '  commit id: "integration-reconcile-both-directions"\n' +
+      "  branch feature/gitgraph-fixture-margin\n" +
+      '  commit id: "gitgraph-fixture-widened"\n' +
+      '  commit id: "export-margin-measured"\n' +
+      "  checkout main\n" +
+      "  merge feature/gitgraph-fixture-margin\n" +
+      '  commit id: "shared-config-read-through-one-helper"',
   ],
   [
     "C4",
@@ -131,39 +146,21 @@ interface MeasureOptions {
 
 let browser: Browser;
 let mermaidBundle: string;
+let vendorElkBundle: string;
 
 before(async () => {
   browser = await chromium.launch({ headless: true });
   // 뷰어와 같은 드라이버 — import.meta.resolve 로 로컬 번들을 씀(네트워크 불요).
   const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
   mermaidBundle = await readFile(resolve(dirname(pkgPath), "dist", "mermaid.min.js"), "utf8");
+  // 공유 설정이 layout:'elk' 를 요구하므로 로더도 뷰어와 같이 실려야 함 — 없으면 렌더가 throw 한다.
+  vendorElkBundle = await readFile(VENDOR_ELK_PATH, "utf8");
 });
 
 after(async () => {
   await browser.close();
   await resetBrowserForTests();
 });
-
-/** public/index.html 의 인라인 init 인자를 원문에서 뽑음 — 사본을 두지 않기 위함. */
-function getViewerMermaidConfig(): Record<string, unknown> {
-  const html = readFileSync(VIEWER_INDEX_PATH, "utf8");
-  const at = html.indexOf("window.mermaid?.initialize(");
-  assert.notEqual(at, -1, "public/index.html 에 mermaid initialize 호출이 없음");
-  const source = html.slice(at, html.indexOf("</script>", at));
-
-  let captured: Record<string, unknown> | null = null;
-  const windowStub = {
-    mermaid: {
-      initialize: (config: Record<string, unknown>) => {
-        captured = config;
-      },
-    },
-  };
-  new Function("window", source)(windowStub);
-
-  assert.notEqual(captured, null, "initialize 인자를 잡지 못함");
-  return captured as unknown as Record<string, unknown>;
-}
 
 /** clauded-docs.jsx 의 인라인 <style> 템플릿 리터럴 본문. */
 function getViewerDocBodyCss(): string {
@@ -236,6 +233,11 @@ async function measureRenderedNodes(
 
   const context = await browser.newContext({
     viewport: { width: options.viewportWidth ?? NARROW_VIEWPORT_WIDTH, height: 900 },
+    // 화면은 뷰포트와 따로 선언함 — C4 는 행 줄바꿈 한계를 `screen.availWidth` 에서 읽으므로
+    // (mermaid 11 c4Diagram-*.mjs), 선언하지 않으면 이 하네스의 좁은 뷰포트가 그대로 화면폭이
+    // 되어 내보내기와 다른 행수로 눕는다. 내보내기가 쓰는 그 상수를 그대로 씀 — 좁은 뷰포트는
+    // 넘침 다리가 요구하는 값이라 그대로 두고, 화면 기준만 두 경로에서 같게 맞춘다.
+    screen: { ...EXPORT_SCREEN },
   });
   const page = await context.newPage();
   await page.route("**/*", (route) => route.abort());
@@ -244,17 +246,22 @@ async function measureRenderedNodes(
 
     if (config !== null && sources !== null) {
       await page.addScriptTag({ content: mermaidBundle });
+      await page.addScriptTag({ content: vendorElkBundle });
       const renderError = await page.evaluate(async (args) => {
         const g = globalThis as unknown as {
           mermaid?: {
             initialize: (c: unknown) => void;
+            registerLayoutLoaders: (loaders: unknown) => void;
             render: (id: string, src: string) => Promise<{ svg: string }>;
           };
+          mermaidLayoutElk?: { default?: unknown };
           document: { querySelectorAll: (sel: string) => ArrayLike<{ innerHTML: string }> };
         };
         const mermaid = g.mermaid;
         if (mermaid === undefined) return "window.mermaid undefined";
         try {
+          // index.html 과 같은 순서 — 등록이 initialize 보다 먼저.
+          mermaid.registerLayoutLoaders(g.mermaidLayoutElk?.default ?? []);
           mermaid.initialize(args.config);
           const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
           for (let i = 0; i < nodes.length; i += 1) {
@@ -335,6 +342,27 @@ function getExportedHtml(): Promise<string> {
   return exportedHtmlCache;
 }
 
+/**
+ * 채택 타입 전수를 평가하고 실패를 모아 한 번에 단언함.
+ *
+ * 타입마다 assert 를 때리면 첫 실패에서 끊겨 뒤의 타입은 평가조차 되지 않음 — 한 타입이
+ * 깨진 동안 나머지가 초록인지 빨강인지 아무도 모르는 상태가 됨. 판정기는 실패 사유
+ * 문자열 배열(빈 배열 = 통과)을 돌려주고, 여기서 전부 이어붙여 한 번만 단언함.
+ */
+function assertEveryType(
+  measurements: NodeMeasurement[],
+  leg: string,
+  check: (m: NodeMeasurement) => string[],
+): void {
+  const failures = measurements.flatMap(check);
+  assert.deepEqual(
+    failures,
+    [],
+    `${leg}: ${measurements.length} 타입 중 ${failures.length} 건 실패\n  - ` +
+      failures.join("\n  - "),
+  );
+}
+
 test("픽스처 집합이 diagram-types.json 의 채택 타입을 전부 덮음", () => {
   const declaration = JSON.parse(
     readFileSync(DECLARATION_PATH, "utf8"),
@@ -348,66 +376,74 @@ test("픽스처 집합이 diagram-types.json 의 채택 타입을 전부 덮음"
 test("AC-T22(b) 뷰어: 채택 타입 전부의 산출 <svg> 에 인라인 max-width 가 없음", async () => {
   const measurements = await measureRenderedNodes(
     buildViewerHarness(getViewerDocBodyCss()),
-    getViewerMermaidConfig(),
+    evaluateMermaidConfig(),
     FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
   );
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(m.svgPresent, `${m.type}: <svg> 가 렌더되지 않음`);
-    assert.ok(
-      !/max-width/i.test(m.svgStyleAttr),
-      `${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`,
-    );
-  }
+  assertEveryType(measurements, "뷰어 인라인 max-width", (m) => {
+    if (!m.svgPresent) return [`${m.type}: <svg> 가 렌더되지 않음`];
+    if (/max-width/i.test(m.svgStyleAttr)) {
+      return [`${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+    }
+    return [];
+  });
 });
 
 test("AC-T22(a) 뷰어: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음", async () => {
   const measurements = await measureRenderedNodes(
     buildViewerHarness(getViewerDocBodyCss()),
-    getViewerMermaidConfig(),
+    evaluateMermaidConfig(),
     FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
   );
 
-  for (const m of measurements) {
-    assert.ok(
-      m.overflowX === "auto" || m.overflowX === "scroll",
-      `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-    );
-    assert.ok(
-      m.scrollWidth > m.clientWidth,
-      `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
-    );
-  }
+  assertEveryType(measurements, "뷰어 가로 스크롤", (m) => {
+    const failures: string[] = [];
+    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+      failures.push(
+        `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+      );
+    }
+    if (!(m.scrollWidth > m.clientWidth)) {
+      failures.push(
+        `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
+      );
+    }
+    return failures;
+  });
 });
 
 test("AC-T22(b) 내보내기: 산출 HTML 의 <svg> 전부에 인라인 max-width 가 없음", async () => {
   const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(m.svgPresent, `${m.type}: 내보내기 산출물에 <svg> 가 없음`);
-    assert.ok(
-      !/max-width/i.test(m.svgStyleAttr),
-      `${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`,
-    );
-  }
+  assertEveryType(measurements, "내보내기 인라인 max-width", (m) => {
+    if (!m.svgPresent) return [`${m.type}: 내보내기 산출물에 <svg> 가 없음`];
+    if (/max-width/i.test(m.svgStyleAttr)) {
+      return [`${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+    }
+    return [];
+  });
 });
 
 test("AC-T22(a) 내보내기: 산출 HTML 을 열면 가로 스크롤이 생기고 잘리지 않음", async () => {
   const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(
-      m.overflowX === "auto" || m.overflowX === "scroll",
-      `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-    );
-    assert.ok(
-      m.scrollWidth > m.clientWidth,
-      `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
-    );
-  }
+  assertEveryType(measurements, "내보내기 가로 스크롤", (m) => {
+    const failures: string[] = [];
+    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+      failures.push(
+        `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+      );
+    }
+    if (!(m.scrollWidth > m.clientWidth)) {
+      failures.push(
+        `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
+      );
+    }
+    return failures;
+  });
 });
 
 // ── AC-T23 크기 프리셋 ───────────────────────────────────────────────────────
@@ -468,7 +504,7 @@ function measurePresetsIn(
   return getPresetMeasurements(key, () =>
     measureRenderedNodes(
       buildHarness(getViewerDocBodyCss(), PRESET_NODES),
-      getViewerMermaidConfig(),
+      evaluateMermaidConfig(),
       SIZE_PRESETS.map(() => PRESET_SOURCE),
       {
         labels: SIZE_PRESETS,

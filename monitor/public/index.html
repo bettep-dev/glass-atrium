@@ -54,91 +54,23 @@
 </script>
 <link rel="stylesheet" href="styles/tokens.css?v=6" />
 <link rel="stylesheet" href="styles/base.css?v=9" />
-<!-- Mermaid 11 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. -->
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- Mermaid 11.15.0 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. 버전은 package.json 의존성과 정확히 같은 값으로 고정 — 뜬 태그(`mermaid@11`)는 CDN 이 패치를 낼 때마다 뷰어 엔진을 말없이 바꿔, 내보내기가 주입하는 번들과 같은 소스를 다른 폭으로 눕힌다(대조: test/mermaid-config.parity.test.ts). -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js" integrity="sha384-yQ4mmBBT+vhTAwjFH0toJXNYJ6O4usWnt6EPIdWwrRvx2V/n5lXuDZQwQFeSFydF" crossorigin="anonymous"></script>
+<!-- ELK 레이아웃 로더 0.2.3 — 벤더 IIFE. 플러그인은 ESM 전용이고 라이브 갱신은 npm install 을 돌리지 않으므로 저장소 파일을 그대로 배포(출처·해시는 provenance 사이드카). -->
+<script src="assets/vendor/mermaid-layout-elk-0.2.3.min.js"></script>
+<!-- Mermaid 런타임 설정 — 뷰어와 HTML 내보내기가 함께 읽는 단일 소스. 값은 mermaid-config.js 에만 둔다. -->
+<script src="mermaid-config.js"></script>
 <!-- svg-pan-zoom 3.6.2 — Mermaid 가 생성한 SVG 에 휠 zoom + 드래그 pan + 더블클릭 zoom-in + 컨트롤 아이콘 부여. window.svgPanZoom 으로 노출. -->
-<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js" integrity="sha384-GGX4llYprEPGp9w5caepn95YWAEflHnsA5ewt+Y+cBEb95og5cXKllnWKSELlzbx" crossorigin="anonymous"></script>
 <script>
-  // dark theme + 폰트 + 전체 너비 fit. startOnLoad:false → architecture.jsx 가 canonical 맵 1장을 수동 render.
-  // securityLevel:'loose' — mermaid_source 는 백엔드가 옵시디언 vault 에서 직접 읽은 internal source (외부 사용자 입력 아님).
-  window.mermaid?.initialize({
-    startOnLoad: false,
-    theme: 'dark',
-    themeVariables: {
-      // 다크 가독성 — theme:'dark' 의 type-specific 텍스트 기본값이 "calculated"/"black" 으로 남아
-      //   #0a0a0a 위 dark-on-dark 불가시 발생 (mindmap 중심노드·무색노드, pie/journey/timeline 라벨).
-      //   → 진단(2026-06-01): primaryTextColor 는 flowchart node 만 커버, 타입별 변수는 미설정 fallback.
-      //   변수명 전부 mermaid@11 번들 grep 으로 실측 검증 (context7 미가용 → CDN 번들 직접 대조).
-      darkMode: true,
-      background: '#0a0a0a',
-      primaryColor: '#1e3a8a',
-      primaryTextColor: '#e5e7eb',
-      lineColor: '#94a3b8',
-      fontSize: '14px',
-      fontFamily: 'Pretendard, system-ui, -apple-system, sans-serif',
-
-      // 전역 텍스트 — labelTextColor→actorTextColor / textColor→primaryTextColor 체인의 dark 기본값이
-      //   "black"/"calculated" → 명시 light 고정. taskTextColor·actorTextColor 도 이 체인 의존.
-      textColor: '#e5e7eb',
-      nodeTextColor: '#e5e7eb',
-      labelTextColor: '#e5e7eb',
-      titleColor: '#f1f5f9',
-      noteTextColor: '#0a0a0a',     // noteBkg 가 밝은 황색 → 노트 텍스트는 어둡게(대비 확보)
-      noteBkgColor: '#fde68a',
-
-      // 노드/섹션 fill — light 텍스트가 얹히도록 어두운 면색 표준화 (자동 cScale 밝은 fill 회피).
-      mainBkg: '#1e293b',
-      secondaryColor: '#334155',
-      tertiaryColor: '#475569',
-      secondaryTextColor: '#e5e7eb',
-      tertiaryTextColor: '#e5e7eb',
-
-      // pie — title/section/legend 텍스트는 raw 기본값 미할당(→ 종종 검정) → 전부 light, stroke 는 line 톤.
-      pieTitleTextColor: '#f1f5f9',
-      pieSectionTextColor: '#e5e7eb',
-      pieLegendTextColor: '#e5e7eb',
-      pieStrokeColor: '#0a0a0a',
-      pieOuterStrokeColor: '#94a3b8',
-
-      // journey — actor/task/label 텍스트 + label 박스 배경 (dark 기본 actorTextColor="black" 보정).
-      actorTextColor: '#e5e7eb',
-      taskTextColor: '#e5e7eb',
-      labelBoxBkgColor: '#1e293b',
-      // section 타이틀 텍스트(.section-type-N)는 fillType0..7 사용 → 기본값 primaryColor(#1e3a8a) 라
-      //   #0a0a0a 위 1.9:1 불가시(실측 검출). 8개 전부 light 명시로 보정.
-      fillType0: '#e5e7eb', fillType1: '#e5e7eb', fillType2: '#e5e7eb', fillType3: '#e5e7eb',
-      fillType4: '#e5e7eb', fillType5: '#e5e7eb', fillType6: '#e5e7eb', fillType7: '#e5e7eb',
-
-      // stateDiagram-v2 — 상태 라벨 + 복합 상태 타이틀 배경.
-      labelColor: '#e5e7eb',
-      stateLabelColor: '#e5e7eb',
-      compositeTitleBackground: '#1e293b',
-
-      // mindmap — 라벨색은 cScaleLabel0..11 사용(cScaleLabel = Ge(labelTextColor) invert 체인) →
-      //   무색노드/중심노드 dark-on-dark 의 직접 원인. 12개 전부 light 명시로 fallback invert 차단.
-      cScaleLabel0: '#e5e7eb', cScaleLabel1: '#e5e7eb', cScaleLabel2: '#e5e7eb',
-      cScaleLabel3: '#e5e7eb', cScaleLabel4: '#e5e7eb', cScaleLabel5: '#e5e7eb',
-      cScaleLabel6: '#e5e7eb', cScaleLabel7: '#e5e7eb', cScaleLabel8: '#e5e7eb',
-      cScaleLabel9: '#e5e7eb', cScaleLabel10: '#e5e7eb', cScaleLabel11: '#e5e7eb',
-    },
-    // useMaxWidth 가 참이면 mermaid 가 산출 <svg> 에 인라인 max-width 를 찍어 컨테이너 규칙을 이김 → 폭은 컨테이너가 정하도록 전부 해제.
-    // BaseDiagramConfig 소속이라 상속이 없음 — 채택 타입(diagram-types.json)마다 따로 꺼야 함.
-    flowchart: {
-      htmlLabels: true,
-      curve: 'basis',
-      padding: 12,
-      nodeSpacing: 50,
-      rankSpacing: 60,
-      useMaxWidth: false,
-    },
-    sequence: { useMaxWidth: false },
-    state: { useMaxWidth: false },
-    er: { useMaxWidth: false },
-    class: { useMaxWidth: false },
-    gitGraph: { useMaxWidth: false },
-    c4: { useMaxWidth: false },
-    securityLevel: 'loose',
-  });
+  // 클래식 스크립트가 문서 순서로 실행되므로 준비 플래그 없이 동기 등록 — 등록 전에는 layout:'elk' 요청이 조용히 dagre 로 떨어짐.
+  window.mermaid?.registerLayoutLoaders(window.mermaidLayoutElk?.default ?? []);
+  // 설정 전역이 없으면 initialize 는 인자 없이 호출된 것처럼 라이브러리 기본값(dagre · light)으로 조용히 성공한다 —
+  // 404 난 설정 파일이 "화면은 뜨는데 배치와 색만 다른" 모양으로 남지 않도록 여기서 크게 끊는다.
+  if (!window.MERMAID_CONFIG) {
+    throw new Error("public/mermaid-config.js did not load — window.MERMAID_CONFIG is missing, so mermaid would fall back to library defaults (dagre, light theme)");
+  }
+  window.mermaid?.initialize(window.MERMAID_CONFIG);
 </script>
 </head>
 <body class="bg-surface text-ink antialiased">

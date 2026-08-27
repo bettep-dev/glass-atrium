@@ -32,7 +32,7 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
-import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
+import { CANONICAL_MAP, DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
@@ -43,6 +43,18 @@ import type {
 	ImprovementLearningLogRow,
 	ImprovementProposalRow,
 } from "../src/server/types/improvement.js";
+import {
+	assertFallbackWarningVisible,
+	assertLayoutsDiffer,
+	assertOrthogonalLinks,
+	createFallbackWatch,
+	findDiagonalSegments,
+	getProbe,
+	getRenderProbe,
+	type FallbackWatch,
+	type RenderProbe,
+} from "./lib/mermaid-elk-probe.js";
+import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -201,6 +213,9 @@ let selectors: { canvas: string; tabControl: string; desc: string };
 let liveFixture: ArchitectureLiveResponse;
 let queueFixture: QueueFixture;
 
+// 폴백 경고 감시 — 첫 렌더보다 먼저 붙어야 초기 경고를 놓치지 않으므로 페이지 생성 직후에 붙임.
+let elkWatch: FallbackWatch;
+
 // 케이스별 live 픽스처를 심고 화면을 다시 세움. about:blank 경유는 같은 URL 재방문이
 // same-document 로 흡수되어 재요청이 일어나지 않는 경우를 막기 위함.
 async function openMap(
@@ -311,6 +326,7 @@ before(async () => {
 
 	browser = await chromium.launch({ headless: true });
 	page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	elkWatch = createFallbackWatch(page);
 });
 
 after(async () => {
@@ -922,5 +938,469 @@ test("AC-T5 the ring displaces neither the drift banner nor the writer alert", a
 		await countAlertsNaming(OFF_WRITER),
 		1,
 		`writer alert naming ${OFF_WRITER} must survive beside the ring`,
+	);
+});
+
+
+// ── P0-2 ELK 증명 (clauded-docs/26410 §7) ──────────────────────────────────────
+// 화면이 실제로 그린 캔버스를 재는 것이 요점 — 같은 소스를 옆에서 다시 렌더하면
+// 지시자가 화면 경로를 통과했는지는 못 잰다.
+
+function getCanvasProbe(): Promise<RenderProbe> {
+	return getProbe(page, selectors.canvas, "canonical map canvas");
+}
+
+// 대조군 — 같은 소스에 layout opt-out 지시자 한 줄만 앞세운 것. 테마·간격·라벨은 공유 설정에서
+// 그대로 오므로(지시자는 설정과 깊은 병합) 남는 차이가 레이아웃 엔진뿐이다
+// (테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
+function getLayoutControl(id: string, layout: string): Promise<RenderProbe> {
+	assert.equal(
+		CANONICAL_MAP.mermaid_drawn.includes("%%{init"),
+		false,
+		"canonical mermaid_drawn must carry no %%{init}%% directive — the layout comes from the shared config",
+	);
+	return getRenderProbe(page, id, `%%{init: {"layout": "${layout}"}}%%\n${CANONICAL_MAP.mermaid_drawn}`);
+}
+
+test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback", async () => {
+	await openMap(getLiveFixture());
+	// 전제 먼저 — logLevel 이 3 을 넘으면 아래 경고 단언 전부가 공허해짐.
+	await assertFallbackWarningVisible(page);
+
+	const canvas = await getCanvasProbe();
+	const control = await getLayoutControl("d52-layout-control", "dagre");
+
+	assertLayoutsDiffer(canvas, control);
+});
+
+test("P0-2 every canvas edge is axis-aligned while the dagre control is not", async () => {
+	await openMap(getLiveFixture());
+	const canvas = await getCanvasProbe();
+
+	assertOrthogonalLinks(canvas.links, "canonical map canvas");
+
+	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.
+	// 파싱 실패를 "직교 아님" 으로 세면 dagre 가 C 를 그린다는 사실만으로 초록이 되고, 대각 0 개와 구별되지 않는다.
+	const control = await getLayoutControl("d52-orthogonality-control", "dagre");
+	const controlDiagonals = findDiagonalSegments(control.links, "layout control");
+	assert.ok(
+		controlDiagonals.length > 0,
+		`the dagre control drew no diagonal segment — the verdict discriminates nothing (links: ${control.links.join(" | ")})`,
+	);
+	// 같은 규칙을 캔버스에 그대로 돌려 반대 판정을 받는다 — 대조군의 대각이 규칙의 산물이 아님을 잠근다.
+	assert.deepStrictEqual(
+		findDiagonalSegments(canvas.links, "canonical map canvas"),
+		[],
+		`canvas carries diagonal segments under the same rule that counted ${controlDiagonals.length} in the dagre control`,
+	);
+});
+
+test("P0-2 the canvas logs no layout fallback, and this harness would catch one", async () => {
+	await openMap(getLiveFixture());
+	assert.deepStrictEqual(
+		elkWatch.messages,
+		[],
+		"mermaid logged a layout fallback — the map rendered on dagre while asking for ELK",
+	);
+
+	// 감시기 반증 — 이 하네스에서 실제로 잡히는지 재지 않으면 위 0건은 문자열이 영영 안 맞아도 초록임.
+	await getLayoutControl("d52-unregistered-control", "no-such-layout");
+	assert.ok(
+		elkWatch.messages.length > 0,
+		"an unregistered layout produced no captured warning — the watch certifies nothing",
+	);
+	elkWatch.clear();
+});
+
+// 벤더 번들은 두 번째 mermaid 런타임(mermaid.core 11.17.0, startOnLoad 기본 참)을 통째로 안고 있다 —
+// 사이드카 embedded 목록과 번들 안 version 문자열이 근거. 정적 판독으로는 그 사본의 load 훅이 실제로
+// 발화하는지 가릴 수 없어서, 화면이 뜬 상태의 관측으로 가른다.
+//
+// 실측(이 하네스에서 잰 값): 플러그인의 지연 임포트 render 청크가 평가된 뒤에 load 를 인위로 다시 쏘면
+// 심어 둔 <div class="mermaid"> 가 실제로 렌더된다. 그때 CDN 인스턴스의 contentLoaded 는 한 번도 불리지
+// 않으므로(래핑해서 0회 확인) 그린 쪽은 임베드 사본이다. 생산 경로에서 잠잠한 이유는 순서 하나뿐이다:
+// 그 청크는 첫 ELK 레이아웃 중에 평가되고, 문서의 유일한 자연 load 는 그보다 먼저 지나간다. 그래서 아래는
+// 인위 이벤트를 쏘지 않고 생산 수명주기 그대로를 잰다.
+// Phase 1 이 이 번들을 지연 로드로 돌리면 다이어그램 없는 경로에서는 사본 자체가 사라진다 — 그게 구조적
+// 보장이고, 그 전까지는 이 관측이 유일한 근거다.
+test("P0-2 the embedded second mermaid runtime owns no global and renders nothing", async () => {
+	await openMap(getLiveFixture());
+
+	const probe = await page.evaluate(async () => {
+		const w = window as never as {
+			mermaid: {
+				initialize: (config: unknown) => void;
+				contentLoaded: () => Promise<void> | void;
+				mermaidAPI?: { getConfig?: () => Record<string, unknown> };
+			};
+			__esbuild_esm_mermaid_nm?: { mermaid?: unknown };
+		};
+
+		const config = w.mermaid.mermaidAPI?.getConfig?.() ?? {};
+		const observed = {
+			elkGlobals: Object.keys(window).filter((key) => /layoutelk/i.test(key)),
+			embeddedIsPageMermaid: w.__esbuild_esm_mermaid_nm?.mermaid === w.mermaid,
+			securityLevel: config.securityLevel ?? null,
+			startOnLoad: config.startOnLoad ?? null,
+			autoRendered: document.querySelectorAll(".mermaid[data-processed]").length,
+		};
+
+		// 검출기 반증 — 진짜 auto-render 를 한 번 일으켜 같은 셀렉터가 잡는지 잰다. 이게 없으면 위 0건은
+		// 셀렉터가 영영 안 맞아도 초록이다. data-processed 는 어느 사본이 그리든 같은 렌더 경로가 찍는다.
+		const planted = document.createElement("div");
+		planted.className = "mermaid";
+		planted.textContent = "graph TD; Z-->Y";
+		document.body.appendChild(planted);
+		w.mermaid.initialize({ startOnLoad: true });
+		await w.mermaid.contentLoaded();
+		await new Promise((resolve) => setTimeout(resolve, 800));
+
+		return {
+			...observed,
+			detectorCatches: document.querySelectorAll(".mermaid[data-processed]").length,
+		};
+	});
+
+	// 전역은 플러그인 하나뿐 — esbuild --global-name 이 심는 이름이 정확히 하나여야 한다.
+	assert.deepStrictEqual(
+		probe.elkGlobals,
+		["mermaidLayoutElk"],
+		`expected exactly one ELK plugin global, got: ${probe.elkGlobals.join(", ")}`,
+	);
+	// 페이지의 mermaid 는 index.html 이 설정한 CDN 인스턴스다. CDN UMD 는 버전 문자열을 노출하지 않아
+	// (window.mermaid.version 은 undefined) 버전으로는 못 가른다 — 대신 설정값이 index.html 것임을 재고,
+	// 임베드 네임스페이스와 동일 객체가 아님을 함께 잠근다.
+	assert.equal(probe.embeddedIsPageMermaid, false, "the embedded mermaid copy became window.mermaid");
+	assert.equal(probe.securityLevel, "antiscript", "window.mermaid does not carry the config index.html initialized");
+	assert.equal(probe.startOnLoad, false, "window.mermaid does not carry the config index.html initialized");
+	// 생산 수명주기에서는 임베드 사본의 startOnLoad 경로가 아무것도 그리지 않는다.
+	assert.equal(
+		probe.autoRendered,
+		0,
+		"something auto-rendered a .mermaid element on the map route — the embedded copy's startOnLoad hook fired",
+	);
+	assert.ok(
+		probe.detectorCatches > 0,
+		"a deliberate auto-render was not caught by the same selector — the zero above certifies nothing",
+	);
+});
+
+// ── P0-2 fix: 세 톤 분리 · 둥근 모서리 · 라벨 클리핑 (사용자 판정 3건) ──────────
+// 색 판정은 문자열 비교가 아니라 상대휘도 대비로 함 — "값이 서로 다르다" 는 1 단위
+// 차이도 만족시키므로, 사용자가 본 "구분되지 않는 검정 셋" 을 반증하지 못한다.
+
+// 노드 fill : 존 fill — 박스가 존 위로 떠올라 보이는 최소 단차.
+const ZONE_TONE_MIN = 1.3;
+// 노드 stroke : 자기 fill — 테두리가 면에서 떨어져 보이는 최소 단차.
+const EDGE_TONE_MIN = 1.5;
+// 존 stroke : 캔버스 — 존을 캔버스에서 떼어내는 일은 테두리가 한다(독트린상 면은 2%, 선은 10%).
+const ZONE_EDGE_TONE_MIN = 1.5;
+// 존 fill : 캔버스 — 면은 은근해야 하므로 "다르다" 보다 약간 위, 단차 요구는 stroke 쪽에 둠.
+const ZONE_FILL_TONE_MIN = 1.05;
+// 업스트림 독트린 r=8 의 하한.
+const CORNER_RADIUS_MIN = 6;
+// 라벨 넘침 허용 오차(px).
+const LABEL_OVERFLOW_TOLERANCE = 0.5;
+// 존 rect 상단 → 제목 상단, 제목 하단 → 첫 노드 상단 (SVG 사용자 단위).
+const TITLE_TOP_MIN = 6;
+const TITLE_GAP_MIN = 12;
+
+interface ProbeRect {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+	width: number;
+	height: number;
+}
+
+interface NodeVisual {
+	text: string;
+	fill: string;
+	stroke: string;
+	rxAttr: string | null;
+	rxComputed: string;
+	foRect: ProbeRect | null;
+	foAttrWidth: number;
+	labelRangeRect: ProbeRect | null;
+	fontSize: string;
+	fontWeight: string;
+	fontFamily: string;
+	// 이 요소에 실제로 걸린 확대율. 루트 <svg> 의 CTM 은 1 로 나온다 — svg-pan-zoom 이
+	// viewBox 대신 내부 <g> 변환을 쓰므로 확대율은 요소 자신의 화면 CTM 에서만 읽힌다.
+	scale: number;
+}
+
+interface ClusterVisual {
+	text: string;
+	fill: string;
+	stroke: string;
+	rxAttr: string | null;
+	rxComputed: string;
+	rectBox: ProbeRect | null;
+	labelBox: ProbeRect | null;
+	firstNodeTop: number | null;
+	scale: number;
+}
+
+interface VisualProbe {
+	canvasBg: string;
+	nodes: NodeVisual[];
+	clusters: ClusterVisual[];
+}
+
+// 화면이 실제로 그린 캔버스 한 장에서 색·모서리·라벨 상자를 한 번에 걷어옴.
+// 페이지 안에서는 이름 붙은 함수를 쓰지 않는다 — 번들러의 keepNames 가 주입하는
+// __name 심볼이 페이지에 없어 evaluate 가 통째로 죽는다.
+async function getVisualProbe(): Promise<VisualProbe> {
+	return await page.evaluate((canvas) => {
+		const root = document.querySelector(canvas) as HTMLElement;
+		const svg = root.querySelector("svg") as SVGSVGElement;
+		const nodeEls = Array.from(svg.querySelectorAll("g.node"));
+		const nodes = nodeEls.map((g) => {
+			const rect = g.querySelector("rect") as SVGRectElement | null;
+			const fo = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
+			const label = g.querySelector(".nodeLabel") as HTMLElement | null;
+			let labelRangeRect: DOMRect | null = null;
+			if (label) {
+				const range = document.createRange();
+				range.selectNodeContents(label);
+				labelRangeRect = range.getBoundingClientRect();
+			}
+			const rcs = rect ? (getComputedStyle(rect) as unknown as Record<string, string>) : null;
+			const lcs = label ? getComputedStyle(label) : null;
+			return {
+				text: (g.textContent || "").trim(),
+				fill: rcs ? rcs.fill : "",
+				stroke: rcs ? rcs.stroke : "",
+				rxAttr: rect ? rect.getAttribute("rx") : null,
+				rxComputed: rcs ? rcs.rx : "",
+				foRect: fo ? (fo.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				foAttrWidth: fo ? Number(fo.getAttribute("width")) : Number.NaN,
+				labelRangeRect: labelRangeRect ? (labelRangeRect.toJSON() as ProbeRect) : null,
+				fontSize: lcs ? lcs.fontSize : "",
+				fontWeight: lcs ? lcs.fontWeight : "",
+				fontFamily: lcs ? lcs.fontFamily : "",
+				scale: fo ? (fo.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
+			};
+		});
+		const nodeBoxes = nodeEls
+			.map((g) => (g.querySelector("rect") as SVGRectElement | null)?.getBoundingClientRect())
+			.filter((box): box is DOMRect => box !== undefined);
+		const clusters = Array.from(svg.querySelectorAll("g.cluster")).map((g) => {
+			const rect = g.querySelector("rect") as SVGRectElement | null;
+			const label = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
+			const rcs = rect ? (getComputedStyle(rect) as unknown as Record<string, string>) : null;
+			const box = rect ? rect.getBoundingClientRect() : null;
+			// 존은 노드의 DOM 조상이 아니라 형제이므로 포함 관계는 기하로만 판정된다.
+			let firstNodeTop: number | null = null;
+			if (box) {
+				for (const nb of nodeBoxes) {
+					if (nb.left >= box.left && nb.right <= box.right && nb.top >= box.top && nb.bottom <= box.bottom) {
+						if (firstNodeTop === null || nb.top < firstNodeTop) firstNodeTop = nb.top;
+					}
+				}
+			}
+			return {
+				text: (g.textContent || "").trim(),
+				fill: rcs ? rcs.fill : "",
+				stroke: rcs ? rcs.stroke : "",
+				rxAttr: rect ? rect.getAttribute("rx") : null,
+				rxComputed: rcs ? rcs.rx : "",
+				rectBox: box ? (box.toJSON() as ProbeRect) : null,
+				labelBox: label ? (label.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				firstNodeTop,
+				scale: rect ? (rect.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
+			};
+		});
+		return {
+			canvasBg: getComputedStyle(root).backgroundColor,
+			nodes,
+			clusters,
+		};
+	}, selectors.canvas);
+}
+
+function toKey(c: Rgba): string {
+	return `${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)}`;
+}
+
+/** rx 는 속성으로도 CSS 기하 속성으로도 설정될 수 있어 둘 다 읽고 큰 쪽을 쓴다. */
+function readEffectiveRadius(rxAttr: string | null, rxComputed: string): number {
+	const fromAttr = rxAttr === null ? 0 : Number.parseFloat(rxAttr);
+	const fromCss = Number.parseFloat(rxComputed);
+	return Math.max(Number.isFinite(fromAttr) ? fromAttr : 0, Number.isFinite(fromCss) ? fromCss : 0);
+}
+
+test("P0-2-fix the canvas, its zones and its boxes read as three separate tones", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+	assert.ok(probe.nodes.length > 0 && probe.clusters.length > 0, "probe found no nodes or zones");
+
+	const canvas = parseColor(probe.canvasBg);
+	const clusterFills = probe.clusters.map((c) => parseColor(c.fill));
+	const clusterKeys = new Set(clusterFills.map(toKey));
+
+	// 존 면은 캔버스와 구별만 되면 됨 — 여기에 단차를 요구하면 은근해야 할 면이 밝아진다.
+	const dimZoneFills = probe.clusters
+		.map((c) => ({ text: c.text, fill: c.fill, ratio: contrastRatio(parseColor(c.fill), canvas) }))
+		.filter((t) => t.ratio < ZONE_FILL_TONE_MIN);
+	assert.deepStrictEqual(
+		dimZoneFills.map((t) => `${t.text} (${t.fill}) ${t.ratio.toFixed(3)}`),
+		[],
+		`zone fill vs the canvas ${probe.canvasBg} below ${ZONE_FILL_TONE_MIN} — the zone surface is invisible`,
+	);
+
+	// 존을 캔버스에서 떼어내는 단차는 테두리가 진다. 반투명 stroke 는 캔버스 위에 합성한 뒤라야 대비를 말할 수 있음.
+	const dimZoneEdges = probe.clusters
+		.map((c) => {
+			const stroke = compositeOver(parseColor(c.stroke), canvas);
+			return { text: c.text, stroke: c.stroke, ratio: contrastRatio(stroke, canvas) };
+		})
+		.filter((t) => t.ratio < ZONE_EDGE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimZoneEdges.map((t) => `${t.text} (${t.stroke}) ${t.ratio.toFixed(3)}`),
+		[],
+		`zone stroke vs the canvas ${probe.canvasBg} below ${ZONE_EDGE_TONE_MIN}`,
+	);
+
+	const nodeKeys = new Set(probe.nodes.map((n) => toKey(parseColor(n.fill))));
+	const collision = [...nodeKeys].filter((k) => clusterKeys.has(k));
+	assert.deepStrictEqual(
+		collision,
+		[],
+		`node fill(s) ${collision.join(" | ")} are identical to a zone fill — those boxes have no box`,
+	);
+	assert.equal(
+		nodeKeys.has(toKey(canvas)),
+		false,
+		`a node fill equals the canvas ${probe.canvasBg}`,
+	);
+
+	const zoneTone = probe.nodes.map((n) => {
+		const fill = parseColor(n.fill);
+		const worst = Math.min(...clusterFills.map((z) => contrastRatio(fill, z)));
+		return { label: n.text, fill: n.fill, ratio: worst };
+	});
+	const dimBoxes = zoneTone.filter((t) => t.ratio < ZONE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimBoxes.map((t) => `${t.label} (${t.fill}) ${t.ratio.toFixed(3)}`),
+		[],
+		`node fill vs zone fill below ${ZONE_TONE_MIN}`,
+	);
+
+	const edgeTone = probe.nodes.map((n) => {
+		const fill = parseColor(n.fill);
+		const stroke = compositeOver(parseColor(n.stroke), fill);
+		return { label: n.text, stroke: n.stroke, ratio: contrastRatio(stroke, fill) };
+	});
+	const dimEdges = edgeTone.filter((t) => t.ratio < EDGE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimEdges.map((t) => `${t.label} (${t.stroke}) ${t.ratio.toFixed(3)}`),
+		[],
+		`node stroke vs its own fill below ${EDGE_TONE_MIN}`,
+	);
+});
+
+test("P0-2-fix every box and every zone is drawn with rounded corners", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	const square = [
+		...probe.nodes.map((n) => ({
+			what: `node ${n.text}`,
+			r: readEffectiveRadius(n.rxAttr, n.rxComputed),
+		})),
+		...probe.clusters.map((c) => ({
+			what: `zone ${c.text}`,
+			r: readEffectiveRadius(c.rxAttr, c.rxComputed),
+		})),
+	].filter((x) => x.r < CORNER_RADIUS_MIN);
+
+	assert.deepStrictEqual(
+		square.map((x) => `${x.what} r=${x.r}`),
+		[],
+		`rect corner radius below ${CORNER_RADIUS_MIN}px`,
+	);
+});
+
+test("P0-2-fix no node label overruns the box mermaid sized for it", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// span 자체의 bbox 는 넘침을 보고하지 않는다(상자에 맞춰 보고됨) — 실제 글리프 런을 Range 로 잼.
+	// 자명성 방지 — foreignObject 가 내용에 맞춰 커지는 상자라면 아래 비교는 항진명제다.
+	const overrun = probe.nodes
+		.map((n) => {
+			const fo = n.foRect;
+			const run = n.labelRangeRect;
+			assert.ok(fo && run, `node ${n.text} rendered no foreignObject/label`);
+			assert.ok(
+				Math.abs(fo.width - n.foAttrWidth * n.scale) < 1,
+				`node ${n.text}: foreignObject box ${fo.width.toFixed(2)}px does not match its declared width ${n.foAttrWidth} x scale ${n.scale.toFixed(4)} — the containment check would be vacuous`,
+			);
+			return { label: n.text, right: run.right - fo.right, bottom: run.bottom - fo.bottom };
+		})
+		.filter((o) => o.right > LABEL_OVERFLOW_TOLERANCE || o.bottom > LABEL_OVERFLOW_TOLERANCE);
+
+	assert.deepStrictEqual(
+		overrun.map((o) => `${o.label} right+${o.right.toFixed(2)}px bottom+${o.bottom.toFixed(2)}px`),
+		[],
+		"label glyph run overflows its foreignObject — the last glyph is cut",
+	);
+});
+
+test("P0-2-fix labels render in the same font mermaid measured them with", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// 측정 조건의 실측치 — 같은 소스를 캔버스 CSS 밖(document.body)에 렌더하면 mermaid 자신의
+	// 스타일만 걸린 라벨이 나온다. 그것이 mermaid 가 상자 크기를 잰 서체다.
+	await getRenderProbe(page, "d52-font-baseline", CANONICAL_MAP.mermaid_drawn);
+	const baseline = await page.evaluate(() => {
+		const label = document.querySelector("#probe-host-d52-font-baseline .nodeLabel") as HTMLElement | null;
+		if (!label) return null;
+		const cs = getComputedStyle(label);
+		return { fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily };
+	});
+	assert.ok(baseline, "baseline render produced no .nodeLabel — the parity claim would be empty");
+
+	const mismatched = probe.nodes.filter(
+		(n) =>
+			n.fontSize !== baseline.fontSize ||
+			n.fontWeight !== baseline.fontWeight ||
+			n.fontFamily !== baseline.fontFamily,
+	);
+
+	assert.deepStrictEqual(
+		mismatched.map((m) => `${m.text}: ${m.fontWeight} ${m.fontSize} ${m.fontFamily}`),
+		[],
+		`canvas labels render in a different font than mermaid measured with (${baseline.fontWeight} ${baseline.fontSize} ${baseline.fontFamily}) — a wider run than the box it sized`,
+	);
+});
+
+test("P0-2-fix zone titles clear the zone edge and the first box below", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// 여백은 확대율과 무관한 주장이므로 사용자 단위로 판정하고 화면 px 은 기록만 한다.
+	const crowded = probe.clusters
+		.map((c) => {
+			const rect = c.rectBox;
+			const title = c.labelBox;
+			assert.ok(rect && title, `zone ${c.text} rendered no rect/title`);
+			assert.ok(c.firstNodeTop !== null, `zone ${c.text} encloses no node — the gap claim is empty`);
+			return {
+				zone: c.text,
+				top: (title.top - rect.top) / c.scale,
+				gap: (c.firstNodeTop - title.bottom) / c.scale,
+			};
+		})
+		.filter((c) => c.top < TITLE_TOP_MIN || c.gap < TITLE_GAP_MIN);
+
+	assert.deepStrictEqual(
+		crowded.map((c) => `${c.zone} top+${c.top.toFixed(2)} gap+${c.gap.toFixed(2)}`),
+		[],
+		`zone title must sit >= ${TITLE_TOP_MIN} below the zone edge and >= ${TITLE_GAP_MIN} above the first box (user units)`,
 	);
 });

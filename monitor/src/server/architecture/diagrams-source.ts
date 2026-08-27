@@ -433,10 +433,15 @@ export interface CanonicalMap {
 export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
 	detail: "balanced",
-	// 감축(T9): 다른 다이어그램으로 넘어가는 경계 노드 3종과 그 엣지를 뺌 — 나머지 여섯 편이 그려지지 않으므로 도착지 없는 표식임.
-	// 방향은 수직(TD) 고정 — 렌더 pane 은 폭만 제약(측정 1150px)되고 높이는 `max-height: none` 로 자유로움.
-	// LR 은 랭크가 가로로 누적돼 1212px 로 넘쳐 우측 67px 이 잘렸음(콘텐츠를 줄이는 대신 방향을 눕힘).
-	// 되돌리려면 폭 초과를 먼저 재측정할 것 — 미관 사유의 LR 복귀는 같은 클리핑을 되살림.
+	/**
+	 * 감축본 — 렌더 제약(폭·content-budget 계수기)을 통과하도록 손본 형태.
+	 * 감축(T9): 경계 노드 3종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
+	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
+	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
+	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
+	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
+	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
+	 */
 	mermaid_drawn: `flowchart TD
     subgraph entry["External inputs"]
         repo[Project repository]
@@ -465,6 +470,13 @@ export const CANONICAL_MAP: CanonicalMap = {
     user --> orch
     daemon --> orch
     orch -- "assigns work" --> agents
-    agents -- "tool calls" --> hooks`,
+    agents -- "tool calls" --> hooks
+
+    classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
+    classDef external fill:#332e2a,stroke:#544c47,color:#a09a96
+    classDef security fill:#332e2a,stroke:#fbbf2480,stroke-width:2px,stroke-dasharray:4 4,color:#fafaf9
+    class main_session focal
+    class repo,user external
+    class hook_pipeline security`,
 	omitted_node_ids: ["to_data", "from_improvement", "to_html_gate"],
 };
