@@ -434,24 +434,15 @@ export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
 	detail: "balanced",
 	/**
-	 * 감축본 — 렌더 제약(폭·content-budget 계수기·sanitizeDirective)을 통과하도록 손본 형태.
+	 * 감축본 — 렌더 제약(폭·content-budget 계수기)을 통과하도록 손본 형태.
 	 * 감축(T9): 경계 노드 3종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
 	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
 	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
-	 * 지시자 형태 고정: 물리적 1줄 · JSON 인용 키 · hex 값.
-	 * 줄을 쪼개거나 `rgb(` 표기를 쓰면 content-budget 계수기가 오프너/화살표로 오검출함.
+	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
 	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
-	 * 색 파생: background=surface · clusterBkg=sunken · nodeTextColor=ink · lineColor=ink 40% 워시.
-	 * mainBkg·nodeBorder 는 line 위로 같은 온기(r>g>b)를 유지한 채 이어붙인 두 단계.
-	 * 세 톤은 값이 다른 것으로 부족하고 눈에 보이는 단차여야 함.
-	 * 단차의 하한은 architecture.merged-surface.e2e 의 대비 판정이 소유함 — 실측값을 여기 박으면 팔레트 편집마다 어긋남.
-	 * flowchart 는 primaryColor/primaryBorderColor 가 아니라 mainBkg/nodeBorder/nodeTextColor 를 읽음.
-	 * elk 튜닝 키는 `sanitizeDirective` 를 4개만 통과하고, 그중 기본값과 다른 것은 mergeEdges 뿐임.
-	 * diagramPadding 16: 화면이 존 rect 를 위로 8 늘려 제목 띠를 만들므로(architecture.jsx ZONE_TITLE_BAND) 기본 8 은 viewBox 밖으로 나감.
-	 * 지시자의 flowchart 객체는 전역 설정과 깊은 병합이라 useMaxWidth:false 는 유지됨.
+	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
-	mermaid_drawn: `%%{init: {"layout": "elk", "elk": {"mergeEdges": true}, "flowchart": {"diagramPadding": 16}, "themeVariables": {"background": "#0c0a09", "mainBkg": "#332e2a", "nodeBorder": "#5c534e", "nodeTextColor": "#fafaf9", "lineColor": "#6b6a69", "clusterBkg": "#181411", "clusterBorder": "#3d3733", "edgeLabelBackground": "#0c0a09"}}}%%
-flowchart TD
+	mermaid_drawn: `flowchart TD
     subgraph entry["External inputs"]
         repo[Project repository]
         user[User utterance]

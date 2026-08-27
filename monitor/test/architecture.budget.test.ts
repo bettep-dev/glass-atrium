@@ -104,15 +104,23 @@ function getClassMembers(mermaid: string, className: string): string[] {
   });
 }
 
-test("P0-2 the layout directive is one physical line and contributes nothing to the census", () => {
-  const [head, ...body] = drawn.split("\n");
-  assert.match(
-    head as string,
-    /^%%\{init:.*\}%%$/,
-    "drawn must open with a single physical %%{init}%% line — a split directive revives opener/arrow miscounts",
+test("P1-1 the drawn source carries no %%{init}%% directive — layout and theme come from the shared config", () => {
+  const directives = drawn
+    .split("\n")
+    .map((line, i) => [i + 1, line] as const)
+    .filter(([, line]) => line.trimStart().startsWith("%%{init"));
+  assert.deepEqual(
+    directives.map(([i]) => i),
+    [],
+    `%%{init}%% directive at line(s) ${directives.map(([i]) => i).join(", ")} — a per-source copy of the shared config`,
   );
-  // 지시자를 떼어낸 본문과 계수가 같아야 함 — 인용 키/괄호 없는 hex 규칙이 깨지면 여기서 붉어짐.
-  assert.deepEqual(getMermaidCensus(drawn), getMermaidCensus(body.join("\n")));
+  // opt-out 지시자를 앞세운 형태도 계수는 같아야 함 — 한 줄·인용 키 규칙이 깨지면 오프너/화살표 오검출이 되살아난다.
+  assert.deepEqual(getMermaidCensus(`%%{init: {"layout": "dagre"}}%%\n${drawn}`), getMermaidCensus(drawn));
+
+  // 설정을 소스 밖으로 옮겨도 콘텐츠 계수는 그대로여야 함 — 상한 대비 여유가 아니라 실측값을 고정한다.
+  const census = getMermaidCensus(drawn);
+  assert.equal(census.nodeCount, 8, "the drawn map counts 8 nodes");
+  assert.equal(census.edgeCount, 5, "the drawn map counts 5 edges");
 });
 
 test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {

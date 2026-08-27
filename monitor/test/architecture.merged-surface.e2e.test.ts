@@ -950,16 +950,16 @@ function getCanvasProbe(): Promise<RenderProbe> {
 	return getProbe(page, selectors.canvas, "canonical map canvas");
 }
 
-// 대조군 — 지시자의 layout 값 하나만 갈아끼운 같은 소스. 테마·간격·라벨이 전부 같으므로
-// 남는 차이가 레이아웃 엔진뿐이다(테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
+// 대조군 — 같은 소스에 layout opt-out 지시자 한 줄만 앞세운 것. 테마·간격·라벨은 공유 설정에서
+// 그대로 오므로(지시자는 설정과 깊은 병합) 남는 차이가 레이아웃 엔진뿐이다
+// (테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
 function getLayoutControl(id: string, layout: string): Promise<RenderProbe> {
-	const variant = CANONICAL_MAP.mermaid_drawn.replace('"layout": "elk"', `"layout": "${layout}"`);
-	assert.notEqual(
-		variant,
-		CANONICAL_MAP.mermaid_drawn,
-		'canonical mermaid_drawn must carry a single-line %%{init}%% directive requesting "layout": "elk"',
+	assert.equal(
+		CANONICAL_MAP.mermaid_drawn.includes("%%{init"),
+		false,
+		"canonical mermaid_drawn must carry no %%{init}%% directive — the layout comes from the shared config",
 	);
-	return getRenderProbe(page, id, variant);
+	return getRenderProbe(page, id, `%%{init: {"layout": "${layout}"}}%%\n${CANONICAL_MAP.mermaid_drawn}`);
 }
 
 test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback", async () => {
