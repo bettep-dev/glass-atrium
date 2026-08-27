@@ -1193,6 +1193,46 @@ base goal
 ## Rules
 NEW vendor rules'
 
+# Pre-verify-policy fixture: local and release each edit a DIFFERENT, non-adjacent
+# line of the SAME EDITABLE region, so the region merges CLEANLY at line level and
+# lands verdict merge-clean with needs_llm=True. That is the one arm reaching the
+# LLM gate in the transaction verify — and it reaches it without any contested gap,
+# so the arbiter's model seam stays untouched and a recorded model call can only be
+# the pre-verify.
+LLMGATE_BASE='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+alpha base line
+shared line one
+shared line two
+shared line three
+omega base line
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+LLMGATE_LOCAL='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+alpha LOCAL line
+shared line one
+shared line two
+shared line three
+omega base line
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+LLMGATE_RELEASE='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+alpha base line
+shared line one
+shared line two
+shared line three
+omega RELEASE line
+<!-- EDITABLE:END -->
+## Rules
+NEW vendor rules'
+
 run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -1222,6 +1262,47 @@ run_update() {
   # runs NO git op, so the on-disk content above IS the applied-state proof. The merge
   # created no repo — a plain non-git INSTALL sandbox stays git-free end to end.
   [[ ! -d "${INSTALL}/.git" ]]
+}
+
+@test "updater path: a both-changed EDITABLE region applies with ZERO daemon pre-verify calls" {
+  # The defect this pins: the updater transaction verify ran the DAEMON's LLM
+  # pre-verify (axes C1-C4, built to judge daemon self-improvement PROPOSALS) over
+  # RELEASE content, and a rejection restored the before-image behind a bare WARN —
+  # leaving the live body silently frozen at an older vendor revision. Release
+  # content is already reviewed and CI-gated, and the local-region protection is the
+  # 3-way merge itself (regions kept local), not the judge.
+  #
+  # The stub RECORDS every model-seam invocation and still exits non-zero (the
+  # unavailable arm): pre-fix, the gate fails closed and rolls the merge back, so a
+  # non-empty call log and a reverted vendor line are the same defect seen twice.
+  local calllog="${WORK}/preverify-calls"
+  local rec_stub="${WORK}/claude-recording-stub"
+  printf '#!/bin/sh\nprintf "called\\n" >>"%s"\nexit 1\n' "${calllog}" >"${rec_stub}"
+  chmod +x "${rec_stub}"
+  export AUTOAGENT_CLAUDE_BIN="${rec_stub}"
+
+  seed_file "${INSTALL}" "agents/dev-a.md" "${LLMGATE_LOCAL}"
+  seed_base_store "dev-a.md" "${LLMGATE_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${LLMGATE_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update
+  local body
+  body="$(cat "${INSTALL}/agents/dev-a.md")"
+  # ONE &&-chain, deliberately: a bats verdict is its LAST command's status, so a
+  # mid-body bare [[ ]] that fails is overwritten by any later passing one — this
+  # very test read a false green that way before the chain went in.
+  # (a) ZERO pre-verify calls: the updater path never reaches the model seam.
+  # (b) the vendor line change LANDS, region content and structure alike.
+  # (c) the local region edit survives byte-for-byte.
+  # (d) the policy is stated LOUDLY, once per merged body.
+  [ "${status}" -eq 0 ] &&
+    [[ ! -s "${calllog}" ]] &&
+    [[ "${body}" == *"omega RELEASE line"* ]] &&
+    [[ "${body}" == *"NEW vendor rules"* ]] &&
+    [[ "${body}" == *"alpha LOCAL line"* ]] &&
+    [[ "${body}" != *"alpha base line"* ]] &&
+    [[ "${output}" == *"release content applied without the daemon pre-verify"* ]]
 }
 
 @test "T19/U-A: a live-only operator model: pin survives the merge (release ships none)" {

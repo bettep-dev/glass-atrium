@@ -848,7 +848,15 @@ PROSE_ONLY_ADD_AXIS_KEY = "prose_only_add"
 # body reaches it.
 RULE_EXCERPT_CHAR_CAP = 120_000
 TARGET_AGENT_EXCERPT_CHAR_CAP = 120_000
-DIFF_EXCERPT_CHAR_CAP = 4000
+# Bound on the diff handed to the verifier. NOT a content cap: past it the
+# excerpt is cut at a LINE boundary under an explicit marker (_diff_excerpt), so
+# the verifier is never asked to judge a fragment cut mid-word. Sized from the
+# measured incident — a 5331-char single-file EDITABLE-merge diff (one 1761-char
+# removed line, one 2034-char added line) overran the former 4000 bound and was
+# rejected on C3 as "truncated mid-sentence" — at roughly twice that, so a whole
+# hunk pair over an <= 8 KB agent body fits. A bound remains, unbounded excerpt
+# is forbidden (LLM10 unbounded consumption).
+DIFF_EXCERPT_CHAR_CAP = 12_000
 
 # Optimizer-side memory (SkillOpt R2): the consolidated generation prompt
 # prepends this agent's recent pre_verify-FAILED diff shapes so the generator
@@ -5735,6 +5743,13 @@ PROPOSED DIFF (unified-diff fragment):
 {diff}
 ---
 
+NOTE ON THE DIFF: the fragment above may be a bounded EXCERPT. A line opening
+`[DIFF-EXCERPT-` marks where the harness stopped, and the hunks past it were
+withheld before you ever saw them. Judge every axis ONLY on the hunks shown, and
+NEVER FAIL an axis because the fragment ends early, reads as partial, or carries
+such a marker — that is a harness bound, not a defect in the patch. With no such
+marker the fragment is the COMPLETE diff.
+
 RATIONALE FROM PATCH GENERATOR:
 {patch_rationale}
 
@@ -5850,6 +5865,61 @@ def _read_sections(path: Path | None, cap: int) -> str:
     return "".join(kept) + f"\n{note}\n"
 
 
+# Marker prefix the diff excerpt emits and the verifier prompt teaches. Both
+# signals below carry it, and _PRE_VERIFY_PROMPT_TEMPLATE spells the same prefix
+# in its NOTE ON THE DIFF — a drift the test suite pins.
+DIFF_EXCERPT_MARKER_PREFIX = "[DIFF-EXCERPT-"
+DIFF_TRUNCATED_SIGNAL = "[DIFF-EXCERPT-TRUNCATED"
+DIFF_OVERSIZED_LINE_SIGNAL = "[DIFF-EXCERPT-OVERSIZED-LINE"
+
+
+def _diff_excerpt(diff: str, cap: int) -> str:
+    """Bound `diff` to `cap` chars WITHOUT ever cutting inside a diff line.
+
+    A character slice lands mid-word inside a long '+'/'-' line and reaches the
+    verifier as a mangled fragment carrying nothing that says so — the measured
+    failure mode: the verifier FAILed axis C3 for "truncated mid-sentence", a
+    verdict on the excerpt rather than on the patch. So lines are taken whole in
+    order until the next would cross `cap`, and any cut is announced by a marker
+    line the prompt teaches the verifier to honour. An oversized FIRST line is
+    kept whole for the same reason `_read_sections` keeps an oversized first
+    heading block: half a line is worse than one line over the bound. Either
+    departure is loud on stderr AND inside the excerpt itself.
+
+    Under the bound the diff is returned byte-identical.
+    """
+    if len(diff) <= cap:
+        return diff
+
+    lines = diff.splitlines(keepends=True)
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        if kept and used + len(line) > cap:
+            break
+        kept.append(line)
+        used += len(line)
+
+    shown = "".join(kept)
+    dropped = len(lines) - len(kept)
+    if used > cap:
+        note = (
+            f"{DIFF_OVERSIZED_LINE_SIGNAL}: one diff line ({len(kept[0])} chars) "
+            f"exceeds the {cap}-char excerpt bound and is shown whole; "
+            f"{dropped} further diff line(s) withheld.]"
+        )
+    else:
+        note = (
+            f"{DIFF_TRUNCATED_SIGNAL}: {used} of {len(diff)} chars shown, "
+            f"{dropped} further diff line(s) withheld at the {cap}-char excerpt "
+            f"bound.]"
+        )
+    sys.stderr.write(f"[daemon-cycle] WARN: {note} — pre-verify diff excerpt\n")
+    if not shown.endswith("\n"):
+        shown += "\n"
+    return f"{shown}{note}\n"
+
+
 # Named signal for an axis file that RESOLVED but carries no content. Distinct
 # from the unresolved signals — the path is fine, the miss is content-side — and
 # loud for the same reason: an empty excerpt reads to the verifier as an axis it
@@ -5923,7 +5993,7 @@ def _build_pre_verify_prompt(
         target_agent=pattern.agent,
         target_file=target_file_name,
         pattern_label=_neutralize_field(pattern.label),
-        diff=patch.proposed_diff[:DIFF_EXCERPT_CHAR_CAP],
+        diff=_diff_excerpt(patch.proposed_diff, DIFF_EXCERPT_CHAR_CAP),
         patch_rationale=patch.rationale[:400],
         compliance_matrix_excerpt=_read_sections(COMPLIANCE_MATRIX_FILE, RULE_EXCERPT_CHAR_CAP),
         global_rules_excerpt=_read_sections(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),

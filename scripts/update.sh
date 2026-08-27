@@ -1025,10 +1025,22 @@ update_plan_field() {
 
 # Python verify shell-out (SC2259-safe: a plain assigned string constant, NOT a
 # `<<'PY'` heredoc inside $()). Reconstructs the MergeCandidate from the SAME
-# anchors `plan` used, then runs its git_txn verify callback: a sensitive re-scan
-# of the on-disk patched file plus — only for an LLM-required (both-changed)
-# region — the daemon's Haiku improvement-verify gate. Deterministic keep-local /
-# take-release / no-op candidates pass WITHOUT any LLM call. argv:
+# anchors `plan` used, then runs its git_txn verify callback.
+#
+# skip_pre_verify=True — the daemon's Haiku improvement-verify gate is OFF on this
+# path, and only on this path. The two callers differ in what they feed the merge:
+#   daemon (daemon-apply.sh / daemon_cycle.py) — a self-authored improvement PROPOSAL
+#     nothing has reviewed, so the C1-C4 gate is the last check before a live body,
+#     and it KEEPS verifying.
+#   updater (here) — a RELEASE tree human review and CI already passed, whose local
+#     half the 3-way merge protects by construction (EDITABLE regions are resolved,
+#     never overwritten), so a judge built to score proposals adds no protection and
+#     costs a real one: it rejected a user-approved rule change three times on axis
+#     C4, and each rejection restored the before-image behind a WARN, silently
+#     freezing that body at an older vendor revision.
+# Every DETERMINISTIC check still runs on BOTH paths — the sensitive re-scan of the
+# on-disk patched file, the conflict-marker tripwire and the candidate-bytes identity
+# check. Only the model call is skipped. argv:
 #   1 merge_lib  2 target(logical)  3 local(the pre-apply before-image in
 #   agents-bak — the single authoritative original-local copy)  4 release
 #   5 base(or "")  6 agent  7 state_dir  8 on_disk(the patched target)
@@ -1048,7 +1060,7 @@ else:
     base_text = em.load_base_text(target, state_dir=state_dir or None)
 cand = em.build_merge_candidate(
     target, local_text, release_text,
-    base_text=base_text, agent=agent, skip_pre_verify=False,
+    base_text=base_text, agent=agent, skip_pre_verify=True,
 )
 sys.exit(0 if cand.verify(on_disk) == 0 else 1)
 '
@@ -1159,6 +1171,12 @@ _update_agent_commit_callback() {
     case "${GIT_TXN_RC}" in
       "${GIT_TXN_OK}")
         update_log "agent merged + applied: ${logical}"
+        # Stated per merged body rather than once per run: a reader chasing why a
+        # given body changed greps the body's name, and a single run-level line is
+        # not in that result. Names the policy so the skip is never inferred from
+        # the ABSENCE of a pre-verify line, which is also what a broken gate looks
+        # like. Keeps the WARN arms below untouched — a merge that fails still fails.
+        update_log "agent merge: release content applied without the daemon pre-verify (CI-verified vendor tree; local EDITABLE regions preserved by the 3-way merge): ${logical}"
         # Applied cleanly → the base-content store may advance for this file
         # (finding #9). Any other GIT_TXN outcome leaves the file at its local
         # version, so it is deliberately NOT recorded (the capture keeps its prior
@@ -1430,7 +1448,7 @@ update_merge_agent_editable_regions() {
     # Queue the self-improvement-history row for a body whose contested gaps the
     # arbiter answered. The live-to-candidate diff comes from `plan
     # --diff-out`: the merge lib already computed it (it is the text the sensitive
-    # scan and the Haiku gate ran against), so re-deriving it here with a second
+    # scan ran against), so re-deriving it here with a second
     # diff implementation would record a diff the merge never saw. Capturing it at
     # plan time also predates the transaction below, which overwrites the live
     # body — once it is overwritten the dropped daemon lines exist nowhere else. The
@@ -2195,7 +2213,8 @@ update_ticker_stop() {
 }
 
 # ---------------------------------------------------------------------------
-# P3 — claude -p precondition (headless). The merge stage may invoke Haiku, and a
+# P3 — claude -p precondition (headless). The merge stage may invoke the model — the
+# gap arbiter, the one model seam left on this path now that the pre-verify is off — and a
 # launchd job with a broken PATH/HOME would fail cryptically mid-merge. Verify the
 # 'claude' binary resolves in the running job env AND on the rendered monitor /
 # one-shot plist PATH BEFORE the merge — loud-fail exit 7 if not.
@@ -3347,7 +3366,7 @@ update_run() {
 
   # Headless only: open the update_job tracking row (single-active enforced by the
   # partial unique index → exit 8 on a 2nd active) + load the launchd claude auth
-  # token so the merge stage's Haiku verify inherits it (no-ops interactively).
+  # token so the merge stage's gap arbiter inherits it (no-ops interactively).
   update_job_begin
   update_headless_load_claude_auth
 
@@ -3557,7 +3576,7 @@ update_main() {
   # shellcheck source=/dev/null
   source "${lib_dir}/apply-spine.sh"
   # Headless claude auth: a launchd job cannot use the GUI keychain, so the merge
-  # stage's Haiku verify needs the 0600 token file's exporter. Function-only source.
+  # stage's gap arbiter needs the 0600 token file's exporter. Function-only source.
   # shellcheck source=/dev/null
   source "${lib_dir}/claude-auth-env.sh"
   # The facade mirror-farm refresh wrapper (incident #58325) — farm_refresh /
