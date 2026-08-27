@@ -1418,7 +1418,7 @@
     "scripts/test/generate-manifest.bats": "dab2785284bc17c5f001d5dd761c12c75a0e408eedf08ec67485e49c634bc7bc",
     "scripts/test/glass-atrium-dispatch.bats": "9999a2285cfcc954bf6361938d0abf3c31cc6efb11e2303a1cee53ad71ce2ecf",
     "scripts/test/glass-atrium-install.bats": "2896cf42efce8a9d5c33e1c33f1db29ecdaaad8ab6876437e7618ff6be53d64e",
-    "scripts/test/glass-atrium-update-e2e.bats": "f6d33f7784ed40a953fb92e4804d6cecf1cc3c37160fb1c4c2185e79a73cbc35",
+    "scripts/test/glass-atrium-update-e2e.bats": "b3c695dff64dd47c870753129e29d62758281e557395d23764be5b02413509f7",
     "scripts/test/glass-atrium-update-idempotency.bats": "d5a8c672635ea2df03d144355201de15be489b8acb0bcc5098002a141607e495",
     "scripts/test/glass-atrium-update.bats": "289221c48e9a0de3784fab469b946f2febbec85ec117080fe0ca9adc1d99c6c4",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
