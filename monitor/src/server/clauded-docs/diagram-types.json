@@ -1,0 +1,57 @@
+{
+  "adopted": [
+    {
+      "type": "flowchart",
+      "keywords": ["flowchart", "graph"],
+      "purpose": "라우팅·게이트 판정 로직, 시스템 개요"
+    },
+    {
+      "type": "sequenceDiagram",
+      "keywords": ["sequenceDiagram"],
+      "purpose": "위임 흐름, 오케스트레이터와 에이전트 호출 추적"
+    },
+    {
+      "type": "stateDiagram-v2",
+      "keywords": ["stateDiagram-v2"],
+      "purpose": "Outcome result 상태, 적용 스크립트 수명주기"
+    },
+    {
+      "type": "erDiagram",
+      "keywords": ["erDiagram"],
+      "purpose": "core.outcomes 등 monitor 데이터 모델"
+    },
+    {
+      "type": "classDiagram",
+      "keywords": ["classDiagram"],
+      "purpose": "타입·모듈 구조와 의존 관계"
+    },
+    {
+      "type": "gitGraph",
+      "keywords": ["gitGraph"],
+      "purpose": "브랜치·머지 전략 설명"
+    },
+    {
+      "type": "C4",
+      "keywords": ["C4Context", "C4Container", "C4Component"],
+      "purpose": "시스템 경계와 구성요소 계층"
+    }
+  ],
+  "excluded": [
+    { "type": "quadrantChart", "keywords": ["quadrantChart"] },
+    { "type": "radar", "keywords": ["radar-beta"] },
+    { "type": "pie", "keywords": ["pie"] },
+    { "type": "timeline", "keywords": ["timeline"] },
+    { "type": "journey", "keywords": ["journey"] },
+    { "type": "mindmap", "keywords": ["mindmap"] },
+    { "type": "sankey", "keywords": ["sankey", "sankey-beta"] },
+    { "type": "xychart", "keywords": ["xychart", "xychart-beta"] },
+    { "type": "gantt", "keywords": ["gantt"] },
+    { "type": "block", "keywords": ["block", "block-beta"] }
+  ],
+  "exclusionReason": "발표·요약 표현이지 개발 판단에 쓰이지 않음 (D5 제외 기준)",
+  "flowDirection": {
+    "recommended": "LR",
+    "allowed": ["LR", "TB", "TD"],
+    "forbidden": ["RL", "BT"]
+  }
+}

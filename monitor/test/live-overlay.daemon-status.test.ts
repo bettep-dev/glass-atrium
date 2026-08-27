@@ -3,8 +3,10 @@
 // reported daemon → 'missing' (info 'No data') on a fresh install; the SAME never-fired
 // daemon escalates to 'stale' (crit 'Overdue') once the install anchor proves the system
 // has run longer than one cadence window (installed-but-never-fired = genuinely dead);
-// an overdue daemon (last run present, staleness > cadence × 1.5) → synthesized 'stale';
+// an overdue daemon (last run present, staleness past the threshold) → synthesized 'stale';
 // a within-cadence daemon → its real last_status pass-through, unaffected by the anchor.
+// Threshold source: schedule-next-fire.ts, never a copied literal.
+// A copy would keep asserting the old flip point after the server moved it.
 // Runner: npx tsx --test test/live-overlay.daemon-status.test.ts
 
 import test from "node:test";
@@ -14,6 +16,7 @@ import {
   resolveDaemonStatuses,
   type DaemonAggRow,
 } from "../src/server/architecture/live-overlay.js";
+import { STALE_MULTIPLIER } from "../src/server/schedule-next-fire.js";
 
 const DAEMON_NAMES = [
   "autoagent",
@@ -23,7 +26,6 @@ const DAEMON_NAMES = [
 ] as const;
 
 const CADENCE_MIN = 1440; // all four daemons are daily jobs
-const STALE_MULTIPLIER = 1.5;
 const NOW = Date.parse("2026-07-12T12:00:00Z");
 
 function minutesAgo(min: number): Date {
@@ -189,5 +191,30 @@ test("every resolved daemon carries the server-declared cadence (no FE hardcode)
   const daemons = resolveDaemonStatuses([], NOW, null);
   for (const d of daemons) {
     assert.strictEqual(d.expected_cadence_minutes, CADENCE_MIN);
+  }
+});
+
+test("effective_status carries the same verdict as status at every construction site", () => {
+  const overdueMin = CADENCE_MIN * STALE_MULTIPLIER + 1;
+  const cases: Array<[string, DaemonAggRow[], Date | null]> = [
+    ["no rows, no anchor", [], null],
+    ["no rows, dead anchor", [], minutesAgo(CADENCE_MIN + 1)],
+    [
+      "mixed rows",
+      [
+        row("autoagent", { last_status: "error" }),
+        row("wiki", { last_run_at: minutesAgo(overdueMin) }),
+      ],
+      null,
+    ],
+  ];
+  for (const [label, rows, anchor] of cases) {
+    for (const d of resolveDaemonStatuses(rows, NOW, anchor)) {
+      assert.strictEqual(
+        d.effective_status,
+        d.status,
+        `${label}: ${d.daemon_name} must report one verdict, not two`,
+      );
+    }
   }
 });

@@ -4,6 +4,8 @@
 // the architecture overlay + health board, instead of leaking raw last_status. Pre-fix
 // this dormant sibling returned the raw last_status with no missing/stale synthesis (the
 // same bug class F#38 fixed in live-overlay).
+// Threshold source: schedule-next-fire.ts, never a copied literal.
+// A copy would keep asserting the old flip point after the server moved it.
 // Runner: npx tsx --test test/dashboard.daemon-status.test.ts
 
 import test from "node:test";
@@ -11,6 +13,7 @@ import assert from "node:assert/strict";
 
 import { buildDaemonStatusItems } from "../src/server/routes/dashboard.js";
 import type { DaemonAggRow } from "../src/server/architecture/live-overlay.js";
+import { STALE_MULTIPLIER } from "../src/server/schedule-next-fire.js";
 
 const DAEMON_BOARD = [
   "autoagent",
@@ -20,7 +23,6 @@ const DAEMON_BOARD = [
 ] as const;
 
 const CADENCE_MIN = 1440; // all four daemons are daily jobs
-const STALE_MULTIPLIER = 1.5;
 const NOW = new Date("2026-07-12T12:00:00Z");
 
 function minutesAgo(min: number): Date {
@@ -80,8 +82,8 @@ test("NULL last_run_at row + null anchor → 'missing' (no fabricated staleness)
   assert.strictEqual(itemOf(items, "autoagent").last_status, "missing");
 });
 
-test("overdue daemon (staleness > cadence × 1.5) → synthesized 'stale' (was stale 'ok' pre-fix)", () => {
-  const overdueMin = CADENCE_MIN * STALE_MULTIPLIER + 1; // 2161 min
+test("overdue daemon (staleness past the threshold) → synthesized 'stale' (was stale 'ok' pre-fix)", () => {
+  const overdueMin = CADENCE_MIN * STALE_MULTIPLIER + 1;
   const items = buildDaemonStatusItems(
     [row("wiki", { last_run_at: minutesAgo(overdueMin), last_status: "ok" })],
     NOW,

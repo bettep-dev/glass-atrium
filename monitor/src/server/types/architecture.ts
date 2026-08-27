@@ -4,11 +4,15 @@
 export type DaemonLiveStatus = {
 	daemon_name: string;
 	status: string;
+	// Cross-route daemon verdict — /api/health/daemons carries the same field name.
+	// Overdue ⇒ 'stale' · otherwise the last reported status · never reported ⇒ 'missing'.
+	effective_status: string;
 	last_run_at: string | null;
 	staleness_minutes: number | null;
 	// Mermaid node ids bound to this daemon (DAEMON_NODE_BINDINGS) — ring overlay target.
 	node_ids: string[];
-	// Expected run cadence (minutes) — staleness_minutes > cadence ⇒ warn-tone signal.
+	// Expected run cadence (minutes) — the overdue baseline, not the threshold itself.
+	// Overdue at cadence × STALE_MULTIPLIER (schedule-next-fire.ts).
 	expected_cadence_minutes: number;
 };
 

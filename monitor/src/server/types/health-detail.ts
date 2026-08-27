@@ -28,6 +28,9 @@ export interface DaemonStatusCard {
   daemon_name: string;
   last_run_at: string | null;
   last_status: DaemonStatusValue | null;
+  // Cross-route daemon verdict — /api/architecture/live carries the same field name.
+  // Overdue ⇒ 'stale' · otherwise the last reported status · never reported ⇒ 'missing'.
+  effective_status: string;
   expected_next_at: string | null;
   cost_guard_state: CostGuardStateValue | null;
   staleness_minutes: number | null;
@@ -149,6 +152,10 @@ export interface HealthHookFailuresResponse {
   // truncated, so the FE cannot derive these). Tone: warn = count_24h > 0 · crit = unretried_count_24h > 0.
   count_24h: number;
   unretried_count_24h: number;
+  // Whole-table MAX(failure_ts), computed outside the days predicate: an empty window and
+  // an empty table are different facts, and only the second means the hook never failed.
+  // null exactly when core.hook_failures has never held a row.
+  last_failure_ts: string | null;
   // failures[].failure_ts is UTC ISO (PG Timestamptz → Date → toISOString).
   timezone: "UTC";
 }

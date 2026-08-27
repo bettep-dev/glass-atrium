@@ -284,6 +284,7 @@ export async function queryInstallAnchor(
  * within cadence ⇒ the real last_status. No new enum — 'stale' reuses DAEMON_STATUS_TONE.
  * installAnchor = min(started_at) across all daemon_runs (queryInstallAnchor); null ⇒ no
  * escalation (unknown/empty history stays fresh-install-safe).
+ * Verdict lands on both `status` and `effective_status` — the name /api/health/daemons mirrors.
  */
 export function resolveDaemonStatuses(
 	rows: DaemonAggRow[],
@@ -307,9 +308,11 @@ export function resolveDaemonStatuses(
 			// 'stale' (crit) only when the anchor proves a full cadence window has elapsed since
 			// the system first ran — the daemon has missed its entire first interval (dead).
 			const isDead = isSystemOlderThanCadence(installAnchor, now, cadence);
+			const verdict = isDead ? "stale" : "missing";
 			return {
 				daemon_name: name,
-				status: isDead ? "stale" : "missing",
+				status: verdict,
+				effective_status: verdict,
 				last_run_at: null,
 				staleness_minutes: null,
 				node_ids: [...(DAEMON_NODE_BINDINGS[name] ?? [])],
@@ -320,9 +323,11 @@ export function resolveDaemonStatuses(
 			(now - row.last_run_at.getTime()) / 60_000,
 		);
 		const isOverdue = stalenessMinutes > cadence * STALE_MULTIPLIER;
+		const verdict = isOverdue ? "stale" : (row.last_status ?? "missing");
 		return {
 			daemon_name: name,
-			status: isOverdue ? "stale" : (row.last_status ?? "missing"),
+			status: verdict,
+			effective_status: verdict,
 			last_run_at: row.last_run_at.toISOString(),
 			staleness_minutes: stalenessMinutes,
 			node_ids: [...(DAEMON_NODE_BINDINGS[name] ?? [])],
@@ -440,6 +445,7 @@ function emptyDaemons(): DaemonLiveStatus[] {
 		(name): DaemonLiveStatus => ({
 			daemon_name: name,
 			status: "missing",
+			effective_status: "missing",
 			last_run_at: null,
 			staleness_minutes: null,
 			node_ids: [...(DAEMON_NODE_BINDINGS[name] ?? [])],
