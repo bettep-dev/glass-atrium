@@ -35,6 +35,14 @@ const LAYOUT_FALLBACK_MARKERS: readonly string[] = ["Layout algorithm", "not reg
 // and a zero-warning render would prove nothing.
 const WARN_LOG_LEVEL = 3;
 
+// The render context's declared screen basis — passed as BOTH viewport and screen so the
+// two never disagree. mermaid 11's C4 renderer takes its row-wrap limit from
+// `screen.availWidth` (c4Diagram-*.mjs: `widthLimit = screen.availWidth`), not from the
+// container or the config, so leaving it undeclared hands the exported C4 row count to
+// Playwright's default and the viewer harness's row count to whatever viewport it set —
+// two paths laying the same diagram out differently for a reason neither states.
+export const EXPORT_SCREEN = { width: 1280, height: 720 } as const;
+
 // Page navigation timeout (ms) — networkidle covers Tailwind Play CDN fetch+exec, cold-cache tolerant.
 const PAGE_NAVIGATION_TIMEOUT_MS = 10_000;
 
@@ -140,6 +148,9 @@ function stripTailwindCorsAttributes(storedBody: string): string {
 }
 
 // Injected script text, read once per path at first export.
+// Process-lifetime and never invalidated — the assumption is that the updater restarts the
+// monitor when it applies, so an edited asset arrives with a fresh process rather than
+// having to be noticed here.
 const assetCache = new Map<string, string>();
 
 /**
@@ -229,7 +240,10 @@ async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
   let context: BrowserContext | null = null;
   let page: Page | null = null;
   try {
-    context = await browser.newContext();
+    context = await browser.newContext({
+      viewport: { ...EXPORT_SCREEN },
+      screen: { ...EXPORT_SCREEN },
+    });
 
     // SSRF / egress guard — abort every render-time request except the Tailwind
     // Play CDN. Installed BEFORE newPage so it covers the very first subresource.
@@ -312,6 +326,35 @@ async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
   }
 }
 
+/**
+ * Watches the render console for mermaid's layout-fallback warning and reports it after the
+ * fact. The two halves have to sit apart in time — the warning is emitted mid-render, so the
+ * listener attaches before the driver runs, while the verdict can only be read once the
+ * render is finished — and keeping them in one named pair is what stops the attach from
+ * drifting away from the check it exists for.
+ */
+function watchLayoutFallback(page: Page): { assertNoFallback: () => void } {
+  const fallbackWarnings: string[] = [];
+  page.on("console", (message) => {
+    const text = message.text();
+    if (LAYOUT_FALLBACK_MARKERS.every((marker) => text.includes(marker))) {
+      fallbackWarnings.push(text);
+    }
+  });
+
+  return {
+    // A fallback still produces an <svg>, so the zero-svg guard cannot see it.
+    assertNoFallback() {
+      if (fallbackWarnings.length > 0) {
+        throw new HtmlExportError(
+          `mermaid drew a diagram with a layout the page never registered: ${fallbackWarnings[0]}`,
+          "mermaid",
+        );
+      }
+    },
+  };
+}
+
 /** Classic script, no `type` — a module tag resolves before it runs, so its global would not be there yet. */
 async function injectScript(page: Page, content: string, label: string): Promise<void> {
   try {
@@ -331,13 +374,7 @@ async function injectScript(page: Page, content: string, label: string): Promise
 async function driveMermaidRender(page: Page, sources: string[]): Promise<void> {
   // Attached before the driver runs: the fallback warning is emitted mid-render and is the
   // only signal that a diagram was drawn by a layout nobody asked for.
-  const fallbackWarnings: string[] = [];
-  page.on("console", (message) => {
-    const text = message.text();
-    if (LAYOUT_FALLBACK_MARKERS.every((marker) => text.includes(marker))) {
-      fallbackWarnings.push(text);
-    }
-  });
+  const layoutFallback = watchLayoutFallback(page);
 
   await injectScript(page, await loadMermaidBundle(), "mermaid driver bundle");
   await injectScript(page, await loadExportAsset(ELK_LOADER_PATH, "elk layout loader"), "elk layout loader");
@@ -421,14 +458,8 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
     );
   }
 
-  // Checked after the render completes: a fallback still produces an <svg>, so the guard
-  // above cannot see it.
-  if (fallbackWarnings.length > 0) {
-    throw new HtmlExportError(
-      `mermaid drew a diagram with a layout the page never registered: ${fallbackWarnings[0]}`,
-      "mermaid",
-    );
-  }
+  // Checked after the render completes — see watchLayoutFallback.
+  layoutFallback.assertNoFallback();
 }
 
 /**

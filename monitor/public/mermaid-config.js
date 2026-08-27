@@ -1,7 +1,6 @@
 // Mermaid 런타임 설정 — 뷰어와 HTML 내보내기가 함께 읽는 단일 소스.
 // index.html 은 이 전역을 initialize 에 그대로 넘기고, 내보내기는 이 파일의 텍스트를
 // 렌더 페이지에 주입한다. 두 표면에 값을 각자 적으면 한쪽만 고쳐지는 드리프트가 생긴다.
-// 색은 hex 로만 적는다 — `rgb(` 표기의 공백 하나가 content-budget 계수기에 오프너로 잡힌다.
 
 window.MERMAID_CONFIG = {
   startOnLoad: false,
@@ -28,6 +27,7 @@ window.MERMAID_CONFIG = {
   },
 
   theme: 'dark',
+  // 색은 hex 로만 적는다 — `rgb(` 표기의 공백 하나가 content-budget 계수기에 오프너로 잡힌다.
   themeVariables: {
     darkMode: true,
 
@@ -101,7 +101,10 @@ window.MERMAID_CONFIG = {
   flowchart: {
     htmlLabels: true,
     padding: 12,
-    // 화면이 존 rect 를 위로 늘려 제목 띠를 만들므로(architecture.jsx ZONE_TITLE_BAND) 기본 8 은 viewBox 밖으로 나감.
+    // 소비자가 둘 — System map 화면(architecture.jsx)과 문서 뷰어/내보내기(clauded-docs.jsx · html-export.ts).
+    // 값을 기본 8 에서 올린 쪽은 System map: 화면이 존 rect 를 위로 늘려 제목 띠를 만들므로
+    // (ZONE_TITLE_BAND) 8 은 viewBox 밖으로 나간다. 문서 본문 다이어그램은 같은 여백을 그대로
+    // 물려받으므로, 한쪽 사정만 보고 고칠 자리가 아니다.
     diagramPadding: 16,
     nodeSpacing: 50,
     rankSpacing: 60,

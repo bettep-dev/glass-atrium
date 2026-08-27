@@ -23,7 +23,7 @@ import { dirname, resolve } from "node:path";
 
 import { chromium, type Browser } from "playwright";
 
-import { renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
+import { EXPORT_SCREEN, renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 // 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
 // index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유.
@@ -233,6 +233,11 @@ async function measureRenderedNodes(
 
   const context = await browser.newContext({
     viewport: { width: options.viewportWidth ?? NARROW_VIEWPORT_WIDTH, height: 900 },
+    // 화면은 뷰포트와 따로 선언함 — C4 는 행 줄바꿈 한계를 `screen.availWidth` 에서 읽으므로
+    // (mermaid 11 c4Diagram-*.mjs), 선언하지 않으면 이 하네스의 좁은 뷰포트가 그대로 화면폭이
+    // 되어 내보내기와 다른 행수로 눕는다. 내보내기가 쓰는 그 상수를 그대로 씀 — 좁은 뷰포트는
+    // 넘침 다리가 요구하는 값이라 그대로 두고, 화면 기준만 두 경로에서 같게 맞춘다.
+    screen: { ...EXPORT_SCREEN },
   });
   const page = await context.newPage();
   await page.route("**/*", (route) => route.abort());

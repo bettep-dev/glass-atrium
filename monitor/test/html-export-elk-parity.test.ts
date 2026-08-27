@@ -25,8 +25,11 @@ import { chromium } from "playwright";
 
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 import {
+  ELK_LOADER_PATH,
+  EXPORT_SCREEN,
   HtmlExportError,
   loadExportAsset,
+  MERMAID_CONFIG_PATH,
   renderSelfContainedHtml,
 } from "../src/server/clauded-docs/html-export.js";
 import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
@@ -45,6 +48,16 @@ const FLOWCHART_SRC = "flowchart TD\n  A[Start] --> B{Choice}\n  B -->|yes| C[Do
 
 // 채택 7타입 중 flowchart 가 아닌 하나 — 전역 layout 이 다른 타입을 깨지 않는지가 요점.
 const STATE_SRC = "stateDiagram-v2\n  Queued --> Running\n  Running --> Done";
+
+// C4 만이 폭을 화면에서 읽는다 — mermaid 11 의 C4 렌더러는 행 줄바꿈 한계를
+// `screen.availWidth` 에서 가져오므로(c4Diagram-*.mjs), 화면 기준이 다른 두 경로는
+// 같은 소스를 다른 행수로 눕힌다. 나머지 타입은 이 상수를 읽지 않는다.
+const C4_SRC =
+  "C4Context\n" +
+  "  title System map document export boundary\n" +
+  '  Person(operator, "Monitor operator", "Reads exported documents offline")\n' +
+  '  System(monitor, "Monitor service", "Serves stored documents and diagrams")\n' +
+  '  Rel(operator, monitor, "reads exported documents")';
 
 // 렌더러가 엣지에 붙이는 클래스는 타입마다 다르다 — 한 판정기를 두 타입 위에 올리기 위한 합집합.
 const EDGE_SELECTOR = "path.flowchart-link, path.transition";
@@ -90,7 +103,12 @@ async function openViewerHarness(): Promise<ViewerHarness> {
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  // 화면 기준을 명시 — 아래 AC-5 의 비교 대상은 아니지만, 하네스가 기준을 선언하지 않으면
+  // 그 값은 Playwright 기본값이 되어 어느 문서에도 적히지 않은 수가 배치를 정한다.
+  const page = await browser.newPage({
+    viewport: { width: 1440, height: 900 },
+    screen: { ...EXPORT_SCREEN },
+  });
   await page.goto(`${serverUrl}/`, { waitUntil: "load" });
 
   const runtimeReady = await page
@@ -216,6 +234,128 @@ describe("html export loud-fail", () => {
     await assert.rejects(
       loadExportAsset(resolve(PUBLIC_ROOT, "assets", "vendor", "absent.min.js"), "elk layout loader"),
       (error: unknown) => error instanceof HtmlExportError && error.stage === "mermaid",
+    );
+  });
+});
+
+// ── AC-5 C4 행 기준 ──────────────────────────────────────────────────────────
+// C4 는 행 줄바꿈 한계를 `screen.availWidth` 에서 읽는 유일한 채택 타입이다. 그 값을 아무도
+// 선언하지 않으면 두 경로가 각자 다른 기본값 위에서 같은 소스를 다른 행수로 눕히고, 그 차이는
+// 폭 한 값으로 남는다 — 내보내기 화면폭을 480 으로 두면 2행 551px, 1280 으로 두면 1행 873px.
+//
+// 비교 대상이 위 index.html 하네스가 아닌 이유(측정): 그 하네스는 mermaid 를 CDN 의
+// `mermaid@11`(현재 11.17.2)에서 받고 문서가 `lang="en"` 이라, 같은 화면 기준에서도 832px 로
+// 떨어진다(고정 11.15.0 · `lang="ko"` 인 내보내기는 873px). px 대조를 거기에 걸면 재는 것은
+// 행 기준이 아니라 빌드·서체 드리프트가 된다. 그래서 여기 비교 대상은 나머지 입력(고정 드라이버 ·
+// 벤더 ELK 로더 · 공유 설정 · 문서 lang)을 내보내기와 똑같이 맞춘 뷰어 렌더 경로다.
+
+/** 내보내기가 주입하는 것과 같은 세 자산 — 같은 파일에서 읽어야 대조에 화면 기준만 남는다. */
+async function loadDriverAssets(): Promise<{ mermaid: string; elk: string; config: string }> {
+  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+  return {
+    mermaid: await loadExportAsset(
+      resolve(dirname(pkgPath), "dist", "mermaid.min.js"),
+      "mermaid driver bundle",
+    ),
+    elk: await loadExportAsset(ELK_LOADER_PATH, "elk layout loader"),
+    config: await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"),
+  };
+}
+
+/** 저장 본문과 같은 문서 껍데기 — lang 이 갈리면 서체 대체가 갈려 C4 텍스트 폭이 움직인다. */
+const VIEWER_SHELL =
+  '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>c4</title></head>' +
+  "<body><main></main></body></html>";
+
+/** 산출물의 <svg> 폭 속성. useMaxWidth 가 꺼져 있어 이 값이 곧 고유폭이다. */
+function getExportedSvgWidth(html: string, context: string): number {
+  const svg = getExportedRoot(html).querySelector("svg");
+  assert.ok(svg !== null, `${context}: <svg> 가 없어 폭 대조가 공허함`);
+  const raw = svg.getAttribute("width");
+  const width = Number(raw);
+  assert.ok(Number.isFinite(width) && width > 0, `${context}: 쓸 수 있는 width 속성이 없음 — ${String(raw)}`);
+  return width;
+}
+
+/**
+ * 뷰어 렌더 경로에서 같은 소스를 그린 폭. 뷰포트는 일부러 좁게 둔다 — 폭이 뷰포트가 아니라
+ * 선언된 화면에서 나온다는 것이 요점이고, 뷰포트 480/1280 이 같은 값을 내는 것은 재서 확인했다.
+ */
+async function measureViewerC4(browser: Browser): Promise<{ width: number; availWidth: number }> {
+  const assets = await loadDriverAssets();
+  const context = await browser.newContext({
+    viewport: { width: 480, height: 900 },
+    screen: { ...EXPORT_SCREEN },
+  });
+  const page = await context.newPage();
+  await page.route("**/*", (route) => route.abort());
+  try {
+    await page.setContent(VIEWER_SHELL, { waitUntil: "domcontentloaded" });
+    await page.addScriptTag({ content: assets.mermaid });
+    await page.addScriptTag({ content: assets.elk });
+    await page.addScriptTag({ content: assets.config });
+
+    const measured = await page.evaluate(async (source: string) => {
+      const w = window as never as {
+        mermaid: {
+          initialize(config: unknown): void;
+          registerLayoutLoaders(loaders: unknown): void;
+          render(id: string, text: string): Promise<{ svg: string }>;
+        };
+        mermaidLayoutElk?: { default?: unknown };
+        MERMAID_CONFIG: unknown;
+      };
+      // index.html 과 같은 순서 — 등록이 initialize 보다 먼저.
+      w.mermaid.registerLayoutLoaders(w.mermaidLayoutElk?.default ?? []);
+      w.mermaid.initialize(w.MERMAID_CONFIG);
+      const { svg } = await w.mermaid.render("parity-c4", source);
+      const host = document.createElement("div");
+      host.innerHTML = svg;
+      document.body.appendChild(host);
+      return {
+        width: Number(host.querySelector("svg")?.getAttribute("width") ?? Number.NaN),
+        availWidth: window.screen.availWidth,
+      };
+    }, C4_SRC);
+
+    assert.ok(
+      Number.isFinite(measured.width) && measured.width > 0,
+      `뷰어 하네스가 C4 를 그리지 못함 — width ${String(measured.width)}`,
+    );
+    return measured;
+  } finally {
+    await page.close();
+    await context.close();
+  }
+}
+
+describe("the C4 row basis is declared, not inherited", () => {
+  let browser: Browser;
+
+  before(async () => {
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser.close();
+    await resetBrowserForTests();
+  });
+
+  test("AC-5 export and viewer draw the C4 fixture at the same width under one declared screen", async () => {
+    const exported = await renderSelfContainedHtml(getStoredBody("c4", C4_SRC), "html");
+    const exportWidth = getExportedSvgWidth(exported, "C4 내보내기");
+    const viewer = await measureViewerC4(browser);
+
+    // 하네스가 화면 옵션을 잃으면 뷰포트 폭이 그 자리를 대신해 대조가 조용히 다른 것을 잰다.
+    assert.equal(
+      viewer.availWidth,
+      EXPORT_SCREEN.width,
+      "뷰어 하네스에 선언한 화면폭이 페이지에 닿지 않음 — 대조가 다른 기준 위에 서 있음",
+    );
+    assert.ok(
+      Math.abs(exportWidth - viewer.width) <= 1,
+      `C4 폭이 갈림 — 내보내기 ${exportWidth}px · 뷰어 ${viewer.width}px ` +
+        `(선언 화면폭 ${EXPORT_SCREEN.width}). 두 경로가 서로 다른 행수로 눕혔다는 뜻이다.`,
     );
   });
 });
