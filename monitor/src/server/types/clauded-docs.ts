@@ -420,10 +420,8 @@ export interface D8P2ViolationErrorBody {
 // never as a 4xx. `type` is the declared name from diagram-types.json (the sole
 // adopted/excluded SoT), `blockIndex` the 1-based DOM position of the offending
 // diagram node so the author can locate it without re-scanning.
-export type DiagramNoticeCode = "diagram_type_excluded";
-
 export interface DiagramTypeNotice {
-  code: DiagramNoticeCode;
+  code: "diagram_type_excluded";
   type: string;
   blockIndex: number;
 }

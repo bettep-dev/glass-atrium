@@ -97,10 +97,22 @@ function wrapMermaid(src: string): string {
   ].join("\n");
 }
 
-/** 통과 판정의 소견 목록을 타입명 배열로 눌러 비교함. 실패 판정이면 그 자체가 오류임. */
+/** 통과 판정의 타입 소견을 타입명 배열로 눌러 비교함. 실패 판정이면 그 자체가 오류임. */
 function assertNoticeTypes(result: ReturnType<typeof validateHtmlStructure>, expected: string[]): void {
   assert.strictEqual(result.ok, true, `보고 전용이어야 함 — 판정: ${JSON.stringify(result)}`);
-  if (result.ok) assert.deepStrictEqual(result.notices.map((n) => n.type), expected);
+  if (result.ok) {
+    const types = result.notices.filter((n) => n.code === "diagram_type_excluded").map((n) => n.type);
+    assert.deepStrictEqual(types, expected);
+  }
+}
+
+/** 같은 소견 배열에서 방향 소견만 방향 문자열로 눌러 비교함. */
+function assertNoticeDirections(result: ReturnType<typeof validateHtmlStructure>, expected: string[]): void {
+  assert.strictEqual(result.ok, true, `보고 전용이어야 함 — 판정: ${JSON.stringify(result)}`);
+  if (result.ok) {
+    const directions = result.notices.filter((n) => n.code === "diagram_flow_direction").map((n) => n.direction);
+    assert.deepStrictEqual(directions, expected);
+  }
 }
 
 /** 임시 선언 JSON 을 써서 경로를 넘기고, 끝나면 지움. */
@@ -249,4 +261,39 @@ test("loadDiagramTypes 가 망가진 선언을 조용히 삼키지 않음", () =
   withTempJson({ adopted: [] }, (path) => {
     assert.throws(() => loadDiagramTypes(path), /excluded/);
   });
+});
+
+test("검증기가 금지 방향 목록을 실제로 읽음 — 목록을 옮기면 판정이 뒤집힘", () => {
+  // AC-T24 를 심볼 이름이 아니라 거동으로 잼. 배포본에서 RL 은 금지이므로 소견이
+  // 1건이고, 금지를 비운 선언을 주입하면 같은 본문이 소견 0건이 됨. 반대로 LR 을
+  // 금지로 옮기면 조용하던 본문이 소견을 냄 — 판정이 파일에서 흘러나온다는 증거임.
+  const rl = wrapMermaid("flowchart RL\n  A --> B");
+  const lr = wrapMermaid("flowchart LR\n  A --> B");
+  assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }), ["RL"]);
+  assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }), []);
+
+  const adopted = [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }];
+  withFixture(
+    {
+      adopted,
+      excluded: [],
+      exclusionReason: "fixture",
+      flowDirection: { recommended: "LR", allowed: ["LR", "TB", "RL"], forbidden: [] },
+    },
+    (injected) => {
+      assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }, D8_THRESHOLDS, injected), []);
+    },
+  );
+
+  withFixture(
+    {
+      adopted,
+      excluded: [],
+      exclusionReason: "fixture",
+      flowDirection: { recommended: "TB", allowed: ["TB"], forbidden: ["LR", "RL", "BT"] },
+    },
+    (injected) => {
+      assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }, D8_THRESHOLDS, injected), ["LR"]);
+    },
+  );
 });

@@ -284,7 +284,7 @@ export function nextOccurrenceUtc(rule: CronRule, tz: string, now: Date): string
 }
 
 // Daemon staleness / cadence thresholds — the single SoT consumed by health-detail.ts
-// (card is_stale) + live-overlay.ts / dashboard.ts (synthesized 'stale'). Co-located with
+// (card effective_status) + live-overlay.ts / dashboard.ts (synthesized 'stale'). Co-located with
 // the CronRule they derive from so a cadence/threshold change can't desync the surfaces
 // that decide a daemon is overdue.
 
