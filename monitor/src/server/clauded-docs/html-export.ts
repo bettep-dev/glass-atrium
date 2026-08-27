@@ -5,6 +5,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import type { BrowserContext, Page } from "playwright";
@@ -13,8 +14,32 @@ import { parse as parseHtml } from "node-html-parser";
 import { acquireBrowser, BrowserPoolError } from "./browser-pool.js";
 import { normalizeMermaidSource } from "./mermaid-normalize.js";
 
-// Pinned mermaid version for the injected export driver → matches package.json + live viewer (index.html:54).
-const MERMAID_VERSION = "11";
+// public/ under both layouts — tsc keeps src/server/clauded-docs/ at the same depth in dist/.
+const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "public");
+
+// The one mermaid runtime config; index.html loads this same file. Its text is injected
+// verbatim and the page initializes from the global it assigns, so the export holds no
+// second copy that could drift from the viewer's.
+export const MERMAID_CONFIG_PATH = resolve(PUBLIC_ROOT, "mermaid-config.js");
+
+// Vendored ELK loader (IIFE). The shared config asks for layout 'elk' and an unregistered
+// layout draws on dagre with nothing but a console warning — see LAYOUT_FALLBACK_MARKERS.
+export const ELK_LOADER_PATH = resolve(PUBLIC_ROOT, "assets", "vendor", "mermaid-layout-elk-0.2.3.min.js");
+
+// mermaid's own wording: `Layout algorithm <x> is not registered. Using <y> as fallback.`
+const LAYOUT_FALLBACK_MARKERS: readonly string[] = ["Layout algorithm", "not registered"];
+
+// Above warn, mermaid rebinds log.warn to a no-op → the fallback warning is never emitted
+// and a zero-warning render would prove nothing.
+const WARN_LOG_LEVEL = 3;
+
+// The render context's declared screen basis — passed as BOTH viewport and screen so the
+// two never disagree. mermaid 11's C4 renderer takes its row-wrap limit from
+// `screen.availWidth` (c4Diagram-*.mjs: `widthLimit = screen.availWidth`), not from the
+// container or the config, so leaving it undeclared hands the exported C4 row count to
+// Playwright's default and the viewer harness's row count to whatever viewport it set —
+// two paths laying the same diagram out differently for a reason neither states.
+export const EXPORT_SCREEN = { width: 1280, height: 720 } as const;
 
 // Page navigation timeout (ms) — networkidle covers Tailwind Play CDN fetch+exec, cold-cache tolerant.
 const PAGE_NAVIGATION_TIMEOUT_MS = 10_000;
@@ -34,14 +59,14 @@ const TAILWIND_CDN_HOST = "cdn.tailwindcss.com";
 // Offline-portability marker comments inserted during the strip pass.
 const OFFLINE_FONTS_COMMENT =
   " fonts: web fonts stripped for offline portability; system/local font-family fallback applied ";
-const MERMAID_VERSION_COMMENT = ` mermaid driver: pinned mermaid@${MERMAID_VERSION} (locally bundled, no network) `;
 
 /**
  * Thrown on HTML export failure. Route handler maps to a 503 envelope (reason
  * `html_export_<stage>: <msg>`). stage "mermaid" = a known-mermaid doc finished
  * with zero <svg> — NEVER ship raw <pre>. stage "tailwind" = a doc that loaded
  * the Tailwind Play CDN finished WITHOUT the runtime stylesheet — NEVER ship an
- * unstyled file.
+ * unstyled file. A diagram drawn by a layout the page never registered fails at the
+ * "mermaid" stage too — the export never ships a silent fallback.
  */
 export class HtmlExportError extends Error {
   readonly stage: "launch" | "render" | "mermaid" | "tailwind" | "serialize";
@@ -119,85 +144,72 @@ function stripTailwindCorsAttributes(storedBody: string): string {
   return `<!DOCTYPE html>\n${serialized}`;
 }
 
-// UMD bundle text, read once at first export. Resolved via import.meta.resolve so
-// the path is identical under tsx (src/) and node (dist/) — no build-asset copy.
-let mermaidBundleCache: string | null = null;
+// Injected script text, read once per path at first export.
+// Process-lifetime and never invalidated — the assumption is that the updater restarts the
+// monitor when it applies, so an edited asset arrives with a fresh process rather than
+// having to be noticed here.
+const assetCache = new Map<string, string>();
 
-async function loadMermaidBundle(): Promise<string> {
-  if (mermaidBundleCache !== null) return mermaidBundleCache;
-  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
-  const bundlePath = resolve(dirname(pkgPath), "dist", "mermaid.min.js");
-  mermaidBundleCache = await readFile(bundlePath, "utf8");
-  return mermaidBundleCache;
+/**
+ * Reads a script the render page needs. An unreadable asset is a loud "mermaid" stage
+ * failure: skipping the injection would export a diagram drawn by the wrong layout.
+ */
+export async function loadExportAsset(path: string, label: string): Promise<string> {
+  const cached = assetCache.get(path);
+  if (cached !== undefined) return cached;
+  try {
+    const text = await readFile(path, "utf8");
+    assetCache.set(path, text);
+    return text;
+  } catch (error) {
+    throw new HtmlExportError(`${label} unreadable at ${path}`, "mermaid", error);
+  }
 }
 
-// Verbatim copy of the live viewer's dark themeVariables (public/index.html) —
-// the palette is load-bearing for dark-on-dark legibility; DO NOT re-derive.
-// securityLevel:'loose' matches the viewer (stored body is already DOMPurify-sanitized).
-const MERMAID_INIT_CONFIG = {
-  startOnLoad: false,
-  theme: "dark",
-  themeVariables: {
-    darkMode: true,
-    background: "#0a0a0a",
-    primaryColor: "#1e3a8a",
-    primaryTextColor: "#e5e7eb",
-    lineColor: "#94a3b8",
-    fontSize: "14px",
-    fontFamily: "Pretendard, system-ui, -apple-system, sans-serif",
+// Resolved via import.meta.resolve so the path is identical under tsx (src/) and node
+// (dist/) — no build-asset copy.
+async function loadMermaidBundle(): Promise<string> {
+  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+  return loadExportAsset(resolve(dirname(pkgPath), "dist", "mermaid.min.js"), "mermaid driver bundle");
+}
 
-    textColor: "#e5e7eb",
-    nodeTextColor: "#e5e7eb",
-    labelTextColor: "#e5e7eb",
-    titleColor: "#f1f5f9",
-    noteTextColor: "#0a0a0a",
-    noteBkgColor: "#fde68a",
+// The injected driver's version, read from the package the driver comes OUT of: loadMermaidBundle
+// reads dist/mermaid.min.js from beside this very package.json, so a hand-written value could only
+// ever drift from the bundle it names.
+//
+// Read at the first export, never at module load. This module sits on the server's boot path
+// (routes/clauded-docs.ts → registerRoutes → main.ts), so a filesystem read at module scope turns a
+// missing mermaid package into a boot failure that launchd repays with a restart loop — the opposite
+// of main.ts's non-fatal-prerequisite design, where an unmet export prerequisite leaves the rest of
+// the service up and fails the first export loudly. Memoized for the same reason and with the same
+// lifetime as assetCache: an edited asset arrives with a fresh process.
+//
+// Sync read, deliberately: stripCdnScriptsAndFonts is a pure string transform and every caller holds
+// it to that, so threading a promise through it to spare one 2 KB read — on a path already blocked on
+// a chromium render — would buy nothing.
+let mermaidVersion: string | null = null;
 
-    mainBkg: "#1e293b",
-    secondaryColor: "#334155",
-    tertiaryColor: "#475569",
-    secondaryTextColor: "#e5e7eb",
-    tertiaryTextColor: "#e5e7eb",
+function getMermaidVersion(): string {
+  if (mermaidVersion !== null) return mermaidVersion;
+  try {
+    const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+    const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    if (version === undefined) throw new Error(`no version field in the mermaid package at ${pkgPath}`);
+    mermaidVersion = version;
+    return version;
+  } catch (error) {
+    throw new HtmlExportError(
+      "mermaid driver version unreadable — the installed mermaid package resolved to nothing readable",
+      "mermaid",
+      error,
+    );
+  }
+}
 
-    pieTitleTextColor: "#f1f5f9",
-    pieSectionTextColor: "#e5e7eb",
-    pieLegendTextColor: "#e5e7eb",
-    pieStrokeColor: "#0a0a0a",
-    pieOuterStrokeColor: "#94a3b8",
-
-    actorTextColor: "#e5e7eb",
-    taskTextColor: "#e5e7eb",
-    labelBoxBkgColor: "#1e293b",
-    fillType0: "#e5e7eb", fillType1: "#e5e7eb", fillType2: "#e5e7eb", fillType3: "#e5e7eb",
-    fillType4: "#e5e7eb", fillType5: "#e5e7eb", fillType6: "#e5e7eb", fillType7: "#e5e7eb",
-
-    labelColor: "#e5e7eb",
-    stateLabelColor: "#e5e7eb",
-    compositeTitleBackground: "#1e293b",
-
-    cScaleLabel0: "#e5e7eb", cScaleLabel1: "#e5e7eb", cScaleLabel2: "#e5e7eb",
-    cScaleLabel3: "#e5e7eb", cScaleLabel4: "#e5e7eb", cScaleLabel5: "#e5e7eb",
-    cScaleLabel6: "#e5e7eb", cScaleLabel7: "#e5e7eb", cScaleLabel8: "#e5e7eb",
-    cScaleLabel9: "#e5e7eb", cScaleLabel10: "#e5e7eb", cScaleLabel11: "#e5e7eb",
-  },
-  // useMaxWidth:true stamps an inline max-width onto the emitted <svg> → it outranks any container rule.
-  // The key sits on BaseDiagramConfig and does NOT inherit — every adopted type (diagram-types.json) needs its own.
-  flowchart: {
-    htmlLabels: true,
-    curve: "basis",
-    padding: 12,
-    nodeSpacing: 50,
-    rankSpacing: 60,
-    useMaxWidth: false,
-  },
-  sequence: { useMaxWidth: false },
-  state: { useMaxWidth: false },
-  er: { useMaxWidth: false },
-  class: { useMaxWidth: false },
-  gitGraph: { useMaxWidth: false },
-  c4: { useMaxWidth: false },
-  securityLevel: "loose",
-} as const;
+/** The offline marker naming the driver that was actually injected — see getMermaidVersion. */
+function getMermaidVersionComment(): string {
+  return ` mermaid driver: pinned mermaid@${getMermaidVersion()} (locally bundled, no network) `;
+}
 
 /** Non-html stored body formats the shell-wrap path handles. */
 export type PlainFormatToken = "md" | "yaml" | "json" | "txt";
@@ -263,7 +275,10 @@ async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
   let context: BrowserContext | null = null;
   let page: Page | null = null;
   try {
-    context = await browser.newContext();
+    context = await browser.newContext({
+      viewport: { ...EXPORT_SCREEN },
+      screen: { ...EXPORT_SCREEN },
+    });
 
     // SSRF / egress guard — abort every render-time request except the Tailwind
     // Play CDN. Installed BEFORE newPage so it covers the very first subresource.
@@ -347,23 +362,58 @@ async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
 }
 
 /**
- * Injects the pinned mermaid driver, runs the viewer's dark initialize, then the
- * per-node render loop keyed on PRE-EXTRACTED sources (rationale:
- * extractMermaidSources). sources[i] ↔ the i-th `pre.mermaid, .mermaid` node
- * (same selector both sides). Waits until every node holds an <svg>; zero <svg>
- * for a doc that HAD mermaid nodes → HtmlExportError stage "mermaid".
+ * Watches the render console for mermaid's layout-fallback warning and reports it after the
+ * fact. The two halves have to sit apart in time — the warning is emitted mid-render, so the
+ * listener attaches before the driver runs, while the verdict can only be read once the
+ * render is finished — and keeping them in one named pair is what stops the attach from
+ * drifting away from the check it exists for.
+ */
+function watchLayoutFallback(page: Page): { assertNoFallback: () => void } {
+  const fallbackWarnings: string[] = [];
+  page.on("console", (message) => {
+    const text = message.text();
+    if (LAYOUT_FALLBACK_MARKERS.every((marker) => text.includes(marker))) {
+      fallbackWarnings.push(text);
+    }
+  });
+
+  return {
+    // A fallback still produces an <svg>, so the zero-svg guard cannot see it.
+    assertNoFallback() {
+      if (fallbackWarnings.length > 0) {
+        throw new HtmlExportError(
+          `mermaid drew a diagram with a layout the page never registered: ${fallbackWarnings[0]}`,
+          "mermaid",
+        );
+      }
+    },
+  };
+}
+
+/** Classic script, no `type` — a module tag resolves before it runs, so its global would not be there yet. */
+async function injectScript(page: Page, content: string, label: string): Promise<void> {
+  try {
+    await page.addScriptTag({ content });
+  } catch (error) {
+    throw new HtmlExportError(`${label} injection failed`, "mermaid", error);
+  }
+}
+
+/**
+ * Injects the pinned mermaid driver, the vendored ELK loader and the shared config, then
+ * runs the per-node render loop keyed on PRE-EXTRACTED sources (rationale:
+ * extractMermaidSources). sources[i] ↔ the i-th `pre.mermaid, .mermaid` node (same
+ * selector both sides). Waits until every node holds an <svg>; zero <svg> for a doc that
+ * HAD mermaid nodes → HtmlExportError stage "mermaid".
  */
 async function driveMermaidRender(page: Page, sources: string[]): Promise<void> {
-  const bundle = await loadMermaidBundle();
-  try {
-    await page.addScriptTag({ content: bundle });
-  } catch (error) {
-    throw new HtmlExportError(
-      error instanceof Error ? error.message : "mermaid driver injection failed",
-      "mermaid",
-      error,
-    );
-  }
+  // Attached before the driver runs: the fallback warning is emitted mid-render and is the
+  // only signal that a diagram was drawn by a layout nobody asked for.
+  const layoutFallback = watchLayoutFallback(page);
+
+  await injectScript(page, await loadMermaidBundle(), "mermaid driver bundle");
+  await injectScript(page, await loadExportAsset(ELK_LOADER_PATH, "elk layout loader"), "elk layout loader");
+  await injectScript(page, await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"), "mermaid config");
 
   let renderError: string | null;
   try {
@@ -373,8 +423,12 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       type MermaidGlobal = {
         mermaid?: {
           initialize: (c: unknown) => void;
+          registerLayoutLoaders: (loaders: unknown) => void;
+          mermaidAPI?: { getConfig: () => { logLevel?: unknown } };
           render: (id: string, src: string) => Promise<{ svg: string }>;
         };
+        MERMAID_CONFIG?: unknown;
+        mermaidLayoutElk?: { default?: unknown };
         document: {
           querySelectorAll: (sel: string) => ArrayLike<{ innerHTML: string }>;
         };
@@ -382,8 +436,15 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       const g = globalThis as unknown as MermaidGlobal;
       const mermaid = g.mermaid;
       if (mermaid === undefined) return "window.mermaid undefined after driver injection";
+      if (g.MERMAID_CONFIG === undefined) return "window.MERMAID_CONFIG undefined after config injection";
       try {
-        mermaid.initialize(args.config);
+        // The loader is a classic script that has already executed — registration is synchronous.
+        mermaid.registerLayoutLoaders(g.mermaidLayoutElk?.default ?? []);
+        mermaid.initialize(g.MERMAID_CONFIG);
+        const level = Number(mermaid.mermaidAPI?.getConfig().logLevel ?? Number.NaN);
+        if (!(level <= args.warnLogLevel)) {
+          return `page logLevel ${String(level)} is above ${args.warnLogLevel}, where a layout fallback is never logged`;
+        }
         const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
         // node/source count divergence (rare parser difference) → render by index, no abort.
         for (let i = 0; i < nodes.length; i += 1) {
@@ -398,7 +459,7 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       } catch (e) {
         return e instanceof Error ? e.message : "mermaid render threw";
       }
-    }, { config: MERMAID_INIT_CONFIG, sources });
+    }, { sources, warnLogLevel: WARN_LOG_LEVEL });
   } catch (error) {
     throw new HtmlExportError(
       error instanceof Error ? error.message : "mermaid render evaluate failed",
@@ -431,6 +492,9 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       error,
     );
   }
+
+  // Checked after the render completes — see watchLayoutFallback.
+  layoutFallback.assertNoFallback();
 }
 
 /**
@@ -555,13 +619,14 @@ export function stripCdnScriptsAndFonts(html: string): string {
   }
 
   // Insert marker comments at the top of <head> (or root if no head).
-  // SECURITY: both args are module-level static literals with ZERO document/body
-  // interpolation — not an injection sink. insertAdjacentHTML keeps them as real
+  // SECURITY: both args are module-level constants with ZERO document/body interpolation
+  // — the mermaid note carries the installed package's own version, never stored content —
+  // so this is not an injection sink. insertAdjacentHTML keeps them as real
   // DOM comments (insertAdjacentText would HTML-escape the markers).
   const head = root.querySelector("head") ?? root;
   head.insertAdjacentHTML(
     "afterbegin",
-    `<!--${OFFLINE_FONTS_COMMENT}--><!--${MERMAID_VERSION_COMMENT}-->`,
+    `<!--${OFFLINE_FONTS_COMMENT}--><!--${getMermaidVersionComment()}-->`,
   );
 
   // Export pages get neither the viewer's .doc-body-isolation block nor SHELL_STYLE → the width rule ships here.
@@ -627,4 +692,3 @@ export function wrapPlainInHtmlShell(body: string, format: PlainFormatToken): st
 }
 
 export { BrowserPoolError };
-export { MERMAID_VERSION };

@@ -93,7 +93,8 @@ describe("vendored ELK bundle pin (no browser, no network)", () => {
 
 		// 문서 순서 — mermaid 전역이 먼저 있어야 동기 등록이 성립하고(ADR-1),
 		// 등록은 initialize 보다 앞서야 한다. 순서가 무너지면 layout:'elk' 가 조용히 dagre 로 떨어짐.
-		const mermaidAt = html.indexOf("mermaid@11/dist/mermaid.min.js");
+		// 버전이 아니라 모양으로 찾는다 — 리터럴로 두면 CDN 태그 고정이 이 파일까지 함께 고쳐야 하는 일이 된다.
+		const mermaidAt = html.search(/mermaid@[\d.]+\/dist\/mermaid\.min\.js/);
 		const vendorAt = html.indexOf(vendorSrcs[0]);
 		const registerAt = html.indexOf("registerLayoutLoaders");
 		const initializeAt = html.indexOf("window.mermaid?.initialize(");

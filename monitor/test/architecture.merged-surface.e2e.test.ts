@@ -950,16 +950,16 @@ function getCanvasProbe(): Promise<RenderProbe> {
 	return getProbe(page, selectors.canvas, "canonical map canvas");
 }
 
-// 대조군 — 지시자의 layout 값 하나만 갈아끼운 같은 소스. 테마·간격·라벨이 전부 같으므로
-// 남는 차이가 레이아웃 엔진뿐이다(테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
+// 대조군 — 같은 소스에 layout opt-out 지시자 한 줄만 앞세운 것. 테마·간격·라벨은 공유 설정에서
+// 그대로 오므로(지시자는 설정과 깊은 병합) 남는 차이가 레이아웃 엔진뿐이다
+// (테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
 function getLayoutControl(id: string, layout: string): Promise<RenderProbe> {
-	const variant = CANONICAL_MAP.mermaid_drawn.replace('"layout": "elk"', `"layout": "${layout}"`);
-	assert.notEqual(
-		variant,
-		CANONICAL_MAP.mermaid_drawn,
-		'canonical mermaid_drawn must carry a single-line %%{init}%% directive requesting "layout": "elk"',
+	assert.equal(
+		CANONICAL_MAP.mermaid_drawn.includes("%%{init"),
+		false,
+		"canonical mermaid_drawn must carry no %%{init}%% directive — the layout comes from the shared config",
 	);
-	return getRenderProbe(page, id, variant);
+	return getRenderProbe(page, id, `%%{init: {"layout": "${layout}"}}%%\n${CANONICAL_MAP.mermaid_drawn}`);
 }
 
 test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback", async () => {
@@ -1071,7 +1071,7 @@ test("P0-2 the embedded second mermaid runtime owns no global and renders nothin
 	// (window.mermaid.version 은 undefined) 버전으로는 못 가른다 — 대신 설정값이 index.html 것임을 재고,
 	// 임베드 네임스페이스와 동일 객체가 아님을 함께 잠근다.
 	assert.equal(probe.embeddedIsPageMermaid, false, "the embedded mermaid copy became window.mermaid");
-	assert.equal(probe.securityLevel, "loose", "window.mermaid does not carry the config index.html initialized");
+	assert.equal(probe.securityLevel, "antiscript", "window.mermaid does not carry the config index.html initialized");
 	assert.equal(probe.startOnLoad, false, "window.mermaid does not carry the config index.html initialized");
 	// 생산 수명주기에서는 임베드 사본의 startOnLoad 경로가 아무것도 그리지 않는다.
 	assert.equal(

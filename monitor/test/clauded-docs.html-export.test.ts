@@ -43,14 +43,41 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 
 const SUITE_MARKER = `html-export-test-${randomUUID()}`;
+
+// 중복 판정 키는 제목이 아니라 저장 본문의 해시다(routes/clauded-docs.ts checkDuplicateContent).
+// 픽스처 본문이 실행마다 같으면 어느 작업 트리의 지난 실행이 남긴 행 하나가 공용 DB 에서
+// 이 파일의 모든 POST 를 409 duplicate_content 로 떨어뜨린다 — 실측된 실패 방식이다.
+// 그래서 표식을 제목뿐 아니라 본문에도 박는다.
+const RUN_NONCE = randomUUID();
+
+// 이 실행이 만든 문서 id — after() 가 문서화된 DELETE 라우트로 전부 되돌린다.
+const createdDocIds: number[] = [];
 
 let htmlSuiteRoot: string;
 let app: FastifyInstance;
 
 function makeTitle(label: string): string {
   return `${SUITE_MARKER}-${label}-${randomUUID()}`;
+}
+
+/**
+ * 저장 본문에 실행 표식을 남겨 본문 해시를 실행마다 가른다.
+ * 속성이나 주석이 아니라 본문 텍스트로 두는 이유 — sanitize 정책이 무엇을 걷어내든 살아남아야
+ * 해시가 실제로 갈리고, 그렇지 않으면 표식이 조용히 사라져 원래의 충돌로 되돌아간다.
+ */
+function withRunMark(htmlBody: string): string {
+  const mark = `<p>run-mark ${RUN_NONCE}</p>`;
+  return htmlBody.includes("</body>")
+    ? htmlBody.replace("</body>", `${mark}</body>`)
+    : `${htmlBody}${mark}`;
+}
+
+function logCleanupFailure(message: string, detail: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(`[html-export-test cleanup] ${message}`, detail);
 }
 
 // PRE-ONLY mermaid doc — the dominant real corpus shape: <pre class="mermaid">
@@ -77,19 +104,26 @@ const MERMAID_V11_SRC = "flowchart TD\n  A[Start] --> B{Choice}\n  B -->|yes| C[
 // tolerant. Dual-corpus gate: both MUST render under the single v11 driver.
 const MERMAID_V10_SRC = "graph LR\n  X-->Y\n  Y-->Z\n  classDef hot fill:#f96;\n  class X hot;";
 
-async function seedHtmlDoc(label: string, htmlBody: string): Promise<{ id: number }> {
-  const title = makeTitle(label);
+/** 제목을 직접 정하는 자리(한글 제목 다리)까지 한 문으로 모음 — 표식과 id 기록이 갈라지지 않게. */
+async function postHtmlDoc(title: string, htmlBody: string): Promise<{ id: number }> {
   const res = await app.inject({
     method: "POST",
     url: "/api/clauded-docs",
-    payload: { title, prefix: "계획", author: "tester", html_body: htmlBody },
+    payload: { title, prefix: "계획", author: "tester", html_body: withRunMark(htmlBody) },
   });
   assert.strictEqual(res.statusCode, 201, `POST seed failed: ${res.payload}`);
-  return { id: (res.json() as { id: number }).id };
+  const id = (res.json() as { id: number }).id;
+  createdDocIds.push(id);
+  return { id };
+}
+
+function seedHtmlDoc(label: string, htmlBody: string): Promise<{ id: number }> {
+  return postHtmlDoc(makeTitle(label), htmlBody);
 }
 
 async function seedPlainDoc(label: string): Promise<{ id: number }> {
   const title = makeTitle(label);
+  // 제목이 본문 안에 들어가고 그 제목이 실행마다 갈리므로 md 본문은 이미 유일함.
   const mdBody = `---\naudience: agent-only\nagent: reporter\ntokens_estimate: 50\n---\n# ${title}\n\n- k: v\n\n결론: 1줄.\n`;
   const res = await app.inject({
     method: "POST",
@@ -97,7 +131,9 @@ async function seedPlainDoc(label: string): Promise<{ id: number }> {
     payload: { title, prefix: "참조", author: "reporter", md_body: mdBody },
   });
   assert.strictEqual(res.statusCode, 201, `POST plain seed failed: ${res.payload}`);
-  return { id: (res.json() as { id: number }).id };
+  const id = (res.json() as { id: number }).id;
+  createdDocIds.push(id);
+  return { id };
 }
 
 async function fetchStoredPath(id: number): Promise<string> {
@@ -117,20 +153,35 @@ before(async () => {
 });
 
 after(async () => {
+  // 이 실행이 만든 문서를 문서화된 경로(DELETE /api/clauded-docs/:id)로 되돌림 — 라우트가 DB 행과
+  // 저장 파일을 함께 지운다. app.close() 앞에 두어야 inject 가 살아 있고, 어떤 다리가 어떻게
+  // 끝났든 돌도록 건별로 삼킨다 — 여기서 한 건이 던지면 나머지 행이 공용 DB 에 그대로 남는다.
+  for (const id of createdDocIds) {
+    try {
+      const res = await app.inject({ method: "DELETE", url: `/api/clauded-docs/${id}` });
+      if (res.statusCode !== 200) {
+        logCleanupFailure(`DELETE ${id} returned ${res.statusCode}:`, res.payload);
+      }
+    } catch (error) {
+      logCleanupFailure(`DELETE ${id} threw:`, error);
+    }
+  }
+  createdDocIds.length = 0;
+
   try {
     await app.close();
   } catch {
     // Best-effort.
   }
   await resetBrowserForTests();
+  // 위 라우트 정리가 놓친 것에 대한 backstop — 201 을 받았지만 id 를 기록하기 전에 끊긴 경우.
   try {
     const prisma = getPrisma();
     await prisma.$executeRaw`
       DELETE FROM monitor.documents WHERE title LIKE ${`%${SUITE_MARKER}%`}
     `;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("[html-export-test cleanup] DB scrub failed:", error);
+    logCleanupFailure("DB scrub failed:", error);
   }
   await disconnectPrisma();
   rmSync(htmlSuiteRoot, { recursive: true, force: true });
@@ -219,13 +270,15 @@ test("GET /:id/html-export: dark theme (R3) — serialized output carries the ho
   const { id } = await seedHtmlDoc("dark", makePreOnlyMermaidBody("dark", MERMAID_V11_SRC));
   const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` });
   assert.strictEqual(res.statusCode, 200, res.payload);
-  // The viewer's non-default dark themeVariables (#e5e7eb light text, #1e293b
-  // node fill) flow into mermaid's emitted <svg>/<style>. Stock mermaid light
-  // defaults would NOT contain these tokens. Assert at least one host token.
-  const body = res.payload.toLowerCase();
-  const hasDarkToken =
-    body.includes("#e5e7eb") || body.includes("#1e293b") || body.includes("#0a0a0a");
-  assert.ok(hasDarkToken, "serialized mermaid output references the host dark palette");
+  // The shared config's dark palette flows into mermaid's emitted <svg>/<style>;
+  // stock mermaid light defaults carry none of it. Read the expected fill from the
+  // config file rather than pinning a hex here — a copy in this test would drift
+  // from the file both surfaces initialize from.
+  const nodeFill = getMermaidThemeValue("mainBkg");
+  assert.ok(
+    res.payload.toLowerCase().includes(nodeFill.toLowerCase()),
+    `serialized mermaid output lost the shared node fill ${nodeFill}`,
+  );
 });
 
 test("GET /:id/html-export: non-HTML row — minimal HTML shell, NO browser invoked", async () => {
@@ -264,16 +317,7 @@ test("GET /:id/html-export: ETag round-trip — second request with If-None-Matc
 test("GET /:id/html-export: Korean title — attachment Content-Disposition dual-param", async () => {
   const koreanLabel = "한글제목-계획";
   const title = `${SUITE_MARKER}-${koreanLabel}-${randomUUID()}`;
-  const seedRes = await app.inject({
-    method: "POST",
-    url: "/api/clauded-docs",
-    payload: {
-      title, prefix: "계획", author: "tester",
-      html_body: makePreOnlyMermaidBody("kr", MERMAID_V11_SRC),
-    },
-  });
-  assert.strictEqual(seedRes.statusCode, 201, seedRes.payload);
-  const id = (seedRes.json() as { id: number }).id;
+  const { id } = await postHtmlDoc(title, makePreOnlyMermaidBody("kr", MERMAID_V11_SRC));
 
   const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` });
   assert.strictEqual(res.statusCode, 200, `Korean export should 200, got ${res.payload}`);
