@@ -28,7 +28,8 @@ import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
-const VIEWER_INDEX_PATH = resolve(MONITOR_ROOT, "public/index.html");
+const VIEWER_CONFIG_PATH = resolve(MONITOR_ROOT, "public/mermaid-config.js");
+const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
@@ -131,12 +132,15 @@ interface MeasureOptions {
 
 let browser: Browser;
 let mermaidBundle: string;
+let vendorElkBundle: string;
 
 before(async () => {
   browser = await chromium.launch({ headless: true });
   // 뷰어와 같은 드라이버 — import.meta.resolve 로 로컬 번들을 씀(네트워크 불요).
   const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
   mermaidBundle = await readFile(resolve(dirname(pkgPath), "dist", "mermaid.min.js"), "utf8");
+  // 공유 설정이 layout:'elk' 를 요구하므로 로더도 뷰어와 같이 실려야 함 — 없으면 렌더가 throw 한다.
+  vendorElkBundle = await readFile(VENDOR_ELK_PATH, "utf8");
 });
 
 after(async () => {
@@ -144,25 +148,19 @@ after(async () => {
   await resetBrowserForTests();
 });
 
-/** public/index.html 의 인라인 init 인자를 원문에서 뽑음 — 사본을 두지 않기 위함. */
+/** 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
+ *  index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유. */
 function getViewerMermaidConfig(): Record<string, unknown> {
-  const html = readFileSync(VIEWER_INDEX_PATH, "utf8");
-  const at = html.indexOf("window.mermaid?.initialize(");
-  assert.notEqual(at, -1, "public/index.html 에 mermaid initialize 호출이 없음");
-  const source = html.slice(at, html.indexOf("</script>", at));
-
-  let captured: Record<string, unknown> | null = null;
-  const windowStub = {
-    mermaid: {
-      initialize: (config: Record<string, unknown>) => {
-        captured = config;
-      },
-    },
-  };
+  const source = readFileSync(VIEWER_CONFIG_PATH, "utf8");
+  const windowStub: Record<string, unknown> = {};
   new Function("window", source)(windowStub);
 
-  assert.notEqual(captured, null, "initialize 인자를 잡지 못함");
-  return captured as unknown as Record<string, unknown>;
+  const config = windowStub.MERMAID_CONFIG;
+  assert.ok(
+    config !== null && typeof config === "object",
+    "public/mermaid-config.js 가 window.MERMAID_CONFIG 를 할당하지 않음",
+  );
+  return config as Record<string, unknown>;
 }
 
 /** clauded-docs.jsx 의 인라인 <style> 템플릿 리터럴 본문. */
@@ -244,17 +242,22 @@ async function measureRenderedNodes(
 
     if (config !== null && sources !== null) {
       await page.addScriptTag({ content: mermaidBundle });
+      await page.addScriptTag({ content: vendorElkBundle });
       const renderError = await page.evaluate(async (args) => {
         const g = globalThis as unknown as {
           mermaid?: {
             initialize: (c: unknown) => void;
+            registerLayoutLoaders: (loaders: unknown) => void;
             render: (id: string, src: string) => Promise<{ svg: string }>;
           };
+          mermaidLayoutElk?: { default?: unknown };
           document: { querySelectorAll: (sel: string) => ArrayLike<{ innerHTML: string }> };
         };
         const mermaid = g.mermaid;
         if (mermaid === undefined) return "window.mermaid undefined";
         try {
+          // index.html 과 같은 순서 — 등록이 initialize 보다 먼저.
+          mermaid.registerLayoutLoaders(g.mermaidLayoutElk?.default ?? []);
           mermaid.initialize(args.config);
           const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
           for (let i = 0; i < nodes.length; i += 1) {
