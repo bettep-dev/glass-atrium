@@ -8,6 +8,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import {
+  DAEMON_CRON_SCHEDULE,
+  STALE_MULTIPLIER,
+  expectedIntervalMinutes,
+} from "../src/server/schedule-next-fire.js";
+
 // health-model.js reads window.UI at call time — stub must exist BEFORE import.
 // Mirrors ui.jsx DAEMON_STATUS_TONE (the SoT). missing→info per F#38 fix.
 const DAEMON_TONE: Record<string, string> = {
@@ -251,4 +257,33 @@ test("daemonState not ready: KPI renders '—' sentinels, never fabricated zeros
   const kpis = HealthModel.computeOverviewKpis(allHealthyStates({ daemonState: LOADING }));
   assert.strictEqual(kpis.okCount, "—");
   assert.strictEqual(kpis.totalCount, "—");
+});
+
+// --- AC-T4 (health half): the board follows the one server threshold and holds none of its own.
+// The map half of the same move, and the screen-to-screen comparison, live in
+// test/architecture.daemon-binding.test.ts.
+
+const WIDER_MULTIPLIER = 2;
+// A run overdue at the shipped multiplier and inside a wider one — the band where a second
+// threshold gives itself away.
+const BAND_MIN = Math.round(
+  expectedIntervalMinutes(DAEMON_CRON_SCHEDULE.autoagent) *
+    ((STALE_MULTIPLIER + WIDER_MULTIPLIER) / 2),
+);
+
+test("AC-T4 the server threshold moves, the row does not, and the card moves with the verdict", () => {
+  const overdue = daemonRow("autoagent", {
+    effective_status: "stale",
+    is_stale: true,
+    staleness_minutes: BAND_MIN,
+  });
+  // Only the server threshold widened: same daemon, same last run, same staleness figure.
+  const inside = { ...overdue, effective_status: "ok", is_stale: false };
+
+  assert.strictEqual(HealthModel.resolveDaemonDisplayMeta(overdue).tone, "crit");
+  assert.strictEqual(
+    HealthModel.resolveDaemonDisplayMeta(inside).tone,
+    "ok",
+    "a threshold of its own would hold this at crit — the staleness figure never changed",
+  );
 });

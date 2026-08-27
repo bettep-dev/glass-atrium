@@ -106,7 +106,7 @@ const FIXTURES = new Map<string, string>([
 
 const FIXTURE_TYPES = [...FIXTURES.keys()];
 
-/** 한 mermaid 노드에서 잰 값 — (b) 는 svgStyleAttr, (a) 는 스크롤 세 값. */
+/** 한 mermaid 노드에서 잰 값 — (b) 는 svgStyleAttr, (a) 는 스크롤 세 값, AC-T23 은 boxWidth. */
 interface NodeMeasurement {
   type: string;
   svgPresent: boolean;
@@ -114,6 +114,13 @@ interface NodeMeasurement {
   overflowX: string;
   scrollWidth: number;
   clientWidth: number;
+  boxWidth: number;
+}
+
+/** 라벨과 뷰포트는 다리마다 다름 — 기본값은 AC-T22 의 채택 타입 전수 × 좁은 뷰포트. */
+interface MeasureOptions {
+  labels?: readonly string[];
+  viewportWidth?: number;
 }
 
 let browser: Browser;
@@ -161,11 +168,12 @@ function getViewerDocBodyCss(): string {
   return jsx.slice(open + "<style>{`".length, close);
 }
 
+const TYPE_NODES = FIXTURE_TYPES.map(
+  (type) => `<pre class="mermaid" data-type="${type}"></pre>`,
+).join("");
+
 /** 뷰어 실제 DOM 계층(wrap > inner > isolation)을 그대로 세운 하네스 문서. */
-function buildViewerHarness(css: string): string {
-  const nodes = FIXTURE_TYPES.map(
-    (type) => `<pre class="mermaid" data-type="${type}"></pre>`,
-  ).join("");
+function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
   return (
     "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">" +
     `<style>${css}</style>` +
@@ -182,9 +190,12 @@ async function measureRenderedNodes(
   html: string,
   config: Record<string, unknown> | null,
   sources: string[] | null,
+  options: MeasureOptions = {},
 ): Promise<NodeMeasurement[]> {
+  const labels = options.labels ?? FIXTURE_TYPES;
+
   const context = await browser.newContext({
-    viewport: { width: NARROW_VIEWPORT_WIDTH, height: 900 },
+    viewport: { width: options.viewportWidth ?? NARROW_VIEWPORT_WIDTH, height: 900 },
   });
   const page = await context.newPage();
   await page.route("**/*", (route) => route.abort());
@@ -222,6 +233,7 @@ async function measureRenderedNodes(
       // 콜백은 chromium 에서 돎 — tsconfig lib 이 ES2022(DOM 없음)라 브라우저 타입은 국소 선언으로 받음.
       type DiagramNode = {
         querySelector: (sel: string) => { getAttribute: (name: string) => string | null } | null;
+        getBoundingClientRect: () => { width: number };
         scrollWidth: number;
         clientWidth: number;
       };
@@ -240,9 +252,10 @@ async function measureRenderedNodes(
           overflowX: g.getComputedStyle(node).overflowX,
           scrollWidth: node.scrollWidth,
           clientWidth: node.clientWidth,
+          boxWidth: node.getBoundingClientRect().width,
         };
       });
-    }, FIXTURE_TYPES);
+    }, labels);
   } finally {
     await page.close();
     await context.close();
@@ -340,6 +353,117 @@ test("AC-T22(a) 내보내기: 산출 HTML 을 열면 가로 스크롤이 생기�
     assert.ok(
       m.scrollWidth > m.clientWidth,
       `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
+    );
+  }
+});
+
+// ── AC-T23 크기 프리셋 ───────────────────────────────────────────────────────
+// 세 단계(본문폭 · 넓게 · 전폭)가 서로 구분되고, 같은 단계가 내보내기 산출물에서
+// 같은 폭으로 재현되는지 잼. 뷰어에서만 맞고 산출물에서 어긋나면 실패임.
+//
+// 폭을 px 로 직접 대조할 수 있는 근거: 아래 뷰포트에서는 본문 컬럼의 1280px 상한이
+// 양쪽 모두 이김 — 뷰어는 .doc-fs-body-inner(max-width: min(90%, 1280px)), 내보내기는
+// 저장 본문이 자기 컬럼을 들고 다니므로 픽스처가 같은 규칙을 씀. 두 컬럼이 같은 값이면
+// 컬럼 기준 프리셋(본문폭)도 뷰포트 기준 프리셋(넓게 · 전폭)도 같은 px 로 떨어짐.
+
+// 컬럼(1280 상한)이 뷰포트보다 확실히 좁아 세 단계가 갈라지는 폭. 480 에서는 셋 다
+// 뷰포트에 눌려 구분 자체가 사라짐.
+const PRESET_VIEWPORT_WIDTH = 1800;
+
+// 뷰어 .doc-fs-body-inner 와 같은 컬럼 규칙 — 내보내기 픽스처가 이것을 그대로 씀.
+const DOC_COLUMN_CSS = "width:min(90%,1280px);margin-inline:auto";
+
+// 나열 순서가 곧 폭의 오름차순임(본문폭 < 넓게 < 전폭).
+const SIZE_PRESETS = ["doc-diagram-body", "doc-diagram-wide", "doc-diagram-full"] as const;
+
+// 반올림 오차가 아니라 실제로 다른 단계임을 요구하는 하한.
+const PRESET_MIN_DELTA = 8;
+
+// 프리셋은 타입이 아니라 컨테이너에 걸리므로 한 타입으로 충분함.
+const PRESET_SOURCE = FIXTURES.get("flowchart") as string;
+
+const PRESET_NODES = SIZE_PRESETS.map(
+  (preset) => `<pre class="mermaid ${preset}"></pre>`,
+).join("");
+
+let viewerPresetCache: Promise<NodeMeasurement[]> | null = null;
+let exportPresetCache: Promise<NodeMeasurement[]> | null = null;
+
+function measureViewerPresets(): Promise<NodeMeasurement[]> {
+  if (viewerPresetCache !== null) return viewerPresetCache;
+
+  viewerPresetCache = measureRenderedNodes(
+    buildViewerHarness(getViewerDocBodyCss(), PRESET_NODES),
+    getViewerMermaidConfig(),
+    SIZE_PRESETS.map(() => PRESET_SOURCE),
+    { labels: SIZE_PRESETS, viewportWidth: PRESET_VIEWPORT_WIDTH },
+  );
+  return viewerPresetCache;
+}
+
+function measureExportPresets(): Promise<NodeMeasurement[]> {
+  if (exportPresetCache !== null) return exportPresetCache;
+
+  const nodes = SIZE_PRESETS.map(
+    (preset) => `<pre class="mermaid ${preset}">${PRESET_SOURCE}</pre>`,
+  ).join("");
+  const body =
+    '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>diagram size presets</title>' +
+    `<style>.doc-column{${DOC_COLUMN_CSS}}</style></head>` +
+    `<body><main class="doc-column">${nodes}</main></body></html>`;
+
+  exportPresetCache = renderSelfContainedHtml(body, "html").then((html) =>
+    measureRenderedNodes(html, null, null, {
+      labels: SIZE_PRESETS,
+      viewportWidth: PRESET_VIEWPORT_WIDTH,
+    }),
+  );
+  return exportPresetCache;
+}
+
+/** 프리셋 이름 → 렌더 폭. 노드 순서가 아니라 이름으로 대조하기 위함. */
+function getPresetWidths(measurements: NodeMeasurement[]): Map<string, number> {
+  assert.equal(measurements.length, SIZE_PRESETS.length);
+  for (const m of measurements) {
+    assert.ok(m.svgPresent, `${m.type}: <svg> 가 렌더되지 않음`);
+  }
+  return new Map(measurements.map((m) => [m.type, m.boxWidth]));
+}
+
+function assertPresetLadder(widths: Map<string, number>, path: string): void {
+  for (let i = 1; i < SIZE_PRESETS.length; i += 1) {
+    const narrow = widths.get(SIZE_PRESETS[i - 1]) as number;
+    const wide = widths.get(SIZE_PRESETS[i]) as number;
+    assert.ok(
+      wide - narrow >= PRESET_MIN_DELTA,
+      `${path}: ${SIZE_PRESETS[i]}(${wide}px) 가 ${SIZE_PRESETS[i - 1]}(${narrow}px) 보다 ` +
+        `${PRESET_MIN_DELTA}px 이상 넓지 않음 — 두 단계가 구분되지 않음`,
+    );
+  }
+}
+
+test("AC-T23 뷰어: 세 프리셋의 렌더 폭이 서로 구분됨", async () => {
+  assertPresetLadder(getPresetWidths(await measureViewerPresets()), "뷰어");
+});
+
+test("AC-T23 내보내기: 세 프리셋의 렌더 폭이 서로 구분됨", async () => {
+  assertPresetLadder(getPresetWidths(await measureExportPresets()), "내보내기");
+});
+
+test("AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 재현됨", async () => {
+  const viewer = getPresetWidths(await measureViewerPresets());
+  const exported = getPresetWidths(await measureExportPresets());
+
+  // 사다리를 여기서 한 번 더 요구함 — 프리셋이 없어 세 폭이 컬럼 하나로 눌리면 대조는
+  // 저절로 맞아 버림. 폭 일치만 묻는 단언은 그 붕괴 상태에서도 초록이라 아무것도 재지 못함.
+  assertPresetLadder(viewer, "뷰어");
+  assertPresetLadder(exported, "내보내기");
+
+  for (const preset of SIZE_PRESETS) {
+    assert.equal(
+      exported.get(preset),
+      viewer.get(preset),
+      `${preset}: 내보내기 폭(${exported.get(preset)}px) 이 뷰어 폭(${viewer.get(preset)}px) 과 다름`,
     );
   }
 });

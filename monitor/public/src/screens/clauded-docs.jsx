@@ -846,6 +846,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
         .doc-body-isolation pre.mermaid, .doc-body-isolation .mermaid { overflow-x: auto; }
         .doc-body-isolation pre.mermaid > svg, .doc-body-isolation .mermaid > svg { max-width: none; }
+        /* 크기 프리셋 — 본문폭(기본) · 넓게 · 전폭. 넓게/전폭의 폭은 컬럼이 아니라 뷰포트가 정함 → 같은 값을 내보내기 셸(html-export.ts)에 넣으면 두 경로가 같은 폭으로 재현됨.
+           음수 margin-inline 은 컬럼 밖으로 빼내는 breakout — 폭만 컬럼에서 떼고 중심은 컬럼에 맞춤.
+           전폭은 100vw breakout 의 알려진 한계를 그대로 받음: 세로 스크롤바 폭만큼 가로 넘침이 생김. */
+        .doc-body-isolation .mermaid.doc-diagram-body { width: 100%; }
+        .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100vw - 4rem, 1600px); margin-inline: calc(50% - min(50vw - 2rem, 800px)); }
+        .doc-body-isolation .mermaid.doc-diagram-full { width: 100vw; margin-inline: calc(50% - 50vw); }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }

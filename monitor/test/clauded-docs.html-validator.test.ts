@@ -46,6 +46,10 @@ function check(html: string) {
   return validateHtmlStructure({ raw: html, sanitized: html });
 }
 
+// A clean pass carries an empty report-only `notices` array, so exact-match
+// assertions state both halves — the verdict AND the absence of notices.
+const OK_NO_NOTICES = { ok: true, notices: [] };
+
 function expectMissing(html: string, expected: HtmlStructureMissingField[]): void {
   const result = check(html);
   assert.strictEqual(result.ok, false, "expected validation to fail");
@@ -62,22 +66,22 @@ function expectMissing(html: string, expected: HtmlStructureMissingField[]): voi
 
 test("validateHtmlStructure: valid minimal HTML → { ok: true }", () => {
   const result = check(VALID_MINIMAL);
-  assert.deepStrictEqual(result, { ok: true });
+  assert.deepStrictEqual(result, OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: <article> alone satisfies semantic_landmark", () => {
   const html = VALID_MINIMAL.replace("<main>", "<article>").replace("</main>", "</article>");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: <section> alone satisfies semantic_landmark", () => {
   const html = VALID_MINIMAL.replace("<main>", "<section>").replace("</main>", "</section>");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: <h2> alone satisfies heading requirement", () => {
   const html = VALID_MINIMAL.replace("<h1>Heading</h1>", "<h2>Heading</h2>");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: legacy <meta http-equiv Content-Type charset> satisfies charset", () => {
@@ -85,7 +89,7 @@ test("validateHtmlStructure: legacy <meta http-equiv Content-Type charset> satis
     '<meta charset="utf-8">',
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">',
   );
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: raw has doctype/charset + sanitized stripped them → still valid", () => {
@@ -96,7 +100,7 @@ test("validateHtmlStructure: raw has doctype/charset + sanitized stripped them �
     .replace("<!doctype html>\n", "")
     .replace('<meta charset="utf-8">\n', "");
   const result = validateHtmlStructure({ raw, sanitized });
-  assert.deepStrictEqual(result, { ok: true });
+  assert.deepStrictEqual(result, OK_NO_NOTICES);
 });
 
 // single-missing-field cases.
@@ -264,12 +268,12 @@ test("validateHtmlStructure: empty string input → all 7 fields missing", () =>
 
 test("validateHtmlStructure: 5-column comparison table passes (cap inclusive)", () => {
   const html = wrapHtml(buildComparisonTable(MAX_COMPARISON_COLUMNS));
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: 4-column comparison table passes", () => {
   const html = wrapHtml(buildComparisonTable(4));
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: 6-column comparison table → d8_p2_violation", () => {
@@ -301,13 +305,13 @@ test("validateHtmlStructure: table without <th> (layout table) skipped", () => {
   // (over-enforcement 회피 — 비교 표 식별 신호는 `<th>` 존재).
   const layoutTable = "<table><tr>" + "<td>x</td>".repeat(6) + "</tr></table>";
   const html = wrapHtml(layoutTable);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: multiple tables, all ≤5 columns → ok", () => {
   const inner = buildComparisonTable(3) + buildComparisonTable(5) + buildComparisonTable(4);
   const html = wrapHtml(inner);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("validateHtmlStructure: multiple tables, 2nd violates → tableIndex=2", () => {
@@ -414,7 +418,7 @@ test("validateHtmlStructure: dogfood-report-shape passes (backwards-compat)", ()
     "</body>",
     "</html>",
   ].join("\n");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 // D8 threshold JSON SoT (de-triplication of the hardcoded column cap).
@@ -462,7 +466,7 @@ test("injecting a JSON SoT with cap=4 makes a 5-column table violate (no code ch
 
     const html = wrapHtml(buildComparisonTable(5));
     // Without injection (shipped cap=5) this passes — sanity anchor.
-    assert.deepStrictEqual(check(html), { ok: true });
+    assert.deepStrictEqual(check(html), OK_NO_NOTICES);
     // With cap=4 injected, the same 5-column table violates.
     const result = validateHtmlStructure({ raw: html, sanitized: html }, injected);
     assert.strictEqual(result.ok, false);
@@ -550,12 +554,12 @@ test("two placeholders on the SAME line → that line reported once", () => {
 
 test("{{…}} inside <code> does NOT raise (code-skip)", () => {
   const html = wrapForPlaceholder(["<p><code>const t = {{token}};</code></p>"]);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("{{…}} inside <pre> does NOT raise (pre-skip)", () => {
   const html = wrapForPlaceholder(["<pre>config: {{value}}</pre>"]);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("mixed — {{…}} in <code> + {{…}} in body → only the body line reported", () => {
@@ -575,12 +579,12 @@ test("mixed — {{…}} in <code> + {{…}} in body → only the body line repor
 
 test("nested {{…}} inside <pre><code> (both exempt ancestors) does NOT raise", () => {
   const html = wrapForPlaceholder(["<pre><code>{{deeply_nested}}</code></pre>"]);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("a clean document (no placeholders) passes through to ok", () => {
   const html = wrapForPlaceholder(["<p>fully resolved content</p>"]);
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("placeholder check precedes structure? No — structure failure wins", () => {
@@ -683,7 +687,7 @@ test("inline rgba() color literal also flagged as inline-color-literal", () => {
 test("inline style WITHOUT a color literal (e.g. margin only) does NOT flag", () => {
   // A non-color inline style must not trip the color-literal rule.
   const html = wrapDark("", '<p style="margin: 8px; padding: 4px">x</p>');
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("EXPLICIT light bg token (bg-white) on <body> → document-level {rule:'light-default-body'}, NO line field", () => {
@@ -736,7 +740,7 @@ test("REGRESSION GUARD — a plain body with NO explicit light token does NOT fi
     "<body><main><h1>H</h1><p>plain</p></main></body>",
     "</html>",
   ].join("\n");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("a dark-base body (bg-zinc-950) does NOT fire light-default-body", () => {
@@ -750,7 +754,7 @@ test("a dark-base body (bg-zinc-950) does NOT fire light-default-body", () => {
     '<body class="bg-zinc-950 text-zinc-100"><main><h1>H</h1><p>plain</p></main></body>',
     "</html>",
   ].join("\n");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("background:white / color:black INSIDE @media print → does NOT raise (print exempt)", () => {
@@ -764,7 +768,7 @@ test("background:white / color:black INSIDE @media print → does NOT raise (pri
     "</style>",
   ].join("\n");
   const html = wrapDark(printStyle, "<p>content</p>");
-  assert.deepStrictEqual(check(html), { ok: true });
+  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
 test("background:white / color:black OUTSIDE @media print → RAISES (non-print context)", () => {
@@ -856,4 +860,121 @@ test("P2: style violations are evaluated only AFTER structure + placeholder pass
   } else {
     assert.fail(`expected html_structure_invalid first, got ${JSON.stringify(result)}`);
   }
+});
+
+// T21 — diagram-type notices (report-only: an excluded type is reported on a
+// PASSING result, never a 4xx). Excluded types already exist in stored bodies,
+// so a blocking gate would reject documents that are already published.
+
+/** Stored-body shape of a diagram node — matches the `pre.mermaid, .mermaid` render contract. */
+function mermaidBlock(src: string): string {
+  return `<pre class="mermaid">${src}</pre>`;
+}
+
+test("diagram: adopted-type block passes with zero notices", () => {
+  const result = check(wrapHtml(mermaidBlock("flowchart LR\n  A --> B")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});
+
+test("diagram: excluded-type block emits exactly one notice naming the type", () => {
+  const result = check(wrapHtml(mermaidBlock('pie title Share\n  "a" : 40')));
+  assert.strictEqual(result.ok, true, "report-only — an excluded type must NOT fail the document");
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_type_excluded", type: "pie", blockIndex: 1 },
+    ]);
+  }
+});
+
+test("diagram: every adopted type passes with zero notices", () => {
+  const sources = [
+    "flowchart LR\n  A --> B",
+    "graph TD\n  A --> B",
+    "sequenceDiagram\n  A ->> B: hi",
+    "stateDiagram-v2\n  [*] --> S",
+    "erDiagram\n  A ||--o{ B : has",
+    "classDiagram\n  A <|-- B",
+    "gitGraph\n  commit",
+    "C4Context\n  Person(a, \"A\")",
+  ];
+  for (const src of sources) {
+    const result = check(wrapHtml(mermaidBlock(src)));
+    assert.strictEqual(result.ok, true, `adopted source rejected: ${src}`);
+    if (result.ok) assert.deepStrictEqual(result.notices, [], `unexpected notice for: ${src}`);
+  }
+});
+
+test("diagram: each excluded type is reported under its declared type name", () => {
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    ["quadrantChart\n  x-axis a --> b", "quadrantChart"],
+    ["radar-beta\n  axis a", "radar"],
+    ["timeline\n  2024 : x", "timeline"],
+    ["journey\n  title t", "journey"],
+    ["mindmap\n  root", "mindmap"],
+    ["sankey-beta\n  a,b,1", "sankey"],
+    ["xychart-beta\n  bar [1]", "xychart"],
+    ["gantt\n  title t", "gantt"],
+    ["block-beta\n  columns 1", "block"],
+  ];
+  for (const [src, type] of cases) {
+    const result = check(wrapHtml(mermaidBlock(src)));
+    assert.strictEqual(result.ok, true, `report-only violated for: ${type}`);
+    if (result.ok) {
+      assert.deepStrictEqual(result.notices, [
+        { code: "diagram_type_excluded", type, blockIndex: 1 },
+      ]);
+    }
+  }
+});
+
+test("diagram: notices carry 1-based DOM-order block index, one per offending block", () => {
+  const html = wrapHtml(
+    [
+      mermaidBlock("flowchart LR\n  A --> B"),
+      mermaidBlock("gantt\n  title t"),
+      mermaidBlock("pie title Share\n  \"a\" : 40"),
+    ].join("\n"),
+  );
+  const result = check(html);
+  assert.strictEqual(result.ok, true);
+  if (result.ok) {
+    assert.deepStrictEqual(result.notices, [
+      { code: "diagram_type_excluded", type: "gantt", blockIndex: 2 },
+      { code: "diagram_type_excluded", type: "pie", blockIndex: 3 },
+    ]);
+  }
+});
+
+test("diagram: acc directives above the type line do not hide an excluded type", () => {
+  // The stored-source normalizer relocates leading acc directives; the type
+  // check must see the same type line mermaid's detectType sees.
+  const src = 'accTitle: Share\naccDescr: breakdown\npie title Share\n  "a" : 40';
+  const result = check(wrapHtml(mermaidBlock(src)));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.strictEqual(result.notices.length, 1);
+});
+
+test("diagram: an unlisted type is neither adopted-silent nor excluded — no notice", () => {
+  // requirementDiagram is in neither list; the gate reports EXCLUSION only.
+  const result = check(wrapHtml(mermaidBlock("requirementDiagram\n  requirement r {\n  }")));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});
+
+test("diagram: a non-mermaid <pre> is not scanned", () => {
+  const result = check(wrapHtml("<pre>pie title Share</pre>"));
+  assert.strictEqual(result.ok, true);
+  if (result.ok) assert.deepStrictEqual(result.notices, []);
+});
+
+test("diagram: an excluded type never converts a passing document into a failure", () => {
+  // Report-only contract as its own assertion — the notice must be present AND
+  // the verdict must stay identical to the same body without the block.
+  const clean = check(wrapHtml("<p>text</p>"));
+  const withExcluded = check(wrapHtml(mermaidBlock("gantt\n  title t")));
+  assert.strictEqual(clean.ok, true);
+  assert.strictEqual(withExcluded.ok, clean.ok);
+  if (withExcluded.ok) assert.strictEqual(withExcluded.notices.length, 1);
+  if (clean.ok) assert.deepStrictEqual(clean.notices, []);
 });
