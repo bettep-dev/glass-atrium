@@ -51,9 +51,13 @@ const ARCH_SELECTORS = {
 
 const DESC_FALLBACK = "No description available.";
 
-// 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스. 최다 빈도는 표 전체가 아니라
-// 이 최근 슬라이스 안에서 고름(읽기 경로가 표 전체 최댓값을 내주지 않음).
+// 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스.
+// 최다 빈도는 표 전체가 아니라 이 슬라이스 안에서 고름 — 읽기 경로가 표 전체 최댓값을 내주지 않음.
 const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
+
+// 두 저장소의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
+const QUEUE_PROPOSALS_LABEL = "Approval queue";
+const QUEUE_LEARNING_LABEL = "Top learned signal";
 
 // Top-level Screen
 
@@ -74,9 +78,11 @@ function ScreenArchitecture(
 	});
 
 	// 자기개선 큐 두 사실 — 각각 독립적으로 null 가능. 한 저장소가 실패해도 다른 쪽은 그대로 보임.
+	// errors 가 그 실패를 들고 있음 — 값 없음과 못 읽음을 화면에서 구별하는 유일한 자리임.
 	const [queueState, setQueueState] = useStateAR({
 		pendingCount: null,
 		topSignal: null,
+		errors: [],
 	});
 
 	const [refreshTick, setRefreshTick] = useStateAR(0);
@@ -121,8 +127,9 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	// 자기개선 큐 — 두 저장소를 각각 읽어 각각 담음. 잇는 키(pattern_label ↔ pattern_signature)의
-	// 대응이 확인되지 않아 조인하지 않음. allSettled 라 한쪽 실패가 다른 쪽 값을 지우지 않음.
+	// 자기개선 큐 — 두 저장소를 각각 읽어 각각 담음.
+	// 잇는 키(pattern_label ↔ pattern_signature)의 대응이 확인되지 않아 조인하지 않음.
+	// allSettled 라 한쪽 실패가 다른 쪽 값을 지우지 않음.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 
@@ -135,6 +142,10 @@ function ScreenArchitecture(
 				pendingCount:
 					queue.status === "fulfilled" ? getPendingCountAR(queue.value) : null,
 				topSignal: log.status === "fulfilled" ? getTopSignalAR(log.value) : null,
+				errors: [
+					getStoreErrorAR(QUEUE_PROPOSALS_LABEL, queue),
+					getStoreErrorAR(QUEUE_LEARNING_LABEL, log),
+				].filter(Boolean),
 			});
 		});
 
@@ -238,6 +249,7 @@ function ScreenArchitecture(
 					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
+					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
@@ -315,6 +327,8 @@ function ScreenArchitecture(
 				<QueueStrip
 					pendingCount={queueState.pendingCount}
 					topSignal={queueState.topSignal}
+					errors={queueState.errors}
+					onRetry={triggerRefresh}
 				/>
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
@@ -774,31 +788,49 @@ function LiveStrip({ state, onRetry }) {
 	return null;
 }
 
-// 자기개선 큐 상태 — 두 저장소의 사실을 나란히 놓되 하나로 합치지 않음(잇는 키의 대응 미확인).
-// 접힘 컨트롤 없이 상시 노출. 컨테이너를 .arch-live-strip 과 나눠 씀 — 그 클래스는 live 로드
-// 실패 경보와 스켈레톤의 자리임.
-
-function QueueStrip({ pendingCount, topSignal }) {
+/**
+ * 자기개선 큐 상태 — 두 저장소의 사실을 나란히 놓되 하나로 합치지 않음(잇는 키의 대응 미확인).
+ * 접힘 컨트롤 없이 상시 노출.
+ * 컨테이너를 .arch-live-strip 과 나눠 씀 — 그 클래스는 live 로드 실패 경보와 스켈레톤의 자리임.
+ * 실패는 경보로 나감 — 값 없음을 못 읽음처럼 보이게 두면 조작자가 둘을 구별할 길이 없음.
+ */
+function QueueStrip({ pendingCount, topSignal, errors, onRetry }) {
 	const { formatRelativeTime } = window.UI;
 
-	if (pendingCount === null && topSignal === null) return null;
+	if (pendingCount === null && topSignal === null && errors.length === 0) return null;
 
 	return (
 		<section className="arch-queue-strip" aria-label="Self-improvement queue">
 			{pendingCount !== null && (
 				<div className="arch-queue-fact" data-queue-source="autoagent-proposals">
-					<span className="fs-micro text-faint">Approval queue</span>
+					<span className="fs-micro text-faint">{QUEUE_PROPOSALS_LABEL}</span>
 					<span className="fs-meta text-ink">{pendingCount} pending</span>
 				</div>
 			)}
 			{topSignal && (
 				<div className="arch-queue-fact" data-queue-source="learning-log">
-					<span className="fs-micro text-faint">Top learned signal</span>
+					<span className="fs-micro text-faint">{QUEUE_LEARNING_LABEL}</span>
 					<span className="fs-meta font-mono text-ink">{topSignal.signature}</span>
 					<span className="fs-meta text-dim">seen {topSignal.frequency}×</span>
 					<span className="fs-meta text-dim">
 						updated {formatRelativeTime(topSignal.lastUpdated)}
 					</span>
+				</div>
+			)}
+			{errors.length > 0 && (
+				<div className="arch-queue-error" role="alert">
+					<span className="fs-meta text-crit" style={{ flexShrink: 0 }}>
+						Couldn't load the self-improvement queue
+					</span>
+					{/* 끊긴 저장소를 이름으로 부름 — 어느 쪽이 죽었는지가 복구의 첫 단서임 */}
+					<span className="fs-meta font-mono text-dim truncate">
+						{errors.join(" · ")}
+					</span>
+					{onRetry && (
+						<button className="btn ghost sm" onClick={onRetry}>
+							Retry
+						</button>
+					)}
 				</div>
 			)}
 		</section>
@@ -914,7 +946,8 @@ function DetailModal({
 }
 
 function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
-	const { Pill, formatRelativeTime, daemonStatusLabel } = window.UI;
+	const { Pill, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
+		window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
 	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
 
@@ -928,8 +961,10 @@ function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
 				{info.type && <Pill>{NODE_TYPE_LABEL[info.type] || info.type}</Pill>}
 				{info.layer_label && <Pill>Layer: {info.layer_label}</Pill>}
 				{daemons.map((daemon) => (
-					<Pill key={daemon.daemon_name} tone={daemonEffectiveTone(daemon)}>
-						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
+					<Pill
+						key={daemon.daemon_name}
+						tone={daemonStatusTone(daemon.effective_status)}>
+						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.effective_status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
 					</Pill>
 				))}
 			</div>
@@ -1098,8 +1133,10 @@ function MembershipBannerAR({ absent, sourceMissing }) {
 	);
 }
 
-// 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 드리프트 info-tone 과 구별.
-// 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부른다.
+/**
+ * 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 드리프트 info-tone 과 구별.
+ * 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부름.
+ */
 function DualWriteBannerAR({ writers }) {
 	const { Icon, Badge } = window.UI;
 	return (
@@ -1225,8 +1262,11 @@ async function fetchJsonAR(url, signal) {
 	return res.json();
 }
 
-// pending 수 — 두 배열의 합집합을 id 로 중복 제거함. proposals 는 limit 로 잘리고
-// actionable_proposals 는 safety tier 만 담아, 한쪽만으로는 pending 을 과소 계수함.
+/**
+ * pending 수 — 두 배열의 합집합을 id 로 중복 제거함.
+ * proposals 는 limit 로 잘리고 actionable_proposals 는 safety tier 만 담아,
+ * 한쪽만으로는 pending 을 과소 계수함.
+ */
 function getPendingCountAR(data) {
 	const rows = [
 		...(Array.isArray(data?.proposals) ? data.proposals : []),
@@ -1237,6 +1277,19 @@ function getPendingCountAR(data) {
 		if (row && row.status === "pending") ids.add(row.id);
 	}
 	return ids.size;
+}
+
+/**
+ * allSettled 결과 1건을 경보 문구로 — 거부만 문구가 되고 이행은 null 임.
+ * 중단(AbortError)은 실패가 아니라 화면 교체이므로 걸러냄.
+ */
+function getStoreErrorAR(label, settled) {
+	if (settled.status !== "rejected") return null;
+
+	const err = settled.reason;
+	if (err && err.name === "AbortError") return null;
+
+	return `${label}: ${err && err.message ? err.message : String(err)}`;
 }
 
 // 최다 빈도 패턴 1건 — 응답은 last_updated DESC 정렬이라 빈도 최댓값은 직접 훑어야 나옴.
@@ -1332,28 +1385,6 @@ function clearCanvasSizingAR(root) {
 	canvas.style.flex = "";
 }
 
-// 데몬 표시 tone — 공유 SoT(window.UI.daemonStatusTone, A2) + 서버 선언 cadence 초과 시 ok→warn 격상 (F35).
-function daemonEffectiveTone(d) {
-	const base = window.UI.daemonStatusTone(d?.status);
-	const cadence = Number(d?.expected_cadence_minutes);
-	const staleness = Number(d?.staleness_minutes);
-	if (
-		base === "ok" &&
-		Number.isFinite(cadence) &&
-		Number.isFinite(staleness) &&
-		staleness > cadence
-	) {
-		return "warn";
-	}
-	return base;
-}
-
-// 칩 상태 라벨 — status enum 라벨이 기본 · ok-이지만-stale 격상분은 'Overdue' 로 모순 라벨 차단.
-function daemonChipLabelAR(daemon, tone) {
-	if (daemon?.status === "ok" && tone === "warn") return "Overdue";
-	return window.UI.daemonStatusLabel(daemon?.status);
-}
-
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
 //   한 노드에 복수 daemon 바인딩 시(cron) last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
 function buildLiveDaemonsByNodeId(daemons) {
@@ -1371,11 +1402,12 @@ function buildLiveDaemonsByNodeId(daemons) {
 // 라이브 상태 표의 행 목록 — daemon 1개 = 1행. 표현 계층과 무관한 순수 파생.
 function getLiveDaemonRows(daemons) {
 	return (daemons || []).map((d) => {
-		const tone = daemonEffectiveTone(d);
+		// 서버가 임계를 적용해 낸 판정만 읽음 — 화면이 다시 재면 같은 입력에 답이 둘이 됨.
+		const verdict = d?.effective_status;
 		return {
 			name: d?.daemon_name || "—",
-			tone,
-			statusLabel: daemonChipLabelAR(d, tone),
+			tone: window.UI.daemonStatusTone(verdict),
+			statusLabel: window.UI.daemonStatusLabel(verdict),
 			nodeIds: Array.isArray(d?.node_ids) ? d.node_ids : [],
 			lastRunAt: d?.last_run_at || null,
 		};

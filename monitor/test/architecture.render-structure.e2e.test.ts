@@ -1,9 +1,10 @@
 // E2E chromium STRUCTURE harness for the system map (screens/architecture.jsx).
 // Runner: npx tsx --test test/architecture.render-structure.e2e.test.ts
 //
-// Asserts DOM-structure facts only — initial exposed description length, rendered
-// SVG count + tab-control absence, live ring-tone absence. No size/scale/width
-// assertion lives here: the rendered-pixel legibility proxy was retired.
+// Asserts DOM-structure facts only — the aria-describedby target's exposed
+// description length, rendered SVG count + tab-control absence, live ring-tone
+// absence. No size/scale/width assertion lives here: the rendered-pixel
+// legibility proxy was retired.
 //
 // App: stripped Fastify (fastify-static + two hand-registered routes) on an
 // ephemeral port. registerArchitectureRoutes is NOT called — it stands up the real
@@ -167,17 +168,41 @@ after(async () => {
 	await app?.close();
 });
 
-test("AC-11 description renders in full at first paint", async () => {
-	const exposed = await page.evaluate((sel) => {
-		const el = document.querySelector(sel.desc) as HTMLElement | null;
-		return el ? el.innerText : "";
+// 셀렉터 상수가 아니라 렌더된 svg 의 aria-describedby 를 기점으로 잼 — 상수만 읽으면
+// 접근성 배선이 끊겨도 초록임(속성을 지우고 재어 확인).
+
+test("AC-11 full description lives on the rendered aria-describedby target", async () => {
+	const probe = await page.evaluate((sel) => {
+		const svg = document.querySelector(`${sel.canvas} svg`);
+		const describedby = svg ? svg.getAttribute("aria-describedby") : null;
+		const target = describedby ? document.getElementById(describedby) : null;
+		return {
+			describedby,
+			idCount: describedby ? document.querySelectorAll(`#${describedby}`).length : 0,
+			tagName: target ? target.tagName.toLowerCase() : "",
+			// 렌더 박스 수 — innerText 는 렌더 트리를 벗어난 노드에서 textContent 로 조용히 후퇴함.
+			boxCount: target ? target.getClientRects().length : 0,
+			exposed: target ? target.innerText : "",
+		};
 	}, selectors);
-	const normalized = getNormalized(exposed);
+
 	assert.ok(expectedDescription.length > 0, "payload description must be non-empty");
+	assert.equal(
+		`#${probe.describedby}`,
+		selectors.desc,
+		`rendered svg aria-describedby="${probe.describedby}" must name the desc SoT ${selectors.desc}`,
+	);
+	assert.equal(probe.idCount, 1, `nodes carrying id ${probe.describedby}`);
+	assert.ok(
+		probe.boxCount > 0,
+		`aria-describedby target <${probe.tagName}> has no layout box — innerText falls back to textContent and stops measuring exposed text`,
+	);
+
+	const normalized = getNormalized(probe.exposed);
 	assert.equal(
 		normalized.length,
 		expectedDescription.length,
-		`exposed ${normalized.length} chars vs payload ${expectedDescription.length} — exposed="${normalized}"`,
+		`exposed ${normalized.length} chars from <${probe.tagName}> vs payload ${expectedDescription.length} — exposed="${normalized}"`,
 	);
 });
 

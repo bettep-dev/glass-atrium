@@ -34,6 +34,8 @@ export interface DaemonStatusCard {
   expected_next_at: string | null;
   cost_guard_state: CostGuardStateValue | null;
   staleness_minutes: number | null;
+  // Transitional — effective_status wins on disagreement (never-fired dead: false here, 'stale' there).
+  // Drops with its last reader: public/src/data/health-model.js `isDaemonStale`.
   is_stale: boolean;
   // DB-derived "firing but failing auth" proxy: daemon has recent activity (ran, not stale)
   // AND last run failed (non-ok status OR infra_fault) AND the shared GA-root claude-auth.env
@@ -94,6 +96,25 @@ export interface HealthHookChainResponse {
   timezone: "UTC";
 }
 
+// One distinct failure reason within a single run. Counted rather than listed: a daemon
+// outage repeats the same reason across every patch or compilation of the cycle.
+export interface DaemonRunErrorSignature {
+  message: string;
+  count: number;
+}
+
+// Payload-derived run verdict — deliberately NOT DaemonStatusValue: that one is the
+// daemon's current cadence-aware standing, this one judges a single stored cycle.
+// 'unknown' means the payload is not a JSON object, so there is no structure to read.
+export type DaemonRunVerdict = "ok" | "fail" | "unknown";
+
+// Collapsed-row roll-up: the verdict plus the reasons behind it, so a drilldown row can
+// state why a run failed before the operator expands the raw payload.
+export interface DaemonRunSummary {
+  verdict: DaemonRunVerdict;
+  error_signatures: DaemonRunErrorSignature[];
+}
+
 // Per-run JSONB payload drill-down (daemon-status exposes only the flat status).
 export interface DaemonPayloadEntry {
   run_date: string;
@@ -102,6 +123,7 @@ export interface DaemonPayloadEntry {
   // wiki: compilations/deadlink_*/...). Passed through verbatim for FE drill-down.
   payload: unknown;
   payload_size_bytes: number;
+  summary: DaemonRunSummary;
 }
 
 export interface HealthDaemonPayloadResponse {
