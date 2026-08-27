@@ -2,6 +2,8 @@
 // tree / wiki daily reports). Named "health-detail" because /api/health is a
 // separate liveness probe with a different shape — the module mirrors the route filename.
 
+import type { BudgetReport } from "../architecture/content-budget.js";
+
 // Mirrors dashboard.ts DaemonStatusValue — duplicated locally per "Module
 // independence" (small util duplication > fragile cross-route imports).
 export type DaemonStatusValue =
@@ -157,3 +159,8 @@ export type HealthDetailErrorBody =
   // DB-rejected client input (SQLSTATE class 22/23) — db-failure.ts taxonomy split.
   | { error: "invalid_input"; reason: string }
   | { error: "invalid_param"; param: string };
+
+export interface HealthArchitectureBudgetResponse extends BudgetReport {
+  slug: string;
+  omitted_node_ids: readonly string[];
+}

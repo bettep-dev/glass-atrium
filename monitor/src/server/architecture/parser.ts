@@ -23,6 +23,7 @@ import {
   type ExtractedNode,
 } from "./flow-extractor.js";
 import {
+  CANONICAL_MAP,
   DIAGRAMS,
   DIAGRAMS_SOURCE_PATH,
 } from "./diagrams-source.js";
@@ -145,7 +146,8 @@ function slugifyMermaidId(mermaidId: string): string {
 }
 
 // Heuristic role for a mermaid subgraph unmapped by the v1 layer table.
-function roleForSyntheticSubgraph(label: string): LayerRole {
+// Exported so the source-side parity oracle can measure the same classifier on mermaid_source labels.
+export function roleForSyntheticSubgraph(label: string): LayerRole {
   const lc = label.toLowerCase();
   if (lc.includes("게이트") || lc.includes("gate")) {
     return "gateway";
@@ -189,7 +191,9 @@ function buildSystemDiagrams(options: BuildDiagramsOptions): SystemDiagrams {
   const aggregatedUnmapped = new Set<string>();
 
   for (const src of DIAGRAMS) {
-    const built = buildSingleDiagram(src.slug, src.title, src.description, src.mermaid_source, logger);
+    // canonical 항목만 그려지는 문자열(drawn)로 치환 — 렌더가 읽는 payload 필드와 legend/클릭 인덱스가 같은 문자열이어야 SVG 와 일치함.
+    const mermaid = src.slug === CANONICAL_MAP.slug ? CANONICAL_MAP.mermaid_drawn : src.mermaid_source;
+    const built = buildSingleDiagram(src.slug, src.title, src.description, mermaid, logger);
     if (built === null) {
       logger.warn(
         { title: src.title, id: src.id },

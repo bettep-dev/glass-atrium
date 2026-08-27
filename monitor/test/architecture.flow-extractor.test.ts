@@ -5,11 +5,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractFlows, type ExtractedFlow } from "../src/server/architecture/flow-extractor.js";
-import { DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
+import {
+  extractFlows,
+  inferFlowNodeType,
+  type ExtractedFlow,
+} from "../src/server/architecture/flow-extractor.js";
+import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
 import {
   getArchitecture,
   resetArchitectureCache,
+  roleForSyntheticSubgraph,
 } from "../src/server/architecture/parser.js";
 
 const silentLogger = { warn() {}, info() {} };
@@ -238,9 +243,10 @@ const CLASSIFICATION_ORACLE: Record<
   string,
   { edges: Record<string, number>; nodes: Record<string, number>; roles: Record<string, number> }
 > = {
+  // canonical 맵은 payload 가 drawn 을 실어 나름 — 이 오라클 한 줄만 drawn 계측이고 나머지 여섯은 source 계측임.
   "v2-overview-entry": {
-    edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
-    nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
+    edges: { control_flow: 5 },
+    nodes: { agent: 6, daemon: 3, hook: 2, store: 1 },
     roles: { execution: 4, orchestration: 2 },
   },
   "v2-overview-data": {
@@ -307,4 +313,54 @@ test("SoT parity: 다이어그램별 edge_type/node type/layer role 히스토그
       `${diagram.id}: layer role histogram drift`,
     );
   }
+});
+
+// canonical 슬러그의 source 계측 — 위 payload 오라클 행은 drawn 을 재므로, verify-arch Stage-4 가 쓰는
+// mermaid_source 쪽 라벨/키워드 재분류 감시망이 비어 있음. 이 행이 그 구간을 메움.
+// 세 축 모두 실음 — edge 만 재면 canonical 의 mermaid_source node type/layer role 재분류가 무계측으로 남음.
+const CANONICAL_SOURCE_ORACLE: {
+  edges: Record<string, number>;
+  nodes: Record<string, number>;
+  roles: Record<string, number>;
+} = {
+  edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
+  nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
+  roles: { execution: 3, orchestration: 2 },
+};
+
+test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그램 == source oracle", () => {
+  const src = DIAGRAMS.find((d) => d.slug === "v2-overview-entry");
+  assert.ok(src !== undefined);
+  const out = extract(src.mermaid_source);
+  assert.deepEqual(histogram(out.edges.map((e) => e.edge_type)), CANONICAL_SOURCE_ORACLE.edges);
+  assert.deepEqual(histogram(out.nodes.map((n) => inferFlowNodeType(n))), CANONICAL_SOURCE_ORACLE.nodes);
+  assert.deepEqual(
+    histogram(out.subgraphs.map((s) => roleForSyntheticSubgraph(s.label))),
+    CANONICAL_SOURCE_ORACLE.roles,
+  );
+});
+
+// 방향 토큰 재작성기 — 헤더 첫 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).
+function withDirection(mermaid: string, direction: string): string {
+  assert.match(mermaid, /^\s*(?:flowchart|graph)\s+\S+/i, "canonical must open with a flowchart header");
+  return mermaid.replace(/^(\s*(?:flowchart|graph))\s+\S+/i, `$1 ${direction}`);
+}
+
+test("방향 비의존: canonical drawn 은 LR/TD 에서 동일한 nodes/edges/subgraphs/unmapped 를 냄", () => {
+  const drawn = CANONICAL_MAP.mermaid_drawn;
+  const lr = withDirection(drawn, "LR");
+  const td = withDirection(drawn, "TD");
+  assert.notEqual(lr, td, "direction rewrite must produce two distinct strings");
+  assert.deepEqual(td.split("\n").slice(1), lr.split("\n").slice(1), "rewrite must touch only the header line");
+
+  const fromLr = extract(lr);
+  const fromTd = extract(td);
+  // 공허한 통과 방지 — 빈 추출끼리 같다는 결론은 방향 비의존의 증거가 아님.
+  assert.ok(fromLr.nodes.length > 0 && fromLr.edges.length > 0, "canonical must extract nodes and edges");
+  assert.deepEqual(fromTd.nodes, fromLr.nodes);
+  assert.deepEqual(fromTd.edges, fromLr.edges);
+  assert.deepEqual(fromTd.subgraphs, fromLr.subgraphs);
+  assert.deepEqual(fromTd.unmappedLabels, fromLr.unmappedLabels);
+  // 체크인된 방향의 실물도 같은 추출 — 헤더 방향이 무엇이든 그래프 구조가 고정임.
+  assert.deepEqual(extract(drawn).edges, fromLr.edges);
 });

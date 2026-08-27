@@ -12,6 +12,8 @@ import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { Prisma } from "../../generated/prisma/client.js";
+import { getBudgetReport } from "../architecture/content-budget.js";
+import { CANONICAL_MAP } from "../architecture/diagrams-source.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import {
@@ -30,6 +32,7 @@ import type {
   DaemonPayloadEntry,
   DaemonStatusCard,
   DaemonStatusValue,
+  HealthArchitectureBudgetResponse,
   HealthDaemonPayloadResponse,
   HealthDaemonsResponse,
   HealthDetailErrorBody,
@@ -149,6 +152,7 @@ export async function registerHealthDetailRoutes(app: FastifyInstance): Promise<
   app.get("/api/health/daemon-payload", handleDaemonPayload);
   app.get("/api/health/hook-failures", handleHookFailures);
   app.get("/api/health/document-integrity", handleDocumentIntegrity);
+  app.get("/api/health/architecture-budget", handleArchitectureBudget);
 }
 
 // 1. /api/health/daemons
@@ -819,4 +823,16 @@ function failWithDb(
 
 function invalidParam(name: string): HealthDetailErrorBody {
   return { error: "invalid_param", param: name };
+}
+
+// 그려지는 canonical 맵의 콘텐츠 예산 표면 — 계수 규칙과 상한 표는 content-budget 단일 SoT 에서만 옴.
+// 기존 소비자(verify-arch 의 /api/architecture/live stale·diffs)를 대체하지 않고 추가되는 표면임.
+const ARCHITECTURE_BUDGET: HealthArchitectureBudgetResponse = {
+  slug: CANONICAL_MAP.slug,
+  omitted_node_ids: CANONICAL_MAP.omitted_node_ids,
+  ...getBudgetReport(CANONICAL_MAP.mermaid_drawn, CANONICAL_MAP.detail),
+};
+
+async function handleArchitectureBudget(): Promise<HealthArchitectureBudgetResponse> {
+  return ARCHITECTURE_BUDGET;
 }
