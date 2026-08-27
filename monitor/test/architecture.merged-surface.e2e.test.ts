@@ -48,10 +48,13 @@ import {
 	assertLayoutsDiffer,
 	assertOrthogonalLinks,
 	createFallbackWatch,
+	getProbe,
 	getRenderProbe,
+	isOrthogonal,
 	type FallbackWatch,
 	type RenderProbe,
 } from "./lib/mermaid-elk-probe.js";
+import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -943,50 +946,20 @@ test("AC-T5 the ring displaces neither the drift banner nor the writer alert", a
 // 화면이 실제로 그린 캔버스를 재는 것이 요점 — 같은 소스를 옆에서 다시 렌더하면
 // 지시자가 화면 경로를 통과했는지는 못 잰다.
 
-async function getCanvasProbe(): Promise<RenderProbe> {
-	const probe = await page.evaluate((canvas) => {
-		const nodes: Record<string, { x: number; y: number }> = {};
-		const labels: string[] = [];
-		for (const el of Array.from(document.querySelectorAll(`${canvas} svg g.node`))) {
-			const label = (el.textContent || "").trim();
-			labels.push(label);
-			const matrix = (el as SVGGraphicsElement).transform.baseVal.consolidate()?.matrix;
-			nodes[label] = { x: matrix ? matrix.e : Number.NaN, y: matrix ? matrix.f : Number.NaN };
-		}
-		const links = Array.from(
-			document.querySelectorAll(`${canvas} svg path.flowchart-link`),
-		).map((path) => path.getAttribute("d") || "");
-		return { nodes, labels, links };
-	}, selectors.canvas);
-
-	assert.ok(probe.labels.length > 0, "canvas rendered no g.node — the probe would be empty");
-	assert.equal(
-		new Set(probe.labels).size,
-		probe.labels.length,
-		`canvas node labels ${probe.labels.join(", ")} are not unique — the coordinate map would collapse`,
-	);
-	return { nodes: probe.nodes, links: probe.links };
+function getCanvasProbe(): Promise<RenderProbe> {
+	return getProbe(page, selectors.canvas, "canonical map canvas");
 }
 
 // 대조군 — 지시자의 layout 값 하나만 갈아끼운 같은 소스. 테마·간격·라벨이 전부 같으므로
 // 남는 차이가 레이아웃 엔진뿐이다(테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
-function getLayoutVariant(layout: string): string {
+function getLayoutControl(id: string, layout: string): Promise<RenderProbe> {
 	const variant = CANONICAL_MAP.mermaid_drawn.replace('"layout": "elk"', `"layout": "${layout}"`);
 	assert.notEqual(
 		variant,
 		CANONICAL_MAP.mermaid_drawn,
 		'canonical mermaid_drawn must carry a single-line %%{init}%% directive requesting "layout": "elk"',
 	);
-	return variant;
-}
-
-function getOrthogonalityVerdict(links: string[]): "orthogonal" | "not-orthogonal" {
-	try {
-		assertOrthogonalLinks(links, "layout control");
-		return "orthogonal";
-	} catch {
-		return "not-orthogonal";
-	}
+	return getRenderProbe(page, id, variant);
 }
 
 test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback", async () => {
@@ -995,7 +968,7 @@ test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback",
 	await assertFallbackWarningVisible(page);
 
 	const canvas = await getCanvasProbe();
-	const control = await getRenderProbe(page, "d52-layout-control", getLayoutVariant("dagre"));
+	const control = await getLayoutControl("d52-layout-control", "dagre");
 
 	assertLayoutsDiffer(canvas, control);
 });
@@ -1006,10 +979,10 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 	// 대조군이 같은 판정을 통과해 버리면 위 초록은 렌더러 무관한 항진명제임.
-	const control = await getRenderProbe(page, "d52-orthogonality-control", getLayoutVariant("dagre"));
+	const control = await getLayoutControl("d52-orthogonality-control", "dagre");
 	assert.equal(
-		getOrthogonalityVerdict(control.links),
-		"not-orthogonal",
+		isOrthogonal(control.links, "layout control"),
+		false,
 		"the dagre control satisfied the orthogonality verdict — the verdict discriminates nothing",
 	);
 });
@@ -1023,7 +996,7 @@ test("P0-2 the canvas logs no layout fallback, and this harness would catch one"
 	);
 
 	// 감시기 반증 — 이 하네스에서 실제로 잡히는지 재지 않으면 위 0건은 문자열이 영영 안 맞아도 초록임.
-	await getRenderProbe(page, "d52-unregistered-control", getLayoutVariant("no-such-layout"));
+	await getLayoutControl("d52-unregistered-control", "no-such-layout");
 	assert.ok(
 		elkWatch.messages.length > 0,
 		"an unregistered layout produced no captured warning — the watch certifies nothing",
@@ -1064,7 +1037,6 @@ interface NodeVisual {
 	rxComputed: string;
 	foRect: ProbeRect | null;
 	foAttrWidth: number;
-	foAttrHeight: number;
 	labelRangeRect: ProbeRect | null;
 	fontSize: string;
 	fontWeight: string;
@@ -1099,7 +1071,8 @@ async function getVisualProbe(): Promise<VisualProbe> {
 	return await page.evaluate((canvas) => {
 		const root = document.querySelector(canvas) as HTMLElement;
 		const svg = root.querySelector("svg") as SVGSVGElement;
-		const nodes = Array.from(svg.querySelectorAll("g.node")).map((g) => {
+		const nodeEls = Array.from(svg.querySelectorAll("g.node"));
+		const nodes = nodeEls.map((g) => {
 			const rect = g.querySelector("rect") as SVGRectElement | null;
 			const fo = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
 			const label = g.querySelector(".nodeLabel") as HTMLElement | null;
@@ -1119,7 +1092,6 @@ async function getVisualProbe(): Promise<VisualProbe> {
 				rxComputed: rcs ? rcs.rx : "",
 				foRect: fo ? (fo.getBoundingClientRect().toJSON() as ProbeRect) : null,
 				foAttrWidth: fo ? Number(fo.getAttribute("width")) : Number.NaN,
-				foAttrHeight: fo ? Number(fo.getAttribute("height")) : Number.NaN,
 				labelRangeRect: labelRangeRect ? (labelRangeRect.toJSON() as ProbeRect) : null,
 				fontSize: lcs ? lcs.fontSize : "",
 				fontWeight: lcs ? lcs.fontWeight : "",
@@ -1127,9 +1099,9 @@ async function getVisualProbe(): Promise<VisualProbe> {
 				scale: fo ? (fo.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
 			};
 		});
-		const nodeBoxes = Array.from(svg.querySelectorAll("g.node")).map((g) =>
-			(g.querySelector("rect") as SVGRectElement | null)?.getBoundingClientRect() ?? null,
-		);
+		const nodeBoxes = nodeEls
+			.map((g) => (g.querySelector("rect") as SVGRectElement | null)?.getBoundingClientRect())
+			.filter((box): box is DOMRect => box !== undefined);
 		const clusters = Array.from(svg.querySelectorAll("g.cluster")).map((g) => {
 			const rect = g.querySelector("rect") as SVGRectElement | null;
 			const label = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
@@ -1139,7 +1111,6 @@ async function getVisualProbe(): Promise<VisualProbe> {
 			let firstNodeTop: number | null = null;
 			if (box) {
 				for (const nb of nodeBoxes) {
-					if (!nb) continue;
 					if (nb.left >= box.left && nb.right <= box.right && nb.top >= box.top && nb.bottom <= box.bottom) {
 						if (firstNodeTop === null || nb.top < firstNodeTop) firstNodeTop = nb.top;
 					}
@@ -1163,43 +1134,6 @@ async function getVisualProbe(): Promise<VisualProbe> {
 			clusters,
 		};
 	}, selectors.canvas);
-}
-
-interface Rgba {
-	r: number;
-	g: number;
-	b: number;
-	a: number;
-}
-
-function parseColor(value: string): Rgba {
-	const nums = (value.match(/-?\d*\.?\d+/g) ?? []).map(Number);
-	assert.ok(nums.length >= 3, `computed colour "${value}" is not an rgb()/rgba() triplet`);
-	return { r: nums[0], g: nums[1], b: nums[2], a: nums.length > 3 ? nums[3] : 1 };
-}
-
-/** 반투명 stroke 는 자기 면 위에 합성한 뒤라야 대비를 말할 수 있다. */
-function compositeOver(fg: Rgba, bg: Rgba): Rgba {
-	return {
-		r: bg.r + (fg.r - bg.r) * fg.a,
-		g: bg.g + (fg.g - bg.g) * fg.a,
-		b: bg.b + (fg.b - bg.b) * fg.a,
-		a: 1,
-	};
-}
-
-function relativeLuminance(c: Rgba): number {
-	const channel = [c.r, c.g, c.b].map((v) => {
-		const s = v / 255;
-		return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-	});
-	return 0.2126 * channel[0] + 0.7152 * channel[1] + 0.0722 * channel[2];
-}
-
-function contrastRatio(a: Rgba, b: Rgba): number {
-	const la = relativeLuminance(a);
-	const lb = relativeLuminance(b);
-	return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
 function toKey(c: Rgba): string {

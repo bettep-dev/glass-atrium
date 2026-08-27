@@ -62,49 +62,52 @@ export async function assertFallbackWarningVisible(page: Page): Promise<void> {
 	);
 }
 
-/** 페이지에서 소스를 렌더하고 노드 원점 + 엣지 path 를 걷어옴. */
-export async function getRenderProbe(
-	page: Page,
-	id: string,
-	source: string,
-): Promise<RenderProbe> {
-	const probe = await page.evaluate(
-		async (args: { id: string; source: string }) => {
+/** 루트 선택자 아래의 노드 원점 + 엣지 path 를 걷어옴. 라벨이 좌표 키이므로 유일성까지 확인한다. */
+export async function getProbe(page: Page, root: string, context: string): Promise<RenderProbe> {
+	const probe = await page.evaluate((selector: string) => {
+		const host = document.querySelector(selector);
+		if (host === null) return null;
+		const nodes: Record<string, Point> = {};
+		const labels: string[] = [];
+		for (const el of Array.from(host.querySelectorAll("g.node"))) {
+			const label = (el.textContent || "").trim();
+			labels.push(label);
+			const matrix = (el as SVGGraphicsElement).transform.baseVal.consolidate()?.matrix;
+			nodes[label] = { x: matrix ? matrix.e : Number.NaN, y: matrix ? matrix.f : Number.NaN };
+		}
+		const links = Array.from(host.querySelectorAll("path.flowchart-link")).map(
+			(path) => path.getAttribute("d") || "",
+		);
+		return { nodes, labels, links };
+	}, root);
+
+	assert.ok(probe, `${context}: nothing matched ${root} — the probe would be empty`);
+	assert.ok(probe.labels.length > 0, `${context}: rendered no g.node — the probe would be empty`);
+	assert.equal(
+		new Set(probe.labels).size,
+		probe.labels.length,
+		`${context}: node labels ${probe.labels.join(", ")} are not unique — the coordinate map would silently collapse`,
+	);
+	return { nodes: probe.nodes, links: probe.links };
+}
+
+/** 소스를 페이지에서 렌더해 전용 호스트에 붙인 뒤 그 호스트를 잼. */
+export async function getRenderProbe(page: Page, id: string, source: string): Promise<RenderProbe> {
+	const hostId = `probe-host-${id}`;
+	await page.evaluate(
+		async (args: { id: string; hostId: string; source: string }) => {
 			const w = window as never as {
 				mermaid: { render(id: string, text: string): Promise<{ svg: string }> };
 			};
 			const { svg } = await w.mermaid.render(args.id, args.source);
 			const host = document.createElement("div");
-			host.id = `probe-host-${args.id}`;
+			host.id = args.hostId;
 			host.innerHTML = svg;
 			document.body.appendChild(host);
-
-			const nodes: Record<string, Point> = {};
-			const labels: string[] = [];
-			for (const el of Array.from(host.querySelectorAll("g.node"))) {
-				const label = (el.textContent || "").trim();
-				labels.push(label);
-				const matrix = (el as SVGGraphicsElement).transform.baseVal.consolidate()?.matrix;
-				nodes[label] = {
-					x: matrix ? matrix.e : Number.NaN,
-					y: matrix ? matrix.f : Number.NaN,
-				};
-			}
-			const links = Array.from(host.querySelectorAll("path.flowchart-link")).map(
-				(path) => path.getAttribute("d") || "",
-			);
-			return { nodes, labels, links };
 		},
-		{ id, source },
+		{ id, hostId, source },
 	);
-
-	assert.ok(probe.labels.length > 0, `${id}: rendered no g.node — the probe would be empty`);
-	assert.equal(
-		new Set(probe.labels).size,
-		probe.labels.length,
-		`${id}: node labels ${probe.labels.join(", ")} are not unique — the coordinate map would silently collapse`,
-	);
-	return { nodes: probe.nodes, links: probe.links };
+	return await getProbe(page, `#${hostId}`, id);
 }
 
 /** 도구 1 — 대조군. 좌표가 같으면 ELK 요청이 조용히 dagre 로 떨어진 것과 구별되지 않음. */
@@ -172,4 +175,17 @@ export function assertOrthogonalLinks(links: string[], context: string): void {
 		);
 	});
 	assert.deepStrictEqual(violations, [], `${context}: diagonal edge segments present`);
+}
+
+/**
+ * 같은 판정의 비-예외 형태 — 대조군이 판정을 통과해 버리는지 재는 데 씀.
+ * 대각 세그먼트뿐 아니라 축 판정이 정의되지 않는 곡선 명령(dagre 가 그리는 C 등)도 직교 아님으로 센다.
+ */
+export function isOrthogonal(links: string[], context: string): boolean {
+	try {
+		assertOrthogonalLinks(links, context);
+		return true;
+	} catch {
+		return false;
+	}
 }
