@@ -2249,12 +2249,14 @@ class ArbiterRecordReplayTest(unittest.TestCase):
             (self.root / "count").read_text(encoding="utf-8"),
             "x",  # one ARBITER invocation across BOTH processes
         )
-        # The verify process makes the one model call A6 adds: the compliance
-        # gate over the candidate. It is a different seam from the arbiter, so
-        # the two counters move independently.
-        self.assertEqual(
-            (self.root / "gate-count").read_text(encoding="utf-8"), "x"
-        )
+        # The verify process makes NO compliance-gate call. The updater passes
+        # skip_pre_verify=True: its input is a release tree human review and CI
+        # already passed, and the local half is protected by the 3-way merge
+        # itself, so the daemon's proposal judge has nothing left to protect here
+        # and a rejection only froze the body at an older vendor revision. The
+        # gate is a different seam from the arbiter, so this counter staying
+        # ABSENT while `count` moved is what tells the two apart.
+        self.assertFalse((self.root / "gate-count").exists())
         self.assertNotIn("record-", verify.stderr)
 
     # -- the seam the two modules share --------------------------------------

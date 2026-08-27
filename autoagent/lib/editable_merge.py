@@ -1305,9 +1305,11 @@ class MergeCandidate:
         """git_txn verify callback: 0 ok / non-0 fail.
 
         Re-runs the sensitive-diff refusal against the on-disk patched file, then
-        — only when the resolution needs the LLM gate — the Haiku improvement-
-        verify dry-run. Deterministic keep-local / take-release / no-op candidates
-        pass WITHOUT any LLM call.
+        — only when the resolution needs the LLM gate AND ``skip_pre_verify`` is
+        unset — the Haiku improvement-verify dry-run. Deterministic keep-local /
+        take-release / no-op candidates pass WITHOUT any LLM call, and so does
+        every candidate on a caller that set ``skip_pre_verify`` (the updater,
+        whose input is a CI-verified release tree rather than a proposal).
         """
         if self.refused:
             return 1
@@ -1341,6 +1343,15 @@ class MergeCandidate:
             return 1
         if not self.resolution.needs_llm:
             return 0  # deterministic candidate — NO LLM call
+        if self.skip_pre_verify:
+            # The flag is honoured HERE rather than handed down to the gate.
+            # run_pre_verify's own skip arm returns passed=False on purpose — its
+            # daemon callers use the flag to keep a patch OFF the auto-apply path —
+            # so passing it through would turn "do not judge this" into "reject
+            # this" and roll back every LLM-required region on the skipping caller.
+            # Everything deterministic above has already run against the bytes on
+            # disk; what is skipped is the model call and nothing else.
+            return 0
         return 0 if self._haiku_pass(on_disk) else 1
 
     def _haiku_pass(self, candidate_text: str) -> bool:

@@ -132,6 +132,37 @@ VENDOR changed both goal
 ## Rules
 vendor NEW rules'
 
+# CONTESTED fixture: both sides rewrite the SAME region line, so the resolver cannot
+# prefer a side and hands the gap to the ARBITER — a model call made from the `plan`
+# process, inside the merge and under the .apply-lock. That is the mid-merge
+# handshake the SIGTERM test needs now that the updater no longer runs the daemon's
+# pre-verify gate (the seam it used to block on). Distinct from BOTH_*, whose edits
+# fall on different lines and merge cleanly with no model call at all.
+GAP_BASE='# dev-gap
+## Goal
+<!-- EDITABLE:BEGIN -->
+base gap goal
+shared tail line
+<!-- EDITABLE:END -->
+## Rules
+vendor base rules'
+GAP_LOCAL='# dev-gap
+## Goal
+<!-- EDITABLE:BEGIN -->
+LOCAL rewritten gap goal
+shared tail line
+<!-- EDITABLE:END -->
+## Rules
+vendor base rules'
+GAP_RELEASE='# dev-gap
+## Goal
+<!-- EDITABLE:BEGIN -->
+VENDOR rewritten gap goal
+shared tail line
+<!-- EDITABLE:END -->
+## Rules
+vendor NEW rules'
+
 @test "E2E (T23): one release combining a non-agent change, an only-vendor merge, a both-changed merge, and a roster add" {
   # install (the live tree being updated)
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"    # (a)
@@ -213,18 +244,20 @@ STUB
 # .apply-lock — no stranded writer-serialization
 
 @test "SIGTERM mid-merge releases the .apply-lock (trap path)" {
-  # Minimal fixture that reaches the both-changed Haiku verify: one non-agent
-  # change (drives the spine sync) + the both-changed agent (the
-  # claude call site — the updater is INSIDE the merge, lock held).
+  # Minimal fixture that reaches a model call INSIDE the merge: one non-agent
+  # change (drives the spine sync) + a CONTESTED agent region, whose gap the
+  # arbiter must ask the model about — the updater is inside the merge, lock held.
+  # It was the pre-verify gate that blocked here until the updater stopped judging
+  # CI-verified release content; the arbiter is the seam that remains.
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"
-  seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"
-  seed_base_store "dev-both.md" "${BOTH_BASE}"
+  seed_file "${INSTALL}" "agents/dev-gap.md" "${GAP_LOCAL}"
+  seed_base_store "dev-gap.md" "${GAP_BASE}"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"
-  seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" "agents/dev-both.md"
+  seed_file "${NEWSRC}" "agents/dev-gap.md" "${GAP_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" "agents/dev-gap.md"
 
   # Handshake claude stub: READY appears once update.sh is INSIDE the merge
-  # verify (mid-run, lock + flag held); RESUME lets it finish, because bash
+  # (mid-run, lock + flag held); RESUME lets it finish, because bash
   # DEFERS a trapped signal until the foreground child tree exits. The RESUME
   # wait is BOUNDED so an aborted test can never strand a spinning stub.
   cat >"${WORK}/fake-claude.sh" <<'STUB'
