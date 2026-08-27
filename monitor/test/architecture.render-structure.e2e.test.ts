@@ -8,9 +8,8 @@
 //
 // TWO render contexts, one per live fixture (healthy · fault). The ring is a function
 // of the server verdict, so a single shared context can only ever measure one side of
-// it — and the side it measured silently stopped being either one once the verdict
-// field moved (see the AC-T6 docblock below). Each context owns its app, browser and
-// page, so neither can contaminate the other and either runs alone.
+// it. Each context owns its app, browser and page, so neither can contaminate the
+// other and either runs alone.
 //
 // App: stripped Fastify (fastify-static + two hand-registered routes) on an
 // ephemeral port. registerArchitectureRoutes is NOT called — it stands up the real
@@ -48,19 +47,19 @@ const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 // 한계: SoT 결합이 없는 하네스 리터럴이라 이름이 바뀐 링은 잡지 못함. 그래서 아래 두
 // 단언은 접두사 패턴 다리를 함께 검사함 — 그 다리도 `arch-node-live-` 접두사 유지에
 // 의존하므로, 접두사까지 바꾼 복원은 두 다리 모두 통과함(잔여 한계).
-const LIVE_TONE_CLASSES = [
-	"arch-node-live-ok",
-	"arch-node-live-warn",
-	"arch-node-live-crit",
-];
+const LIVE_TONE_CLASS = {
+	ok: "arch-node-live-ok",
+	warn: "arch-node-live-warn",
+	crit: "arch-node-live-crit",
+};
+const LIVE_TONE_CLASSES = Object.values(LIVE_TONE_CLASS);
 
 // 값은 DAEMON_NODE_BINDINGS 의 실제 키여야 함 — 키가 아니면 node_ids 가 비어 전제가 무너짐.
 const BOUND_DAEMON = "autoagent";
 
-// 픽스처가 싣는 판정값. 두 값 모두 ui.jsx 의 DAEMON_STATUS_TONE 실제 키여야 하며,
-// 그 전제는 각 컨텍스트의 before 에서 화면과 같은 테이블을 불러 직접 잰다(getDaemonStatusTone).
-// 키가 아닌 값은 tone 이 info 로 떨어져 링이 꺼지므로, 그대로 두면 fault 픽스처가
-// 조용히 no-data 픽스처가 된다 — 이 파일이 실제로 겪은 회귀임.
+// 픽스처가 싣는 판정값 — 두 값 모두 ui.jsx 의 DAEMON_STATUS_TONE 실제 키여야 함.
+// 그 전제는 각 컨텍스트의 before 에서 화면과 같은 테이블을 불러 직접 잼(getDaemonStatusTone).
+// 키가 아닌 값은 tone 이 info 로 떨어져 링이 꺼지고, fault 픽스처가 조용히 no-data 픽스처가 됨.
 const HEALTHY_VERDICT = "ok";
 const FAULT_VERDICT = "stale";
 
@@ -105,8 +104,8 @@ function getNormalized(s: string): string {
 	return (s || "").replace(/\s+/g, " ").trim();
 }
 
-// architecture.jsx 의 unscopedNodeIdAR 사본 — 스키마 node id(`${diagramId}.${mermaidId}`)를
-// mermaid id 로 되돌림. 화면이 내보내지 않는 함수라 하네스가 규칙을 복제함(결합 없음).
+// architecture.jsx 의 unscopedNodeIdAR 사본 — 스키마 node id(`${diagramId}.${mermaidId}`)를 mermaid id 로 되돌림.
+// 화면이 내보내지 않는 함수라 하네스가 규칙을 복제함(결합 없음).
 function getUnscopedNodeId(nodeId: string): string {
 	const idx = nodeId.lastIndexOf(".");
 	return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
@@ -126,8 +125,8 @@ interface RenderContext {
 	expectedDescription: string;
 }
 
-// 픽스처 하나 = 렌더 컨텍스트 하나. 서버·브라우저·페이지를 모두 새로 세우므로
-// 두 컨텍스트는 서로의 DOM 도 폴링 상태도 보지 못함.
+// 픽스처 하나 = 렌더 컨텍스트 하나.
+// 서버·브라우저·페이지를 모두 새로 세우므로 두 컨텍스트는 서로의 DOM 도 폴링 상태도 보지 못함.
 async function openRenderContext(
 	liveFixture: ArchitectureLiveResponse,
 ): Promise<RenderContext> {
@@ -204,17 +203,24 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
 	await ctx?.app?.close();
 }
 
-// 리터럴 tone 클래스 3종의 캔버스 내 개수 합.
-function countLiveToneClasses(page: Page, canvas: string): Promise<number> {
+// 리터럴 tone 클래스 한 종의 캔버스 내 개수.
+function countLiveToneClass(
+	page: Page,
+	canvas: string,
+	cls: string,
+): Promise<number> {
 	return page.evaluate(
-		(args) =>
-			args.tones.reduce(
-				(sum, cls) =>
-					sum + document.querySelectorAll(`${args.canvas} svg .${cls}`).length,
-				0,
-			),
-		{ canvas, tones: LIVE_TONE_CLASSES },
+		(args) => document.querySelectorAll(`${args.canvas} svg .${args.cls}`).length,
+		{ canvas, cls },
 	);
+}
+
+// 리터럴 tone 클래스 3종의 캔버스 내 개수 합.
+async function countLiveToneClasses(page: Page, canvas: string): Promise<number> {
+	const counts = await Promise.all(
+		LIVE_TONE_CLASSES.map((cls) => countLiveToneClass(page, canvas, cls)),
+	);
+	return counts.reduce((sum, n) => sum + n, 0);
 }
 
 // 이름이 바뀐 링까지 잡는 두 번째 다리 — 리터럴 목록이 아니라 접두사 패턴.
@@ -378,21 +384,19 @@ describe("fault live fixture", () => {
 	});
 
 	/**
-	 * AC-T6 — 링의 양면. 위 정상 픽스처에서 두 다리가 0 이라는 원래 단언은 문장 그대로
-	 * 살아 있고(전면 부활이 아님을 계속 증명함), 여기서는 같은 두 다리가 결함 픽스처에서
-	 * 정확히 켜져야 할 노드 수만큼이어야 함을 잼.
+	 * AC-T6 — 링의 양면.
+	 * 정상 픽스처에서 두 다리가 0 이고, 결함 픽스처에서는 같은 두 다리가 켜져야 할 노드 수만큼임을 잼.
 	 *
-	 * 왜 결함 쪽이 이제 옳은가 (ADR-4): 서버 판정을 맵과 상태판이 하나로 통일한 것이
-	 * DEFECT-1 의 처방이고, 그 통일이 실제로 이뤄졌는지 눈으로 확인할 표면은 캔버스
-	 * 링 하나뿐임. 링이 아예 없으면 통일은 화면에서 검증 불가능한 주장으로 남음.
+	 * 왜 결함 쪽을 재는가: 서버 판정을 맵과 상태판이 하나로 통일했는지 눈으로 확인할 표면은
+	 * 캔버스 링 하나뿐임. 링이 아예 없으면 그 통일은 화면에서 검증 불가능한 주장으로 남음.
 	 *
 	 * 왜 픽스처가 effective_status 를 실어야 하는가: 판정의 기준 필드가 그것이기 때문임
-	 * (types/architecture.ts — status 는 과도기 사본). 이 파일의 이전 픽스처는 그 필드
-	 * 없이 status: "critical" 만 실었는데, "critical" 은 tone 테이블의 키조차 아니어서
-	 * tone 이 info 로 떨어졌음 — 즉 데몬이 결함이 아니라 no-data 로 읽혔고, 위 "0개"
-	 * 단언은 표현이 제거되어서가 아니라 잴 대상이 없어서 초록이었음. 그 자리를 메우려고
-	 * before 는 판정값이 tone 테이블의 실제 키인지부터 재고, 기대 개수는 리터럴이 아니라
+	 * (types/architecture.ts — status 는 과도기 사본). 키가 아닌 값은 tone 이 info 로 떨어지므로
+	 * before 가 판정값이 tone 테이블의 실제 키인지부터 재고, 기대 개수는 리터럴이 아니라
 	 * 바인딩 SoT ∩ 실제 각인 id 로 매번 구함 — 바인딩이 끊기거나 링이 사라지면 붉어짐.
+	 *
+	 * 켜지는 클래스는 crit 한 종뿐이어야 함 — 3종 합계만 재면 crit↔warn 뒤바뀜이 합계 안에서
+	 * 상쇄되어 초록으로 지나가므로, 클래스별로 나눠 잼.
 	 */
 	test("AC-T6 fault verdict lights the ring on exactly the bound rendered nodes", async () => {
 		const expectedIds = await getRenderedBoundNodeIds(ctx.page, ctx.selectors.canvas);
@@ -401,12 +405,30 @@ describe("fault live fixture", () => {
 			`fixture precondition: none of ${BOUND_DAEMON}'s bound ids (${(DAEMON_NODE_BINDINGS[BOUND_DAEMON] ?? []).join(", ")}) is rendered in ${CANONICAL_DIAGRAM_ID} — the assertion below would be vacuous`,
 		);
 
-		const toneCount = await countLiveToneClasses(ctx.page, ctx.selectors.canvas);
-		assert.equal(
-			toneCount,
-			expectedIds.length,
-			`live tone class count vs bound rendered nodes ${expectedIds.join(", ")}`,
+		const critCount = await countLiveToneClass(
+			ctx.page,
+			ctx.selectors.canvas,
+			LIVE_TONE_CLASS.crit,
 		);
+		assert.equal(
+			critCount,
+			expectedIds.length,
+			`${LIVE_TONE_CLASS.crit} count vs bound rendered nodes ${expectedIds.join(", ")}`,
+		);
+
+		const okCount = await countLiveToneClass(
+			ctx.page,
+			ctx.selectors.canvas,
+			LIVE_TONE_CLASS.ok,
+		);
+		assert.equal(okCount, 0, `${LIVE_TONE_CLASS.ok} present under a crit verdict`);
+
+		const warnCount = await countLiveToneClass(
+			ctx.page,
+			ctx.selectors.canvas,
+			LIVE_TONE_CLASS.warn,
+		);
+		assert.equal(warnCount, 0, `${LIVE_TONE_CLASS.warn} present under a crit verdict`);
 
 		const patternCount = await countLiveClassPattern(ctx.page, ctx.selectors.canvas);
 		assert.equal(
