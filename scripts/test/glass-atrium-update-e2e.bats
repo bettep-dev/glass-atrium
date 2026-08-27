@@ -4,10 +4,15 @@
 # orchestration (not just each piece) is pinned:
 #   (a) changed NON-AGENT file      -> deterministic spine sync (replace)
 #   (b) agent, ONLY-VENDOR region   -> E4 take-release (updated, no Haiku)
-#   (c) agent, BOTH-CHANGED region  -> E4 net-new diff3, Haiku-gated (here gated/
-#                                      rolled back via a failing claude stub)
+#   (c) agent, BOTH-CHANGED region, NON-CONFLICTING (the two sides edit different
+#                                      lines) -> E4 net-new diff3 merges cleanly and
+#                                      the updater APPLIES it without the daemon
+#                                      pre-verify (CI-verified release tree)
 #   (d) release-only agent (ROSTER ADD) -> deferred to the agent_lifecycle ceremony,
 #                                      never written in-band
+#   (e) agent, BOTH-CHANGED region, CONTESTED (both sides rewrite the SAME line)
+#                                   -> the arbiter answers nothing -> declined,
+#                                      local body kept, loudly reported
 # plus the cross-cutting invariant: the daemon .apply-lock is HELD during the run
 # then released on exit. git is NOT required — the whole
 # flow (spine sync + git-free git_txn_apply merge) runs without any git invocation
@@ -99,13 +104,14 @@ vendor changed goal
 ## Rules
 vendor rules v2'
 
-# (c) BOTH-CHANGED agent fixture: base, local, release all differ in the region ->
-# net-new diff3 candidate, needs_llm=True (Haiku improvement-verify gate). With the
-# failing claude stub the verify conservative-fails -> git_txn rolls it back (gated).
-# Both-changed fixture: the two sides edit DIFFERENT lines of the region, so the
-# resolver produces a CLEAN diff3 candidate that still needs the Haiku gate. An
-# OVERLAPPING rewrite would instead be marker-bearing — report-only under the
-# conflict-marker tripwire, so it never reaches the verify these tests exercise.
+# (c) BOTH-CHANGED, NON-CONFLICTING agent fixture: base, local and release all differ
+# in the region, but the two sides edit DIFFERENT lines of it — local rewrites the
+# first line, the vendor appends a third. The resolver therefore produces a CLEAN
+# diff3 candidate (verdict merge-clean) that carries BOTH edits. The updater applies
+# it with skip_pre_verify=True: its input is a CI-verified release tree, so the
+# daemon's Haiku improvement-verify gate is OFF on this path and no model is consulted
+# for this body at all. The OVERLAPPING shape is a separate fixture (GAP_*) with its
+# own outcome, so neither assertion below depends on which shape the resolver saw.
 BOTH_BASE='# dev-both
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -126,6 +132,19 @@ BOTH_RELEASE='# dev-both
 ## Goal
 <!-- EDITABLE:BEGIN -->
 base both goal
+shared tail line
+VENDOR changed both goal
+<!-- EDITABLE:END -->
+## Rules
+vendor NEW rules'
+# The ONE outcome the merge above may produce: the local first-line rewrite survives
+# byte-for-byte AND the vendor's appended line lands, with the vendor's out-of-region
+# structure taken wholesale. Pinned as a whole-body equality so a resolver that
+# dropped either side (or reordered the region) cannot pass.
+BOTH_MERGED='# dev-both
+## Goal
+<!-- EDITABLE:BEGIN -->
+LOCAL learned both goal
 shared tail line
 VENDOR changed both goal
 <!-- EDITABLE:END -->
@@ -163,27 +182,33 @@ shared tail line
 ## Rules
 vendor NEW rules'
 
-@test "E2E (T23): one release combining a non-agent change, an only-vendor merge, a both-changed merge, and a roster add" {
+@test "E2E (T23): one release combining a non-agent change, an only-vendor merge, a NON-CONFLICTING both-changed merge, a CONTESTED both-changed decline, and a roster add" {
   # install (the live tree being updated)
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"    # (a)
   seed_file "${INSTALL}" "agents/dev-vendor.md" "${VENDOR_BASE}" # (b) local == base
   seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"    # (c) local learned
+  seed_file "${INSTALL}" "agents/dev-gap.md" "${GAP_LOCAL}"      # (e) local rewrote
   seed_base_store "dev-vendor.md" "${VENDOR_BASE}"               # (b) base anchor
   seed_base_store "dev-both.md" "${BOTH_BASE}"                   # (c) base anchor
+  seed_base_store "dev-gap.md" "${GAP_BASE}"                     # (e) base anchor
 
   # new release tree (the test-seam source)
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"       # (a)
   seed_file "${NEWSRC}" "agents/dev-vendor.md" "${VENDOR_RELEASE}" # (b)
   seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"     # (c)
+  seed_file "${NEWSRC}" "agents/dev-gap.md" "${GAP_RELEASE}"       # (e)
   seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
 brand new vendor agent" # (d) roster ADD
   write_manifest "${WORK}/manifest.json" \
-    "scripts/tool.sh" "agents/dev-vendor.md" "agents/dev-both.md" "agents/dev-new.md"
+    "scripts/tool.sh" "agents/dev-vendor.md" "agents/dev-both.md" \
+    "agents/dev-gap.md" "agents/dev-new.md"
 
-  # Hermetic claude stub for the both-changed Haiku verify: it records that the
-  # apply-lock is HELD at invocation (proving the writer stays serialized for the
-  # whole run) then exits non-zero so run_pre_verify conservative-fails -> the
-  # both-changed merge is gated (git_txn rolls it back). It never contacts the network.
+  # Hermetic claude stub for the CONTESTED region's arbiter call — the one model seam
+  # this release still reaches, now that the updater applies CI-verified release
+  # content without the daemon pre-verify. It records that the apply-lock is HELD at
+  # invocation (proving the writer stays serialized for the whole run) then exits
+  # non-zero, so the contested gap is answered by neither side and (e) declines. It
+  # never contacts the network.
   cat >"${WORK}/fake-claude.sh" <<'STUB'
 #!/usr/bin/env bash
 [[ -d "${GA_LOCK_DIR}" ]] && : >"${GA_LOCK_WITNESS}"
@@ -213,12 +238,21 @@ STUB
   [[ "$(cat "${INSTALL}/agents/dev-vendor.md")" == *"vendor changed goal"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-vendor.md")" == *"vendor rules v2"* ]]
 
-  # (c) the both-changed agent was GATED (Haiku verify failed -> git_txn rollback)
-  #     -> left at the local learned version, loudly reported, never silently
-  #     overwritten with the vendor text
-  [[ "$(cat "${INSTALL}/agents/dev-both.md")" == *"LOCAL learned both goal"* ]]
-  [[ "$(cat "${INSTALL}/agents/dev-both.md")" != *"VENDOR changed both goal"* ]]
-  [[ "$output" == *"agents/dev-both.md"* ]]
+  # (c) the NON-CONFLICTING both-changed agent was MERGED and APPLIED: the vendor's
+  #     added line landed AND the local rewrite survived byte-for-byte (whole-body
+  #     equality, so neither side may be dropped). No model was consulted for it —
+  #     the updater's skip_pre_verify path is announced on its own INFO line.
+  [[ "$(cat "${INSTALL}/agents/dev-both.md")" == "${BOTH_MERGED}" ]]
+  [[ "$output" == *"agent merged + applied: agents/dev-both.md"* ]]
+  [[ "$output" == *"release content applied without the daemon pre-verify"* ]]
+
+  # (e) the CONTESTED both-changed agent was DECLINED: both sides rewrote the SAME
+  #     region line, so the resolver handed the gap to the arbiter, whose (failing)
+  #     model call answered nothing -> merge-pending-arbitration -> the local body is
+  #     kept whole, loudly reported, never silently overwritten with the vendor text.
+  [[ "$(cat "${INSTALL}/agents/dev-gap.md")" == "${GAP_LOCAL}" ]]
+  [[ "$output" == *"CONFLICT (merge-pending-arbitration) in agents/dev-gap.md"* ]]
+  [[ "$output" == *"local body kept"* ]]
 
   # (d) the roster ADD is reported and then INSTALLED in-band through the create
   #     path: an add-only release returns from the gate before the override is
