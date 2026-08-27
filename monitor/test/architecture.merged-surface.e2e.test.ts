@@ -48,9 +48,9 @@ import {
 	assertLayoutsDiffer,
 	assertOrthogonalLinks,
 	createFallbackWatch,
+	findDiagonalSegments,
 	getProbe,
 	getRenderProbe,
-	isOrthogonal,
 	type FallbackWatch,
 	type RenderProbe,
 } from "./lib/mermaid-elk-probe.js";
@@ -978,12 +978,20 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	const canvas = await getCanvasProbe();
 
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
-	// 대조군이 같은 판정을 통과해 버리면 위 초록은 렌더러 무관한 항진명제임.
+
+	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.
+	// 파싱 실패를 "직교 아님" 으로 세면 dagre 가 C 를 그린다는 사실만으로 초록이 되고, 대각 0 개와 구별되지 않는다.
 	const control = await getLayoutControl("d52-orthogonality-control", "dagre");
-	assert.equal(
-		isOrthogonal(control.links, "layout control"),
-		false,
-		"the dagre control satisfied the orthogonality verdict — the verdict discriminates nothing",
+	const controlDiagonals = findDiagonalSegments(control.links, "layout control");
+	assert.ok(
+		controlDiagonals.length > 0,
+		`the dagre control drew no diagonal segment — the verdict discriminates nothing (links: ${control.links.join(" | ")})`,
+	);
+	// 같은 규칙을 캔버스에 그대로 돌려 반대 판정을 받는다 — 대조군의 대각이 규칙의 산물이 아님을 잠근다.
+	assert.deepStrictEqual(
+		findDiagonalSegments(canvas.links, "canonical map canvas"),
+		[],
+		`canvas carries diagonal segments under the same rule that counted ${controlDiagonals.length} in the dagre control`,
 	);
 });
 
@@ -1012,6 +1020,10 @@ test("P0-2 the canvas logs no layout fallback, and this harness would catch one"
 const ZONE_TONE_MIN = 1.3;
 // 노드 stroke : 자기 fill — 테두리가 면에서 떨어져 보이는 최소 단차.
 const EDGE_TONE_MIN = 1.5;
+// 존 stroke : 캔버스 — 존을 캔버스에서 떼어내는 일은 테두리가 한다(독트린상 면은 2%, 선은 10%).
+const ZONE_EDGE_TONE_MIN = 1.5;
+// 존 fill : 캔버스 — 면은 은근해야 하므로 "다르다" 보다 약간 위, 단차 요구는 stroke 쪽에 둠.
+const ZONE_FILL_TONE_MIN = 1.05;
 // 업스트림 독트린 r=8 의 하한.
 const CORNER_RADIUS_MIN = 6;
 // 라벨 넘침 허용 오차(px).
@@ -1141,7 +1153,7 @@ function toKey(c: Rgba): string {
 }
 
 /** rx 는 속성으로도 CSS 기하 속성으로도 설정될 수 있어 둘 다 읽고 큰 쪽을 쓴다. */
-function effectiveRadius(rxAttr: string | null, rxComputed: string): number {
+function readEffectiveRadius(rxAttr: string | null, rxComputed: string): number {
 	const fromAttr = rxAttr === null ? 0 : Number.parseFloat(rxAttr);
 	const fromCss = Number.parseFloat(rxComputed);
 	return Math.max(Number.isFinite(fromAttr) ? fromAttr : 0, Number.isFinite(fromCss) ? fromCss : 0);
@@ -1155,10 +1167,28 @@ test("P0-2-fix the canvas, its zones and its boxes read as three separate tones"
 	const canvas = parseColor(probe.canvasBg);
 	const clusterFills = probe.clusters.map((c) => parseColor(c.fill));
 	const clusterKeys = new Set(clusterFills.map(toKey));
-	assert.equal(
-		clusterKeys.has(toKey(canvas)),
-		false,
-		`zone fill equals the canvas ${probe.canvasBg} — the zone surface is invisible`,
+
+	// 존 면은 캔버스와 구별만 되면 됨 — 여기에 단차를 요구하면 은근해야 할 면이 밝아진다.
+	const dimZoneFills = probe.clusters
+		.map((c) => ({ text: c.text, fill: c.fill, ratio: contrastRatio(parseColor(c.fill), canvas) }))
+		.filter((t) => t.ratio < ZONE_FILL_TONE_MIN);
+	assert.deepStrictEqual(
+		dimZoneFills.map((t) => `${t.text} (${t.fill}) ${t.ratio.toFixed(3)}`),
+		[],
+		`zone fill vs the canvas ${probe.canvasBg} below ${ZONE_FILL_TONE_MIN} — the zone surface is invisible`,
+	);
+
+	// 존을 캔버스에서 떼어내는 단차는 테두리가 진다. 반투명 stroke 는 캔버스 위에 합성한 뒤라야 대비를 말할 수 있음.
+	const dimZoneEdges = probe.clusters
+		.map((c) => {
+			const stroke = compositeOver(parseColor(c.stroke), canvas);
+			return { text: c.text, stroke: c.stroke, ratio: contrastRatio(stroke, canvas) };
+		})
+		.filter((t) => t.ratio < ZONE_EDGE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimZoneEdges.map((t) => `${t.text} (${t.stroke}) ${t.ratio.toFixed(3)}`),
+		[],
+		`zone stroke vs the canvas ${probe.canvasBg} below ${ZONE_EDGE_TONE_MIN}`,
 	);
 
 	const nodeKeys = new Set(probe.nodes.map((n) => toKey(parseColor(n.fill))));
@@ -1206,11 +1236,11 @@ test("P0-2-fix every box and every zone is drawn with rounded corners", async ()
 	const square = [
 		...probe.nodes.map((n) => ({
 			what: `node ${n.text}`,
-			r: effectiveRadius(n.rxAttr, n.rxComputed),
+			r: readEffectiveRadius(n.rxAttr, n.rxComputed),
 		})),
 		...probe.clusters.map((c) => ({
 			what: `zone ${c.text}`,
-			r: effectiveRadius(c.rxAttr, c.rxComputed),
+			r: readEffectiveRadius(c.rxAttr, c.rxComputed),
 		})),
 	].filter((x) => x.r < CORNER_RADIUS_MIN);
 

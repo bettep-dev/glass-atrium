@@ -433,21 +433,23 @@ export interface CanonicalMap {
 export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
 	detail: "balanced",
-	// 감축(T9): 다른 다이어그램으로 넘어가는 경계 노드 3종과 그 엣지를 뺌 — 나머지 여섯 편이 그려지지 않으므로 도착지 없는 표식임.
-	// 방향은 수직(TD) 고정 — 렌더 pane 은 폭만 제약(측정 1150px)되고 높이는 `max-height: none` 로 자유로움.
-	// LR 은 랭크가 가로로 누적돼 1212px 로 넘쳐 우측 67px 이 잘렸음(콘텐츠를 줄이는 대신 방향을 눕힘).
-	// 되돌리려면 폭 초과를 먼저 재측정할 것 — 미관 사유의 LR 복귀는 같은 클리핑을 되살림.
-	// 지시자는 물리적 1줄 · JSON 인용 키 · hex 값 고정 — 줄을 쪼개거나 `rgb(` 표기를 쓰면 content-budget 의
-	// 계수기가 오프너/화살표로 오검출하고, 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
-	// 색은 tokens.css 다크 블록 파생 — background=surface(12 10 9) · clusterBkg=sunken(24 20 17) ·
-	// nodeTextColor=ink · lineColor=ink 40% 워시 · mainBkg #332e2a 와 nodeBorder #5c534e 는 line(41 37 36)
-	// 위로 같은 온기(r>g>b)를 유지한 채 이어붙인 두 단계임. 세 톤은 값이 다른 것으로 부족하고 눈에 보이는
-	// 단차여야 함 — 실측 대비: 노드 fill:존 fill 1.364 · 노드 stroke:자기 fill 1.791 · 존 stroke:존 fill 1.563.
-	// flowchart 는 primaryColor/primaryBorderColor 가 아니라 mainBkg/nodeBorder/nodeTextColor 를 읽음 — 전자만 두면 전역 init 값이 그대로 이김.
-	// elk 튜닝 키는 지시자에서 4개만 살아남고(`sanitizeDirective`), 그중 기본값과 다른 것은 mergeEdges 뿐임.
-	// diagramPadding 16 — 화면이 렌더 후 존 rect 를 위로 8 늘려 제목 띠를 만들므로(architecture.jsx
-	// ZONE_TITLE_BAND) 기본 8 이면 그 8 이 viewBox 밖으로 나감.
-	// 지시자의 flowchart 객체는 전역 설정과 깊은 병합이라 useMaxWidth:false 는 유지됨.
+	/**
+	 * 감축본 — 렌더 제약(폭·content-budget 계수기·sanitizeDirective)을 통과하도록 손본 형태.
+	 * 감축(T9): 경계 노드 3종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
+	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
+	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
+	 * 지시자 형태 고정: 물리적 1줄 · JSON 인용 키 · hex 값.
+	 * 줄을 쪼개거나 `rgb(` 표기를 쓰면 content-budget 계수기가 오프너/화살표로 오검출함.
+	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
+	 * 색 파생: background=surface · clusterBkg=sunken · nodeTextColor=ink · lineColor=ink 40% 워시.
+	 * mainBkg·nodeBorder 는 line 위로 같은 온기(r>g>b)를 유지한 채 이어붙인 두 단계.
+	 * 세 톤은 값이 다른 것으로 부족하고 눈에 보이는 단차여야 함.
+	 * 단차의 하한은 architecture.merged-surface.e2e 의 대비 판정이 소유함 — 실측값을 여기 박으면 팔레트 편집마다 어긋남.
+	 * flowchart 는 primaryColor/primaryBorderColor 가 아니라 mainBkg/nodeBorder/nodeTextColor 를 읽음.
+	 * elk 튜닝 키는 `sanitizeDirective` 를 4개만 통과하고, 그중 기본값과 다른 것은 mergeEdges 뿐임.
+	 * diagramPadding 16: 화면이 존 rect 를 위로 8 늘려 제목 띠를 만들므로(architecture.jsx ZONE_TITLE_BAND) 기본 8 은 viewBox 밖으로 나감.
+	 * 지시자의 flowchart 객체는 전역 설정과 깊은 병합이라 useMaxWidth:false 는 유지됨.
+	 */
 	mermaid_drawn: `%%{init: {"layout": "elk", "elk": {"mergeEdges": true}, "flowchart": {"diagramPadding": 16}, "themeVariables": {"background": "#0c0a09", "mainBkg": "#332e2a", "nodeBorder": "#5c534e", "nodeTextColor": "#fafaf9", "lineColor": "#6b6a69", "clusterBkg": "#181411", "clusterBorder": "#3d3733", "edgeLabelBackground": "#0c0a09"}}}%%
 flowchart TD
     subgraph entry["External inputs"]

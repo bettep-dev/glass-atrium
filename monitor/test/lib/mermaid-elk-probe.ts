@@ -1,8 +1,9 @@
 // Shared ELK-proof probes for the mermaid layout work (plan D5-2 §7 공용 판정 도구).
 // Three tools, each closing one hole the others leave open: a dagre control (a layout
 // claim is empty without one), an orthogonality verdict over a flat coordinate
-// sequence (ADR-3), and a console watch whose zero-count only means something while
-// the page carries logLevel <= 3.
+// sequence plus its positive counterpart that counts the control's diagonals (ADR-3),
+// and a console watch whose zero-count only means something while the page carries
+// logLevel <= 3.
 
 import assert from "node:assert/strict";
 
@@ -124,29 +125,48 @@ export function assertLayoutsDiffer(elk: RenderProbe, dagre: RenderProbe): void 
 	);
 }
 
+/** 명령별 피연산자 개수 — 판정이 정의된 명령의 유일한 목록이기도 하다. */
+const FLAT_COMMANDS: Record<string, number> = { M: 2, L: 2, Q: 4 };
+const CURVE_COMMANDS: Record<string, number> = { M: 2, L: 2, Q: 4, C: 6, S: 4 };
+
+/** path `d` → 좌표쌍 열. 허용 목록 밖의 명령은 조용히 통과시키지 않고 throw. */
+function readPathPoints(d: string, allowed: Record<string, number>): Point[] {
+	const points: Point[] = [];
+	for (const group of d.match(/[A-Za-z][^A-Za-z]*/g) ?? []) {
+		const command = group[0];
+		const operands = allowed[command];
+		if (operands === undefined) {
+			throw new Error(
+				`unsupported path command '${command}' in "${d}" — this verdict is defined over ${Object.keys(allowed).join("/")} only`,
+			);
+		}
+		const nums = (group.slice(1).match(/-?\d*\.?\d+/g) ?? []).map(Number);
+		assert.equal(
+			nums.length,
+			operands,
+			`${command} takes ${operands} operands, got ${nums.length} in "${d}"`,
+		);
+		for (let i = 0; i + 1 < nums.length; i += 2) points.push({ x: nums[i], y: nums[i + 1] });
+	}
+	return points;
+}
+
 /**
  * path `d` 를 평탄 좌표열로 (ADR-3).
  * Q 는 제어점(=모서리 꼭짓점)과 끝점(=다음 직선 시작점)을 순서대로 둘 다 싣는다.
  * M/L/Q 밖의 명령은 판정이 정의되지 않으므로 조용히 통과시키지 않고 throw.
  */
 export function getFlatPoints(d: string): Point[] {
-	const points: Point[] = [];
-	for (const group of d.match(/[A-Za-z][^A-Za-z]*/g) ?? []) {
-		const command = group[0];
-		const nums = (group.slice(1).match(/-?\d*\.?\d+/g) ?? []).map(Number);
-		if (command === "M" || command === "L") {
-			assert.equal(nums.length, 2, `${command} takes 2 operands, got ${nums.length} in "${d}"`);
-			points.push({ x: nums[0], y: nums[1] });
-		} else if (command === "Q") {
-			assert.equal(nums.length, 4, `Q takes 4 operands, got ${nums.length} in "${d}"`);
-			points.push({ x: nums[0], y: nums[1] }, { x: nums[2], y: nums[3] });
-		} else {
-			throw new Error(
-				`unsupported path command '${command}' in "${d}" — the orthogonality verdict is defined over M/L/Q only`,
-			);
-		}
-	}
-	return points;
+	return readPathPoints(d, FLAT_COMMANDS);
+}
+
+/**
+ * 곡선 제어점까지 실은 좌표열 — dagre 가 그리는 C/S 를 같은 축 규칙 위에 올리는 확장.
+ * C 는 (제어점1, 제어점2, 끝점), S 는 (제어점2, 끝점) 순 — 제어점이 축을 벗어나면 인접 쌍이 대각으로 잡힌다.
+ * M/L/Q/C/S 밖의 명령은 여기서도 throw: "못 읽었다" 를 "대각이다" 로 세지 않기 위함이다.
+ */
+export function getControlPolygon(d: string): Point[] {
+	return readPathPoints(d, CURVE_COMMANDS);
 }
 
 /** 축 정렬을 어긴 인접 쌍의 시작 인덱스. 첫/끝 세그먼트는 마커 오프셋 때문에 예외(ADR-3). */
@@ -161,31 +181,35 @@ export function findNonOrthogonalPairs(points: Point[]): number[] {
 	return offending;
 }
 
-/** 도구 2 — 엣지 전수 직교성 판정. */
+/** 위반 쌍 → 읽을 수 있는 한 줄. 아래 두 판정이 같은 형식으로 보고하도록 한 자리에 둠. */
+function describeNonOrthogonalPairs(points: Point[], index: number): string[] {
+	return findNonOrthogonalPairs(points).map(
+		(pair) =>
+			`link[${index}] pair ${pair}: ${JSON.stringify(points[pair])} -> ${JSON.stringify(points[pair + 1])}`,
+	);
+}
+
+/** 도구 2 — 엣지 전수 직교성 판정. M/L/Q 밖의 명령은 통과가 아니라 throw 로 드러난다. */
 export function assertOrthogonalLinks(links: string[], context: string): void {
 	assert.ok(
 		links.length > 0,
 		`${context}: no flowchart-link path to judge — the orthogonality verdict would be vacuous`,
 	);
-	const violations = links.flatMap((d, index) => {
-		const points = getFlatPoints(d);
-		return findNonOrthogonalPairs(points).map(
-			(pair) =>
-				`link[${index}] pair ${pair}: ${JSON.stringify(points[pair])} -> ${JSON.stringify(points[pair + 1])}`,
-		);
-	});
+	const violations = links.flatMap((d, index) =>
+		describeNonOrthogonalPairs(getFlatPoints(d), index),
+	);
 	assert.deepStrictEqual(violations, [], `${context}: diagonal edge segments present`);
 }
 
 /**
- * 같은 판정의 비-예외 형태 — 대조군이 판정을 통과해 버리는지 재는 데 씀.
- * 대각 세그먼트뿐 아니라 축 판정이 정의되지 않는 곡선 명령(dagre 가 그리는 C 등)도 직교 아님으로 센다.
+ * 도구 2b — 같은 축 규칙의 양성 형태. 대각 세그먼트를 세어 돌려준다(곡선 제어점 포함).
+ * 대조군은 "판정을 통과하지 못했다" 가 아니라 "대각을 가졌다" 로 세워야 한다.
+ * 파싱 실패를 통과 실패로 세면 대각이 하나도 없는 렌더도 대조군 노릇을 하게 된다.
  */
-export function isOrthogonal(links: string[], context: string): boolean {
-	try {
-		assertOrthogonalLinks(links, context);
-		return true;
-	} catch {
-		return false;
-	}
+export function findDiagonalSegments(links: string[], context: string): string[] {
+	assert.ok(
+		links.length > 0,
+		`${context}: no flowchart-link path to judge — the diagonal count would be vacuous`,
+	);
+	return links.flatMap((d, index) => describeNonOrthogonalPairs(getControlPolygon(d), index));
 }

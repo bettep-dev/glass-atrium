@@ -30,6 +30,7 @@ import {
 	assertLayoutsDiffer,
 	assertOrthogonalLinks,
 	createFallbackWatch,
+	findDiagonalSegments,
 	findNonOrthogonalPairs,
 	getFlatPoints,
 	getRenderProbe,
@@ -207,5 +208,31 @@ describe("orthogonality verdict (ADR-3)", () => {
 			() => getFlatPoints("M 10,10 C 20,20 30,30 40,40"),
 			/unsupported path command 'C'/,
 		);
+	});
+});
+
+// 대조군을 "대각을 가졌다" 로 세우는 쪽의 판정. 통과 실패와 파싱 실패가 갈라지는지가 요점.
+describe("positive diagonal count over curve commands", () => {
+	test("a dagre-style cubic is counted as diagonal, not merely unparseable", () => {
+		const hits = findDiagonalSegments(["M100,50C100,75 140,90 180,110C220,130 260,145 300,170"], "cubic");
+		assert.ok(hits.length > 0, `expected diagonal control-point pairs, got ${JSON.stringify(hits)}`);
+	});
+
+	test("an orthogonal path counts zero under the same rule", () => {
+		assert.deepStrictEqual(
+			findDiagonalSegments(["M 10,10 L 10,40 Q 10,45 15,45 L 60,45 L 90,45"], "orthogonal"),
+			[],
+		);
+	});
+
+	test("a truly unknown command throws rather than counting as diagonal", () => {
+		assert.throws(
+			() => findDiagonalSegments(["M 10,10 A 5,5 0 0 1 20,20"], "arc"),
+			/unsupported path command 'A'/,
+		);
+	});
+
+	test("an empty link list is refused instead of counting zero", () => {
+		assert.throws(() => findDiagonalSegments([], "empty"), /diagonal count would be vacuous/);
 	});
 });

@@ -260,12 +260,13 @@ function ScreenArchitecture(
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
-					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨
-					// 마스크가 사각형으로 드러나지 않음. 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸이라 여기만 바꾸면 사다리가 어긋난다.
+					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
+					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
-					// 노드 라벨 — 색만 보정한다. mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로
-					// foreignObject 를 자르므로, 여기서 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
+					// 노드 라벨 — 색만 보정한다.
+					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
+					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
 					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } " +
 					// 잰 상자와 그린 글리프 런의 잔여 오차(서브픽셀·힌팅)는 자르지 말고 흘려보냄 — 노드 rect 안쪽 패딩(12) 안이라 레이아웃 불변.
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
@@ -494,8 +495,8 @@ function MermaidCanvas({
 		// mermaid.render unique id (diagram + timestamp 로 충돌 회피).
 		const renderId = `mermaid-${diagramId}-${Date.now()}`;
 
-		// 웹폰트(Pretendard) 도착 전에 재면 mermaid 는 fallback 서체 폭으로 상자를 자르고, 뒤이어 swap 된
-		// 더 넓은 서체가 끝 글자를 넘긴다. fonts.ready 이후에 재게 해서 잰 서체 = 그린 서체를 만든다.
+		// 웹폰트(Pretendard) 도착 전에 재면 mermaid 는 fallback 서체 폭으로 상자를 자름 — 뒤이어 swap 된 더 넓은 서체가 끝 글자를 넘긴다.
+		// fonts.ready 이후에 재게 해서 잰 서체 = 그린 서체를 만든다.
 		const fontsReady = document.fonts?.ready ?? Promise.resolve();
 
 		fontsReady
@@ -573,9 +574,13 @@ function MermaidCanvas({
 		titleEl.textContent = diagramTitle;
 	}, [renderState.status, renderState.svgHtml, diagramTitle]);
 
-	// 존 제목 여백 — mermaid+ELK 는 존 rect 상단에서 첫 노드까지 (제목 높이 + 15) 만 비우고 제목은 그 안에서 테두리에 붙는다.
-	// subGraphTitleMargin 은 그 15 안에서 제목을 밀 뿐이고(실측 top 12 → 첫 노드까지 3) ELK padding 키는 지시자에서 살아남지 못함.
-	// → rect 를 위로만 늘려 띠를 만든다(아래 모서리·노드 좌표 불변 = 직교성/폭 계약 유지). pan-zoom 이 bbox 를 읽기 전에 돌아야 함.
+	/**
+	 * 존 제목 여백 — rect 를 위로만 늘려 띠를 만든다.
+	 * mermaid+ELK 는 존 rect 상단에서 첫 노드까지 (제목 높이 + 15) 만 비우고 제목은 그 안에서 테두리에 붙음.
+	 * subGraphTitleMargin 은 그 15 안에서 제목을 밀 뿐이고 ELK padding 키는 지시자에서 살아남지 못함.
+	 * 위로만 늘리므로 아래 모서리·노드 좌표는 불변 — 직교성/폭 계약 유지.
+	 * pan-zoom 이 bbox 를 읽기 전에 돌아야 함.
+	 */
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
