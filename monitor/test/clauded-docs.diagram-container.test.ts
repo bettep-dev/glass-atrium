@@ -67,9 +67,14 @@ const FIXTURES = new Map<string, string>([
   ],
   [
     "erDiagram",
+    // 두 관계짜리 원본은 ELK 아래에서 455px 로 떨어져 뷰어 컨테이너(382px)는 넘고 내보내기
+    // 컨테이너(464px)는 못 넘었음 — 두 기준 사이에 낀 폭이라 한쪽 다리만 조용히 초록이 됨.
+    // 관계를 넷으로 늘려 두 컨테이너 모두에서 확실히 넘기게 함.
     "erDiagram\n" +
       '  OUTCOME_RECORD ||--o{ CORRECTION_SIGNAL : "produces on revision"\n' +
-      '  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"',
+      '  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"\n' +
+      '  AGENT_REGISTRY_ENTRY ||--o{ DELEGATION_SCOPE_DECLARATION : "declares files and deliverable"\n' +
+      '  CORRECTION_SIGNAL }o--|| DIRECTIVE_HINT_DISTILLATION : "distilled to one English line"',
   ],
   [
     "classDiagram",
@@ -338,6 +343,27 @@ function getExportedHtml(): Promise<string> {
   return exportedHtmlCache;
 }
 
+/**
+ * 채택 타입 전수를 평가하고 실패를 모아 한 번에 단언함.
+ *
+ * 타입마다 assert 를 때리면 첫 실패에서 끊겨 뒤의 타입은 평가조차 되지 않음 — 한 타입이
+ * 깨진 동안 나머지가 초록인지 빨강인지 아무도 모르는 상태가 됨. 판정기는 실패 사유
+ * 문자열 배열(빈 배열 = 통과)을 돌려주고, 여기서 전부 이어붙여 한 번만 단언함.
+ */
+function assertEveryType(
+  measurements: NodeMeasurement[],
+  leg: string,
+  check: (m: NodeMeasurement) => string[],
+): void {
+  const failures = measurements.flatMap(check);
+  assert.deepEqual(
+    failures,
+    [],
+    `${leg}: ${measurements.length} 타입 중 ${failures.length} 건 실패\n  - ` +
+      failures.join("\n  - "),
+  );
+}
+
 test("픽스처 집합이 diagram-types.json 의 채택 타입을 전부 덮음", () => {
   const declaration = JSON.parse(
     readFileSync(DECLARATION_PATH, "utf8"),
@@ -356,13 +382,13 @@ test("AC-T22(b) 뷰어: 채택 타입 전부의 산출 <svg> 에 인라인 max-w
   );
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(m.svgPresent, `${m.type}: <svg> 가 렌더되지 않음`);
-    assert.ok(
-      !/max-width/i.test(m.svgStyleAttr),
-      `${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`,
-    );
-  }
+  assertEveryType(measurements, "뷰어 인라인 max-width", (m) => {
+    if (!m.svgPresent) return [`${m.type}: <svg> 가 렌더되지 않음`];
+    if (/max-width/i.test(m.svgStyleAttr)) {
+      return [`${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+    }
+    return [];
+  });
 });
 
 test("AC-T22(a) 뷰어: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음", async () => {
@@ -372,45 +398,53 @@ test("AC-T22(a) 뷰어: 넓은 다이어그램이 가로 스크롤을 얻고 잘
     FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
   );
 
-  for (const m of measurements) {
-    assert.ok(
-      m.overflowX === "auto" || m.overflowX === "scroll",
-      `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-    );
-    assert.ok(
-      m.scrollWidth > m.clientWidth,
-      `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
-    );
-  }
+  assertEveryType(measurements, "뷰어 가로 스크롤", (m) => {
+    const failures: string[] = [];
+    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+      failures.push(
+        `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+      );
+    }
+    if (!(m.scrollWidth > m.clientWidth)) {
+      failures.push(
+        `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
+      );
+    }
+    return failures;
+  });
 });
 
 test("AC-T22(b) 내보내기: 산출 HTML 의 <svg> 전부에 인라인 max-width 가 없음", async () => {
   const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(m.svgPresent, `${m.type}: 내보내기 산출물에 <svg> 가 없음`);
-    assert.ok(
-      !/max-width/i.test(m.svgStyleAttr),
-      `${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`,
-    );
-  }
+  assertEveryType(measurements, "내보내기 인라인 max-width", (m) => {
+    if (!m.svgPresent) return [`${m.type}: 내보내기 산출물에 <svg> 가 없음`];
+    if (/max-width/i.test(m.svgStyleAttr)) {
+      return [`${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+    }
+    return [];
+  });
 });
 
 test("AC-T22(a) 내보내기: 산출 HTML 을 열면 가로 스크롤이 생기고 잘리지 않음", async () => {
   const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
 
   assert.equal(measurements.length, FIXTURE_TYPES.length);
-  for (const m of measurements) {
-    assert.ok(
-      m.overflowX === "auto" || m.overflowX === "scroll",
-      `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-    );
-    assert.ok(
-      m.scrollWidth > m.clientWidth,
-      `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
-    );
-  }
+  assertEveryType(measurements, "내보내기 가로 스크롤", (m) => {
+    const failures: string[] = [];
+    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+      failures.push(
+        `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+      );
+    }
+    if (!(m.scrollWidth > m.clientWidth)) {
+      failures.push(
+        `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
+      );
+    }
+    return failures;
+  });
 });
 
 // ── AC-T23 크기 프리셋 ───────────────────────────────────────────────────────
