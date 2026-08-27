@@ -56,13 +56,19 @@
 <link rel="stylesheet" href="styles/base.css?v=9" />
 <!-- Mermaid 11 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. -->
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- ELK 레이아웃 로더 0.2.3 — 벤더 IIFE. 플러그인은 ESM 전용이고 라이브 갱신은 npm install 을 돌리지 않으므로 저장소 파일을 그대로 배포(출처·해시는 provenance 사이드카). -->
+<script src="assets/vendor/mermaid-layout-elk-0.2.3.min.js"></script>
 <!-- svg-pan-zoom 3.6.2 — Mermaid 가 생성한 SVG 에 휠 zoom + 드래그 pan + 더블클릭 zoom-in + 컨트롤 아이콘 부여. window.svgPanZoom 으로 노출. -->
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js"></script>
 <script>
   // dark theme + 폰트 + 전체 너비 fit. startOnLoad:false → architecture.jsx 가 canonical 맵 1장을 수동 render.
   // securityLevel:'loose' — mermaid_source 는 백엔드가 옵시디언 vault 에서 직접 읽은 internal source (외부 사용자 입력 아님).
+  // 클래식 스크립트 두 개가 문서 순서로 실행되므로 준비 플래그 없이 동기 등록 — 등록 전에는 layout:'elk' 요청이 조용히 dagre 로 떨어짐.
+  window.mermaid?.registerLayoutLoaders(window.mermaidLayoutElk?.default ?? []);
   window.mermaid?.initialize({
     startOnLoad: false,
+    // 기본 5(fatal) 에서는 log.warn 이 no-op 이라 미등록 레이아웃 폴백 경고가 콘솔에 아예 안 뜸 → 3(warn) 으로 가시화.
+    logLevel: 3,
     theme: 'dark',
     themeVariables: {
       // 다크 가독성 — theme:'dark' 의 type-specific 텍스트 기본값이 "calculated"/"black" 으로 남아

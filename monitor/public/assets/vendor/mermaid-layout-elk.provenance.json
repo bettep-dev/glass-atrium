@@ -1,0 +1,30 @@
+{
+  "package": "@mermaid-js/layout-elk",
+  "version": "0.2.3",
+  "global_name": "mermaidLayoutElk",
+  "bundle_file": "mermaid-layout-elk-0.2.3.min.js",
+  "bundle_sha256": "862049a526e2825f85360a55f95870f216baa277a3048f174ccafe525be22dec",
+  "bundle_bytes": 5079669,
+  "tarball_sha512": "sha512-m46RVGfvKK1PSMdAFGDz2nksI4jusEkFxvf0lb48bYWmqLQxZpjtpruiw29MbOy9rlWJtuMf9EzG9fAF8CVZbg==",
+  "build_command": "npx esbuild node_modules/@mermaid-js/layout-elk/dist/mermaid-layout-elk.core.mjs --bundle --format=iife --global-name=mermaidLayoutElk --minify --target=es2022 --legal-comments=none --outfile=public/assets/vendor/mermaid-layout-elk-0.2.3.min.js",
+  "esbuild_version": "0.28.1",
+  "embedded": [
+    {
+      "package": "elkjs",
+      "version": "0.9.3",
+      "license": "EPL-2.0",
+      "note": "lib/elk.bundled.js \u2014 the worker-free build"
+    },
+    {
+      "package": "d3",
+      "version": "7.9.0",
+      "license": "ISC"
+    },
+    {
+      "package": "@mermaid-js/layout-elk",
+      "version": "0.2.3",
+      "license": "MIT"
+    }
+  ],
+  "note": "IIFE re-package of an ESM-only plugin: the live install never runs npm install and the export page aborts every host but cdn.tailwindcss.com, so both surfaces read this one vendored file. Size is above the plan's 1.6MB estimate because an IIFE cannot code-split \u2014 esbuild inlines the plugin's lazily-imported render chunk and the mermaid copy that chunk carries."
+}
