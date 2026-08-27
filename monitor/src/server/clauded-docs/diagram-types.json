@@ -50,7 +50,7 @@
   ],
   "exclusionReason": "발표·요약 표현이지 개발 판단에 쓰이지 않음 (D5 제외 기준)",
   "flowDirection": {
-    "recommended": "LR",
+    "recommended": "TD",
     "allowed": ["LR", "TB", "TD"],
     "forbidden": ["RL", "BT"]
   }
