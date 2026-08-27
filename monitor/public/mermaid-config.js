@@ -8,8 +8,9 @@ window.MERMAID_CONFIG = {
   // 기본 5(fatal) 에서는 log.warn 이 no-op 이라 미등록 레이아웃 폴백 경고가 콘솔에 안 뜸 → 3(warn) 으로 가시화.
   logLevel: 3,
 
-  // securityLevel:'loose' — 소스는 백엔드가 저장소에서 직접 읽은 internal 텍스트 (외부 사용자 입력 아님).
-  securityLevel: 'loose',
+  // 소스는 LLM 이 POST API 로 올린 문서 본문 — <pre class="mermaid"> 안 텍스트는 sanitize.ts 를 건너뛰고 렌더러에 닿는다(내보내기가 저장 본문에서 직접 긁어 엔티티만 되돌림).
+  // 'antiscript' 는 그 통로에 DOMPurify 를 태우고 click 콜백을 끄되 htmlLabels(<br/> 라벨)는 남긴다 — 'loose' 만이 그 제거 pre-pass 를 통째로 건너뛴다.
+  securityLevel: 'antiscript',
 
   // 전역 기본 레이아웃. 문서별 opt-out 은 한 줄 `%%{init: {"layout":"dagre"}}%%` 지시자.
   layout: 'elk',

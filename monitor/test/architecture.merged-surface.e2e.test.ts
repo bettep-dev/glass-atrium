@@ -1071,7 +1071,7 @@ test("P0-2 the embedded second mermaid runtime owns no global and renders nothin
 	// (window.mermaid.version 은 undefined) 버전으로는 못 가른다 — 대신 설정값이 index.html 것임을 재고,
 	// 임베드 네임스페이스와 동일 객체가 아님을 함께 잠근다.
 	assert.equal(probe.embeddedIsPageMermaid, false, "the embedded mermaid copy became window.mermaid");
-	assert.equal(probe.securityLevel, "loose", "window.mermaid does not carry the config index.html initialized");
+	assert.equal(probe.securityLevel, "antiscript", "window.mermaid does not carry the config index.html initialized");
 	assert.equal(probe.startOnLoad, false, "window.mermaid does not carry the config index.html initialized");
 	// 생산 수명주기에서는 임베드 사본의 startOnLoad 경로가 아무것도 그리지 않는다.
 	assert.equal(

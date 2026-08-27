@@ -171,7 +171,25 @@ test("P1-1 the config carries the ELK default and the log level the warning watc
 	assert.equal(config.logLevel, WARN_LOG_LEVEL, "logLevel above warn makes every 'zero fallback warnings' claim vacuous");
 	assert.equal(config.theme, "dark");
 	assert.equal(config.startOnLoad, false, "both surfaces render explicitly");
-	assert.equal(config.securityLevel, "loose");
+});
+
+test("P1-1 authored diagram text is rendered at a level that strips script", () => {
+	// 다이어그램 소스는 LLM 이 POST API 로 올린 문서 본문에서 온다. <pre class="mermaid"> 안의
+	// 텍스트는 sanitize.ts 를 지나지 않고 렌더러에 닿는다 — 내보내기가 저장 본문에서 직접 긁어
+	// 엔티티만 되돌리기 때문(html-export.ts extractMermaidSources). 즉 이 값이 그 통로의 유일한 방벽이다.
+	// 'loose' 만이 mermaid 의 script 제거 pre-pass 를 통째로 건너뛰고 click 콜백을 켠다(mermaid 11
+	// sanitizeMore / setClickFun). 'antiscript' 는 DOMPurify 를 태우면서 htmlLabels 는 남기므로
+	// 라벨의 <br/> 는 그대로 산다 — securityLevel 과 무관한 getEffectiveHtmlLabels 가 정한다.
+	assert.notEqual(
+		config.securityLevel,
+		"loose",
+		"'loose' hands LLM-authored diagram text to the renderer with mermaid's script-stripping pre-pass skipped",
+	);
+	assert.equal(
+		config.securityLevel,
+		"antiscript",
+		"antiscript is the level that strips script and disables click callbacks while keeping HTML labels",
+	);
 });
 
 test("P1-1 all seven elk tuning keys are pinned, and curve is left to the renderer", () => {

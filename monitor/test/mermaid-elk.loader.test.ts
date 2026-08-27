@@ -56,41 +56,49 @@ interface PageContext {
 	browser: Browser;
 	page: Page;
 	watch: FallbackWatch;
+	/** 준비 여부는 사실로만 싣는다 — 단정은 ctx 가 대입된 뒤 before() 가 한다(아래 누수 주석). */
+	runtimeReady: boolean;
 }
 
 async function openPageContext(): Promise<PageContext> {
 	const app = Fastify({ logger: false });
-	await app.register(fastifyStatic, {
-		root: PUBLIC_ROOT,
-		prefix: "/",
-		index: ["index.html"],
-	});
-	await app.ready();
-	const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+	let browser: Browser | undefined;
+	try {
+		await app.register(fastifyStatic, {
+			root: PUBLIC_ROOT,
+			prefix: "/",
+			index: ["index.html"],
+		});
+		await app.ready();
+		const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
-	const browser = await chromium.launch({ headless: true });
-	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-	// 감시는 첫 렌더보다 먼저 붙어야 함 — goto 이후에 붙이면 초기 경고를 놓침.
-	const watch = createFallbackWatch(page);
-	await page.goto(`${serverUrl}/`, { waitUntil: "load" });
+		browser = await chromium.launch({ headless: true });
+		const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+		// 감시는 첫 렌더보다 먼저 붙어야 함 — goto 이후에 붙이면 초기 경고를 놓침.
+		const watch = createFallbackWatch(page);
+		await page.goto(`${serverUrl}/`, { waitUntil: "load" });
 
-	const runtimeReady = await page
-		.waitForFunction(
-			() => Boolean((window as never as { mermaid?: unknown }).mermaid),
-			null,
-			{ timeout: 30_000 },
-		)
-		.then(
-			() => true,
-			() => false,
-		);
-	assert.equal(
-		runtimeReady,
-		true,
-		"page-level network prerequisite unmet — the mermaid CDN runtime did not load",
-	);
+		// 여기서 단정하지 않는 이유: 던지면 호출부의 ctx 가 영영 대입되지 않아 after() 의 `ctx?.…` 정리가
+		// 통째로 건너뛰어지고, 살아남은 브라우저와 리스닝 서버가 이벤트 루프를 붙잡는다. node 는
+		// --test-timeout=0 으로 도니 그 상태는 실패가 아니라 무한 대기 — CI 한 다리가 붉어지는 대신 멈춘다.
+		const runtimeReady = await page
+			.waitForFunction(
+				() => Boolean((window as never as { mermaid?: unknown }).mermaid),
+				null,
+				{ timeout: 30_000 },
+			)
+			.then(
+				() => true,
+				() => false,
+			);
 
-	return { app, browser, page, watch };
+		return { app, browser, page, watch, runtimeReady };
+	} catch (cause) {
+		// 컨텍스트를 만들다 던지는 경로에도 같은 누수가 있다 — 만든 것만 되돌리고 원인은 그대로 올린다.
+		// allSettled 인 이유는 정리 실패가 진짜 원인인 cause 를 덮지 않게 하려는 것.
+		await Promise.allSettled([browser?.close(), app.close()]);
+		throw cause;
+	}
 }
 
 describe("vendored ELK layout loader", () => {
@@ -100,6 +108,12 @@ describe("vendored ELK layout loader", () => {
 
 	before(async () => {
 		ctx = await openPageContext();
+		// 대입 뒤에 단정 — 이 순서라야 실패가 after() 의 정리를 거쳐 붉게 끝난다(openPageContext 주석).
+		assert.equal(
+			ctx.runtimeReady,
+			true,
+			"page-level network prerequisite unmet — the mermaid CDN runtime did not load",
+		);
 		// 전제 먼저 — logLevel 이 3 을 넘으면 아래 경고 단언 전부가 공허해짐.
 		await assertFallbackWarningVisible(ctx.page);
 		elk = await getRenderProbe(ctx.page, "smoke-elk", getSmokeSource("elk"));
