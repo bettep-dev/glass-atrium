@@ -340,10 +340,26 @@ test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그�
   );
 });
 
-// 방향 토큰 재작성기 — 헤더 첫 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).
+// 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).
+// 헤더가 첫 줄이라는 보장은 없음 — 소스가 한 줄 %%{init}%% 지시자를 앞세우면 그 다음 줄임.
+function getHeaderIndex(mermaid: string): number {
+  const at = mermaid.split("\n").findIndex((line) => /^\s*(?:flowchart|graph)\s+\S+/i.test(line));
+  assert.notEqual(at, -1, "canonical must carry a flowchart header");
+  return at;
+}
+
 function withDirection(mermaid: string, direction: string): string {
-  assert.match(mermaid, /^\s*(?:flowchart|graph)\s+\S+/i, "canonical must open with a flowchart header");
-  return mermaid.replace(/^(\s*(?:flowchart|graph))\s+\S+/i, `$1 ${direction}`);
+  const lines = mermaid.split("\n");
+  const at = getHeaderIndex(mermaid);
+  lines[at] = (lines[at] as string).replace(/^(\s*(?:flowchart|graph))\s+\S+/i, `$1 ${direction}`);
+  return lines.join("\n");
+}
+
+/** 헤더를 뺀 나머지 줄 — "헤더 한 줄만 건드렸다" 를 헤더 위치와 무관하게 재는 비교 대상. */
+function withoutHeader(mermaid: string): string[] {
+  const lines = mermaid.split("\n");
+  lines.splice(getHeaderIndex(mermaid), 1);
+  return lines;
 }
 
 test("방향 비의존: canonical drawn 은 LR/TD 에서 동일한 nodes/edges/subgraphs/unmapped 를 냄", () => {
@@ -351,7 +367,7 @@ test("방향 비의존: canonical drawn 은 LR/TD 에서 동일한 nodes/edges/s
   const lr = withDirection(drawn, "LR");
   const td = withDirection(drawn, "TD");
   assert.notEqual(lr, td, "direction rewrite must produce two distinct strings");
-  assert.deepEqual(td.split("\n").slice(1), lr.split("\n").slice(1), "rewrite must touch only the header line");
+  assert.deepEqual(withoutHeader(td), withoutHeader(lr), "rewrite must touch only the header line");
 
   const fromLr = extract(lr);
   const fromTd = extract(td);

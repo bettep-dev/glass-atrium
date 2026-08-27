@@ -842,7 +842,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            CARVE-OUT(rgb 9 9 11) — --surface(warm 12 10 9) 미사용은 의도적. 문서 자체 bg-zinc-950 과 hue·값을 정확히 일치시켜 cascade 비결정성 제거 (cool zinc reading palette). --surface 교체 시 hue 불일치 + 결정성 붕괴 → swap 금지.
            행간·자간 base default — 승리값은 specificity 높은 .doc-fs-body-inner > .doc-body-isolation 에 위치(아래) · 여기 base 는 문서 leading 부재 시 fallback. */
         .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; background: rgb(9 9 11); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
-        /* 본문 다이어그램 폭 — mermaid init(public/index.html)이 useMaxWidth 를 껐으므로 SVG 가 고유폭을 유지함 → 넘침을 컨테이너가 스크롤로 받아 잘림을 막음.
+        /* 본문 다이어그램 폭 — 공유 설정(public/mermaid-config.js)이 채택 타입마다 useMaxWidth 를 껐으므로 SVG 가 고유폭을 유지함 → 넘침을 컨테이너가 스크롤로 받아 잘림을 막음.
+           index.html 은 그 전역을 initialize 에 넘길 뿐 값을 갖지 않음 — 이 규칙이 서 있는 값의 출처는 설정 파일 한 곳임.
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
         .doc-body-isolation pre.mermaid, .doc-body-isolation .mermaid { overflow-x: auto; }
         .doc-body-isolation pre.mermaid > svg, .doc-body-isolation .mermaid > svg { max-width: none; }

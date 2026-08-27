@@ -205,6 +205,8 @@ test("가짜 키워드는 mermaid 가 거부함 — 위 검사가 공허하지 �
 test("흐름 방향 정책이 정합적임", () => {
   const { recommended, allowed, forbidden } = declaration.flowDirection;
   assert.ok(allowed.includes(recommended), "권장 방향이 허용 목록 안에 없음");
+  // 렌더 pane 은 폭만 제약되고 높이는 자유로움 — 가로 누적은 우측이 잘린다(Pre-drawing Doctrine 기본값).
+  assert.equal(recommended, "TD", "권장 방향은 TD — LR 은 폭 초과를 재측정한 뒤에만 고른다");
   const forbiddenSet = new Set(forbidden);
   assert.deepStrictEqual(allowed.filter((d) => forbiddenSet.has(d)), [], "허용과 금지가 겹침");
   // AC-T24 의 판정 대상 — 좌→우 · 위→아래는 허용, 우→좌 · 아래→위는 금지.

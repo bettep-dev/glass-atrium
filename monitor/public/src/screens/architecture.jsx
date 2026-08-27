@@ -17,6 +17,9 @@ const LEGIBLE_FIT_FLOOR = 0.6;
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
+// 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
+const ZONE_TITLE_BAND = 8;
+
 const NODE_TYPE_LABEL = {
 	agent: "Agent",
 	hook: "Hook",
@@ -257,10 +260,19 @@ function ScreenArchitecture(
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
+					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
+					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
-					// 노드 라벨 — fill/weight 만 가독 보정. font-size 는 mermaid init(index.html, 14px)이 노드 박스 폭을 산정한 값과 일치시켜야 라벨이 박스를 넘쳐 단어 중간 잘림이 발생하지 않음 (15px 강제는 박스보다 넓어 클리핑 원인 → 14px 로 정렬).
-					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; font-size: 14px !important; font-weight: 500 !important; } " +
+					// 노드 라벨 — 색만 보정한다.
+					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
+					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
+					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } " +
+					// 잰 상자와 그린 글리프 런의 잔여 오차(서브픽셀·힌팅)는 자르지 말고 흘려보냄 — 노드 rect 안쪽 패딩(12) 안이라 레이아웃 불변.
+					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
+					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
+					// (소스 shape 를 바꾸는 대안은 content-budget 계수와 존 rect 를 동시에 흔들어 기각).
+					".arch-mermaid-canvas svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
@@ -483,11 +495,15 @@ function MermaidCanvas({
 		// mermaid.render unique id (diagram + timestamp 로 충돌 회피).
 		const renderId = `mermaid-${diagramId}-${Date.now()}`;
 
-		window.mermaid
-			.render(renderId, source)
-			.then(({ svg }) => {
-				if (cancelled) return;
-				setRenderState({ status: "ready", error: null, svgHtml: svg });
+		// 웹폰트(Pretendard) 도착 전에 재면 mermaid 는 fallback 서체 폭으로 상자를 자름 — 뒤이어 swap 된 더 넓은 서체가 끝 글자를 넘긴다.
+		// fonts.ready 이후에 재게 해서 잰 서체 = 그린 서체를 만든다.
+		const fontsReady = document.fonts?.ready ?? Promise.resolve();
+
+		fontsReady
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, source)))
+			.then((result) => {
+				if (cancelled || !result) return;
+				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
 			})
 			.catch((err) => {
 				if (cancelled) return;
@@ -557,6 +573,28 @@ function MermaidCanvas({
 		}
 		titleEl.textContent = diagramTitle;
 	}, [renderState.status, renderState.svgHtml, diagramTitle]);
+
+	/**
+	 * 존 제목 여백 — rect 를 위로만 늘려 띠를 만든다.
+	 * mermaid+ELK 는 존 rect 상단에서 첫 노드까지 (제목 높이 + 15) 만 비우고 제목은 그 안에서 테두리에 붙음.
+	 * subGraphTitleMargin 은 그 15 안에서 제목을 밀 뿐이고 ELK padding 키는 지시자에서 살아남지 못함.
+	 * 위로만 늘리므로 아래 모서리·노드 좌표는 불변 — 직교성/폭 계약 유지.
+	 * pan-zoom 이 bbox 를 읽기 전에 돌아야 함.
+	 */
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const root = containerRef.current;
+		if (!root) return;
+		root.querySelectorAll("svg g.cluster rect").forEach((rect) => {
+			if (rect.dataset.archTitleBand === "1") return;
+			const y = Number.parseFloat(rect.getAttribute("y"));
+			const height = Number.parseFloat(rect.getAttribute("height"));
+			if (!Number.isFinite(y) || !Number.isFinite(height)) return;
+			rect.setAttribute("y", String(y - ZONE_TITLE_BAND));
+			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
+			rect.dataset.archTitleBand = "1";
+		});
+	}, [renderState.status, renderState.svgHtml]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
 	useEffectAR(() => {
