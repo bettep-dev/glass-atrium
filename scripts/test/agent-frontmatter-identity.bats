@@ -1,21 +1,20 @@
 #!/usr/bin/env bats
-# Frontmatter identity of the two intel agent files — `name`, `tools`, `scope` —
-# must read the same at the cycle base as at HEAD, so an edit to either body
-# cannot carry a renamed agent or a widened tool grant along with it.
+# Pins the frontmatter identity — `name`, `tools`, `scope` — of the two intel
+# agent files: what those keys say at the cycle base must be what they say at
+# HEAD, so an edit to either body cannot carry a renamed agent or a widened
+# tool grant along with it. enforce-harness-critical.sh guards the LIVE install
+# paths only, so this suite is the only judge for the repository tree.
 #
-# Why the suite and not the hook: enforce-harness-critical.sh guards the LIVE
-# install paths only (HOME-anchored), so no runtime hook observes an identity
-# change made in the repository tree.
+# `tools` folds to a SORTED item set, so the inline-flow and block-list
+# spellings of one grant read alike; an absent key emits no line, so
+# absent-vs-absent compares equal and ADDING a key is drift.
 #
-# Judge shape: `tools` folds to a SORTED item set, so the inline-flow and the
-# block-list spellings of one grant read alike and a reformat is not drift. An
-# absent key emits no line, so absent-vs-absent compares equal — neither file
-# carries `scope:` today, and adding one IS drift.
-#
-# Base resolution is best-effort by design: outside a git work tree (the live
-# install's run-bats-parallel.sh runs every on-disk .bats) and wherever the base
-# blob is unfetched (a depth-1 CI checkout keeps the ref but not the object),
-# every row SKIPS rather than fails.
+# Skip predicate (base resolution, best-effort by design): a row runs only
+# where a merge-base with HEAD resolves AND the base blobs are present. Outside
+# a git work tree — the live install's run-bats-parallel.sh executes every
+# on-disk .bats — and on a shallow clone, which keeps the ref without the
+# object, every row SKIPS rather than fails. CI checks this leg out at
+# fetch-depth 0 so the rows actually run there.
 #
 # Run via: bats scripts/test/agent-frontmatter-identity.bats
 # Requires: bats, bash 3.2+, git, awk.
