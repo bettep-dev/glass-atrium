@@ -163,7 +163,7 @@ Decision order before drawing (each step builds on the previous):
    - Excluded (do not draw — presentation shapes, not development judgment): `quadrantChart` · `radar` · `pie` · `timeline` · `journey` · `mindmap` · `sankey` · `xychart` · `gantt` · `block`; express that content as a table or prose.
    - The Diagram Standard "Permitted Mermaid types" list enumerates this same adopted set: renderable by Mermaid is not the same as adopted.
 2. **Direction** — hold ONE primary flow per diagram; a single held direction is what makes rank alignment readable.
-   - `TD` is the default; `diagram-types.json` `flowDirection.recommended` is being aligned to `TD` in Phase 1 (plan 26410 Phase 1) — until then the doctrine governs.
+   - `TD` is the default.
    - `LR` only after re-measuring the rendered width against the preset container (Preset step).
    - `RL` / `BT` are forbidden (`diagram-types.json` `flowDirection.forbidden`).
 3. **Budget** — SoT: `BUDGET_CAPS.balanced` in `monitor/src/server/architecture/content-budget.ts`; the numbers here are a mirror, never the source.
