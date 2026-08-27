@@ -1012,6 +1012,79 @@ test("P0-2 the canvas logs no layout fallback, and this harness would catch one"
 	elkWatch.clear();
 });
 
+// 벤더 번들은 두 번째 mermaid 런타임(mermaid.core 11.17.0, startOnLoad 기본 참)을 통째로 안고 있다 —
+// 사이드카 embedded 목록과 번들 안 version 문자열이 근거. 정적 판독으로는 그 사본의 load 훅이 실제로
+// 발화하는지 가릴 수 없어서, 화면이 뜬 상태의 관측으로 가른다.
+//
+// 실측(이 하네스에서 잰 값): 플러그인의 지연 임포트 render 청크가 평가된 뒤에 load 를 인위로 다시 쏘면
+// 심어 둔 <div class="mermaid"> 가 실제로 렌더된다. 그때 CDN 인스턴스의 contentLoaded 는 한 번도 불리지
+// 않으므로(래핑해서 0회 확인) 그린 쪽은 임베드 사본이다. 생산 경로에서 잠잠한 이유는 순서 하나뿐이다:
+// 그 청크는 첫 ELK 레이아웃 중에 평가되고, 문서의 유일한 자연 load 는 그보다 먼저 지나간다. 그래서 아래는
+// 인위 이벤트를 쏘지 않고 생산 수명주기 그대로를 잰다.
+// Phase 1 이 이 번들을 지연 로드로 돌리면 다이어그램 없는 경로에서는 사본 자체가 사라진다 — 그게 구조적
+// 보장이고, 그 전까지는 이 관측이 유일한 근거다.
+test("P0-2 the embedded second mermaid runtime owns no global and renders nothing", async () => {
+	await openMap(getLiveFixture());
+
+	const probe = await page.evaluate(async () => {
+		const w = window as never as {
+			mermaid: {
+				initialize: (config: unknown) => void;
+				contentLoaded: () => Promise<void> | void;
+				mermaidAPI?: { getConfig?: () => Record<string, unknown> };
+			};
+			__esbuild_esm_mermaid_nm?: { mermaid?: unknown };
+		};
+
+		const config = w.mermaid.mermaidAPI?.getConfig?.() ?? {};
+		const observed = {
+			elkGlobals: Object.keys(window).filter((key) => /layoutelk/i.test(key)),
+			embeddedIsPageMermaid: w.__esbuild_esm_mermaid_nm?.mermaid === w.mermaid,
+			securityLevel: config.securityLevel ?? null,
+			startOnLoad: config.startOnLoad ?? null,
+			autoRendered: document.querySelectorAll(".mermaid[data-processed]").length,
+		};
+
+		// 검출기 반증 — 진짜 auto-render 를 한 번 일으켜 같은 셀렉터가 잡는지 잰다. 이게 없으면 위 0건은
+		// 셀렉터가 영영 안 맞아도 초록이다. data-processed 는 어느 사본이 그리든 같은 렌더 경로가 찍는다.
+		const planted = document.createElement("div");
+		planted.className = "mermaid";
+		planted.textContent = "graph TD; Z-->Y";
+		document.body.appendChild(planted);
+		w.mermaid.initialize({ startOnLoad: true });
+		await w.mermaid.contentLoaded();
+		await new Promise((resolve) => setTimeout(resolve, 800));
+
+		return {
+			...observed,
+			detectorCatches: document.querySelectorAll(".mermaid[data-processed]").length,
+		};
+	});
+
+	// 전역은 플러그인 하나뿐 — esbuild --global-name 이 심는 이름이 정확히 하나여야 한다.
+	assert.deepStrictEqual(
+		probe.elkGlobals,
+		["mermaidLayoutElk"],
+		`expected exactly one ELK plugin global, got: ${probe.elkGlobals.join(", ")}`,
+	);
+	// 페이지의 mermaid 는 index.html 이 설정한 CDN 인스턴스다. CDN UMD 는 버전 문자열을 노출하지 않아
+	// (window.mermaid.version 은 undefined) 버전으로는 못 가른다 — 대신 설정값이 index.html 것임을 재고,
+	// 임베드 네임스페이스와 동일 객체가 아님을 함께 잠근다.
+	assert.equal(probe.embeddedIsPageMermaid, false, "the embedded mermaid copy became window.mermaid");
+	assert.equal(probe.securityLevel, "loose", "window.mermaid does not carry the config index.html initialized");
+	assert.equal(probe.startOnLoad, false, "window.mermaid does not carry the config index.html initialized");
+	// 생산 수명주기에서는 임베드 사본의 startOnLoad 경로가 아무것도 그리지 않는다.
+	assert.equal(
+		probe.autoRendered,
+		0,
+		"something auto-rendered a .mermaid element on the map route — the embedded copy's startOnLoad hook fired",
+	);
+	assert.ok(
+		probe.detectorCatches > 0,
+		"a deliberate auto-render was not caught by the same selector — the zero above certifies nothing",
+	);
+});
+
 // ── P0-2 fix: 세 톤 분리 · 둥근 모서리 · 라벨 클리핑 (사용자 판정 3건) ──────────
 // 색 판정은 문자열 비교가 아니라 상대휘도 대비로 함 — "값이 서로 다르다" 는 1 단위
 // 차이도 만족시키므로, 사용자가 본 "구분되지 않는 검정 셋" 을 반증하지 못한다.

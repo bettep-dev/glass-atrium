@@ -1,11 +1,15 @@
 // P0-1 — vendored ELK layout loader proof.
 // Runner: npx tsx --test test/mermaid-elk.loader.test.ts
 //
-// Three claims, none of which the others cover: the vendored bundle on disk is the
-// one the provenance sidecar describes; a `layout: elk` directive actually reaches
-// ELK (proved by a dagre control, since an unregistered layout renders fine on the
-// dagre fallback); and the console watch that certifies "no fallback warning" is
-// itself capable of catching one.
+// Two claims, neither of which the other covers: a `layout: elk` directive actually
+// reaches ELK (proved by a dagre control, since an unregistered layout renders fine
+// on the dagre fallback), and the console watch that certifies "no fallback warning"
+// is itself capable of catching one.
+//
+// The supply-chain pins that used to live here — bundle sha256/bytes vs the sidecar,
+// and the index.html load order — moved to mermaid-elk.vendor-pin.unit.test.ts. They
+// sat under the before() below, so a leg without chromium or without network never
+// ran them; browserless, they run everywhere.
 //
 // App: stripped Fastify (fastify-static over public/) on an ephemeral port —
 // index.html is loaded as shipped, so the registration wiring under test is the
@@ -15,8 +19,6 @@
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,20 +42,6 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
-const VENDOR_ROOT = resolve(PUBLIC_ROOT, "assets", "vendor");
-const PROVENANCE_PATH = resolve(VENDOR_ROOT, "mermaid-layout-elk.provenance.json");
-const INDEX_PATH = resolve(PUBLIC_ROOT, "index.html");
-
-interface VendorProvenance {
-	package: string;
-	version: string;
-	bundle_file: string;
-	bundle_sha256: string;
-	bundle_bytes: number;
-	tarball_sha512: string;
-	build_command: string;
-	global_name: string;
-}
 
 // 3노드 스모크 — 갈래가 있어야 두 레이아웃의 배치 차이가 좌표에 남음.
 const SMOKE_GRAPH = ["flowchart TD", "  A[Alpha] --> B[Bravo]", "  A --> C[Charlie]"].join("\n");
@@ -61,10 +49,6 @@ const SMOKE_GRAPH = ["flowchart TD", "  A[Alpha] --> B[Bravo]", "  A --> C[Charl
 // ADR-2 한 줄 지시자 형식(물리적 1줄 · JSON 인용 키) — P0-2 가 canonical map 에 쓸 경로와 동일.
 function getSmokeSource(layout: string): string {
 	return `%%{init: {"layout": "${layout}"}}%%\n${SMOKE_GRAPH}`;
-}
-
-async function getProvenance(): Promise<VendorProvenance> {
-	return JSON.parse(await readFile(PROVENANCE_PATH, "utf8")) as VendorProvenance;
 }
 
 interface PageContext {
@@ -125,36 +109,6 @@ describe("vendored ELK layout loader", () => {
 	after(async () => {
 		await ctx?.browser?.close();
 		await ctx?.app?.close();
-	});
-
-	test("AC-1 vendored bundle sha256 matches its provenance sidecar", async () => {
-		const provenance = await getProvenance();
-		const bundle = await readFile(resolve(VENDOR_ROOT, provenance.bundle_file));
-		assert.equal(
-			createHash("sha256").update(bundle).digest("hex"),
-			provenance.bundle_sha256,
-			`${provenance.bundle_file} content does not match the sha256 its sidecar pins`,
-		);
-		assert.equal(bundle.byteLength, provenance.bundle_bytes, "bundle byte length vs sidecar");
-	});
-
-	test("AC-1 index.html loads exactly the vendored file the sidecar names", async () => {
-		const provenance = await getProvenance();
-		const html = await readFile(INDEX_PATH, "utf8");
-		const vendorSrc = `assets/vendor/${provenance.bundle_file}`;
-		assert.ok(
-			html.includes(vendorSrc),
-			`index.html must load ${vendorSrc} — a renamed bundle with a stale sidecar would otherwise pass AC-1`,
-		);
-		// 문서 순서 — mermaid 전역이 먼저 있어야 동기 등록이 성립(ADR-1).
-		assert.ok(
-			html.indexOf("mermaid@11/dist/mermaid.min.js") < html.indexOf(vendorSrc),
-			"the vendored loader must be loaded after the mermaid UMD script",
-		);
-		assert.ok(
-			html.indexOf(vendorSrc) < html.indexOf("registerLayoutLoaders"),
-			"registration must follow the vendored loader in document order",
-		);
 	});
 
 	test("AC-2 an elk directive renders with zero fallback warnings", () => {

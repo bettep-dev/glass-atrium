@@ -1,6 +1,8 @@
 {
   "package": "@mermaid-js/layout-elk",
   "version": "0.2.3",
+  "registry": "https://registry.npmjs.org/",
+  "tarball_url": "https://registry.npmjs.org/@mermaid-js/layout-elk/-/layout-elk-0.2.3.tgz",
   "global_name": "mermaidLayoutElk",
   "bundle_file": "mermaid-layout-elk-0.2.3.min.js",
   "bundle_sha256": "862049a526e2825f85360a55f95870f216baa277a3048f174ccafe525be22dec",
@@ -24,6 +26,12 @@
       "package": "@mermaid-js/layout-elk",
       "version": "0.2.3",
       "license": "MIT"
+    },
+    {
+      "package": "mermaid",
+      "version": "11.17.0",
+      "license": "MIT",
+      "note": "mermaid.core \u2014 arrives inside the plugin's lazily-imported render chunk; version read from the bundle, never installed as a global"
     }
   ],
   "note": "IIFE re-package of an ESM-only plugin: the live install never runs npm install and the export page aborts every host but cdn.tailwindcss.com, so both surfaces read this one vendored file. Size is above the plan's 1.6MB estimate because an IIFE cannot code-split \u2014 esbuild inlines the plugin's lazily-imported render chunk and the mermaid copy that chunk carries."
