@@ -17,6 +17,10 @@ const LEGIBLE_FIT_FLOOR = 0.6;
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
+// 존 제목 띠 높이(px, SVG 사용자 단위) — 존 rect 를 이만큼 위로만 늘려 제목이 테두리에서 떨어지게 함.
+// 렌더 후 조정이므로 지시자의 diagramPadding 여유 안에 들어와야 viewBox 밖으로 나가지 않음.
+const ZONE_TITLE_BAND = 8;
+
 const NODE_TYPE_LABEL = {
 	agent: "Agent",
 	hook: "Hook",
@@ -258,11 +262,21 @@ function ScreenArchitecture(
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 다이어그램 소스의 themeVariables background·edgeLabelBackground 와 같은 토큰이어야
-					// 엣지 라벨 마스크가 면색과 어긋나 사각형으로 드러나지 않고, 노드 fill(sunken)이 면 위로 떠오름.
+					// 엣지 라벨 마스크가 면색과 어긋나 사각형으로 드러나지 않음. 면 위 세 톤(캔버스 < 존 < 노드)은
+					// 소스 지시자가 정함 — 여기서 배경을 바꾸면 그 사다리의 맨 아래 칸만 어긋난다.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
-					// 노드 라벨 — fill/weight 만 가독 보정. font-size 는 mermaid init(index.html, 14px)이 노드 박스 폭을 산정한 값과 일치시켜야 라벨이 박스를 넘쳐 단어 중간 잘림이 발생하지 않음 (15px 강제는 박스보다 넓어 클리핑 원인 → 14px 로 정렬).
-					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; font-size: 14px !important; font-weight: 500 !important; } " +
+					// 노드 라벨 — 색만 보정한다. mermaid 는 라벨을 캔버스 밖에서 재고(그 시점엔 이 규칙이 걸리지 않음)
+					// 그 폭으로 foreignObject 를 자른 뒤 캔버스 안으로 들어오므로, 여기서 서체를 바꾸면 잰 상자보다
+					// 넓은 글리프 런이 그려져 마지막 글자가 잘린다. font-weight:500 이 정확히 그 경로였음
+					// (측정 400 / 렌더 500). font-size 도 같은 이유로 mermaid init(index.html, 14px)과 어긋나면 안 됨.
+					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } " +
+					// 잰 상자와 그린 글리프 런의 잔여 오차(서브픽셀·힌팅)는 잘라내지 말고 흘려보냄 — 상자 밖으로
+					// 1px 넘쳐도 노드 rect 안쪽 패딩(12) 안이라 레이아웃은 그대로고 글자만 온전해진다.
+					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
+					// 모서리 — 업스트림 독트린 r=8. mermaid 는 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김.
+					// 소스의 노드 shape 를 바꾸는 대안은 content-budget 계수와 존 rect 를 동시에 건드려 기각.
+					".arch-mermaid-canvas svg .node rect, .arch-mermaid-canvas svg .cluster rect { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
@@ -485,10 +499,17 @@ function MermaidCanvas({
 		// mermaid.render unique id (diagram + timestamp 로 충돌 회피).
 		const renderId = `mermaid-${diagramId}-${Date.now()}`;
 
-		window.mermaid
-			.render(renderId, source)
-			.then(({ svg }) => {
-				if (cancelled) return;
+		// 웹폰트(Pretendard)가 도착하기 전에 재면 mermaid 는 fallback 서체 폭으로 상자를 자르고,
+		// 그 뒤 swap 된 서체가 더 넓어 마지막 글자가 잘린다. fonts.ready 이후에 재게 해서
+		// 잰 서체 = 그린 서체를 만든다. ELK 로더 등록과는 무관(그쪽은 여전히 동기).
+		const fontsReady =
+			document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+
+		fontsReady
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, source)))
+			.then((result) => {
+				if (cancelled || !result) return;
+				const { svg } = result;
 				setRenderState({ status: "ready", error: null, svgHtml: svg });
 			})
 			.catch((err) => {
@@ -559,6 +580,26 @@ function MermaidCanvas({
 		}
 		titleEl.textContent = diagramTitle;
 	}, [renderState.status, renderState.svgHtml, diagramTitle]);
+
+	// 존 제목 여백 — mermaid+ELK 는 존 rect 상단에서 첫 노드까지 (제목 높이 + 15) 만 비우고,
+	// 제목은 그 안에서 rect 테두리에 딱 붙는다. subGraphTitleMargin 은 제목을 그 15 안에서
+	// 아래로 밀 뿐이라(실측: top 12 → 첫 노드까지 3) 위·아래 여백을 동시에 만들 수 없고,
+	// ELK 의 padding 키는 지시자에서 살아남지 못한다. 그래서 rect 를 위로만 늘려 제목 띠를 만든다
+	// (아래 모서리·노드 좌표는 그대로 → 직교성/폭 계약 불변). pan-zoom 이 bbox 를 읽기 전에 돌아야 함.
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const root = containerRef.current;
+		if (!root) return;
+		root.querySelectorAll("svg g.cluster rect").forEach((rect) => {
+			if (rect.dataset.archTitleBand === "1") return;
+			const y = Number.parseFloat(rect.getAttribute("y"));
+			const height = Number.parseFloat(rect.getAttribute("height"));
+			if (!Number.isFinite(y) || !Number.isFinite(height)) return;
+			rect.setAttribute("y", String(y - ZONE_TITLE_BAND));
+			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
+			rect.dataset.archTitleBand = "1";
+		});
+	}, [renderState.status, renderState.svgHtml]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
 	useEffectAR(() => {

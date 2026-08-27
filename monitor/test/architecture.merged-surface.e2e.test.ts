@@ -1030,3 +1030,340 @@ test("P0-2 the canvas logs no layout fallback, and this harness would catch one"
 	);
 	elkWatch.clear();
 });
+
+// ── P0-2 fix: 세 톤 분리 · 둥근 모서리 · 라벨 클리핑 (사용자 판정 3건) ──────────
+// 색 판정은 문자열 비교가 아니라 상대휘도 대비로 함 — "값이 서로 다르다" 는 1 단위
+// 차이도 만족시키므로, 사용자가 본 "구분되지 않는 검정 셋" 을 반증하지 못한다.
+
+// 노드 fill : 존 fill — 박스가 존 위로 떠올라 보이는 최소 단차.
+const ZONE_TONE_MIN = 1.3;
+// 노드 stroke : 자기 fill — 테두리가 면에서 떨어져 보이는 최소 단차.
+const EDGE_TONE_MIN = 1.5;
+// 업스트림 독트린 r=8 의 하한.
+const CORNER_RADIUS_MIN = 6;
+// 라벨 넘침 허용 오차(px).
+const LABEL_OVERFLOW_TOLERANCE = 0.5;
+// 존 rect 상단 → 제목 상단, 제목 하단 → 첫 노드 상단 (SVG 사용자 단위).
+const TITLE_TOP_MIN = 6;
+const TITLE_GAP_MIN = 12;
+
+interface ProbeRect {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+	width: number;
+	height: number;
+}
+
+interface NodeVisual {
+	text: string;
+	fill: string;
+	stroke: string;
+	rxAttr: string | null;
+	rxComputed: string;
+	foRect: ProbeRect | null;
+	foAttrWidth: number;
+	foAttrHeight: number;
+	labelRangeRect: ProbeRect | null;
+	fontSize: string;
+	fontWeight: string;
+	fontFamily: string;
+	// 이 요소에 실제로 걸린 확대율. 루트 <svg> 의 CTM 은 1 로 나온다 — svg-pan-zoom 이
+	// viewBox 대신 내부 <g> 변환을 쓰므로 확대율은 요소 자신의 화면 CTM 에서만 읽힌다.
+	scale: number;
+}
+
+interface ClusterVisual {
+	text: string;
+	fill: string;
+	stroke: string;
+	rxAttr: string | null;
+	rxComputed: string;
+	rectBox: ProbeRect | null;
+	labelBox: ProbeRect | null;
+	firstNodeTop: number | null;
+	scale: number;
+}
+
+interface VisualProbe {
+	canvasBg: string;
+	nodes: NodeVisual[];
+	clusters: ClusterVisual[];
+}
+
+// 화면이 실제로 그린 캔버스 한 장에서 색·모서리·라벨 상자를 한 번에 걷어옴.
+// 페이지 안에서는 이름 붙은 함수를 쓰지 않는다 — 번들러의 keepNames 가 주입하는
+// __name 심볼이 페이지에 없어 evaluate 가 통째로 죽는다.
+async function getVisualProbe(): Promise<VisualProbe> {
+	return await page.evaluate((canvas) => {
+		const root = document.querySelector(canvas) as HTMLElement;
+		const svg = root.querySelector("svg") as SVGSVGElement;
+		const nodes = Array.from(svg.querySelectorAll("g.node")).map((g) => {
+			const rect = g.querySelector("rect") as SVGRectElement | null;
+			const fo = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
+			const label = g.querySelector(".nodeLabel") as HTMLElement | null;
+			let labelRangeRect: DOMRect | null = null;
+			if (label) {
+				const range = document.createRange();
+				range.selectNodeContents(label);
+				labelRangeRect = range.getBoundingClientRect();
+			}
+			const rcs = rect ? (getComputedStyle(rect) as unknown as Record<string, string>) : null;
+			const lcs = label ? getComputedStyle(label) : null;
+			return {
+				text: (g.textContent || "").trim(),
+				fill: rcs ? rcs.fill : "",
+				stroke: rcs ? rcs.stroke : "",
+				rxAttr: rect ? rect.getAttribute("rx") : null,
+				rxComputed: rcs ? rcs.rx : "",
+				foRect: fo ? (fo.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				foAttrWidth: fo ? Number(fo.getAttribute("width")) : Number.NaN,
+				foAttrHeight: fo ? Number(fo.getAttribute("height")) : Number.NaN,
+				labelRangeRect: labelRangeRect ? (labelRangeRect.toJSON() as ProbeRect) : null,
+				fontSize: lcs ? lcs.fontSize : "",
+				fontWeight: lcs ? lcs.fontWeight : "",
+				fontFamily: lcs ? lcs.fontFamily : "",
+				scale: fo ? (fo.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
+			};
+		});
+		const nodeBoxes = Array.from(svg.querySelectorAll("g.node")).map((g) =>
+			(g.querySelector("rect") as SVGRectElement | null)?.getBoundingClientRect() ?? null,
+		);
+		const clusters = Array.from(svg.querySelectorAll("g.cluster")).map((g) => {
+			const rect = g.querySelector("rect") as SVGRectElement | null;
+			const label = g.querySelector("foreignObject") as SVGForeignObjectElement | null;
+			const rcs = rect ? (getComputedStyle(rect) as unknown as Record<string, string>) : null;
+			const box = rect ? rect.getBoundingClientRect() : null;
+			// 존은 노드의 DOM 조상이 아니라 형제이므로 포함 관계는 기하로만 판정된다.
+			let firstNodeTop: number | null = null;
+			if (box) {
+				for (const nb of nodeBoxes) {
+					if (!nb) continue;
+					if (nb.left >= box.left && nb.right <= box.right && nb.top >= box.top && nb.bottom <= box.bottom) {
+						if (firstNodeTop === null || nb.top < firstNodeTop) firstNodeTop = nb.top;
+					}
+				}
+			}
+			return {
+				text: (g.textContent || "").trim(),
+				fill: rcs ? rcs.fill : "",
+				stroke: rcs ? rcs.stroke : "",
+				rxAttr: rect ? rect.getAttribute("rx") : null,
+				rxComputed: rcs ? rcs.rx : "",
+				rectBox: box ? (box.toJSON() as ProbeRect) : null,
+				labelBox: label ? (label.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				firstNodeTop,
+				scale: rect ? (rect.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
+			};
+		});
+		return {
+			canvasBg: getComputedStyle(root).backgroundColor,
+			nodes,
+			clusters,
+		};
+	}, selectors.canvas);
+}
+
+interface Rgba {
+	r: number;
+	g: number;
+	b: number;
+	a: number;
+}
+
+function parseColor(value: string): Rgba {
+	const nums = (value.match(/-?\d*\.?\d+/g) ?? []).map(Number);
+	assert.ok(nums.length >= 3, `computed colour "${value}" is not an rgb()/rgba() triplet`);
+	return { r: nums[0], g: nums[1], b: nums[2], a: nums.length > 3 ? nums[3] : 1 };
+}
+
+/** 반투명 stroke 는 자기 면 위에 합성한 뒤라야 대비를 말할 수 있다. */
+function compositeOver(fg: Rgba, bg: Rgba): Rgba {
+	return {
+		r: bg.r + (fg.r - bg.r) * fg.a,
+		g: bg.g + (fg.g - bg.g) * fg.a,
+		b: bg.b + (fg.b - bg.b) * fg.a,
+		a: 1,
+	};
+}
+
+function relativeLuminance(c: Rgba): number {
+	const channel = [c.r, c.g, c.b].map((v) => {
+		const s = v / 255;
+		return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * channel[0] + 0.7152 * channel[1] + 0.0722 * channel[2];
+}
+
+function contrastRatio(a: Rgba, b: Rgba): number {
+	const la = relativeLuminance(a);
+	const lb = relativeLuminance(b);
+	return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+function toKey(c: Rgba): string {
+	return `${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)}`;
+}
+
+/** rx 는 속성으로도 CSS 기하 속성으로도 설정될 수 있어 둘 다 읽고 큰 쪽을 쓴다. */
+function effectiveRadius(rxAttr: string | null, rxComputed: string): number {
+	const fromAttr = rxAttr === null ? 0 : Number.parseFloat(rxAttr);
+	const fromCss = Number.parseFloat(rxComputed);
+	return Math.max(Number.isFinite(fromAttr) ? fromAttr : 0, Number.isFinite(fromCss) ? fromCss : 0);
+}
+
+test("P0-2-fix the canvas, its zones and its boxes read as three separate tones", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+	assert.ok(probe.nodes.length > 0 && probe.clusters.length > 0, "probe found no nodes or zones");
+
+	const canvas = parseColor(probe.canvasBg);
+	const clusterFills = probe.clusters.map((c) => parseColor(c.fill));
+	const clusterKeys = new Set(clusterFills.map(toKey));
+	assert.equal(
+		clusterKeys.has(toKey(canvas)),
+		false,
+		`zone fill equals the canvas ${probe.canvasBg} — the zone surface is invisible`,
+	);
+
+	const nodeKeys = new Set(probe.nodes.map((n) => toKey(parseColor(n.fill))));
+	const collision = [...nodeKeys].filter((k) => clusterKeys.has(k));
+	assert.deepStrictEqual(
+		collision,
+		[],
+		`node fill(s) ${collision.join(" | ")} are identical to a zone fill — those boxes have no box`,
+	);
+	assert.equal(
+		nodeKeys.has(toKey(canvas)),
+		false,
+		`a node fill equals the canvas ${probe.canvasBg}`,
+	);
+
+	const zoneTone = probe.nodes.map((n) => {
+		const fill = parseColor(n.fill);
+		const worst = Math.min(...clusterFills.map((z) => contrastRatio(fill, z)));
+		return { label: n.text, fill: n.fill, ratio: worst };
+	});
+	const dimBoxes = zoneTone.filter((t) => t.ratio < ZONE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimBoxes.map((t) => `${t.label} (${t.fill}) ${t.ratio.toFixed(3)}`),
+		[],
+		`node fill vs zone fill below ${ZONE_TONE_MIN}`,
+	);
+
+	const edgeTone = probe.nodes.map((n) => {
+		const fill = parseColor(n.fill);
+		const stroke = compositeOver(parseColor(n.stroke), fill);
+		return { label: n.text, stroke: n.stroke, ratio: contrastRatio(stroke, fill) };
+	});
+	const dimEdges = edgeTone.filter((t) => t.ratio < EDGE_TONE_MIN);
+	assert.deepStrictEqual(
+		dimEdges.map((t) => `${t.label} (${t.stroke}) ${t.ratio.toFixed(3)}`),
+		[],
+		`node stroke vs its own fill below ${EDGE_TONE_MIN}`,
+	);
+});
+
+test("P0-2-fix every box and every zone is drawn with rounded corners", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	const square = [
+		...probe.nodes.map((n) => ({
+			what: `node ${n.text}`,
+			r: effectiveRadius(n.rxAttr, n.rxComputed),
+		})),
+		...probe.clusters.map((c) => ({
+			what: `zone ${c.text}`,
+			r: effectiveRadius(c.rxAttr, c.rxComputed),
+		})),
+	].filter((x) => x.r < CORNER_RADIUS_MIN);
+
+	assert.deepStrictEqual(
+		square.map((x) => `${x.what} r=${x.r}`),
+		[],
+		`rect corner radius below ${CORNER_RADIUS_MIN}px`,
+	);
+});
+
+test("P0-2-fix no node label overruns the box mermaid sized for it", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// span 자체의 bbox 는 넘침을 보고하지 않는다(상자에 맞춰 보고됨) — 실제 글리프 런을 Range 로 잼.
+	// 자명성 방지 — foreignObject 가 내용에 맞춰 커지는 상자라면 아래 비교는 항진명제다.
+	const overrun = probe.nodes
+		.map((n) => {
+			const fo = n.foRect;
+			const run = n.labelRangeRect;
+			assert.ok(fo && run, `node ${n.text} rendered no foreignObject/label`);
+			assert.ok(
+				Math.abs(fo.width - n.foAttrWidth * n.scale) < 1,
+				`node ${n.text}: foreignObject box ${fo.width.toFixed(2)}px does not match its declared width ${n.foAttrWidth} x scale ${n.scale.toFixed(4)} — the containment check would be vacuous`,
+			);
+			return { label: n.text, right: run.right - fo.right, bottom: run.bottom - fo.bottom };
+		})
+		.filter((o) => o.right > LABEL_OVERFLOW_TOLERANCE || o.bottom > LABEL_OVERFLOW_TOLERANCE);
+
+	assert.deepStrictEqual(
+		overrun.map((o) => `${o.label} right+${o.right.toFixed(2)}px bottom+${o.bottom.toFixed(2)}px`),
+		[],
+		"label glyph run overflows its foreignObject — the last glyph is cut",
+	);
+});
+
+test("P0-2-fix labels render in the same font mermaid measured them with", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// 측정 조건의 실측치 — 같은 소스를 캔버스 CSS 밖(document.body)에 렌더하면 mermaid 자신의
+	// 스타일만 걸린 라벨이 나온다. 그것이 mermaid 가 상자 크기를 잰 서체다.
+	await getRenderProbe(page, "d52-font-baseline", CANONICAL_MAP.mermaid_drawn);
+	const baseline = await page.evaluate(() => {
+		const label = document.querySelector("#probe-host-d52-font-baseline .nodeLabel") as HTMLElement | null;
+		if (!label) return null;
+		const cs = getComputedStyle(label);
+		return { fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily };
+	});
+	assert.ok(baseline, "baseline render produced no .nodeLabel — the parity claim would be empty");
+
+	const mismatched = probe.nodes.filter(
+		(n) =>
+			n.fontSize !== baseline.fontSize ||
+			n.fontWeight !== baseline.fontWeight ||
+			n.fontFamily !== baseline.fontFamily,
+	);
+
+	assert.deepStrictEqual(
+		mismatched.map((m) => `${m.text}: ${m.fontWeight} ${m.fontSize} ${m.fontFamily}`),
+		[],
+		`canvas labels render in a different font than mermaid measured with (${baseline.fontWeight} ${baseline.fontSize} ${baseline.fontFamily}) — a wider run than the box it sized`,
+	);
+});
+
+test("P0-2-fix zone titles clear the zone edge and the first box below", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getVisualProbe();
+
+	// 여백은 확대율과 무관한 주장이므로 사용자 단위로 판정하고 화면 px 은 기록만 한다.
+	const crowded = probe.clusters
+		.map((c) => {
+			const rect = c.rectBox;
+			const title = c.labelBox;
+			assert.ok(rect && title, `zone ${c.text} rendered no rect/title`);
+			assert.ok(c.firstNodeTop !== null, `zone ${c.text} encloses no node — the gap claim is empty`);
+			return {
+				zone: c.text,
+				top: (title.top - rect.top) / c.scale,
+				gap: (c.firstNodeTop - title.bottom) / c.scale,
+			};
+		})
+		.filter((c) => c.top < TITLE_TOP_MIN || c.gap < TITLE_GAP_MIN);
+
+	assert.deepStrictEqual(
+		crowded.map((c) => `${c.zone} top+${c.top.toFixed(2)} gap+${c.gap.toFixed(2)}`),
+		[],
+		`zone title must sit >= ${TITLE_TOP_MIN} below the zone edge and >= ${TITLE_GAP_MIN} above the first box (user units)`,
+	);
+});
