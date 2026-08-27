@@ -28,7 +28,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -43,6 +43,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { MERMAID_CONFIG_PATH } from "../src/server/clauded-docs/html-export.js";
 
 const SUITE_MARKER = `html-export-test-${randomUUID()}`;
 
@@ -98,6 +99,16 @@ async function seedPlainDoc(label: string): Promise<{ id: number }> {
   });
   assert.strictEqual(res.statusCode, 201, `POST plain seed failed: ${res.payload}`);
   return { id: (res.json() as { id: number }).id };
+}
+
+/** Node fill straight from the config both the viewer and this export initialize from. */
+function getSharedNodeFill(): string {
+  const windowStub: Record<string, unknown> = {};
+  new Function("window", readFileSync(MERMAID_CONFIG_PATH, "utf8"))(windowStub);
+  const config = windowStub.MERMAID_CONFIG as { themeVariables: Record<string, string> };
+  const fill = config.themeVariables.mainBkg;
+  assert.ok(fill, "the shared config must define a node fill");
+  return fill;
 }
 
 async function fetchStoredPath(id: number): Promise<string> {
@@ -219,13 +230,15 @@ test("GET /:id/html-export: dark theme (R3) — serialized output carries the ho
   const { id } = await seedHtmlDoc("dark", makePreOnlyMermaidBody("dark", MERMAID_V11_SRC));
   const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` });
   assert.strictEqual(res.statusCode, 200, res.payload);
-  // The viewer's non-default dark themeVariables (#e5e7eb light text, #1e293b
-  // node fill) flow into mermaid's emitted <svg>/<style>. Stock mermaid light
-  // defaults would NOT contain these tokens. Assert at least one host token.
-  const body = res.payload.toLowerCase();
-  const hasDarkToken =
-    body.includes("#e5e7eb") || body.includes("#1e293b") || body.includes("#0a0a0a");
-  assert.ok(hasDarkToken, "serialized mermaid output references the host dark palette");
+  // The shared config's dark palette flows into mermaid's emitted <svg>/<style>;
+  // stock mermaid light defaults carry none of it. Read the expected fill from the
+  // config file rather than pinning a hex here — a copy in this test would drift
+  // from the file both surfaces initialize from.
+  const nodeFill = getSharedNodeFill();
+  assert.ok(
+    res.payload.toLowerCase().includes(nodeFill.toLowerCase()),
+    `serialized mermaid output lost the shared node fill ${nodeFill}`,
+  );
 });
 
 test("GET /:id/html-export: non-HTML row — minimal HTML shell, NO browser invoked", async () => {
