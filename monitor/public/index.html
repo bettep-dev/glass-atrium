@@ -54,8 +54,8 @@
 </script>
 <link rel="stylesheet" href="styles/tokens.css?v=6" />
 <link rel="stylesheet" href="styles/base.css?v=9" />
-<!-- Mermaid 11 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. -->
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- Mermaid 11.15.0 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. 버전은 package.json 의존성과 정확히 같은 값으로 고정 — 뜬 태그(`mermaid@11`)는 CDN 이 패치를 낼 때마다 뷰어 엔진을 말없이 바꿔, 내보내기가 주입하는 번들과 같은 소스를 다른 폭으로 눕힌다(대조: test/mermaid-config.parity.test.ts). -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js"></script>
 <!-- ELK 레이아웃 로더 0.2.3 — 벤더 IIFE. 플러그인은 ESM 전용이고 라이브 갱신은 npm install 을 돌리지 않으므로 저장소 파일을 그대로 배포(출처·해시는 provenance 사이드카). -->
 <script src="assets/vendor/mermaid-layout-elk-0.2.3.min.js"></script>
 <!-- Mermaid 런타임 설정 — 뷰어와 HTML 내보내기가 함께 읽는 단일 소스. 값은 mermaid-config.js 에만 둔다. -->

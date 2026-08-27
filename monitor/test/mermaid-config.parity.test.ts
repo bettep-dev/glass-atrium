@@ -94,3 +94,80 @@ test("P1-2 html-export.ts declares no config object of its own", () => {
     "html-export.ts declares its own theme palette — a second copy of one contract, and only one copy ever gets edited",
   );
 });
+
+// ── P1a mermaid build parity ─────────────────────────────────────────────────
+// The config above is one file both surfaces read, but the ENGINE that reads it is not:
+// the viewer pulls mermaid from a CDN tag while the export injects the installed
+// dependency's own bundle. A floating tag (`mermaid@11`) makes the viewer's engine
+// whatever the CDN published last, so the two surfaces lay the same source out
+// differently for a reason no file states. The version is therefore asserted across all
+// three declarations — the CDN tag, the lockfile's resolved version, and the package on
+// disk the export actually injects — so drift in any of them goes red.
+
+const LOCK_PATH = resolve(MONITOR_ROOT, "package-lock.json");
+
+// Matches the version segment of a CDN package path (`…/npm/mermaid@11.15.0/dist/…`).
+// Anchored on the slashes so a neighbouring `@mermaid-js/*` tag cannot answer for it.
+const MERMAID_CDN_TAG = /\/mermaid@([^/]+)\//;
+
+/** Remote (cross-origin) scripts index.html loads — the same-origin ones are asserted above. */
+function getViewerRemoteScriptSrcs(): string[] {
+  return parseHtml(readFileSync(INDEX_PATH, "utf8"))
+    .querySelectorAll("script")
+    .map((node) => node.getAttribute("src") ?? "")
+    .filter((src) => src.startsWith("http"));
+}
+
+/**
+ * The version of the mermaid package on disk. html-export.ts resolves the SAME
+ * package.json and injects `dist/mermaid.min.js` from beside it, so this is the export's
+ * runtime version, not a restatement of the manifest.
+ */
+function getInstalledMermaidVersion(): string {
+  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+  assert.ok(pkg.version, `no version field in the installed mermaid package at ${pkgPath}`);
+  return pkg.version;
+}
+
+/** The lockfile's RESOLVED version — not the manifest range, which a range could satisfy loosely. */
+function getLockedMermaidVersion(): string {
+  const lock = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as {
+    packages?: Record<string, { version?: string } | undefined>;
+  };
+  const version = lock.packages?.["node_modules/mermaid"]?.version;
+  assert.ok(version, "package-lock.json resolves no node_modules/mermaid entry");
+  return version;
+}
+
+const remoteMermaidSrcs = getViewerRemoteScriptSrcs().filter((src) => MERMAID_CDN_TAG.test(src));
+
+test("P1a index.html loads exactly one remote mermaid runtime", () => {
+  assert.equal(
+    remoteMermaidSrcs.length,
+    1,
+    `index.html loads ${remoteMermaidSrcs.length} remote mermaid runtimes (${remoteMermaidSrcs.join(", ")}) — ` +
+      "with more than one, the version below is asserted against a tag that may not be the one that wins",
+  );
+});
+
+test("P1a the viewer's mermaid tag names the exact version the export injects", () => {
+  const tagged = MERMAID_CDN_TAG.exec(remoteMermaidSrcs[0] ?? "")?.[1];
+  const installed = getInstalledMermaidVersion();
+  assert.ok(tagged, `no mermaid@<version> segment in ${remoteMermaidSrcs[0] ?? "(no remote mermaid script)"}`);
+  assert.equal(
+    tagged,
+    installed,
+    `index.html loads mermaid@${tagged} while the export injects ${installed} from node_modules — ` +
+      "a floating or stale tag hands the viewer's layout to whatever the CDN published last",
+  );
+});
+
+test("P1a the installed mermaid driver is the version the lockfile resolves", () => {
+  assert.equal(
+    getInstalledMermaidVersion(),
+    getLockedMermaidVersion(),
+    "the mermaid package on disk is not the one package-lock.json resolves — the pin above " +
+      "is asserted against a tree the next npm ci would not reproduce",
+  );
+});

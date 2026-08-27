@@ -5,6 +5,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import type { BrowserContext, Page } from "playwright";
@@ -13,8 +14,17 @@ import { parse as parseHtml } from "node-html-parser";
 import { acquireBrowser, BrowserPoolError } from "./browser-pool.js";
 import { normalizeMermaidSource } from "./mermaid-normalize.js";
 
-// Pinned mermaid version for the injected export driver → matches package.json + the live viewer.
-const MERMAID_VERSION = "11";
+// The injected driver's version, read from the package the driver comes OUT of: loadMermaidBundle
+// reads dist/mermaid.min.js from beside this very package.json, so a hand-written value could
+// only ever drift from the bundle it names. Init-time sync read — one value per process, needed
+// before the marker constant below is built. An unresolvable mermaid means no export at all, so
+// failing loudly at load beats stamping a version nothing verified.
+const MERMAID_VERSION = ((): string => {
+  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+  const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+  if (version === undefined) throw new Error(`no version field in the mermaid package at ${pkgPath}`);
+  return version;
+})();
 
 // public/ under both layouts — tsc keeps src/server/clauded-docs/ at the same depth in dist/.
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "public");
@@ -584,8 +594,9 @@ export function stripCdnScriptsAndFonts(html: string): string {
   }
 
   // Insert marker comments at the top of <head> (or root if no head).
-  // SECURITY: both args are module-level static literals with ZERO document/body
-  // interpolation — not an injection sink. insertAdjacentHTML keeps them as real
+  // SECURITY: both args are module-level constants with ZERO document/body interpolation
+  // — the mermaid note carries the installed package's own version, never stored content —
+  // so this is not an injection sink. insertAdjacentHTML keeps them as real
   // DOM comments (insertAdjacentText would HTML-escape the markers).
   const head = root.querySelector("head") ?? root;
   head.insertAdjacentHTML(
