@@ -21,6 +21,10 @@ import {
   MERMAID_CONFIG_PATH,
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
+import {
+  MERMAID_CONFIG_SOURCE,
+  evaluateMermaidConfig,
+} from "./lib/mermaid-config-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
@@ -38,15 +42,6 @@ function getViewerScriptPaths(): string[] {
     .map((node) => node.getAttribute("src") ?? "")
     .filter((src) => src !== "" && !src.startsWith("http"))
     .map((src) => resolve(PUBLIC_ROOT, src));
-}
-
-/** Evaluates a config script the way a page would — reading a copy of it would defeat the point. */
-function getConfig(source: string): Record<string, unknown> {
-  const windowStub: Record<string, unknown> = {};
-  new Function("window", source)(windowStub);
-  const config = windowStub.MERMAID_CONFIG;
-  assert.ok(config, "the config script must assign window.MERMAID_CONFIG");
-  return config as Record<string, unknown>;
 }
 
 const viewerScripts = getViewerScriptPaths();
@@ -68,7 +63,7 @@ test("P1-2 the export reads the ELK loader index.html registers", () => {
 test("P1-2 the export injects the config file itself, with nothing appended", async () => {
   assert.equal(
     await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"),
-    readFileSync(MERMAID_CONFIG_PATH, "utf8"),
+    MERMAID_CONFIG_SOURCE,
     "the injected text differs from the file on disk — the export carries an override",
   );
 });
@@ -77,13 +72,13 @@ test("P1-2 the config the export injects deep-equals the one the viewer initiali
   const referenced = viewerScripts.find((path) => path.endsWith("mermaid-config.js"));
   assert.ok(referenced, "index.html must load a mermaid-config.js");
   assert.deepStrictEqual(
-    getConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config")),
-    getConfig(readFileSync(referenced, "utf8")),
+    evaluateMermaidConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config")),
+    evaluateMermaidConfig(readFileSync(referenced, "utf8")),
   );
 });
 
 test("P1-2 the injected config carries the two keys the export's own guards stand on", async () => {
-  const config = getConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"));
+  const config = evaluateMermaidConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"));
   assert.equal(config.layout, "elk", "the export's fallback watch guards a layout the config never requests");
   assert.ok(
     Number(config.logLevel) <= WARN_LOG_LEVEL,

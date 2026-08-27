@@ -17,11 +17,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
 import { compositeOver, relativeLuminance, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
-const CONFIG_PATH = resolve(MONITOR_ROOT, "public/mermaid-config.js");
 const INDEX_PATH = resolve(MONITOR_ROOT, "public/index.html");
 const TOKENS_PATH = resolve(MONITOR_ROOT, "public/styles/tokens.css");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
@@ -66,27 +66,6 @@ const PALETTE_FIXED = new Set([
 	"#0a0a0a",
 ]);
 
-interface MermaidConfig {
-	startOnLoad: boolean;
-	logLevel: number;
-	theme: string;
-	securityLevel: string;
-	layout: string;
-	elk: Record<string, unknown>;
-	themeVariables: Record<string, unknown>;
-	[key: string]: unknown;
-}
-
-/** 설정 파일을 그대로 평가해 전역을 걷어옴 — 사본을 두면 그 사본이 드리프트한다. */
-function getConfig(): MermaidConfig {
-	const source = readFileSync(CONFIG_PATH, "utf8");
-	const windowStub: Record<string, unknown> = {};
-	new Function("window", source)(windowStub);
-	const config = windowStub.MERMAID_CONFIG;
-	assert.ok(config, "public/mermaid-config.js must assign window.MERMAID_CONFIG");
-	return config as MermaidConfig;
-}
-
 /** tokens.css 의 [data-theme="dark"] 블록 — :root 라이트 트리플릿과 같은 이름이라 블록을 먼저 가른다. */
 function getDarkBlock(): string {
 	const css = readFileSync(TOKENS_PATH, "utf8");
@@ -114,7 +93,7 @@ function parseHex(value: string): Rgba {
 	return { r: Number.parseInt(m[1], 16), g: Number.parseInt(m[2], 16), b: Number.parseInt(m[3], 16), a: 1 };
 }
 
-const config = getConfig();
+const config = evaluateMermaidConfig();
 const dark = getDarkBlock();
 const theme = config.themeVariables;
 

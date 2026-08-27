@@ -25,10 +25,12 @@ import { chromium, type Browser } from "playwright";
 
 import { renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+// 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
+// index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유.
+import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
-const VIEWER_CONFIG_PATH = resolve(MONITOR_ROOT, "public/mermaid-config.js");
 const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
@@ -91,6 +93,7 @@ const FIXTURES = new Map<string, string>([
   ],
   [
     "gitGraph",
+    // 730px 렌더 — 내보내기 컨테이너(464px) 대비 +266px · 뷰어 컨테이너(382px) 대비 +348px.
     "gitGraph\n" +
       '  commit id: "wave-one-integration-landed"\n' +
       "  branch feature/diagram-container-width\n" +
@@ -98,7 +101,13 @@ const FIXTURES = new Map<string, string>([
       '  commit id: "per-type-use-max-width-off"\n' +
       "  checkout main\n" +
       "  merge feature/diagram-container-width\n" +
-      '  commit id: "integration-reconcile-both-directions"',
+      '  commit id: "integration-reconcile-both-directions"\n' +
+      "  branch feature/gitgraph-fixture-margin\n" +
+      '  commit id: "gitgraph-fixture-widened"\n' +
+      '  commit id: "export-margin-measured"\n' +
+      "  checkout main\n" +
+      "  merge feature/gitgraph-fixture-margin\n" +
+      '  commit id: "shared-config-read-through-one-helper"',
   ],
   [
     "C4",
@@ -152,21 +161,6 @@ after(async () => {
   await browser.close();
   await resetBrowserForTests();
 });
-
-/** 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
- *  index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유. */
-function getViewerMermaidConfig(): Record<string, unknown> {
-  const source = readFileSync(VIEWER_CONFIG_PATH, "utf8");
-  const windowStub: Record<string, unknown> = {};
-  new Function("window", source)(windowStub);
-
-  const config = windowStub.MERMAID_CONFIG;
-  assert.ok(
-    config !== null && typeof config === "object",
-    "public/mermaid-config.js 가 window.MERMAID_CONFIG 를 할당하지 않음",
-  );
-  return config as Record<string, unknown>;
-}
 
 /** clauded-docs.jsx 의 인라인 <style> 템플릿 리터럴 본문. */
 function getViewerDocBodyCss(): string {
@@ -377,7 +371,7 @@ test("픽스처 집합이 diagram-types.json 의 채택 타입을 전부 덮음"
 test("AC-T22(b) 뷰어: 채택 타입 전부의 산출 <svg> 에 인라인 max-width 가 없음", async () => {
   const measurements = await measureRenderedNodes(
     buildViewerHarness(getViewerDocBodyCss()),
-    getViewerMermaidConfig(),
+    evaluateMermaidConfig(),
     FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
   );
 
@@ -394,7 +388,7 @@ test("AC-T22(b) 뷰어: 채택 타입 전부의 산출 <svg> 에 인라인 max-w
 test("AC-T22(a) 뷰어: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음", async () => {
   const measurements = await measureRenderedNodes(
     buildViewerHarness(getViewerDocBodyCss()),
-    getViewerMermaidConfig(),
+    evaluateMermaidConfig(),
     FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
   );
 
@@ -505,7 +499,7 @@ function measurePresetsIn(
   return getPresetMeasurements(key, () =>
     measureRenderedNodes(
       buildHarness(getViewerDocBodyCss(), PRESET_NODES),
-      getViewerMermaidConfig(),
+      evaluateMermaidConfig(),
       SIZE_PRESETS.map(() => PRESET_SOURCE),
       {
         labels: SIZE_PRESETS,

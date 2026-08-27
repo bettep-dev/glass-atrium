@@ -28,7 +28,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -43,7 +43,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
-import { MERMAID_CONFIG_PATH } from "../src/server/clauded-docs/html-export.js";
+import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 
 const SUITE_MARKER = `html-export-test-${randomUUID()}`;
 
@@ -99,16 +99,6 @@ async function seedPlainDoc(label: string): Promise<{ id: number }> {
   });
   assert.strictEqual(res.statusCode, 201, `POST plain seed failed: ${res.payload}`);
   return { id: (res.json() as { id: number }).id };
-}
-
-/** Node fill straight from the config both the viewer and this export initialize from. */
-function getSharedNodeFill(): string {
-  const windowStub: Record<string, unknown> = {};
-  new Function("window", readFileSync(MERMAID_CONFIG_PATH, "utf8"))(windowStub);
-  const config = windowStub.MERMAID_CONFIG as { themeVariables: Record<string, string> };
-  const fill = config.themeVariables.mainBkg;
-  assert.ok(fill, "the shared config must define a node fill");
-  return fill;
 }
 
 async function fetchStoredPath(id: number): Promise<string> {
@@ -234,7 +224,7 @@ test("GET /:id/html-export: dark theme (R3) — serialized output carries the ho
   // stock mermaid light defaults carry none of it. Read the expected fill from the
   // config file rather than pinning a hex here — a copy in this test would drift
   // from the file both surfaces initialize from.
-  const nodeFill = getSharedNodeFill();
+  const nodeFill = getMermaidThemeValue("mainBkg");
   assert.ok(
     res.payload.toLowerCase().includes(nodeFill.toLowerCase()),
     `serialized mermaid output lost the shared node fill ${nodeFill}`,

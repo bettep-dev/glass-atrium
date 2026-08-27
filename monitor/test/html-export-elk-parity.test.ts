@@ -14,7 +14,6 @@
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,10 +26,10 @@ import { chromium } from "playwright";
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 import {
   HtmlExportError,
-  MERMAID_CONFIG_PATH,
   loadExportAsset,
   renderSelfContainedHtml,
 } from "../src/server/clauded-docs/html-export.js";
+import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 import {
   assertOrthogonalLinks,
   findDiagonalSegments,
@@ -75,16 +74,6 @@ function getExportedLinks(html: string, selector: string): string[] {
   return getExportedRoot(html)
     .querySelectorAll(selector)
     .map((node) => node.getAttribute("d") ?? "");
-}
-
-/** 설정 SoT 에서 직접 읽은 값 — 색을 테스트에 적어두면 그 사본이 드리프트한다. */
-function getThemeValue(key: string): string {
-  const windowStub: Record<string, unknown> = {};
-  new Function("window", readFileSync(MERMAID_CONFIG_PATH, "utf8"))(windowStub);
-  const config = windowStub.MERMAID_CONFIG as { themeVariables: Record<string, string> };
-  const value = config.themeVariables[key];
-  assert.ok(value, `the shared config must define themeVariables.${key}`);
-  return value;
 }
 
 interface ViewerHarness {
@@ -193,7 +182,8 @@ describe("html export under the shared config", () => {
     assert.equal(elkLinks.length, viewerProbe.links.length, "export and viewer disagree on edge count");
     assertOrthogonalLinks(viewerProbe.links, "flowchart in the viewer");
 
-    const nodeFill = getThemeValue("mainBkg");
+    // 설정 SoT 에서 직접 읽은 값 — 색을 테스트에 적어두면 그 사본이 드리프트한다.
+    const nodeFill = getMermaidThemeValue("mainBkg");
     const viewerSvg = await viewer.page.evaluate(
       (id: string) => document.querySelector(id)?.innerHTML ?? "",
       "#probe-host-parity-flowchart",
