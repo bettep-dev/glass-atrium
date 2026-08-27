@@ -1095,17 +1095,17 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 	);
 }
 
-/**
- * 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
- * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
- * 아이콘 색 클래스는 리터럴 표 — 조립한 클래스명은 클래스 스캐너가 보지 못함.
- */
+// 아이콘 색 클래스는 리터럴 표 — 조립한 클래스명은 클래스 스캐너가 보지 못함.
 const BANNER_TONE_TEXT_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
 };
 
+/**
+ * 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
+ * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
+ */
 function AlertBannerAR({ tone, icon, title, note, badges }) {
 	const { Icon, Badge } = window.UI;
 	const items = badges || [];
