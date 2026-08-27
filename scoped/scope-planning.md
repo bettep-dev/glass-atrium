@@ -100,6 +100,10 @@ All diagrams in user-requested HTML primary documents MUST use **Mermaid** (sing
 
 **Reference**: D8 sandbox-safe interactivity (existing prohibition) · `glass-atrium-intel-planner.md` "Abstraction Level & Diagram Requirement Matrix" (5+ task DAG nodes → flowchart · 3+ async actors → sequenceDiagram, etc. trigger table canonical).
 
+## Pre-drawing Doctrine [PLANNING]
+
+> Canonical mirror — `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` is the SoT and this section is a pointer only (the adopted/excluded type lists and the budget caps live there ONCE, so nothing here can drift). Before drawing any Mermaid block in a user-requested HTML plan, run its decision order: type from the adopted set · one primary direction · budget check + split · size preset · semantic-role `classDef` · layout default + opt-out.
+
 ## Designer Co-Emission Trigger [PLANNING]
 
 > Canonical mirror — `scope-report.md` "Designer Co-Emission Trigger" is the SoT · this section is a mirror scoped to user-requested HTML primary plans. Cross-reference to prevent duplication drift.

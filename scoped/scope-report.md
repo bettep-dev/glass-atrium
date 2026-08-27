@@ -152,6 +152,39 @@ Do NOT use an inline `<script>` / ESM-module + `mermaid.initialize()`/`mermaid.r
 
 **Reference**: D8 sandbox-safe interactivity (existing prohibition) · `glass-atrium-intel-reporter.md` "Sandbox-Safe Interactivity" Mermaid CDN exception (host-context render path specified).
 
+## Pre-drawing Doctrine [REPORT]
+
+> **CANONICAL SoT** — `scope-planning.md` → `## Pre-drawing Doctrine [PLANNING]` is a pointer to this section; the type lists and the budget numbers live here ONCE. Apply the order below to EVERY Mermaid block in a user-requested HTML primary, not only the first. An agent-only record stays on the Diagram Standard agent-only branch.
+
+Decision order before drawing (each step builds on the previous):
+
+1. **Type** — SoT: `monitor/src/server/clauded-docs/diagram-types.json`.
+   - Adopted (draw): `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`).
+   - Excluded (do not draw — presentation shapes, not development judgment): `quadrantChart` · `radar` · `pie` · `timeline` · `journey` · `mindmap` · `sankey` · `xychart` · `gantt` · `block`; express that content as a table or prose.
+   - This step narrows the Diagram Standard "Permitted Mermaid types" list: renderable is not the same as adopted.
+2. **Direction** — hold ONE primary flow per diagram; a single held direction is what makes rank alignment readable.
+   - `TD` is the default.
+   - `LR` only after re-measuring the rendered width against the preset container (Preset step).
+   - `RL` / `BT` are forbidden (`diagram-types.json` `flowDirection.forbidden`).
+3. **Budget** — SoT: `BUDGET_CAPS.balanced` in `monitor/src/server/architecture/content-budget.ts`; the numbers here are a mirror, never the source.
+   - Caps: nodes ≤ 9 · edges ≤ 6 · label chars ≤ 45 · subgraph depth ≤ 1.
+   - Band: ≥ 0.9 of a cap warns, > 1.0 fails; depth is an invariant (equal passes, over fails).
+   - Census rules an author must respect: every arrow token counts (a chained `A --> B --> C` line is 2 edges) · quoted spans are stripped before arrows are counted · a `name(` / `name[` / `name{` token counts as a node · a `---` line counts as an edge.
+   - Over budget: split into one overview diagram plus detail diagram(s), each inside the caps on its own; never raise a cap, never trim a label below its meaning.
+4. **Preset** — attach the size preset as a second class on the block: `<pre class="mermaid doc-diagram-body">`.
+   - `doc-diagram-body` — default, column width.
+   - `doc-diagram-wide` — ranks ≥ 4 along the primary flow OR a label overflows the column width.
+   - `doc-diagram-full` — zones (subgraphs) ≥ 3.
+   - The three width rules are the same three selectors in `monitor/public/src/screens/clauded-docs.jsx` (viewer) and `monitor/src/server/clauded-docs/html-export.ts` (export).
+5. **Semantic-role `classDef`** — exactly five role classes: `focal` · `external` · `store` · `optional` · `security`.
+   - `focal` is the accent: assigned to ≤ 2 nodes.
+   - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block; a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
+   - Scope of hex-only: mermaid `classDef` / `themeVariables` values ONLY — they sit in the diagram source, outside the d8 `inline-color-literal` scan surface (`style=` attributes + `<style>` blocks); the d8 no-hex rule keeps governing every CSS surface.
+6. **Layout** — ELK is the global layout default from the shared mermaid init; a diagram carries no layout configuration of its own.
+   - Never a YAML frontmatter block in a mermaid source: each `---` line is counted as an edge (Budget step).
+   - Never encode the engine into the type keyword: the header is `flowchart TD`, never a `flowchart-<engine>` variant.
+   - Opt-out is exactly one physical line, the first line, JSON-quoted keys: `%%{init: {"layout":"dagre"}}%%` — a one-line directive contributes 0 nodes and 0 edges to the census.
+
 ## Designer Co-Emission Trigger [REPORT]
 
 > Canonical authority — `scope-planning.md` Designer Co-Emission Trigger mirrors this section.
