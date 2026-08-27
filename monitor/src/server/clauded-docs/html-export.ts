@@ -14,18 +14,6 @@ import { parse as parseHtml } from "node-html-parser";
 import { acquireBrowser, BrowserPoolError } from "./browser-pool.js";
 import { normalizeMermaidSource } from "./mermaid-normalize.js";
 
-// The injected driver's version, read from the package the driver comes OUT of: loadMermaidBundle
-// reads dist/mermaid.min.js from beside this very package.json, so a hand-written value could
-// only ever drift from the bundle it names. Init-time sync read — one value per process, needed
-// before the marker constant below is built. An unresolvable mermaid means no export at all, so
-// failing loudly at load beats stamping a version nothing verified.
-const MERMAID_VERSION = ((): string => {
-  const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
-  const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
-  if (version === undefined) throw new Error(`no version field in the mermaid package at ${pkgPath}`);
-  return version;
-})();
-
 // public/ under both layouts — tsc keeps src/server/clauded-docs/ at the same depth in dist/.
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "public");
 
@@ -71,7 +59,6 @@ const TAILWIND_CDN_HOST = "cdn.tailwindcss.com";
 // Offline-portability marker comments inserted during the strip pass.
 const OFFLINE_FONTS_COMMENT =
   " fonts: web fonts stripped for offline portability; system/local font-family fallback applied ";
-const MERMAID_VERSION_COMMENT = ` mermaid driver: pinned mermaid@${MERMAID_VERSION} (locally bundled, no network) `;
 
 /**
  * Thrown on HTML export failure. Route handler maps to a 503 envelope (reason
@@ -184,6 +171,44 @@ export async function loadExportAsset(path: string, label: string): Promise<stri
 async function loadMermaidBundle(): Promise<string> {
   const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
   return loadExportAsset(resolve(dirname(pkgPath), "dist", "mermaid.min.js"), "mermaid driver bundle");
+}
+
+// The injected driver's version, read from the package the driver comes OUT of: loadMermaidBundle
+// reads dist/mermaid.min.js from beside this very package.json, so a hand-written value could only
+// ever drift from the bundle it names.
+//
+// Read at the first export, never at module load. This module sits on the server's boot path
+// (routes/clauded-docs.ts → registerRoutes → main.ts), so a filesystem read at module scope turns a
+// missing mermaid package into a boot failure that launchd repays with a restart loop — the opposite
+// of main.ts's non-fatal-prerequisite design, where an unmet export prerequisite leaves the rest of
+// the service up and fails the first export loudly. Memoized for the same reason and with the same
+// lifetime as assetCache: an edited asset arrives with a fresh process.
+//
+// Sync read, deliberately: stripCdnScriptsAndFonts is a pure string transform and every caller holds
+// it to that, so threading a promise through it to spare one 2 KB read — on a path already blocked on
+// a chromium render — would buy nothing.
+let mermaidVersion: string | null = null;
+
+function getMermaidVersion(): string {
+  if (mermaidVersion !== null) return mermaidVersion;
+  try {
+    const pkgPath = fileURLToPath(import.meta.resolve("mermaid/package.json"));
+    const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    if (version === undefined) throw new Error(`no version field in the mermaid package at ${pkgPath}`);
+    mermaidVersion = version;
+    return version;
+  } catch (error) {
+    throw new HtmlExportError(
+      "mermaid driver version unreadable — the installed mermaid package resolved to nothing readable",
+      "mermaid",
+      error,
+    );
+  }
+}
+
+/** The offline marker naming the driver that was actually injected — see getMermaidVersion. */
+function getMermaidVersionComment(): string {
+  return ` mermaid driver: pinned mermaid@${getMermaidVersion()} (locally bundled, no network) `;
 }
 
 /** Non-html stored body formats the shell-wrap path handles. */
@@ -601,7 +626,7 @@ export function stripCdnScriptsAndFonts(html: string): string {
   const head = root.querySelector("head") ?? root;
   head.insertAdjacentHTML(
     "afterbegin",
-    `<!--${OFFLINE_FONTS_COMMENT}--><!--${MERMAID_VERSION_COMMENT}-->`,
+    `<!--${OFFLINE_FONTS_COMMENT}--><!--${getMermaidVersionComment()}-->`,
   );
 
   // Export pages get neither the viewer's .doc-body-isolation block nor SHELL_STYLE → the width rule ships here.
@@ -667,4 +692,3 @@ export function wrapPlainInHtmlShell(body: string, format: PlainFormatToken): st
 }
 
 export { BrowserPoolError };
-export { MERMAID_VERSION };

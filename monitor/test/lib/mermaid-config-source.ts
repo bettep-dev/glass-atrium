@@ -38,11 +38,13 @@ export interface MermaidConfig {
  * 인자를 주면 그 원문을(내보내기가 주입하는 텍스트 등), 주지 않으면 디스크의 파일을 평가한다.
  */
 export function evaluateMermaidConfig(source: string = MERMAID_CONFIG_SOURCE): MermaidConfig {
-	// SECURITY: the single dynamic-evaluation site under monitor/test. core-security bans
-	// dynamic execution of EXTERNAL input; this input is a repo-owned static asset — either
-	// public/mermaid-config.js itself or the text the export injects from that same file —
-	// never user-supplied and never fetched. Keep it to this one site: a second copy is a
-	// second shape a reviewer has to read.
+	// SECURITY: the single `new Function` (same-realm, unsandboxed) site under monitor/test — the
+	// vm.runInContext evaluations elsewhere (test/client-sandbox.ts and the client unit suites that
+	// call it) are sandboxed, a different shape, and the paragraph below is why this one is not one
+	// of them. core-security bans dynamic execution of EXTERNAL input; this input is a repo-owned
+	// static asset — either public/mermaid-config.js itself or the text the export injects from
+	// that same file — never user-supplied and never fetched. Keep it to this one site: a second
+	// copy is a second shape a reviewer has to read.
 	//
 	// node:vm would sandbox this further, but not for free: each context is its own realm, so
 	// two configs evaluated that way carry two different Object.prototypes and the parity

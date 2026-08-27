@@ -14,8 +14,10 @@
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
@@ -41,7 +43,8 @@ import {
 } from "./lib/mermaid-elk-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_ROOT = resolve(HERE, "..", "public");
+const MONITOR_ROOT = resolve(HERE, "..");
+const PUBLIC_ROOT = resolve(MONITOR_ROOT, "public");
 
 // 갈래가 있어야 두 레이아웃의 배치 차이가 좌표에 남는다.
 const FLOWCHART_SRC = "flowchart TD\n  A[Start] --> B{Choice}\n  B -->|yes| C[Done]\n  B -->|no| A";
@@ -58,6 +61,13 @@ const C4_SRC =
   '  Person(operator, "Monitor operator", "Reads exported documents offline")\n' +
   '  System(monitor, "Monitor service", "Serves stored documents and diagrams")\n' +
   '  Rel(operator, monitor, "reads exported documents")';
+
+// P1-F1 AC2 의 대조 대상 — 관계 둘짜리 최소 ER. C4 처럼 화면을 읽지는 않지만, 뷰어와 내보내기가
+// 같은 설정·같은 화면 기준 위에서 같은 폭으로 눕는지는 타입마다 따로 재야 확인된다.
+const ER_SRC =
+  "erDiagram\n" +
+  '  OUTCOME_RECORD ||--o{ CORRECTION_SIGNAL : "produces on revision"\n' +
+  '  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"';
 
 // 렌더러가 엣지에 붙이는 클래스는 타입마다 다르다 — 한 판정기를 두 타입 위에 올리기 위한 합집합.
 const EDGE_SELECTOR = "path.flowchart-link, path.transition";
@@ -211,6 +221,56 @@ describe("html export under the shared config", () => {
   });
 });
 
+// ── AC-6 드라이버 버전을 읽는 시점 ────────────────────────────────────────────
+// 이 모듈은 서버 부팅 경로에서 임포트된다(routes/clauded-docs.ts → registerRoutes → main.ts).
+// 그래서 모듈 최상위에서 디스크를 읽으면 mermaid 패키지 하나가 사라졌을 때 첫 내보내기가 아니라
+// 부팅이 죽고, launchd 는 그것을 재시작 루프로 갚는다 — 내보내기 전제 미충족을 치명적이지 않게
+// 두는 main.ts 의 설계와 반대 방향이다. 그래서 판정은 두 다리를 한 번에 재야 한다: 임포트는 살아남고,
+// 내보내기는 여전히 소리 내어 실패한다.
+//
+// 자식 프로세스인 이유: 해석은 모듈이 실려 있기 전에 깨져 있어야 하고, `import.meta.resolve` 는
+// 등록된 resolve 훅이 답한다(node 24 에서 확인). 같은 프로세스 안에서는 그 순서를 만들 수 없다.
+const EXPORT_MODULE_URL = pathToFileURL(
+  resolve(MONITOR_ROOT, "src/server/clauded-docs/html-export.ts"),
+).href;
+
+/** 자식이 실행할 스크립트 — 훅을 등록하고, 임포트와 내보내기를 각각 표식으로 남긴다. */
+const UNRESOLVABLE_MERMAID_PROBE = [
+  'import { register } from "node:module";',
+  'const hook =',
+  '  "export function resolve(specifier, context, nextResolve) {" +',
+  `  "  if (specifier === 'mermaid/package.json') {" +`,
+  `  "    throw new Error('stubbed: mermaid package is unresolvable');" +`,
+  '  "  }" +',
+  '  "  return nextResolve(specifier, context);" +',
+  '  "}";',
+  'register("data:text/javascript," + encodeURIComponent(hook));',
+  'let mod;',
+  'try {',
+  '  mod = await import(process.env.EXPORT_MODULE_URL);',
+  '} catch (error) {',
+  '  console.log(`IMPORT_THREW ${error?.message}`);',
+  '  process.exit(0);',
+  '}',
+  'console.log("IMPORT_OK");',
+  'try {',
+  '  mod.stripCdnScriptsAndFonts("<!doctype html><html><head></head><body></body></html>");',
+  '  console.log("EXPORT_RETURNED");',
+  '} catch (error) {',
+  '  console.log(`EXPORT_THREW ${error?.name} stage=${error?.stage}`);',
+  '}',
+].join("\n");
+
+/** 표식만 돌려줌 — 자식의 stderr 는 tsx 잡음을 실을 수 있어 판정 대상이 아니다. */
+async function runUnresolvableMermaidProbe(): Promise<string> {
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "--eval", UNRESOLVABLE_MERMAID_PROBE],
+    { cwd: MONITOR_ROOT, env: { ...process.env, EXPORT_MODULE_URL } },
+  );
+  return stdout;
+}
+
 describe("html export loud-fail", () => {
   after(async () => {
     await resetBrowserForTests();
@@ -236,6 +296,21 @@ describe("html export loud-fail", () => {
       (error: unknown) => error instanceof HtmlExportError && error.stage === "mermaid",
     );
   });
+
+  test("AC-6 an unresolvable mermaid package fails the export, not the module import", async () => {
+    const output = await runUnresolvableMermaidProbe();
+    assert.match(
+      output,
+      /^IMPORT_OK$/m,
+      `importing the export module read the mermaid package off disk, so a missing package takes the ` +
+        `whole server down at boot instead of failing the first export: ${output}`,
+    );
+    assert.match(
+      output,
+      /^EXPORT_THREW HtmlExportError stage=mermaid$/m,
+      `the export did not fail loudly once the version was unreadable: ${output}`,
+    );
+  });
 });
 
 // ── AC-5 C4 행 기준 ──────────────────────────────────────────────────────────
@@ -243,11 +318,13 @@ describe("html export loud-fail", () => {
 // 선언하지 않으면 두 경로가 각자 다른 기본값 위에서 같은 소스를 다른 행수로 눕히고, 그 차이는
 // 폭 한 값으로 남는다 — 내보내기 화면폭을 480 으로 두면 2행 551px, 1280 으로 두면 1행 873px.
 //
-// 비교 대상이 위 index.html 하네스가 아닌 이유(측정): 그 하네스는 mermaid 를 CDN 의
-// `mermaid@11`(현재 11.17.2)에서 받고 문서가 `lang="en"` 이라, 같은 화면 기준에서도 832px 로
-// 떨어진다(고정 11.15.0 · `lang="ko"` 인 내보내기는 873px). px 대조를 거기에 걸면 재는 것은
-// 행 기준이 아니라 빌드·서체 드리프트가 된다. 그래서 여기 비교 대상은 나머지 입력(고정 드라이버 ·
-// 벤더 ELK 로더 · 공유 설정 · 문서 lang)을 내보내기와 똑같이 맞춘 뷰어 렌더 경로다.
+// 비교 대상이 위 index.html 하네스가 아닌 이유(측정): 엔진 차이는 이제 없다 — index.html 은
+// 내보내기가 주입하는 것과 같은 11.15.0 을 고정한다. 남은 것은 문서의 `lang` 하나다. 그 하네스는
+// `lang="en"`, 저장 본문과 내보내기는 `lang="ko"` 라 같은 화면 기준에서도 C4 가 899px 대 873px 로
+// 갈린다(재서 확인). 서체는 원인이 아니다: 두 문서가 같은 서체 스택을 받고, 이 26px 은 `lang` 하나만
+// 바꿔도 그대로 나타난다. px 대조를 거기에 걸면 재는 것은 행 기준이 아니라 문서 언어가 된다.
+// 그래서 여기 비교 대상은 나머지 입력(고정 드라이버 · 벤더 ELK 로더 · 공유 설정 · 문서 lang)을
+// 내보내기와 똑같이 맞춘 뷰어 렌더 경로다.
 
 /** 내보내기가 주입하는 것과 같은 세 자산 — 같은 파일에서 읽어야 대조에 화면 기준만 남는다. */
 async function loadDriverAssets(): Promise<{ mermaid: string; elk: string; config: string }> {
@@ -280,8 +357,14 @@ function getExportedSvgWidth(html: string, context: string): number {
 /**
  * 뷰어 렌더 경로에서 같은 소스를 그린 폭. 뷰포트는 일부러 좁게 둔다 — 폭이 뷰포트가 아니라
  * 선언된 화면에서 나온다는 것이 요점이고, 뷰포트 480/1280 이 같은 값을 내는 것은 재서 확인했다.
+ * 타입을 인자로 받는 이유: 화면 기준을 읽는 것은 C4 뿐이어도, 두 경로가 같은 폭을 내는지는
+ * 타입마다 따로 재야 한다(P1-F1 AC2 의 ER 다리).
  */
-async function measureViewerC4(browser: Browser): Promise<{ width: number; availWidth: number }> {
+async function measureViewerDiagram(
+  browser: Browser,
+  id: string,
+  source: string,
+): Promise<{ width: number; availWidth: number }> {
   const assets = await loadDriverAssets();
   const context = await browser.newContext({
     viewport: { width: 480, height: 900 },
@@ -295,7 +378,7 @@ async function measureViewerC4(browser: Browser): Promise<{ width: number; avail
     await page.addScriptTag({ content: assets.elk });
     await page.addScriptTag({ content: assets.config });
 
-    const measured = await page.evaluate(async (source: string) => {
+    const measured = await page.evaluate(async (args: { id: string; source: string }) => {
       const w = window as never as {
         mermaid: {
           initialize(config: unknown): void;
@@ -308,7 +391,7 @@ async function measureViewerC4(browser: Browser): Promise<{ width: number; avail
       // index.html 과 같은 순서 — 등록이 initialize 보다 먼저.
       w.mermaid.registerLayoutLoaders(w.mermaidLayoutElk?.default ?? []);
       w.mermaid.initialize(w.MERMAID_CONFIG);
-      const { svg } = await w.mermaid.render("parity-c4", source);
+      const { svg } = await w.mermaid.render(args.id, args.source);
       const host = document.createElement("div");
       host.innerHTML = svg;
       document.body.appendChild(host);
@@ -316,11 +399,11 @@ async function measureViewerC4(browser: Browser): Promise<{ width: number; avail
         width: Number(host.querySelector("svg")?.getAttribute("width") ?? Number.NaN),
         availWidth: window.screen.availWidth,
       };
-    }, C4_SRC);
+    }, { id, source });
 
     assert.ok(
       Number.isFinite(measured.width) && measured.width > 0,
-      `뷰어 하네스가 C4 를 그리지 못함 — width ${String(measured.width)}`,
+      `뷰어 하네스가 ${id} 를 그리지 못함 — width ${String(measured.width)}`,
     );
     return measured;
   } finally {
@@ -344,7 +427,7 @@ describe("the C4 row basis is declared, not inherited", () => {
   test("AC-5 export and viewer draw the C4 fixture at the same width under one declared screen", async () => {
     const exported = await renderSelfContainedHtml(getStoredBody("c4", C4_SRC), "html");
     const exportWidth = getExportedSvgWidth(exported, "C4 내보내기");
-    const viewer = await measureViewerC4(browser);
+    const viewer = await measureViewerDiagram(browser, "parity-c4", C4_SRC);
 
     // 하네스가 화면 옵션을 잃으면 뷰포트 폭이 그 자리를 대신해 대조가 조용히 다른 것을 잰다.
     assert.equal(
@@ -356,6 +439,20 @@ describe("the C4 row basis is declared, not inherited", () => {
       Math.abs(exportWidth - viewer.width) <= 1,
       `C4 폭이 갈림 — 내보내기 ${exportWidth}px · 뷰어 ${viewer.width}px ` +
         `(선언 화면폭 ${EXPORT_SCREEN.width}). 두 경로가 서로 다른 행수로 눕혔다는 뜻이다.`,
+    );
+  });
+
+  // P1-F1 AC2 — 지금까지 이 폭 일치는 픽스처 주석에 손으로 적힌 수(454.92)로만 남아 있었다.
+  // 주석은 다음 판올림에서 조용히 틀려지지만 단언은 붉어진다.
+  test("AC-5 export and viewer draw the erDiagram fixture at the same width", async () => {
+    const exported = await renderSelfContainedHtml(getStoredBody("er", ER_SRC), "html");
+    const exportWidth = getExportedSvgWidth(exported, "ER 내보내기");
+    const viewer = await measureViewerDiagram(browser, "parity-er", ER_SRC);
+
+    assert.ok(
+      Math.abs(exportWidth - viewer.width) <= 1,
+      `ER 폭이 갈림 — 내보내기 ${exportWidth}px · 뷰어 ${viewer.width}px ` +
+        `(선언 화면폭 ${EXPORT_SCREEN.width}). 같은 소스가 두 경로에서 다르게 눕었다는 뜻이다.`,
     );
   });
 });

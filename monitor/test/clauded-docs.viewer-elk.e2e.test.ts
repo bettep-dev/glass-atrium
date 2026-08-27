@@ -9,9 +9,11 @@
 // cycle-A width contract, and a per-block dagre opt-out.
 //
 // The samples are shaped after the live corpus rather than after one convenient
-// case — a flowchart-heavy HTML document, a document whose adopted types are not
-// flowcharts, and a document carrying an excluded type (gantt) beside an adopted
-// one. A single-flowchart sample would stay green while every other type broke.
+// case — a flowchart-heavy HTML document, a document carrying all six adopted
+// non-flowchart types, and a document carrying an excluded type (gantt) beside an
+// adopted one. A single-flowchart sample would stay green while every other type
+// broke, so the type coverage is asserted against diagram-types.json rather than
+// left to whichever fixtures happen to be here (AC1).
 //
 // App: stripped Fastify (fastify-static over public/ + two hand-written fixture
 // routes) on an ephemeral port. registerClaudedDocsRoutes is NOT called — it needs
@@ -176,6 +178,57 @@ const NON_FLOWCHART: DocFixture = {
 				"  AwaitingVerification --> ImplementationEntry",
 				"  ImplementationEntry --> Reconciliation",
 				"  Reconciliation --> [*]",
+			].join("\n"),
+		},
+		{
+			probe: "er-outcome",
+			type: "erDiagram",
+			preset: "doc-diagram-body",
+			source: [
+				"erDiagram",
+				'  OUTCOME_RECORD ||--o{ CORRECTION_SIGNAL : "produces on revision"',
+				'  OUTCOME_RECORD }o--|| AGENT_REGISTRY_ENTRY : "emitted by agent"',
+			].join("\n"),
+		},
+		{
+			probe: "class-writer",
+			type: "classDiagram",
+			preset: "doc-diagram-body",
+			source: [
+				"classDiagram",
+				"  direction LR",
+				"  class OutcomeRecordWriter {",
+				"    +getCompletionBlock(): CompletionBlock",
+				"  }",
+				"  class CorrectionSignalAggregator {",
+				"    +putDirectiveHint(hint: DistilledLesson)",
+				"  }",
+				"  OutcomeRecordWriter --> CorrectionSignalAggregator : emits distilled lesson",
+			].join("\n"),
+		},
+		{
+			probe: "gitgraph-waves",
+			type: "gitGraph",
+			preset: "doc-diagram-wide",
+			source: [
+				"gitGraph",
+				'  commit id: "wave-one-integration-landed"',
+				"  branch feature/plan-direction-gate",
+				'  commit id: "stage-two-verify-team"',
+				"  checkout main",
+				"  merge feature/plan-direction-gate",
+			].join("\n"),
+		},
+		{
+			probe: "c4-boundary",
+			type: "C4",
+			preset: "doc-diagram-body",
+			source: [
+				"C4Context",
+				"  title Document export boundary",
+				'  Person(operator, "Monitor operator", "Reads exported documents offline")',
+				'  System(monitor, "Monitor service", "Serves stored documents and diagrams")',
+				'  Rel(operator, monitor, "reads exported documents")',
 			].join("\n"),
 		},
 	],
@@ -428,12 +481,15 @@ after(async () => {
 
 describe("document diagrams under the shared ELK config", () => {
 	// 픽스처가 조용히 한쪽으로 쏠리는 것을 막는 다리 — 이게 없으면 flowchart 만 남아도 초록이다.
-	test("P1-3 the sample set spans flowchart, a non-flowchart adopted type and an excluded one", () => {
+	// AC1 이 요구하는 것은 "채택 타입 중 몇 개" 가 아니라 전부이므로, 선언(diagram-types.json)을
+	// 기준으로 빠진 타입을 이름으로 부른다. 채택 목록이 늘면 이 다리가 먼저 붉어진다.
+	test("P1-3 the sample set covers every adopted type and an excluded one", () => {
 		const types = new Set(DOC_FIXTURES.flatMap((doc) => doc.diagrams.map((d) => d.type)));
-		const adopted = [...types].filter((type) => ADOPTED_TYPES.has(type));
-		assert.ok(
-			adopted.some((type) => type !== "flowchart"),
-			`samples carry no adopted non-flowchart type: ${[...types].join(", ")}`,
+		const missing = [...ADOPTED_TYPES].filter((type) => !types.has(type));
+		assert.deepStrictEqual(
+			missing,
+			[],
+			`adopted types with no sample block: ${missing.join(", ")} — they render in no measured document`,
 		);
 		assert.ok(
 			[...types].some((type) => EXCLUDED_TYPES.has(type)),
