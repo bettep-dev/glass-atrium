@@ -257,7 +257,9 @@ function ScreenArchitecture(
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--sunken)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
+					// 캔버스 면은 surface — 다이어그램 소스의 themeVariables background·edgeLabelBackground 와 같은 토큰이어야
+					// 엣지 라벨 마스크가 면색과 어긋나 사각형으로 드러나지 않고, 노드 fill(sunken)이 면 위로 떠오름.
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — fill/weight 만 가독 보정. font-size 는 mermaid init(index.html, 14px)이 노드 박스 폭을 산정한 값과 일치시켜야 라벨이 박스를 넘쳐 단어 중간 잘림이 발생하지 않음 (15px 강제는 박스보다 넓어 클리핑 원인 → 14px 로 정렬).
 					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; font-size: 14px !important; font-weight: 500 !important; } " +

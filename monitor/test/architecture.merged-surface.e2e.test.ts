@@ -32,7 +32,7 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
-import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
+import { CANONICAL_MAP, DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
@@ -43,6 +43,15 @@ import type {
 	ImprovementLearningLogRow,
 	ImprovementProposalRow,
 } from "../src/server/types/improvement.js";
+import {
+	assertFallbackWarningVisible,
+	assertLayoutsDiffer,
+	assertOrthogonalLinks,
+	createFallbackWatch,
+	getRenderProbe,
+	type FallbackWatch,
+	type RenderProbe,
+} from "./lib/mermaid-elk-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -201,6 +210,9 @@ let selectors: { canvas: string; tabControl: string; desc: string };
 let liveFixture: ArchitectureLiveResponse;
 let queueFixture: QueueFixture;
 
+// 폴백 경고 감시 — 첫 렌더보다 먼저 붙어야 초기 경고를 놓치지 않으므로 페이지 생성 직후에 붙임.
+let elkWatch: FallbackWatch;
+
 // 케이스별 live 픽스처를 심고 화면을 다시 세움. about:blank 경유는 같은 URL 재방문이
 // same-document 로 흡수되어 재요청이 일어나지 않는 경우를 막기 위함.
 async function openMap(
@@ -311,6 +323,7 @@ before(async () => {
 
 	browser = await chromium.launch({ headless: true });
 	page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	elkWatch = createFallbackWatch(page);
 });
 
 after(async () => {
@@ -923,4 +936,97 @@ test("AC-T5 the ring displaces neither the drift banner nor the writer alert", a
 		1,
 		`writer alert naming ${OFF_WRITER} must survive beside the ring`,
 	);
+});
+
+
+// ── P0-2 ELK 증명 (clauded-docs/26410 §7) ──────────────────────────────────────
+// 화면이 실제로 그린 캔버스를 재는 것이 요점 — 같은 소스를 옆에서 다시 렌더하면
+// 지시자가 화면 경로를 통과했는지는 못 잰다.
+
+async function getCanvasProbe(): Promise<RenderProbe> {
+	const probe = await page.evaluate((canvas) => {
+		const nodes: Record<string, { x: number; y: number }> = {};
+		const labels: string[] = [];
+		for (const el of Array.from(document.querySelectorAll(`${canvas} svg g.node`))) {
+			const label = (el.textContent || "").trim();
+			labels.push(label);
+			const matrix = (el as SVGGraphicsElement).transform.baseVal.consolidate()?.matrix;
+			nodes[label] = { x: matrix ? matrix.e : Number.NaN, y: matrix ? matrix.f : Number.NaN };
+		}
+		const links = Array.from(
+			document.querySelectorAll(`${canvas} svg path.flowchart-link`),
+		).map((path) => path.getAttribute("d") || "");
+		return { nodes, labels, links };
+	}, selectors.canvas);
+
+	assert.ok(probe.labels.length > 0, "canvas rendered no g.node — the probe would be empty");
+	assert.equal(
+		new Set(probe.labels).size,
+		probe.labels.length,
+		`canvas node labels ${probe.labels.join(", ")} are not unique — the coordinate map would collapse`,
+	);
+	return { nodes: probe.nodes, links: probe.links };
+}
+
+// 대조군 — 지시자의 layout 값 하나만 갈아끼운 같은 소스. 테마·간격·라벨이 전부 같으므로
+// 남는 차이가 레이아웃 엔진뿐이다(테마를 함께 잃으면 노드 크기가 달라져 좌표 차이가 공허해짐).
+function getLayoutVariant(layout: string): string {
+	const variant = CANONICAL_MAP.mermaid_drawn.replace('"layout": "elk"', `"layout": "${layout}"`);
+	assert.notEqual(
+		variant,
+		CANONICAL_MAP.mermaid_drawn,
+		'canonical mermaid_drawn must carry a single-line %%{init}%% directive requesting "layout": "elk"',
+	);
+	return variant;
+}
+
+function getOrthogonalityVerdict(links: string[]): "orthogonal" | "not-orthogonal" {
+	try {
+		assertOrthogonalLinks(links, "layout control");
+		return "orthogonal";
+	} catch {
+		return "not-orthogonal";
+	}
+}
+
+test("P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback", async () => {
+	await openMap(getLiveFixture());
+	// 전제 먼저 — logLevel 이 3 을 넘으면 아래 경고 단언 전부가 공허해짐.
+	await assertFallbackWarningVisible(page);
+
+	const canvas = await getCanvasProbe();
+	const control = await getRenderProbe(page, "d52-layout-control", getLayoutVariant("dagre"));
+
+	assertLayoutsDiffer(canvas, control);
+});
+
+test("P0-2 every canvas edge is axis-aligned while the dagre control is not", async () => {
+	await openMap(getLiveFixture());
+	const canvas = await getCanvasProbe();
+
+	assertOrthogonalLinks(canvas.links, "canonical map canvas");
+	// 대조군이 같은 판정을 통과해 버리면 위 초록은 렌더러 무관한 항진명제임.
+	const control = await getRenderProbe(page, "d52-orthogonality-control", getLayoutVariant("dagre"));
+	assert.equal(
+		getOrthogonalityVerdict(control.links),
+		"not-orthogonal",
+		"the dagre control satisfied the orthogonality verdict — the verdict discriminates nothing",
+	);
+});
+
+test("P0-2 the canvas logs no layout fallback, and this harness would catch one", async () => {
+	await openMap(getLiveFixture());
+	assert.deepStrictEqual(
+		elkWatch.messages,
+		[],
+		"mermaid logged a layout fallback — the map rendered on dagre while asking for ELK",
+	);
+
+	// 감시기 반증 — 이 하네스에서 실제로 잡히는지 재지 않으면 위 0건은 문자열이 영영 안 맞아도 초록임.
+	await getRenderProbe(page, "d52-unregistered-control", getLayoutVariant("no-such-layout"));
+	assert.ok(
+		elkWatch.messages.length > 0,
+		"an unregistered layout produced no captured warning — the watch certifies nothing",
+	);
+	elkWatch.clear();
 });

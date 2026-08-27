@@ -437,7 +437,14 @@ export const CANONICAL_MAP: CanonicalMap = {
 	// 방향은 수직(TD) 고정 — 렌더 pane 은 폭만 제약(측정 1150px)되고 높이는 `max-height: none` 로 자유로움.
 	// LR 은 랭크가 가로로 누적돼 1212px 로 넘쳐 우측 67px 이 잘렸음(콘텐츠를 줄이는 대신 방향을 눕힘).
 	// 되돌리려면 폭 초과를 먼저 재측정할 것 — 미관 사유의 LR 복귀는 같은 클리핑을 되살림.
-	mermaid_drawn: `flowchart TD
+	// 지시자는 물리적 1줄 · JSON 인용 키 · hex 값 고정 — 줄을 쪼개거나 `rgb(` 표기를 쓰면 content-budget 의
+	// 계수기가 오프너/화살표로 오검출하고, 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
+	// 색은 tokens.css 다크 블록 파생 — background=surface · mainBkg=sunken · nodeBorder/clusterBorder=line ·
+	// nodeTextColor=ink · lineColor=ink 40% · clusterBkg=ink 2% 워시 · focal=accent 10% 틴트+accent 테두리 · security=warn 50% dashed.
+	// flowchart 는 primaryColor/primaryBorderColor 가 아니라 mainBkg/nodeBorder/nodeTextColor 를 읽음 — 전자만 두면 전역 init 값이 그대로 이김.
+	// elk 튜닝 키는 지시자에서 4개만 살아남고(`sanitizeDirective`), 그중 기본값과 다른 것은 mergeEdges 뿐임.
+	mermaid_drawn: `%%{init: {"layout": "elk", "elk": {"mergeEdges": true}, "themeVariables": {"background": "#0c0a09", "mainBkg": "#181411", "nodeBorder": "#292524", "nodeTextColor": "#fafaf9", "lineColor": "#6b6a69", "clusterBkg": "#110f0e", "clusterBorder": "#292524", "edgeLabelBackground": "#0c0a09"}}}%%
+flowchart TD
     subgraph entry["External inputs"]
         repo[Project repository]
         user[User utterance]
@@ -465,6 +472,13 @@ export const CANONICAL_MAP: CanonicalMap = {
     user --> orch
     daemon --> orch
     orch -- "assigns work" --> agents
-    agents -- "tool calls" --> hooks`,
+    agents -- "tool calls" --> hooks
+
+    classDef focal fill:#1f2228,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
+    classDef external fill:#110f0e,stroke:#292524,color:#9b9a99
+    classDef security fill:#181411,stroke:#fbbf2480,stroke-width:2px,stroke-dasharray:4 4,color:#fafaf9
+    class main_session focal
+    class repo,user external
+    class hook_pipeline security`,
 	omitted_node_ids: ["to_data", "from_improvement", "to_html_gate"],
 };

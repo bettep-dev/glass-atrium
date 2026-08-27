@@ -88,6 +88,61 @@ test("AC-5 drawn node label chars <= its grade cap outside the literal exemption
   assert.equal(getBudgetReport(over, ASSIGNED_GRADE).state, "fail");
 });
 
+// P0-2 — 설정을 소스에 싣는 두 방법 중 frontmatter 는 ARROW 정규식이 `---` 를 엣지로 세어
+// balanced 상한(edges 6)을 넘긴다. 아래 픽스처가 그 사실의 반증 가능한 형태(ADR-2).
+const FRONTMATTER_FIXTURE = `---
+config:
+  layout: elk
+---
+${drawn}`;
+
+/** `class a,b role` 배정에서 role 을 받은 노드 id — classDef 선언이 아니라 실제 배정만 셈. */
+function getClassMembers(mermaid: string, className: string): string[] {
+  return mermaid.split("\n").flatMap((raw) => {
+    const match = raw.trim().match(/^class\s+([A-Za-z0-9_,-]+)\s+(\S+)$/);
+    return match !== null && match[2] === className ? (match[1] as string).split(",") : [];
+  });
+}
+
+test("P0-2 the layout directive is one physical line and contributes nothing to the census", () => {
+  const [head, ...body] = drawn.split("\n");
+  assert.match(
+    head as string,
+    /^%%\{init:.*\}%%$/,
+    "drawn must open with a single physical %%{init}%% line — a split directive revives opener/arrow miscounts",
+  );
+  // 지시자를 떼어낸 본문과 계수가 같아야 함 — 인용 키/괄호 없는 hex 규칙이 깨지면 여기서 붉어짐.
+  assert.deepEqual(getMermaidCensus(drawn), getMermaidCensus(body.join("\n")));
+});
+
+test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {
+  const fences = drawn
+    .split("\n")
+    .map((line, i) => [i + 1, line] as const)
+    .filter(([, line]) => line.startsWith("---"));
+  assert.deepEqual(
+    fences.map(([i]) => i),
+    [],
+    `frontmatter fence at line(s) ${fences.map(([i]) => i).join(", ")} — ARROW counts each as an edge`,
+  );
+  // adversarial: 같은 콘텐츠를 frontmatter 로 실으면 상한을 넘김 — 위 규칙이 지키는 대상.
+  const report = getBudgetReport(FRONTMATTER_FIXTURE, ASSIGNED_GRADE);
+  assert.equal(report.state, "fail");
+  const edges = report.measures.find((m) => m.metric === "edges");
+  assert.ok(edges !== undefined && edges.measured > edges.cap, `frontmatter edges ${edges?.measured}`);
+});
+
+test("P0-2 accent stays scarce — one or two nodes carry the focal class", () => {
+  const focal = getClassMembers(drawn, "focal");
+  const drawnIds = new Set(getMermaidCensus(drawn).nodes.map((n) => n.id));
+  assert.ok(focal.length >= 1, "no node carries the focal class — the accent budget is measured on nothing");
+  assert.ok(focal.length <= 2, `focal nodes ${focal.join(", ")} exceed the accent budget of 2`);
+  for (const id of focal) {
+    assert.ok(drawnIds.has(id), `focal class assigned to '${id}', which the drawn source does not declare`);
+  }
+  assert.match(drawn, /^\s*classDef focal\s/m, "the focal class must be declared before it is assigned");
+});
+
 test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", () => {
   assert.ok(canonicalSource !== undefined);
   const sourceCensus = getMermaidCensus(canonicalSource.mermaid_source);
