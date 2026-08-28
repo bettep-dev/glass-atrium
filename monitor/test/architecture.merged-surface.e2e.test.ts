@@ -217,7 +217,8 @@ type DaemonCardStub = Pick<DaemonStatusCard, "daemon_name" | "effective_status">
 interface HealthFixture {
 	daemons: DaemonCardStub[];
 	pg: PgHealthStub;
-	hookChain: Pick<HealthHookChainResponse, "events">;
+	// source_* 까지 담음 — T11 의 전역 블록이 "이 구성이 어느 파일에서 왔는가" 를 냄.
+	hookChain: Pick<HealthHookChainResponse, "events" | "source_path" | "source_mtime">;
 	payload: Pick<HealthDaemonPayloadResponse, "entries">;
 	hookFailures: Pick<HealthHookFailuresResponse, "count_24h" | "unretried_count_24h">;
 }
@@ -243,7 +244,11 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 			effective_status: "ok",
 		})),
 		pg: { status: "ok", db: "open", browser: "ok" },
-		hookChain: { events: [{ event: "PreToolUse", groups: [] }] },
+		hookChain: {
+			events: [{ event: "PreToolUse", groups: [] }],
+			source_path: "/fixture/.claude/settings.json",
+			source_mtime: "2026-08-20T04:05:06.000Z",
+		},
 		payload: {
 			entries: Array.from({ length: HEALTH_PAYLOAD_ENTRIES }, (_v, i) => ({
 				run_date: `2026-08-${String(20 + i).padStart(2, "0")}`,
@@ -1598,14 +1603,194 @@ test("T7 the run-payload fact counts the entries the payload response actually r
 	);
 });
 
-test("T7 the global block container leaves nothing in the tree while no block is registered", async () => {
+// 지금 등록된 전역 블록 — 이 목록이 트리에 그대로 나와야 함. T12c 가 항목을 더하면 여기도 같이 늘어남.
+const GLOBAL_BLOCK_IDS = ["hook-chain"];
+
+// T7 이 세운 컨테이너 계약의 살아 있는 쪽 — 등록된 블록이 하나도 빠짐없이, 그리고 그것만 트리에 남음.
+// T11 이 첫 항목을 등록하기 전에는 컨테이너가 통째로 없었고 이 단언이 그 사실을 재던 자리임.
+// 등록이 깨지면 블록이 0 개가 되어 붉어지고, 컨테이너가 등록을 무시해도 붉어짐.
+// 빈 명부 → 트리에 아무것도 없음 이라는 반대 방향은 명부를 인자로 갈아끼울 수 있는 단위 테스트가
+// 계속 잼(architecture.live-badge.client.unit.test.ts 의 `GlobalDetailRegion({ blocks: [] })`).
+// 여기서 그 방향을 못 재는 이유: 출하 번들은 iife 라 파일 최상단 선언이 window 에 없음.
+test("T7 the global block container holds exactly the registered blocks", async () => {
 	await openMap(getLiveFixture());
 	await waitForHealthStrip();
 
+	const tree = await page.evaluate(() => ({
+		containers: document.querySelectorAll(".arch-global-blocks").length,
+		blocks: [...document.querySelectorAll("[data-global-block]")].map(
+			(el) => el.getAttribute("data-global-block") || "",
+		),
+	}));
+
+	assert.equal(tree.containers, 1, "a non-empty registry must render exactly one container");
+	assert.deepEqual(
+		tree.blocks,
+		GLOBAL_BLOCK_IDS,
+		"the container must render every registered block and nothing else",
+	);
+});
+
+// --- T10: the database and browser readings on the strip -------------------
+
+// 스트립 한 줄이 실은 tone — 판정은 공용 카드 모델이 내고 줄은 그 값을 속성으로 실음.
+// 속성이 없으면 null: '줄이 없음' 과 'tone 이 없음' 을 부르는 이름이 서로 다름.
+async function getHealthFactTone(fact: string): Promise<string | null> {
+	return await page.evaluate((f) => {
+		const el = document.querySelector(`[data-health-fact="${f}"]`);
+		return el ? el.getAttribute("data-health-tone") : null;
+	}, fact);
+}
+
+// 스트립 전체에서 crit 을 실은 줄 — AC-T10 의 '표시하지 않음' 쪽을 재는 자리.
+async function getCritStripFacts(): Promise<string[]> {
+	return await page.evaluate(() =>
+		[...document.querySelectorAll('.arch-health-strip [data-health-tone="crit"]')].map(
+			(el) => el.getAttribute("data-health-fact") || "",
+		),
+	);
+}
+
+test("T10 an unreachable database shows a crit tone in the strip, a reachable one does not", async () => {
+	// 정상 픽스처 — 이쪽에서는 스트립 어디에도 crit 이 없어야 함.
+	await openMap(getLiveFixture());
+	await waitForHealthStrip();
+
+	assert.equal(await getHealthFactTone("pg"), "ok", "a reachable database must read ok");
+	assert.deepEqual(
+		await getCritStripFacts(),
+		[],
+		"no strip reading may sit in crit while every fixture response is healthy",
+	);
+
+	// 도달 불가 픽스처 — 같은 줄이 crit 으로 돌아야 함(AC-T10).
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "ok" } }),
+	);
+	await waitForHealthStrip();
+
 	assert.equal(
-		await page.evaluate(() => document.querySelectorAll(".arch-global-blocks").length),
-		0,
-		"an empty registry must render no container — T11 and T12c are what fill it",
+		await getHealthFactTone("pg"),
+		"crit",
+		"an unreachable database must turn the strip's PostgreSQL reading crit",
+	);
+	assert.deepEqual(await getCritStripFacts(), ["pg"], "only the database reading may go crit here");
+	// 판정과 함께 읽을 문장도 나와야 함 — tone 만 있고 이름이 없으면 조작자가 무엇이 죽었는지 모름.
+	assert.match(await getHealthFactText("pg"), /PostgreSQL/);
+});
+
+test("T10 the Chromium export reading follows the launch probe through all three of its values", async () => {
+	await openMap(getLiveFixture());
+	await waitForHealthStrip();
+	assert.equal(await getHealthFactTone("browser"), "ok", "a launching browser must read ok");
+
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getHealthFixture({ pg: { status: "ok", db: "open", browser: "failed" } }),
+	);
+	await waitForHealthStrip();
+	assert.equal(
+		await getHealthFactTone("browser"),
+		"crit",
+		"a browser that cannot launch must read crit — every HTML export is failing",
+	);
+
+	// 미프로브는 실패가 아님 — 정상으로 꾸미지도, 장애로 부르지도 않는 셋째 값.
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getHealthFixture({ pg: { status: "ok", db: "open", browser: "unprobed" } }),
+	);
+	await waitForHealthStrip();
+	assert.equal(await getHealthFactTone("browser"), "info", "an unprobed browser must read info");
+	assert.deepEqual(await getCritStripFacts(), [], "an unprobed browser is not a failure");
+});
+
+// --- T11: the hook chain configuration in a global block -------------------
+
+const HOOK_BLOCK_ID = "hook-chain";
+
+// 훅 구성 픽스처 — 화면이 지어낼 수 없는 값들. 이벤트 2종 · matcher 2종 · 훅 3개.
+const HOOK_FIXTURE_EVENTS: HealthHookChainResponse["events"] = [
+	{
+		event: "PreToolUse",
+		groups: [
+			{
+				matcher: "Write|Edit",
+				hooks: [
+					{ command: "hooks/enforce-harness-critical.sh", type: "command", timeout: 5 },
+					{ command: "hooks/enforce-delegation.sh", type: "command", timeout: null },
+				],
+			},
+			{
+				matcher: "Bash",
+				hooks: [{ command: "hooks/advisory-raw-store-read.sh", type: "command", timeout: 3 }],
+			},
+		],
+	},
+	{ event: "SubagentStop", groups: [] },
+];
+
+const HOOK_FIXTURE_SOURCE = "/Users/fixture/.claude/settings.json";
+
+function getHookChainFixture(): HealthFixture {
+	return getHealthFixture({
+		hookChain: {
+			events: HOOK_FIXTURE_EVENTS,
+			source_path: HOOK_FIXTURE_SOURCE,
+			source_mtime: "2026-08-20T04:05:06.000Z",
+		},
+	});
+}
+
+async function getHookBlockText(): Promise<string> {
+	return await page.evaluate((id) => {
+		const el = document.querySelector(`[data-global-block="${id}"]`);
+		return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
+	}, HOOK_BLOCK_ID);
+}
+
+test("T11 the hook chain block stays collapsed until its control is pressed", async () => {
+	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
+	await page.waitForSelector(`[data-global-block="${HOOK_BLOCK_ID}"]`, { timeout: 30_000 });
+
+	const control = page.locator(`[data-global-block="${HOOK_BLOCK_ID}"] button[aria-expanded]`);
+	assert.equal(
+		await control.getAttribute("aria-expanded"),
+		"false",
+		"the block must start collapsed — the map is not a settings dump",
+	);
+	const collapsed = await getHookBlockText();
+	assert.ok(
+		!collapsed.includes(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command),
+		`a collapsed block must not render its body, but it read: ${collapsed}`,
+	);
+
+	await control.click();
+	assert.equal(await control.getAttribute("aria-expanded"), "true");
+
+	// aria-controls 가 실제 요소를 가리켜야 함 — 가리키는 곳이 없으면 스크린리더에 관계가 안 남음.
+	const controlled = await page.evaluate((id) => {
+		const btn = document.querySelector(`[data-global-block="${id}"] button[aria-expanded]`);
+		const target = btn ? document.getElementById(btn.getAttribute("aria-controls") || "") : null;
+		return { hasTarget: Boolean(target) };
+	}, HOOK_BLOCK_ID);
+	assert.ok(controlled.hasTarget, "aria-controls must resolve to the expanded region");
+
+	const expanded = await getHookBlockText();
+	for (const group of HOOK_FIXTURE_EVENTS[0].groups) {
+		assert.ok(expanded.includes(group.matcher), `the expanded block must name the ${group.matcher} matcher`);
+		for (const hook of group.hooks) {
+			assert.ok(expanded.includes(hook.command), `the expanded block must name ${hook.command}`);
+		}
+	}
+	assert.ok(expanded.includes("PreToolUse"), "the expanded block must name the event the hooks fire on");
+	assert.ok(
+		expanded.includes(HOOK_FIXTURE_SOURCE),
+		"the expanded block must name the file the configuration was read from",
 	);
 });
 

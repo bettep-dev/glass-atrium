@@ -108,9 +108,48 @@ function getMapHealthKpis(states) {
 	return model.computeOverviewKpis(states);
 }
 
-// 전역 확장 블록 레지스트리 — 맵 하단의 화면-폭 상세 블록. T11(Hook chain) ·
-// T12c(Hook failure log) 가 항목을 더함. T7 은 자리를 세울 뿐 아무것도 등록하지 않음.
-const GLOBAL_DETAIL_BLOCKS = [];
+// 스트립이 tone 한 줄로 내는 카드 — 정의(kind · 표시 이름)는 공용 카드 목록에서 찾음 (T10).
+// 목록에서 사라지면 줄도 사라짐: 맵이 없는 카드의 판정을 지어내지 않음.
+const MAP_STRIP_CARD_IDS = ["pg", "browser"];
+
+// 카드 id → 스트립 한 줄. 판정(tone)은 health-model 의 resolveCardFacts 가, 표시 문장은 ui.jsx 의
+// 배지 표가 냄 — 맵은 어느 쪽도 다시 적지 않음. 둘째 tone 표를 들이면 KPI 분자와 이 줄이 갈라짐.
+// 문장은 tone 기본값(BADGE_TONE_META)을 씀: 카드별 오버라이드('Disconnected' 등)의 선택 로직은
+// 카드 격자의 것이고, 한 줄 요약이 그 분기를 복제하면 같은 판정을 두 곳에서 말하게 됨.
+// 모르는 tone 은 resolveBadge 가 info 로 떨어뜨림 — 가짜 ok 를 만들지 않음.
+// ready 가 아닌 응답은 줄을 내지 않음: 못 읽은 저장소는 아래 로드 실패 경보가 이름으로 부르고
+// (getHealthStoreErrorsAR), KPI fold 도 같은 규칙으로 ready 아닌 카드를 분모에서 뺌.
+function getMapStripReadings(states) {
+	const model = window.HealthModel;
+	if (!model || typeof model.resolveCardFacts !== "function") return [];
+
+	return MAP_STRIP_CARD_IDS.map((id) =>
+		(model.HEALTH_CARD_DEFS || []).find((def) => def.id === id),
+	)
+		.filter((def) => Boolean(def))
+		.map((def) => {
+			const facts = model.resolveCardFacts(def, states);
+			if (facts.status !== "ready") return null;
+
+			return {
+				id: def.id,
+				name: def.name,
+				tone: facts.tone,
+				statusLabel: window.UI.resolveBadge(facts.tone).label,
+			};
+		})
+		.filter((reading) => Boolean(reading));
+}
+
+// 전역 확장 블록 레지스트리 — 맵 하단의 화면-폭 상세 블록. T11(Hook chain) 이 첫 항목이고
+// T12c(Hook failure log) 가 뒤를 이음. 접힘/펼침은 항목이 아니라 컨테이너가 관리함.
+const GLOBAL_DETAIL_BLOCKS = [
+	{
+		id: "hook-chain",
+		title: "Hook chain",
+		render: (states) => <HookChainDetail state={states.hookState} />,
+	},
+];
 
 // render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
 function getGlobalDetailBlocks() {
@@ -123,6 +162,31 @@ function getGlobalDetailBlocks() {
 // id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는 이미 합법이라 그대로 통과).
 function getDaemonDetailId(daemonName) {
 	return `arch-daemon-detail-${String(daemonName || "").replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+// 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 가리키는 값 (T11).
+// 데몬 행과 같은 방식: id 문법을 벗어나는 문자만 하이픈으로 접음.
+function getGlobalBlockDetailId(blockId) {
+	return `arch-global-detail-${String(blockId || "").replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+// hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
+// null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 설정된 이벤트가 없음 — 다른 문장임.
+function getHookChainRows(state) {
+	if (!state || state.status !== "ready") return null;
+
+	return (state.data?.events || []).map((event) => {
+		const groups = (event.groups || []).map((group) => ({
+			matcher: group.matcher,
+			hooks: group.hooks || [],
+		}));
+
+		return {
+			event: event.event,
+			groups,
+			hookCount: groups.reduce((sum, group) => sum + group.hooks.length, 0),
+		};
+	});
 }
 
 // 확장 영역의 실행 줄 — 선택 데몬의 payload 응답을 날짜 + 사유로 접음.
@@ -396,6 +460,14 @@ function ScreenArchitecture(
 					// 전역 확장 블록 — 지도 아래 화면-폭 상세. 블록이 없으면 컨테이너 자체가 렌더되지 않음.
 					".arch-global-blocks { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; } " +
 					".arch-global-block { background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					// 블록 머리 = 펼침 컨트롤. 표 행과 같은 button 클래스를 쓰되 블록 폭을 다 차지해 클릭 면이 넓음.
+					".arch-global-block > .arch-row-toggle { width: 100%; padding: 6px 10px; } " +
+					".arch-global-block-body { padding: 0 10px 8px 22px; } " +
+					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
+					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
+					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
+					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
@@ -1086,7 +1158,8 @@ function getHealthStoreErrorsAR(states) {
  * health 응답 요약 스트립 — 이관된 health 화면의 KPI '정상 N/M' 이 앉는 지도 상단 한 줄.
  * 분모는 window.HealthModel 의 카드 정의 목록에서 나옴 — 맵이 총계를 자기 파일에 다시 적지
  * 않으므로 정의가 늘거나 줄면 분모가 따라 움직임 (F02 불변식의 화면 몫 · T14 가 잠금).
- * PG tone · Chromium tone 한 줄은 T10 이 이 스트립에 더함.
+ * PG · Chromium 은 KPI 숫자에 접힌 채로도 각자의 tone 한 줄을 냄 (T10) — 분자가 하나 줄었다는
+ * 사실만으로는 어느 부품이 죽었는지 대답하지 못함.
  */
 function HealthStrip({
 	daemonState,
@@ -1097,7 +1170,16 @@ function HealthStrip({
 	payloadDaemon,
 	onRetry,
 }) {
+	const { StatusDot } = window.UI;
+
 	const kpis = getMapHealthKpis({
+		daemonState,
+		pgState,
+		hookState,
+		hookFailState,
+	});
+
+	const readings = getMapStripReadings({
 		daemonState,
 		pgState,
 		hookState,
@@ -1119,7 +1201,8 @@ function HealthStrip({
 			? (payloadState.data?.entries || []).length
 			: null;
 
-	if (kpis === null && payloadCount === null && errors.length === 0) return null;
+	if (kpis === null && payloadCount === null && readings.length === 0 && errors.length === 0)
+		return null;
 
 	// 정보 버킷 공개 — 정상도 장애도 아닌 카드(미수신/미검증/한도)의 분모 귀속을 밝힘.
 	const infoHint = kpis && kpis.infoCount > 0 ? `${kpis.infoCount} informational` : "";
@@ -1145,6 +1228,21 @@ function HealthStrip({
 					</div>
 				</>
 			)}
+			{/* 부품 한 줄 — tone 은 속성으로도 실림. 색만으로 판정을 말하면 색을 못 읽는 조작자와
+			    하네스가 같은 문장을 못 읽음(문장은 statusLabel 이 냄). */}
+			{readings.map((reading) => (
+				<div
+					key={reading.id}
+					className="arch-queue-fact"
+					data-health-fact={reading.id}
+					data-health-tone={reading.tone}>
+					<span className="fs-micro text-faint">{reading.name}</span>
+					<span className="fs-meta text-ink inline-flex items-center gap-1.5">
+						<StatusDot status={reading.tone} />
+						{reading.statusLabel}
+					</span>
+				</div>
+			))}
 			{payloadCount !== null && (
 				<div className="arch-queue-fact" data-health-fact="run-payloads">
 					<span className="fs-micro text-faint">Run payloads</span>
@@ -1168,22 +1266,124 @@ function HealthStrip({
  * 전역 확장 블록 자리 — 지도 아래 화면-폭 상세. T11(Hook chain) · T12c(Hook failure log) 가 채움.
  * 등록된 블록이 없으면 null 을 냄: 빈 컨테이너가 지도와 표 사이에 여백만 남기지 않게 함.
  * blocks 를 인자로도 받음 — 레지스트리를 건드리지 않고 컨테이너 계약만 재는 자리를 남김.
+ * 접힘/펼침은 여기가 관리함 — 블록마다 제 상태를 들면 같은 규율을 항목 수만큼 다시 적게 됨.
  */
 function GlobalDetailRegion({ blocks = getGlobalDetailBlocks(), states }) {
+	// 한 번에 한 블록 — 화면-폭 상세가 여럿 열리면 지도 아래가 세로로 길어져 비교가 스크롤이 됨
+	// (확장 행과 같은 규율).
+	const [expandedBlock, setExpandedBlock] = useStateAR(null);
+
+	const toggleBlock = useCallbackAR((id) => {
+		setExpandedBlock((current) => (current === id ? null : id));
+	}, []);
+
 	if (blocks.length === 0) return null;
 
 	return (
 		<section className="arch-global-blocks" aria-label="System detail">
-			{blocks.map((block) => (
-				<div
-					key={block.id}
-					className="arch-global-block"
-					data-global-block={block.id}
-				>
-					{block.render(states)}
-				</div>
-			))}
+			{blocks.map((block) => {
+				const detailId = getGlobalBlockDetailId(block.id);
+				const isExpanded = expandedBlock === block.id;
+
+				return (
+					<div
+						key={block.id}
+						className="arch-global-block"
+						data-global-block={block.id}
+					>
+						{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
+						<button
+							type="button"
+							className="arch-row-toggle"
+							aria-expanded={isExpanded}
+							aria-controls={detailId}
+							onClick={() => toggleBlock(block.id)}>
+							<span className="arch-row-caret" aria-hidden="true">
+								{isExpanded ? "▾" : "▸"}
+							</span>
+							{block.title || block.id}
+						</button>
+						{/* 접힌 블록은 본문을 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음 */}
+						{isExpanded && (
+							<div id={detailId} className="arch-global-block-body">
+								{block.render(states)}
+							</div>
+						)}
+					</div>
+				);
+			})}
 		</section>
+	);
+}
+
+/**
+ * Hook chain 전역 블록 본문 — 이벤트 → matcher → 훅 (T11). 카드가 내던 요약(이벤트 수 · 훅 수)은
+ * "어느 훅이 어느 matcher 에 걸렸는가" 를 대답하지 못하므로 그 관계를 그대로 폄.
+ * 경로 · matcher · 명령 문자열은 settings.json 에서 읽어 온 서버 텍스트임. JSX 텍스트 자식으로만
+ * 두어 React 가 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면
+ * 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function HookChainDetail({ state }) {
+	const { formatRelativeTime } = window.UI;
+	const rows = getHookChainRows(state);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the hook configuration: {state.error}
+			</span>
+		);
+
+	if (rows === null)
+		return <span className="fs-meta text-dim">Loading the hook chain…</span>;
+
+	if (rows.length === 0)
+		return <span className="fs-meta text-dim">This settings file configures no hooks.</span>;
+
+	const sourceMtime = state.data?.source_mtime;
+
+	return (
+		<div className="arch-hook-chain">
+			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
+			<div className="arch-hook-head fs-meta text-dim">
+				<span className="font-mono text-ink">{state.data?.source_path || "—"}</span>
+				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
+			</div>
+			<ul className="arch-hook-events">
+				{rows.map((row) => (
+					<li key={row.event} className="arch-hook-event">
+						<div className="arch-hook-head">
+							<span className="fs-meta font-mono text-ink">{row.event}</span>
+							{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
+							<span className="fs-micro text-faint">{row.hookCount} hooks</span>
+						</div>
+						{row.groups.length > 0 && (
+							<ul className="arch-hook-groups">
+								{row.groups.map((group) => (
+									<li key={group.matcher} className="arch-hook-group">
+										<span className="fs-meta font-mono text-dim">{group.matcher}</span>
+										<ul className="arch-hook-list">
+											{group.hooks.map((hook, index) => (
+												<li
+													key={`${group.matcher}-${index}`}
+													className="arch-hook-head fs-meta text-dim">
+													<span className="font-mono text-ink">{hook.command}</span>
+													{hook.type && <span className="fs-micro text-faint">{hook.type}</span>}
+													{hook.timeout !== null && hook.timeout !== undefined && (
+														<span className="fs-micro text-faint">timeout {hook.timeout}s</span>
+													)}
+												</li>
+											))}
+										</ul>
+									</li>
+								))}
+							</ul>
+						)}
+					</li>
+				))}
+			</ul>
+		</div>
 	);
 }
 
