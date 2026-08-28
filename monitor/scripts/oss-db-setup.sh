@@ -15,6 +15,11 @@
 #   $ bash scripts/oss-db-setup.sh
 set -euo pipefail
 
+# Self-locating root for the shared library resolve below (the script is invoked from the monitor
+# project root, so a cwd-relative path would not reach scripts/lib/).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+
 # Exit-code semantics (for wrapper-script branching + dashboard alerting):
 #   3 = wrong cwd (not monitor root)      4 = required CLI missing (psql/createdb/npm)
 #   5 = createdb failure (perm/socket)    6 = prisma step failure (generate/deploy)
@@ -91,6 +96,32 @@ grant_public_create() {
     || fail "${EXIT_CREATEDB}" "GRANT CREATE ON SCHEMA public (DB '${name}', role '${DB_USER}') failed — check peer auth / privileges"
 }
 
+# resolve_backup_dir — the pg_dump backup directory, resolved through the ONE resolver that decides
+# whether [paths].backup_dir is adopted (atrium_backup_dir, ADR-6) instead of re-derived here, so an
+# operator relocation reaches the recreate backup exactly as it reaches the nightly job. The library
+# lives beside the engine, two levels up from this monitor-internal script.
+#
+# LIBRARY-ABSENT FALLBACK. The recreate path's whole point is that a verified backup precedes the
+# drop, so an unreachable library must not stop the backup: the default location is spelled here as
+# the last-resort constant (honouring GA_DB_BACKUP_DIR, which the resolver would otherwise honour
+# first) and the run continues after ONE loud WARN. That literal is pinned byte-equal to the
+# resolver's own default by test/db-backup-path-consistency.bats — the duplication is deliberate
+# (the SoT is unreachable in exactly the branch that needs it) and mechanically held equal.
+resolve_backup_dir() {
+  local lib="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/../../scripts/lib/atrium-config.sh}"
+  # An && chain, not `|| true`: every step's failure lands on the one fallback arm below, so no
+  # status is discarded and set -e stays armed for the rest of the run.
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/atrium-config.sh
+  if [[ -r "${lib}" ]] && . "${lib}" && declare -F atrium_backup_dir >/dev/null; then
+    atrium_backup_dir
+    return 0
+  fi
+  # STDERR, not log(): this function's stdout IS the resolved path, and log() here writes to stdout.
+  printf '[oss-db-setup] WARN: backup-dir resolver unavailable (%s) — using the default location\n' \
+    "${lib}" >&2
+  printf '%s\n' "${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
+}
+
 # Parameterized backup — dumps the argument DB (vs pg-backup.sh's hardcoded
 # '-d glass_atrium') so recreate's safety invariant ("never touch live glass_atrium")
 # holds. Custom format (-F c) for pg_restore compat + non-empty check; EXIT_RECREATE on
@@ -139,7 +170,7 @@ recreate_database() {
 
   # step 1 — backup before drop (parameterized, never touches live glass_atrium); timestamped file.
   local backup_dir backup_file
-  backup_dir="${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
+  backup_dir="$(resolve_backup_dir)"
   mkdir -p -- "${backup_dir}"
   backup_file="${backup_dir}/${name}-recreate-$(date +%Y%m%d-%H%M%S).dump"
   backup_db_to_file "${name}" "${backup_file}"

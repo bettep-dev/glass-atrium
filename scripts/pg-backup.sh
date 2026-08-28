@@ -3,7 +3,8 @@
 # Runs from launchd at 02:30 daily
 # (com.glass-atrium.pg-backup). Idempotent and safe to invoke manually any time.
 #
-# Storage:   ~/.glass-atrium/backups/postgres/glass_atrium-YYYYMMDD-HHMMSS.dump (custom -F c)
+# Storage:   <atrium_backup_dir>/glass_atrium-YYYYMMDD-HHMMSS.dump (custom -F c) — the
+#            directory is resolved by the shared ADR-6 resolver, never derived here.
 # Retention: keep 14 newest dumps; older ones moved to ~/.Trash/ (NEVER rm —
 #            per feedback_delete_to_trash.md and global file-deletion policy).
 # Auth:      peer authentication via Unix socket (/tmp). Socket-only absolute —
@@ -11,13 +12,13 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly BACKUP_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly TRASH_DIR="${HOME}/.Trash"
 readonly RETAIN_COUNT=14
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 readonly TIMESTAMP
 readonly FILENAME="glass_atrium-${TIMESTAMP}.dump"
-readonly DUMP_PATH="${BACKUP_DIR}/${FILENAME}"
 
 log() {
   printf '[pg-backup] %s\n' "$*" >&2
@@ -29,6 +30,33 @@ die() {
 }
 
 trap 'die "line ${LINENO}: ${BASH_COMMAND}"' ERR
+
+# Resolve the backup directory through the shared ADR-6 resolver, which is the ONE
+# place that decides whether [paths].backup_dir is adopted. This script no longer
+# derives the path itself, so an operator relocation reaches the nightly job.
+#
+# LIBRARY-ABSENT FALLBACK. This runs unattended from launchd, so a library that
+# moved must not stop the dump: the default location is spelled here as the
+# last-resort constant and the run continues after ONE loud WARN. That literal is
+# pinned byte-equal to the resolver's own default by
+# test/db-backup-path-consistency.bats — the duplication is deliberate (the SoT is
+# unreachable in exactly the branch that needs it) and mechanically held equal.
+resolve_backup_dir() {
+  local lib="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/lib/atrium-config.sh}"
+  # An && chain, not `|| true`: every step's failure lands on the one fallback arm
+  # below, so no status is discarded and set -e stays armed for the rest of the run.
+  # shellcheck source-path=SCRIPTDIR source=lib/atrium-config.sh
+  if [[ -r "${lib}" ]] && . "${lib}" && declare -F atrium_backup_dir >/dev/null; then
+    atrium_backup_dir
+    return 0
+  fi
+  log "WARN: backup-dir resolver unavailable (${lib}) — using the default location"
+  printf '%s\n' "${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres"
+}
+
+BACKUP_DIR="$(resolve_backup_dir)"
+readonly BACKUP_DIR
+readonly DUMP_PATH="${BACKUP_DIR}/${FILENAME}"
 
 # 1. Ensure backup directory exists. mkdir -p is idempotent.
 mkdir -p "${BACKUP_DIR}"

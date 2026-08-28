@@ -384,3 +384,44 @@ run_recreate() {
   [[ ! -d "${fake_home}/.claude/backups/postgres" ]] \
     || { echo "legacy .claude/backups/postgres created (seam leaked)" >&2; return 1; }
 }
+
+# --- AC-C3: the recreate backup follows the ADR-6 resolver -------------------
+#
+# The DEFAULT case above pins where the dump goes with nothing configured. This pins
+# the other half: a CONFIGURED relocation must reach the recreate backup, which it
+# can only do if the site resolves through atrium_backup_dir instead of deriving the
+# path itself. Case 2 of the ADR-6 table (destination EXISTS) is used so the value
+# is adopted and therefore differs from the default under the sandbox HOME.
+#
+# NO LIVE PATH LITERAL beyond the negative assertion already present in this file:
+# the fixture is built from sandbox paths.
+#
+# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every
+# assertion below `return 1`s with its own message so each fails independently.
+
+@test "AC-C3 GA_DB_RECREATE backup lands under a CONFIGURED backup_dir" {
+  # Same stub shape as the DEFAULT test: dropdb fails (exit 1) so the run stops at
+  # EXIT_RECREATE=8 right after the backup dir + dump file are created.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nexit 1\n' >"${STUB_BIN}/dropdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
+
+  local fake_home="${SANDBOX}/home" relocated="${SANDBOX}/relocated"
+  mkdir -p "${fake_home}" "${relocated}"
+  printf '[paths]\nbackup_dir = "%s"\n' "${relocated}" >"${SANDBOX}/config.toml"
+
+  # env -u options MUST precede the NAME=value assignments (else env treats -u as the cmd).
+  run env -u GA_DB_BACKUP_DIR -u GA_DATA_ROOT -u GA_ROOT \
+    GA_DB_RECREATE=1 GA_DB_NAME=claude_oss_e2e HOME="${fake_home}" \
+    ATRIUM_CONFIG_TOML="${SANDBOX}/config.toml" \
+    PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
+  [[ "${status}" -eq 8 ]] || { echo "expected EXIT_RECREATE=8, got ${status}; out=${output}" >&2; return 1; }
+  # the recreate dump landed at the CONFIGURED location …
+  local dumps=("${relocated}"/claude_oss_e2e-recreate-*.dump)
+  [[ -e "${dumps[0]}" ]] || { echo "no dump under the configured dir; out=${output}" >&2; return 1; }
+  # … and the default location under HOME was never used.
+  [[ ! -d "${fake_home}/.glass-atrium/backups/postgres" ]] \
+    || { echo "dump leaked to the default location while a relocation was configured" >&2; return 1; }
+}

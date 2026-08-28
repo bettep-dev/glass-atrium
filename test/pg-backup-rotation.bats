@@ -8,10 +8,19 @@
 # Run via: bats test/pg-backup-rotation.bats
 # Requires: bats (brew install bats-core), bash 3.2+
 #
+# It also pins the ADR-6 wiring (AC-C3): the script resolves its directory through
+# the shared resolver, so a configured relocation must carry BOTH the dump and its
+# rotation, and an unreachable resolver library must still produce a dump — the job
+# runs unattended from launchd, where dying because a library moved is the worst
+# available outcome.
+#
 # Hermetic strategy: HOME is redirected to a mktemp sandbox (so the script's
 # BACKUP_DIR + TRASH_DIR resolve inside it), and a fake pg_dump on PATH writes a
 # non-empty payload — the real glass_atrium database and the real ~/.glass-atrium
 # backups are never touched (SECURITY: no real pg_dump ever runs).
+#
+# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every
+# assertion below `return 1`s with its own message so each fails independently.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/pg-backup.sh"
@@ -49,13 +58,19 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
-# seed_nightly <count> — create <count> dated nightly dumps (ascending dates).
-seed_nightly() {
-  local n="$1" i day
+# seed_nightly_in <dir> <count> — create <count> dated nightly dumps (ascending dates).
+seed_nightly_in() {
+  local dir="$1" n="$2" i day
+  mkdir -p -- "${dir}"
   for ((i = 1; i <= n; i++)); do
     day="$(printf '202601%02d' "${i}")"
-    printf 'SEED\n' >"${BACKUP_DIR}/glass_atrium-${day}-000000.dump"
+    printf 'SEED\n' >"${dir}/glass_atrium-${day}-000000.dump"
   done
+}
+
+# seed_nightly <count> — the same, at the default location.
+seed_nightly() {
+  seed_nightly_in "${BACKUP_DIR}" "$1"
 }
 
 # Write one keep-forever pre-uninstall dump (matches lib/ga-db.sh naming).
@@ -65,8 +80,12 @@ seed_preuninstall() {
 
 # Count dated nightly dumps present (excludes the pre-uninstall dump, which
 # begins with 'p' not a digit).
+count_nightly_in() {
+  find "$1" -maxdepth 1 -type f -name 'glass_atrium-[0-9]*.dump' | wc -l | tr -d '[:space:]'
+}
+
 count_nightly() {
-  find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'glass_atrium-[0-9]*.dump' | wc -l | tr -d '[:space:]'
+  count_nightly_in "${BACKUP_DIR}"
 }
 
 run_backup() {
@@ -103,6 +122,81 @@ run_backup() {
   }
   [[ -f "${BACKUP_DIR}/glass_atrium-pre-uninstall-20260601-000000.dump" ]] || {
     echo "pre-uninstall dump was rotated to trash (keep-forever violated)"
+    return 1
+  }
+}
+
+# --- AC-C3: the ADR-6 resolver decides where the dump lands ------------------
+#
+# NO LIVE PATH LITERAL: test/db-backup-path-consistency.bats greps every tracked
+# file for the stale backup path, so the fixture below uses sandbox paths only.
+
+# run_backup_with <config.toml path> <resolver library path> — drive the script with
+# the config seam and the library seam both pinned. A library path that does not
+# exist exercises the fallback arm.
+run_backup_with() {
+  run env -u GA_DATA_ROOT -u GA_ROOT -u GA_DB_BACKUP_DIR \
+    HOME="${FAKE_HOME}" PATH="${FAKE_BIN}:${PATH}" \
+    ATRIUM_CONFIG_TOML="$1" ATRIUM_CONFIG_LIB="$2" \
+    bash "${REAL_SCRIPT}"
+}
+
+@test "AC-C3 a configured backup_dir carries BOTH the nightly dump and its rotation" {
+  local relocated="${SANDBOX}/relocated" kept
+  # Case 2 of the ADR-6 table: the destination EXISTS, so the configured value is
+  # adopted and differs from the default location under this sandbox HOME.
+  mkdir -p -- "${relocated}"
+  printf '[paths]\nbackup_dir = "%s"\n' "${relocated}" >"${SANDBOX}/config.toml"
+  # One dump over the retention window, seeded AT the configured location, so the
+  # rotation has to run there too.
+  seed_nightly_in "${relocated}" "$((RETAIN_COUNT + 1))"
+
+  run_backup_with "${SANDBOX}/config.toml" "${GA}/scripts/lib/atrium-config.sh"
+  [[ "${status}" -eq 0 ]] || {
+    echo "script exit ${status}: ${output}" >&2
+    return 1
+  }
+  # the rotation ran at the configured location, leaving exactly the window …
+  kept="$(count_nightly_in "${relocated}")"
+  [[ "${kept}" -eq "${RETAIN_COUNT}" ]] || {
+    echo "nightly retained at the configured dir = ${kept}, expected ${RETAIN_COUNT}" >&2
+    return 1
+  }
+  # … today's dump is one of them (the script wrote where it rotated) …
+  [[ -n "$(find "${relocated}" -maxdepth 1 -type f -name "glass_atrium-$(date +%Y%m%d)-*.dump")" ]] || {
+    echo "today's dump did not land at the configured dir; out=${output}" >&2
+    return 1
+  }
+  # … and the default location was never written to.
+  [[ "$(count_nightly_in "${BACKUP_DIR}")" -eq 0 ]] || {
+    echo "dumps leaked to the default location while a relocation was configured" >&2
+    return 1
+  }
+}
+
+@test "AC-C3 an unreachable resolver library still dumps, with exactly one WARN" {
+  local warns
+  # A config that WOULD relocate, paired with a library that cannot be read: the
+  # fallback must ignore the unread config and use the default location rather than
+  # abort the unattended job.
+  mkdir -p -- "${SANDBOX}/relocated"
+  printf '[paths]\nbackup_dir = "%s"\n' "${SANDBOX}/relocated" >"${SANDBOX}/config.toml"
+
+  run_backup_with "${SANDBOX}/config.toml" "${SANDBOX}/no-such-library.sh"
+  [[ "${status}" -eq 0 ]] || {
+    echo "library-absent run exited ${status}: ${output}" >&2
+    return 1
+  }
+  [[ -n "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name "glass_atrium-$(date +%Y%m%d)-*.dump" -size +0c)" ]] || {
+    echo "no dump at the default location on the fallback path; out=${output}" >&2
+    return 1
+  }
+  # Exactly one WARN: the fallback is announced once, and nothing else warns on a
+  # run this small (the rotation branch is the only other WARN emitter).
+  warns="$(printf '%s\n' "${output}" | grep -c 'WARN' || true)"
+  [[ -z "${warns}" ]] && warns=0
+  [[ "${warns}" -eq 1 ]] || {
+    echo "expected exactly 1 WARN line, got ${warns}; out=${output}" >&2
     return 1
   }
 }
