@@ -28,9 +28,7 @@ setup() {
   export GA_ROOT="${WORK}/root"
   python3 -c 'import yaml' 2>/dev/null \
     || skip "PyYAML not importable under python3 — sync-registry-tools.sh cannot run; install requirements.txt on this leg"
-  # Deliberately NOT named AGENTS_DIR/REGISTRY_PATH: those two are the script's
-  # documented per-path test seam, and a future `export` of a same-named helper
-  # would silently take over the root resolution this file is isolating with.
+  # The two paths the script derives from the root; the fixtures land here.
   AGENTS="${GA_ROOT}/agents"
   REGISTRY="${GA_ROOT}/agent-registry.json"
   export REG="${REGISTRY}"
@@ -64,6 +62,36 @@ write_agent_md() {
     printf '%s\n' "${frontmatter}"
     printf -- '---\n\n> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n'
   } >"${AGENTS}/glass-atrium-dev-x.md"
+}
+
+# The `tools:` VALUE is the only frontmatter most cases vary — `$1` is that value.
+# A case probing the frontmatter SHAPE itself (a duplicate key, a block list,
+# malformed YAML) writes the whole body through write_agent_md instead.
+write_agent_tools() {
+  write_agent_md "name: glass-atrium-dev-x
+tools: ${1}"
+}
+
+# Snapshot the registry bytes, then assert them byte-identical (or not) — "wrote
+# nothing" is the shared claim of the refusal, dry-run and failed-write cases.
+# The snapshot is a global so neither assertion needs an argument, and no test
+# body reads it directly.
+snapshot_registry() {
+  REGISTRY_BEFORE="$(cat "${REGISTRY}")"
+}
+
+assert_registry_unchanged() {
+  [[ "$(cat "${REGISTRY}")" == "${REGISTRY_BEFORE}" ]] || {
+    echo "registry changed, but this case requires it untouched" >&2
+    return 1
+  }
+}
+
+assert_registry_changed() {
+  [[ "$(cat "${REGISTRY}")" != "${REGISTRY_BEFORE}" ]] || {
+    echo "registry unchanged, but this case requires a write" >&2
+    return 1
+  }
 }
 
 # Build a SECOND root (outside GA_ROOT) so root precedence has somewhere else
@@ -114,23 +142,21 @@ temp_leftovers() {
   write_agent_md 'name: glass-atrium-dev-x
 tools: [Read]
 "tools": [Read, Bash, Write]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  snapshot_registry
   run "${SCRIPT}"
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"parse failed"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }
 
 @test "duplicate bare tools key: refused, registry not widened" {
   write_agent_md 'name: glass-atrium-dev-x
 tools: [Read]
 tools: [Read, Bash, Write]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  snapshot_registry
   run "${SCRIPT}"
   [[ "${status}" -eq 2 ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }
 
 @test "duplicate single-quoted tools key: refused" {
@@ -161,8 +187,7 @@ tools: [Read]
 # --- benign paths (non-regression) -----------------------------------------
 
 @test "single tools key differing from registry: synced through" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
+  write_agent_tools '[Read, Bash]'
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"updated=1"* ]] || return 1
@@ -179,8 +204,7 @@ tools: [Read, Bash]'
 }
 
 @test "already-matching tools: idempotent no-op" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read]'
+  write_agent_tools '[Read]'
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"synced=1 updated=0"* ]] || return 1
@@ -206,19 +230,16 @@ tools: [Read'
 # --- root resolution · DRY_RUN contract · --check ---------------------------
 
 @test "--check on drift: nonzero exit, registry untouched" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  write_agent_tools '[Read, Bash]'
+  snapshot_registry
   run "${SCRIPT}" --check
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"DRIFT"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }
 
 @test "--check on a converged registry: exit 0" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read]'
+  write_agent_tools '[Read]'
   run "${SCRIPT}" --check
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"synced=1 updated=0"* ]] || return 1
@@ -228,8 +249,7 @@ tools: [Read]'
 @test "--root outranks GA_ROOT: the flag's root decides the verdict" {
   # GA_ROOT is converged; the --root tree drifts. A rc-3 verdict can only come
   # from the flag's tree, and the reverse pairing must then come back rc 0.
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read]'
+  write_agent_tools '[Read]'
   write_alt_root '[Read, Bash]'
   run "${SCRIPT}" --root "${ALT}" --check
   [[ "${status}" -eq 3 ]] || return 1
@@ -239,31 +259,28 @@ tools: [Read]'
 }
 
 @test "DRY_RUN=1: dry-run, not a write (only empty/false/0 opt out)" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  write_agent_tools '[Read, Bash]'
+  snapshot_registry
   run env DRY_RUN=1 "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"PLANNED UPDATES"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
   # ...and the documented opt-out still writes, so the guard is not blanket.
   run env DRY_RUN=0 "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
-  [[ "$(cat "${REGISTRY}")" != "${before}" ]] || return 1
+  assert_registry_changed || return 1
 }
 
 @test "failure seam: an unreadable root fails loudly and writes nothing" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
-  local before missing
-  before="$(cat "${REGISTRY}")"
+  write_agent_tools '[Read, Bash]'
+  local missing
+  snapshot_registry
   missing="${WORK}/absent-root"
   run "${SCRIPT}" --root "${missing}" --check
   [[ "${status}" -eq 1 ]] || return 1
   [[ "${output}" == *"registry load failed"* ]] || return 1
   [[ "${output}" == *"${missing}"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }
 
 # --- atomic write path · SYNC_REGISTRY_FAIL_VALIDATE seam -------------------
@@ -275,22 +292,19 @@ tools: [Read, Bash]'
 # seam inert, so these four cases go red together: that is their RED control.
 
 @test "write seam armed: the drifted write fails loudly, registry byte-identical" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  write_agent_tools '[Read, Bash]'
+  snapshot_registry
   run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}"
   [[ "${status}" -eq 1 ]] || return 1
   [[ "${output}" == *"registry write failed"* ]] || return 1
   # The helper's own rejection text — this is what pins the write to the atomic
   # path rather than to a direct write that happened to raise.
   [[ "${output}" == *"post-write validation rejected"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }
 
 @test "write seam armed: no temp file survives beside the registry" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
+  write_agent_tools '[Read, Bash]'
   run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}"
   [[ "${status}" -eq 1 ]] || return 1
   run temp_leftovers
@@ -298,8 +312,7 @@ tools: [Read, Bash]'
 }
 
 @test "write seam unset: the write lands and the result re-parses as JSON" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
+  write_agent_tools '[Read, Bash]'
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"updated=1"* ]] || return 1
@@ -314,12 +327,10 @@ tools: [Read, Bash]'
 @test "write seam armed under --check: the read-only contract is unaffected" {
   # The seam must live on the WRITE path only — CI and doctor consume --check,
   # and a seam that leaked into it would change their verdict.
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read, Bash]'
-  local before
-  before="$(cat "${REGISTRY}")"
+  write_agent_tools '[Read, Bash]'
+  snapshot_registry
   run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}" --check
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"DRIFT"* ]] || return 1
-  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+  assert_registry_unchanged || return 1
 }

@@ -483,6 +483,16 @@ _undeclared_field() {
   printf '%s\n' "${output}" | grep -F 'undeclared-present:' || true
 }
 
+# The positive control both AC8 cases seed: a genuinely undeclared file that MUST
+# be reported, so an empty drift report cannot pass either test. `$1` is the
+# `undeclared-present:` field.
+_assert_control_reported() {
+  [[ "${1}" == *"undeclared-extra.md"* ]] || {
+    echo "control file unreported — the drift scan is not running: ${output}"
+    return 1
+  }
+}
+
 @test "AC8 the injection-text source is exempt, so Layer A stops reporting it" {
   # Behavioural, not a list assertion: the file is seeded where the live one
   # lives and left out of the matrix, which is exactly the standing advisory
@@ -494,10 +504,7 @@ _undeclared_field() {
   run run_hook
   local field
   field="$(_undeclared_field)"
-  [[ "${field}" == *"undeclared-extra.md"* ]] || {
-    echo "control file unreported — the drift scan is not running: ${output}"
-    return 1
-  }
+  _assert_control_reported "${field}" || return 1
   [[ "${field}" != *"shared-turn-budget.md"* ]] || {
     echo "an exempt file surfaced in the drift report: ${field}"
     return 1
@@ -517,26 +524,19 @@ _undeclared_field() {
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
     : >"${SCOPED_DIR}/${name}"
-  done <<EOF
-${exempt}
-EOF
+  done <<<"${exempt}"
   : >"${RULES_DIR}/undeclared-extra.md"
 
   run run_hook
   field="$(_undeclared_field)"
-  [[ "${field}" == *"undeclared-extra.md"* ]] || {
-    echo "control file unreported — the drift scan is not running: ${output}"
-    return 1
-  }
+  _assert_control_reported "${field}" || return 1
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
     case "${field}" in
       *"${name}"*) missing="${missing}${name} " ;;
       *) ;;
     esac
-  done <<EOF
-${exempt}
-EOF
+  done <<<"${exempt}"
   [[ -z "${missing}" ]] || {
     echo "exempt file(s) reported as undeclared-present: ${missing}— ${field}"
     return 1

@@ -12,9 +12,9 @@
 # different roots: a CI checkout (`--root`), a sandbox (`GA_ROOT`), and the live
 # install (the default):
 #   1. `--root <dir>`   2. `${GA_ROOT}`   3. `${HOME}/.glass-atrium`
-# AGENTS_DIR and REGISTRY_PATH are DERIVED from the resolved root. Setting either
-# variable directly in the environment overrides its derived value — that is a
-# TEST SEAM, not a supported interface; callers pass `--root`/`GA_ROOT` instead.
+# AGENTS_DIR and REGISTRY_PATH are DERIVED from the resolved root and readonly:
+# neither is an interface, and an inherited variable of either name cannot
+# silently redirect the read behind a caller's `--root`.
 #
 # Re-run after editing any `tools:` array, adding/removing an agent, or as a
 # periodic drift check (`--check` for an exit code, `--dry-run` to read the
@@ -54,12 +54,6 @@
 # file, re-parse, structure check, then one `os.replace`. A crash or a rejected
 # payload leaves the live file untouched and removes the temp. The direct
 # `write_text` this used to call could leave a half-written registry in place.
-#
-# Test seam: a NON-EMPTY `SYNC_REGISTRY_FAIL_VALIDATE` makes the post-write
-# validator reject, so the helper raises just before the rename — the write path
-# fails (exit 1) with the registry byte-identical and no temp left behind. It is
-# a test seam, not an interface; the public `validate=` argument is the only
-# failure point a caller can reach (`before_replace` is bound inside the helper).
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -117,13 +111,14 @@ if [[ -z "${ROOT}" ]]; then
 fi
 readonly ROOT
 
-# Derived from the resolved root; a direct env value wins as a TEST SEAM only.
-REGISTRY_PATH="${REGISTRY_PATH:-${ROOT}/agent-registry.json}"
-AGENTS_DIR="${AGENTS_DIR:-${ROOT}/agents}"
+# Derived from the resolved root, never from a same-named inherited variable.
+REGISTRY_PATH="${ROOT}/agent-registry.json"
+AGENTS_DIR="${ROOT}/agents"
+readonly REGISTRY_PATH AGENTS_DIR
 
 # Capture the python source up-front (NOT inlined into `python3 -c` alongside a
-# heredoc — SC2259: stdin would be overwritten, blocking pipe input). We pass
-# the registry path + dry-run flag via env vars so the script body stays clean.
+# heredoc — SC2259: stdin would be overwritten, blocking pipe input). Every
+# resolved path and mode flag reaches it through the env exports at the bottom.
 PY_SRC="$(
   cat <<'PY'
 import json

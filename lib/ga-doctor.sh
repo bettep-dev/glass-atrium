@@ -1031,8 +1031,9 @@ run_doctor() {
   #     run by construction, so this section never writes. The tool is resolved from THIS FILE's
   #     location (the §18 idiom) and aimed at GA_ROOT with `--root`, so a bats-sourced doctor checks
   #     the sandbox tree with the shipped tool.
-  local tools_mirror_dir="" tools_mirror_tool="" tools_mirror_out="" tools_mirror_line=""
-  local tools_mirror_rc=0 tools_mirror_drift="" tools_mirror_count=0
+  local tools_mirror_dir="" tools_mirror_tool="" tools_mirror_out=""
+  local tools_mirror_line="" tools_mirror_name="" tools_mirror_rc=0
+  local tools_mirror_drift="" tools_mirror_count=0
   tools_mirror_dir="$(cd -- "${BASH_SOURCE[0]%/*}/../scripts" 2>/dev/null && pwd)" || tools_mirror_dir=""
   tools_mirror_tool="${tools_mirror_dir}/sync-registry-tools.sh"
   if [[ -z "${tools_mirror_dir}" || ! -f "${tools_mirror_tool}" ]]; then
@@ -1054,10 +1055,10 @@ run_doctor() {
       while IFS= read -r tools_mirror_line; do
         case "${tools_mirror_line}" in
           '  - '*': '*)
-            tools_mirror_line="${tools_mirror_line#  - }"
-            tools_mirror_line="${tools_mirror_line%%:*}"
-            [[ -n "${tools_mirror_line}" ]] || continue
-            tools_mirror_drift="${tools_mirror_drift}${tools_mirror_drift:+, }${tools_mirror_line}"
+            tools_mirror_name="${tools_mirror_line#  - }"
+            tools_mirror_name="${tools_mirror_name%%:*}"
+            [[ -n "${tools_mirror_name}" ]] || continue
+            tools_mirror_drift="${tools_mirror_drift}${tools_mirror_drift:+, }${tools_mirror_name}"
             tools_mirror_count=$((tools_mirror_count + 1))
             ;;
           # Every other line (the metric line, the ORPHANS/MISSING/SKIPPED blocks, the DRIFT
