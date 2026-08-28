@@ -38,6 +38,9 @@ function makeCtx(
     compatibility: null,
     description: null,
     dualPhase: false,
+    // Required on SummaryItemContext (not optional) — the factory used to omit it and
+    // relied on `overrides` to supply it, which no call site did.
+    origin: null,
     ...overrides,
   };
 }

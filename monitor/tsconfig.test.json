@@ -1,0 +1,23 @@
+{
+	// `lib` adds "DOM" on top of the base ES2022: every DOM global reference in test/ sits inside a
+	// Playwright browser-context callback (page.evaluate / waitForFunction), which really does run in a
+	// document — 79/79 sites verified. It is a type-honest widening, not a suppression: it resolved 30
+	// downstream `unknown` errors by giving querySelectorAll its real NodeListOf<Element> return, and it
+	// SURFACED 3 new ones (TS2352 on the Node-side `globalThis as { window }` stubs), which is the
+	// counter-check that it is not masking. Residual accepted: a future Node-context `document` use would
+	// no longer be caught by the compiler here. Base tsconfig.json stays ES2022-only — src/ is Node.
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": ".",
+		"lib": ["ES2022", "DOM"],
+		// `allowJs` (with checkJs off) lets tsc INFER types for the browser modules the tests
+		// import for their side effects (public/src/**/*.js) instead of resolving them to an
+		// implicit `any` — a real typing gain, not a suppression: it is what gives the
+		// window.HealthModel handle a shape at all. checkJs stays off because public/src is
+		// esbuild-bundled browser JSX, outside this program's remit.
+		"allowJs": true,
+		"checkJs": false
+	},
+	"include": ["test/**/*"]
+}
