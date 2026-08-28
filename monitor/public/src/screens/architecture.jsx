@@ -149,6 +149,11 @@ const GLOBAL_DETAIL_BLOCKS = [
 		title: "Hook chain",
 		render: (states) => <HookChainDetail state={states.hookState} />,
 	},
+	{
+		id: "hook-failures",
+		title: "Hook failure log",
+		render: (states) => <HookFailureDetail state={states.hookFailState} />,
+	},
 ];
 
 // render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
@@ -187,6 +192,37 @@ function getHookChainRows(state) {
 			hookCount: groups.reduce((sum, group) => sum + group.hooks.length, 0),
 		};
 	});
+}
+
+// error_kind → 표시 라벨. 라벨 자체가 신호라서 색은 보조임 — 색맹 안전(듀얼 인코딩).
+// 서버 union 5종을 모두 적음: 빠진 종류는 아래 폴백이 원문 문자열을 그대로 부르므로
+// 화면이 모르는 실패를 'Unknown' 으로 접어 없애지 않음.
+const HOOK_FAIL_KIND = {
+	connection_refused: { tone: "crit", label: "Connection refused" },
+	timeout: { tone: "warn", label: "Timed out" },
+	constraint_violation: { tone: "warn", label: "Data conflict" },
+	identifier_rejected: { tone: "warn", label: "Identifier rejected" },
+	unknown: { tone: "info", label: "Unknown" },
+};
+
+function getHookFailKind(kind) {
+	return HOOK_FAIL_KIND[kind] || { tone: "info", label: String(kind || "—") };
+}
+
+// hook-failures 응답 → 실패 한 줄씩 (T12c). 창(days) 안의 목록이고, 창 밖 최종기록은
+// 이 목록이 아니라 응답의 last_failure_ts 가 냄 — 둘은 다른 사실이라 여기서 섞지 않음.
+// null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 창 안에 실패가 없음 — 다른 문장임.
+function getHookFailureRows(state) {
+	if (!state || state.status !== "ready") return null;
+
+	return (state.data?.failures || []).map((failure, index) => ({
+		key: failure?.id ?? `${failure?.failure_ts}-${index}`,
+		failureTs: failure?.failure_ts || null,
+		hookName: failure?.hook_name || "—",
+		targetTable: failure?.target_table || "—",
+		kind: getHookFailKind(failure?.error_kind),
+		retryAttempted: Boolean(failure?.retry_attempted),
+	}));
 }
 
 // 확장 영역의 실행 줄 — 선택 데몬의 payload 응답을 날짜 + 사유로 접음.
@@ -1387,6 +1423,87 @@ function HookChainDetail({ state }) {
 	);
 }
 
+/**
+ * Hook failure log 전역 블록 본문 — 창 안 실패 목록 + 창 무관 최종기록 (T12c).
+ * 두 사실을 따로 부름: 목록은 days 창에 매인 값이라 창이 비면 사라지지만, 마지막으로 실패한
+ * 시각은 창 밖 MAX 이므로 남음. 빈 창을 '한 번도 실패한 적 없음'으로 읽히게 두면 조작자가
+ * 조사할 사건을 조사하지 않게 됨 — 서버가 그 둘을 갈라 주는 이유가 여기임.
+ * 최종기록은 응답 필드에서만 읽음: 목록 최댓값으로 유도하면 빈 창에서 값이 사라짐.
+ * hook 이름 · 테이블 · error_kind 는 실패 로그에서 온 서버 텍스트임. JSX 텍스트 자식과
+ * dateTime/title 속성으로만 두어 React 가 이스케이프하게 함 — 이 경로에 raw-HTML
+ * 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는
+ * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function HookFailureDetail({ state }) {
+	const { formatRelativeTime, formatKstFull } = window.UI;
+	const rows = getHookFailureRows(state);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the hook failures: {state.error}
+			</span>
+		);
+
+	if (rows === null)
+		return <span className="fs-meta text-dim">Loading the hook failure log…</span>;
+
+	const days = state.data?.days;
+	const lastFailure = state.data?.last_failure_ts || null;
+
+	return (
+		<div className="arch-hook-fails">
+			<div className="arch-hook-head fs-meta text-dim">
+				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
+				<span className="text-ink">
+					{rows.length} {rows.length === 1 ? "failure" : "failures"} in the last{" "}
+					{days ?? "—"} days
+				</span>
+				{lastFailure ? (
+					<span>
+						Last failure{" "}
+						<time
+							data-hook-fail-last=""
+							dateTime={lastFailure}
+							title={formatKstFull(lastFailure)}>
+							{formatRelativeTime(lastFailure)}
+						</time>
+					</span>
+				) : (
+					<span>This log has never held a hook failure.</span>
+				)}
+			</div>
+			{rows.length > 0 && (
+				<ul className="arch-hook-fail-list">
+					{rows.map((row) => (
+						<li
+							key={row.key}
+							data-hook-fail-row=""
+							className="arch-hook-head fs-meta text-dim">
+							<time
+								className="font-mono"
+								dateTime={row.failureTs}
+								title={formatKstFull(row.failureTs)}>
+								{formatRelativeTime(row.failureTs)}
+							</time>
+							<span className="font-mono text-ink">{row.hookName}</span>
+							<span className="font-mono">{row.targetTable}</span>
+							{/* 라벨이 신호이고 색은 보조 — 색만으로 실패 종류를 가르지 않음 */}
+							<span className={TONE_TEXT_CLASS[row.kind.tone] || "text-dim"}>
+								{row.kind.label}
+							</span>
+							{row.retryAttempted && (
+								<span className="fs-micro text-faint">retried</span>
+							)}
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
 // 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
 
 function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
@@ -1716,8 +1833,10 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 	);
 }
 
-// 아이콘 색 클래스는 리터럴 표 — 조립한 클래스명은 클래스 스캐너가 보지 못함.
-const BANNER_TONE_TEXT_CLASS = {
+// tone → 글자색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
+// 배너 아이콘과 실패 로그의 error_kind 라벨이 같은 표를 씀 — 둘째 표를 들이면 같은 tone 이
+// 화면 자리마다 다른 색으로 갈라짐.
+const TONE_TEXT_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
@@ -1742,7 +1861,7 @@ function AlertBannerAR({ tone, icon, title, note, badges }) {
 			<Icon
 				name={icon}
 				size={16}
-				className={`${BANNER_TONE_TEXT_CLASS[tone]} mt-0.5`}
+				className={`${TONE_TEXT_CLASS[tone]} mt-0.5`}
 			/>
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{title}</div>

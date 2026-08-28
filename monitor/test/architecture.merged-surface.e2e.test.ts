@@ -49,6 +49,7 @@ import type {
 	HealthDaemonsResponse,
 	HealthHookChainResponse,
 	HealthHookFailuresResponse,
+	HookFailureEntry,
 } from "../src/server/types/health-detail.js";
 import {
 	assertFallbackWarningVisible,
@@ -220,7 +221,12 @@ interface HealthFixture {
 	// source_* 까지 담음 — T11 의 전역 블록이 "이 구성이 어느 파일에서 왔는가" 를 냄.
 	hookChain: Pick<HealthHookChainResponse, "events" | "source_path" | "source_mtime">;
 	payload: Pick<HealthDaemonPayloadResponse, "entries">;
-	hookFailures: Pick<HealthHookFailuresResponse, "count_24h" | "unretried_count_24h">;
+	// 창 안 목록(failures)과 창 밖 최종기록(last_failure_ts)을 따로 실음 — T12c 가 재는 것이
+	// 정확히 그 둘이 다른 사실이라는 점이고, 한 값으로 접으면 빈 창 케이스를 세울 자리가 없어짐.
+	hookFailures: Pick<
+		HealthHookFailuresResponse,
+		"count_24h" | "unretried_count_24h" | "failures" | "error_kind_breakdown" | "last_failure_ts"
+	>;
 }
 
 // HEALTH_CARD_DEFS 의 daemon 카드 이름 — 이 둘만 명부에 두고 daily-restart-* 는 뺌.
@@ -258,7 +264,13 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 				summary: { verdict: "ok" as const, error_signatures: [] },
 			})),
 		},
-		hookFailures: { count_24h: 0, unretried_count_24h: 0 },
+		hookFailures: {
+			count_24h: 0,
+			unretried_count_24h: 0,
+			failures: [],
+			error_kind_breakdown: [],
+			last_failure_ts: null,
+		},
 		...overrides,
 	};
 }
@@ -415,7 +427,7 @@ before(async () => {
 	});
 	app.get("/api/health/hook-failures", async () => {
 		healthHits.add("/api/health/hook-failures");
-		return { ...healthFixture.hookFailures, days: 30, failures: [], error_kind_breakdown: [], last_failure_ts: null, timezone: "UTC" };
+		return { ...healthFixture.hookFailures, days: HOOK_FAIL_WINDOW_DAYS, timezone: "UTC" };
 	});
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -1604,7 +1616,7 @@ test("T7 the run-payload fact counts the entries the payload response actually r
 });
 
 // 지금 등록된 전역 블록 — 이 목록이 트리에 그대로 나와야 함. T12c 가 항목을 더하면 여기도 같이 늘어남.
-const GLOBAL_BLOCK_IDS = ["hook-chain"];
+const GLOBAL_BLOCK_IDS = ["hook-chain", "hook-failures"];
 
 // T7 이 세운 컨테이너 계약의 살아 있는 쪽 — 등록된 블록이 하나도 빠짐없이, 그리고 그것만 트리에 남음.
 // T11 이 첫 항목을 등록하기 전에는 컨테이너가 통째로 없었고 이 단언이 그 사실을 재던 자리임.
@@ -2036,5 +2048,136 @@ test("AC-T9 expanding a second daemon drills the payload request into THAT daemo
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
 		true,
 		`expanding ${DRILLDOWN_DAEMON} must move the drilldown — a frozen literal keeps asking for ${BOUND_DAEMON}`,
+	);
+});
+
+// --- T12c: the hook failure log block ---------------------------------------
+
+const FAIL_BLOCK_ID = "hook-failures";
+
+// 하네스 라우트가 내는 창 폭 — 화면이 "지난 N일" 을 응답에서 읽는지 재는 값이라 상수로 둠.
+const HOOK_FAIL_WINDOW_DAYS = 30;
+
+// 창 안 실패 한 건의 값들 — 어느 것도 화면이 지어낼 수 없음(플레이스홀더 구현이면 붉어짐).
+const FAIL_WINDOW_TS = "2026-08-24T11:22:33.000Z";
+const FAIL_HOOK_NAME = "track-outcome.sh";
+const FAIL_TABLE = "core.outcomes";
+
+// 창 밖 최종기록 — 30일 창보다 오래된 날짜. 창이 비어도 남아 있어야 하는 사실이고,
+// 창 안 목록에서는 절대 유도할 수 없는 값임(목록이 비어 있으므로).
+const FAIL_STALE_TS = "2026-05-02T07:08:09.000Z";
+
+function getHookFailureEntry(): HookFailureEntry {
+	return {
+		id: 1,
+		failure_ts: FAIL_WINDOW_TS,
+		hook_name: FAIL_HOOK_NAME,
+		target_table: FAIL_TABLE,
+		error_kind: "connection_refused",
+		payload_ref: null,
+		retry_attempted: true,
+	};
+}
+
+function getFailuresFixture(
+	overrides: Partial<HealthFixture["hookFailures"]> = {},
+): HealthFixture {
+	return getHealthFixture({
+		hookFailures: {
+			count_24h: 0,
+			unretried_count_24h: 0,
+			failures: [],
+			error_kind_breakdown: [],
+			last_failure_ts: null,
+			...overrides,
+		},
+	});
+}
+
+// 블록을 펼치고 본문 텍스트를 냄. 응답 왕복이 끝나야 채워지므로 기한을 두고 기다림 —
+// 초과하면 마지막으로 읽은 텍스트를 그대로 돌려 단언이 무엇을 봤는지 메시지에 남게 함.
+async function expandFailureBlock(needle: string): Promise<string> {
+	await page.waitForSelector(`[data-global-block="${FAIL_BLOCK_ID}"]`, { timeout: 30_000 });
+	await page.click(`[data-global-block="${FAIL_BLOCK_ID}"] button[aria-expanded]`);
+
+	const deadline = Date.now() + 15_000;
+	let text = "";
+	while (Date.now() < deadline) {
+		text = await page.evaluate((id) => {
+			const el = document.querySelector(`[data-global-block="${id}"]`);
+			return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
+		}, FAIL_BLOCK_ID);
+		if (text.includes(needle)) return text;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	return text;
+}
+
+// 최종기록 줄이 실은 기계가 읽는 값 — 표시 문장은 tz/상대시간에 따라 흔들리지만 이 값은 안 흔들림.
+// 없으면 null: '줄이 없음' 과 '값이 없음' 을 부르는 이름이 서로 다름.
+async function getLastFailureStamp(): Promise<string | null> {
+	return await page.evaluate((id) => {
+		const el = document.querySelector(`[data-global-block="${id}"] [data-hook-fail-last]`);
+		return el ? el.getAttribute("datetime") : null;
+	}, FAIL_BLOCK_ID);
+}
+
+test("AC-T12 the failure block lists the failures the window actually returned", async () => {
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getFailuresFixture({
+			count_24h: 1,
+			failures: [getHookFailureEntry()],
+			last_failure_ts: FAIL_WINDOW_TS,
+		}),
+	);
+
+	const text = await expandFailureBlock(FAIL_HOOK_NAME);
+	assert.ok(text.includes(FAIL_HOOK_NAME), `the expanded block must name the failing hook, but it read: ${text}`);
+	assert.ok(text.includes(FAIL_TABLE), `the expanded block must name the table the write targeted, but it read: ${text}`);
+	assert.ok(
+		text.includes(String(HOOK_FAIL_WINDOW_DAYS)),
+		`the block must state the window it counted over, but it read: ${text}`,
+	);
+
+	// 행의 시각은 응답 값에서 나와야 함 — 표시 문장이 아니라 기계값으로 잼.
+	const rowStamps = await page.evaluate((id) => {
+		return [...document.querySelectorAll(`[data-global-block="${id}"] [data-hook-fail-row] time`)].map(
+			(el) => el.getAttribute("datetime") || "",
+		);
+	}, FAIL_BLOCK_ID);
+	assert.deepEqual(rowStamps, [FAIL_WINDOW_TS], "each rendered row must carry the failure instant the response served");
+});
+
+// AC-T12 의 화면 몫이 사는 자리 — 빈 창이 '실패가 한 번도 없었다' 로 읽히면 안 됨.
+// 목록에서 최종기록을 유도하는 구현은 여기서 붉어짐: 목록이 비어 있어 유도할 값이 없음.
+test("AC-T12 an empty window still names when the last failure was", async () => {
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getFailuresFixture({ failures: [], last_failure_ts: FAIL_STALE_TS }),
+	);
+
+	const text = await expandFailureBlock("Last failure");
+	assert.equal(
+		await getLastFailureStamp(),
+		FAIL_STALE_TS,
+		`the block must carry the whole-table last failure even with an empty window, but it read: ${text}`,
+	);
+	assert.equal(
+		await page.evaluate((id) => document.querySelectorAll(`[data-global-block="${id}"] [data-hook-fail-row]`).length, FAIL_BLOCK_ID),
+		0,
+		"fixture precondition: the window returned no rows, so the block must render none",
+	);
+
+	// 반증 방향 — 표가 정말 비어 있으면 최종기록 줄 자체가 없어야 함.
+	// 이 줄이 상수라면 여기서도 나타나 붉어짐.
+	await openMap(getLiveFixture(), getQueueFixture(), getFailuresFixture({ last_failure_ts: null }));
+	await expandFailureBlock("never");
+	assert.equal(
+		await getLastFailureStamp(),
+		null,
+		"a table that never held a failure must render no last-failure instant",
 	);
 });

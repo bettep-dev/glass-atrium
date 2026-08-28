@@ -530,10 +530,17 @@ test("T7 only blocks carrying a render function reach the container", () => {
     0,
     "a half-registered block would open the container onto an empty box",
   );
+  // 정렬해 비교함 — 명부의 차례는 화면에 그려지는 차례이고 그 순서는 merged-surface e2e 의
+  // deepEqual 이 소유함. 여기서 순서를 한 번 더 못 박으면 명부를 재배열하는 변경이 두 곳에서
+  // 붉어지면서 어느 쪽이 진짜 계약인지 흐려짐 — 이 자리는 '무엇이 등록됐는가'만 잼.
+  // 블록을 더하는 작업은 제 id 를 아래 목록에 더함 (T11 → hook-chain · T12c → hook-failures).
   assert.strictEqual(
-    blocks.map((b) => b.id).join(","),
-    "hook-chain",
-    "the registry holds exactly the blocks this cycle registered — T12c appends the next one",
+    blocks
+      .map((b) => b.id)
+      .sort()
+      .join(","),
+    "hook-chain,hook-failures",
+    "the registry holds exactly the blocks registered so far — an appending task adds its id here",
   );
 });
 
