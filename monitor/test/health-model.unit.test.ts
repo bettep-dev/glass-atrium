@@ -67,11 +67,18 @@ const stubWindow: StubWindow = {
     daemonStatusLabel: (status) => status ?? "—",
   },
 };
-(globalThis as { window?: StubWindow }).window = stubWindow;
+// Double-cast is required, not laziness: with the DOM lib loaded `globalThis.window` is
+// `Window & typeof globalThis`, which does not overlap this stub — and installing a
+// non-Window stub is exactly the point, since the module under test is a browser
+// module loaded in node.
+(globalThis as unknown as { window?: StubWindow }).window = stubWindow;
 
 await import("../public/src/data/health-model.js");
-const HealthModel = stubWindow.HealthModel;
-assert.ok(HealthModel, "health-model.js must register window.HealthModel");
+const registeredHealthModel = stubWindow.HealthModel;
+assert.ok(registeredHealthModel, "health-model.js must register window.HealthModel");
+// Re-bind to a non-optional handle: `assert.ok` narrows the value here, but that narrowing
+// does not survive into the helper closures below, which are where the model is used.
+const HealthModel: HealthModelApi = registeredHealthModel;
 
 function ready(data: unknown): FetchState {
   return { status: "ready", data, error: null };

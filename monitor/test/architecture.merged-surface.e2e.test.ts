@@ -83,6 +83,11 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 			{
 				daemon_name: BOUND_DAEMON,
 				status: "critical",
+				// Required on DaemonLiveStatus and the field the screen actually reads; the
+				// fixture omitted it. Mirroring `status` keeps the rendered verdict exactly
+				// where it already was — "critical" is not a DAEMON_STATUS_TONE key, so it
+				// resolves through the same `info` fallback that `undefined` did.
+				effective_status: "critical",
 				last_run_at: null,
 				staleness_minutes: 999,
 				node_ids: nodeIds,

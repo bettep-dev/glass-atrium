@@ -110,9 +110,12 @@ Object.assign(arch.window.UI, {
 // health-model.js reads window.UI at call time and registers itself on window — stub first.
 (globalThis as { window?: unknown }).window = { UI: ui.window.UI };
 await import("../public/src/data/health-model.js");
-const HealthModel = (globalThis as { window?: { HealthModel?: HealthModelApi } }).window
+const registeredHealthModel = (globalThis as { window?: { HealthModel?: HealthModelApi } }).window
   ?.HealthModel;
-assert.ok(HealthModel, "health-model.js must register window.HealthModel");
+assert.ok(registeredHealthModel, "health-model.js must register window.HealthModel");
+// Re-bind to a non-optional handle: `assert.ok` narrows the value here, but that narrowing
+// does not survive into the helper closures below, which are where the model is used.
+const HealthModel: HealthModelApi = registeredHealthModel;
 
 const DAEMON = "wiki";
 const NOW = Date.parse("2026-07-12T12:00:00Z");
