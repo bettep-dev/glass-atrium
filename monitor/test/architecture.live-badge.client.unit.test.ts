@@ -441,6 +441,20 @@ test("T7 the payload endpoint carries the selected daemon, not a frozen literal"
   );
 });
 
+// 화면은 이 표를 두 몫으로 갈라 요청함 — 드릴다운을 따라 다시 나가는 것은 페이로드 하나뿐이고,
+// 나머지 넷은 머리글(스트립·KPI)이 서 있는 값이라 행을 펼칠 때 다시 나가면 안 됨.
+// 그 가름이 성립하려면 데몬 이름을 싣는 URL 이 정확히 하나여야 함 — 그 전제를 여기서 못 박음.
+test("T7 exactly one endpoint follows the daemon, which is what lets the other four stay put", () => {
+  const urls = arch.getMapHealthEndpoints("wiki");
+  // 파일 관례대로 이어붙여 비교함 — 화면 소스는 별도 realm 에서 평가되므로 그쪽 Array 는
+  // 내용이 같아도 prototype 이 달라 deepEqual 이 붙지 않음.
+  assert.strictEqual(
+    urls.filter((u) => u.includes("wiki")).join("\n"),
+    "/api/health/daemon-payload?daemon=wiki&limit=10",
+    "a second daemon-bearing URL would silently rejoin the strip's responses to the drilldown",
+  );
+});
+
 // 이름 안의 `&` 는 인코딩하지 않으면 질의를 한 칸 더 만듦 — 서버가 허용목록으로 거르지만
 // 그건 서버의 방어이고, 이 자리는 URL 을 조립하는 쪽이 제 값을 감쌌는지를 잼.
 // 조립된 원문 그대로 냄: `new URL` 은 파싱하면서 공백 같은 문자를 스스로 인코딩하므로,

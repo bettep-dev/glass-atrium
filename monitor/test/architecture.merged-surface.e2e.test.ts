@@ -227,6 +227,12 @@ interface HealthFixture {
 		HealthHookFailuresResponse,
 		"count_24h" | "unretried_count_24h" | "failures" | "error_kind_breakdown" | "last_failure_ts"
 	>;
+	// 페이로드 응답을 500 으로 끊음 — 화면 fetch 를 중단이 아닌 거부로 만듦.
+	// 못 읽음과 늦음을 따로 심는 두 손잡이라 하나로 접지 않음: 한 값으로는
+	// "끊긴 응답이 로딩으로 읽힌다" 는 결함을 세울 자리가 없어짐.
+	payloadFails: boolean;
+	// 페이로드 응답을 이만큼 늦춤 — 아직 안 온 응답이 실제로 로딩으로 읽히는지 재는 자리.
+	payloadDelayMs: number;
 }
 
 // HEALTH_CARD_DEFS 의 daemon 카드 이름 — 이 둘만 명부에 두고 daily-restart-* 는 뺌.
@@ -277,6 +283,8 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 			})),
 		},
 		hookFailures: getEmptyHookFailures(),
+		payloadFails: false,
+		payloadDelayMs: 0,
 		...overrides,
 	};
 }
@@ -306,6 +314,20 @@ let healthFixture: HealthFixture;
 // 흡수 완결성(다섯 응답)을 소스 grep 이 아니라 브라우저 왕복으로 잼.
 const healthHits = new Set<string>();
 
+// 경로별 요청 '횟수' — 집합은 한 번 온 것과 네 번 온 것을 구별하지 못함.
+// 드릴다운 한 번이 다섯 응답을 모두 다시 끌고 오는지는 그 차이에서만 보임.
+const healthCounts = new Map<string, number>();
+
+function recordHealthHit(path: string): void {
+	healthHits.add(path);
+	healthCounts.set(path, (healthCounts.get(path) || 0) + 1);
+}
+
+// 지금 시점의 횟수 사본 — 클릭 전후를 비교하려면 살아 있는 Map 이 아니라 스냅샷이어야 함.
+function getHealthCounts(): Record<string, number> {
+	return Object.fromEntries(healthCounts);
+}
+
 // 폴백 경고 감시 — 첫 렌더보다 먼저 붙어야 초기 경고를 놓치지 않으므로 페이지 생성 직후에 붙임.
 let elkWatch: FallbackWatch;
 
@@ -320,6 +342,7 @@ async function openMap(
 	queueFixture = queue;
 	healthFixture = health;
 	healthHits.clear();
+	healthCounts.clear();
 	await page.goto("about:blank");
 	await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 
@@ -430,25 +453,37 @@ before(async () => {
 	// 진짜 health 라우트는 PG·chromium 프로브를 물고 있어 이 하네스를 호스트 상태에 묶으므로
 	// live 라우트와 같은 방식으로 픽스처만 냄.
 	app.get("/api/health", async () => {
-		healthHits.add("/api/health");
+		recordHealthHit("/api/health");
 		return { ...healthFixture.pg, version: "test", timezone: "UTC" };
 	});
 	app.get("/api/health/daemons", async (): Promise<Partial<HealthDaemonsResponse>> => {
-		healthHits.add("/api/health/daemons");
+		recordHealthHit("/api/health/daemons");
 		return { daemons: healthFixture.daemons as DaemonStatusCard[], timezone: "UTC" };
 	});
 	app.get("/api/health/hook-chain", async () => {
-		healthHits.add("/api/health/hook-chain");
+		recordHealthHit("/api/health/hook-chain");
 		return healthFixture.hookChain;
 	});
-	app.get("/api/health/daemon-payload", async (request: FastifyRequest) => {
-		const daemon = (request.query as { daemon?: string } | undefined)?.daemon || "";
-		// 질의 문자열까지 기록 — 선택 데몬이 URL 에 실려 나가는지가 T9c 드릴다운의 전제임.
-		healthHits.add(`/api/health/daemon-payload?daemon=${daemon}`);
-		return { daemon, ...healthFixture.payload, timezone: "UTC" };
-	});
+	app.get(
+		"/api/health/daemon-payload",
+		async (request: FastifyRequest, reply: FastifyReply) => {
+			const daemon = (request.query as { daemon?: string } | undefined)?.daemon || "";
+			// 질의 문자열까지 기록 — 선택 데몬이 URL 에 실려 나가는지가 T9c 드릴다운의 전제임.
+			recordHealthHit(`/api/health/daemon-payload?daemon=${daemon}`);
+
+			// 거부와 지연을 따로 냄 — 화면이 '못 읽음' 과 '아직 안 옴' 을 다른 문장으로 부르는지
+			// 재려면 그 둘을 각각 심을 수 있어야 함.
+			if (healthFixture.payloadFails)
+				return reply.code(500).send({ error: "payload fixture failure" });
+
+			if (healthFixture.payloadDelayMs > 0)
+				await new Promise((resolve) => setTimeout(resolve, healthFixture.payloadDelayMs));
+
+			return { daemon, ...healthFixture.payload, timezone: "UTC" };
+		},
+	);
 	app.get("/api/health/hook-failures", async () => {
-		healthHits.add("/api/health/hook-failures");
+		recordHealthHit("/api/health/hook-failures");
 		return { ...healthFixture.hookFailures, days: HOOK_FAIL_WINDOW_DAYS, timezone: "UTC" };
 	});
 	await app.ready();
@@ -1897,6 +1932,37 @@ async function waitForDaemonRows(): Promise<void> {
 	await page.waitForSelector(".arch-live-table tbody tr", { timeout: 30_000 });
 }
 
+// 표가 선언하는 열 — AC-T8 첫 절("접힘 상태 행에 job/status/last run/nodes 4열")이 재는 값.
+// 이름까지 고정함: 개수만 세면 열 하나가 다른 사실로 바뀌어도 초록이 됨.
+const LIVE_TABLE_HEADERS = ["Job", "Status", "Last run", "Nodes"];
+
+interface LiveTableShape {
+	headers: string[];
+	rowCells: number;
+	detailColSpan: number | null;
+}
+
+// 표의 '모양'을 한 번에 읽음 — 머리글 · 행의 칸 수 · 상세 칸이 가로지르는 폭.
+// 셋을 따로 재면 "열은 넷인데 colSpan 은 여전히 4" 같은 어긋남을 아무 단언도 보지 못함.
+async function getLiveTableShape(daemon: string): Promise<LiveTableShape> {
+	return await page.evaluate((name) => {
+		const table = document.querySelector(".arch-live-table");
+		// textContent 로 읽음 — innerText 는 스타일시트의 text-transform 까지 반영해서
+		// 열 이름이 아니라 대소문자 규칙을 재게 됨. 여기서 잴 것은 마크업이 쓴 이름임.
+		const headers = [...(table?.querySelectorAll("thead th") || [])].map((el) =>
+			(el.textContent || "").replace(/\s+/g, " ").trim(),
+		);
+		const row = table?.querySelector(`[data-daemon-row="${name}"]`);
+		const detailCell = table?.querySelector(`[data-daemon-detail="${name}"] td`);
+		return {
+			headers,
+			// 행 없음(-1)과 칸 0개를 갈라 부름 — 둘 다 0 으로 접으면 픽스처 붕괴가 결함으로 읽힘.
+			rowCells: row ? row.querySelectorAll("th, td").length : -1,
+			detailColSpan: detailCell ? Number(detailCell.getAttribute("colspan")) : null,
+		};
+	}, daemon);
+}
+
 // 확장 영역은 페이로드 왕복이 끝나야 채워짐 — 기한을 두고 기다리되 초과는 붉어짐.
 async function waitForRegionText(daemon: string, needle: string): Promise<string> {
 	const deadline = Date.now() + 15_000;
@@ -1941,6 +2007,45 @@ test("AC-T8 each daemon row carries a real expand control wired by aria", async 
 		probe.regionFound,
 		false,
 		"a collapsed row must leave no region in the tree — aria-controls names what expanding creates",
+	);
+});
+
+// AC-T8 첫 절이 사는 자리 — 표를 flatMap 으로 다시 쓴 자리(architecture.jsx)가 열을 하나
+// 떨어뜨려도, 열 수만 바꾸고 상세 칸의 colSpan 을 그대로 두어도 여기서 붉어짐.
+// 접힘/펼침 양쪽을 다 잼: 펼침이 요약 행의 칸을 건드리면 표가 한 행만 다른 폭이 됨.
+test("AC-T8 a collapsed row carries the four columns the header names", async () => {
+	await openMap(getLiveFixture());
+	await waitForDaemonRows();
+
+	const collapsed = await getLiveTableShape(BOUND_DAEMON);
+	assert.deepEqual(
+		collapsed.headers,
+		LIVE_TABLE_HEADERS,
+		"the live table must name job/status/last run/nodes — dropping or renaming a column changes this list",
+	);
+	assert.equal(
+		collapsed.rowCells,
+		LIVE_TABLE_HEADERS.length,
+		`a collapsed row must fill every column the header declares — read ${collapsed.rowCells} cells against ${LIVE_TABLE_HEADERS.length} headers`,
+	);
+	assert.equal(
+		collapsed.detailColSpan,
+		null,
+		"fixture precondition: nothing is expanded yet, so no detail cell exists",
+	);
+
+	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+
+	const expanded = await getLiveTableShape(BOUND_DAEMON);
+	assert.equal(
+		expanded.rowCells,
+		LIVE_TABLE_HEADERS.length,
+		"expanding must not change the summary row's own cells",
+	);
+	assert.equal(
+		expanded.detailColSpan,
+		expanded.headers.length,
+		`the detail cell must span exactly the columns the header declares — read colSpan ${expanded.detailColSpan} against ${expanded.headers.length} headers`,
 	);
 });
 
@@ -2039,6 +2144,94 @@ test("AC-T9 expanding a second daemon drills the payload request into THAT daemo
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
 		true,
 		`expanding ${DRILLDOWN_DAEMON} must move the drilldown — a frozen literal keeps asking for ${BOUND_DAEMON}`,
+	);
+});
+
+// 스트립과 KPI 가 서 있는 네 응답 — 드릴다운은 이들을 건드리면 안 됨.
+const STRIP_BACKING_PATHS = [
+	"/api/health",
+	"/api/health/daemons",
+	"/api/health/hook-chain",
+	"/api/health/hook-failures",
+];
+
+// 다섯 응답을 한 effect 에 묶고 payloadDaemon 을 그 deps 에 넣은 구현은 여기서 붉어짐:
+// 행 하나를 펼치면 네 응답이 함께 다시 나가고, 왕복이 끝날 때까지 스트립의 PG·브라우저 줄이
+// DOM 에서 사라지며 KPI 가 —/— 로 떨어짐. 지도의 머리글은 드릴다운을 따라 흔들리면 안 됨.
+test("AC-T9 drilling into another daemon re-requests the payload alone", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")],
+		}),
+	);
+	await waitForDaemonRows();
+	assert.equal(
+		await waitForHealthHit(`/api/health/daemon-payload?daemon=${BOUND_DAEMON}`),
+		true,
+		"fixture precondition: the map drills into its default daemon on mount",
+	);
+	// 첫 왕복이 다 앉은 뒤에 세어야 함 — 마운트분이 클릭분으로 새면 아무것도 재지 못함.
+	await page.waitForTimeout(500);
+
+	const before = getHealthCounts();
+	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+	assert.equal(
+		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
+		true,
+		"fixture precondition: the drilldown moved to the row that was expanded",
+	);
+	// 결함 있는 구현이 나머지 넷을 마저 보낼 시간을 줌 — 안 기다리면 경합으로 조용히 초록이 됨.
+	await page.waitForTimeout(500);
+
+	const after = getHealthCounts();
+	assert.deepEqual(
+		STRIP_BACKING_PATHS.filter((path) => after[path] !== before[path]),
+		[],
+		"expanding a row must not re-fire the four responses the strip and the KPI stand on",
+	);
+});
+
+// 못 읽은 응답과 아직 안 온 응답을 화면이 갈라 부르는지 재는 반증 케이스 — 형제 블록
+// (HookChainDetail · HookFailureDetail)이 이미 그렇게 함. 둘을 한 문장으로 접은 구현은
+// 끊긴 응답에도 "Loading …" 을 남겨 조작자가 기다릴지 고칠지 못 정하게 만듦.
+test("AC-T9 an errored payload response says it could not be read, not that it is loading", async () => {
+	await openMapWithHealth(getHealthFixture({ payloadFails: true }));
+	await waitForDaemonRows();
+	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+
+	const text = await waitForRegionText(BOUND_DAEMON, "Couldn't read");
+	assert.ok(
+		text.includes("Couldn't read the recent runs"),
+		`an errored payload response must name itself unreadable — read "${text}"`,
+	);
+	assert.ok(
+		!text.includes("Loading recent runs"),
+		`an unreadable response must not read as a slow one — read "${text}"`,
+	);
+});
+
+// 반대 방향 — 진짜로 늦은 응답은 여전히 로딩으로 읽혀야 함. 에러 분기를 너무 넓게 잡아
+// 응답 없음까지 '못 읽음' 으로 부르는 구현은 여기서 붉어짐.
+test("AC-T9 a payload response still on its way reads as loading, not as unreadable", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")],
+		}),
+		getQueueFixture(),
+		getHealthFixture({ payloadDelayMs: 5_000 }),
+	);
+	await waitForDaemonRows();
+	// 아직 한 번도 응답이 오지 않은 데몬으로 드릴다운함 — 기본 데몬은 마운트분이 이미 앉았을 수 있음.
+	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+
+	const text = await waitForRegionText(DRILLDOWN_DAEMON, "Loading recent runs");
+	assert.ok(
+		text.includes(`Loading recent runs for ${DRILLDOWN_DAEMON}`),
+		`a pending payload must read as loading — read "${text}"`,
+	);
+	assert.ok(
+		!text.includes("Couldn't read"),
+		`a slow response must not be reported as an unreadable one — read "${text}"`,
 	);
 });
 
@@ -2144,6 +2337,14 @@ test("AC-T12 an empty window still names when the last failure was", async () =>
 		await page.evaluate((id) => document.querySelectorAll(`[data-global-block="${id}"] [data-hook-fail-row]`).length, FAIL_BLOCK_ID),
 		0,
 		"fixture precondition: the window returned no rows, so the block must render none",
+	);
+
+	// AC-T12 의 "둘 중 하나라도 빠지면 실패" 를 나머지 방향에서 잼 — 최종기록만으로는
+	// 창을 얼마나 보고 비었다고 말하는지가 화면에 없음. 빈 창에서 개수 줄을 숨기는 구현은
+	// 여기서 붉어짐(0 도 사실이고, 그 0 이 최종기록과 짝을 이루는 문장임).
+	assert.ok(
+		text.includes(`0 failures in the last ${HOOK_FAIL_WINDOW_DAYS} days`),
+		`an empty window must state the count and the window alongside the last failure, but it read: ${text}`,
 	);
 
 	// 반증 방향 — 표가 정말 비어 있으면 최종기록 줄 자체가 없어야 함.

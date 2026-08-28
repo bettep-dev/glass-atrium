@@ -101,6 +101,11 @@ function getMapHealthEndpoints(payloadDaemon) {
 	];
 }
 
+// 표에서 페이로드 URL 이 앉은 자리 — 다섯 중 드릴다운 데몬을 따라 움직이는 유일한 항목이고,
+// 두 요청 무리(머리글이 서 있는 넷 · 드릴다운 하나)를 가르는 기준임. 목록은 언제나 위 표에서
+// 파생시킴: URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라져 한쪽만 고쳐지는 자리가 생김.
+const MAP_PAYLOAD_URL_INDEX = 3;
+
 // KPI 집계는 공용 모델에 위임 — 맵이 카드 목록을 다시 적지 않음.
 // 분모(정상 N/M 의 M)가 HEALTH_CARD_DEFS 를 따라 움직여야 정의가 늘거나 줄 때
 // 화면이 조용히 옛 총계를 들고 있지 않음 (F02 불변식의 화면 몫 · T14).
@@ -315,6 +320,7 @@ function ScreenArchitecture(
 	const diagAbortRef = useRefAR(null);
 	const liveAbortRef = useRefAR(null);
 	const healthAbortRef = useRefAR(null);
+	const payloadAbortRef = useRefAR(null);
 
 	const triggerRefresh = useCallbackAR(() => setRefreshTick((t) => t + 1), []);
 
@@ -375,21 +381,21 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	// health 응답 5종 — 병렬 발화. 수동 Refresh(refreshTick) · 60s 폴링(healthTick) ·
-	// 드릴다운 데몬 변경 모두에서 다시 나감. 세터 순서는 getMapHealthEndpoints 의 URL 순서와 짝임.
+	// 머리글이 서 있는 health 응답 4종 — 병렬 발화. 수동 Refresh(refreshTick)와 60s 폴링(healthTick)
+	// 에서만 다시 나감. 드릴다운(payloadDaemon)은 일부러 deps 에 없음: 행 하나를 펼쳤다고 이 넷이
+	// 다시 나가면 왕복 동안 스트립의 PG·브라우저 줄이 DOM 에서 사라지고 KPI 가 —/— 로 떨어져,
+	// 방금 읽은 실패를 조작자가 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		healthAbortRef.current?.abort();
 		healthAbortRef.current = ctrl;
 
-		const setters = [
-			setDaemonHealthState,
-			setHookState,
-			setPgState,
-			setPayloadState,
-			setHookFailState,
-		];
-		const urls = getMapHealthEndpoints(payloadDaemon);
+		const setters = [setDaemonHealthState, setHookState, setPgState, setHookFailState];
+		// 표에서 페이로드 자리만 덜어냄. 데몬 이름을 싣는 URL 은 방금 덜어낸 그 하나뿐이라
+		// 어느 이름으로 표를 세우든 남는 넷은 같음 — 그래서 payloadDaemon 이 여기 필요 없음.
+		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON).filter(
+			(_url, index) => index !== MAP_PAYLOAD_URL_INDEX,
+		);
 
 		urls.forEach((url, i) => {
 			const setter = setters[i];
@@ -400,6 +406,25 @@ function ScreenArchitecture(
 				})
 				.catch((err) => handleErrorAR(err, setter));
 		});
+
+		return () => ctrl.abort();
+	}, [refreshTick, healthTick]);
+
+	// 드릴다운 응답 1종 — 위 넷과 달리 선택 데몬을 따라 다시 나감 (T9c). 자기 요청만 중단함:
+	// 머리글의 넷과 abort 컨트롤러를 함께 쓰면 행을 펼칠 때 그쪽 왕복까지 끊겨 같은 공백이 생김.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+		payloadAbortRef.current?.abort();
+		payloadAbortRef.current = ctrl;
+
+		const url = getMapHealthEndpoints(payloadDaemon)[MAP_PAYLOAD_URL_INDEX];
+
+		setPayloadState(INITIAL_FETCH_STATE_AR);
+		fetchJsonAR(url, ctrl.signal)
+			.then((data) => {
+				if (!ctrl.signal.aborted) setPayloadState({ status: "ready", data, error: null });
+			})
+			.catch((err) => handleErrorAR(err, setPayloadState));
 
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick, payloadDaemon]);
@@ -1582,10 +1607,7 @@ function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 							summaryRow,
 							<tr key={`${row.name}-detail`} data-daemon-detail={row.name}>
 								<td id={detailId} colSpan={4} className="arch-run-cell">
-									<DaemonRunDetail
-										daemon={row.name}
-										runs={getDaemonRunRows(payloadState, row.name)}
-									/>
+									<DaemonRunDetail daemon={row.name} state={payloadState} />
 								</td>
 							</tr>,
 						];
@@ -1598,11 +1620,22 @@ function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 
 /**
  * 확장 영역 본문 — 선택 데몬의 최근 실행을 날짜 + 사유로 나열함 (T9c).
- * 사유 문자열은 데몬 로그에서 파생된 서버 텍스트임. JSX 텍스트 자식으로만 두어 React 가
+ * 사유 문자열도 못 읽음 사유(state.error)도 서버에서 온 텍스트임. JSX 텍스트 자식으로만 두어 React 가
  * 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01).
  * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
-function DaemonRunDetail({ daemon, runs }) {
+function DaemonRunDetail({ daemon, state }) {
+	const runs = getDaemonRunRows(state, daemon);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	// fold 는 두 경우 모두 null 을 내므로(응답 없음 · 이름 불일치) 상태를 여기서 직접 읽어야 함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the recent runs: {state.error}
+			</span>
+		);
+
 	if (runs === null)
 		return (
 			<span className="fs-meta text-dim">Loading recent runs for {daemon}…</span>
