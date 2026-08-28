@@ -26,7 +26,7 @@ setup() {
 # redirect stayed empty catches that for EVERY module at once, including one added later —
 # which is what makes this cheaper than auditing each module's own sandboxing.
 #
-# Unlike the autoagent twin, this probe also asserts the discover exit code. These suites
+# The discover exit code is asserted here, as it is in the autoagent twin. These suites
 # are the runner's stage 2 and their verdict becomes the runner's rc, so a dropped code
 # here would report a red stage as green.
 @test "no python suite in this root escapes its sandbox HOME or fails" {

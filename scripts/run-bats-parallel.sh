@@ -41,10 +41,11 @@ readonly HOOKS_TEST_ROOT=hooks/test
 readonly SCRIPTS_TEST_ROOT=scripts/test
 
 SANDBOX_HOME=""
-# Out-parameter of run_stage. A stage's rc is reported HERE rather than as run_stage's
-# own return value: a `run_stage … || rc=$?` call site would disable set -e for the
-# whole call (SC2310), and the rc is data to be folded, not a failure to propagate.
-STAGE_RC=0
+# The highest exit code any stage has returned so far, folded by run_stage itself. The
+# fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
+# disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
+# failure to propagate.
+WORST_RC=0
 
 # SC2329: invoked indirectly by the EXIT trap below — not dead code.
 # shellcheck disable=SC2329
@@ -55,18 +56,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# run_stage — run one stage, publish its exit code in STAGE_RC, and print a
-# duration-carrying banner to stderr. Always returns 0: the caller folds STAGE_RC.
+# run_stage — run one stage, fold its exit code into WORST_RC, and print a
+# duration-carrying banner to stderr. Always returns 0.
 # Duration comes from SECONDS (integer, bash 3.2-safe) because BSD date has no %N.
 # $1 = banner label · $2.. = the command and its arguments
 run_stage() {
   local label="${1}"
   shift
   local t0="${SECONDS}"
-  STAGE_RC=0
-  "$@" || STAGE_RC=$?
+  local rc=0
+  "$@" || rc=$?
+  if ((rc > WORST_RC)); then WORST_RC="${rc}"; fi
   printf 'run-bats-parallel: [%s] rc=%s (%ss)\n' \
-    "${label}" "${STAGE_RC}" "$((SECONDS - t0))" >&2
+    "${label}" "${rc}" "$((SECONDS - t0))" >&2
 }
 
 main() {
@@ -108,21 +110,18 @@ main() {
   cd -- "${REPO_ROOT}"
 
   local total_t0="${SECONDS}"
-  local worst=0
 
   printf 'run-bats-parallel: bats --jobs %s --no-parallelize-within-files over %s\n' \
     "${job_count}" "${TEST_ROOTS[*]}" >&2
 
   run_stage 'stage 1/3 bats' \
     bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
-  if ((STAGE_RC > worst)); then worst="${STAGE_RC}"; fi
 
   # The unittest suites are hermetic under a sandbox HOME (they write nothing below
   # it), so the stage cannot mutate the operator's real home on a daemon-driven run.
   SANDBOX_HOME="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
   run_stage "stage 2/3 ${HOOKS_TEST_ROOT} unittest" \
     env "HOME=${SANDBOX_HOME}" python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
-  if ((STAGE_RC > worst)); then worst="${STAGE_RC}"; fi
 
   # Stage 3 is conditional: the live install has no pytest, and the honest outcome
   # there is a LOUD skip (one stderr line naming the interpreter) rather than a silent
@@ -131,7 +130,6 @@ main() {
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 3/3 ${SCRIPTS_TEST_ROOT} pytest" \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
-    if ((STAGE_RC > worst)); then worst="${STAGE_RC}"; fi
   else
     local python3_path
     python3_path="$(command -v python3)"
@@ -140,8 +138,8 @@ main() {
   fi
 
   printf 'run-bats-parallel: stages complete rc=%s (total %ss)\n' \
-    "${worst}" "$((SECONDS - total_t0))" >&2
-  exit "${worst}"
+    "${WORST_RC}" "$((SECONDS - total_t0))" >&2
+  exit "${WORST_RC}"
 }
 
 main "$@"

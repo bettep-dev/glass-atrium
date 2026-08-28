@@ -32,7 +32,7 @@ setup() {
 # because daemon_cycle.CLAUDE_BIN and gap_arbiter.get_decision's keyword default both freeze
 # at import, ahead of any per-module hook. The PATH stub therefore both spends no model budget
 # and counts what reached it.
-@test "no python suite in this root escapes its sandbox state dir or the model seam" {
+@test "no python suite in this root escapes its sandbox state dir, reaches the model seam, or fails" {
   local home="${BATS_TEST_TMPDIR}/home" bin="${BATS_TEST_TMPDIR}/bin"
   local calls="${BATS_TEST_TMPDIR}/model-calls"
   mkdir -p "${home}" "${bin}"
@@ -68,9 +68,19 @@ setup() {
     return 1
   }
 
-  run find "${home}" -type f
-  [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  # Both tail assertions carry their own diagnostic, matching the hooks twin: the bare
+  # `[ ]` form they replace does abort on failure, but it names only a line number, and
+  # what this probe is worth on a red run is the path it left behind.
+  local escaped
+  escaped="$(find "${home}" -type f)"
+  [[ -z "${escaped}" ]] || {
+    printf 'files written under the sandbox state dir:\n%s\n' "${escaped}" >&2
+    return 1
+  }
 
-  [ ! -e "${calls}" ]
+  [[ ! -e "${calls}" ]] || {
+    printf 'the model seam was reached %s time(s) despite the PATH stub\n' \
+      "$(wc -c <"${calls}" | tr -d ' ')" >&2
+    return 1
+  }
 }

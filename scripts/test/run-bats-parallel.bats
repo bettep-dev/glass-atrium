@@ -20,12 +20,13 @@
 # The one exception is the scenario-6 probe, which deliberately calls the REAL
 # python3 by absolute path: only a real interpreter can demonstrate that no
 # __pycache__ appears.
-
-# The last two tests cover the OTHER half of the same bytecode decision. Suppressing
+#
+# The seventh test covers the OTHER half of the same bytecode decision. Suppressing
 # production in the runner's children (above) misses every interpreter that does not
 # come from the runner — an operator running a module by hand, and the daemon cycle,
 # which runs its python modules directly. A per-corpus ignore file catches what the
 # env misses, and the two legs are pinned together because neither is sufficient alone.
+# The eighth then pins those ignore files as manifest-eligible, so they actually ship.
 
 bats_require_minimum_version 1.5.0
 
@@ -47,6 +48,20 @@ write_stub() {
   local name="${1}"
   cat >"${STUB_BIN}/${name}"
   chmod +x "${STUB_BIN}/${name}"
+}
+
+# Runs the sandboxed runner under the stub PATH and asserts its exit status, dumping the
+# runner's stderr on a mismatch. `run --separate-stderr` assigns ${status} and ${stderr}
+# in the caller's scope, so a scenario goes on asserting against them after this returns.
+# Call it as `run_runner_expecting N || return 1` — the explicit `|| return 1` is what
+# gates the test, matching every other assertion here rather than leaning on set -e.
+run_runner_expecting() {
+  local want="${1}"
+  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
+  [[ "${status}" -eq "${want}" ]] || {
+    printf 'runner rc=%s (want %s) stderr:\n%s\n' "${status}" "${want}" "${stderr}" >&2
+    return 1
+  }
 }
 
 setup() {
@@ -115,11 +130,8 @@ teardown() {
 }
 
 @test "(1) the bats child inherits the bytecode-suppression variable" {
-  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
-  [[ "${status}" -eq 0 ]] || {
-    printf 'runner rc=%s stderr:\n%s\n' "${status}" "${stderr}" >&2
-    return 1
-  }
+  run_runner_expecting 0 || return 1
+
   local seen
   seen="$(cat "${STUB_LOG_DIR}/bats-env.log")"
   [[ "${seen}" == "1" ]] || {
@@ -130,12 +142,9 @@ teardown() {
 
 @test "(2) a bats rc of 3 becomes the runner rc while later stages still run" {
   export STUB_BATS_RC=3
-  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
   # Folded to the MAXIMUM, not to the last stage: stages 2 and 3 return 0 here.
-  [[ "${status}" -eq 3 ]] || {
-    printf 'runner rc=%s (want 3) stderr:\n%s\n' "${status}" "${stderr}" >&2
-    return 1
-  }
+  run_runner_expecting 3 || return 1
+
   # An `exec bats` tail would end the process at stage 1 and never reach python3.
   grep -q -- '-m unittest discover' "${STUB_LOG_DIR}/python3-args.log" || {
     printf 'stage 2 never ran; recorded python3 calls:\n%s\n' \
@@ -156,11 +165,8 @@ teardown() {
 
 @test "(4) an unimportable pytest skips stage 3 loudly on one line and keeps rc 0" {
   export STUB_PYTEST_IMPORT_RC=1
-  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
-  [[ "${status}" -eq 0 ]] || {
-    printf 'runner rc=%s (want 0) stderr:\n%s\n' "${status}" "${stderr}" >&2
-    return 1
-  }
+  run_runner_expecting 0 || return 1
+
   if grep -q -- '-m pytest' "${STUB_LOG_DIR}/python3-args.log"; then
     printf 'stage 3 ran despite an unimportable pytest:\n%s\n' \
       "$(cat "${STUB_LOG_DIR}/python3-args.log")" >&2
@@ -180,11 +186,8 @@ teardown() {
 }
 
 @test "(5) an importable pytest runs stage 3 against scripts/test" {
-  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
-  [[ "${status}" -eq 0 ]] || {
-    printf 'runner rc=%s (want 0) stderr:\n%s\n' "${status}" "${stderr}" >&2
-    return 1
-  }
+  run_runner_expecting 0 || return 1
+
   grep -q -- '-m pytest.*scripts/test' "${STUB_LOG_DIR}/python3-args.log" || {
     printf 'no scripts/test pytest call recorded; recorded python3 calls:\n%s\n' \
       "$(cat "${STUB_LOG_DIR}/python3-args.log" 2>/dev/null)" >&2
@@ -194,11 +197,8 @@ teardown() {
 
 @test "(6) a child importing a module leaves no __pycache__ behind" {
   export STUB_BATS_IMPORT_PROBE=1
-  run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
-  [[ "${status}" -eq 0 ]] || {
-    printf 'runner rc=%s (want 0) stderr:\n%s\n' "${status}" "${stderr}" >&2
-    return 1
-  }
+  run_runner_expecting 0 || return 1
+
   [[ ! -e "${STUB_LOG_DIR}/pyprobe/__pycache__" ]] || {
     printf 'bytecode cache written next to the imported module:\n%s\n' \
       "$(ls -a "${STUB_LOG_DIR}/pyprobe")" >&2
