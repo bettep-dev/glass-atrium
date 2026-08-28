@@ -21,6 +21,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -312,4 +313,71 @@ test("effect composition: KPI, drift and daemon badges share the map slot", () =
 
   // Two warns out of the three badges — the footer reads the slot the map now owns.
   assert.strictEqual(app.systemsRollup({ architecture: slot }).label, "ISSUES DETECTED");
+});
+
+// --- AC-T13(b): the deleted health screen leaves zero references in the shipped surfaces ---
+//
+// Read the files that actually ship, never a copy: a fixture restating the entry list would
+// stay green after the real package.json drifted. The screen source itself, the build entry,
+// the index include and the README screen table are the four surfaces T13b clears.
+//
+// The counter-direction assertion at the end is the guard against over-deleting: the KPI model
+// `src/data/health-model.js` is loaded INDEPENDENTLY of the screen (index.html:106) and the map
+// still consumes it (ADR-B1 R2), so removing that line must turn this file red.
+
+const MONITOR_ROOT = resolve(__dirname, "..");
+const HEALTH_SCREEN = resolve(MONITOR_ROOT, "public/src/screens/health.jsx");
+const PKG_JSON = resolve(MONITOR_ROOT, "package.json");
+const INDEX_HTML = resolve(MONITOR_ROOT, "public/index.html");
+const MONITOR_README = resolve(MONITOR_ROOT, "README.md");
+
+test("AC-T13(b): the health screen source is gone", () => {
+  assert.ok(
+    !existsSync(HEALTH_SCREEN),
+    "public/src/screens/health.jsx must be deleted — the map absorbed it",
+  );
+});
+
+test("AC-T13(b): the build:jsx entry list no longer names the health screen", () => {
+  const pkg = readFileSync(PKG_JSON, "utf8");
+  assert.ok(
+    !pkg.includes("screens/health"),
+    "monitor/package.json build:jsx must not list public/src/screens/health.jsx — " +
+      "a stale entry makes esbuild fail to resolve and takes the whole suite down",
+  );
+});
+
+test("AC-T13(b): index.html no longer includes the health screen bundle", () => {
+  const html = readFileSync(INDEX_HTML, "utf8");
+  assert.ok(
+    !html.includes("screens/health"),
+    "monitor/public/index.html must not <script src> dist/screens/health.js — " +
+      "the bundle is no longer built, so the include would 404",
+  );
+});
+
+test("AC-T13(b): the README screen table has no health row", () => {
+  const readme = readFileSync(MONITOR_README, "utf8");
+  assert.ok(
+    !/^\|[^|\n]*\|\s*`health`\s*\|/m.test(readme),
+    "monitor/README.md screen table must not carry a `health` row",
+  );
+  const screensDirLine = readme
+    .split("\n")
+    .find((line) => line.includes("└── screens/"));
+  assert.ok(screensDirLine, "README source-tree listing must still describe screens/");
+  assert.ok(
+    !/\bhealth\b/.test(screensDirLine),
+    `README source-tree screens/ listing must not name health — found: ${screensDirLine}`,
+  );
+});
+
+// Counter-direction — deleting too much must go red here.
+test("AC-T13(b) counter: index.html still loads the KPI model the map depends on", () => {
+  const html = readFileSync(INDEX_HTML, "utf8");
+  assert.ok(
+    html.includes("src/data/health-model.js"),
+    "monitor/public/index.html must keep loading src/data/health-model.js — " +
+      "window.HealthModel is loaded independently of the screen and the map still reads it",
+  );
 });
