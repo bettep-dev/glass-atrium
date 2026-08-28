@@ -102,7 +102,7 @@
 <script src="dist/ui.js"></script>
 <!-- Static token unit-price catalog (TOKEN_RATES) — plan §B ADR-4 G5. MUST load before cost.jsx; exposes window.TOKEN_RATES / TOKEN_CATEGORY_RATES. Plain JS, no Babel. -->
 <script src="src/data/pricing.js"></script>
-<!-- 헬스 카드/KPI 순수 모델 (window.HealthModel) — dashboard/architecture 데몬 카드 + F02 KPI 불변식 공용. 화면과 무관하게 로드됨(T13b 가 health 화면을 지운 뒤에도 맵이 소비). ui.js 이후·screens 이전 로드. Plain JS, no Babel. -->
+<!-- 헬스 카드/KPI 순수 모델 (window.HealthModel) — architecture 화면의 데몬 카드 + F02 KPI 불변식 공용 (유일한 화면 소비자: dashboard.jsx 는 참조 0건). 화면과 무관하게 로드됨(T13b 가 health 화면을 지운 뒤에도 맵이 소비). ui.js 이후·screens 이전 로드. Plain JS, no Babel. -->
 <script src="src/data/health-model.js"></script>
 <script src="dist/screens/dashboard.js"></script>
 <script src="dist/screens/cost.js"></script>

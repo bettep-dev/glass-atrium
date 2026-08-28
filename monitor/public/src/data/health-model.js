@@ -1,4 +1,4 @@
-// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — health.jsx 표시층·monitor/test 공용.
+// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — architecture.jsx 표시층·monitor/test 공용.
 // 카드 tone 과 KPI 버킷을 단일 출처에서 결정 → '정상 N/M' 분모 == 렌더 카드 수 불변식 보장 (F02).
 // window.UI 는 호출 시점 참조 — node 테스트는 import 전 window.UI 스텁 주입으로 로드.
 

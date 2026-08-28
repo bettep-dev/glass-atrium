@@ -136,7 +136,7 @@ Glass Atrium 的技能**不是**由用户调用的命令，而是一个内部质
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-交互式菜单打开后，请选择 **Install**——安装完成后，依赖与守护进程会自动配置并运行，仪表盘可在 `http://127.0.0.1:16145` 访问。安装必须通过健康门（health gate）才算结束，之后你也可以随时用 `glass-atrium doctor` 或监控的 **System health** 界面再次确认状态。
+交互式菜单打开后，请选择 **Install**——安装完成后，依赖与守护进程会自动配置并运行，仪表盘可在 `http://127.0.0.1:16145` 访问。安装必须通过健康门（health gate）才算结束，之后你也可以随时用 `glass-atrium doctor` 或监控 **System map** 界面上的 **System health** 状态条再次确认状态。
 
 > **请把安装好的文件夹留在原处。** 安装程序会下载发布包、解压到 `~/.glass-atrium` 文件夹，再以**按文件的符号链接群**（前文所述的方式）与 Claude 配置目录相连。真实文件就存放在这里，因此一旦移动或删除该文件夹，这些链接便会失效。
 
