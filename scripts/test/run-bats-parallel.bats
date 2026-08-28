@@ -21,9 +21,26 @@
 # python3 by absolute path: only a real interpreter can demonstrate that no
 # __pycache__ appears.
 
+# The last two tests cover the OTHER half of the same bytecode decision. Suppressing
+# production in the runner's children (above) misses every interpreter that does not
+# come from the runner — an operator running a module by hand, and the daemon cycle,
+# which runs its python modules directly. A per-corpus ignore file catches what the
+# env misses, and the two legs are pinned together because neither is sufficient alone.
+
 bats_require_minimum_version 1.5.0
 
 REAL_RUNNER="${BATS_TEST_DIRNAME}/../run-bats-parallel.sh"
+GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+GENERATOR="${GA_ROOT_DIR}/scripts/generate-manifest.sh"
+
+# The four corpora that produce bytecode, each its OWN git repository on the live
+# install. autoagent/ is the one the runner env cannot reach.
+CORPUS_IGNORE_FILES=(
+  "test/.gitignore"
+  "hooks/test/.gitignore"
+  "scripts/test/.gitignore"
+  "autoagent/.gitignore"
+)
 
 # Writes stdin to an executable stub of the given name in the stub bin dir.
 write_stub() {
@@ -187,4 +204,123 @@ teardown() {
       "$(ls -a "${STUB_LOG_DIR}/pyprobe")" >&2
     return 1
   }
+}
+
+# Each corpus is its OWN git repository on the live install, so the monorepo root
+# .gitignore never reaches it. The recovery snapshot screens `git status --porcelain
+# --untracked-files=all` per repo and refuses the WHOLE run on an untracked __pycache__,
+# which is the refusal the live install carries today. The sandbox repo shape mirrors
+# that: the ignore file sits at the repo ROOT, which is what a corpus directory becomes
+# once it is git-init'd.
+#
+# Both rules are exercised against REAL artefacts — the interpreter's own __pycache__
+# tree, and a stray sibling .pyc that the directory rule alone would leave visible.
+@test "(7) each corpus ignore file hides the bytecode its suites produce" {
+  local rel src repo dirty
+  for rel in "${CORPUS_IGNORE_FILES[@]}"; do
+    src="${GA_ROOT_DIR}/${rel}"
+    [[ -f "${src}" ]] || {
+      printf 'missing corpus ignore file: %s\n' "${rel}" >&2
+      return 1
+    }
+
+    repo="${TMPROOT}/ignore-repo-${rel//\//-}"
+    mkdir -p "${repo}"
+    cp -- "${src}" "${repo}/.gitignore"
+    printf 'GA_CORPUS = 1\n' >"${repo}/mod.py"
+    git -C "${repo}" init -q
+    git -C "${repo}" config user.email bats@test.local
+    git -C "${repo}" config user.name bats
+    git -C "${repo}" add .gitignore mod.py
+    git -C "${repo}" commit -qm init
+
+    # setup() unsets PYTHONDONTWRITEBYTECODE, so production is ON here — this is the
+    # interpreter run that happens OUTSIDE the runner, which the env leg cannot cover.
+    (cd -- "${repo}" && "${REAL_PYTHON3}" -c 'import mod') || {
+      printf '%s: the probe module would not import\n' "${rel}" >&2
+      return 1
+    }
+    (cd -- "${repo}" && "${REAL_PYTHON3}" -c \
+      'import py_compile; py_compile.compile("mod.py", cfile="stray.pyc")') || {
+      printf '%s: could not produce a stray .pyc\n' "${rel}" >&2
+      return 1
+    }
+    [[ -d "${repo}/__pycache__" && -f "${repo}/stray.pyc" ]] || {
+      printf '%s: expected bytecode artefacts absent under %s\n' "${rel}" "${repo}" >&2
+      return 1
+    }
+
+    git -C "${repo}" check-ignore -q -- __pycache__ || {
+      printf '%s: __pycache__ is not ignored\n' "${rel}" >&2
+      return 1
+    }
+    git -C "${repo}" check-ignore -q -- stray.pyc || {
+      printf '%s: a stray .pyc is not ignored — the *.pyc rule is missing\n' "${rel}" >&2
+      return 1
+    }
+
+    dirty="$(git -C "${repo}" status --porcelain --untracked-files=all)"
+    [[ -z "${dirty}" ]] || {
+      printf '%s: the snapshot screen would refuse — status is not clean:\n%s\n' \
+        "${rel}" "${dirty}" >&2
+      return 1
+    }
+  done
+}
+
+# The barrier task regenerates manifest.json; what a regeneration cannot tell you
+# afterwards is whether a path was ELIGIBLE or merely happened to be picked up. Membership
+# is `git ls-files` narrowed by the generator's SCOPE_PATHS and filtered by its EXCLUDE_RE,
+# and both are READ FROM the generator here rather than copied — a copy would drift the
+# moment either changed, which is the failure this guard exists to catch.
+@test "(8) the four corpus ignore paths are manifest-eligible" {
+  [[ -f "${GENERATOR}" ]] || {
+    printf 'broken tree: generate-manifest.sh missing at %s\n' "${GENERATOR}" >&2
+    return 1
+  }
+
+  local scope_entries exclude_line exclude_re
+  scope_entries="$(sed -n \
+    '/^readonly -a SCOPE_PATHS=(/,/^)/{ s/^[[:space:]]*"\([^"]*\)".*/\1/p; }' \
+    "${GENERATOR}")"
+  [[ -n "${scope_entries}" ]] || {
+    printf 'could not read SCOPE_PATHS out of %s\n' "${GENERATOR}" >&2
+    return 1
+  }
+
+  # Unwrapped by parameter expansion rather than a sed script: the value is single-quoted
+  # in the source and contains backslashes, which a nested quoting layer would mangle.
+  exclude_line="$(grep -m1 '^readonly EXCLUDE_RE=' "${GENERATOR}")"
+  exclude_re="${exclude_line#*=}"
+  exclude_re="${exclude_re#\'}"
+  exclude_re="${exclude_re%\'}"
+  [[ -n "${exclude_re}" ]] || {
+    printf 'could not read EXCLUDE_RE out of %s\n' "${GENERATOR}" >&2
+    return 1
+  }
+
+  local rel entry covered
+  for rel in "${CORPUS_IGNORE_FILES[@]}"; do
+    [[ -f "${GA_ROOT_DIR}/${rel}" ]] || {
+      printf 'missing corpus ignore file: %s\n' "${rel}" >&2
+      return 1
+    }
+
+    covered=0
+    while IFS= read -r entry; do
+      if [[ "${rel}" == "${entry}" || "${rel}" == "${entry}/"* ]]; then
+        covered=1
+        break
+      fi
+    done <<<"${scope_entries}"
+    [[ "${covered}" -eq 1 ]] || {
+      printf '%s: outside every generator SCOPE_PATHS entry\n' "${rel}" >&2
+      return 1
+    }
+
+    if printf '%s\n' "${rel}" | grep -qE "${exclude_re}"; then
+      printf '%s: dropped by the generator EXCLUDE_RE\n' "${rel}" >&2
+      return 1
+    fi
+  done
 }
