@@ -54,8 +54,16 @@ interface OverviewKpis {
   totalCount: number | string;
 }
 
+interface HealthCardDef {
+  id: string;
+  kind: string;
+  daemonName?: string;
+}
+
 interface HealthModelApi {
-  HEALTH_CARD_DEFS: ReadonlyArray<{ id: string; kind: string; daemonName?: string }>;
+  // Mutable on purpose, not a missed `readonly`: the T14 fixtures below splice the live
+  // exported array and restore it — the module leaves it unfrozen for exactly that.
+  HEALTH_CARD_DEFS: HealthCardDef[];
   resolveCardFacts: (def: unknown, states: HealthStates) => { status: string; tone?: string };
   computeOverviewKpis: (states: HealthStates) => OverviewKpis;
   resolveDaemonDisplayMeta: (d: unknown) => { tone: string; label: string };
@@ -292,4 +300,54 @@ test("AC-T4 the server threshold moves, the row does not, and the card moves wit
     "ok",
     "a threshold of its own would hold this at crit — the staleness figure never changed",
   );
+});
+
+// --- T14: the denominator follows the card definition list, not a copy of its length ------
+// RED 확보 기구 — `HEALTH_CARD_DEFS` 는 동결되지 않은 채 참조로 내보내지므로 픽스처가 줄였다
+// 복원할 수 있음. 모델이 목록 길이를 스냅샷/리터럴로 굳혔다면 아래 두 단언이 붉어짐.
+// 기구 선례: architecture.live-badge.client.unit.test.ts (맵 몫의 같은 기구).
+
+test("T14 shrinking the definition list shrinks the KPI denominator by the same count", () => {
+  const defs = HealthModel.HEALTH_CARD_DEFS;
+  const full = defs.length;
+  const removed = defs.splice(1, 3);
+  try {
+    assert.strictEqual(removed.length, 3, "fixture precondition: three defs removed");
+    const kpis = HealthModel.computeOverviewKpis(allHealthyStates());
+    assert.strictEqual(
+      kpis.totalCount,
+      full - 3,
+      "denominator must follow HEALTH_CARD_DEFS — a snapshot count would stay at the old total",
+    );
+    assert.strictEqual(
+      kpis.totalCount,
+      defs.length,
+      "denominator must equal the live definition count, whatever that count currently is",
+    );
+    assert.strictEqual(
+      Number(kpis.okCount) + Number(kpis.degradedCount) + Number(kpis.infoCount),
+      kpis.totalCount,
+      "the buckets must still partition the shrunken denominator exactly",
+    );
+  } finally {
+    // 복원 — 뒤 테스트가 온전한 목록을 보게 함. splice 반환분을 원래 자리에 되꽂음.
+    defs.splice(1, 0, ...removed);
+    assert.strictEqual(defs.length, full, "definition list must be restored");
+  }
+});
+
+test("T14 an empty definition list yields a 0 denominator, never a stale total", () => {
+  const defs = HealthModel.HEALTH_CARD_DEFS;
+  const backup = defs.slice();
+  defs.splice(0, defs.length);
+  try {
+    const kpis = HealthModel.computeOverviewKpis(allHealthyStates());
+    assert.strictEqual(kpis.totalCount, 0, "no definitions means no denominator, not a fake total");
+    assert.strictEqual(kpis.okCount, 0);
+    assert.strictEqual(kpis.degradedCount, 0);
+    assert.strictEqual(kpis.infoCount, 0);
+  } finally {
+    defs.splice(0, 0, ...backup);
+    assert.strictEqual(defs.length, backup.length, "definition list must be restored");
+  }
 });
