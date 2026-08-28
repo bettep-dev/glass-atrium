@@ -58,22 +58,6 @@ function makeTitle(label: string): string {
   return `${SUITE_MARKER}-${label}-${randomUUID()}`;
 }
 
-// PRE-ONLY mermaid doc — the dominant real corpus shape (no working init script).
-function makePreOnlyMermaidBody(salt: string): string {
-  const src = "flowchart TD\n  A[Start] --> B{Choice}\n  B -->|yes| C[Done]\n  B -->|no| A";
-  return (
-    "<!doctype html>" +
-    '<html lang="ko">' +
-    `<head><meta charset="utf-8"><title>${salt}</title>` +
-    '<script src="https://cdn.tailwindcss.com"></script>' +
-    "</head>" +
-    `<body><main><h1>${salt}</h1>` +
-    `<pre class="mermaid">${src}</pre>` +
-    "</main></body>" +
-    "</html>"
-  );
-}
-
 // Minimal dark HTML body (no mermaid — faster render for zip tests).
 function makeSimpleHtmlBody(salt: string): string {
   return (

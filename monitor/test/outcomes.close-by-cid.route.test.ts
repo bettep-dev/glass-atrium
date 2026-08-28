@@ -106,7 +106,7 @@ function seedId(index: number): number {
   return id;
 }
 
-async function closeByCid(cid: string): ReturnType<FastifyInstance["inject"]> {
+async function closeByCid(cid: string): Promise<Awaited<ReturnType<FastifyInstance["inject"]>>> {
   return app.inject({
     method: "PATCH",
     url: `/api/outcomes/close-by-cid?cid=${encodeURIComponent(cid)}`,

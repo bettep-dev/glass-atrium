@@ -68,6 +68,210 @@ const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 const QUEUE_PROPOSALS_LABEL = "Approval queue";
 const QUEUE_LEARNING_LABEL = "Top learned signal";
 
+// ── health 응답 흡수 (ADR-B1 R2) ────────────────────────────────────────────
+// health.jsx 가 읽던 다섯 응답을 맵이 그대로 읽음 — 서버 계약 무변경, 요청 자리만 옮김.
+// 카드/KPI 모델(window.HealthModel)은 index.html 이 화면과 무관하게 싣고 있어
+// health 화면이 사라져도 고아가 되지 않음.
+
+// 로딩 초기 상태 — 다섯 응답이 같은 모양을 씀. 상태 객체는 교체만 하고 변형하지 않으므로
+// 참조를 공유해도 안전하고, 재요청 시 같은 참조를 다시 넣으면 불필요한 렌더가 생기지 않음.
+const INITIAL_FETCH_STATE_AR = { status: "loading", data: null, error: null };
+
+// 페이로드 드릴다운 기본 데몬 — payload 를 실제로 기록하는 데몬(autoagent/wiki) 중 첫째.
+// daily-restart-* 는 run status 만 남기고 payload 를 쓰지 않아 항상 빈 entries 임.
+const MAP_PAYLOAD_DAEMON = "autoagent";
+
+// health 폴링 주기 — 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
+// 설계도/live/큐 fetch 는 이 틱을 타지 않음: 준정적 데이터를 60s 마다 다시 끌 이유가 없음.
+const HEALTH_POLL_MS = 60_000;
+
+// 맵의 health fetch 표 — health.jsx:42-47 의 다섯 URL 과 같은 집합.
+// 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
+// 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
+// 데몬 이름은 응답에서 온 값이라 인코딩해 실음 — 이름 안의 `&`/공백이 그냥 붙으면 질의가
+// 한 칸 더 생기거나 잘려 다른 요청이 됨. 서버가 이름을 허용목록으로 거르지만(health-detail.ts),
+// 그건 서버의 방어지 이 URL 을 조립하는 쪽의 근거가 아님.
+function getMapHealthEndpoints(payloadDaemon) {
+	return [
+		"/api/health/daemons",
+		"/api/health/hook-chain",
+		"/api/health",
+		`/api/health/daemon-payload?daemon=${encodeURIComponent(payloadDaemon)}&limit=10`,
+		"/api/health/hook-failures?days=30&limit=50",
+	];
+}
+
+// 표에서 페이로드 URL 이 앉은 자리 — 다섯 중 드릴다운 데몬을 따라 움직이는 유일한 항목이고,
+// 두 요청 무리(머리글이 서 있는 넷 · 드릴다운 하나)를 가르는 기준임. 목록은 언제나 위 표에서
+// 파생시킴: URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라져 한쪽만 고쳐지는 자리가 생김.
+const MAP_PAYLOAD_URL_INDEX = 3;
+
+// KPI 집계는 공용 모델에 위임 — 맵이 카드 목록을 다시 적지 않음.
+// 분모(정상 N/M 의 M)가 HEALTH_CARD_DEFS 를 따라 움직여야 정의가 늘거나 줄 때
+// 화면이 조용히 옛 총계를 들고 있지 않음 (F02 불변식의 화면 몫 · T14).
+// 모델 미적재 시 null — 가짜 0 을 그리는 대신 KPI 행 자체를 비움.
+function getMapHealthKpis(states) {
+	const model = window.HealthModel;
+	if (!model || typeof model.computeOverviewKpis !== "function") return null;
+	return model.computeOverviewKpis(states);
+}
+
+// 스트립이 tone 한 줄로 내는 카드 — 정의(kind · 표시 이름)는 공용 카드 목록에서 찾음 (T10).
+// 목록에서 사라지면 줄도 사라짐: 맵이 없는 카드의 판정을 지어내지 않음.
+const MAP_STRIP_CARD_IDS = ["pg", "browser"];
+
+// 카드 id → 스트립 한 줄. 판정(tone)은 health-model 의 resolveCardFacts 가, 표시 문장은 ui.jsx 의
+// 배지 표가 냄 — 맵은 어느 쪽도 다시 적지 않음. 둘째 tone 표를 들이면 KPI 분자와 이 줄이 갈라짐.
+// 문장은 tone 기본값(BADGE_TONE_META)을 씀: 카드별 오버라이드('Disconnected' 등)의 선택 로직은
+// 카드 격자의 것이고, 한 줄 요약이 그 분기를 복제하면 같은 판정을 두 곳에서 말하게 됨.
+// 모르는 tone 은 resolveBadge 가 info 로 떨어뜨림 — 가짜 ok 를 만들지 않음.
+// ready 가 아닌 응답은 줄을 내지 않음: 못 읽은 저장소는 아래 로드 실패 경보가 이름으로 부르고
+// (getHealthStoreErrorsAR), KPI fold 도 같은 규칙으로 ready 아닌 카드를 분모에서 뺌.
+function getMapStripReadings(states) {
+	const model = window.HealthModel;
+	if (!model || typeof model.resolveCardFacts !== "function") return [];
+
+	return MAP_STRIP_CARD_IDS.map((id) =>
+		(model.HEALTH_CARD_DEFS || []).find((def) => def.id === id),
+	)
+		.filter((def) => Boolean(def))
+		.map((def) => {
+			const facts = model.resolveCardFacts(def, states);
+			if (facts.status !== "ready") return null;
+
+			return {
+				id: def.id,
+				name: def.name,
+				tone: facts.tone,
+				statusLabel: window.UI.resolveBadge(facts.tone).label,
+			};
+		})
+		.filter((reading) => Boolean(reading));
+}
+
+// 전역 확장 블록 레지스트리 — 맵 하단의 화면-폭 상세 블록. T11(Hook chain) 이 첫 항목이고
+// T12c(Hook failure log) 가 뒤를 이음. 접힘/펼침은 항목이 아니라 컨테이너가 관리함.
+const GLOBAL_DETAIL_BLOCKS = [
+	{
+		id: "hook-chain",
+		title: "Hook chain",
+		render: (states) => <HookChainDetail state={states.hookState} />,
+	},
+	{
+		id: "hook-failures",
+		title: "Hook failure log",
+		render: (states) => <HookFailureDetail state={states.hookFailState} />,
+	},
+];
+
+// render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
+function getGlobalDetailBlocks() {
+	return GLOBAL_DETAIL_BLOCKS.filter(
+		(block) => block && typeof block.render === "function",
+	);
+}
+
+// 이름을 id 조각으로 — id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는
+// 이미 합법이라 그대로 통과). 두 펼침 영역이 같은 규칙을 써야 한쪽만 문법을 바꿔 어긋나지 않음.
+function toDetailIdPart(name) {
+	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값.
+// 접힌 문자만 다른 두 이름(`a b` 와 `a-b`)은 같은 id 로 떨어짐. 지금 중복 id 가 생기지 않는 것은
+// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(LiveDaemonTable 의 expandedDaemon
+// 은 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
+// id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
+function getDaemonDetailId(daemonName) {
+	return `arch-daemon-detail-${toDetailIdPart(daemonName)}`;
+}
+
+// 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 가리키는 값 (T11).
+function getGlobalBlockDetailId(blockId) {
+	return `arch-global-detail-${toDetailIdPart(blockId)}`;
+}
+
+// hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
+// null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 설정된 이벤트가 없음 — 다른 문장임.
+function getHookChainRows(state) {
+	if (!state || state.status !== "ready") return null;
+
+	return (state.data?.events || []).map((event) => {
+		const groups = (event.groups || []).map((group) => ({
+			matcher: group.matcher,
+			hooks: group.hooks || [],
+		}));
+
+		return {
+			event: event.event,
+			groups,
+			hookCount: groups.reduce((sum, group) => sum + group.hooks.length, 0),
+		};
+	});
+}
+
+// error_kind → 표시 라벨. 라벨 자체가 신호라서 색은 보조임 — 색맹 안전(듀얼 인코딩).
+// 서버 union 5종을 모두 적음: 빠진 종류는 아래 폴백이 원문 문자열을 그대로 부르므로
+// 화면이 모르는 실패를 'Unknown' 으로 접어 없애지 않음.
+const HOOK_FAIL_KIND = {
+	connection_refused: { tone: "crit", label: "Connection refused" },
+	timeout: { tone: "warn", label: "Timed out" },
+	constraint_violation: { tone: "warn", label: "Data conflict" },
+	identifier_rejected: { tone: "warn", label: "Identifier rejected" },
+	unknown: { tone: "info", label: "Unknown" },
+};
+
+function getHookFailKind(kind) {
+	return HOOK_FAIL_KIND[kind] || { tone: "info", label: String(kind || "—") };
+}
+
+// hook-failures 응답 → 실패 한 줄씩 (T12c). 창(days) 안의 목록이고, 창 밖 최종기록은
+// 이 목록이 아니라 응답의 last_failure_ts 가 냄 — 둘은 다른 사실이라 여기서 섞지 않음.
+// null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 창 안에 실패가 없음 — 다른 문장임.
+function getHookFailureRows(state) {
+	if (!state || state.status !== "ready") return null;
+
+	return (state.data?.failures || []).map((failure, index) => ({
+		key: failure?.id ?? `${failure?.failure_ts}-${index}`,
+		failureTs: failure?.failure_ts || null,
+		hookName: failure?.hook_name || "—",
+		targetTable: failure?.target_table || "—",
+		kind: getHookFailKind(failure?.error_kind),
+		retryAttempted: Boolean(failure?.retry_attempted),
+	}));
+}
+
+// 확장 영역의 실행 줄 — 선택 데몬의 payload 응답을 날짜 + 사유로 접음.
+// 응답이 든 daemon 이름을 대조함: 드릴다운 재요청이 도는 동안 이전 데몬의 실패를 새로 펼친 행
+// 아래 그리면 화면이 다른 작업의 장애를 이 작업의 것으로 말하게 됨.
+// null = 이 데몬의 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 실행 기록이 없음 — 둘은 다른 문장임.
+function getDaemonRunRows(payloadState, daemonName) {
+	if (!payloadState || payloadState.status !== "ready") return null;
+
+	const data = payloadState.data;
+	if (!data || data.daemon !== daemonName) return null;
+
+	// key 는 fold 가 냄 — 실패 로그 줄과 같은 방식. 날짜도 사유 문장도 로그에서 온 값이라
+	// 한 응답 안에서 되풀이될 수 있고, 겹친 key 는 React 경고에 더해 편집 중인 두 줄을
+	// 서로 섞음. 자리(index)를 붙여 응답 안에서 유일하게 만듦.
+	return (data.entries || []).map((entry, index) => ({
+		key: `${entry?.run_date}-${index}`,
+		runDate: entry?.run_date || "—",
+		verdict: entry?.summary?.verdict || "unknown",
+		reasons: (entry?.summary?.error_signatures || []).map((signature, sigIndex) => ({
+			key: `${signature?.message}-${sigIndex}`,
+			message: signature?.message || "—",
+			count: Number(signature?.count) || 0,
+		})),
+	}));
+}
+
+// 사유가 없는 실행이 스스로를 설명하는 문장 — 빈 자리는 '실패 없음'과 '읽을 payload 없음'을 구별하지 못함.
+const RUN_VERDICT_NOTE = {
+	ok: "No failures recorded",
+	unknown: "No readable payload",
+};
+
 // Top-level Screen
 
 function ScreenArchitecture(
@@ -94,13 +298,29 @@ function ScreenArchitecture(
 		errors: [],
 	});
 
+	// health 응답 5종 — 각각 독립적으로 실패 가능. 한 응답이 죽어도 나머지 사실은 그대로 보임.
+	const [daemonHealthState, setDaemonHealthState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [hookState, setHookState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [pgState, setPgState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [payloadState, setPayloadState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [hookFailState, setHookFailState] = useStateAR(INITIAL_FETCH_STATE_AR);
+
+	// 페이로드 드릴다운 대상 — 확장 행이 고름 (T9c). 접어도 되돌리지 않음: 되돌리면 다섯 응답이
+	// 한 번 더 나가고 방금 읽은 실패가 스트립에서도 지워짐.
+	const [payloadDaemon, setPayloadDaemon] = useStateAR(MAP_PAYLOAD_DAEMON);
+
 	const [refreshTick, setRefreshTick] = useStateAR(0);
+
+	// health 전용 틱 — 60s 폴링이 설계도/live/큐 재요청까지 끌고 가지 않게 분리함.
+	const [healthTick, setHealthTick] = useStateAR(0);
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
 
 	const diagAbortRef = useRefAR(null);
 	const liveAbortRef = useRefAR(null);
+	const healthAbortRef = useRefAR(null);
+	const payloadAbortRef = useRefAR(null);
 
 	const triggerRefresh = useCallbackAR(() => setRefreshTick((t) => t + 1), []);
 
@@ -160,6 +380,60 @@ function ScreenArchitecture(
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
+
+	// 머리글이 서 있는 health 응답 4종 — 병렬 발화. 수동 Refresh(refreshTick)와 60s 폴링(healthTick)
+	// 에서만 다시 나감. 드릴다운(payloadDaemon)은 일부러 deps 에 없음: 행 하나를 펼쳤다고 이 넷이
+	// 다시 나가면 왕복 동안 스트립의 PG·브라우저 줄이 DOM 에서 사라지고 KPI 가 —/— 로 떨어져,
+	// 방금 읽은 실패를 조작자가 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+		healthAbortRef.current?.abort();
+		healthAbortRef.current = ctrl;
+
+		const setters = [setDaemonHealthState, setHookState, setPgState, setHookFailState];
+		// 표에서 페이로드 자리만 덜어냄. 데몬 이름을 싣는 URL 은 방금 덜어낸 그 하나뿐이라
+		// 어느 이름으로 표를 세우든 남는 넷은 같음 — 그래서 payloadDaemon 이 여기 필요 없음.
+		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON).filter(
+			(_url, index) => index !== MAP_PAYLOAD_URL_INDEX,
+		);
+
+		urls.forEach((url, i) => {
+			const setter = setters[i];
+			setter(INITIAL_FETCH_STATE_AR);
+			fetchJsonAR(url, ctrl.signal)
+				.then((data) => {
+					if (!ctrl.signal.aborted) setter({ status: "ready", data, error: null });
+				})
+				.catch((err) => handleErrorAR(err, setter));
+		});
+
+		return () => ctrl.abort();
+	}, [refreshTick, healthTick]);
+
+	// 드릴다운 응답 1종 — 위 넷과 달리 선택 데몬을 따라 다시 나감 (T9c). 자기 요청만 중단함:
+	// 머리글의 넷과 abort 컨트롤러를 함께 쓰면 행을 펼칠 때 그쪽 왕복까지 끊겨 같은 공백이 생김.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+		payloadAbortRef.current?.abort();
+		payloadAbortRef.current = ctrl;
+
+		const url = getMapHealthEndpoints(payloadDaemon)[MAP_PAYLOAD_URL_INDEX];
+
+		setPayloadState(INITIAL_FETCH_STATE_AR);
+		fetchJsonAR(url, ctrl.signal)
+			.then((data) => {
+				if (!ctrl.signal.aborted) setPayloadState({ status: "ready", data, error: null });
+			})
+			.catch((err) => handleErrorAR(err, setPayloadState));
+
+		return () => ctrl.abort();
+	}, [refreshTick, healthTick, payloadDaemon]);
+
+	// 60s 자동 새로고침 — health 는 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
+	useEffectAR(() => {
+		const intervalId = setInterval(() => setHealthTick((t) => t + 1), HEALTH_POLL_MS);
+		return () => clearInterval(intervalId);
+	}, []);
 
 	// ── derived data ──────────────────────────────────────────────────────────
 
@@ -254,9 +528,22 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					// 자기개선 큐 스트립 — 상시 노출. 좁은 폭에서는 두 사실이 줄바꿈으로 쌓임.
-					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
+					// 사실 스트립 두 줄(자기개선 큐 · health 요약) — 상시 노출, 같은 면.
+					// 좁은 폭에서는 사실들이 줄바꿈으로 쌓임. 한 규칙에 둘을 묶어 둠: 면이 갈라지면
+					// 지도 위 두 줄이 서로 다른 상자로 읽힘.
+					".arch-queue-strip, .arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					// 전역 확장 블록 — 지도 아래 화면-폭 상세. 블록이 없으면 컨테이너 자체가 렌더되지 않음.
+					".arch-global-blocks { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; } " +
+					".arch-global-block { background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					// 블록 머리 = 펼침 컨트롤. 표 행과 같은 button 클래스를 쓰되 블록 폭을 다 차지해 클릭 면이 넓음.
+					".arch-global-block > .arch-row-toggle { width: 100%; padding: 6px 10px; } " +
+					".arch-global-block-body { padding: 0 10px 8px 22px; } " +
+					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
+					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
+					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
+					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
@@ -300,6 +587,17 @@ function ScreenArchitecture(
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
 					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
+					// 확장 컨트롤 — 표 셀 안에서 서체를 물려받아 행 그대로 보이되 진짜 button 으로 남음.
+					".arch-row-toggle { display: inline-flex; align-items: baseline; gap: 6px; background: none; " +
+					"border: 0; margin: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; } " +
+					".arch-row-toggle:hover { color: rgb(var(--ink)); } " +
+					".arch-row-toggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
+					".arch-row-caret { color: rgb(var(--faint)); font-size: var(--fs-micro); } " +
+					// 상세 셀만 줄바꿈 허용 — 표 본문의 nowrap 이 걸리면 사유 문장이 가로로 흘러 표를 벌림.
+					".arch-live-table td.arch-run-cell { white-space: normal; padding: 6px 8px 8px 22px; } " +
+					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
@@ -351,6 +649,17 @@ function ScreenArchitecture(
 					onRetry={triggerRefresh}
 				/>
 
+				{/* health 요약 — 이관된 health 화면의 KPI 가 지도 상단에 앉는 자리 (ADR-B1). */}
+				<HealthStrip
+					daemonState={daemonHealthState}
+					pgState={pgState}
+					hookState={hookState}
+					hookFailState={hookFailState}
+					payloadState={payloadState}
+					payloadDaemon={payloadDaemon}
+					onRetry={triggerRefresh}
+				/>
+
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
 					<div className="card arch-col-card">
@@ -371,7 +680,22 @@ function ScreenArchitecture(
 					{activeDiagram?.description || "No description available."}
 				</div>
 
-				<LiveDaemonTable state={liveState} />
+				<LiveDaemonTable
+					state={liveState}
+					payloadState={payloadState}
+					onSelectDaemon={setPayloadDaemon}
+				/>
+
+				{/* 전역 확장 블록 — 명부(GLOBAL_DETAIL_BLOCKS)가 채움: Hook chain · Hook failure log. */}
+				<GlobalDetailRegion
+					states={{
+						daemonState: daemonHealthState,
+						pgState,
+						hookState,
+						hookFailState,
+						payloadState,
+					}}
+				/>
 			</div>
 
 			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
@@ -890,14 +1214,344 @@ function QueueStrip({ pendingCount, topSignal, errors, onRetry }) {
 	);
 }
 
+// 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
+// 값 없음(빈 배열)과 못 읽음을 화면에서 구별하는 유일한 자리임.
+const HEALTH_STORE_LABELS_AR = {
+	daemonState: "Daemons",
+	hookState: "Hook chain",
+	pgState: "PostgreSQL",
+	payloadState: "Run payloads",
+	hookFailState: "Hook failures",
+};
+
+function getHealthStoreErrorsAR(states) {
+	return Object.keys(HEALTH_STORE_LABELS_AR)
+		.filter((key) => states[key] && states[key].status === "error")
+		.map((key) => HEALTH_STORE_LABELS_AR[key]);
+}
+
+/**
+ * health 응답 요약 스트립 — 이관된 health 화면의 KPI '정상 N/M' 이 앉는 지도 상단 한 줄.
+ * 분모는 window.HealthModel 의 카드 정의 목록에서 나옴 — 맵이 총계를 자기 파일에 다시 적지
+ * 않으므로 정의가 늘거나 줄면 분모가 따라 움직임 (F02 불변식의 화면 몫 · T14 가 잠금).
+ * PG · Chromium 은 KPI 숫자에 접힌 채로도 각자의 tone 한 줄을 냄 (T10) — 분자가 하나 줄었다는
+ * 사실만으로는 어느 부품이 죽었는지 대답하지 못함.
+ */
+function HealthStrip({
+	daemonState,
+	pgState,
+	hookState,
+	hookFailState,
+	payloadState,
+	payloadDaemon,
+	onRetry,
+}) {
+	const { StatusDot } = window.UI;
+
+	// 카드 판정이 읽는 네 응답 — KPI 분자/분모와 부품 한 줄이 같은 묶음을 봐야 두 값이 갈라지지 않음.
+	// 페이로드는 카드 정의에 없어 이 묶음 밖임: 로드 실패 경보에만 이름으로 참여함.
+	const cardStates = { daemonState, pgState, hookState, hookFailState };
+
+	const kpis = getMapHealthKpis(cardStates);
+
+	const readings = getMapStripReadings(cardStates);
+
+	const errors = getHealthStoreErrorsAR({ ...cardStates, payloadState });
+
+	// 최근 실행 페이로드 도착 건수 — 확장 행이 날짜·사유로 펼치는 원자료(T9c)를 같은 응답에서 읽음.
+	// 여기서는 도착 여부만 한 줄로 드러냄 (읽지 않는 상태로 두면 흡수가 아니라 적재일 뿐임).
+	const payloadCount =
+		payloadState.status === "ready"
+			? (payloadState.data?.entries || []).length
+			: null;
+
+	if (kpis === null && payloadCount === null && readings.length === 0 && errors.length === 0)
+		return null;
+
+	// 정보 버킷 공개 — 정상도 장애도 아닌 카드(미수신/미검증/한도)의 분모 귀속을 밝힘.
+	const infoHint = kpis && kpis.infoCount > 0 ? `${kpis.infoCount} informational` : "";
+
+	return (
+		<section className="arch-health-strip" aria-label="System health">
+			{kpis && (
+				<>
+					<div className="arch-queue-fact" data-health-fact="healthy-parts">
+						<span className="fs-micro text-faint">Healthy parts</span>
+						<span className="fs-meta text-ink">
+							{kpis.okCount}/{kpis.totalCount}
+						</span>
+						{infoHint && <span className="fs-meta text-dim">{infoHint}</span>}
+					</div>
+					<div className="arch-queue-fact" data-health-fact="needs-attention">
+						<span className="fs-micro text-faint">Needs attention</span>
+						<span className="fs-meta text-ink">{kpis.degradedCount}</span>
+					</div>
+					<div className="arch-queue-fact" data-health-fact="overdue-jobs">
+						<span className="fs-micro text-faint">Overdue jobs</span>
+						<span className="fs-meta text-ink">{kpis.staleCount}</span>
+					</div>
+				</>
+			)}
+			{/* 부품 한 줄 — tone 은 속성으로도 실림. 색만으로 판정을 말하면 색을 못 읽는 조작자와
+			    하네스가 같은 문장을 못 읽음(문장은 statusLabel 이 냄). */}
+			{readings.map((reading) => (
+				<div
+					key={reading.id}
+					className="arch-queue-fact"
+					data-health-fact={reading.id}
+					data-health-tone={reading.tone}>
+					<span className="fs-micro text-faint">{reading.name}</span>
+					<span className="fs-meta text-ink inline-flex items-center gap-1.5">
+						<StatusDot status={reading.tone} />
+						{reading.statusLabel}
+					</span>
+				</div>
+			))}
+			{payloadCount !== null && (
+				<div className="arch-queue-fact" data-health-fact="run-payloads">
+					<span className="fs-micro text-faint">Run payloads</span>
+					<span className="fs-meta font-mono text-ink">{payloadDaemon}</span>
+					<span className="fs-meta text-dim">{payloadCount} recent</span>
+				</div>
+			)}
+			{errors.length > 0 && (
+				<StripAlertAR
+					className="arch-queue-error"
+					message="Couldn't load system health"
+					detail={errors.join(" · ")}
+					onRetry={onRetry}
+				/>
+			)}
+		</section>
+	);
+}
+
+/**
+ * 전역 확장 블록 자리 — 지도 아래 화면-폭 상세. T11(Hook chain) · T12c(Hook failure log) 가 채움.
+ * 등록된 블록이 없으면 null 을 냄: 빈 컨테이너가 지도와 표 사이에 여백만 남기지 않게 함.
+ * blocks 를 인자로도 받음 — 레지스트리를 건드리지 않고 컨테이너 계약만 재는 자리를 남김.
+ * 접힘/펼침은 여기가 관리함 — 블록마다 제 상태를 들면 같은 규율을 항목 수만큼 다시 적게 됨.
+ */
+function GlobalDetailRegion({ blocks = getGlobalDetailBlocks(), states }) {
+	// 한 번에 한 블록 — 화면-폭 상세가 여럿 열리면 지도 아래가 세로로 길어져 비교가 스크롤이 됨
+	// (확장 행과 같은 규율).
+	const [expandedBlock, setExpandedBlock] = useStateAR(null);
+
+	const toggleBlock = useCallbackAR((id) => {
+		setExpandedBlock((current) => (current === id ? null : id));
+	}, []);
+
+	if (blocks.length === 0) return null;
+
+	return (
+		<section className="arch-global-blocks" aria-label="System detail">
+			{blocks.map((block) => {
+				const detailId = getGlobalBlockDetailId(block.id);
+				const isExpanded = expandedBlock === block.id;
+
+				return (
+					<div
+						key={block.id}
+						className="arch-global-block"
+						data-global-block={block.id}
+					>
+						{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
+						<button
+							type="button"
+							className="arch-row-toggle"
+							aria-expanded={isExpanded}
+							aria-controls={detailId}
+							onClick={() => toggleBlock(block.id)}>
+							<span className="arch-row-caret" aria-hidden="true">
+								{isExpanded ? "▾" : "▸"}
+							</span>
+							{block.title || block.id}
+						</button>
+						{/* 접힌 블록은 본문을 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음 */}
+						{isExpanded && (
+							<div id={detailId} className="arch-global-block-body">
+								{block.render(states)}
+							</div>
+						)}
+					</div>
+				);
+			})}
+		</section>
+	);
+}
+
+/**
+ * Hook chain 전역 블록 본문 — 이벤트 → matcher → 훅 (T11). 카드가 내던 요약(이벤트 수 · 훅 수)은
+ * "어느 훅이 어느 matcher 에 걸렸는가" 를 대답하지 못하므로 그 관계를 그대로 폄.
+ * 경로 · matcher · 명령 문자열은 settings.json 에서 읽어 온 서버 텍스트임. JSX 텍스트 자식으로만
+ * 두어 React 가 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면
+ * 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function HookChainDetail({ state }) {
+	const { formatRelativeTime } = window.UI;
+	const rows = getHookChainRows(state);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the hook configuration: {state.error}
+			</span>
+		);
+
+	if (rows === null)
+		return <span className="fs-meta text-dim">Loading the hook chain…</span>;
+
+	if (rows.length === 0)
+		return <span className="fs-meta text-dim">This settings file configures no hooks.</span>;
+
+	const sourceMtime = state.data?.source_mtime;
+
+	return (
+		<div className="arch-hook-chain">
+			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
+			<div className="arch-hook-head fs-meta text-dim">
+				<span className="font-mono text-ink">{state.data?.source_path || "—"}</span>
+				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
+			</div>
+			<ul className="arch-hook-events">
+				{rows.map((row) => (
+					<li key={row.event} className="arch-hook-event">
+						<div className="arch-hook-head">
+							<span className="fs-meta font-mono text-ink">{row.event}</span>
+							{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
+							<span className="fs-micro text-faint">{row.hookCount} hooks</span>
+						</div>
+						{row.groups.length > 0 && (
+							<ul className="arch-hook-groups">
+								{row.groups.map((group) => (
+									<li key={group.matcher} className="arch-hook-group">
+										<span className="fs-meta font-mono text-dim">{group.matcher}</span>
+										<ul className="arch-hook-list">
+											{group.hooks.map((hook, index) => (
+												<li
+													key={`${group.matcher}-${index}`}
+													className="arch-hook-head fs-meta text-dim">
+													<span className="font-mono text-ink">{hook.command}</span>
+													{hook.type && <span className="fs-micro text-faint">{hook.type}</span>}
+													{hook.timeout !== null && hook.timeout !== undefined && (
+														<span className="fs-micro text-faint">timeout {hook.timeout}s</span>
+													)}
+												</li>
+											))}
+										</ul>
+									</li>
+								))}
+							</ul>
+						)}
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+/**
+ * Hook failure log 전역 블록 본문 — 창 안 실패 목록 + 창 무관 최종기록 (T12c).
+ * 두 사실을 따로 부름: 목록은 days 창에 매인 값이라 창이 비면 사라지지만, 마지막으로 실패한
+ * 시각은 창 밖 MAX 이므로 남음. 빈 창을 '한 번도 실패한 적 없음'으로 읽히게 두면 조작자가
+ * 조사할 사건을 조사하지 않게 됨 — 서버가 그 둘을 갈라 주는 이유가 여기임.
+ * 최종기록은 응답 필드에서만 읽음: 목록 최댓값으로 유도하면 빈 창에서 값이 사라짐.
+ * hook 이름 · 테이블 · error_kind 는 실패 로그에서 온 서버 텍스트임. JSX 텍스트 자식과
+ * dateTime/title 속성으로만 두어 React 가 이스케이프하게 함 — 이 경로에 raw-HTML
+ * 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는
+ * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function HookFailureDetail({ state }) {
+	const { formatRelativeTime, formatKstFull } = window.UI;
+	const rows = getHookFailureRows(state);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the hook failures: {state.error}
+			</span>
+		);
+
+	if (rows === null)
+		return <span className="fs-meta text-dim">Loading the hook failure log…</span>;
+
+	const days = state.data?.days;
+	const lastFailure = state.data?.last_failure_ts || null;
+
+	return (
+		<div className="arch-hook-fails">
+			<div className="arch-hook-head fs-meta text-dim">
+				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
+				<span className="text-ink">
+					{rows.length} {rows.length === 1 ? "failure" : "failures"} in the last{" "}
+					{days ?? "—"} days
+				</span>
+				{lastFailure ? (
+					<span>
+						Last failure{" "}
+						<time
+							data-hook-fail-last=""
+							dateTime={lastFailure}
+							title={formatKstFull(lastFailure)}>
+							{formatRelativeTime(lastFailure)}
+						</time>
+					</span>
+				) : (
+					<span>This log has never held a hook failure.</span>
+				)}
+			</div>
+			{rows.length > 0 && (
+				<ul className="arch-hook-fail-list">
+					{rows.map((row) => (
+						<li
+							key={row.key}
+							data-hook-fail-row=""
+							className="arch-hook-head fs-meta text-dim">
+							<time
+								className="font-mono"
+								dateTime={row.failureTs}
+								title={formatKstFull(row.failureTs)}>
+								{formatRelativeTime(row.failureTs)}
+							</time>
+							<span className="font-mono text-ink">{row.hookName}</span>
+							<span className="font-mono">{row.targetTable}</span>
+							{/* 라벨이 신호이고 색은 보조 — 색만으로 실패 종류를 가르지 않음 */}
+							<span className={TONE_TEXT_CLASS[row.kind.tone] || "text-dim"}>
+								{row.kind.label}
+							</span>
+							{row.retryAttempted && (
+								<span className="fs-micro text-faint">retried</span>
+							)}
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
 // 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
 
-function LiveDaemonTable({ state }) {
+function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
 	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 daemon 배열을 다시 훑지 않음.
 	const rows = useMemoAR(
 		() => (state.status === "ready" ? getLiveDaemonRows(state.data?.daemons) : []),
 		[state.status, state.data],
+	);
+
+	// 한 번에 한 행만 펼침 — 여럿이 열리면 표가 세로로 길어져 실패 비교가 아니라 스크롤이 됨.
+	const [expandedDaemon, setExpandedDaemon] = useStateAR(null);
+
+	const toggleRow = useCallbackAR(
+		(name) => {
+			setExpandedDaemon((current) => (current === name ? null : name));
+			// 접을 때도 같은 이름을 올림 — 값이 그대로라 재요청은 없고, 방금 읽은 실패가 남음.
+			onSelectDaemon?.(name);
+		},
+		[onSelectDaemon],
 	);
 
 	if (state.status !== "ready") return null;
@@ -915,24 +1569,106 @@ function LiveDaemonTable({ state }) {
 					</tr>
 				</thead>
 				<tbody>
-					{rows.map((row) => (
-						<tr key={row.name}>
-							<th scope="row" className="text-ink font-mono">
-								{row.name}
-							</th>
-							<td>
-								<span className="inline-flex items-center gap-1.5">
-									<StatusDot status={row.tone} />
-									{row.statusLabel}
-								</span>
-							</td>
-							<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
-							<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
-						</tr>
-					))}
+					{rows.flatMap((row) => {
+						const detailId = getDaemonDetailId(row.name);
+						const isExpanded = expandedDaemon === row.name;
+
+						const summaryRow = (
+							<tr key={row.name} data-daemon-row={row.name}>
+								<th scope="row" className="text-ink font-mono">
+									{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
+									<button
+										type="button"
+										className="arch-row-toggle"
+										aria-expanded={isExpanded}
+										aria-controls={detailId}
+										onClick={() => toggleRow(row.name)}>
+										<span className="arch-row-caret" aria-hidden="true">
+											{isExpanded ? "▾" : "▸"}
+										</span>
+										{row.name}
+									</button>
+								</th>
+								<td>
+									<span className="inline-flex items-center gap-1.5">
+										<StatusDot status={row.tone} />
+										{row.statusLabel}
+									</span>
+								</td>
+								<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
+								<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
+							</tr>
+						);
+
+						// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
+						if (!isExpanded) return [summaryRow];
+
+						return [
+							summaryRow,
+							<tr key={`${row.name}-detail`} data-daemon-detail={row.name}>
+								<td id={detailId} colSpan={4} className="arch-run-cell">
+									<DaemonRunDetail daemon={row.name} state={payloadState} />
+								</td>
+							</tr>,
+						];
+					})}
 				</tbody>
 			</table>
 		</div>
+	);
+}
+
+/**
+ * 확장 영역 본문 — 선택 데몬의 최근 실행을 날짜 + 사유로 나열함 (T9c).
+ * 사유 문자열도 못 읽음 사유(state.error)도 서버에서 온 텍스트임. JSX 텍스트 자식으로만 두어 React 가
+ * 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01).
+ * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function DaemonRunDetail({ daemon, state }) {
+	const runs = getDaemonRunRows(state, daemon);
+
+	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
+	// fold 는 두 경우 모두 null 을 내므로(응답 없음 · 이름 불일치) 상태를 여기서 직접 읽어야 함.
+	if (state && state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the recent runs: {state.error}
+			</span>
+		);
+
+	if (runs === null)
+		return (
+			<span className="fs-meta text-dim">Loading recent runs for {daemon}…</span>
+		);
+
+	if (runs.length === 0)
+		return <span className="fs-meta text-dim">No stored runs for {daemon}.</span>;
+
+	return (
+		<ul className="arch-run-list">
+			{runs.map((run) => (
+				<li key={run.key} className="arch-run-entry">
+					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
+					{run.reasons.length === 0 ? (
+						<span className="fs-meta text-dim">
+							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}
+						</span>
+					) : (
+						<ul className="arch-run-reasons">
+							{run.reasons.map((reason) => (
+								<li key={reason.key} className="fs-meta text-dim">
+									{reason.message}
+									{/* 한 사이클에 반복된 서명은 횟수까지 밝힘 — 단발 장애와 반복 장애는 다른 사건임 */}
+									{reason.count > 1 && (
+										<span className="text-faint"> ×{reason.count}</span>
+									)}
+								</li>
+							))}
+						</ul>
+					)}
+				</li>
+			))}
+		</ul>
 	);
 }
 
@@ -1133,8 +1869,10 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 	);
 }
 
-// 아이콘 색 클래스는 리터럴 표 — 조립한 클래스명은 클래스 스캐너가 보지 못함.
-const BANNER_TONE_TEXT_CLASS = {
+// tone → 글자색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
+// 배너 아이콘과 실패 로그의 error_kind 라벨이 같은 표를 씀 — 둘째 표를 들이면 같은 tone 이
+// 화면 자리마다 다른 색으로 갈라짐.
+const TONE_TEXT_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
@@ -1159,7 +1897,7 @@ function AlertBannerAR({ tone, icon, title, note, badges }) {
 			<Icon
 				name={icon}
 				size={16}
-				className={`${BANNER_TONE_TEXT_CLASS[tone]} mt-0.5`}
+				className={`${TONE_TEXT_CLASS[tone]} mt-0.5`}
 			/>
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{title}</div>

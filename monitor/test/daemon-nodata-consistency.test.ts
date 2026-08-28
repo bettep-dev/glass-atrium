@@ -65,7 +65,11 @@ const stubWindow: StubWindow = {
     },
   },
 };
-(globalThis as { window?: StubWindow }).window = stubWindow;
+// Double-cast is required, not laziness: with the DOM lib loaded `globalThis.window` is
+// `Window & typeof globalThis`, which does not overlap this stub — and installing a
+// non-Window stub is exactly the point, since the module under test is a browser
+// module loaded in node.
+(globalThis as unknown as { window?: StubWindow }).window = stubWindow;
 
 await import("../public/src/data/health-model.js");
 const HealthModel = stubWindow.HealthModel;
