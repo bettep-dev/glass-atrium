@@ -224,10 +224,19 @@ dispatch_action_monitor_panel() {
 # codes are byte-for-byte unchanged — ONLY the progress render moves into the box. A cancelled
 # confirm returns 0.
 dispatch_action_uninstall_panel() {
-  local status=0
+  local status=0 backup_dir
+  # The prompt names the directory the backup will ACTUALLY land in, resolved by the same
+  # function drop_databases uses (ga_resolve_backup_dir, ga-db.sh). A hardcoded path here
+  # would read as a promise at the one moment the user is deciding whether their data is
+  # recoverable, and it would be wrong for every install that relocated the backups.
+  # The resolver's own stderr WARN is suppressed: this call happens before the alt-screen
+  # toggle, so a stray line would paint into the frame, and the WARN's audience is the
+  # reconciler/doctor surfaces rather than a typed-confirm prompt.
+  # GA-ABSORB[handled@this call]: stderr only — ga_resolve_backup_dir returns 0 on every arm and always echoes a path
+  backup_dir="$(ga_resolve_backup_dir 2>/dev/null)"
   # PRE-gate: the "remove" typed confirm in cooked mode. _confirm_pregate handles the
   # rmcup/smcup + stty toggle.
-  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, DROPS the glass_atrium + shadow DBs (pre-drop pg_dump backup kept in ~/.glass-atrium/backups/postgres), and deletes monitor/node_modules."; then
+  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, DROPS the glass_atrium + shadow DBs (pre-drop pg_dump backup kept in ${backup_dir}), and deletes monitor/node_modules."; then
     # Cancelled: a brief done line, then back to nav.
     status_line 0 "Uninstall cancelled" 0 0
     IFS= read -rsn1 _ <"${TTY}" || true
@@ -248,8 +257,8 @@ dispatch_action_uninstall_panel() {
     STEP_TOTAL=1
     STEP_LABEL_ACTIVE_CUR="Purging config…"
     STEP_BAR_ACCENT_CUR="${C_ALERT}" # destructive purge → amber filled bar (ITEM 4)
-    STEP_BAR_CUR="$(build_run_bar)"   # full bar for the single purge step
-    draw_workbox # show the purge step label + bar in the box body before the (fast) step
+    STEP_BAR_CUR="$(build_run_bar)"  # full bar for the single purge step
+    draw_workbox                     # show the purge step label + bar in the box body before the (fast) step
     PURGE_CONFIG=true
     local RENDER_MODE="panel"
     run_step "Purge config" purge_config || status=$?

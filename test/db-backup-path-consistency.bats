@@ -91,6 +91,23 @@ SITE_RECORDS=(
   }
 }
 
+# The DISPLAY site. It writes no dump, so it is not in the records above, but it names the
+# backup directory to the user inside the uninstall typed confirm — the one moment the
+# reader is deciding whether their data is recoverable. A literal there would be a promise
+# the resolver need not keep, so the file must carry no path literal at all.
+@test "the uninstall confirm prompt resolves the directory rather than naming one" {
+  local dispatch="${GA}/lib/ga-tui-dispatch.sh"
+  grep -q -F -- 'ga_resolve_backup_dir' "${dispatch}" || {
+    echo "the uninstall prompt no longer resolves the backup directory" >&2
+    return 1
+  }
+  grep -q -F -- 'backups/postgres' "${dispatch}" && {
+    echo "a backup path literal reappeared in the uninstall prompt" >&2
+    return 1
+  }
+  return 0
+}
+
 # --- AC-C3: the three sites agree under one sandbox config -------------------
 #
 # Each site owns a small resolve function whose stdout IS the directory it will
