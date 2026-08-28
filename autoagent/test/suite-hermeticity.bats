@@ -47,7 +47,13 @@ setup() {
   # second thing to maintain for no added signal.
   local log="${BATS_TEST_TMPDIR}/discover.log"
   local rc=0
-  env -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
+  # GA_DATA_ROOT is unset deliberately, matching the hooks twin: ga_paths.get_base_root
+  # returns Path(GA_DATA_ROOT) whenever it is set and never consults HOME, so an ambient
+  # value would silently void the redirect below. daemon_cycle and project_key resolve
+  # their roots through that seam at IMPORT time, ahead of any per-test patch — a module
+  # that forgot to sandbox itself would then write outside ${home}, where the find cannot
+  # see it, and this probe would read green on a real escape.
+  env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
     HOME="${home}" PATH="${bin}:${PATH}" \
     python3 -m unittest discover -s "${BATS_TEST_DIRNAME}" -p 'test_*.py' \
     >"${log}" 2>&1 || rc=$?
