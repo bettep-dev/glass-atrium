@@ -19,6 +19,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -2355,5 +2356,129 @@ test("AC-T12 an empty window still names when the last failure was", async () =>
 		await getLastFailureStamp(),
 		null,
 		"a table that never held a failure must render no last-failure instant",
+	);
+});
+
+// ── AC-후속-4a(i) 벤더 번들을 언제 몇 번 받는가 ──────────────────────────────
+// 5 MB 벤더 IIFE 는 예전에 index.html 의 <script src> 였다 — 다이어그램이 하나도 없는
+// 라우트도 그 바이트를 파서가 멈춘 채 동기로 받았다. 지금은 mermaid-elk-loader.js 가
+// 첫 렌더 직전에 한 번만 들여온다. 그 차이는 "무엇이 그려졌나" 가 아니라 "언제 몇 번
+// 받았나" 에만 남으므로 두 방향을 함께 잰다 — 다이어그램 없는 라우트 0 건 · 맵 1 건.
+// 한쪽만으로는 배치를 구별하지 못한다: 0 건만 재면 아예 받지 않는 회귀(모든 다이어그램이
+// dagre 로 눕는다)가 통과하고, 1 건만 재면 모든 라우트가 받던 예전 배치도 그대로 통과한다.
+
+/** 사이드카가 이름을 적은 그 파일 하나 — mermaid-elk-loader.js 의 VENDOR_SRC 와 같은 경로. */
+const VENDOR_BUNDLE_PATH = "assets/vendor/mermaid-layout-elk-0.2.3.min.js";
+
+/**
+ * 라우트 하나를 새 컨텍스트에서 열고 그 사이의 벤더 번들 요청을 모은다.
+ *
+ * 청취기는 goto 보다 먼저 붙는다 — 예전 <script src> 는 파서가 만드는 동기 스크립트라
+ * load 이벤트가 서기 전에 끝난다. goto 뒤에 붙이면 바로 그 배치의 요청을 놓쳐, 0 건이
+ * "미뤘다" 가 아니라 "늦게 봤다" 가 된다.
+ *
+ * 컨텍스트를 새로 여는 이유는 캐시다 — 앞 케이스가 받아 둔 5 MB 가 메모리 캐시에서
+ * 나오면 요청 이벤트가 서지 않아 "1 건" 이 0 건으로 읽힌다.
+ */
+async function collectVendorRequests(
+	hash: string,
+	settle: (probe: Page) => Promise<void>,
+): Promise<string[]> {
+	const probe = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	const requests: string[] = [];
+	probe.on("request", (request) => {
+		// 경로를 정확히 맞춤 — 부분 문자열이면 `…min.js.absent` 처럼 이름이 드리프트한 요청도
+		// 세어, 배포되지 않는 경로를 받으러 간 회귀가 "1 건" 으로 통과한다.
+		if (new URL(request.url()).pathname === `/${VENDOR_BUNDLE_PATH}`) requests.push(request.url());
+	});
+	try {
+		await probe.goto(`${serverUrl}/#${hash}`, { waitUntil: "load" });
+
+		const runtimeReady = await probe
+			.waitForFunction(
+				() => {
+					const w = window as never as { mermaid?: unknown; React?: unknown };
+					return Boolean(w.mermaid && w.React);
+				},
+				null,
+				{ timeout: 30_000 },
+			)
+			.then(
+				() => true,
+				() => false,
+			);
+		assert.equal(
+			runtimeReady,
+			true,
+			`#${hash}: page-level network prerequisite unmet — React/mermaid CDN runtime did not load`,
+		);
+
+		// 로더는 어느 라우트에서나 실려야 한다. 실리지 않았다면 0 건은 "받을 시점을 미룬 것" 이
+		// 아니라 "받을 주체가 없는 것" 이라, 그 값으로는 배치를 증명하지 못한다.
+		assert.equal(
+			await probe.evaluate(
+				() => typeof (window as never as { ensureElkLayout?: unknown }).ensureElkLayout,
+			),
+			"function",
+			`#${hash}: public/mermaid-elk-loader.js did not run — window.ensureElkLayout is absent, so the request count says nothing about deferral`,
+		);
+
+		await settle(probe);
+		return requests;
+	} finally {
+		await probe.close();
+	}
+}
+
+test("AC-후속-4a(i) a diagram-free route pulls no vendor bundle", async () => {
+	// 이름이 드리프트하면 0 건은 미룬 증거가 아니라 못 알아본 증거가 된다.
+	assert.ok(
+		existsSync(resolve(PUBLIC_ROOT, VENDOR_BUNDLE_PATH)),
+		`${VENDOR_BUNDLE_PATH} is not under public/ — the counter would read 0 for a bundle that ships under another name`,
+	);
+
+	const requests = await collectVendorRequests("dashboard", async (probe) => {
+		// 화면이 실제로 섰는지 — 서기 전이라면 아직 아무것도 요청하지 않은 순간을 잰 것이다.
+		await probe.waitForSelector('[data-screen-label="Dashboard"]', { timeout: 30_000 });
+		// 이 라우트에 다이어그램이 없다는 것은 요구의 전제다 — 생기면 0 건은 틀린 기대가 된다.
+		assert.equal(
+			await probe.evaluate(
+				() =>
+					document.querySelectorAll("pre.mermaid, [data-diagram-type], svg[id^='mermaid']")
+						.length,
+			),
+			0,
+			"#dashboard rendered a diagram — the route is no longer diagram-free, so expecting zero vendor requests is the wrong bar",
+		);
+	});
+
+	assert.deepEqual(
+		requests,
+		[],
+		`#dashboard pulled the vendor bundle ${requests.length} time(s) (${JSON.stringify(requests)}) — a route that draws nothing must not pay the 5 MB, which is exactly what the eager <script src> in index.html did`,
+	);
+});
+
+test("AC-후속-4a(i) opening the map pulls the vendor bundle exactly once", async () => {
+	// 앞 케이스가 갈아끼운 픽스처를 되돌림 — 맵은 live · queue · health 를 모두 읽는다.
+	liveFixture = getLiveFixture();
+	queueFixture = getQueueFixture();
+	healthFixture = getHealthFixture();
+
+	const requests = await collectVendorRequests("architecture", async (probe) => {
+		const probeSelectors = await probe.evaluate(
+			() => (window as never as { ARCH_SELECTORS?: { canvas: string } }).ARCH_SELECTORS,
+		);
+		assert.ok(
+			probeSelectors && probeSelectors.canvas,
+			"screen must expose window.ARCH_SELECTORS (canvas SoT)",
+		);
+		await probe.waitForSelector(`${probeSelectors.canvas} svg`, { timeout: 30_000 });
+	});
+
+	assert.equal(
+		requests.length,
+		1,
+		`the map pulled the vendor bundle ${requests.length} time(s) (${JSON.stringify(requests)}) — 0 means the layout registered without the bundle and every diagram quietly lay on dagre, 2+ means the single-promise memo in mermaid-elk-loader.js stopped holding`,
 	);
 });

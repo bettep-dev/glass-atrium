@@ -590,6 +590,11 @@ describe("document diagrams under the shared ELK config", () => {
 
 	// 벤더 IIFE 는 5MB 짜리 단일 파일 — 문서를 여는 동안 두 번 실려서는 안 되고,
 	// 0 건이면 위 "폴백 경고 0건" 이 등록 없이 통과한 것이다.
+	//
+	// 이 단언은 "미뤄서 받는가" 를 재지 않는다: 청취기가 #clauded-docs 로 가는 goto 에 붙어 있어,
+	// 모든 라우트에서 동기로 받던 예전 <script src> 배치도 여기서는 똑같이 1 건으로 보인다.
+	// 그 구별(다이어그램 없는 라우트 0 건 · 다이어그램 라우트 1 건)은 AC-후속-4a(i) 의 몫이고
+	// test/architecture.merged-surface.e2e.test.ts 에 산다.
 	test("P1-3 opening a document pulls the vendor loader exactly once", () => {
 		for (const doc of DOC_FIXTURES) {
 			assert.equal(
