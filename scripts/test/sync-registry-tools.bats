@@ -271,6 +271,20 @@ tools: [Read'
   assert_registry_changed || return 1
 }
 
+@test "--dry-run overrides a write-mode DRY_RUN env: planned, never written" {
+  # DRY_RUN contract ROW 4 — the flag wins over an env value that would
+  # otherwise select write mode. The only other `--dry-run` case exits 2 at
+  # frontmatter parse, before the write path, so it asserts nothing here: a
+  # regression that accepted the flag but stopped reaching the python verdict
+  # would keep that case green while WRITING the live registry.
+  write_agent_tools '[Read, Bash]'
+  snapshot_registry
+  run env DRY_RUN=false "${SCRIPT}" --dry-run
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"PLANNED UPDATES"* ]] || return 1
+  assert_registry_unchanged || return 1
+}
+
 @test "failure seam: an unreadable root fails loudly and writes nothing" {
   write_agent_tools '[Read, Bash]'
   local missing

@@ -28,7 +28,8 @@
 # overwrites the registry; the script NEVER writes any agent file.
 #
 # Reporting (stdout one line): synced=N updated=N skipped=N orphans=N missing=N —
-#   synced=already matching · updated=written · skipped=active file lacking `tools:` ·
+#   synced=already matching · updated=entries reconciled (written unless dry-run,
+#   where the count is the PLAN) · skipped=active file lacking `tools:` ·
 #   orphans=registry entry with no file (reported, NOT removed) · missing=active file
 #   with no registry entry (reported, NOT added).
 #
