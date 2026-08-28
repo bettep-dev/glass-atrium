@@ -88,12 +88,15 @@ const HEALTH_POLL_MS = 60_000;
 // 맵의 health fetch 표 — health.jsx:42-47 의 다섯 URL 과 같은 집합.
 // 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
 // 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
+// 데몬 이름은 응답에서 온 값이라 인코딩해 실음 — 이름 안의 `&`/공백이 그냥 붙으면 질의가
+// 한 칸 더 생기거나 잘려 다른 요청이 됨. 서버가 이름을 허용목록으로 거르지만(health-detail.ts),
+// 그건 서버의 방어지 이 URL 을 조립하는 쪽의 근거가 아님.
 function getMapHealthEndpoints(payloadDaemon) {
 	return [
 		"/api/health/daemons",
 		"/api/health/hook-chain",
 		"/api/health",
-		`/api/health/daemon-payload?daemon=${payloadDaemon}&limit=10`,
+		`/api/health/daemon-payload?daemon=${encodeURIComponent(payloadDaemon)}&limit=10`,
 		"/api/health/hook-failures?days=30&limit=50",
 	];
 }
@@ -163,16 +166,24 @@ function getGlobalDetailBlocks() {
 	);
 }
 
-// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값. 이름이 그대로 id 로 들어가므로
-// id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는 이미 합법이라 그대로 통과).
+// 이름을 id 조각으로 — id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는
+// 이미 합법이라 그대로 통과). 두 펼침 영역이 같은 규칙을 써야 한쪽만 문법을 바꿔 어긋나지 않음.
+function toDetailIdPart(name) {
+	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값.
+// 접힌 문자만 다른 두 이름(`a b` 와 `a-b`)은 같은 id 로 떨어짐. 지금 중복 id 가 생기지 않는 것은
+// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(LiveDaemonTable 의 expandedDaemon
+// 은 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
+// id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
 function getDaemonDetailId(daemonName) {
-	return `arch-daemon-detail-${String(daemonName || "").replace(/[^A-Za-z0-9_-]/g, "-")}`;
+	return `arch-daemon-detail-${toDetailIdPart(daemonName)}`;
 }
 
 // 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 가리키는 값 (T11).
-// 데몬 행과 같은 방식: id 문법을 벗어나는 문자만 하이픈으로 접음.
 function getGlobalBlockDetailId(blockId) {
-	return `arch-global-detail-${String(blockId || "").replace(/[^A-Za-z0-9_-]/g, "-")}`;
+	return `arch-global-detail-${toDetailIdPart(blockId)}`;
 }
 
 // hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
@@ -235,10 +246,15 @@ function getDaemonRunRows(payloadState, daemonName) {
 	const data = payloadState.data;
 	if (!data || data.daemon !== daemonName) return null;
 
-	return (data.entries || []).map((entry) => ({
+	// key 는 fold 가 냄 — 실패 로그 줄과 같은 방식. 날짜도 사유 문장도 로그에서 온 값이라
+	// 한 응답 안에서 되풀이될 수 있고, 겹친 key 는 React 경고에 더해 편집 중인 두 줄을
+	// 서로 섞음. 자리(index)를 붙여 응답 안에서 유일하게 만듦.
+	return (data.entries || []).map((entry, index) => ({
+		key: `${entry?.run_date}-${index}`,
 		runDate: entry?.run_date || "—",
 		verdict: entry?.summary?.verdict || "unknown",
-		reasons: (entry?.summary?.error_signatures || []).map((signature) => ({
+		reasons: (entry?.summary?.error_signatures || []).map((signature, sigIndex) => ({
+			key: `${signature?.message}-${sigIndex}`,
 			message: signature?.message || "—",
 			count: Number(signature?.count) || 0,
 		})),
@@ -487,11 +503,10 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					// 자기개선 큐 스트립 — 상시 노출. 좁은 폭에서는 두 사실이 줄바꿈으로 쌓임.
-					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
-					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					// health 요약 스트립 — 큐 스트립과 같은 면. 좁은 폭에서 사실들이 줄바꿈으로 쌓임.
-					".arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
+					// 사실 스트립 두 줄(자기개선 큐 · health 요약) — 상시 노출, 같은 면.
+					// 좁은 폭에서는 사실들이 줄바꿈으로 쌓임. 한 규칙에 둘을 묶어 둠: 면이 갈라지면
+					// 지도 위 두 줄이 서로 다른 상자로 읽힘.
+					".arch-queue-strip, .arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
 					// 전역 확장 블록 — 지도 아래 화면-폭 상세. 블록이 없으면 컨테이너 자체가 렌더되지 않음.
 					".arch-global-blocks { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; } " +
@@ -646,7 +661,7 @@ function ScreenArchitecture(
 					onSelectDaemon={setPayloadDaemon}
 				/>
 
-				{/* 전역 확장 블록 — T11(Hook chain) · T12c(Hook failure log) 가 채움. 지금은 빔. */}
+				{/* 전역 확장 블록 — 명부(GLOBAL_DETAIL_BLOCKS)가 채움: Hook chain · Hook failure log. */}
 				<GlobalDetailRegion
 					states={{
 						daemonState: daemonHealthState,
@@ -1208,29 +1223,17 @@ function HealthStrip({
 }) {
 	const { StatusDot } = window.UI;
 
-	const kpis = getMapHealthKpis({
-		daemonState,
-		pgState,
-		hookState,
-		hookFailState,
-	});
+	// 카드 판정이 읽는 네 응답 — KPI 분자/분모와 부품 한 줄이 같은 묶음을 봐야 두 값이 갈라지지 않음.
+	// 페이로드는 카드 정의에 없어 이 묶음 밖임: 로드 실패 경보에만 이름으로 참여함.
+	const cardStates = { daemonState, pgState, hookState, hookFailState };
 
-	const readings = getMapStripReadings({
-		daemonState,
-		pgState,
-		hookState,
-		hookFailState,
-	});
+	const kpis = getMapHealthKpis(cardStates);
 
-	const errors = getHealthStoreErrorsAR({
-		daemonState,
-		pgState,
-		hookState,
-		hookFailState,
-		payloadState,
-	});
+	const readings = getMapStripReadings(cardStates);
 
-	// 최근 실행 페이로드 도착 건수 — T9c 가 확장 행에서 날짜·사유로 펼칠 원자료.
+	const errors = getHealthStoreErrorsAR({ ...cardStates, payloadState });
+
+	// 최근 실행 페이로드 도착 건수 — 확장 행이 날짜·사유로 펼치는 원자료(T9c)를 같은 응답에서 읽음.
 	// 여기서는 도착 여부만 한 줄로 드러냄 (읽지 않는 상태로 두면 흡수가 아니라 적재일 뿐임).
 	const payloadCount =
 		payloadState.status === "ready"
@@ -1611,7 +1614,7 @@ function DaemonRunDetail({ daemon, runs }) {
 	return (
 		<ul className="arch-run-list">
 			{runs.map((run) => (
-				<li key={run.runDate} className="arch-run-entry">
+				<li key={run.key} className="arch-run-entry">
 					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
 					{run.reasons.length === 0 ? (
 						<span className="fs-meta text-dim">
@@ -1620,7 +1623,7 @@ function DaemonRunDetail({ daemon, runs }) {
 					) : (
 						<ul className="arch-run-reasons">
 							{run.reasons.map((reason) => (
-								<li key={reason.message} className="fs-meta text-dim">
+								<li key={reason.key} className="fs-meta text-dim">
 									{reason.message}
 									{/* 한 사이클에 반복된 서명은 횟수까지 밝힘 — 단발 장애와 반복 장애는 다른 사건임 */}
 									{reason.count > 1 && (

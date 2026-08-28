@@ -441,6 +441,53 @@ test("T7 the payload endpoint carries the selected daemon, not a frozen literal"
   );
 });
 
+// 이름 안의 `&` 는 인코딩하지 않으면 질의를 한 칸 더 만듦 — 서버가 허용목록으로 거르지만
+// 그건 서버의 방어이고, 이 자리는 URL 을 조립하는 쪽이 제 값을 감쌌는지를 잼.
+// 조립된 원문 그대로 냄: `new URL` 은 파싱하면서 공백 같은 문자를 스스로 인코딩하므로,
+// 파싱한 값만 보면 감싸지 않은 구현도 초록이 됨(감싸는 쪽과 구별되지 않음).
+function getPayloadUrl(daemon: string): string {
+  const raw = arch
+    .getMapHealthEndpoints(daemon)
+    .find((u) => u.startsWith("/api/health/daemon-payload"));
+  assert.ok(raw, "the fetch table must carry a daemon-payload URL");
+  return raw;
+}
+
+test("T7 a daemon name that would otherwise change the query is encoded into it", () => {
+  const hostile = "auto&limit=1";
+  const url = new URL(getPayloadUrl(hostile), "http://monitor.invalid");
+
+  assert.strictEqual(
+    url.searchParams.get("daemon"),
+    hostile,
+    "the daemon parameter must round-trip to the selected name, not to a truncated prefix",
+  );
+  assert.deepStrictEqual(
+    [...url.searchParams.keys()].sort(),
+    ["daemon", "limit"],
+    "an unencoded name splits its own `&` into an extra parameter — the query must keep exactly two",
+  );
+  assert.strictEqual(
+    url.searchParams.get("limit"),
+    "10",
+    "the row limit must survive a name carrying its own limit= text",
+  );
+});
+
+test("T7 a daemon name carrying a space is encoded before the URL leaves the screen", () => {
+  // 원문을 잼 — fetch 에 넘기는 문자열이 이것이고, 파싱을 거치면 두 구현이 같아 보임.
+  const raw = getPayloadUrl("daily restart");
+  assert.ok(
+    !raw.includes(" "),
+    `a raw space must never reach the request URL, but it read: ${raw}`,
+  );
+  assert.strictEqual(
+    new URL(raw, "http://monitor.invalid").searchParams.get("daemon"),
+    "daily restart",
+    "encoding must be reversible — the server still receives the name that was selected",
+  );
+});
+
 // 카드 7종이 모두 ready 로 떨어지는 상태 묶음 — 분모가 정의 목록 길이와 같아지는 조건.
 // daemonState 가 ready 면 daemon 카드는 명부에 없어도 info tone 으로 ready 임.
 function getAllReadyHealthStates(): MapHealthStates {

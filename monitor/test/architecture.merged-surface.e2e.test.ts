@@ -243,6 +243,18 @@ const HEALTH_EXPECTED_INFO = 2;
 // 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
 const HEALTH_PAYLOAD_ENTRIES = 3;
 
+// 실패가 하나도 없는 hook-failures 응답 — 기본 픽스처와 T12c 의 창 픽스처가 같은 바닥에서 출발함.
+// 함수인 이유: 배열 두 개를 케이스마다 새로 냄(공유 참조면 한 케이스의 변형이 다음 케이스로 샘).
+function getEmptyHookFailures(): HealthFixture["hookFailures"] {
+	return {
+		count_24h: 0,
+		unretried_count_24h: 0,
+		failures: [],
+		error_kind_breakdown: [],
+		last_failure_ts: null,
+	};
+}
+
 function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture {
 	return {
 		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
@@ -264,13 +276,7 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 				summary: { verdict: "ok" as const, error_signatures: [] },
 			})),
 		},
-		hookFailures: {
-			count_24h: 0,
-			unretried_count_24h: 0,
-			failures: [],
-			error_kind_breakdown: [],
-			last_failure_ts: null,
-		},
+		hookFailures: getEmptyHookFailures(),
 		...overrides,
 	};
 }
@@ -350,6 +356,22 @@ async function openMap(
 	);
 
 	await page.waitForSelector(`${selectors.canvas} svg`, { timeout: 30_000 });
+}
+
+// health 픽스처만 갈아끼우는 케이스용 — 큐를 기본값으로 다시 적는 자리 인자를 지움.
+// 케이스가 무엇을 바꾸는지가 호출 한 줄에 남음.
+async function openMapWithHealth(health: HealthFixture): Promise<void> {
+	await openMap(getLiveFixture(), getQueueFixture(), health);
+}
+
+// 선택자 한 노드의 정규화된 innerText — 라벨과 값이 한 노드 안에 있는 표면을 이 함수로 읽음.
+// page.evaluate 는 함수를 직렬화해 보내므로 브라우저 안에서 바깥 도우미를 부를 수 없음:
+// 정규화식이 케이스마다 다시 적히지 않도록 읽는 자리를 하나로 둠.
+async function getNodeText(selector: string): Promise<string> {
+	return await page.evaluate((sel) => {
+		const el = document.querySelector(sel);
+		return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
+	}, selector);
 }
 
 // aria-describedby 타깃을 SVG 에서 출발해 실제로 되짚어 읽음 — id 상수를 하네스가
@@ -1535,10 +1557,7 @@ const ABSORBED_HEALTH_PATHS = [
 
 // 스트립 사실 한 줄의 본문 — 라벨과 값이 한 노드 안에 있으므로 정규화한 innerText 로 읽음.
 async function getHealthFactText(fact: string): Promise<string> {
-	return await page.evaluate((f) => {
-		const el = document.querySelector(`[data-health-fact="${f}"]`);
-		return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
-	}, fact);
+	return await getNodeText(`[data-health-fact="${fact}"]`);
 }
 
 async function waitForHealthStrip(): Promise<void> {
@@ -1569,11 +1588,11 @@ test("T7 the health strip carries the KPI denominator the shared card list defin
 	const healthy = await getHealthFactText("healthy-parts");
 	assert.match(
 		healthy,
-		new RegExp(`${HEALTH_EXPECTED_OK}/${HEALTH_EXPECTED_TOTAL}\\b`),
+		new RegExp(`\\b${HEALTH_EXPECTED_OK}/${HEALTH_EXPECTED_TOTAL}\\b`),
 		`healthy-parts must read ${HEALTH_EXPECTED_OK}/${HEALTH_EXPECTED_TOTAL} for this fixture`,
 	);
 	// 정보 버킷을 이름으로 부름 — 정상도 장애도 아닌 카드가 분모 어디로 갔는지 밝히는 자리.
-	assert.match(healthy, new RegExp(`${HEALTH_EXPECTED_INFO} informational`));
+	assert.match(healthy, new RegExp(`\\b${HEALTH_EXPECTED_INFO} informational`));
 
 	assert.match(await getHealthFactText("needs-attention"), /\b0$/);
 	assert.match(await getHealthFactText("overdue-jobs"), /\b0$/);
@@ -1581,9 +1600,7 @@ test("T7 the health strip carries the KPI denominator the shared card list defin
 
 // 값이 응답을 따라 움직이는지 재는 반증 케이스 — 상수를 그린 화면은 여기서 붉어짐.
 test("T7 an overdue daemon moves the strip's buckets, so the values track the response", async () => {
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
+	await openMapWithHealth(
 		getHealthFixture({
 			daemons: [
 				{ daemon_name: "autoagent", effective_status: "stale" },
@@ -1595,7 +1612,7 @@ test("T7 an overdue daemon moves the strip's buckets, so the values track the re
 
 	assert.match(
 		await getHealthFactText("healthy-parts"),
-		new RegExp(`${HEALTH_EXPECTED_OK - 1}/${HEALTH_EXPECTED_TOTAL}\\b`),
+		new RegExp(`\\b${HEALTH_EXPECTED_OK - 1}/${HEALTH_EXPECTED_TOTAL}\\b`),
 		"an overdue daemon must leave the healthy numerator one lower",
 	);
 	assert.match(await getHealthFactText("needs-attention"), /\b1$/);
@@ -1610,7 +1627,7 @@ test("T7 the run-payload fact counts the entries the payload response actually r
 	assert.match(text, /autoagent/, "the fact must name the daemon it drilled into");
 	assert.match(
 		text,
-		new RegExp(`${HEALTH_PAYLOAD_ENTRIES} recent`),
+		new RegExp(`\\b${HEALTH_PAYLOAD_ENTRIES} recent`),
 		"the count must come from the served entries, not a placeholder",
 	);
 });
@@ -1676,9 +1693,7 @@ test("T10 an unreachable database shows a crit tone in the strip, a reachable on
 	);
 
 	// 도달 불가 픽스처 — 같은 줄이 crit 으로 돌아야 함(AC-T10).
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
+	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "ok" } }),
 	);
 	await waitForHealthStrip();
@@ -1698,9 +1713,7 @@ test("T10 the Chromium export reading follows the launch probe through all three
 	await waitForHealthStrip();
 	assert.equal(await getHealthFactTone("browser"), "ok", "a launching browser must read ok");
 
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
+	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "ok", db: "open", browser: "failed" } }),
 	);
 	await waitForHealthStrip();
@@ -1711,9 +1724,7 @@ test("T10 the Chromium export reading follows the launch probe through all three
 	);
 
 	// 미프로브는 실패가 아님 — 정상으로 꾸미지도, 장애로 부르지도 않는 셋째 값.
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
+	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "ok", db: "open", browser: "unprobed" } }),
 	);
 	await waitForHealthStrip();
@@ -1759,14 +1770,11 @@ function getHookChainFixture(): HealthFixture {
 }
 
 async function getHookBlockText(): Promise<string> {
-	return await page.evaluate((id) => {
-		const el = document.querySelector(`[data-global-block="${id}"]`);
-		return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
-	}, HOOK_BLOCK_ID);
+	return await getNodeText(`[data-global-block="${HOOK_BLOCK_ID}"]`);
 }
 
 test("T11 the hook chain block stays collapsed until its control is pressed", async () => {
-	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
+	await openMapWithHealth(getHookChainFixture());
 	await page.waitForSelector(`[data-global-block="${HOOK_BLOCK_ID}"]`, { timeout: 30_000 });
 
 	const control = page.locator(`[data-global-block="${HOOK_BLOCK_ID}"] button[aria-expanded]`);
@@ -1819,20 +1827,6 @@ const PAYLOAD_QUOTA_MESSAGE = "haiku classify failed: quota exceeded";
 const PAYLOAD_QUOTA_COUNT = 4;
 // health-detail.ts 의 getDoctorFailureMessage 가 rc 를 읽어 내는 문장 그대로.
 const PAYLOAD_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
-
-function getDaemonStatus(name: string): DaemonLiveStatus {
-	const nodeIds = [...(DAEMON_NODE_BINDINGS[name] ?? [])];
-	assert.ok(nodeIds.length > 0, `fixture precondition: ${name} must carry node bindings`);
-	return {
-		daemon_name: name,
-		status: "ok",
-		effective_status: "ok",
-		last_run_at: null,
-		staleness_minutes: 0,
-		node_ids: nodeIds,
-		expected_cadence_minutes: 60,
-	};
-}
 
 // 실패 사이클 하나 + 정상 사이클 하나 — 둘 다 날짜를 내야 확장 영역이 '실패만' 이 아니라
 // 최근 실행을 읽고 있음이 드러남.
@@ -1998,11 +1992,7 @@ test("AC-T8 the keyboard alone opens and closes the row", async () => {
 });
 
 test("AC-T9 the expanded region names the failure date and the reason behind it", async () => {
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
-		getHealthFixture({ payload: getFailingPayload() }),
-	);
+	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
 	await waitForDaemonRows();
 	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
 
@@ -2019,9 +2009,10 @@ test("AC-T9 the expanded region names the failure date and the reason behind it"
 		text.includes(PAYLOAD_DOCTOR_MESSAGE),
 		"a second signature in the same run must not be dropped",
 	);
+	// 횟수 표기까지 잼 — 맨 숫자만 찾으면 픽스처의 어느 날짜에 우연히 그 자리가 들어와도 초록이 됨.
 	assert.ok(
-		text.includes(String(PAYLOAD_QUOTA_COUNT)),
-		"a reason repeated across the cycle must carry its count, not read as a single event",
+		text.includes(`×${PAYLOAD_QUOTA_COUNT}`),
+		`a reason repeated across the cycle must carry its count, not read as a single event — read "${text}"`,
 	);
 	assert.ok(
 		text.includes(PAYLOAD_OK_DATE),
@@ -2033,7 +2024,7 @@ test("AC-T9 the expanded region names the failure date and the reason behind it"
 test("AC-T9 expanding a second daemon drills the payload request into THAT daemon", async () => {
 	await openMap(
 		getLiveFixture({
-			daemons: [getDaemonStatus(BOUND_DAEMON), getDaemonStatus(DRILLDOWN_DAEMON)],
+			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")],
 		}),
 	);
 	await waitForDaemonRows();
@@ -2083,14 +2074,7 @@ function getFailuresFixture(
 	overrides: Partial<HealthFixture["hookFailures"]> = {},
 ): HealthFixture {
 	return getHealthFixture({
-		hookFailures: {
-			count_24h: 0,
-			unretried_count_24h: 0,
-			failures: [],
-			error_kind_breakdown: [],
-			last_failure_ts: null,
-			...overrides,
-		},
+		hookFailures: { ...getEmptyHookFailures(), ...overrides },
 	});
 }
 
@@ -2103,10 +2087,7 @@ async function expandFailureBlock(needle: string): Promise<string> {
 	const deadline = Date.now() + 15_000;
 	let text = "";
 	while (Date.now() < deadline) {
-		text = await page.evaluate((id) => {
-			const el = document.querySelector(`[data-global-block="${id}"]`);
-			return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
-		}, FAIL_BLOCK_ID);
+		text = await getNodeText(`[data-global-block="${FAIL_BLOCK_ID}"]`);
 		if (text.includes(needle)) return text;
 		await new Promise((r) => setTimeout(r, 50));
 	}
@@ -2123,9 +2104,7 @@ async function getLastFailureStamp(): Promise<string | null> {
 }
 
 test("AC-T12 the failure block lists the failures the window actually returned", async () => {
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
+	await openMapWithHealth(
 		getFailuresFixture({
 			count_24h: 1,
 			failures: [getHookFailureEntry()],
@@ -2153,11 +2132,7 @@ test("AC-T12 the failure block lists the failures the window actually returned",
 // AC-T12 의 화면 몫이 사는 자리 — 빈 창이 '실패가 한 번도 없었다' 로 읽히면 안 됨.
 // 목록에서 최종기록을 유도하는 구현은 여기서 붉어짐: 목록이 비어 있어 유도할 값이 없음.
 test("AC-T12 an empty window still names when the last failure was", async () => {
-	await openMap(
-		getLiveFixture(),
-		getQueueFixture(),
-		getFailuresFixture({ failures: [], last_failure_ts: FAIL_STALE_TS }),
-	);
+	await openMapWithHealth(getFailuresFixture({ failures: [], last_failure_ts: FAIL_STALE_TS }));
 
 	const text = await expandFailureBlock("Last failure");
 	assert.equal(
@@ -2173,7 +2148,7 @@ test("AC-T12 an empty window still names when the last failure was", async () =>
 
 	// 반증 방향 — 표가 정말 비어 있으면 최종기록 줄 자체가 없어야 함.
 	// 이 줄이 상수라면 여기서도 나타나 붉어짐.
-	await openMap(getLiveFixture(), getQueueFixture(), getFailuresFixture({ last_failure_ts: null }));
+	await openMapWithHealth(getFailuresFixture({ last_failure_ts: null }));
 	await expandFailureBlock("never");
 	assert.equal(
 		await getLastFailureStamp(),
