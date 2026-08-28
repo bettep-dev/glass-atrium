@@ -1019,6 +1019,59 @@ run_doctor() {
     fi
   fi
 
+  # 23. agent-registry `tools` mirror vs. each agent body's frontmatter `tools:`. The frontmatter is
+  #     the SoT the Capability Probe reads at delegation time; the registry array is a MIRROR that
+  #     tooling preferring JSON reads instead. Nothing on the install compared them, so a mirror
+  #     claiming a grant the agent body does not hold stayed silent until a probe acted on it.
+  #     Registration kind B (report-only): its log line ONLY — no counter, no term in the warning
+  #     total, exit code unchanged. Both remedies (write the mirror, or correct the frontmatter) are
+  #     operator decisions on live routing state, and neither is safe to force through an abort.
+  #     The comparison is DELEGATED to scripts/sync-registry-tools.sh rather than re-implemented
+  #     here: a second frontmatter parser is a second answer to the same question. `--check` is a dry
+  #     run by construction, so this section never writes. The tool is resolved from THIS FILE's
+  #     location (the §18 idiom) and aimed at GA_ROOT with `--root`, so a bats-sourced doctor checks
+  #     the sandbox tree with the shipped tool.
+  local tools_mirror_dir="" tools_mirror_tool="" tools_mirror_out="" tools_mirror_line=""
+  local tools_mirror_rc=0 tools_mirror_drift="" tools_mirror_count=0
+  tools_mirror_dir="$(cd -- "${BASH_SOURCE[0]%/*}/../scripts" 2>/dev/null && pwd)" || tools_mirror_dir=""
+  tools_mirror_tool="${tools_mirror_dir}/sync-registry-tools.sh"
+  if [[ -z "${tools_mirror_dir}" || ! -f "${tools_mirror_tool}" ]]; then
+    log "  note : registry tools mirror not compared — no sync tool beside this install's lib dir"
+  # ONE probe for BOTH legs: an absent python3 and a python3 without PyYAML are the same condition
+  # for this reader — the tool cannot run — and the tool invokes a bare `python3` itself.
+  elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    log "  note : registry tools mirror not compared — python3 with PyYAML unavailable (the mirror reader needs both)"
+  # The rc IS the verdict: 0 clean, 3 drift, anything else the tool declining to answer. Captured
+  # through an `if` so the drift exit code cannot abort run_doctor under the caller's set -e.
+  elif tools_mirror_out="$(bash "${tools_mirror_tool}" --check --root "${GA_ROOT}" 2>&1)"; then
+    log "  ok   : agent-registry tools mirror matches every agent's frontmatter"
+  else
+    tools_mirror_rc=$?
+    if [[ "${tools_mirror_rc}" -eq 3 ]]; then
+      # The tool names each drifted agent on its own `  - <name>: <old> -> <new>` line under
+      # PLANNED UPDATES. The NAMES are what an operator acts on, so they are lifted onto the row
+      # rather than left in a stderr block nobody re-runs the tool to see.
+      while IFS= read -r tools_mirror_line; do
+        case "${tools_mirror_line}" in
+          '  - '*': '*)
+            tools_mirror_line="${tools_mirror_line#  - }"
+            tools_mirror_line="${tools_mirror_line%%:*}"
+            [[ -n "${tools_mirror_line}" ]] || continue
+            tools_mirror_drift="${tools_mirror_drift}${tools_mirror_drift:+, }${tools_mirror_line}"
+            tools_mirror_count=$((tools_mirror_count + 1))
+            ;;
+          # Every other line (the metric line, the ORPHANS/MISSING/SKIPPED blocks, the DRIFT
+          # notice) carries no agent name for this row — dropped, never an error.
+          *) ;;
+        esac
+      done <<<"${tools_mirror_out}"
+      log "  info : agent-registry tools mirror drift — ${tools_mirror_count} agent(s) differ from frontmatter: ${tools_mirror_drift:-<names unavailable>} (report-only; run 'bash ${tools_mirror_tool} --root ${GA_ROOT}' to write the mirror)"
+    else
+      # Announced rather than silent: a comparison nobody hears fail is the drift channel again.
+      log "  note : registry tools mirror not compared — the check exited ${tools_mirror_rc} (run 'bash ${tools_mirror_tool} --check --root ${GA_ROOT}' to read why)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
