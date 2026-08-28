@@ -18,6 +18,7 @@ import { parse as parseHtml } from "node-html-parser";
 
 import {
   ELK_LOADER_PATH,
+  ELK_PREP_PATH,
   MERMAID_CONFIG_PATH,
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
@@ -53,10 +54,30 @@ test("P1-2 the export reads the config file index.html loads", () => {
   );
 });
 
-test("P1-2 the export reads the ELK loader index.html registers", () => {
+test("P1-2 the export reads the ELK prep module index.html loads", () => {
   assert.ok(
-    viewerScripts.includes(ELK_LOADER_PATH),
-    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${ELK_LOADER_PATH}`,
+    viewerScripts.includes(ELK_PREP_PATH),
+    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${ELK_PREP_PATH}`,
+  );
+});
+
+// index.html no longer carries a tag for the vendored bundle itself: the prep module above
+// fetches it on demand, from a path written inside that module. So the two surfaces agree on
+// the ENGINE only if the path the viewer's module fetches is the file the export injects —
+// a claim the script-tag list can no longer answer, and the one thing it used to answer here.
+test("P1-2 the export injects the same vendored bundle the prep module fetches", () => {
+  // Whole-line comments dropped first: the module's own header quotes the tag it replaced.
+  const code = readFileSync(ELK_PREP_PATH, "utf8").replace(/^[ \t]*\/\/.*$/gm, "");
+  const named = [...code.matchAll(/"(assets\/vendor\/[^"]+)"/g)].map((m) => m[1]);
+  assert.equal(
+    named.length,
+    1,
+    `the prep module names ${named.length} vendor paths (${named.join(", ")}) — exactly one carries the fetch`,
+  );
+  assert.equal(
+    resolve(PUBLIC_ROOT, named[0]),
+    ELK_LOADER_PATH,
+    "the viewer fetches a different vendored bundle than the export injects — same config, two engines",
   );
 });
 

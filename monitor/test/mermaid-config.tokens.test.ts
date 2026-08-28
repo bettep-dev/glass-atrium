@@ -235,13 +235,16 @@ test("P1-1 every adopted diagram type carries the useMaxWidth:false width contra
 test("P1-1 index.html reads the shared config instead of carrying a second copy", () => {
 	const html = readFileSync(INDEX_PATH, "utf8");
 
-	const vendorAt = html.indexOf('src="assets/vendor/');
+	// 벤더 번들은 더 이상 여기서 태그로 받지 않는다 — 첫 다이어그램 직전에 로더가 받아온다.
+	// 그래서 위치 기준점은 그 로더 스크립트이고, 벤더 파일의 신원 자체는 사이드카와 대조하는
+	// test/mermaid-elk.vendor-pin.unit.test.ts 가 갖는다(이 파일의 주장은 설정 사본 하나뿐).
+	const elkLoaderAt = html.indexOf('src="mermaid-elk-loader.js"');
 	const configAt = html.indexOf('src="mermaid-config.js"');
 	const initializeAt = html.indexOf("window.mermaid?.initialize(");
-	assert.ok(vendorAt >= 0, "index.html must load the vendored ELK loader");
+	assert.ok(elkLoaderAt >= 0, "index.html must load the on-demand ELK loader");
 	assert.ok(configAt >= 0, "index.html must load public/mermaid-config.js");
 	assert.ok(initializeAt >= 0, "index.html must call window.mermaid?.initialize(");
-	assert.ok(vendorAt < configAt, "the config script must follow the vendored loader");
+	assert.ok(elkLoaderAt < configAt, "the config script must follow the ELK loader");
 	assert.ok(configAt < initializeAt, "the config script must precede initialize");
 
 	assert.match(

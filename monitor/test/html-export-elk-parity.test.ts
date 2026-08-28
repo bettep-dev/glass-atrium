@@ -134,6 +134,25 @@ async function openViewerHarness(): Promise<ViewerHarness> {
     true,
     "page-level network prerequisite unmet — the mermaid CDN runtime did not load",
   );
+
+  // The vendored bundle now arrives on the first window.ensureElkLayout() call, and the viewer's
+  // render paths await that promise before mermaid.render. This harness calls mermaid.render
+  // directly rather than through those components, so it has to reproduce their precondition —
+  // without it the comparison below measures a dagre render against an ELK export and calls the
+  // difference a parity failure. That the components DO await is pinned on their source in
+  // test/mermaid-elk.vendor-pin.unit.test.ts, and that awaiting is what removes the fallback
+  // warning is measured in test/mermaid-elk.loader.test.ts.
+  const prepReady = await page.evaluate(async () => {
+    const w = window as never as { ensureElkLayout?: () => Promise<void> };
+    if (typeof w.ensureElkLayout !== "function") return false;
+    await w.ensureElkLayout();
+    return true;
+  });
+  assert.equal(
+    prepReady,
+    true,
+    "the shipped page assigned no window.ensureElkLayout — index.html must load mermaid-elk-loader.js",
+  );
   return { app, browser, page };
 }
 
