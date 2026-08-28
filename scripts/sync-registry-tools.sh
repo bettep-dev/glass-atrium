@@ -48,8 +48,26 @@
 #
 # Idempotency: re-run on a clean tree yields `updated=0` + zero file changes
 # (post-merge JSON computed in memory, compared to on-disk bytes, write skipped if equal).
+#
+# Write path: the registry is read live by routing and the monitor, so the write
+# goes through the shared atomic helper (`agent_lifecycle.atomic`) — sibling temp
+# file, re-parse, structure check, then one `os.replace`. A crash or a rejected
+# payload leaves the live file untouched and removes the temp. The direct
+# `write_text` this used to call could leave a half-written registry in place.
+#
+# Test seam: a NON-EMPTY `SYNC_REGISTRY_FAIL_VALIDATE` makes the post-write
+# validator reject, so the helper raises just before the rename — the write path
+# fails (exit 1) with the registry byte-identical and no temp left behind. It is
+# a test seam, not an interface; the public `validate=` argument is the only
+# failure point a caller can reach (`before_replace` is bound inside the helper).
 set -Eeuo pipefail
 IFS=$'\n\t'
+
+# The atomic helper ships beside this script (scripts/agent_lifecycle/). Resolve
+# it from the SCRIPT's own location, never from the resolved ROOT: a `--root` run
+# targets a different tree and must still use the helper it was shipped with.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 usage() {
   local self
@@ -263,14 +281,58 @@ if updates and dry_run:
         old_repr = "MISSING" if old is None else repr(old)
         print(f"  - {name}: {old_repr} -> {new!r}", file=sys.stderr)
 
-# 6. Serialize back — preserve formatting (2-space indent, ensure_ascii=false,
-#    trailing newline). Compare against on-disk bytes; skip write on no-op.
+def write_registry(payload) -> None:
+    """Replace the registry through the shared atomic helper (temp + rename).
+
+    The helper is imported HERE rather than at module scope so `--check` and
+    `--dry-run` — the modes CI and doctor run — keep working on a tree where it
+    is absent; only the write path depends on it, and there a missing helper is
+    a broken tree that must fail loudly rather than fall back to a direct write.
+    Bytecode is disabled before the import: it would otherwise drop a
+    `__pycache__` into scripts/agent_lifecycle/, which the live recovery
+    snapshot refuses as an untracked path.
+    """
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, os.environ["SYNC_LIB_DIR"])
+    try:
+        from agent_lifecycle.atomic import (
+            AtomicWriteError,
+            atomic_write_json,
+            has_agents_dict,
+        )
+    except ImportError as exc:
+        print(
+            f"ERROR: atomic write helper unavailable ({exc}) — refusing to "
+            "write the registry through an unsafe direct path",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    def validate(reparsed) -> bool:
+        # TEST SEAM: a non-empty SYNC_REGISTRY_FAIL_VALIDATE makes the PUBLIC
+        # `validate=` callback reject, so the helper raises immediately before
+        # the rename — the one failure point a caller can reach, since
+        # `before_replace` is bound inside atomic_write_json.
+        if os.environ.get("SYNC_REGISTRY_FAIL_VALIDATE"):
+            return False
+        return has_agents_dict(reparsed)
+
+    try:
+        atomic_write_json(registry_path, payload, validate=validate)
+    except AtomicWriteError as exc:
+        print(f"ERROR: registry write failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+# 6. Serialize back — the helper re-serializes with the SAME format this
+#    comparison assumes (2-space indent, ensure_ascii=false, trailing newline),
+#    so comparing against on-disk bytes still skips the write on a no-op.
 new_text = json.dumps(registry, indent=2, ensure_ascii=False) + "\n"
 current_text = registry_path.read_text(encoding="utf-8")
 
 write_needed = new_text != current_text
 if write_needed and not dry_run:
-    registry_path.write_text(new_text, encoding="utf-8")
+    write_registry(registry)
 
 print(
     f"synced={synced} updated={updated} "
@@ -292,5 +354,6 @@ PY
 export REGISTRY_PATH AGENTS_DIR
 export DRY_RUN="${DRY_RUN}"
 export CHECK_MODE="${CHECK_MODE}"
+export SYNC_LIB_DIR="${SCRIPT_DIR}"
 
 python3 -c "${PY_SRC}"

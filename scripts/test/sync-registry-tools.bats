@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # sync-registry-tools.sh tests: duplicate-frontmatter-key rejection (the
 # quoted-key widening smuggle), the root-resolution / DRY_RUN / --check
-# contract, plus the benign sync/idempotency paths that must keep working.
+# contract, the atomic write path and its validate seam, plus the benign
+# sync/idempotency paths that must keep working.
 #
 # Isolation runs through the tool's OWN root seam: setup exports a synthetic
 # `GA_ROOT`, which outranks the `${HOME}/.glass-atrium` default, so the live
@@ -98,6 +99,13 @@ JSON
 registry_tools() {
   python3 -c 'import json,os,sys; print(json.load(open(os.environ["REG"]))["agents"]["glass-atrium-dev-x"]["tools"])' \
     2>/dev/null
+}
+
+# Count atomic-helper temp files (`<target>.XXXXXX.al-tmp`) left beside the
+# registry. The helper removes its temp on ANY failure, so a surviving one means
+# the write path aborted without cleaning up.
+temp_leftovers() {
+  find "${GA_ROOT}" -maxdepth 1 -name '*.al-tmp' | wc -l | tr -d '[:space:]'
 }
 
 # --- duplicate guarded key: the last-wins widening smuggle ------------------
@@ -255,5 +263,63 @@ tools: [Read, Bash]'
   [[ "${status}" -eq 1 ]] || return 1
   [[ "${output}" == *"registry load failed"* ]] || return 1
   [[ "${output}" == *"${missing}"* ]] || return 1
+  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+}
+
+# --- atomic write path · SYNC_REGISTRY_FAIL_VALIDATE seam -------------------
+#
+# The write goes through agent_lifecycle.atomic (temp + re-parse + os.replace).
+# `SYNC_REGISTRY_FAIL_VALIDATE` arms the helper's PUBLIC `validate=` callback to
+# reject, which is the only failure point a caller can reach — the helper binds
+# `before_replace` internally. Restoring the old direct `write_text` makes the
+# seam inert, so these four cases go red together: that is their RED control.
+
+@test "write seam armed: the drifted write fails loudly, registry byte-identical" {
+  write_agent_md 'name: glass-atrium-dev-x
+tools: [Read, Bash]'
+  local before
+  before="$(cat "${REGISTRY}")"
+  run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}"
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"registry write failed"* ]] || return 1
+  # The helper's own rejection text — this is what pins the write to the atomic
+  # path rather than to a direct write that happened to raise.
+  [[ "${output}" == *"post-write validation rejected"* ]] || return 1
+  [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
+}
+
+@test "write seam armed: no temp file survives beside the registry" {
+  write_agent_md 'name: glass-atrium-dev-x
+tools: [Read, Bash]'
+  run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}"
+  [[ "${status}" -eq 1 ]] || return 1
+  run temp_leftovers
+  [[ "${output}" == "0" ]] || return 1
+}
+
+@test "write seam unset: the write lands and the result re-parses as JSON" {
+  write_agent_md 'name: glass-atrium-dev-x
+tools: [Read, Bash]'
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"updated=1"* ]] || return 1
+  # registry_tools parses the file, so a non-zero status here IS a parse failure.
+  run registry_tools
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "['Read', 'Bash']" ]] || return 1
+  run temp_leftovers
+  [[ "${output}" == "0" ]] || return 1
+}
+
+@test "write seam armed under --check: the read-only contract is unaffected" {
+  # The seam must live on the WRITE path only — CI and doctor consume --check,
+  # and a seam that leaked into it would change their verdict.
+  write_agent_md 'name: glass-atrium-dev-x
+tools: [Read, Bash]'
+  local before
+  before="$(cat "${REGISTRY}")"
+  run env SYNC_REGISTRY_FAIL_VALIDATE=1 "${SCRIPT}" --check
+  [[ "${status}" -eq 3 ]] || return 1
+  [[ "${output}" == *"DRIFT"* ]] || return 1
   [[ "$(cat "${REGISTRY}")" == "${before}" ]] || return 1
 }
