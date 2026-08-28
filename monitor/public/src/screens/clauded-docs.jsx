@@ -2359,12 +2359,17 @@ function ViewerBodyCD({ state }) {
 		);
 		if (nodes.length === 0) return;
 		let cancelled = false;
+		// ELK 레이아웃 준비(public/mermaid-elk-loader.js) — 벤더 번들은 다이어그램이 실제로 있는
+		// 문서를 열 때 처음 도착한다. 노드 0건에서 일찍 돌아가는 위 줄 덕에 다이어그램 없는 문서는
+		// 5 MB 를 아예 요청하지 않고, 이 문서의 둘째 다이어그램은 기억된 약속을 그대로 받는다.
+		// 기다리지 않고 그리면 등록 전이라 layout:'elk' 가 조용히 dagre 로 눕는다.
+		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 		nodes.forEach((n, i) => {
 			// detectType fix: acc directive 가 type line 보다 위에 있으면 정규화로 type line 을 첫 줄로 올림 (mermaid-normalize.ts SYNC).
 			const source = normalizeMermaidSource(n.textContent);
 			const id = `cd-mermaid-${state.data?.id || "x"}-${i}`;
-			window.mermaid
-				.render(id, source)
+			elkReady
+				.then(() => window.mermaid.render(id, source))
 				.then(({ svg, bindFunctions }) => {
 					if (cancelled) return;
 					// SECURITY: mermaid 산출 SVG 는 trusted — 입력 source 는 server DOMPurify + client htmlToReactCD 이중 sanitize 통과한 본문 textContent (XSS surface 없음). architecture.jsx 의 mermaid.render 동일 신뢰 모델.

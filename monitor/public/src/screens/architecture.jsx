@@ -823,7 +823,13 @@ function MermaidCanvas({
 		// fonts.ready 이후에 재게 해서 잰 서체 = 그린 서체를 만든다.
 		const fontsReady = document.fonts?.ready ?? Promise.resolve();
 
-		fontsReady
+		// ELK 레이아웃 준비(public/mermaid-elk-loader.js) — 벤더 번들은 이제 이 호출이 처음 부를 때
+		// 도착하므로, 기다리지 않고 그리면 등록 전이라 layout:'elk' 가 조용히 dagre 로 눕는다.
+		// 준비 함수가 아예 없으면(로더 스크립트 자체가 404) 폴백을 감수하고 그린다 — 다이어그램을
+		// 통째로 잃는 것보다는 dagre 로라도 보이는 편이 낫다는 판단은 대체된 인라인 등록의 `?? []` 와 같다.
+		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
+
+		Promise.all([fontsReady, elkReady])
 			.then(() => (cancelled ? null : window.mermaid.render(renderId, source)))
 			.then((result) => {
 				if (cancelled || !result) return;

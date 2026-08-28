@@ -31,6 +31,12 @@ export const MERMAID_CONFIG_PATH = resolve(PUBLIC_ROOT, "mermaid-config.js");
 // layout draws on dagre with nothing but a console warning — see LAYOUT_FALLBACK_MARKERS.
 export const ELK_LOADER_PATH = resolve(PUBLIC_ROOT, "assets", "vendor", "mermaid-layout-elk-0.2.3.min.js");
 
+// The viewer's ELK prep function; index.html loads this same file. The viewer calls it to FETCH
+// the vendored bundle on demand, and this page has already injected that bundle's text, so what
+// the export takes from it is the registration step alone (it detects window.mermaidLayoutElk and
+// skips the network). Injecting it here is what keeps one registration expression instead of two.
+export const ELK_PREP_PATH = resolve(PUBLIC_ROOT, "mermaid-elk-loader.js");
+
 // mermaid's own wording: `Layout algorithm <x> is not registered. Using <y> as fallback.`
 const LAYOUT_FALLBACK_MARKERS: readonly string[] = ["Layout algorithm", "not registered"];
 
@@ -439,6 +445,7 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
 
   await injectScript(page, await loadMermaidBundle(), "mermaid driver bundle");
   await injectScript(page, await loadExportAsset(ELK_LOADER_PATH, "elk layout loader"), "elk layout loader");
+  await injectScript(page, await loadExportAsset(ELK_PREP_PATH, "elk layout prep"), "elk layout prep");
   await injectScript(page, await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"), "mermaid config");
 
   let renderError: string | null;
@@ -455,6 +462,7 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
         };
         MERMAID_CONFIG?: unknown;
         mermaidLayoutElk?: { default?: unknown };
+        ensureElkLayout?: () => Promise<void>;
         document: {
           querySelectorAll: (sel: string) => ArrayLike<{ innerHTML: string }>;
         };
@@ -463,9 +471,11 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       const mermaid = g.mermaid;
       if (mermaid === undefined) return "window.mermaid undefined after driver injection";
       if (g.MERMAID_CONFIG === undefined) return "window.MERMAID_CONFIG undefined after config injection";
+      if (g.ensureElkLayout === undefined) return "window.ensureElkLayout undefined after prep injection";
       try {
-        // The loader is a classic script that has already executed — registration is synchronous.
-        mermaid.registerLayoutLoaders(g.mermaidLayoutElk?.default ?? []);
+        // The viewer's prep function, on its already-arrived branch: the loader is a classic script
+        // that has already executed, so this registers from window.mermaidLayoutElk and never fetches.
+        await g.ensureElkLayout();
         mermaid.initialize(g.MERMAID_CONFIG);
         const level = Number(mermaid.mermaidAPI?.getConfig().logLevel ?? Number.NaN);
         if (!(level <= args.warnLogLevel)) {
