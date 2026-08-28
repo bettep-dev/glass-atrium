@@ -107,6 +107,51 @@ test("P1-2 the injected config carries the two keys the export's own guards stan
   );
 });
 
+// ── 후속-5 document language parity ──────────────────────────────────────────
+// The two surfaces render the same stored bodies, and the document language is an input
+// to that render: mermaid's C4 renderer measures its row-wrap limit from text metrics the
+// document language feeds, so a viewer declaring one language and the export another lay
+// the same source out at different widths. The value itself is a decision (ADR-B3 R1: ko);
+// what goes red here is the two surfaces disagreeing about it, whichever way one is edited.
+//
+// Read out of the sources rather than off a rendered page — a width comparison would need a
+// diagram whose width happens to move, and would report a layout difference rather than the
+// declaration that caused it.
+
+/** The `<html lang>` of the page the viewer serves. */
+function getViewerHtmlLang(): string | null {
+  return parseHtml(readFileSync(INDEX_PATH, "utf8")).querySelector("html")?.getAttribute("lang") ?? null;
+}
+
+/**
+ * The `<html lang>` of the shell the export builds. The shell is assembled from string
+ * concatenation, not a template file, so the declaration is read as the literal it is —
+ * anchored on the opening tag so a `lang` elsewhere in the module cannot answer for it.
+ */
+function getExportShellHtmlLang(): string | null {
+  const source = readFileSync(EXPORT_MODULE_PATH, "utf8");
+  const matches = [...source.matchAll(/<html\s+lang="([^"]*)"/g)].map((m) => m[1]);
+  assert.equal(
+    matches.length,
+    1,
+    `html-export.ts declares ${matches.length} <html lang> literals (${matches.join(", ")}) — ` +
+      "with more than one, the assertion below is made against a shell that may not be the one that ships",
+  );
+  return matches[0];
+}
+
+test("후속-5 the viewer and the export declare the same document language", () => {
+  const viewerLang = getViewerHtmlLang();
+  const exportLang = getExportShellHtmlLang();
+  assert.ok(viewerLang, "public/index.html declares no <html lang> — the viewer inherits whatever the browser guesses");
+  assert.equal(
+    viewerLang,
+    exportLang,
+    `index.html declares lang="${String(viewerLang)}" while the export shell declares lang="${String(exportLang)}" — ` +
+      "one stored body renders under two document languages, and the width difference that causes is reported nowhere",
+  );
+});
+
 test("P1-2 html-export.ts declares no config object of its own", () => {
   const source = readFileSync(EXPORT_MODULE_PATH, "utf8");
   assert.equal(
