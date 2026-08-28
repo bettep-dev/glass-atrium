@@ -39,6 +39,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
 const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
+const MAP_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/architecture.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
 // 좁은 뷰포트 — 아래 픽스처가 전부 컨테이너보다 넓어지도록 고른 폭.
@@ -137,6 +138,8 @@ interface NodeMeasurement {
   clientWidth: number;
   boxWidth: number;
   boxLeft: number;
+  // 첫 노드 rect 의 산출 모서리 반지름. 규칙이 없으면 mermaid 가 찍은 표현 속성이 그대로 남음.
+  nodeRectRx: string;
   // 스크롤 컨테이너의 padding-box 왼쪽 모서리 = 스크롤 원점. scrollLeft 는 음수가 될 수
   // 없으므로 이 지점보다 왼쪽에 놓인 내용은 어떤 스크롤로도 닿지 않음.
   originLeft: number;
@@ -325,8 +328,9 @@ async function measureRenderedNodes(
 
     return await page.evaluate((args) => {
       // 콜백은 chromium 에서 돎 — tsconfig lib 이 ES2022(DOM 없음)라 브라우저 타입은 국소 선언으로 받음.
+      type DiagramChild = { getAttribute: (name: string) => string | null };
       type DiagramNode = {
-        querySelector: (sel: string) => { getAttribute: (name: string) => string | null } | null;
+        querySelector: (sel: string) => DiagramChild | null;
         getBoundingClientRect: () => { width: number; left: number };
         scrollWidth: number;
         clientWidth: number;
@@ -336,7 +340,11 @@ async function measureRenderedNodes(
           querySelectorAll: (sel: string) => ArrayLike<DiagramNode>;
           querySelector: (sel: string) => DiagramNode | null;
         };
-        getComputedStyle: (el: DiagramNode) => { overflowX: string; borderLeftWidth: string };
+        getComputedStyle: (el: DiagramNode | DiagramChild) => {
+          overflowX: string;
+          borderLeftWidth: string;
+          rx: string;
+        };
       };
 
       const originEl =
@@ -350,6 +358,9 @@ async function measureRenderedNodes(
       const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
       return nodes.map((node, i) => {
         const svg = node.querySelector("svg");
+        // 산출 값을 읽음 — CSS 문자열의 존재가 아니라 브라우저가 실제로 적용한 기하 속성.
+        // mermaid 는 rx 를 표현 속성으로 찍으므로 규칙이 없으면 여기서 그 값이 그대로 나옴.
+        const nodeRect = node.querySelector("svg :is(.node, .cluster) rect");
         return {
           type: args.types[i] ?? `node-${i}`,
           svgPresent: svg !== null,
@@ -359,6 +370,7 @@ async function measureRenderedNodes(
           clientWidth: node.clientWidth,
           boxWidth: node.getBoundingClientRect().width,
           boxLeft: node.getBoundingClientRect().left,
+          nodeRectRx: nodeRect === null ? "" : g.getComputedStyle(nodeRect).rx,
           originLeft,
         };
       });
@@ -628,6 +640,58 @@ test("AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 
       exported.get(preset),
       viewer.get(preset),
       `${preset}: 내보내기 폭(${exported.get(preset)}px) 이 뷰어 폭(${viewer.get(preset)}px) 과 다름`,
+    );
+  }
+});
+
+// ── 후속-7 노드 모서리 ───────────────────────────────────────────────────────
+// 맵은 다이어그램 노드에 모서리 반지름을 주는데(architecture.jsx 의 캔버스 CSS) 문서 경로에는
+// 그 규칙이 없어 같은 mermaid 노드가 뷰어와 내보내기에서만 각진 채로 나왔다. 두 경로에 규칙을
+// 붙이고, 그것이 붙었다는 것을 CSS 문자열의 존재가 아니라 브라우저가 산출한 반지름에서 잼 —
+// 문자열 대조는 규칙이 다른 규칙에 눌리거나 셀렉터가 빗나가도 초록이다.
+//
+// 기대값은 맵 소스에서 읽음(드리프트 감시): 세 표면이 같은 모서리를 그린다는 것이 요구이고,
+// 여기 손으로 적은 수는 맵이 움직인 날 조용히 틀려진다.
+
+/** 맵 캔버스 CSS 가 노드·클러스터 rect 에 선언한 반지름. */
+function getMapNodeRadius(): string {
+  const source = readFileSync(MAP_SCREEN_PATH, "utf8");
+  const match = /:is\(\.node,\s*\.cluster\)\s*rect\s*\{[^}]*\brx:\s*([\d.]+px)/.exec(source);
+  assert.ok(
+    match,
+    "architecture.jsx 에서 노드 rect 의 rx 선언을 찾지 못함 — 아래 대조가 기준 없이 서 있음",
+  );
+  return match[1];
+}
+
+/** 프리셋 계측에서 노드 rect 의 산출 반지름만 뽑음. */
+function getMeasuredRadii(measurements: NodeMeasurement[]): Map<string, string> {
+  assert.equal(measurements.length, SIZE_PRESETS.length);
+  for (const m of measurements) {
+    assert.ok(m.svgPresent, `${m.type}: <svg> 가 렌더되지 않음`);
+    assert.notEqual(m.nodeRectRx, "", `${m.type}: 노드 rect 를 찾지 못해 모서리를 잴 것이 없음`);
+  }
+  return new Map(measurements.map((m) => [m.type, m.nodeRectRx]));
+}
+
+test("AC-후속-7 뷰어: 문서 다이어그램 노드가 맵과 같은 모서리 반지름으로 산출됨", async () => {
+  const expected = getMapNodeRadius();
+  for (const [preset, rx] of getMeasuredRadii(await measureViewerPresets())) {
+    assert.equal(
+      rx,
+      expected,
+      `${preset}: 뷰어 노드 rect 의 산출 rx 가 ${rx} — 맵 선언 ${expected} 과 다름`,
+    );
+  }
+});
+
+test("AC-후속-7 내보내기: 산출물의 노드가 맵과 같은 모서리 반지름으로 산출됨", async () => {
+  const expected = getMapNodeRadius();
+  for (const [preset, rx] of getMeasuredRadii(await measureExportPresets())) {
+    assert.equal(
+      rx,
+      expected,
+      `${preset}: 내보내기 노드 rect 의 산출 rx 가 ${rx} — 맵 선언 ${expected} 과 다름`,
     );
   }
 });

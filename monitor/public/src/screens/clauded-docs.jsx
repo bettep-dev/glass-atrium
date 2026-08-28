@@ -854,6 +854,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid.doc-diagram-body { width: 100%; }
         .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100cqi - 4rem, 1600px); margin-inline: calc(50% - min(50cqi - 2rem, 800px)); }
         .doc-body-isolation .mermaid.doc-diagram-full { width: 100cqi; margin-inline: calc(50% - 50cqi); }
+        /* 노드 모서리 — 맵 캔버스와 같은 r=8(architecture.jsx 의 .arch-mermaid-canvas 규칙).
+           mermaid 는 채택 타입 대부분에서 rx 를 아예 찍지 않아(산출 auto) 문서 노드만 각졌음.
+           CSS 기하 속성이라 표현 속성을 찍는 타입에서도 이김 — 맵이 같은 이유로 쓰는 기제. */
+        .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
+        .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }

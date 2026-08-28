@@ -604,7 +604,12 @@ const DIAGRAM_CONTAINER_STYLE =
   ".mermaid.doc-diagram-body{width:100%}" +
   ".mermaid.doc-diagram-wide{width:min(100cqi - 4rem,1600px);" +
   "margin-inline:calc(50% - min(50cqi - 2rem,800px))}" +
-  ".mermaid.doc-diagram-full{width:100cqi;margin-inline:calc(50% - 50cqi)}";
+  ".mermaid.doc-diagram-full{width:100cqi;margin-inline:calc(50% - 50cqi)}" +
+  // Node corners — the same r=8 the map's canvas gives its diagram nodes, and the viewer's
+  // own rule beside the width block above. A CSS geometry property, so it also wins over the
+  // presentation attribute the types that DO emit one write.
+  "pre.mermaid svg :is(.node,.cluster) rect," +
+  ".mermaid svg :is(.node,.cluster) rect{rx:8px;ry:8px}";
 
 /**
  * Removes CDN <script src> / runtime inline scripts + webfont <link>/@import
