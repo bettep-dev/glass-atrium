@@ -1019,6 +1019,54 @@ run_doctor() {
     fi
   fi
 
+  # 24. backup directory reconciliation surface (ADR-6 resolver + ADR-10 reconciler). Registration
+  #     kind B (report-only): its log lines only — no counter, no term in the warning total, exit
+  #     code unchanged. NUMBERING: this tree's sections run 1..22 and §23 is deliberately skipped —
+  #     the registry-mirror row lands there on the other track, and pre-assigning the two numbers is
+  #     what keeps them from colliding when the branches meet.
+  #
+  #     The resolver declines a configured [paths].backup_dir it cannot safely adopt and says so
+  #     ONCE, on stderr, in whichever process resolved it. The nightly launchd job is that process
+  #     and its stderr goes nowhere an operator reads, so between runs of the reconciler a declined
+  #     value is invisible. These rows are the standing surface for that.
+  #
+  #     SILENT WHEN HEALTHY — zero rows, not even an `ok` line, which is why this section holds no
+  #     `else` arm. A row that fires on every legitimately customized install is exactly the alarm
+  #     fatigue ADR-10 split doctor from the reconciler to avoid, so each row states a condition an
+  #     operator still has to close:
+  #       (a) a DECLARED value the resolver is not honouring — the config states an intent nobody
+  #           acted on (ADR-6 cases 4 and 5);
+  #       (b) resolution outside the default WHILE the default still holds dumps — that archive sits
+  #           outside both the rotation window and any restore search. A customization whose old
+  #           location is empty is the knob working as documented and stays silent.
+  #     Neither condition implies the other and both can stand at once. WHAT TO DO about either is
+  #     the reconciler's report; this section only says the condition exists.
+  local bkpdir_configured bkpdir_resolved bkpdir_default bkpdir_default_dumps
+  # shellcheck disable=SC2311  # the resolver and its census always return 0; a masked status here would be a fiction
+  bkpdir_default="$(atrium_backup_dir_default)"
+  # shellcheck disable=SC2311
+  bkpdir_configured="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'backup_dir')"
+  # The resolver's WARN carries the same facts the rows below print and fires in whichever process
+  # resolved — re-emitting it here would say one thing twice, on two streams.
+  # GA-ABSORB[handled@the two rows below]: stderr only; the resolver always returns 0 and always echoes a path
+  # shellcheck disable=SC2311
+  bkpdir_resolved="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_backup_dir 2>/dev/null)"
+  # Trailing slashes go exactly as the resolver strips them before its own compare, so `/x/` and
+  # `/x` cannot read as a declined value.
+  while [[ "${bkpdir_configured}" == */ && "${bkpdir_configured}" != "/" ]]; do
+    bkpdir_configured="${bkpdir_configured%/}"
+  done
+  if [[ -n "${bkpdir_configured}" && "${bkpdir_configured}" != "${bkpdir_resolved}" ]]; then
+    log "  note : backup dir unreconciled — [paths].backup_dir names ${bkpdir_configured}, but the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
+  fi
+  if [[ "${bkpdir_resolved}" != "${bkpdir_default}" ]]; then
+    # shellcheck disable=SC2311
+    bkpdir_default_dumps="$(atrium_backup_dump_count "${bkpdir_default}")"
+    if [[ "${bkpdir_default_dumps}" -gt 0 ]]; then
+      log "  note : backup dir relocated — dumps resolve to ${bkpdir_resolved}, while the default ${bkpdir_default} still holds ${bkpdir_default_dumps} dump(s), outside both the rotation and any restore search (report-only; run scripts/reconcile-backup-dir.sh)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all

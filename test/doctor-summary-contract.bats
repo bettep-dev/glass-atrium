@@ -42,12 +42,14 @@ retired_residue'
 # section 20's names are all `perms_`). The fossil assertion pins each stem to a real name.
 KIND_B_STEMS='perms
 rewire
-cfgkey'
+cfgkey
+bkpdir'
 
 # One synthetic operand per registered stem, in stem order — the promotion the guard must catch.
 KIND_B_SYNTHETIC='perms_missing
 rewire_pending
-cfgkey_missing'
+cfgkey_missing
+bkpdir_default_dumps'
 
 KIND_B_PATTERN="$(printf '%s\n' "${KIND_B_STEMS}" | tr '\n' '|' | sed 's/|$//')"
 
