@@ -13,6 +13,11 @@
 //
 // 픽스처 집합은 diagram-types.json 의 채택 목록에서 파생됨 — flowchart 만 덮고
 // 나머지 채택 타입이 깨진 채로 초록이 되는 것을 구조적으로 막음.
+//
+// 같은 이유로 축이 하나 더 있음 — 저장 본문의 포맷. 픽스처가 전부 html 본문(pre.mermaid 를
+// 이미 실은 모양)이던 동안 md 본문의 ``` mermaid 펜스는 어느 시험도 지나지 않았고, 뷰어는
+// 그 펜스를 코드 블록으로 그리면서 이 파일은 초록이었음. 두 포맷을 같은 표에서 돌려 그
+// 구멍을 닫음 — 타입 하나가 한쪽 포맷에서만 깨지는 것도 여기서 붉어짐.
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
@@ -21,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { marked } from "marked";
 import { chromium, type Browser } from "playwright";
 
 import { EXPORT_SCREEN, renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
@@ -175,6 +181,47 @@ const TYPE_NODES = FIXTURE_TYPES.map(
   (type) => `<pre class="mermaid" data-type="${type}"></pre>`,
 ).join("");
 
+/** 문서가 다이어그램을 실어 나르는 두 1차 포맷. */
+const PRIMARY_FORMATS = ["html", "md"] as const;
+type PrimaryFormat = (typeof PRIMARY_FORMATS)[number];
+
+const FIXTURE_SOURCES = FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string);
+
+/** 위 표 하나에서 파생한 포맷별 저장 본문 — 두 포맷이 같은 다이어그램을 실음. */
+function buildStoredBody(format: PrimaryFormat): string {
+  if (format === "md") {
+    return `${FIXTURE_SOURCES.map((source) => `\`\`\`mermaid\n${source}\n\`\`\``).join("\n\n")}\n`;
+  }
+  const blocks = FIXTURE_SOURCES.map((source) => `<pre class="mermaid">${source}</pre>`).join("");
+  return (
+    '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>diagram width</title>' +
+    `</head><body><main>${blocks}</main></body></html>`
+  );
+}
+
+/**
+ * 뷰어의 md→html 클래스 주입기 — 사본이 아니라 clauded-docs.jsx 원문에서 잘라 씀
+ * (같은 파일의 인라인 <style> 을 걷어오는 getViewerDocBodyCss 와 같은 기법).
+ * 사본이면 배포된 뷰어가 깨진 동안에도 초록이 됨 — 그게 이 축이 막으려는 실패임.
+ */
+function convertMdToViewerNodes(mdBody: string): string {
+  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
+  const name = "injectMdTypographyClassesCD";
+  const open = jsx.indexOf(`function ${name}(html) {`);
+  assert.notEqual(open, -1, `clauded-docs.jsx 에서 ${name} 를 찾지 못함`);
+  const close = jsx.indexOf("\n}\n", open);
+  assert.notEqual(close, -1, `${name} 의 열 0 닫는 중괄호를 찾지 못함`);
+  const inject = new Function(`${jsx.slice(open, close + 2)}\nreturn ${name};`)() as (
+    html: string,
+  ) => string;
+  return inject(marked.parse(mdBody, { gfm: true, breaks: false }) as string);
+}
+
+/** 뷰어 하네스에 심을 포맷별 노드 — md 는 실제 변환을 거쳐야 컨테이너가 생김. */
+function buildFormatNodes(format: PrimaryFormat): string {
+  return format === "html" ? TYPE_NODES : convertMdToViewerNodes(buildStoredBody("md"));
+}
+
 /** 하네스 문서 껍데기 — 두 배치가 head 와 body 바깥을 같이 씀. */
 function buildHarnessDocument(css: string, body: string, headExtra = ""): string {
   return (
@@ -326,20 +373,15 @@ async function measureRenderedNodes(
  * 내보내기 산출물을 1회만 만들어 재사용 — 두 다리가 같은 산출물을 봐야 하고
  * chromium 왕복이 비쌈. 본문은 Tailwind CDN 미참조(CDN 대기 경로 회피).
  */
-let exportedHtmlCache: Promise<string> | null = null;
+const exportedHtmlCache = new Map<PrimaryFormat, Promise<string>>();
 
-function getExportedHtml(): Promise<string> {
-  if (exportedHtmlCache !== null) return exportedHtmlCache;
+function getExportedHtml(format: PrimaryFormat): Promise<string> {
+  const cached = exportedHtmlCache.get(format);
+  if (cached !== undefined) return cached;
 
-  const blocks = FIXTURE_TYPES.map(
-    (type) => `<pre class="mermaid">${FIXTURES.get(type)}</pre>`,
-  ).join("");
-  const body =
-    '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>diagram width</title>' +
-    `</head><body><main>${blocks}</main></body></html>`;
-
-  exportedHtmlCache = renderSelfContainedHtml(body, "html");
-  return exportedHtmlCache;
+  const rendered = renderSelfContainedHtml(buildStoredBody(format), format);
+  exportedHtmlCache.set(format, rendered);
+  return rendered;
 }
 
 /**
@@ -373,78 +415,83 @@ test("픽스처 집합이 diagram-types.json 의 채택 타입을 전부 덮음"
   );
 });
 
-test("AC-T22(b) 뷰어: 채택 타입 전부의 산출 <svg> 에 인라인 max-width 가 없음", async () => {
-  const measurements = await measureRenderedNodes(
-    buildViewerHarness(getViewerDocBodyCss()),
-    evaluateMermaidConfig(),
-    FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
-  );
+for (const format of PRIMARY_FORMATS) {
+  test(`AC-T22(b) 뷰어[${format}]: 채택 타입 전부의 산출 <svg> 에 인라인 max-width 가 없음`, async () => {
+    const measurements = await measureRenderedNodes(
+      buildViewerHarness(getViewerDocBodyCss(), buildFormatNodes(format)),
+      evaluateMermaidConfig(),
+      FIXTURE_SOURCES,
+    );
 
-  assert.equal(measurements.length, FIXTURE_TYPES.length);
-  assertEveryType(measurements, "뷰어 인라인 max-width", (m) => {
-    if (!m.svgPresent) return [`${m.type}: <svg> 가 렌더되지 않음`];
-    if (/max-width/i.test(m.svgStyleAttr)) {
-      return [`${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
-    }
-    return [];
+    assert.equal(measurements.length, FIXTURE_TYPES.length);
+    assertEveryType(measurements, `뷰어[${format}] 인라인 max-width`, (m) => {
+      if (!m.svgPresent) return [`${m.type}: <svg> 가 렌더되지 않음`];
+      if (/max-width/i.test(m.svgStyleAttr)) {
+        return [`${m.type}: 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+      }
+      return [];
+    });
   });
-});
 
-test("AC-T22(a) 뷰어: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음", async () => {
-  const measurements = await measureRenderedNodes(
-    buildViewerHarness(getViewerDocBodyCss()),
-    evaluateMermaidConfig(),
-    FIXTURE_TYPES.map((type) => FIXTURES.get(type) as string),
-  );
+  test(`AC-T22(a) 뷰어[${format}]: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음`, async () => {
+    const measurements = await measureRenderedNodes(
+      buildViewerHarness(getViewerDocBodyCss(), buildFormatNodes(format)),
+      evaluateMermaidConfig(),
+      FIXTURE_SOURCES,
+    );
 
-  assertEveryType(measurements, "뷰어 가로 스크롤", (m) => {
-    const failures: string[] = [];
-    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
-      failures.push(
-        `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-      );
-    }
-    if (!(m.scrollWidth > m.clientWidth)) {
-      failures.push(
-        `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
-      );
-    }
-    return failures;
+    // 길이 단언이 여기에도 있어야 함 — 컨테이너가 0 개면 아래 판정기는 돌 것이 없어
+    // 조용히 초록이 됨. md 축을 처음 켰을 때 이 다리만 그렇게 통과했음.
+    assert.equal(measurements.length, FIXTURE_TYPES.length);
+    assertEveryType(measurements, `뷰어[${format}] 가로 스크롤`, (m) => {
+      const failures: string[] = [];
+      if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+        failures.push(
+          `${m.type}: 다이어그램 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+        );
+      }
+      if (!(m.scrollWidth > m.clientWidth)) {
+        failures.push(
+          `${m.type}: scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음 — 축소되어 스크롤이 없음`,
+        );
+      }
+      return failures;
+    });
   });
-});
 
-test("AC-T22(b) 내보내기: 산출 HTML 의 <svg> 전부에 인라인 max-width 가 없음", async () => {
-  const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
+  test(`AC-T22(b) 내보내기[${format}]: 산출 HTML 의 <svg> 전부에 인라인 max-width 가 없음`, async () => {
+    const measurements = await measureRenderedNodes(await getExportedHtml(format), null, null);
 
-  assert.equal(measurements.length, FIXTURE_TYPES.length);
-  assertEveryType(measurements, "내보내기 인라인 max-width", (m) => {
-    if (!m.svgPresent) return [`${m.type}: 내보내기 산출물에 <svg> 가 없음`];
-    if (/max-width/i.test(m.svgStyleAttr)) {
-      return [`${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
-    }
-    return [];
+    assert.equal(measurements.length, FIXTURE_TYPES.length);
+    assertEveryType(measurements, `내보내기[${format}] 인라인 max-width`, (m) => {
+      if (!m.svgPresent) return [`${m.type}: 내보내기 산출물에 <svg> 가 없음`];
+      if (/max-width/i.test(m.svgStyleAttr)) {
+        return [`${m.type}: 내보내기 <svg> 에 인라인 max-width 가 남아 있음 — style="${m.svgStyleAttr}"`];
+      }
+      return [];
+    });
   });
-});
 
-test("AC-T22(a) 내보내기: 산출 HTML 을 열면 가로 스크롤이 생기고 잘리지 않음", async () => {
-  const measurements = await measureRenderedNodes(await getExportedHtml(), null, null);
+  test(`AC-T22(a) 내보내기[${format}]: 산출 HTML 을 열면 가로 스크롤이 생기고 잘리지 않음`, async () => {
+    const measurements = await measureRenderedNodes(await getExportedHtml(format), null, null);
 
-  assert.equal(measurements.length, FIXTURE_TYPES.length);
-  assertEveryType(measurements, "내보내기 가로 스크롤", (m) => {
-    const failures: string[] = [];
-    if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
-      failures.push(
-        `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
-      );
-    }
-    if (!(m.scrollWidth > m.clientWidth)) {
-      failures.push(
-        `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
-      );
-    }
-    return failures;
+    assert.equal(measurements.length, FIXTURE_TYPES.length);
+    assertEveryType(measurements, `내보내기[${format}] 가로 스크롤`, (m) => {
+      const failures: string[] = [];
+      if (m.overflowX !== "auto" && m.overflowX !== "scroll") {
+        failures.push(
+          `${m.type}: 내보내기 컨테이너의 overflow-x 가 ${m.overflowX} — 스크롤 컨테이너가 아님`,
+        );
+      }
+      if (!(m.scrollWidth > m.clientWidth)) {
+        failures.push(
+          `${m.type}: 내보내기 scrollWidth(${m.scrollWidth}) 가 clientWidth(${m.clientWidth}) 를 넘지 않음`,
+        );
+      }
+      return failures;
+    });
   });
-});
+}
 
 // ── AC-T23 크기 프리셋 ───────────────────────────────────────────────────────
 // 세 단계(본문폭 · 넓게 · 전폭)가 서로 구분되고, 같은 단계가 내보내기 산출물에서
