@@ -245,3 +245,262 @@ TOML
   [[ "${status}" -eq 0 ]]
   [[ -z "${output}" ]]
 }
+
+# --- atrium_backup_dir: ADR-6 adoption rule (AC-C2) --------------------------
+#
+# The resolver adopts [paths].backup_dir on the FILESYSTEM STATE the value
+# describes, so each case below differs from its neighbour in exactly one piece of
+# state and no two can pass by the same code path:
+#
+#   case 1  value = the default          -> default,    silent
+#   case 2  destination EXISTS           -> configured, silent  (dumps at the
+#                                           default, so ONLY the existence arm
+#                                           can adopt here)
+#   case 3  absent, creatable, 0 dumps   -> configured, silent
+#   case 4  absent, creatable, dumps > 0 -> default + WARN, nothing created or moved
+#   case 5  relative / empty             -> default + WARN
+#
+# Cases 3 and 4 differ ONLY in the dump census, which is what makes the population
+# check independently red-able: drop it and 4 adopts the configured value.
+#
+# NO LIVE PATH LITERAL: test/db-backup-path-consistency.bats greps every tracked
+# file for the stale backup path string, so case 4 reproduces the live SHAPE
+# (absolute, elsewhere, directory absent, dumps already at the default) out of
+# sandbox paths and never spells the live value.
+#
+# SEAM HYGIENE: GA_DB_BACKUP_DIR is unset inside every call (except the test that
+# asserts its precedence) so an exported value in the developer's shell cannot mask
+# the rule under test, and GA_DATA_ROOT is pinned into WORK so "the default
+# location" is a directory these tests own.
+#
+# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict, so every
+# assertion below `return 1`s with its own message and fails independently.
+
+BK_CFG_ABSENT="__no_key__"
+
+# Write a [paths] fixture. Args: $1 = backup_dir value, or BK_CFG_ABSENT to declare
+# no such key at all (the fresh-clone shape, which must stay silent).
+backup_fixture() {
+  local value="$1"
+  {
+    printf '[paths]\n'
+    printf 'target_home = "%s"\n' "${WORK}/facade"
+    if [[ "${value}" != "${BK_CFG_ABSENT}" ]]; then
+      printf 'backup_dir = "%s"\n' "${value}"
+    fi
+  } >"${WORK}/config.toml"
+}
+
+# The default location these tests resolve against.
+backup_default_dir() {
+  printf '%s\n' "${WORK}/ga/backups/postgres"
+}
+
+# Create $2 dump files in $1. The names stay inside pg-backup.sh's rotation glob
+# unless a test deliberately steps outside it.
+seed_dumps() {
+  local dir="$1" want="$2" i=1
+  mkdir -p -- "${dir}"
+  while [[ "${i}" -le "${want}" ]]; do
+    : >"${dir}/glass_atrium-2026010${i}-000000.dump"
+    i=$((i + 1))
+  done
+}
+
+# Resolve once, stdout and stderr captured separately so the WARN can be asserted
+# without polluting the resolved path.
+backup_resolve() {
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+}
+
+@test "AC-C2(1) fresh install: the value IS the default -> default location, silent" {
+  backup_fixture "$(backup_default_dir)"
+  backup_resolve
+  [[ "${status}" -eq 0 ]] || {
+    printf 'resolver failed: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want %s, got %s\n' "$(backup_default_dir)" "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'a config that agrees with the default must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(2) a customization in use: destination EXISTS -> configured value, silent" {
+  # Dumps sit at the DEFAULT here, so the creatable+empty arm cannot adopt: only
+  # the existence arm can, which is what makes that arm independently red-able.
+  seed_dumps "$(backup_default_dir)" 2
+  mkdir -p -- "${WORK}/custom-live"
+  backup_fixture "${WORK}/custom-live"
+  backup_resolve
+  [[ "${output}" == "${WORK}/custom-live" ]] || {
+    printf 'an existing destination must be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'adopting an existing destination must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(3) a customization not yet created, 0 dumps at the default -> configured value, silent" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "${WORK}/custom-new"
+  backup_resolve
+  [[ "${output}" == "${WORK}/custom-new" ]] || {
+    printf 'a creatable destination with nothing left behind must be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'case 3 must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/custom-new" ]] || {
+    printf 'the resolver created %s — resolution must never touch the filesystem\n' "${WORK}/custom-new" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(4) live shape: absolute, elsewhere, absent, dumps at the default -> default + WARN, nothing created" {
+  # The ONLY difference from case 3 is the census: the parent exists, so the
+  # destination is creatable and the creatability probe cannot be what rejects it.
+  mkdir -p -- "${WORK}/stale-render"
+  seed_dumps "$(backup_default_dir)" 3
+  backup_fixture "${WORK}/stale-render/postgres"
+  backup_resolve
+
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a value nobody acted on must NOT relocate the dumps; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"${WORK}/stale-render/postgres"* ]] || {
+    printf 'the WARN must name the configured path: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"$(backup_default_dir)"* ]] || {
+    printf 'the WARN must name the resolved path: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"configured=0"* && "${stderr}" == *"resolved=3"* ]] || {
+    printf 'the WARN must carry both dump censuses: %s\n' "${stderr}" >&2
+    return 1
+  }
+  # NON-DESTRUCTIVE PROBE: `mkdir -p` here would create the configured path, and
+  # the existence arm would then adopt it on the very next run.
+  [[ ! -e "${WORK}/stale-render/postgres" ]] || {
+    printf 'the resolver created the configured path — the next run would adopt it\n' >&2
+    return 1
+  }
+  # NO RELOCATION: every dump is still where it was.
+  local remaining
+  remaining="$(find "$(backup_default_dir)" -maxdepth 1 -name '*.dump' | wc -l | tr -d ' ')"
+  [[ "${remaining}" == "3" ]] || {
+    printf 'dumps moved: %s left at the default location\n' "${remaining}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(4b) the populated census is *.dump, wider than the rotation glob" {
+  # A directory holding only hand-kept dumps — outside pg-backup.sh's
+  # glass_atrium-[0-9]*.dump rotation — must still read as populated, or the
+  # resolver would abandon exactly the archive nobody can regenerate.
+  mkdir -p -- "${WORK}/stale-render" "$(backup_default_dir)"
+  : >"$(backup_default_dir)/keep-forever.dump"
+  backup_fixture "${WORK}/stale-render/postgres"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a non-rotation dump must still count as populated; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"resolved=1"* ]] || {
+    printf 'the census missed the non-rotation dump: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5a) a relative value -> default + WARN naming the reason" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "relative/backups"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a relative value must never be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"not an absolute path"* ]] || {
+    printf 'the WARN must name the reason: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/relative" && ! -e "relative/backups" ]] || {
+    printf 'a relative value produced a directory somewhere — resolution must not write\n' >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5b) a declared-but-empty value -> default + WARN" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture ""
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want the default, got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -n "${stderr}" ]] || {
+    printf 'a declared-but-empty value is a misconfiguration and must warn\n' >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5c) an UNDECLARED key -> default, silent (fresh-clone safety)" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "${BK_CFG_ABSENT}"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want the default, got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'an absent key is the stock shape and must stay silent: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2 the WARN is emitted once per shell, not once per resolution" {
+  mkdir -p -- "${WORK}/stale-render"
+  seed_dumps "$(backup_default_dir)" 1
+  backup_fixture "${WORK}/stale-render/postgres"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir >/dev/null; atrium_backup_dir >/dev/null' \
+    _ "${REAL_LIB}"
+  local warns
+  warns="$(printf '%s\n' "${stderr}" | grep -c 'backup_dir=' || true)"
+  [[ -n "${warns}" ]] || warns=0
+  [[ "${warns}" -eq 1 ]] || {
+    printf 'want exactly 1 WARN across two resolutions, got %s:\n%s\n' "${warns}" "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2 GA_DB_BACKUP_DIR outranks the config and never warns" {
+  # The seam names a destination the caller is acting on right now, which is the
+  # state the adoption rule has to infer — so it is taken verbatim.
+  seed_dumps "$(backup_default_dir)" 2
+  backup_fixture "${WORK}/stale-render/postgres"
+  run --separate-stderr env GA_DB_BACKUP_DIR="${WORK}/seam-target" \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+  [[ "${output}" == "${WORK}/seam-target" ]] || {
+    printf 'the seam must win verbatim; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'the seam path must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}

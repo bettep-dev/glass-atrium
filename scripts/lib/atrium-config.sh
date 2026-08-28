@@ -8,6 +8,10 @@
 # Parsing: table-scoped awk (no TOML-parser dep) — a same-named key in another
 # section can never collide ([ports].monitor vs [paths].monitor). Config path:
 # ATRIUM_CONFIG_TOML (test override) → ${GA_ROOT:-$HOME/.glass-atrium}/config.toml.
+#
+# Two accessors are more than defaulted reads and carry their own contracts below:
+# atrium_monitor_port (ADR-1 precedence, loud on a configured invalid) and
+# atrium_backup_dir (ADR-6 existence/population adoption, loud fallback).
 
 # Resolved config.toml path (may not exist — accessors degrade to defaults).
 atrium_config_file() {
@@ -264,4 +268,178 @@ atrium_resolve_haiku_model() {
     [[ -n "${cfg_model}" ]] && model="${cfg_model}"
   fi
   printf '%s\n' "${model}"
+}
+
+# --- postgres backup directory (ADR-6) ---------------------------------------
+#
+# The single resolver for the pg_dump backup directory, replacing three sites that
+# each derived it themselves. It adopts [paths].backup_dir on the FILESYSTEM STATE
+# the value describes, never on a string comparison against the template default.
+#
+# WHY state and not a string. The knob's promise is that an operator may relocate
+# the dumps, so a configured value that differs from the default has to be able to
+# win. But a RENDERED config also holds values no one ever acted on, and adopting
+# one of those silently relocates the nightly job: dumps start landing in the new
+# directory, the 14-dump rotation restarts there, and every dump already written is
+# outside both the rotation and any restore search. An absolute-path check does not
+# separate the two cases — a value nobody acted on is absolute too.
+#
+# Adoption rule. The configured value wins when its directory EXISTS, or when it is
+# creatable AND the default location holds no dumps. Otherwise the default wins and
+# the resolver says so, once, on stderr.
+#
+#   case                                    | dir      | default dumps | resolves to
+#   1 fresh install (value = the default)   | absent   | 0             | default, silent
+#   2 a customization in use                | exists   | any           | configured
+#   3 a customization not yet created       | absent   | 0             | configured
+#   4 a value nobody acted on               | absent   | >0            | default + WARN
+#   5 relative, empty, or not a directory   | -        | any           | default + WARN
+#
+# Honest limit: 3 and 4 are separated ONLY by the dump census, so a NEW relocation
+# configured on an install that already holds dumps reads as 4 and is not honored
+# until the operator reconciles. That is the intended trade — a loud non-adoption
+# is recoverable in one command, a silent relocation is not.
+#
+# The populated predicate is `*.dump`, deliberately BROADER than pg-backup.sh's
+# rotation glob `glass_atrium-[0-9]*.dump`: pre-uninstall and hand-kept dumps are
+# outside the rotation, and a directory holding only those must still read as
+# populated or the resolver would abandon exactly the archive nobody can regenerate.
+#
+# WARN scope: once per shell. A caller that resolves through command substitution
+# runs the function in a subshell, where the guard cannot propagate back, so resolve
+# ONCE per process and reuse the value — which is what each consumer site does.
+
+# The fallback backup directory. ONE spelling, shared by the resolver, its WARN and
+# the reconciler, so "the default location" cannot mean two paths.
+atrium_backup_dir_default() {
+  printf '%s\n' "${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres"
+}
+
+# Count the `*.dump` files directly under $1; 0 when the directory is absent.
+# Non-recursive: nested paths are not what either the rotation or a restore reads.
+atrium_backup_dump_count() {
+  local dir="$1" count=0 entry
+  [[ -d "${dir}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  # An unmatched glob expands to the pattern itself (nullglob is not assumed, since
+  # this is a sourced library and must not change the caller's shell options), so
+  # every candidate is confirmed to be a real file before it counts.
+  for entry in "${dir}"/*.dump; do
+    [[ -f "${entry}" ]] || continue
+    count=$((count + 1))
+  done
+  printf '%s\n' "${count}"
+}
+
+# NON-DESTRUCTIVE creatability probe: the parent exists and is writable.
+#
+# It MUST stay non-destructive. `mkdir -p` is the idiom at the consumer sites this
+# resolver feeds, and calling it here would create the configured directory — which
+# is the existence arm's input, so the next run would adopt the value on the
+# strength of a directory this code made. The rule would then be unconditional
+# adoption wearing a state check.
+_atrium_dir_is_creatable() {
+  local dir="$1"
+  local parent="${dir%/*}"
+  [[ "${parent}" != "${dir}" ]] || parent="." # no slash at all -> relative to cwd
+  [[ -n "${parent}" ]] || parent="/"          # "/x" -> the parent is the root
+  [[ -d "${parent}" && -w "${parent}" ]]
+}
+
+# Whether the config file DECLARES a key at all, distinct from declaring it empty.
+# An absent key is fresh-clone safety and resolves silently; a key present with an
+# empty value is a misconfiguration and earns the WARN (case 5). Reuses the shared
+# enumerator rather than adding a second reader of the TOML grammar.
+# Args: $1 = table header literal · $2 = key name.
+_atrium_config_has_key() {
+  local section="$1" key="$2" needle keys
+  needle="${section}"$'\t'"${key}" # the enumerator's record separator, spelled once
+  keys="$(atrium_toml_keys)"
+  grep -qxF -- "${needle}" <<<"${keys}"
+}
+
+# One-line stderr WARN naming both paths, both dump censuses and the reason, so the
+# operator can see which location holds the data without running anything first.
+# Args: $1 configured · $2 resolved · $3 dumps at configured · $4 dumps at resolved
+#       · $5 reason.
+_atrium_backup_dir_warn() {
+  local configured="$1" resolved="$2" cand_dumps="$3" resolved_dumps="$4" reason="$5"
+  local target_home facade_note=""
+  if [[ -n "${_ATRIUM_BACKUP_DIR_WARNED:-}" ]]; then
+    return 0
+  fi
+  _ATRIUM_BACKUP_DIR_WARNED=1
+  # A value under the install facade root is worth naming: the facade is a symlink
+  # farm the installer owns, so a backup destination there is very likely a stale
+  # render rather than a deliberate choice. Extra context only — the adoption rule
+  # above reads state, and a stale value pointing elsewhere is caught the same way.
+  target_home="$(atrium_config_get '[paths]' 'target_home' "${HOME}/.claude")"
+  if [[ -n "${target_home}" && "${configured}" == "${target_home}/"* ]]; then
+    facade_note=" [under the install facade root ${target_home}]"
+  fi
+  printf 'atrium-config: WARNING: [paths].backup_dir=%s not adopted (%s)%s — resolving to %s. dumps: configured=%s resolved=%s. Nothing was moved or created; run scripts/reconcile-backup-dir.sh to reconcile.\n' \
+    "${configured}" "${reason}" "${facade_note}" "${resolved}" "${cand_dumps}" "${resolved_dumps}" >&2
+}
+
+# Resolve the effective pg_dump backup directory (contract + case table above).
+# Precedence: exported GA_DB_BACKUP_DIR → [paths].backup_dir when the adoption rule
+# admits it → the default location. Always echoes a path and returns 0.
+atrium_backup_dir() {
+  local default_dir configured default_dumps cand_dumps
+
+  # 1. explicit seam — the caller's own override (sandbox, test, one-off restore).
+  #    It names a destination the caller is acting on RIGHT NOW, which is the state
+  #    the rule below has to infer, so it is taken verbatim and never warns.
+  if [[ -n "${GA_DB_BACKUP_DIR:-}" ]]; then
+    printf '%s\n' "${GA_DB_BACKUP_DIR}"
+    return 0
+  fi
+
+  default_dir="$(atrium_backup_dir_default)"
+  configured="$(atrium_toml_get '[paths]' 'backup_dir')"
+  while [[ "${configured}" == */ && "${configured}" != "/" ]]; do
+    configured="${configured%/}"
+  done
+
+  # 2. undeclared key → default, silent (fresh-clone safety, as every accessor here).
+  if [[ -z "${configured}" ]] && ! _atrium_config_has_key '[paths]' 'backup_dir'; then
+    printf '%s\n' "${default_dir}"
+    return 0
+  fi
+  # 3. declared AT the default → the two agree, nothing to adopt or warn about.
+  if [[ "${configured}" == "${default_dir}" ]]; then
+    printf '%s\n' "${default_dir}"
+    return 0
+  fi
+
+  # 4. POPULATION FIRST. The census at the default location is taken before any
+  #    probe of the configured path: it decides the creatable arm below, and it is
+  #    what the WARN has to report, so it is never conditional on the probes.
+  default_dumps="$(atrium_backup_dump_count "${default_dir}")"
+  cand_dumps="$(atrium_backup_dump_count "${configured}")"
+
+  # 5. adoption rule.
+  if [[ "${configured}" != /* ]]; then
+    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+      "not an absolute path"
+  elif [[ -d "${configured}" ]]; then
+    printf '%s\n' "${configured}" # case 2 — the destination is real and in use
+    return 0
+  elif [[ -e "${configured}" ]]; then
+    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+      "exists but is not a directory"
+  elif _atrium_dir_is_creatable "${configured}" && [[ "${default_dumps}" -eq 0 ]]; then
+    printf '%s\n' "${configured}" # case 3 — creatable, and no dumps are left behind
+    return 0
+  elif [[ "${default_dumps}" -ne 0 ]]; then
+    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+      "directory absent while the default location already holds dumps"
+  else
+    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+      "directory absent and its parent is missing or not writable"
+  fi
+
+  printf '%s\n' "${default_dir}"
 }
