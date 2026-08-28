@@ -39,16 +39,34 @@ setup() {
   printf '#!/bin/sh\nprintf x >>"%s"\nexit 1\n' "${calls}" >"${bin}/claude"
   chmod +x "${bin}/claude"
 
-  # A failing python suite is the python leg's verdict, not this probe's — the run's exit
-  # code is deliberately dropped. The trailer assertion below is what keeps the drop from
-  # turning a suite that never ran into a silent pass.
+  # The exit code is CAPTURED, not dropped: a dropped code let a red suite read green
+  # here, and this probe is reached by the same runner leg that gates the daemon's apply.
+  # The trailer assertion stays alongside it — a collection error also exits non-zero, and
+  # the trailer is what distinguishes "the suite ran and failed" from "nothing ran". It
+  # carries no count literal deliberately: the suite grows, and a pinned total would be a
+  # second thing to maintain for no added signal.
   local log="${BATS_TEST_TMPDIR}/discover.log"
+  local rc=0
   env -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
     HOME="${home}" PATH="${bin}:${PATH}" \
     python3 -m unittest discover -s "${BATS_TEST_DIRNAME}" -p 'test_*.py' \
-    >"${log}" 2>&1 || true
+    >"${log}" 2>&1 || rc=$?
 
-  grep -qE '^Ran [1-9][0-9]* tests?' "${log}"
+  # Every assertion below gates on its own status. On bash 3.2 a FAILING bare `[[ ]]` in
+  # mid-body does not abort the test (measured: bash 3.2.57 + bats 1.13.0 — the `[ ]`
+  # builtin form does abort, the `[[ ]]` keyword form does not), so a mid-body `[[ ]]`
+  # would be an assertion that can never fail.
+  [[ "${rc}" -eq 0 ]] || {
+    printf 'unittest discover exited %s; tail of the run log:\n' "${rc}" >&2
+    tail -n 20 "${log}" >&2
+    return 1
+  }
+
+  grep -qE '^Ran [1-9][0-9]* tests?' "${log}" || {
+    printf 'no run trailer in the discover log — nothing ran:\n' >&2
+    tail -n 20 "${log}" >&2
+    return 1
+  }
 
   run find "${home}" -type f
   [ "${status}" -eq 0 ]
