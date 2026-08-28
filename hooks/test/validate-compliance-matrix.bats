@@ -466,3 +466,79 @@ break_layer_b() {
     return 1
   }
 }
+
+# ── AC8 — documented exemptions stay out of the Layer A drift report ───────────
+
+# The hook's exemption list, read from its own source. Deriving it keeps this
+# suite from re-declaring a second copy that could drift from the first.
+_exempt_files() {
+  sed -n 's/^readonly EXEMPT_FILES="\(.*\)"$/\1/p' "${HOOK_SH}" \
+    | tr ',' '\n' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d'
+}
+
+# The `undeclared-present:` field alone. Matching the whole output would read the
+# banner prefix and any advisory naming the matrix PATH as a report hit.
+_undeclared_field() {
+  printf '%s\n' "${output}" | grep -F 'undeclared-present:' || true
+}
+
+@test "AC8 the injection-text source is exempt, so Layer A stops reporting it" {
+  # Behavioural, not a list assertion: the file is seeded where the live one
+  # lives and left out of the matrix, which is exactly the standing advisory
+  # this exemption closes. Dropping it from EXEMPT_FILES turns this red.
+  : >"${SCOPED_DIR}/shared-turn-budget.md"
+  # Positive control in the same run — an empty report must not pass this test.
+  : >"${RULES_DIR}/undeclared-extra.md"
+
+  run run_hook
+  local field
+  field="$(_undeclared_field)"
+  [[ "${field}" == *"undeclared-extra.md"* ]] || {
+    echo "control file unreported — the drift scan is not running: ${output}"
+    return 1
+  }
+  [[ "${field}" != *"shared-turn-budget.md"* ]] || {
+    echo "an exempt file surfaced in the drift report: ${field}"
+    return 1
+  }
+}
+
+@test "AC8 no file on the exemption list reaches undeclared-present" {
+  local exempt name field missing=""
+  exempt="$(_exempt_files)"
+  [[ -n "${exempt}" ]] || {
+    echo "no EXEMPT_FILES parsed from ${HOOK_SH} — the parser lost its anchor"
+    return 1
+  }
+  # Basenames are subtracted AFTER the rules/scoped union, so the seeding dir is
+  # immaterial to the verdict; scoped/ is used because that is where the live
+  # standing advisory came from.
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    : >"${SCOPED_DIR}/${name}"
+  done <<EOF
+${exempt}
+EOF
+  : >"${RULES_DIR}/undeclared-extra.md"
+
+  run run_hook
+  field="$(_undeclared_field)"
+  [[ "${field}" == *"undeclared-extra.md"* ]] || {
+    echo "control file unreported — the drift scan is not running: ${output}"
+    return 1
+  }
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    case "${field}" in
+      *"${name}"*) missing="${missing}${name} " ;;
+      *) ;;
+    esac
+  done <<EOF
+${exempt}
+EOF
+  [[ -z "${missing}" ]] || {
+    echo "exempt file(s) reported as undeclared-present: ${missing}— ${field}"
+    return 1
+  }
+}

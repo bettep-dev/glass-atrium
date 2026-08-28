@@ -90,11 +90,18 @@ readonly SCOPED_DIR="${COMPLIANCE_SCOPED_DIR:-${HOME}/.glass-atrium/scoped}"
 # would point at a path that never exists and silently fail open forever.
 readonly REGISTRY_FILE="${COMPLIANCE_REGISTRY_FILE:-${HOME}/.glass-atrium/agent-registry.json}"
 
-# Files that physically live in rules/ but are not loadable rules themselves.
-# core-compliance-matrix.md is the governance manifest (this script reads it as
-# input) — listing it as a matrix row would be self-referential. Treat as a
-# documented exemption rather than flagging it every session.
-readonly EXEMPT_FILES="core-compliance-matrix.md"
+# Files that physically live in rules/ or scoped/ but are not loadable rules
+# themselves. Each is a DOCUMENTED exemption rather than a per-session advisory:
+# a report that fires on every run is alarm fatigue, and it hides the real drift
+# this scan exists to surface.
+#   core-compliance-matrix.md — the governance manifest this script reads as
+#     input; listing it as a matrix row would be self-referential.
+#   shared-turn-budget.md — an injection-TEXT source, which the manifest itself
+#     declares row-less: "its policy SoT stays the Tier-1
+#     GLASS_ATRIUM_GLOBAL_RULES.md Turn Budget & Graceful Exit section, so the
+#     file carries NO tier membership and no matrix row". The row the advisory
+#     asked for would contradict the manifest this hook validates.
+readonly EXEMPT_FILES="core-compliance-matrix.md,shared-turn-budget.md"
 
 # Footnote markers the matrix uses for conditional-exception cells. The B2 check
 # never hard-codes which markers must exist — it derives both the cell set and
