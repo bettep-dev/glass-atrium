@@ -1042,17 +1042,14 @@ run_doctor() {
   #     Neither condition implies the other and both can stand at once. WHAT TO DO about either is
   #     the reconciler's report; this section only says the condition exists.
   local bkpdir_configured bkpdir_resolved bkpdir_default bkpdir_default_dumps
-  # shellcheck disable=SC2311  # the resolver and its census always return 0; a masked status here would be a fiction
   bkpdir_default="$(atrium_backup_dir_default)"
-  # shellcheck disable=SC2311
   bkpdir_configured="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'backup_dir')"
   # The resolver's WARN carries the same facts the rows below print and fires in whichever process
   # resolved — re-emitting it here would say one thing twice, on two streams.
   # GA-ABSORB[handled@the two rows below]: stderr only; the resolver always returns 0 and always echoes a path
-  # shellcheck disable=SC2311
   bkpdir_resolved="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_backup_dir 2>/dev/null)"
-  # Trailing slashes go exactly as the resolver strips them before its own compare, so `/x/` and
-  # `/x` cannot read as a declined value.
+  # Trailing slashes are stripped exactly as the resolver strips them before its own compare, so
+  # `/x/` and `/x` cannot read as a declined value.
   while [[ "${bkpdir_configured}" == */ && "${bkpdir_configured}" != "/" ]]; do
     bkpdir_configured="${bkpdir_configured%/}"
   done
@@ -1060,7 +1057,6 @@ run_doctor() {
     log "  note : backup dir unreconciled — [paths].backup_dir names ${bkpdir_configured}, but the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
   fi
   if [[ "${bkpdir_resolved}" != "${bkpdir_default}" ]]; then
-    # shellcheck disable=SC2311
     bkpdir_default_dumps="$(atrium_backup_dump_count "${bkpdir_default}")"
     if [[ "${bkpdir_default_dumps}" -gt 0 ]]; then
       log "  note : backup dir relocated — dumps resolve to ${bkpdir_resolved}, while the default ${bkpdir_default} still holds ${bkpdir_default_dumps} dump(s), outside both the rotation and any restore search (report-only; run scripts/reconcile-backup-dir.sh)"

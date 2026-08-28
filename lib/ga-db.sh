@@ -237,8 +237,9 @@ ga_resolve_backup_dir() {
 # schema drift across installs → no auto-restore), but the drop is gated on a verified backup:
 # BACKUP-BEFORE-DROP, FAIL-CLOSED per database. Each EXISTING database is pg_dump'ed (custom -F c,
 # pg_restore-compatible) to <ga_resolve_backup_dir>/<db>-pre-uninstall-<ts>.dump
-# (pg-backup.sh's dir + timestamp convention; the directory comes from the shared ADR-6 resolver,
-# which honours the GA_DB_BACKUP_DIR sandbox override ahead of the config, mirroring oss-db-setup.sh). A dump that FAILS or is EMPTY (non-empty gate = oss-db-setup.sh
+# (pg-backup.sh's timestamp convention; the directory comes from the shared ADR-6 resolver, which
+# honours the GA_DB_BACKUP_DIR sandbox override ahead of the config, mirroring oss-db-setup.sh).
+# A dump that FAILS or is EMPTY (non-empty gate = oss-db-setup.sh
 # backup_db_to_file precedent) SKIPS the drop for THAT database — loud log, data preserved,
 # uninstall continues; applied uniformly (the shadow may dump near-empty, same gate governs).
 # Pre-uninstall dumps are KEEP-FOREVER: no rotation here, and pg-backup.sh's 14-dump keep-window
