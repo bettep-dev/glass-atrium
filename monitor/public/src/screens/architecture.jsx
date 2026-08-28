@@ -119,6 +119,38 @@ function getGlobalDetailBlocks() {
 	);
 }
 
+// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값. 이름이 그대로 id 로 들어가므로
+// id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는 이미 합법이라 그대로 통과).
+function getDaemonDetailId(daemonName) {
+	return `arch-daemon-detail-${String(daemonName || "").replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+// 확장 영역의 실행 줄 — 선택 데몬의 payload 응답을 날짜 + 사유로 접음.
+// 응답이 든 daemon 이름을 대조함: 드릴다운 재요청이 도는 동안 이전 데몬의 실패를 새로 펼친 행
+// 아래 그리면 화면이 다른 작업의 장애를 이 작업의 것으로 말하게 됨.
+// null = 이 데몬의 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 실행 기록이 없음 — 둘은 다른 문장임.
+function getDaemonRunRows(payloadState, daemonName) {
+	if (!payloadState || payloadState.status !== "ready") return null;
+
+	const data = payloadState.data;
+	if (!data || data.daemon !== daemonName) return null;
+
+	return (data.entries || []).map((entry) => ({
+		runDate: entry?.run_date || "—",
+		verdict: entry?.summary?.verdict || "unknown",
+		reasons: (entry?.summary?.error_signatures || []).map((signature) => ({
+			message: signature?.message || "—",
+			count: Number(signature?.count) || 0,
+		})),
+	}));
+}
+
+// 사유가 없는 실행이 스스로를 설명하는 문장 — 빈 자리는 '실패 없음'과 '읽을 payload 없음'을 구별하지 못함.
+const RUN_VERDICT_NOTE = {
+	ok: "No failures recorded",
+	unknown: "No readable payload",
+};
+
 // Top-level Screen
 
 function ScreenArchitecture(
@@ -151,6 +183,10 @@ function ScreenArchitecture(
 	const [pgState, setPgState] = useStateAR(INITIAL_FETCH_STATE_AR);
 	const [payloadState, setPayloadState] = useStateAR(INITIAL_FETCH_STATE_AR);
 	const [hookFailState, setHookFailState] = useStateAR(INITIAL_FETCH_STATE_AR);
+
+	// 페이로드 드릴다운 대상 — 확장 행이 고름 (T9c). 접어도 되돌리지 않음: 되돌리면 다섯 응답이
+	// 한 번 더 나가고 방금 읽은 실패가 스트립에서도 지워짐.
+	const [payloadDaemon, setPayloadDaemon] = useStateAR(MAP_PAYLOAD_DAEMON);
 
 	const [refreshTick, setRefreshTick] = useStateAR(0);
 
@@ -237,9 +273,7 @@ function ScreenArchitecture(
 			setPayloadState,
 			setHookFailState,
 		];
-		// 드릴다운 데몬은 아직 고정 — T9c 가 확장 행에서 고르게 되면 상태로 올라오고
-		// 그때 이 의존 배열이 그 상태를 받음 (URL 은 이미 인자를 달고 나감).
-		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON);
+		const urls = getMapHealthEndpoints(payloadDaemon);
 
 		urls.forEach((url, i) => {
 			const setter = setters[i];
@@ -252,7 +286,7 @@ function ScreenArchitecture(
 		});
 
 		return () => ctrl.abort();
-	}, [refreshTick, healthTick]);
+	}, [refreshTick, healthTick, payloadDaemon]);
 
 	// 60s 자동 새로고침 — health 는 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
 	useEffectAR(() => {
@@ -405,6 +439,17 @@ function ScreenArchitecture(
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
 					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
 					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
+					// 확장 컨트롤 — 표 셀 안에서 서체를 물려받아 행 그대로 보이되 진짜 button 으로 남음.
+					".arch-row-toggle { display: inline-flex; align-items: baseline; gap: 6px; background: none; " +
+					"border: 0; margin: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; } " +
+					".arch-row-toggle:hover { color: rgb(var(--ink)); } " +
+					".arch-row-toggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
+					".arch-row-caret { color: rgb(var(--faint)); font-size: var(--fs-micro); } " +
+					// 상세 셀만 줄바꿈 허용 — 표 본문의 nowrap 이 걸리면 사유 문장이 가로로 흘러 표를 벌림.
+					".arch-live-table td.arch-run-cell { white-space: normal; padding: 6px 8px 8px 22px; } " +
+					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
@@ -463,6 +508,7 @@ function ScreenArchitecture(
 					hookState={hookState}
 					hookFailState={hookFailState}
 					payloadState={payloadState}
+					payloadDaemon={payloadDaemon}
 					onRetry={triggerRefresh}
 				/>
 
@@ -486,7 +532,11 @@ function ScreenArchitecture(
 					{activeDiagram?.description || "No description available."}
 				</div>
 
-				<LiveDaemonTable state={liveState} />
+				<LiveDaemonTable
+					state={liveState}
+					payloadState={payloadState}
+					onSelectDaemon={setPayloadDaemon}
+				/>
 
 				{/* 전역 확장 블록 — T11(Hook chain) · T12c(Hook failure log) 가 채움. 지금은 빔. */}
 				<GlobalDetailRegion
@@ -1044,6 +1094,7 @@ function HealthStrip({
 	hookState,
 	hookFailState,
 	payloadState,
+	payloadDaemon,
 	onRetry,
 }) {
 	const kpis = getMapHealthKpis({
@@ -1097,7 +1148,7 @@ function HealthStrip({
 			{payloadCount !== null && (
 				<div className="arch-queue-fact" data-health-fact="run-payloads">
 					<span className="fs-micro text-faint">Run payloads</span>
-					<span className="fs-meta font-mono text-ink">{MAP_PAYLOAD_DAEMON}</span>
+					<span className="fs-meta font-mono text-ink">{payloadDaemon}</span>
 					<span className="fs-meta text-dim">{payloadCount} recent</span>
 				</div>
 			)}
@@ -1138,12 +1189,24 @@ function GlobalDetailRegion({ blocks = getGlobalDetailBlocks(), states }) {
 
 // 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
 
-function LiveDaemonTable({ state }) {
+function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
 	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 daemon 배열을 다시 훑지 않음.
 	const rows = useMemoAR(
 		() => (state.status === "ready" ? getLiveDaemonRows(state.data?.daemons) : []),
 		[state.status, state.data],
+	);
+
+	// 한 번에 한 행만 펼침 — 여럿이 열리면 표가 세로로 길어져 실패 비교가 아니라 스크롤이 됨.
+	const [expandedDaemon, setExpandedDaemon] = useStateAR(null);
+
+	const toggleRow = useCallbackAR(
+		(name) => {
+			setExpandedDaemon((current) => (current === name ? null : name));
+			// 접을 때도 같은 이름을 올림 — 값이 그대로라 재요청은 없고, 방금 읽은 실패가 남음.
+			onSelectDaemon?.(name);
+		},
+		[onSelectDaemon],
 	);
 
 	if (state.status !== "ready") return null;
@@ -1161,24 +1224,98 @@ function LiveDaemonTable({ state }) {
 					</tr>
 				</thead>
 				<tbody>
-					{rows.map((row) => (
-						<tr key={row.name}>
-							<th scope="row" className="text-ink font-mono">
-								{row.name}
-							</th>
-							<td>
-								<span className="inline-flex items-center gap-1.5">
-									<StatusDot status={row.tone} />
-									{row.statusLabel}
-								</span>
-							</td>
-							<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
-							<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
-						</tr>
-					))}
+					{rows.flatMap((row) => {
+						const detailId = getDaemonDetailId(row.name);
+						const isExpanded = expandedDaemon === row.name;
+
+						const summaryRow = (
+							<tr key={row.name} data-daemon-row={row.name}>
+								<th scope="row" className="text-ink font-mono">
+									{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
+									<button
+										type="button"
+										className="arch-row-toggle"
+										aria-expanded={isExpanded}
+										aria-controls={detailId}
+										onClick={() => toggleRow(row.name)}>
+										<span className="arch-row-caret" aria-hidden="true">
+											{isExpanded ? "▾" : "▸"}
+										</span>
+										{row.name}
+									</button>
+								</th>
+								<td>
+									<span className="inline-flex items-center gap-1.5">
+										<StatusDot status={row.tone} />
+										{row.statusLabel}
+									</span>
+								</td>
+								<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
+								<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
+							</tr>
+						);
+
+						// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
+						if (!isExpanded) return [summaryRow];
+
+						return [
+							summaryRow,
+							<tr key={`${row.name}-detail`} data-daemon-detail={row.name}>
+								<td id={detailId} colSpan={4} className="arch-run-cell">
+									<DaemonRunDetail
+										daemon={row.name}
+										runs={getDaemonRunRows(payloadState, row.name)}
+									/>
+								</td>
+							</tr>,
+						];
+					})}
 				</tbody>
 			</table>
 		</div>
+	);
+}
+
+/**
+ * 확장 영역 본문 — 선택 데몬의 최근 실행을 날짜 + 사유로 나열함 (T9c).
+ * 사유 문자열은 데몬 로그에서 파생된 서버 텍스트임. JSX 텍스트 자식으로만 두어 React 가
+ * 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01).
+ * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
+ */
+function DaemonRunDetail({ daemon, runs }) {
+	if (runs === null)
+		return (
+			<span className="fs-meta text-dim">Loading recent runs for {daemon}…</span>
+		);
+
+	if (runs.length === 0)
+		return <span className="fs-meta text-dim">No stored runs for {daemon}.</span>;
+
+	return (
+		<ul className="arch-run-list">
+			{runs.map((run) => (
+				<li key={run.runDate} className="arch-run-entry">
+					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
+					{run.reasons.length === 0 ? (
+						<span className="fs-meta text-dim">
+							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}
+						</span>
+					) : (
+						<ul className="arch-run-reasons">
+							{run.reasons.map((reason) => (
+								<li key={reason.message} className="fs-meta text-dim">
+									{reason.message}
+									{/* 한 사이클에 반복된 서명은 횟수까지 밝힘 — 단발 장애와 반복 장애는 다른 사건임 */}
+									{reason.count > 1 && (
+										<span className="text-faint"> ×{reason.count}</span>
+									)}
+								</li>
+							))}
+						</ul>
+					)}
+				</li>
+			))}
+		</ul>
 	);
 }
 

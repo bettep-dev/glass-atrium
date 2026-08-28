@@ -46,6 +46,12 @@ interface DaemonRow {
   nodeIds: string[];
   lastRunAt: string | null;
 }
+// 확장 영역 한 줄 — 실행 하나의 날짜와 그 실행이 낸 사유들.
+interface DaemonRunRow {
+  runDate: string;
+  verdict: string;
+  reasons: { message: string; count: number }[];
+}
 // 맵이 흡수한 health 응답 5종의 상태 묶음 — health.jsx 의 fetch 상태와 같은 모양.
 interface FetchState {
   status: string;
@@ -90,6 +96,13 @@ interface ArchHelpers {
     daemons: DaemonLiveStatus[] | null | undefined,
   ) => Map<string, DaemonLiveStatus[]>;
   getLiveDaemonRows: (daemons: DaemonLiveStatus[] | null | undefined) => DaemonRow[];
+  // T8: 확장 영역의 DOM id — 행 컨트롤의 aria-controls 가 이 값을 가리킴.
+  getDaemonDetailId: (daemonName: string) => string;
+  // T9c: 선택 데몬의 payload 응답을 날짜 + 사유 줄로 접는 순수 fold.
+  getDaemonRunRows: (
+    payloadState: FetchState | null | undefined,
+    daemonName: string,
+  ) => DaemonRunRow[] | null;
   getLegibleFitScaleAR: (
     paneW: number,
     paneH: number,
@@ -190,6 +203,16 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     typeof h.GlobalDetailRegion,
     "function",
     "GlobalDetailRegion must be reachable (T7 global-block container)",
+  );
+  assert.strictEqual(
+    typeof h.getDaemonDetailId,
+    "function",
+    "getDaemonDetailId must be reachable (T8 aria-controls instrument)",
+  );
+  assert.strictEqual(
+    typeof h.getDaemonRunRows,
+    "function",
+    "getDaemonRunRows must be reachable (T9c date+reason fold instrument)",
   );
 
   const healthModel = (ctx.window as { HealthModel?: HealthModelGlobal }).HealthModel;
@@ -490,4 +513,110 @@ test("T7 the global block container renders a registered block", () => {
     null,
     "a registered block must reach the tree — an always-null container would silently swallow T11/T12c",
   );
+});
+
+// --- T8: the expansion region's DOM id --------------------------------------
+
+test("T8 the detail id is derived from the daemon name and stays a legal DOM id", () => {
+  const id = arch.getDaemonDetailId("autoagent");
+  assert.match(id, /autoagent$/, "the id must name the row it belongs to");
+  assert.strictEqual(
+    id,
+    arch.getDaemonDetailId("autoagent"),
+    "the id must be stable — aria-controls and the region are wired by the same call",
+  );
+  assert.notStrictEqual(
+    id,
+    arch.getDaemonDetailId("wiki"),
+    "two rows must not share one region id",
+  );
+  // 명부의 데몬 이름은 하이픈을 포함함 — id 문법을 벗어나는 문자만 접히고 나머지는 남아야 함.
+  assert.match(
+    arch.getDaemonDetailId("daily-restart-autoagent"),
+    /^[A-Za-z][A-Za-z0-9_-]*$/,
+    "the id must remain a legal getElementById target for every roster name",
+  );
+});
+
+// --- T9c: the date + reason fold -------------------------------------------
+
+const RUN_FAIL_DATE = "2026-08-22";
+const RUN_OK_DATE = "2026-08-19";
+const RUN_QUOTA_MESSAGE = "haiku classify failed: quota exceeded";
+const RUN_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
+
+function getPayloadState(daemon: string): FetchState {
+  return {
+    status: "ready",
+    data: {
+      daemon,
+      entries: [
+        {
+          run_date: RUN_FAIL_DATE,
+          daemon_name: daemon,
+          payload: {},
+          payload_size_bytes: 512,
+          summary: {
+            verdict: "fail",
+            error_signatures: [
+              { message: RUN_QUOTA_MESSAGE, count: 4 },
+              { message: RUN_DOCTOR_MESSAGE, count: 1 },
+            ],
+          },
+        },
+        {
+          run_date: RUN_OK_DATE,
+          daemon_name: daemon,
+          payload: {},
+          payload_size_bytes: 256,
+          summary: { verdict: "ok", error_signatures: [] },
+        },
+      ],
+    },
+    error: null,
+  };
+}
+
+test("T9c the fold carries each run's date and every signature behind it", () => {
+  const rows = arch.getDaemonRunRows(getPayloadState("autoagent"), "autoagent");
+  assert.ok(rows, "a ready response for the named daemon must fold into rows");
+  assert.deepStrictEqual(
+    rows.map((r) => r.runDate),
+    [RUN_FAIL_DATE, RUN_OK_DATE],
+    "run dates must come through in response order",
+  );
+  assert.deepStrictEqual(
+    rows[0].reasons.map((r) => `${r.message}#${r.count}`),
+    [`${RUN_QUOTA_MESSAGE}#4`, `${RUN_DOCTOR_MESSAGE}#1`],
+    "both signatures must survive with their counts — a first-only fold hides the doctor verdict",
+  );
+  assert.strictEqual(rows[0].verdict, "fail");
+  assert.deepStrictEqual(rows[1].reasons, [], "a clean run must fold to zero reasons, not to null");
+});
+
+// 드릴다운 재요청이 도는 동안의 반증 케이스 — 응답의 daemon 을 대조하지 않는 fold 는 여기서
+// 다른 작업의 실패를 이 행 아래 그리게 되므로 붉어짐.
+test("T9c a response that names a different daemon folds to null, not to that daemon's failures", () => {
+  assert.strictEqual(
+    arch.getDaemonRunRows(getPayloadState("autoagent"), "wiki"),
+    null,
+    "the fold must refuse a response belonging to another daemon",
+  );
+});
+
+test("T9c a response still in flight folds to null and an empty roster folds to an empty list", () => {
+  assert.strictEqual(
+    arch.getDaemonRunRows({ status: "loading", data: null, error: null }, "autoagent"),
+    null,
+    "loading is not 'no runs' — the two must stay distinguishable in the region",
+  );
+  assert.strictEqual(
+    arch.getDaemonRunRows({ status: "error", data: null, error: "boom" }, "autoagent"),
+    null,
+  );
+  const empty = arch.getDaemonRunRows(
+    { status: "ready", data: { daemon: "autoagent", entries: [] }, error: null },
+    "autoagent",
+  );
+  assert.deepStrictEqual(empty, [], "a ready response with no entries must fold to an empty list");
 });

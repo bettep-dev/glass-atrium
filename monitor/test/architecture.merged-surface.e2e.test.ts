@@ -1608,3 +1608,248 @@ test("T7 the global block container leaves nothing in the tree while no block is
 		"an empty registry must render no container — T11 and T12c are what fill it",
 	);
 });
+
+// --- T8 · T9c: the daemon row expands to its last failure -------------------
+
+// 드릴다운을 옮겨 볼 둘째 데몬 — 바인딩 키여야 node_ids 가 비지 않음.
+const DRILLDOWN_DAEMON = "wiki";
+
+// 실패 픽스처의 값들 — 어느 것도 화면이 지어낼 수 없는 값임(플레이스홀더면 붉어짐).
+// 사유 둘: 여러 패치에 반복된 한도 초과 서명(count > 1) + 사이클 단위 doctor 판정.
+const PAYLOAD_FAIL_DATE = "2026-08-22";
+const PAYLOAD_OK_DATE = "2026-08-19";
+const PAYLOAD_QUOTA_MESSAGE = "haiku classify failed: quota exceeded";
+const PAYLOAD_QUOTA_COUNT = 4;
+// health-detail.ts 의 getDoctorFailureMessage 가 rc 를 읽어 내는 문장 그대로.
+const PAYLOAD_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
+
+function getDaemonStatus(name: string): DaemonLiveStatus {
+	const nodeIds = [...(DAEMON_NODE_BINDINGS[name] ?? [])];
+	assert.ok(nodeIds.length > 0, `fixture precondition: ${name} must carry node bindings`);
+	return {
+		daemon_name: name,
+		status: "ok",
+		effective_status: "ok",
+		last_run_at: null,
+		staleness_minutes: 0,
+		node_ids: nodeIds,
+		expected_cadence_minutes: 60,
+	};
+}
+
+// 실패 사이클 하나 + 정상 사이클 하나 — 둘 다 날짜를 내야 확장 영역이 '실패만' 이 아니라
+// 최근 실행을 읽고 있음이 드러남.
+function getFailingPayload(): Pick<HealthDaemonPayloadResponse, "entries"> {
+	return {
+		entries: [
+			{
+				run_date: PAYLOAD_FAIL_DATE,
+				daemon_name: BOUND_DAEMON,
+				payload: {},
+				payload_size_bytes: 512,
+				summary: {
+					verdict: "fail",
+					error_signatures: [
+						{ message: PAYLOAD_QUOTA_MESSAGE, count: PAYLOAD_QUOTA_COUNT },
+						{ message: PAYLOAD_DOCTOR_MESSAGE, count: 1 },
+					],
+				},
+			},
+			{
+				run_date: PAYLOAD_OK_DATE,
+				daemon_name: BOUND_DAEMON,
+				payload: {},
+				payload_size_bytes: 256,
+				summary: { verdict: "ok", error_signatures: [] },
+			},
+		],
+	};
+}
+
+interface RowExpansionProbe {
+	rowFound: boolean;
+	tag: string;
+	type: string | null;
+	name: string;
+	expanded: string | null;
+	controls: string;
+	regionFound: boolean;
+	regionText: string;
+}
+
+/**
+ * 확장 컨트롤에서 출발해 aria-controls 가 가리키는 id 를 실제로 되짚어 읽음.
+ * 하네스가 id 상수를 다시 적으면 배선이 끊겨도 초록이 되므로 컨트롤에서 출발함.
+ */
+async function getRowExpansionProbe(daemon: string): Promise<RowExpansionProbe> {
+	return await page.evaluate((name) => {
+		const row = document.querySelector(`[data-daemon-row="${name}"]`);
+		const control = row?.querySelector("[aria-expanded]") as HTMLElement | null;
+		const controls = control?.getAttribute("aria-controls") || "";
+		const region = controls ? document.getElementById(controls) : null;
+		return {
+			rowFound: Boolean(row),
+			tag: control ? control.tagName : "",
+			type: control ? control.getAttribute("type") : null,
+			name: control ? (control as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "",
+			expanded: control ? control.getAttribute("aria-expanded") : null,
+			controls,
+			regionFound: Boolean(region),
+			regionText: region
+				? (region as HTMLElement).innerText.replace(/\s+/g, " ").trim()
+				: "",
+		};
+	}, daemon);
+}
+
+async function waitForDaemonRows(): Promise<void> {
+	await page.waitForSelector(".arch-live-table tbody tr", { timeout: 30_000 });
+}
+
+// 확장 영역은 페이로드 왕복이 끝나야 채워짐 — 기한을 두고 기다리되 초과는 붉어짐.
+async function waitForRegionText(daemon: string, needle: string): Promise<string> {
+	const deadline = Date.now() + 15_000;
+	let text = "";
+	while (Date.now() < deadline) {
+		text = (await getRowExpansionProbe(daemon)).regionText;
+		if (text.includes(needle)) return text;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return text;
+}
+
+async function waitForHealthHit(path: string): Promise<boolean> {
+	const deadline = Date.now() + 15_000;
+	while (Date.now() < deadline) {
+		if (healthHits.has(path)) return true;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return false;
+}
+
+test("AC-T8 each daemon row carries a real expand control wired by aria", async () => {
+	await openMap(getLiveFixture());
+	await waitForDaemonRows();
+
+	const probe = await getRowExpansionProbe(BOUND_DAEMON);
+	assert.equal(probe.rowFound, true, `the live table must carry a row for ${BOUND_DAEMON}`);
+	assert.equal(
+		probe.tag,
+		"BUTTON",
+		"the expand control must be a real button — a click-only cell is unreachable by keyboard",
+	);
+	assert.equal(probe.type, "button", "the control must not submit a form");
+	assert.equal(probe.expanded, "false", "a collapsed row must report aria-expanded=false");
+	assert.ok(probe.controls, "the control must name the region it opens via aria-controls");
+	assert.match(
+		probe.name,
+		new RegExp(BOUND_DAEMON),
+		"the control's accessible name must be the job it opens",
+	);
+	assert.equal(
+		probe.regionFound,
+		false,
+		"a collapsed row must leave no region in the tree — aria-controls names what expanding creates",
+	);
+});
+
+test("AC-T8 clicking the control expands the row and the region it names appears", async () => {
+	await openMap(getLiveFixture());
+	await waitForDaemonRows();
+	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+
+	const probe = await getRowExpansionProbe(BOUND_DAEMON);
+	assert.equal(probe.expanded, "true", "an expanded row must report aria-expanded=true");
+	assert.equal(
+		probe.regionFound,
+		true,
+		`aria-controls target #${probe.controls} must exist once the row is open`,
+	);
+});
+
+// 키보드만으로 여닫는지 재는 반증 케이스 — tabindex 없는 div 에 onClick 만 단 구현은 여기서 붉어짐.
+test("AC-T8 the keyboard alone opens and closes the row", async () => {
+	await openMap(getLiveFixture());
+	await waitForDaemonRows();
+
+	const control = `[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`;
+	await page.focus(control);
+	assert.equal(
+		await page.evaluate(
+			(sel) => document.activeElement === document.querySelector(sel),
+			control,
+		),
+		true,
+		"the control must be focusable",
+	);
+
+	await page.keyboard.press("Enter");
+	assert.equal(
+		(await getRowExpansionProbe(BOUND_DAEMON)).expanded,
+		"true",
+		"Enter on the focused control must open the row",
+	);
+
+	await page.keyboard.press("Space");
+	const collapsed = await getRowExpansionProbe(BOUND_DAEMON);
+	assert.equal(collapsed.expanded, "false", "Space must close the row again");
+	assert.equal(
+		collapsed.regionFound,
+		false,
+		"closing must take the region back out of the a11y tree, not merely restyle it",
+	);
+});
+
+test("AC-T9 the expanded region names the failure date and the reason behind it", async () => {
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await waitForDaemonRows();
+	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+
+	const text = await waitForRegionText(BOUND_DAEMON, PAYLOAD_FAIL_DATE);
+	assert.ok(
+		text.includes(PAYLOAD_FAIL_DATE),
+		`the region must carry the failing run's date — read "${text}"`,
+	);
+	assert.ok(
+		text.includes(PAYLOAD_QUOTA_MESSAGE),
+		`the region must carry the reason the run failed — read "${text}"`,
+	);
+	assert.ok(
+		text.includes(PAYLOAD_DOCTOR_MESSAGE),
+		"a second signature in the same run must not be dropped",
+	);
+	assert.ok(
+		text.includes(String(PAYLOAD_QUOTA_COUNT)),
+		"a reason repeated across the cycle must carry its count, not read as a single event",
+	);
+	assert.ok(
+		text.includes(PAYLOAD_OK_DATE),
+		"a run with no signatures must still state its date — the region lists runs, not only failures",
+	);
+});
+
+// 드릴다운이 고른 행을 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
+test("AC-T9 expanding a second daemon drills the payload request into THAT daemon", async () => {
+	await openMap(
+		getLiveFixture({
+			daemons: [getDaemonStatus(BOUND_DAEMON), getDaemonStatus(DRILLDOWN_DAEMON)],
+		}),
+	);
+	await waitForDaemonRows();
+	assert.equal(
+		await waitForHealthHit(`/api/health/daemon-payload?daemon=${BOUND_DAEMON}`),
+		true,
+		"fixture precondition: the map drills into its default daemon on mount",
+	);
+
+	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+	assert.equal(
+		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
+		true,
+		`expanding ${DRILLDOWN_DAEMON} must move the drilldown — a frozen literal keeps asking for ${BOUND_DAEMON}`,
+	);
+});
