@@ -68,6 +68,57 @@ const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 const QUEUE_PROPOSALS_LABEL = "Approval queue";
 const QUEUE_LEARNING_LABEL = "Top learned signal";
 
+// ── health 응답 흡수 (ADR-B1 R2) ────────────────────────────────────────────
+// health.jsx 가 읽던 다섯 응답을 맵이 그대로 읽음 — 서버 계약 무변경, 요청 자리만 옮김.
+// 카드/KPI 모델(window.HealthModel)은 index.html 이 화면과 무관하게 싣고 있어
+// health 화면이 사라져도 고아가 되지 않음.
+
+// 로딩 초기 상태 — 다섯 응답이 같은 모양을 씀. 상태 객체는 교체만 하고 변형하지 않으므로
+// 참조를 공유해도 안전하고, 재요청 시 같은 참조를 다시 넣으면 불필요한 렌더가 생기지 않음.
+const INITIAL_FETCH_STATE_AR = { status: "loading", data: null, error: null };
+
+// 페이로드 드릴다운 기본 데몬 — payload 를 실제로 기록하는 데몬(autoagent/wiki) 중 첫째.
+// daily-restart-* 는 run status 만 남기고 payload 를 쓰지 않아 항상 빈 entries 임.
+const MAP_PAYLOAD_DAEMON = "autoagent";
+
+// health 폴링 주기 — 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
+// 설계도/live/큐 fetch 는 이 틱을 타지 않음: 준정적 데이터를 60s 마다 다시 끌 이유가 없음.
+const HEALTH_POLL_MS = 60_000;
+
+// 맵의 health fetch 표 — health.jsx:42-47 의 다섯 URL 과 같은 집합.
+// 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
+// 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
+function getMapHealthEndpoints(payloadDaemon) {
+	return [
+		"/api/health/daemons",
+		"/api/health/hook-chain",
+		"/api/health",
+		`/api/health/daemon-payload?daemon=${payloadDaemon}&limit=10`,
+		"/api/health/hook-failures?days=30&limit=50",
+	];
+}
+
+// KPI 집계는 공용 모델에 위임 — 맵이 카드 목록을 다시 적지 않음.
+// 분모(정상 N/M 의 M)가 HEALTH_CARD_DEFS 를 따라 움직여야 정의가 늘거나 줄 때
+// 화면이 조용히 옛 총계를 들고 있지 않음 (F02 불변식의 화면 몫 · T14).
+// 모델 미적재 시 null — 가짜 0 을 그리는 대신 KPI 행 자체를 비움.
+function getMapHealthKpis(states) {
+	const model = window.HealthModel;
+	if (!model || typeof model.computeOverviewKpis !== "function") return null;
+	return model.computeOverviewKpis(states);
+}
+
+// 전역 확장 블록 레지스트리 — 맵 하단의 화면-폭 상세 블록. T11(Hook chain) ·
+// T12c(Hook failure log) 가 항목을 더함. T7 은 자리를 세울 뿐 아무것도 등록하지 않음.
+const GLOBAL_DETAIL_BLOCKS = [];
+
+// render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
+function getGlobalDetailBlocks() {
+	return GLOBAL_DETAIL_BLOCKS.filter(
+		(block) => block && typeof block.render === "function",
+	);
+}
+
 // Top-level Screen
 
 function ScreenArchitecture(
@@ -94,13 +145,24 @@ function ScreenArchitecture(
 		errors: [],
 	});
 
+	// health 응답 5종 — 각각 독립적으로 실패 가능. 한 응답이 죽어도 나머지 사실은 그대로 보임.
+	const [daemonHealthState, setDaemonHealthState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [hookState, setHookState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [pgState, setPgState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [payloadState, setPayloadState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [hookFailState, setHookFailState] = useStateAR(INITIAL_FETCH_STATE_AR);
+
 	const [refreshTick, setRefreshTick] = useStateAR(0);
+
+	// health 전용 틱 — 60s 폴링이 설계도/live/큐 재요청까지 끌고 가지 않게 분리함.
+	const [healthTick, setHealthTick] = useStateAR(0);
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
 
 	const diagAbortRef = useRefAR(null);
 	const liveAbortRef = useRefAR(null);
+	const healthAbortRef = useRefAR(null);
 
 	const triggerRefresh = useCallbackAR(() => setRefreshTick((t) => t + 1), []);
 
@@ -160,6 +222,43 @@ function ScreenArchitecture(
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
+
+	// health 응답 5종 — 병렬 발화. 수동 Refresh(refreshTick) · 60s 폴링(healthTick) ·
+	// 드릴다운 데몬 변경 모두에서 다시 나감. 세터 순서는 getMapHealthEndpoints 의 URL 순서와 짝임.
+	useEffectAR(() => {
+		const ctrl = new AbortController();
+		healthAbortRef.current?.abort();
+		healthAbortRef.current = ctrl;
+
+		const setters = [
+			setDaemonHealthState,
+			setHookState,
+			setPgState,
+			setPayloadState,
+			setHookFailState,
+		];
+		// 드릴다운 데몬은 아직 고정 — T9c 가 확장 행에서 고르게 되면 상태로 올라오고
+		// 그때 이 의존 배열이 그 상태를 받음 (URL 은 이미 인자를 달고 나감).
+		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON);
+
+		urls.forEach((url, i) => {
+			const setter = setters[i];
+			setter(INITIAL_FETCH_STATE_AR);
+			fetchJsonAR(url, ctrl.signal)
+				.then((data) => {
+					if (!ctrl.signal.aborted) setter({ status: "ready", data, error: null });
+				})
+				.catch((err) => handleErrorAR(err, setter));
+		});
+
+		return () => ctrl.abort();
+	}, [refreshTick, healthTick]);
+
+	// 60s 자동 새로고침 — health 는 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
+	useEffectAR(() => {
+		const intervalId = setInterval(() => setHealthTick((t) => t + 1), HEALTH_POLL_MS);
+		return () => clearInterval(intervalId);
+	}, []);
 
 	// ── derived data ──────────────────────────────────────────────────────────
 
@@ -257,6 +356,12 @@ function ScreenArchitecture(
 					// 자기개선 큐 스트립 — 상시 노출. 좁은 폭에서는 두 사실이 줄바꿈으로 쌓임.
 					".arch-queue-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					// health 요약 스트립 — 큐 스트립과 같은 면. 좁은 폭에서 사실들이 줄바꿈으로 쌓임.
+					".arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
+					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
+					// 전역 확장 블록 — 지도 아래 화면-폭 상세. 블록이 없으면 컨테이너 자체가 렌더되지 않음.
+					".arch-global-blocks { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; } " +
+					".arch-global-block { background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
 					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
@@ -351,6 +456,16 @@ function ScreenArchitecture(
 					onRetry={triggerRefresh}
 				/>
 
+				{/* health 요약 — 이관된 health 화면의 KPI 가 지도 상단에 앉는 자리 (ADR-B1). */}
+				<HealthStrip
+					daemonState={daemonHealthState}
+					pgState={pgState}
+					hookState={hookState}
+					hookFailState={hookFailState}
+					payloadState={payloadState}
+					onRetry={triggerRefresh}
+				/>
+
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
 					<div className="card arch-col-card">
@@ -372,6 +487,17 @@ function ScreenArchitecture(
 				</div>
 
 				<LiveDaemonTable state={liveState} />
+
+				{/* 전역 확장 블록 — T11(Hook chain) · T12c(Hook failure log) 가 채움. 지금은 빔. */}
+				<GlobalDetailRegion
+					states={{
+						daemonState: daemonHealthState,
+						pgState,
+						hookState,
+						hookFailState,
+						payloadState,
+					}}
+				/>
 			</div>
 
 			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
@@ -886,6 +1012,126 @@ function QueueStrip({ pendingCount, topSignal, errors, onRetry }) {
 					onRetry={onRetry}
 				/>
 			)}
+		</section>
+	);
+}
+
+// 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
+// 값 없음(빈 배열)과 못 읽음을 화면에서 구별하는 유일한 자리임.
+const HEALTH_STORE_LABELS_AR = {
+	daemonState: "Daemons",
+	hookState: "Hook chain",
+	pgState: "PostgreSQL",
+	payloadState: "Run payloads",
+	hookFailState: "Hook failures",
+};
+
+function getHealthStoreErrorsAR(states) {
+	return Object.keys(HEALTH_STORE_LABELS_AR)
+		.filter((key) => states[key] && states[key].status === "error")
+		.map((key) => HEALTH_STORE_LABELS_AR[key]);
+}
+
+/**
+ * health 응답 요약 스트립 — 이관된 health 화면의 KPI '정상 N/M' 이 앉는 지도 상단 한 줄.
+ * 분모는 window.HealthModel 의 카드 정의 목록에서 나옴 — 맵이 총계를 자기 파일에 다시 적지
+ * 않으므로 정의가 늘거나 줄면 분모가 따라 움직임 (F02 불변식의 화면 몫 · T14 가 잠금).
+ * PG tone · Chromium tone 한 줄은 T10 이 이 스트립에 더함.
+ */
+function HealthStrip({
+	daemonState,
+	pgState,
+	hookState,
+	hookFailState,
+	payloadState,
+	onRetry,
+}) {
+	const kpis = getMapHealthKpis({
+		daemonState,
+		pgState,
+		hookState,
+		hookFailState,
+	});
+
+	const errors = getHealthStoreErrorsAR({
+		daemonState,
+		pgState,
+		hookState,
+		hookFailState,
+		payloadState,
+	});
+
+	// 최근 실행 페이로드 도착 건수 — T9c 가 확장 행에서 날짜·사유로 펼칠 원자료.
+	// 여기서는 도착 여부만 한 줄로 드러냄 (읽지 않는 상태로 두면 흡수가 아니라 적재일 뿐임).
+	const payloadCount =
+		payloadState.status === "ready"
+			? (payloadState.data?.entries || []).length
+			: null;
+
+	if (kpis === null && payloadCount === null && errors.length === 0) return null;
+
+	// 정보 버킷 공개 — 정상도 장애도 아닌 카드(미수신/미검증/한도)의 분모 귀속을 밝힘.
+	const infoHint = kpis && kpis.infoCount > 0 ? `${kpis.infoCount} informational` : "";
+
+	return (
+		<section className="arch-health-strip" aria-label="System health">
+			{kpis && (
+				<>
+					<div className="arch-queue-fact" data-health-fact="healthy-parts">
+						<span className="fs-micro text-faint">Healthy parts</span>
+						<span className="fs-meta text-ink">
+							{kpis.okCount}/{kpis.totalCount}
+						</span>
+						{infoHint && <span className="fs-meta text-dim">{infoHint}</span>}
+					</div>
+					<div className="arch-queue-fact" data-health-fact="needs-attention">
+						<span className="fs-micro text-faint">Needs attention</span>
+						<span className="fs-meta text-ink">{kpis.degradedCount}</span>
+					</div>
+					<div className="arch-queue-fact" data-health-fact="overdue-jobs">
+						<span className="fs-micro text-faint">Overdue jobs</span>
+						<span className="fs-meta text-ink">{kpis.staleCount}</span>
+					</div>
+				</>
+			)}
+			{payloadCount !== null && (
+				<div className="arch-queue-fact" data-health-fact="run-payloads">
+					<span className="fs-micro text-faint">Run payloads</span>
+					<span className="fs-meta font-mono text-ink">{MAP_PAYLOAD_DAEMON}</span>
+					<span className="fs-meta text-dim">{payloadCount} recent</span>
+				</div>
+			)}
+			{errors.length > 0 && (
+				<StripAlertAR
+					className="arch-queue-error"
+					message="Couldn't load system health"
+					detail={errors.join(" · ")}
+					onRetry={onRetry}
+				/>
+			)}
+		</section>
+	);
+}
+
+/**
+ * 전역 확장 블록 자리 — 지도 아래 화면-폭 상세. T11(Hook chain) · T12c(Hook failure log) 가 채움.
+ * 등록된 블록이 없으면 null 을 냄: 빈 컨테이너가 지도와 표 사이에 여백만 남기지 않게 함.
+ * blocks 를 인자로도 받음 — 레지스트리를 건드리지 않고 컨테이너 계약만 재는 자리를 남김.
+ */
+function GlobalDetailRegion({ blocks = getGlobalDetailBlocks(), states }) {
+	if (blocks.length === 0) return null;
+
+	return (
+		<section className="arch-global-blocks" aria-label="System detail">
+			{blocks.map((block) => (
+				<div
+					key={block.id}
+					className="arch-global-block"
+					data-global-block={block.id}
+				>
+					{block.render(states)}
+				</div>
+			))}
 		</section>
 	);
 }

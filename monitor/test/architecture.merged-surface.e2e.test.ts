@@ -43,6 +43,13 @@ import type {
 	ImprovementLearningLogRow,
 	ImprovementProposalRow,
 } from "../src/server/types/improvement.js";
+import type {
+	DaemonStatusCard,
+	HealthDaemonPayloadResponse,
+	HealthDaemonsResponse,
+	HealthHookChainResponse,
+	HealthHookFailuresResponse,
+} from "../src/server/types/health-detail.js";
 import {
 	assertFallbackWarningVisible,
 	assertLayoutsDiffer,
@@ -201,6 +208,56 @@ function getQueueFailedFixture(
 	return { ...getQueueLoadedFixture(), failedStores };
 }
 
+// ── health 픽스처 (T7: 맵이 흡수한 다섯 응답) ───────────────────────────────
+// 화면이 실제로 읽는 필드만 담되 타입으로 묶음 — 서버 계약이 움직이면 컴파일에서 걸림.
+// /api/health 의 응답 타입은 라우트 파일 안에 갇혀 있어 읽기 계약만 여기서 다시 묶음.
+type PgHealthStub = { status: "ok" | "degraded"; db: "open" | "closed"; browser: "ok" | "failed" | "unprobed" };
+type DaemonCardStub = Pick<DaemonStatusCard, "daemon_name" | "effective_status">;
+
+interface HealthFixture {
+	daemons: DaemonCardStub[];
+	pg: PgHealthStub;
+	hookChain: Pick<HealthHookChainResponse, "events">;
+	payload: Pick<HealthDaemonPayloadResponse, "entries">;
+	hookFailures: Pick<HealthHookFailuresResponse, "count_24h" | "unretried_count_24h">;
+}
+
+// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 이 둘만 명부에 두고 daily-restart-* 는 뺌.
+// 빠진 둘은 '못 찾음' 경로로 info 버킷에 들어가므로 분자/분모가 서로 다른 수가 됨:
+// 총계만 세는 픽스처는 버킷 배분이 뒤집혀도 초록이 됨.
+const HEALTH_OK_DAEMONS = ["autoagent", "wiki"];
+
+// KPI 기대값 — HEALTH_CARD_DEFS 7종(PG · Chromium · daemon×4 · hook chain) 기준.
+// PG + Chromium + 명부에 있는 데몬 2 + hook chain = 5 정상 · 명부에 없는 데몬 2 = 정보.
+const HEALTH_EXPECTED_OK = 5;
+const HEALTH_EXPECTED_TOTAL = 7;
+const HEALTH_EXPECTED_INFO = 2;
+
+// 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
+const HEALTH_PAYLOAD_ENTRIES = 3;
+
+function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture {
+	return {
+		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
+			daemon_name,
+			effective_status: "ok",
+		})),
+		pg: { status: "ok", db: "open", browser: "ok" },
+		hookChain: { events: [{ event: "PreToolUse", groups: [] }] },
+		payload: {
+			entries: Array.from({ length: HEALTH_PAYLOAD_ENTRIES }, (_v, i) => ({
+				run_date: `2026-08-${String(20 + i).padStart(2, "0")}`,
+				daemon_name: "autoagent",
+				payload: {},
+				payload_size_bytes: 128,
+				summary: { verdict: "ok" as const, error_signatures: [] },
+			})),
+		},
+		hookFailures: { count_24h: 0, unretried_count_24h: 0 },
+		...overrides,
+	};
+}
+
 function getDriftDiff(key: string): ArchDriftDiff {
 	return { key, claimed: 1, actual: 2 };
 }
@@ -220,6 +277,11 @@ let selectors: { canvas: string; tabControl: string; desc: string };
 // 라이브 라우트가 요청 시점에 읽는 가변 픽스처 — openMap 이 케이스별로 갈아끼움.
 let liveFixture: ArchitectureLiveResponse;
 let queueFixture: QueueFixture;
+let healthFixture: HealthFixture;
+
+// 맵이 실제로 요청한 health 경로 — 라우트 핸들러가 스스로 기록함.
+// 흡수 완결성(다섯 응답)을 소스 grep 이 아니라 브라우저 왕복으로 잼.
+const healthHits = new Set<string>();
 
 // 폴백 경고 감시 — 첫 렌더보다 먼저 붙어야 초기 경고를 놓치지 않으므로 페이지 생성 직후에 붙임.
 let elkWatch: FallbackWatch;
@@ -229,9 +291,12 @@ let elkWatch: FallbackWatch;
 async function openMap(
 	live: ArchitectureLiveResponse,
 	queue: QueueFixture = getQueueFixture(),
+	health: HealthFixture = getHealthFixture(),
 ): Promise<void> {
 	liveFixture = live;
 	queueFixture = queue;
+	healthFixture = health;
+	healthHits.clear();
 	await page.goto("about:blank");
 	await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 
@@ -295,6 +360,7 @@ before(async () => {
 	// 라우트 핸들러 안에서 만들면 전제 위반이 500 으로 바뀌어 테스트가 초록으로 통과함 — before 에서 한 번만 만듦.
 	liveFixture = getLiveFixture();
 	queueFixture = getQueueFixture();
+	healthFixture = getHealthFixture();
 	app = Fastify({ logger: false });
 	await app.register(fastifyStatic, {
 		root: PUBLIC_ROOT,
@@ -321,6 +387,31 @@ before(async () => {
 				? reply.code(500).send({ error: "queue fixture failure" })
 				: queueFixture.learningLog,
 	);
+	// health 응답 5종 — 맵이 흡수한 뒤로 화면이 직접 읽는 경로 (ADR-B1 R2).
+	// 진짜 health 라우트는 PG·chromium 프로브를 물고 있어 이 하네스를 호스트 상태에 묶으므로
+	// live 라우트와 같은 방식으로 픽스처만 냄.
+	app.get("/api/health", async () => {
+		healthHits.add("/api/health");
+		return { ...healthFixture.pg, version: "test", timezone: "UTC" };
+	});
+	app.get("/api/health/daemons", async (): Promise<Partial<HealthDaemonsResponse>> => {
+		healthHits.add("/api/health/daemons");
+		return { daemons: healthFixture.daemons as DaemonStatusCard[], timezone: "UTC" };
+	});
+	app.get("/api/health/hook-chain", async () => {
+		healthHits.add("/api/health/hook-chain");
+		return healthFixture.hookChain;
+	});
+	app.get("/api/health/daemon-payload", async (request: FastifyRequest) => {
+		const daemon = (request.query as { daemon?: string } | undefined)?.daemon || "";
+		// 질의 문자열까지 기록 — 선택 데몬이 URL 에 실려 나가는지가 T9c 드릴다운의 전제임.
+		healthHits.add(`/api/health/daemon-payload?daemon=${daemon}`);
+		return { daemon, ...healthFixture.payload, timezone: "UTC" };
+	});
+	app.get("/api/health/hook-failures", async () => {
+		healthHits.add("/api/health/hook-failures");
+		return { ...healthFixture.hookFailures, days: 30, failures: [], error_kind_breakdown: [], last_failure_ts: null, timezone: "UTC" };
+	});
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -1410,5 +1501,110 @@ test("P0-2-fix zone titles clear the zone edge and the first box below", async (
 		crowded.map((c) => `${c.zone} top+${c.top.toFixed(2)} gap+${c.gap.toFixed(2)}`),
 		[],
 		`zone title must sit >= ${TITLE_TOP_MIN} below the zone edge and >= ${TITLE_GAP_MIN} above the first box (user units)`,
+	);
+});
+
+// --- T7: the map absorbs the five health responses -------------------------
+
+// 맵이 흡수한 다섯 경로. 페이로드는 질의 문자열까지 잼 — 선택 데몬이 URL 에 실려야
+// T9c 가 그 자리에서 드릴다운을 걸 수 있음.
+const ABSORBED_HEALTH_PATHS = [
+	"/api/health",
+	"/api/health/daemons",
+	"/api/health/hook-chain",
+	"/api/health/daemon-payload?daemon=autoagent",
+	"/api/health/hook-failures",
+];
+
+// 스트립 사실 한 줄의 본문 — 라벨과 값이 한 노드 안에 있으므로 정규화한 innerText 로 읽음.
+async function getHealthFactText(fact: string): Promise<string> {
+	return await page.evaluate((f) => {
+		const el = document.querySelector(`[data-health-fact="${f}"]`);
+		return el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
+	}, fact);
+}
+
+async function waitForHealthStrip(): Promise<void> {
+	await page.waitForSelector('[data-health-fact="healthy-parts"]', { timeout: 30_000 });
+}
+
+test("T7 the map requests all five health responses it absorbed", async () => {
+	await openMap(getLiveFixture());
+	await waitForHealthStrip();
+	// 스트립은 KPI 네 응답으로 서므로 페이로드 왕복이 아직 안 끝났을 수 있음 — 기한을 두고 기다림.
+	// 기한 초과는 흡수 누락으로 붉어짐(조용한 통과 없음).
+	const deadline = Date.now() + 10_000;
+	while (healthHits.size < ABSORBED_HEALTH_PATHS.length && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+
+	assert.deepEqual(
+		ABSORBED_HEALTH_PATHS.filter((path) => !healthHits.has(path)),
+		[],
+		"every health response health.jsx read must now be requested by the map itself",
+	);
+});
+
+test("T7 the health strip carries the KPI denominator the shared card list defines", async () => {
+	await openMap(getLiveFixture());
+	await waitForHealthStrip();
+
+	const healthy = await getHealthFactText("healthy-parts");
+	assert.match(
+		healthy,
+		new RegExp(`${HEALTH_EXPECTED_OK}/${HEALTH_EXPECTED_TOTAL}\\b`),
+		`healthy-parts must read ${HEALTH_EXPECTED_OK}/${HEALTH_EXPECTED_TOTAL} for this fixture`,
+	);
+	// 정보 버킷을 이름으로 부름 — 정상도 장애도 아닌 카드가 분모 어디로 갔는지 밝히는 자리.
+	assert.match(healthy, new RegExp(`${HEALTH_EXPECTED_INFO} informational`));
+
+	assert.match(await getHealthFactText("needs-attention"), /\b0$/);
+	assert.match(await getHealthFactText("overdue-jobs"), /\b0$/);
+});
+
+// 값이 응답을 따라 움직이는지 재는 반증 케이스 — 상수를 그린 화면은 여기서 붉어짐.
+test("T7 an overdue daemon moves the strip's buckets, so the values track the response", async () => {
+	await openMap(
+		getLiveFixture(),
+		getQueueFixture(),
+		getHealthFixture({
+			daemons: [
+				{ daemon_name: "autoagent", effective_status: "stale" },
+				{ daemon_name: "wiki", effective_status: "ok" },
+			],
+		}),
+	);
+	await waitForHealthStrip();
+
+	assert.match(
+		await getHealthFactText("healthy-parts"),
+		new RegExp(`${HEALTH_EXPECTED_OK - 1}/${HEALTH_EXPECTED_TOTAL}\\b`),
+		"an overdue daemon must leave the healthy numerator one lower",
+	);
+	assert.match(await getHealthFactText("needs-attention"), /\b1$/);
+	assert.match(await getHealthFactText("overdue-jobs"), /\b1$/);
+});
+
+test("T7 the run-payload fact counts the entries the payload response actually returned", async () => {
+	await openMap(getLiveFixture());
+	await page.waitForSelector('[data-health-fact="run-payloads"]', { timeout: 30_000 });
+
+	const text = await getHealthFactText("run-payloads");
+	assert.match(text, /autoagent/, "the fact must name the daemon it drilled into");
+	assert.match(
+		text,
+		new RegExp(`${HEALTH_PAYLOAD_ENTRIES} recent`),
+		"the count must come from the served entries, not a placeholder",
+	);
+});
+
+test("T7 the global block container leaves nothing in the tree while no block is registered", async () => {
+	await openMap(getLiveFixture());
+	await waitForHealthStrip();
+
+	assert.equal(
+		await page.evaluate(() => document.querySelectorAll(".arch-global-blocks").length),
+		0,
+		"an empty registry must render no container — T11 and T12c are what fill it",
 	);
 });
