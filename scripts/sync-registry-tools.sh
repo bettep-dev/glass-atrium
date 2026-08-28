@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # sync-registry-tools.sh — propagate `tools:` from agent .md frontmatter to agent-registry.json
-# Usage: sync-registry-tools.sh [--dry-run]
+# Usage: sync-registry-tools.sh [--root <dir>] [--dry-run | --check]
 #
-# Mirror each agent's authoritative frontmatter `tools:` array (~/.claude/agents/<name>.md)
-# into the matching `agents` entry of ~/.claude/agent-registry.json. The
+# Mirror each agent's authoritative frontmatter `tools:` array (<root>/agents/<name>.md)
+# into the matching `agents` entry of <root>/agent-registry.json. The
 # orchestrator-role.md Decision-phase Capability Probe reads frontmatter `tools:` at
 # delegation time, but tooling that prefers the JSON form consumes this mirror
 # (avoids re-parsing 23 markdown files); drift between the two breaks the probe.
 #
+# Root resolution (three steps, FIRST match wins) — the three consumers want
+# different roots: a CI checkout (`--root`), a sandbox (`GA_ROOT`), and the live
+# install (the default):
+#   1. `--root <dir>`   2. `${GA_ROOT}`   3. `${HOME}/.glass-atrium`
+# AGENTS_DIR and REGISTRY_PATH are DERIVED from the resolved root. Setting either
+# variable directly in the environment overrides its derived value — that is a
+# TEST SEAM, not a supported interface; callers pass `--root`/`GA_ROOT` instead.
+#
 # Re-run after editing any `tools:` array, adding/removing an agent, or as a
-# periodic drift check (`--dry-run` then inspect diff).
+# periodic drift check (`--check` for an exit code, `--dry-run` to read the
+# planned updates on stderr).
 #
 # Key-order: `tools` inserted at index 1 (between `domains` and `phase`) to match
 # the `design-designer` entry. JSON output = 2-space indent + trailing newline +
@@ -23,25 +32,76 @@
 #   orphans=registry entry with no file (reported, NOT removed) · missing=active file
 #   with no registry entry (reported, NOT added).
 #
+# DRY_RUN contract — the shell PRESERVES an inherited value (it does not
+# overwrite it), and the verdict is an exclusion rule, not an equality test:
+#   unset · empty · `false` · `0` → write mode (an explicit, exact-case opt-out)
+#   any other value               → dry-run, nothing written
+#   `--dry-run`                   → dry-run, overrides whatever env said
+#   `--check`                     → dry-run + exit 3 on drift, NEVER writes
+# The comparison is exact-case on purpose: an unrecognised spelling (`False`)
+# selects dry-run, so a misread errs toward not writing.
+#
 # Exit codes: 0=success · 1=JSON parse/write error · 2=frontmatter parse error
 #   (includes a DUPLICATE frontmatter key — last-wins would let a second
-#   `tools:` line pick the mirrored value; the mirror refuses instead).
+#   `tools:` line pick the mirrored value; the mirror refuses instead) ·
+#   3=`--check` found drift (registry differs from frontmatter; nothing written).
 #
 # Idempotency: re-run on a clean tree yields `updated=0` + zero file changes
 # (post-merge JSON computed in memory, compared to on-disk bytes, write skipped if equal).
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly REGISTRY_PATH="${HOME}/.claude/agent-registry.json"
-readonly AGENTS_DIR="${HOME}/.claude/agents"
+usage() {
+  local self
+  self="$(basename -- "${0}")"
+  printf 'usage: %s [--root <dir>] [--dry-run | --check]\n' "${self}" >&2
+}
 
-DRY_RUN=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=true
-elif [[ $# -gt 0 ]]; then
-  printf 'usage: %s [--dry-run]\n' "$(basename "$0")" >&2
-  exit 1
+# Preserve any INHERITED DRY_RUN — assigning a default here unconditionally is
+# what made `DRY_RUN=1 sync-registry-tools.sh` silently write. Unset and empty
+# both mean write mode, so `:-` collapsing them is the documented behaviour.
+DRY_RUN="${DRY_RUN:-}"
+CHECK_MODE=false
+ROOT=""
+
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+    --root)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        printf '%s\n' 'ERROR: --root requires a directory argument' >&2
+        usage
+        exit 1
+      fi
+      ROOT="${2}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --check)
+      # `--check` is a dry-run that reports drift through its exit code.
+      CHECK_MODE=true
+      DRY_RUN=1
+      shift
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+# Root resolution: --root > GA_ROOT > the live install. An empty GA_ROOT falls
+# through to the default rather than resolving paths against "/".
+if [[ -z "${ROOT}" ]]; then
+  ROOT="${GA_ROOT:-${HOME}/.glass-atrium}"
 fi
+readonly ROOT
+
+# Derived from the resolved root; a direct env value wins as a TEST SEAM only.
+REGISTRY_PATH="${REGISTRY_PATH:-${ROOT}/agent-registry.json}"
+AGENTS_DIR="${AGENTS_DIR:-${ROOT}/agents}"
 
 # Capture the python source up-front (NOT inlined into `python3 -c` alongside a
 # heredoc — SC2259: stdin would be overwritten, blocking pipe input). We pass
@@ -87,7 +147,12 @@ class DuplicateKeyRejectingLoader(yaml.SafeLoader):
 
 registry_path = Path(os.environ["REGISTRY_PATH"])
 agents_dir = Path(os.environ["AGENTS_DIR"])
-dry_run = os.environ.get("DRY_RUN") == "true"
+# Exclusion rule, NOT an equality test against one magic spelling: unset, empty,
+# `false` and `0` are the write-mode opt-outs; every other value is a dry run.
+# An equality test here is what let `DRY_RUN=1` fall through to writing.
+DRY_RUN_WRITE_MODE_VALUES = ("", "false", "0")
+dry_run = os.environ.get("DRY_RUN", "") not in DRY_RUN_WRITE_MODE_VALUES
+check_mode = os.environ.get("CHECK_MODE") == "true"
 
 # 1. Load current registry — preserve dict order via standard json.load
 #    (Python 3.7+ dicts preserve insertion order).
@@ -211,11 +276,21 @@ print(
     f"synced={synced} updated={updated} "
     f"skipped={len(skipped)} orphans={len(orphans)} missing={len(missing_entries)}"
 )
+
+# 7. `--check`: report drift through the exit code. The metric line above is
+#    emitted first so a checking caller still gets the counts.
+if check_mode and write_needed:
+    print(
+        "DRIFT: registry does not match frontmatter — re-run without --check to write",
+        file=sys.stderr,
+    )
+    sys.exit(3)
 PY
 )"
 
 # Export env for the python invocation. The python source reads them.
 export REGISTRY_PATH AGENTS_DIR
 export DRY_RUN="${DRY_RUN}"
+export CHECK_MODE="${CHECK_MODE}"
 
 python3 -c "${PY_SRC}"
