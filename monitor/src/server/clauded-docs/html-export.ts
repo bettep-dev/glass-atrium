@@ -13,6 +13,11 @@ import { parse as parseHtml } from "node-html-parser";
 
 import { acquireBrowser, BrowserPoolError } from "./browser-pool.js";
 import { normalizeMermaidSource } from "./mermaid-normalize.js";
+import {
+  findMdMermaidFences,
+  MERMAID_NODE_SELECTOR,
+  MERMAID_RENDERED_SVG_SELECTOR,
+} from "./mermaid-selector.js";
 
 // public/ under both layouts — tsc keeps src/server/clauded-docs/ at the same depth in dist/.
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "public");
@@ -99,7 +104,7 @@ function extractMermaidSources(storedBody: string): string[] {
   });
   // .text on a <pre> with blockTextElements:true → decoded, whitespace-preserved.
   return root
-    .querySelectorAll("pre.mermaid, .mermaid")
+    .querySelectorAll(MERMAID_NODE_SELECTOR)
     .map((node) => node.text);
 }
 
@@ -223,8 +228,9 @@ export type ExportFormatToken = "html" | PlainFormatToken;
  *
  * Throws HtmlExportError on launch/render/mermaid/serialize failure; a
  * known-mermaid doc finishing with zero <svg> throws stage "mermaid" (NEVER
- * returns raw <pre>). INVARIANT: the return is never re-sanitized (carries live
- * <svg> that sanitize.ts would strip).
+ * returns raw <pre>). The md leg is the one exception and degrades instead —
+ * see the fallback there. INVARIANT: the return is never re-sanitized (carries
+ * live <svg> that sanitize.ts would strip).
  *
  * @param storedBody - the already-sanitized stored doc body
  * @param format - the doc's stored format (derived from its file extension)
@@ -234,7 +240,27 @@ export async function renderSelfContainedHtml(
   format: ExportFormatToken,
 ): Promise<string> {
   if (format !== "html") {
-    return wrapPlainInHtmlShell(storedBody, format);
+    const shell = wrapPlainInHtmlShell(storedBody, format);
+    // A markdown body carrying diagram fences goes through the SAME browser driver
+    // the html format uses — the shell alone has no renderer, so its fences would
+    // ship as text (the defect this branch closes). Routing on the fence count and
+    // not on the format keeps every fence-free plain export on the cheap path: no
+    // chromium, no browser pool, byte-identical output.
+    if (format === "md" && countMdMermaidFences(storedBody) > 0) {
+      try {
+        return await renderHtmlThroughBrowser(shell);
+      } catch (error) {
+        // An md body ALWAYS had a 200 before this path existed, so a renderer that
+        // cannot draw its fences must return the document, not a 503 — a source
+        // this grammar reads as a diagram and mermaid does not is a disagreement
+        // between two parsers, and the reader loses a document over it either way.
+        // The shell it falls back to is the same one every md export shipped
+        // before, plus a marker naming what failed so the degradation is visible
+        // in the artifact rather than silent.
+        return degradeMdToPlainShell(shell, error);
+      }
+    }
+    return shell;
   }
   return renderHtmlThroughBrowser(storedBody);
 }
@@ -402,8 +428,8 @@ async function injectScript(page: Page, content: string, label: string): Promise
 /**
  * Injects the pinned mermaid driver, the vendored ELK loader and the shared config, then
  * runs the per-node render loop keyed on PRE-EXTRACTED sources (rationale:
- * extractMermaidSources). sources[i] ↔ the i-th `pre.mermaid, .mermaid` node (same
- * selector both sides). Waits until every node holds an <svg>; zero <svg> for a doc that
+ * extractMermaidSources). sources[i] ↔ the i-th MERMAID_NODE_SELECTOR node (the
+ * same constant both sides read). Waits until every node holds an <svg>; zero <svg> for a doc that
  * HAD mermaid nodes → HtmlExportError stage "mermaid".
  */
 async function driveMermaidRender(page: Page, sources: string[]): Promise<void> {
@@ -445,7 +471,7 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
         if (!(level <= args.warnLogLevel)) {
           return `page logLevel ${String(level)} is above ${args.warnLogLevel}, where a layout fallback is never logged`;
         }
-        const nodes = Array.from(g.document.querySelectorAll("pre.mermaid, .mermaid"));
+        const nodes = Array.from(g.document.querySelectorAll(args.nodeSelector));
         // node/source count divergence (rare parser difference) → render by index, no abort.
         for (let i = 0; i < nodes.length; i += 1) {
           const node = nodes[i];
@@ -459,7 +485,7 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
       } catch (e) {
         return e instanceof Error ? e.message : "mermaid render threw";
       }
-    }, { sources, warnLogLevel: WARN_LOG_LEVEL });
+    }, { sources, warnLogLevel: WARN_LOG_LEVEL, nodeSelector: MERMAID_NODE_SELECTOR });
   } catch (error) {
     throw new HtmlExportError(
       error instanceof Error ? error.message : "mermaid render evaluate failed",
@@ -476,13 +502,13 @@ async function driveMermaidRender(page: Page, sources: string[]): Promise<void> 
   // Not a blind timer: a hung/failed driver surfaces as a "mermaid" stage error.
   try {
     await page.waitForFunction(
-      (count) => {
+      (args) => {
         const g = globalThis as unknown as {
           document: { querySelectorAll: (sel: string) => ArrayLike<unknown> };
         };
-        return g.document.querySelectorAll("pre.mermaid svg, .mermaid svg").length >= count;
+        return g.document.querySelectorAll(args.svgSelector).length >= args.count;
       },
-      sources.length,
+      { count: sources.length, svgSelector: MERMAID_RENDERED_SVG_SELECTOR },
       { timeout: MERMAID_RENDER_TIMEOUT_MS },
     );
   } catch (error) {
@@ -660,11 +686,90 @@ const SHELL_STYLE =
   "body{margin:0;background:#0a0a0a;color:#e5e7eb;" +
   "font-family:Pretendard,system-ui,-apple-system,sans-serif;" +
   "font-size:14px;line-height:1.6}" +
-  "main,pre{padding:1.5rem;max-width:980px;margin:0 auto}" +
-  "pre{white-space:pre-wrap;word-break:break-word;" +
+  "main,pre:not(.mermaid){padding:1.5rem;max-width:980px;margin:0 auto}" +
+  // .mermaid is a diagram container, not a code block — the dark box, the wrap
+  // and the column cap all belong to the text formats. The yaml/json/txt <pre>
+  // carries no class, so :not(.mermaid) selects exactly what the bare selector did
+  // and their rendering is unchanged. Their stylesheet TEXT does differ by these two
+  // selectors, so an existing plain export is equivalent, not byte-identical.
+  "pre:not(.mermaid){white-space:pre-wrap;word-break:break-word;" +
   "background:#111827;border:1px solid #1f2937;border-radius:8px;" +
   "font-family:ui-monospace,SFMono-Regular,Menlo,monospace}" +
   "main{white-space:pre-wrap;word-break:break-word}";
+
+/**
+ * Splices a markdown body's ```mermaid fences into diagram containers, escaping
+ * everything else exactly as the plain shell always has.
+ *
+ * WHICH fences those are is not decided here — findMdMermaidFences owns that
+ * question for both the count and the splice, so the export can never route a
+ * body to the renderer and then produce no container for it.
+ *
+ * The whole-body escape this replaces is why an md document exported its diagram
+ * as literal fence text: the shell has no renderer, so a fence had no path to an
+ * <svg>. Emitting the container the driver already reads (MERMAID_NODE_SELECTOR)
+ * puts md on the same path the html format uses.
+ *
+ * A body with no fence returns escapeHtml(body) — byte-identical to before, which
+ * is what keeps every existing plain export unchanged.
+ *
+ * The source is escaped, never pre-decoded: it has to survive as the container's
+ * TEXT, and a decoded `--&gt;` would re-parse as markup.
+ */
+function renderMdInner(body: string): { inner: string; diagramCount: number } {
+  let inner = "";
+  let cursor = 0;
+  let diagramCount = 0;
+
+  for (const fence of findMdMermaidFences(body)) {
+    inner += escapeHtml(body.slice(cursor, fence.start));
+    // doc-diagram-body = the body-width preset, first of the three declared in
+    // DIAGRAM_CONTAINER_STYLE. A fence carries no width declaration, so it gets the default.
+    inner += `<pre class="mermaid doc-diagram-body">${escapeHtml(fence.source)}</pre>`;
+    cursor = fence.end;
+    diagramCount += 1;
+  }
+  inner += escapeHtml(body.slice(cursor));
+
+  return { inner, diagramCount };
+}
+
+/** How many diagram fences a markdown body carries — the export's routing test. */
+export function countMdMermaidFences(body: string): number {
+  return renderMdInner(body).diagramCount;
+}
+
+/**
+ * Marks an md export whose diagrams could not be drawn and shipped as text.
+ *
+ * The degradation itself is the point: an md body has always exported 200, and a
+ * renderer that chokes on something this grammar read as a diagram must not cost
+ * the reader the whole document. But it is never SILENT — this comment rides in
+ * the artifact, so a degraded export is distinguishable from one that never had
+ * a diagram, both by a reader opening the file and by the suite.
+ */
+export const MD_DIAGRAM_DEGRADED_COMMENT = "diagram render unavailable; body shipped as text";
+
+/** Detail cap — a mermaid parse error quotes the source it choked on back at you. */
+const DEGRADED_DETAIL_MAX = 200;
+
+/** The plain shell every md export shipped before, plus the marker naming what failed. */
+function degradeMdToPlainShell(shell: string, error: unknown): string {
+  const stage = error instanceof HtmlExportError ? error.stage : "render";
+  const detail = error instanceof Error ? error.message : String(error);
+  // The message can quote the stored body, which is attacker-influenceable: a
+  // `-->` inside it would close this comment and land markup in the shell.
+  const safeDetail = detail
+    .replace(/[<>]/g, " ")
+    .replace(/-{2,}/g, "-")
+    .slice(0, DEGRADED_DETAIL_MAX);
+  // Function form, not a replacement string — safeDetail is untrusted and `$&`
+  // in a replacement string is a substitution pattern.
+  return shell.replace(
+    "</head>",
+    () => `<!-- ${MD_DIAGRAM_DEGRADED_COMMENT} (${stage}): ${safeDetail} --></head>`,
+  );
+}
 
 /**
  * Wraps a raw non-HTML stored body in a minimal self-contained dark HTML shell.
@@ -672,11 +777,10 @@ const SHELL_STYLE =
  * newline-preserving <main>. No CDN, no script — offline by construction.
  */
 export function wrapPlainInHtmlShell(body: string, format: PlainFormatToken): string {
-  const escaped = escapeHtml(body);
   const inner =
     format === "md"
-      ? `<main>${escaped}</main>`
-      : `<pre>${escaped}</pre>`;
+      ? `<main>${renderMdInner(body).inner}</main>`
+      : `<pre>${escapeHtml(body)}</pre>`;
   return (
     "<!doctype html>" +
     '<html lang="ko">' +

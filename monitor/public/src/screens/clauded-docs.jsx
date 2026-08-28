@@ -2161,6 +2161,17 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 // R6 본문 분리 컨테이너 className — htmlToReactCD 가 <style> 셀렉터를 이 클래스로 prefix scoping.
 const DOC_BODY_SCOPE_CD = "doc-body-isolation";
 
+// SYNC: src/server/clauded-docs/mermaid-selector.ts 의 MERMAID_NODE_SELECTOR 가
+// source of truth. 이 inline 사본은 client viewer 전용 (server .ts import 불가 —
+// esbuild IIFE transpile, no module bundling) — 리터럴을 byte 단위로 같게 유지.
+// drift 는 clauded-docs.md-mermaid.test.ts 가 두 파일을 함께 읽어 붉게 만듦.
+//
+// 이 셀렉터가 곧 "무엇이 다이어그램 블록인가" 의 정의임 — 본문을 쓰는 쪽(HTML primary 의
+// pre.mermaid · MD 의 ``` mermaid 펜스 변환)과 읽는 쪽(아래 render effect · export driver ·
+// validator)이 같은 모양에 합의해야 함. 어긋나면 문서는 저장·검증·내보내기를 모두 통과한 뒤
+// 코드 블록으로 보임 — 조용한 실패라 어느 층에서도 붉어지지 않음.
+const MERMAID_NODE_SELECTOR_CD = "pre.mermaid, .mermaid";
+
 // SYNC: src/server/clauded-docs/mermaid-normalize.ts 가 normalizeMermaidSource 의
 // source of truth. 이 inline 사본은 client viewer 전용 (server .ts import 불가 —
 // esbuild IIFE transpile, no module bundling) — 양쪽 (헬퍼 이름은 다르되) 로직 동일하게 유지.
@@ -2344,7 +2355,7 @@ function ViewerBodyCD({ state }) {
 		const container = bodyContainerRef.current;
 		if (!container) return;
 		const nodes = Array.from(
-			container.querySelectorAll("pre.mermaid, .mermaid"),
+			container.querySelectorAll(MERMAID_NODE_SELECTOR_CD),
 		);
 		if (nodes.length === 0) return;
 		let cancelled = false;
@@ -3293,6 +3304,20 @@ function injectMdTypographyClassesCD(html) {
 	// marked v13 default 는 anchor id 미주입 — heading id 충돌 우려 0.
 	return (
 		html
+			// ``` mermaid 펜스 → 다이어그램 컨테이너. marked 는 fenced code 를 전부
+			// <pre><code class="language-xxx"> 로 내므로 mermaid 도 코드 블록으로 떨어짐 —
+			// 아래 render effect 가 MERMAID_NODE_SELECTOR_CD 로 훑을 때 0건이라 조용히 코드로 남음.
+			// 여기서 render effect 가 아는 모양(pre.mermaid)으로 바꿔 그 경로에 얹음.
+			//   · 체인 맨 앞에 두는 이유 — 뒤따르는 /<pre>/g 치환은 attribute 없는 여는 태그만
+			//     잡으므로, 먼저 class 를 단 이 노드는 dark 코드블록 utility 를 받지 않음.
+			//   · doc-diagram-body = 폭 프리셋 3종(본문폭 · 넓게 · 전폭) 중 기본값.
+			//   · 캡처한 본문은 marked 가 escape 한 그대로 둠 — 노드의 textContent 로 남아야
+			//     render effect(브라우저 native 디코드)가 원본 소스를 읽음. 여기서 미리 디코딩하면
+			//     &gt; 가 태그 경계로 재해석되어 소스가 깨짐.
+			.replace(
+				/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+				'<pre class="mermaid doc-diagram-body">$1</pre>',
+			)
 			.replace(
 				/<h1>/g,
 				'<h1 class="text-2xl font-bold text-zinc-100 mt-8 mb-4">',
