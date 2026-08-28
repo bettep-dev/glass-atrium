@@ -17,7 +17,9 @@ Describe which test suites you ran and their result. For installer-touching
 changes, confirm `./glass-atrium doctor` passes before and after.
 
 - [ ] Installer (`test/`)
-- [ ] Monitor (`npm test` + `npm run typecheck` from `monitor/`)
+- [ ] Monitor (`npm test` + `npm run typecheck` from `monitor/`; `npm test`
+      requires `MONITOR_TEST_DATABASE_URL` pointing at a test-only database —
+      it refuses to run against the live one, see `monitor/.env.example`)
 - [ ] Self-improvement loop (`autoagent/test/`)
 - [ ] Hooks & scripts (`hooks/test/`, `scripts/test/`)
 
