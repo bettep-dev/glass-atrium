@@ -11,7 +11,9 @@
 #     (one stderr line) rather than silent;
 #   - the bytecode-suppression variable is exported into every child, so a
 #     daemon-driven run leaves no __pycache__ for the live recovery-repo snapshot
-#     screen to refuse.
+#     screen to refuse;
+#   - every stage banner carries its own duration, which is the ONLY thing that makes
+#     the doubled cost of the gate's one flaky-retry visible in the daemon log.
 #
 # Hermetic: the runner is COPIED into a sandbox, so its REPO_ROOT resolves to that
 # sandbox and never to this checkout — no real suite is ever shelled. bats, GNU
@@ -129,13 +131,32 @@ teardown() {
   [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
 }
 
-@test "(1) the bats child inherits the bytecode-suppression variable" {
+@test "(1) the child inherits bytecode suppression and each stage banner carries its duration" {
   run_runner_expecting 0 || return 1
 
   local seen
   seen="$(cat "${STUB_LOG_DIR}/bats-env.log")"
   [[ "${seen}" == "1" ]] || {
     printf 'child PYTHONDONTWRITEBYTECODE=%s (want 1)\n' "${seen}" >&2
+    return 1
+  }
+
+  # The daemon's green gate re-runs the WHOLE runner once on a first failure, so the
+  # python stages are paid TWICE on a red cycle and the per-stage duration is what makes
+  # that cost visible in the daemon log. The pattern matches the banner's FULL shape, so
+  # dropping only the `(Ns)` fails here as loudly as dropping the banner itself would —
+  # without it, the narrower regression is silent. All three stages run in this scenario
+  # (the stub pytest import returns 0), hence 3. `grep -c` prints 0 AND exits 1 on zero
+  # matches, so `|| true` (never `|| echo 0`, which would append a second zero to grep's own).
+  local banners
+  banners="$(printf '%s\n' "${stderr}" \
+    | grep -cE '^run-bats-parallel: \[stage [0-9]+/3 [^]]+\] rc=[0-9]+ \([0-9]+s\)$' || true)"
+  if [[ -z "${banners}" ]]; then
+    banners=0
+  fi
+  [[ "${banners}" -eq 3 ]] || {
+    printf 'duration-carrying stage banners=%s (want 3, one per stage) stderr:\n%s\n' \
+      "${banners}" "${stderr}" >&2
     return 1
   }
 }
