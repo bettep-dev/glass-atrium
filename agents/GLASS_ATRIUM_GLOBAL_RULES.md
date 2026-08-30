@@ -23,10 +23,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ## Absolute Rules [ALL]
 
 - All responses are answered in the **user's question language**.
+  - Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
 - Technical terms in original language + parenthetical explanation on first occurrence
 - **No guessing** → Ask when unclear (1 issue = 1 question):
-  Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
-  Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
+  - Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
 - File names, class names, lines, APIs → Use **only verified** references.
   - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
@@ -131,7 +131,6 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
   - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
   - **splitting > truncation** (next /loop tick resumes cleanly)
-- **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 #### Work-unit checkpoint dimension
 
@@ -160,6 +159,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
     - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
     - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
     - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
+
+#### Exempt
+
+- `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 ### Context Compression Strategies
 
@@ -235,8 +238,6 @@ Reject trading an established practice for a shortcut: name the excuse → apply
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper** |
-| | auth, schema-as-SoT, type safety, complete loading = the right path, shortcuts become future debt |
-| | (BLOB-on-disk like WAV = essential-fit call, not a shortcut — distinguish) |
+| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper** · auth, schema-as-SoT, type safety, complete loading = the right path, shortcuts become future debt · (BLOB-on-disk like WAV = essential-fit call, not a shortcut — distinguish) |
 
 > Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix
