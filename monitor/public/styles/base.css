@@ -693,10 +693,6 @@
 	/* DOM marker — 2개 자식 cell (status / 응답시간). */
 }
 
-.health-card-grid {
-	/* DOM marker — 자식 .card 6개 (라이브). */
-}
-
 /* ConfBar tone: conf>=90 ok / >=80 info / <80 warn.
    conf 값은 core.learning_log 에 conf 컬럼 부재 → frequency 기반 근사 도출 (log 정규화). */
 .bp-learning-table-confbar {

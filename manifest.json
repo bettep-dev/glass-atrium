@@ -1233,7 +1233,7 @@
     "monitor/public/src/screens/wiki.jsx": "fcbf7dd0c2fce4481290d39470e86db2670c2261c5cfd859467e49b24d80fbd7",
     "monitor/public/src/tweaks-panel.jsx": "98e9f0b74e595e92651169c90c86e8da0e99e2b2dde91741ade5829a3208a9ea",
     "monitor/public/src/ui.jsx": "01ebf69c3e9f0cd04543e259fa707b9c46b779270b2318fc660f871a4a478cad",
-    "monitor/public/styles/base.css": "81b63e7a2984d555a740490302f43c3792fc66f015e88a9b0a86cd838f18df2c",
+    "monitor/public/styles/base.css": "f6b26a0d4c246bac90c8ae2ab947e139ed75c06f90fd3bf954954efdfba15cf5",
     "monitor/public/styles/tokens.css": "f389cb68e2c6194eed2e448c6635566abcc63de6b4e7b33aac80fdccba2b038e",
     "monitor/scripts/oss-db-setup.sh": "f80cb84376c661469446e5ff1e52089c2dc202abb988ff27c554cbe55d1bfd46",
     "monitor/src/server/agents/registry.ts": "43064a7baee3fe803252e99c98ad3b1aedcfac2afe17076cb1299f9f3172df50",
