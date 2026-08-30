@@ -213,6 +213,11 @@ setup_database() {
 # warn. That literal is pinned byte-equal to the resolver's own default by
 # test/db-backup-path-consistency.bats — the duplication is deliberate (the SoT is unreachable in
 # exactly the branch that needs it) and mechanically held equal.
+#
+# SEAM: ATRIUM_CONFIG_LIB is a TEST-ONLY override of the library PATH — the sandbox
+# seam the bats suites pin, never an operator knob. Production always resolves the
+# sibling path spelled below, the same way ATRIUM_CONFIG_TOML and GA_DB_BACKUP_DIR
+# are labelled test/sandbox overrides in atrium-config.sh.
 ga_resolve_backup_dir() {
   local lib="${ATRIUM_CONFIG_LIB:-${GA_ROOT:-}/scripts/lib/atrium-config.sh}"
   # Already sourced (a sibling call, or a consumer that loaded the library itself) — reuse it.
@@ -273,7 +278,17 @@ drop_databases() {
   backup_dir="$(ga_resolve_backup_dir)"
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
+  # CREATION MASK (CWE-732). These pre-drop dumps are the ONLY copy of a database this
+  # function is about to drop, so they must not land 0644: 077 makes a directory this
+  # step creates 0700 and every dump below 0600. The same user runs pg_restore, so
+  # owner-only loses nothing. SCOPED — restored after the loop so the rest of the
+  # uninstall keeps the caller's mask. HONEST LIMIT: umask governs CREATION only; an
+  # existing backup directory keeps the mode it has.
+  local prior_umask
+  prior_umask="$(umask)"
+  umask 077
   if ! mkdir -p -- "${backup_dir}"; then
+    umask "${prior_umask}"
     log "uninstall: cannot create backup dir ${backup_dir} — SKIPPING DB drop entirely (data preserved)"
     return 0
   fi
@@ -307,6 +322,8 @@ drop_databases() {
       log "  warn: dropdb '${db}' failed (server unreachable?) — skipped (advisory)"
     fi
   done
+  # Creation-mask scope ends with the last dump.
+  umask "${prior_umask}"
   log "uninstall: DB drop done (${dropped}/2 dropped — skipped DBs preserved)"
   return 0
 }

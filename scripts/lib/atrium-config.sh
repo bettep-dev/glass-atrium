@@ -285,7 +285,8 @@ atrium_resolve_haiku_model() {
 # separate the two cases — a value nobody acted on is absolute too.
 #
 # Adoption rule. The configured value wins when its directory EXISTS, or when it is
-# creatable AND the default location holds no dumps. Otherwise the default wins and
+# creatable AND the default location holds no dumps — and, in either arm, when the
+# directory it would write to is SAFE (case 6 below). Otherwise the default wins and
 # the resolver says so, once, on stderr.
 #
 #   case                                    | dir      | default dumps | resolves to
@@ -294,10 +295,25 @@ atrium_resolve_haiku_model() {
 #   3 a customization not yet created       | absent   | 0             | configured
 #   4 a value nobody acted on               | absent   | >0            | default + WARN
 #   5 relative, empty, or not a directory   | -        | any           | default + WARN
+#   6 unsafe: dot segment, foreign owner,   | any      | any           | default + WARN
+#     or world-writable without sticky      |          |               |
 #
 # Case 5 is reported by THREE surfaces that have to agree: this WARN, the reconciler's
 # report and doctor §24 each classify a DECLARED-but-empty value as a misconfiguration
 # rather than as an absent key, and each names the same reason for it.
+#
+# Case 6 is the adoption guardrail (CWE-59 symlink following, CWE-377 insecure
+# temporary location). The nightly dump filename is predictable and pg_dump creates it
+# non-exclusively, so a destination another local user can write — /tmp, /Users/Shared,
+# anything under a foreign-owned or 0777 parent — lets that user pre-place a symlink or
+# a file at the name the dump will open. The resolver therefore RESOLVES the value
+# (every probe below follows symlinks, so an unresolved value would guard a different
+# inode than the one the write sites open) and then requires the directory it would
+# write to be owned by the invoking user and not world-writable without the sticky bit.
+# Every check is read-only: a `-O` test, a stat(1) read and a `cd -P`, nothing created.
+# RECOVERY is one command: an operator who genuinely wants a location under a
+# foreign-owned parent creates the directory themselves, at which point the existence
+# arm judges THAT directory's ownership rather than its parent's, and adopts it.
 #
 # Honest limit: 3 and 4 are separated ONLY by the dump census, so a NEW relocation
 # configured on an install that already holds dumps reads as 4 and is not honored
@@ -345,11 +361,124 @@ atrium_backup_dump_count() {
 # strength of a directory this code made. The rule would then be unconditional
 # adoption wearing a state check.
 _atrium_dir_is_creatable() {
+  local dir="$1" parent
+  # shellcheck disable=SC2312  # the helper returns 0 on every path, so no status is masked
+  parent="$(_atrium_parent_dir "${dir}")"
+  [[ -d "${parent}" && -w "${parent}" ]]
+}
+
+# The parent directory of $1. Spelled ONCE so the creatability probe and the parent
+# safety check can never disagree about WHICH directory they are judging — they gate
+# the same adoption arm, and a divergence there would check one path and create in
+# another.
+_atrium_parent_dir() {
   local dir="$1"
   local parent="${dir%/*}"
   [[ "${parent}" != "${dir}" ]] || parent="." # no slash at all -> relative to cwd
   [[ -n "${parent}" ]] || parent="/"          # "/x" -> the parent is the root
-  [[ -d "${parent}" && -w "${parent}" ]]
+  printf '%s\n' "${parent}"
+}
+
+# Canonicalize an absolute path WITHOUT creating anything (CWE-59). Every probe the
+# adoption rule runs — `-d`, `-e`, `-w`, `-O`, stat(1) — FOLLOWS symlinks, so an
+# unresolved value has the resolver reporting one path while the write sites open
+# another, and has the ownership checks guarding the link rather than its target.
+# The deepest EXISTING directory prefix is resolved with `cd -P` (which resolves every
+# symlink within it) and the not-yet-existing tail is re-appended verbatim;
+# `realpath -m` / `readlink -f` are GNU-only, so the shell walk is the portable form.
+#
+# CALLER CONTRACT: the argument is ABSOLUTE and free of '.' and '..' segments. A
+# relative value would resolve against the current directory, turning a value the
+# shape arms reject into one they would have accepted — which is why the shape arms
+# run first and this is reached only after they pass.
+_atrium_path_canonicalize() {
+  local path="$1" head="$1" tail="" resolved
+  while [[ "${head}" != "/" && ! -d "${head}" ]]; do
+    tail="${head##*/}${tail:+/}${tail}"
+    head="${head%/*}"
+    [[ -n "${head}" ]] || head="/"
+  done
+  # An unsearchable directory leaves the value UNRESOLVED rather than inventing one:
+  # the state arms then judge the path as written, which can only decline.
+  resolved="$(cd -P -- "${head}" 2>/dev/null && pwd -P)" || resolved=""
+  if [[ -z "${resolved}" ]]; then
+    printf '%s\n' "${path}"
+  elif [[ -z "${tail}" ]]; then
+    printf '%s\n' "${resolved}"
+  elif [[ "${resolved}" == "/" ]]; then
+    printf '/%s\n' "${tail}"
+  else
+    printf '%s/%s\n' "${resolved}" "${tail}"
+  fi
+}
+
+# Whether $1 carries a '.' or '..' path SEGMENT (delimited on BOTH sides, so a real
+# directory name like /srv/..data is untouched). Spelled ONCE: the resolver declines on
+# it and the public canonical-form wrapper refuses to resolve on it, and a drift
+# between the two would leave one surface resolving what the other rejects.
+_atrium_path_has_dot_segment() {
+  local path="$1"
+  [[ "${path}/" == *"/../"* || "${path}/" == *"/./"* ]]
+}
+
+# PUBLIC canonical form of a CONFIGURED path value, for the surfaces that ask "is the
+# resolver honouring this value?". atrium_backup_dir adopts the RESOLVED path (CWE-59),
+# so comparing the raw declaration against what the resolver returns reads every
+# symlinked-but-honoured value as a mismatch — a row that fires on a working install,
+# which is the alarm fatigue ADR-10 split doctor from the reconciler to avoid.
+#
+# PUBLIC for the same reason atrium_config_has_key is: doctor §24 and the reconciler
+# both make this comparison, and a private helper would leave each re-deriving the
+# resolution rule — two more readers that can drift from the resolver's own.
+#
+# A value the resolver DECLINES on shape (empty, relative, dot-segment) is echoed
+# VERBATIM — it is not a path the resolver resolves, and canonicalizing a relative one
+# would resolve it against the current directory, so those keep reporting the mismatch
+# they genuinely are.
+atrium_canonical_config_path() {
+  local value="$1"
+  if [[ -z "${value}" || "${value}" != /* ]] || _atrium_path_has_dot_segment "${value}"; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  _atrium_path_canonicalize "${value}"
+}
+
+# Octal permission mode of $1, four digits including the setuid/setgid/sticky nibble.
+# Empty when it cannot be read. BSD and GNU stat spell this differently AND their
+# flags collide (`-f` is a format string on BSD and --file-system on GNU), so each
+# errors out on the other platform and the `||` chain IS the platform branch.
+# BSD `%Lp` alone drops the sticky bit, which is the one bit this check needs most.
+_atrium_path_mode() {
+  local path="$1" mode
+  # GA-ABSORB[benign]: the || chain IS the BSD/GNU platform branch — each spelling errors on the other platform, and an unreadable mode is a valid empty answer the caller treats as UNSAFE
+  mode="$(stat -f '%OMp%OLp' -- "${path}" 2>/dev/null || stat -c '%a' -- "${path}" 2>/dev/null || true)"
+  printf '%s\n' "${mode}"
+}
+
+# Adoption safety predicate for an EXISTING path (CWE-59/CWE-377): owned by the
+# invoking user AND not world-writable unless the sticky bit is set. Returns 0 when
+# safe. READ-ONLY — a `-O` test and one stat(1) read; nothing is created or changed,
+# which is the same constraint that governs the creatability probe above.
+#
+# An UNREADABLE mode counts as UNSAFE. Adoption needs positive evidence that the
+# destination is the operator's own; "could not tell" is not evidence. The asymmetry
+# is the point — a wrong decline is loud and closed by one command, a wrong adoption
+# writes the database somewhere a second local user can pre-place the dump's name.
+_atrium_path_is_safe() {
+  local path="$1" mode dec
+  [[ -O "${path}" ]] || return 1
+  # shellcheck disable=SC2312  # the helper returns 0 on every path, echoing empty on failure
+  mode="$(_atrium_path_mode "${path}")"
+  [[ "${mode}" =~ ^[0-7]+$ ]] || return 1
+  dec=$((8#${mode}))
+  # o+w without the sticky bit: any local user can replace an entry here. Sticky
+  # (the /tmp shape) still admits creating names, so it is not sufficient on its own
+  # — it only matters alongside the ownership test above, never instead of it.
+  if ((dec & 2)) && ! ((dec & 512)); then
+    return 1
+  fi
+  return 0
 }
 
 # Whether the config file DECLARES a key at all, distinct from declaring it empty.
@@ -399,7 +528,7 @@ _atrium_backup_dir_warn() {
 # Precedence: exported GA_DB_BACKUP_DIR → [paths].backup_dir when the adoption rule
 # admits it → the default location. Always echoes a path and returns 0.
 atrium_backup_dir() {
-  local default_dir configured default_dumps cand_dumps
+  local default_dir configured canonical default_dumps cand_dumps reason=""
 
   # 1. explicit seam — the caller's own override (sandbox, test, one-off restore).
   #    It names a destination the caller is acting on RIGHT NOW, which is the state
@@ -432,31 +561,59 @@ atrium_backup_dir() {
   default_dumps="$(atrium_backup_dump_count "${default_dir}")"
   cand_dumps="$(atrium_backup_dump_count "${configured}")"
 
-  # 5. adoption rule. The empty declaration is tested FIRST because it is not a path at
-  #    all, so every reason below would describe it wrongly — "not an absolute path" in
-  #    particular sends the operator looking for a path to correct where there is none.
+  # 5. SHAPE arms — what the value SAYS, judged before anything touches the filesystem.
+  #    The empty declaration is tested FIRST because it is not a path at all, so every
+  #    reason below would describe it wrongly — "not an absolute path" in particular
+  #    sends the operator looking for a path to correct where there is none. These two
+  #    also GUARD the canonicalizer in step 6, which resolves a relative value against
+  #    the current directory and would turn a value rejected here into an accepted
+  #    absolute one.
   if [[ -z "${configured}" ]]; then
-    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
-      "declared with an empty value"
+    reason="declared with an empty value"
   elif [[ "${configured}" != /* ]]; then
-    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
-      "not an absolute path"
-  elif [[ -d "${configured}" ]]; then
-    printf '%s\n' "${configured}" # case 2 — the destination is real and in use
-    return 0
-  elif [[ -e "${configured}" ]]; then
-    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
-      "exists but is not a directory"
-  elif _atrium_dir_is_creatable "${configured}" && [[ "${default_dumps}" -eq 0 ]]; then
-    printf '%s\n' "${configured}" # case 3 — creatable, and no dumps are left behind
-    return 0
-  elif [[ "${default_dumps}" -ne 0 ]]; then
-    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
-      "directory absent while the default location already holds dumps"
-  else
-    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
-      "directory absent and its parent is missing or not writable"
+    reason="not an absolute path"
+  elif _atrium_path_has_dot_segment "${configured}"; then
+    # Absolute is not the same as fixed: /a/../b and /a/./b both pass the test above
+    # while naming a directory other than the one they read as, and the value is
+    # re-resolved on every run.
+    reason="contains a '.' or '..' path segment"
   fi
 
+  # 6. STATE arms — the same adoption decisions as before, in the same order, taken on
+  #    the CANONICAL path and gated on the safety predicate. Canonicalization comes
+  #    first because every probe below follows symlinks (see _atrium_path_canonicalize),
+  #    and the safety gate sits on the two ADOPTING arms only: the existence arm judges
+  #    the directory it would write into, the creatable arm judges the parent it would
+  #    create that directory in. A declined value falls through to the same WARN as
+  #    every other decline.
+  if [[ -z "${reason}" ]]; then
+    # shellcheck disable=SC2312  # the canonicalizer returns 0 on every path, echoing the input on failure
+    canonical="$(_atrium_path_canonicalize "${configured}")"
+    if [[ -d "${canonical}" ]]; then
+      if _atrium_path_is_safe "${canonical}"; then
+        printf '%s\n' "${canonical}" # case 2 — the destination is real, safe and in use
+        return 0
+      fi
+      reason="directory is not owned by the invoking user, or is world-writable without the sticky bit"
+    elif [[ -e "${canonical}" ]]; then
+      reason="exists but is not a directory"
+    elif _atrium_dir_is_creatable "${canonical}" && [[ "${default_dumps}" -eq 0 ]]; then
+      # The ONLY arm that leads to a directory being created, so it is the only one
+      # where the PARENT's ownership decides who could have pre-placed the name.
+      # shellcheck disable=SC2312  # the helper returns 0 on every path
+      if _atrium_path_is_safe "$(_atrium_parent_dir "${canonical}")"; then
+        printf '%s\n' "${canonical}" # case 3 — creatable, safe, and no dumps are left behind
+        return 0
+      fi
+      reason="parent directory is not owned by the invoking user, or is world-writable without the sticky bit"
+    elif [[ "${default_dumps}" -ne 0 ]]; then
+      reason="directory absent while the default location already holds dumps"
+    else
+      reason="directory absent and its parent is missing or not writable"
+    fi
+  fi
+
+  _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+    "${reason}"
   printf '%s\n' "${default_dir}"
 }

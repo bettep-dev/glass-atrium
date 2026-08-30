@@ -107,6 +107,11 @@ grant_public_create() {
 # first) and the run continues after ONE loud WARN. That literal is pinned byte-equal to the
 # resolver's own default by test/db-backup-path-consistency.bats — the duplication is deliberate
 # (the SoT is unreachable in exactly the branch that needs it) and mechanically held equal.
+#
+# SEAM: ATRIUM_CONFIG_LIB is a TEST-ONLY override of the library PATH — the sandbox
+# seam the bats suites pin, never an operator knob. Production always resolves the
+# sibling path spelled below, the same way ATRIUM_CONFIG_TOML and GA_DB_BACKUP_DIR
+# are labelled test/sandbox overrides in atrium-config.sh.
 resolve_backup_dir() {
   local lib="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/../../scripts/lib/atrium-config.sh}"
   # An && chain, not `|| true`: every step's failure lands on the one fallback arm below, so no
@@ -129,8 +134,19 @@ resolve_backup_dir() {
 backup_db_to_file() {
   local name="$1" out="$2"
   log "pg_dump '${name}' → ${out} (custom format)"
+  # CREATION MASK (CWE-732). This dump is the only copy of a database about to be
+  # dropped, so it must not land 0644 under the caller's mask; 077 makes it 0600, and
+  # the same user runs pg_restore. SCOPED — restored below, so the migration and
+  # verification steps that follow keep the caller's mask. Set HERE as well as around
+  # the caller's mkdir: the mask has to hold at the site that creates the file, and a
+  # second caller of this helper would otherwise write an unprotected dump. A `fail`
+  # exits the process, which restores the mask too.
+  local prior_umask
+  prior_umask="$(umask)"
+  umask 077
   pg_dump -h "${PG_SOCKET}" -d "${name}" -F c -f "${out}" \
     || fail "${EXIT_RECREATE}" "pg_dump '${name}' failed — before the drop step, so data is preserved (drop not run)"
+  umask "${prior_umask}"
   # Empty dump must not proceed to drop — loss is irreversible, so backup completion is
   # a hard precondition of the drop.
   [[ -s "${out}" ]] \
@@ -169,9 +185,16 @@ recreate_database() {
   fi
 
   # step 1 — backup before drop (parameterized, never touches live glass_atrium); timestamped file.
-  local backup_dir backup_file
+  local backup_dir backup_file prior_umask
   backup_dir="$(resolve_backup_dir)"
+  # CREATION MASK (CWE-732), same rule as backup_db_to_file below: a directory this
+  # step creates lands 0700 rather than 0755. SCOPED — restored immediately, since
+  # only the mkdir creates anything here. HONEST LIMIT: umask governs CREATION only;
+  # an existing backup directory keeps the mode it has.
+  prior_umask="$(umask)"
+  umask 077
   mkdir -p -- "${backup_dir}"
+  umask "${prior_umask}"
   backup_file="${backup_dir}/${name}-recreate-$(date +%Y%m%d-%H%M%S).dump"
   backup_db_to_file "${name}" "${backup_file}"
   log "recreate: backup complete ${backup_file}"

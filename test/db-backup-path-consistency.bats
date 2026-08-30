@@ -133,7 +133,11 @@ SITE_FUNCTIONS=(
 )
 
 setup() {
-  WORK="$(mktemp -d -t ga-backup-consistency.XXXXXX)"
+  # CANONICAL fixture root. macOS `mktemp -d` hands back /var/folders/..., a symlink to
+  # /private/var/folders/..., and the ADR-6 resolver now resolves the value it adopts
+  # (CWE-59). Without this the agreement test below would compare three resolved paths
+  # against an unresolved fixture and report a disagreement the three sites do not have.
+  WORK="$(cd -P -- "$(mktemp -d -t ga-backup-consistency.XXXXXX)" && pwd -P)"
 }
 
 teardown() {

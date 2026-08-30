@@ -200,3 +200,54 @@ run_backup_with() {
     return 1
   }
 }
+
+# --- creation mask (CWE-732) --------------------------------------------------
+#
+# A dump is the entire database in one file. Under the caller's default mask it
+# lands 0644 in a 0755 directory, readable by every local account; the script sets
+# a 077 mask around the two creating steps so a directory it creates is 0700 and
+# the dump inside it 0600.
+
+# Octal permission bits of $1. BSD and GNU stat spell this differently AND their
+# flags collide (`-f` is a format on BSD, --file-system on GNU), so each errors out
+# on the other platform and the `||` chain IS the branch.
+mode_of() {
+  stat -f '%Lp' -- "$1" 2>/dev/null || stat -c '%a' -- "$1" 2>/dev/null
+}
+
+@test "AC-C7 a backup dir and dump this script CREATES are owner-only (0700 / 0600)" {
+  local fresh="${SANDBOX}/fresh-dumps" dump dir_mode dump_mode default_mode
+  # ADR-6 case 3: the destination is absent and creatable and the default location
+  # holds no dumps, so the script's own mkdir is what creates it — which is the only
+  # shape where a creation mask can be observed at all.
+  printf '[paths]\nbackup_dir = "%s"\n' "${fresh}" >"${SANDBOX}/config.toml"
+
+  run_backup_with "${SANDBOX}/config.toml" "${GA}/scripts/lib/atrium-config.sh"
+  [[ "${status}" -eq 0 ]] || {
+    echo "script exit ${status}: ${output}" >&2
+    return 1
+  }
+  dir_mode="$(mode_of "${fresh}")"
+  [[ "${dir_mode}" == "700" ]] || {
+    echo "created backup dir mode = ${dir_mode}, expected 700" >&2
+    return 1
+  }
+  dump="$(find "${fresh}" -maxdepth 1 -type f -name 'glass_atrium-*.dump' | head -n 1)"
+  [[ -n "${dump}" ]] || {
+    echo "no dump landed at ${fresh}; out=${output}" >&2
+    return 1
+  }
+  dump_mode="$(mode_of "${dump}")"
+  [[ "${dump_mode}" == "600" ]] || {
+    echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+  # HONEST LIMIT, pinned so no reader mistakes the mask for a chmod: umask governs
+  # CREATION only. The default location setup() pre-created keeps its own 0755 — the
+  # script does not, and must not, silently re-mode a directory an operator made.
+  default_mode="$(mode_of "${BACKUP_DIR}")"
+  [[ "${default_mode}" == "755" ]] || {
+    echo "the pre-existing dir was re-moded to ${default_mode}; the mask must not chmod" >&2
+    return 1
+  }
+}

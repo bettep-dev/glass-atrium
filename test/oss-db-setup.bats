@@ -425,3 +425,48 @@ run_recreate() {
   [[ ! -d "${fake_home}/.glass-atrium/backups/postgres" ]] \
     || { echo "dump leaked to the default location while a relocation was configured" >&2; return 1; }
 }
+
+# --- creation mask (CWE-732) --------------------------------------------------
+
+# Octal permission bits of $1. BSD and GNU stat spell this differently AND their
+# flags collide (`-f` is a format on BSD, --file-system on GNU), so each errors out
+# on the other platform and the `||` chain IS the branch.
+mode_of() {
+  stat -f '%Lp' -- "$1" 2>/dev/null || stat -c '%a' -- "$1" 2>/dev/null
+}
+
+@test "AC-C7 the recreate backup and the dir created for it are owner-only (0700 / 0600)" {
+  local dump dir_mode dump_mode
+  # Same stub shape as the backup-before-drop test above: the main db reports
+  # 'exists' until dropdb clears its sentinel, so recreate_database engages and its
+  # own mkdir creates ${SANDBOX}/backups (setup() does not pre-create it).
+  : >"${SANDBOX}/main-present"
+  printf '#!/bin/bash\ncase "$*" in\n  *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;;\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
+    >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
+
+  run_recreate "claude_oss_e2e"
+  [[ "${status}" -eq 0 ]] || {
+    echo "recreate exit ${status}: ${output}" >&2
+    return 1
+  }
+  dir_mode="$(mode_of "${SANDBOX}/backups")"
+  [[ "${dir_mode}" == "700" ]] || {
+    echo "created backup dir mode = ${dir_mode}, expected 700" >&2
+    return 1
+  }
+  dump="$(find "${SANDBOX}/backups" -maxdepth 1 -type f -name 'claude_oss_e2e-recreate-*.dump' | head -n 1)"
+  [[ -n "${dump}" ]] || {
+    echo "no recreate dump landed; out=${output}" >&2
+    return 1
+  }
+  dump_mode="$(mode_of "${dump}")"
+  [[ "${dump_mode}" == "600" ]] || {
+    echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+}

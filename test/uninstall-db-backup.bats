@@ -164,3 +164,39 @@ STUB
   grep -q -- 'claude_oss_e2e_shadow$' "${SANDBOX}/dropdb-args"
   [[ "$(wc -l <"${SANDBOX}/dropdb-args" | tr -d ' ')" -eq 1 ]]
 }
+
+# --- creation mask (CWE-732) --------------------------------------------------
+
+# Octal permission bits of $1. BSD and GNU stat spell this differently AND their
+# flags collide (`-f` is a format on BSD, --file-system on GNU), so each errors out
+# on the other platform and the `||` chain IS the branch.
+mode_of() {
+  stat -f '%Lp' -- "$1" 2>/dev/null || stat -c '%a' -- "$1" 2>/dev/null
+}
+
+@test "AC-C7 pre-drop dumps and the dir created for them are owner-only (0700 / 0600)" {
+  local dump dir_mode dump_mode
+  # These dumps are the ONLY copy of a database this function then drops, so a
+  # world-readable dump is the whole database readable by every local account.
+  # ${BACKUPS} is not pre-created by setup(), so drop_databases' own mkdir makes it.
+  run_drop
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  dir_mode="$(mode_of "${BACKUPS}")"
+  [[ "${dir_mode}" == "700" ]] || {
+    echo "created backup dir mode = ${dir_mode}, expected 700" >&2
+    return 1
+  }
+  dump="$(find "${BACKUPS}" -maxdepth 1 -type f -name '*-pre-uninstall-*.dump' | head -n 1)"
+  [[ -n "${dump}" ]] || {
+    echo "no pre-uninstall dump landed; out=${output}" >&2
+    return 1
+  }
+  dump_mode="$(mode_of "${dump}")"
+  [[ "${dump_mode}" == "600" ]] || {
+    echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+}

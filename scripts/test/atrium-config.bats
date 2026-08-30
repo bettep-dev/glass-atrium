@@ -13,7 +13,13 @@ REAL_LIB="${GA}/scripts/lib/atrium-config.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "atrium-config.sh not found: ${REAL_LIB}"
-  WORK="$(mktemp -d -t atrium-config-bats.XXXXXX)"
+  # CANONICAL fixture root. macOS `mktemp -d` hands back /var/folders/..., a symlink
+  # to /private/var/folders/..., and the ADR-6 resolver now resolves the value it
+  # adopts (CWE-59). Without this the adoption tests would compare a resolved path
+  # against an unresolved fixture and fail on the platform rather than on the rule.
+  # It hides no behaviour: the symlink resolution has its own test below, which builds
+  # its link deliberately instead of inheriting one from the temp directory.
+  WORK="$(cd -P -- "$(mktemp -d -t atrium-config-bats.XXXXXX)" && pwd -P)"
 }
 
 teardown() {
@@ -512,6 +518,130 @@ backup_resolve() {
   }
   [[ -z "${stderr}" ]] || {
     printf 'the seam path must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+# --- atrium_backup_dir: case-6 adoption guardrails (CWE-59 / CWE-377) ---------
+#
+# The adoption rule decides on filesystem STATE, and every probe it runs follows
+# symlinks — so the value has to be RESOLVED before it is judged, and the directory
+# that would actually be written has to be the operator's own. Each test below is red
+# on the unguarded resolver: drop the dot-segment arm and 6a adopts, drop the
+# canonicalizer and 6b reports the link instead of its target, drop the safety
+# predicate and 6c/6d/6e adopt a directory a second local user can write.
+#
+# BATS GATING NOTE (as above): a bare non-final `[[ ]]` does NOT gate the verdict, so
+# every assertion `return 1`s with its own message.
+
+@test "AC-C2(6a) a '..' or '.' segment is declined with its own reason" {
+  local value
+  for value in "${WORK}/real/../evil" "${WORK}/./real"; do
+    backup_fixture "${value}"
+    backup_resolve
+    [[ "${output}" == "$(backup_default_dir)" ]] || {
+      printf '%s must not be adopted; got %s\n' "${value}" "${output}" >&2
+      return 1
+    }
+    [[ "${stderr}" == *"'.' or '..' path segment"* ]] || {
+      printf 'the decline must name the dot-segment reason for %s; got %s\n' "${value}" "${stderr}" >&2
+      return 1
+    }
+  done
+}
+
+@test "AC-C2(6b) a symlinked destination resolves to its TARGET before adoption" {
+  # The consumers open what the link points at, so the resolver has to report that
+  # path — reporting the link would have the WARN, doctor and the reconciler all
+  # naming a location no dump is written to.
+  mkdir -p -- "${WORK}/real-target"
+  ln -sfn "${WORK}/real-target" "${WORK}/link-dir"
+  backup_fixture "${WORK}/link-dir"
+  backup_resolve
+  [[ "${output}" == "${WORK}/real-target" ]] || {
+    printf 'want the resolved target %s, got %s\n' "${WORK}/real-target" "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'a safe symlinked destination must adopt silently: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6c) a world-writable non-sticky PARENT is declined (creatable arm)" {
+  # The creatable arm is the only one that leads to a directory being created, so the
+  # parent decides who could have pre-placed the dump's name there.
+  mkdir -p -- "${WORK}/open-parent"
+  chmod 0777 "${WORK}/open-parent"
+  backup_fixture "${WORK}/open-parent/dumps"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a world-writable parent must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"parent directory is not owned"* ]] || {
+    printf 'the decline must name the parent reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/open-parent/dumps" ]] || {
+    printf 'the probe must stay read-only — it created %s\n' "${WORK}/open-parent/dumps" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6d) a world-writable non-sticky EXISTING destination is declined" {
+  mkdir -p -- "${WORK}/open-dir"
+  chmod 0777 "${WORK}/open-dir"
+  backup_fixture "${WORK}/open-dir"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a 0777 destination must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory is not owned"* ]] || {
+    printf 'the decline must name the destination reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6e) the sticky bit alone does not admit a FOREIGN-owned parent" {
+  # A genuine owner mismatch, constructible without root: /tmp is root-owned and 1777
+  # on both platforms this runs on. Sticky stops one local user REPLACING another's
+  # entry, not creating a name first, so ownership is the test that has to hold.
+  # Nothing is created here — the resolver declines, and its probes are read-only.
+  [[ ! -O /tmp ]] || skip "this runner owns /tmp, so no owner mismatch is available"
+  backup_fixture "/tmp/atrium-config-bats-never-created"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a foreign-owned sticky parent must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"parent directory is not owned"* ]] || {
+    printf 'the decline must name the parent reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "/tmp/atrium-config-bats-never-created" ]] || {
+    printf 'the probe must stay read-only — it created a directory under /tmp\n' >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6f) canonicalization never rescues a RELATIVE value" {
+  # Ordering contract: the shape arms run BEFORE the canonicalizer, which resolves
+  # against the current directory. Reverse the two and a relative value becomes an
+  # absolute one under whatever cwd the nightly job happens to have.
+  mkdir -p -- "${WORK}/cwd-here/relative-dumps"
+  backup_fixture "relative-dumps"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'cd "$2" || exit 1; source "$1"; atrium_backup_dir' \
+    _ "${REAL_LIB}" "${WORK}/cwd-here"
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a relative value must stay declined; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"not an absolute path"* ]] || {
+    printf 'the decline must keep the relative reason; got %s\n' "${stderr}" >&2
     return 1
   }
 }

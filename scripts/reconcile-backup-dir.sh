@@ -82,6 +82,11 @@ esac
 # LOUD PRECONDITION: without the resolver there is no "location the resolver will use",
 # so there is nothing to report. Unlike the write sites, which fall back so a dump still
 # happens, a reporter with nothing to report must fail rather than invent an answer.
+#
+# SEAM: ATRIUM_CONFIG_LIB is a TEST-ONLY override of the library PATH — the sandbox
+# seam the bats suites pin, never an operator knob. Production always resolves the
+# sibling path spelled below, the same way ATRIUM_CONFIG_TOML and GA_DB_BACKUP_DIR
+# are labelled test/sandbox overrides in atrium-config.sh.
 CONFIG_LIB="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/lib/atrium-config.sh}"
 readonly CONFIG_LIB
 [[ -r "${CONFIG_LIB}" ]] || die "${EXIT_NO_LIB}" "config library not readable: ${CONFIG_LIB}"
@@ -93,12 +98,18 @@ declare -F atrium_config_has_key >/dev/null \
   || die "${EXIT_NO_LIB}" "atrium_config_has_key not defined by ${CONFIG_LIB}"
 
 # add_location <dir> — append to LOCATIONS unless already present (bash 3.2 has no sets).
+# Presence is judged on the CANONICAL form while the RAW spelling is what gets stored:
+# the resolver adopts the canonical path (CWE-59), so two spellings of one directory
+# would otherwise both enter the set and each report itself as stranded from the other,
+# while every line this report prints has to keep naming the path the operator wrote.
 LOCATIONS=()
 add_location() {
-  local dir="$1" existing
+  local dir="$1" existing canon
   [[ -n "${dir}" ]] || return 0
+  canon="$(atrium_canonical_config_path "${dir}")"
   for existing in ${LOCATIONS[@]+"${LOCATIONS[@]}"}; do
-    if [[ "${existing}" == "${dir}" ]]; then
+    # shellcheck disable=SC2310,SC2312  # the wrapper returns 0 on every path: no status is masked and the set -e suspension is immaterial
+    if [[ "$(atrium_canonical_config_path "${existing}")" == "${canon}" ]]; then
       return 0
     fi
   done
@@ -144,6 +155,14 @@ if [[ -z "${configured}" ]] && atrium_config_has_key '[paths]' 'backup_dir'; the
   declared_empty=1
 fi
 
+# COMPARISON FORMS. Every "are these the same directory?" question below is asked of the
+# canonical form, because the resolver ADOPTS the canonical path (CWE-59): compared raw, an
+# honoured-but-symlinked declaration reads as a MISMATCH on a working install. Drawn from
+# the library that owns the rule rather than re-derived here. Every value the report PRINTS
+# stays raw — what the operator wrote is what they need to see in order to correct it.
+resolved_canonical="$(atrium_canonical_config_path "${resolved}")"
+configured_canonical="$(atrium_canonical_config_path "${configured}")"
+
 add_location "${resolved}"
 add_location "${default_dir}"
 add_location "${configured}"
@@ -163,7 +182,8 @@ say_location "default location     " "${default_dir}"
 stranded=""
 stranded_count=0
 for candidate in ${LOCATIONS[@]+"${LOCATIONS[@]}"}; do
-  if [[ "${candidate}" == "${resolved}" ]]; then
+  # shellcheck disable=SC2310,SC2312  # the wrapper returns 0 on every path: no status is masked and the set -e suspension is immaterial
+  if [[ "$(atrium_canonical_config_path "${candidate}")" == "${resolved_canonical}" ]]; then
     continue
   fi
   count="$(atrium_backup_dump_count "${candidate}")"
@@ -178,7 +198,7 @@ done
 # condition and is tracked separately only because it names no path, so every line that
 # would quote one has to say something else.
 declined=0
-if [[ -n "${configured}" && "${configured}" != "${resolved}" ]]; then
+if [[ -n "${configured}" && "${configured_canonical}" != "${resolved_canonical}" ]]; then
   declined=1
 fi
 

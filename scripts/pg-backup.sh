@@ -41,6 +41,11 @@ trap 'die "line ${LINENO}: ${BASH_COMMAND}"' ERR
 # pinned byte-equal to the resolver's own default by
 # test/db-backup-path-consistency.bats — the duplication is deliberate (the SoT is
 # unreachable in exactly the branch that needs it) and mechanically held equal.
+#
+# SEAM: ATRIUM_CONFIG_LIB is a TEST-ONLY override of the library PATH — the sandbox
+# seam the bats suites pin, never an operator knob. Production always resolves the
+# sibling path spelled below, the same way ATRIUM_CONFIG_TOML and GA_DB_BACKUP_DIR
+# are labelled test/sandbox overrides in atrium-config.sh.
 resolve_backup_dir() {
   local lib="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/lib/atrium-config.sh}"
   # An && chain, not `|| true`: every step's failure lands on the one fallback arm
@@ -59,6 +64,22 @@ readonly BACKUP_DIR
 readonly DUMP_PATH="${BACKUP_DIR}/${FILENAME}"
 
 # 1. Ensure backup directory exists. mkdir -p is idempotent.
+#
+#    CREATION MASK (CWE-732). A dump is the entire database in one file, so it must
+#    not land 0644 under the caller's default mask: 077 makes a directory this step
+#    creates 0700 and the dump written at step 3 0600. The same user runs pg_restore,
+#    so owner-only loses nothing.
+#
+#    SCOPED, not global — restored at step 4, before the rotation moves anything into
+#    ~/.Trash, so the rest of the run keeps whatever mask the operator's environment
+#    set. A `die` between here and there exits the process, which restores it too.
+#
+#    HONEST LIMIT: umask governs CREATION only. An already-existing backup directory
+#    keeps the mode it has, and this step does not tighten it — that is the
+#    reconciler's surface, not the nightly job's.
+PRIOR_UMASK="$(umask)"
+readonly PRIOR_UMASK
+umask 077
 mkdir -p "${BACKUP_DIR}"
 
 # 2. Verify pg_dump is on PATH. Under launchd the EnvironmentVariables PATH
@@ -79,6 +100,10 @@ fi
 if [[ ! -s "${DUMP_PATH}" ]]; then
   die "pg_dump produced empty file: ${DUMP_PATH}"
 fi
+
+# Creation-mask scope ends here — everything below only MOVES files that already
+# exist, so it runs under the operator's own mask.
+umask "${PRIOR_UMASK}"
 
 # POSIX byte count (identical on BSD+GNU) — NOT `stat -f`/`stat -c` (BSD/GNU-divergent:
 # GNU `-f` means --file-system, so '%z' becomes a bad file operand and the ERR trap dies).
