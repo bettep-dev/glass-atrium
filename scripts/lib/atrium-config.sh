@@ -295,6 +295,10 @@ atrium_resolve_haiku_model() {
 #   4 a value nobody acted on               | absent   | >0            | default + WARN
 #   5 relative, empty, or not a directory   | -        | any           | default + WARN
 #
+# Case 5 is reported by THREE surfaces that have to agree: this WARN, the reconciler's
+# report and doctor §24 each classify a DECLARED-but-empty value as a misconfiguration
+# rather than as an absent key, and each names the same reason for it.
+#
 # Honest limit: 3 and 4 are separated ONLY by the dump census, so a NEW relocation
 # configured on an install that already holds dumps reads as 4 and is not honored
 # until the operator reconciles. That is the intended trade — a loud non-adoption
@@ -352,8 +356,13 @@ _atrium_dir_is_creatable() {
 # An absent key is fresh-clone safety and resolves silently; a key present with an
 # empty value is a misconfiguration and earns the WARN (case 5). Reuses the shared
 # enumerator rather than adding a second reader of the TOML grammar.
+#
+# PUBLIC because that distinction is not the resolver's alone: the reconciler and
+# doctor §24 report the same classification, and atrium_toml_get returns the empty
+# string for BOTH shapes, so each surface would otherwise need its own reader of the
+# grammar to tell them apart — three readers that can drift.
 # Args: $1 = table header literal · $2 = key name.
-_atrium_config_has_key() {
+atrium_config_has_key() {
   local section="$1" key="$2" needle keys
   needle="${section}"$'\t'"${key}" # the enumerator's record separator, spelled once
   keys="$(atrium_toml_keys)"
@@ -366,7 +375,10 @@ _atrium_config_has_key() {
 #       · $5 reason.
 _atrium_backup_dir_warn() {
   local configured="$1" resolved="$2" cand_dumps="$3" resolved_dumps="$4" reason="$5"
-  local target_home facade_note=""
+  local target_home facade_note="" shown="$1"
+  # An empty declaration has no path to print, and `backup_dir= not adopted` reads as a
+  # truncated message rather than as the value the operator actually wrote.
+  [[ -n "${shown}" ]] || shown='""'
   if [[ -n "${_ATRIUM_BACKUP_DIR_WARNED:-}" ]]; then
     return 0
   fi
@@ -380,7 +392,7 @@ _atrium_backup_dir_warn() {
     facade_note=" [under the install facade root ${target_home}]"
   fi
   printf 'atrium-config: WARNING: [paths].backup_dir=%s not adopted (%s)%s — resolving to %s. dumps: configured=%s resolved=%s. Nothing was moved or created; run scripts/reconcile-backup-dir.sh to reconcile.\n' \
-    "${configured}" "${reason}" "${facade_note}" "${resolved}" "${cand_dumps}" "${resolved_dumps}" >&2
+    "${shown}" "${reason}" "${facade_note}" "${resolved}" "${cand_dumps}" "${resolved_dumps}" >&2
 }
 
 # Resolve the effective pg_dump backup directory (contract + case table above).
@@ -404,7 +416,7 @@ atrium_backup_dir() {
   done
 
   # 2. undeclared key → default, silent (fresh-clone safety, as every accessor here).
-  if [[ -z "${configured}" ]] && ! _atrium_config_has_key '[paths]' 'backup_dir'; then
+  if [[ -z "${configured}" ]] && ! atrium_config_has_key '[paths]' 'backup_dir'; then
     printf '%s\n' "${default_dir}"
     return 0
   fi
@@ -420,8 +432,13 @@ atrium_backup_dir() {
   default_dumps="$(atrium_backup_dump_count "${default_dir}")"
   cand_dumps="$(atrium_backup_dump_count "${configured}")"
 
-  # 5. adoption rule.
-  if [[ "${configured}" != /* ]]; then
+  # 5. adoption rule. The empty declaration is tested FIRST because it is not a path at
+  #    all, so every reason below would describe it wrongly — "not an absolute path" in
+  #    particular sends the operator looking for a path to correct where there is none.
+  if [[ -z "${configured}" ]]; then
+    _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
+      "declared with an empty value"
+  elif [[ "${configured}" != /* ]]; then
     _atrium_backup_dir_warn "${configured}" "${default_dir}" "${cand_dumps}" "${default_dumps}" \
       "not an absolute path"
   elif [[ -d "${configured}" ]]; then

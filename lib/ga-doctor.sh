@@ -1035,13 +1035,16 @@ run_doctor() {
   #     fatigue ADR-10 split doctor from the reconciler to avoid, so each row states a condition an
   #     operator still has to close:
   #       (a) a DECLARED value the resolver is not honouring — the config states an intent nobody
-  #           acted on (ADR-6 cases 4 and 5);
+  #           acted on (ADR-6 cases 4 and 5). A key declared with an EMPTY value is that condition
+  #           too: atrium_toml_get cannot tell it from an absent key, so the row is gated on the
+  #           library's own classifier rather than on a non-empty value — gating on non-empty hid
+  #           exactly the shape whose WARN nobody can read;
   #       (b) resolution outside the default WHILE the default still holds dumps — that archive sits
   #           outside both the rotation window and any restore search. A customization whose old
   #           location is empty is the knob working as documented and stays silent.
   #     Neither condition implies the other and both can stand at once. WHAT TO DO about either is
   #     the reconciler's report; this section only says the condition exists.
-  local bkpdir_configured bkpdir_resolved bkpdir_default bkpdir_default_dumps
+  local bkpdir_configured bkpdir_resolved bkpdir_default bkpdir_default_dumps bkpdir_declared_empty
   bkpdir_default="$(atrium_backup_dir_default)"
   bkpdir_configured="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'backup_dir')"
   # The resolver's WARN carries the same facts the rows below print and fires in whichever process
@@ -1053,7 +1056,18 @@ run_doctor() {
   while [[ "${bkpdir_configured}" == */ && "${bkpdir_configured}" != "/" ]]; do
     bkpdir_configured="${bkpdir_configured%/}"
   done
-  if [[ -n "${bkpdir_configured}" && "${bkpdir_configured}" != "${bkpdir_resolved}" ]]; then
+  # Declared-empty vs. absent, from the library that draws the distinction — never re-derived
+  # here. Trailing-slash stripping cannot turn one into the other, so the order is free.
+  bkpdir_declared_empty=0
+  if [[ -z "${bkpdir_configured}" ]] \
+    && ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_config_has_key '[paths]' 'backup_dir'; then
+    bkpdir_declared_empty=1
+  fi
+  # One row for condition (a) under either shape: the arms are mutually exclusive by construction
+  # (empty vs. non-empty), and both carry the `backup dir` stem the census counts.
+  if [[ "${bkpdir_declared_empty}" -eq 1 ]]; then
+    log "  note : backup dir unreconciled — [paths].backup_dir is declared with an empty value, which names no location, so the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
+  elif [[ -n "${bkpdir_configured}" && "${bkpdir_configured}" != "${bkpdir_resolved}" ]]; then
     log "  note : backup dir unreconciled — [paths].backup_dir names ${bkpdir_configured}, but the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
   fi
   if [[ "${bkpdir_resolved}" != "${bkpdir_default}" ]]; then

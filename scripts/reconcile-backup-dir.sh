@@ -15,7 +15,12 @@
 #
 # WHAT COUNTS AS A MISMATCH — two independent conditions, either of which stands alone:
 #   (a) a declared [paths].backup_dir was NOT adopted, so the config states an intent the
-#       resolver is deliberately ignoring (ADR-6 cases 4 and 5, the loud non-adoption);
+#       resolver is deliberately ignoring (ADR-6 cases 4 and 5, the loud non-adoption).
+#       An EMPTY declaration is that condition too — atrium_toml_get returns the empty
+#       string for a declared-empty key and for an absent one alike, so this script asks
+#       atrium_config_has_key which shape it has rather than reading the first as the
+#       second: the resolver WARNs about it, and a report that answered "not declared,
+#       nothing to reconcile" would contradict the surface it is the remedy for;
 #   (b) dumps sit at a location the resolver will NOT write to.
 # Condition (b) is not implied by (a) and neither replaces the other. A configured
 # directory that EXISTS wins adoption, so config and resolved AGREE — (a) is silent —
@@ -84,6 +89,8 @@ readonly CONFIG_LIB
 . "${CONFIG_LIB}"
 declare -F atrium_backup_dir >/dev/null \
   || die "${EXIT_NO_LIB}" "atrium_backup_dir not defined by ${CONFIG_LIB}"
+declare -F atrium_config_has_key >/dev/null \
+  || die "${EXIT_NO_LIB}" "atrium_config_has_key not defined by ${CONFIG_LIB}"
 
 # add_location <dir> — append to LOCATIONS unless already present (bash 3.2 has no sets).
 LOCATIONS=()
@@ -126,8 +133,16 @@ default_dir="$(atrium_backup_dir_default)"
 configured="$(atrium_toml_get '[paths]' 'backup_dir')"
 # The resolver's own WARN points AT this script, so re-printing it above this report would
 # say the same thing twice, less clearly.
-# GA-ABSORB[handled@this report]: stderr only — the resolver always returns 0 and always echoes a path, and every fact its WARN carries is printed below
+# GA-ABSORB[handled@this report]: stderr only — the resolver always returns 0 and always echoes a path, and the paths and censuses its WARN carries are printed below; its decline REASON is deliberately not re-derived here, since a second reader of the adoption rule could disagree with the first
 resolved="$(atrium_backup_dir 2>/dev/null)"
+
+# A key present with an empty value is ADR-6 case 5, not an absent key. The two are
+# indistinguishable in the value alone, so the classification comes from the library that
+# makes it — this script never re-implements the distinction.
+declared_empty=0
+if [[ -z "${configured}" ]] && atrium_config_has_key '[paths]' 'backup_dir'; then
+  declared_empty=1
+fi
 
 add_location "${resolved}"
 add_location "${default_dir}"
@@ -136,6 +151,8 @@ add_location "${configured}"
 say "config file          : ${config_file}"
 if [[ -n "${configured}" ]]; then
   say_location "[paths].backup_dir   " "${configured}"
+elif [[ "${declared_empty}" -eq 1 ]]; then
+  say "[paths].backup_dir   : (declared with an empty value)"
 else
   say "[paths].backup_dir   : (not declared)"
 fi
@@ -157,17 +174,22 @@ for candidate in ${LOCATIONS[@]+"${LOCATIONS[@]}"}; do
   fi
 done
 
-# Condition (a): a declared value the resolver declined.
+# Condition (a): a declared value the resolver declined. The empty declaration is the same
+# condition and is tracked separately only because it names no path, so every line that
+# would quote one has to say something else.
 declined=0
 if [[ -n "${configured}" && "${configured}" != "${resolved}" ]]; then
   declined=1
 fi
 
-if [[ -z "${stranded}" && "${declined}" -eq 0 ]]; then
+if [[ -z "${stranded}" && "${declined}" -eq 0 && "${declared_empty}" -eq 0 ]]; then
   say "nothing to reconcile: the resolver writes where the dumps are, and no declared value is being ignored."
   exit 0
 fi
 
+if [[ "${declared_empty}" -eq 1 ]]; then
+  say "MISMATCH: [paths].backup_dir is declared with an empty value, which names no location — the resolver will write to ${resolved}. An empty declaration is a misconfiguration, not the stock shape: deleting the key is what selects the default."
+fi
 if [[ "${declined}" -eq 1 ]]; then
   say "MISMATCH: [paths].backup_dir names ${configured}, but the resolver will write to ${resolved} — the configured value is not being honoured."
 fi
@@ -184,8 +206,12 @@ if [[ "${declined}" -eq 1 ]]; then
   else
     say "Option 1 - honour the configured location: create ${configured} yourself, move any dumps from ${resolved} into it, then re-run this script."
   fi
-else
+elif [[ -n "${stranded}" ]]; then
   say "Option 1 - keep writing where the resolver writes: move the ${stranded_count} dump(s) from ${stranded} into ${resolved} yourself, then re-run this script."
+else
+  # The empty declaration with nothing stranded: no archive is in the wrong place, so the
+  # only move is to the config, and Option 1 is the intent the empty value failed to state.
+  say "Option 1 - name the location you meant: set [paths].backup_dir to an absolute path in ${config_file}, create that directory yourself, then re-run this script."
 fi
 say "Option 2 - keep the dumps where they are: set [paths].backup_dir = \"${keep_target}\" in ${config_file} (or delete the key to fall back to ${default_dir}), then re-run this script."
 say "Nothing was created, moved or deleted by this run."

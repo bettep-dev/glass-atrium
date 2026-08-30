@@ -11,6 +11,7 @@
 #   AC2  resolved outside the default, default POPULATED -> exactly one row, naming the census
 #   AC3  fresh install (value = the default)           -> ZERO rows
 #   AC4  a customization in use, default EMPTY         -> ZERO rows (the knob working as documented)
+#   AC4b a value declared EMPTY                        -> exactly one row, total unmoved
 #   AC5  the warning total is identical across all three shapes (kind B)
 #   AC6  the row's identifier stem is registered kind B in the summary contract
 #
@@ -159,6 +160,27 @@ warn_total_of_output() {
   seed_dump "${CUSTOM_DIR}"
   run_doctor_sandbox
   assert_row_count 0
+}
+
+@test "AC4b a value declared with an empty string is reported once, total unmoved" {
+  # ADR-6 case 5. The resolver declines it and WARNs into the nightly job's unread stderr,
+  # which is the exact condition this section exists to make standing — gating the row on a
+  # non-empty configured value hides the one shape the operator cannot see anywhere else.
+  local healthy empty
+  seed_config "${DEFAULT_DIR}"
+  run_doctor_sandbox
+  healthy="$(warn_total_of_output)"
+
+  seed_config ""
+  run_doctor_sandbox
+  assert_row_count 1
+  assert_output_has "backup dir unreconciled"
+  assert_output_has "empty value"
+  empty="$(warn_total_of_output)"
+  [[ "${healthy}" == "${empty}" ]] || {
+    printf 'kind-B violation: warning total moved healthy=%s empty=%s\n' "${healthy}" "${empty}" >&2
+    return 1
+  }
 }
 
 @test "AC5 the warning total is identical across healthy, declined and relocated (kind B)" {

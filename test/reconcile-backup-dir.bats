@@ -13,6 +13,11 @@
 #   2 a declared value the resolver declined                                -> rc != 0
 #   2b a declared value that WON while the dumps stayed behind (silent split) -> rc != 0
 #   3 no [paths].backup_dir key at all                                      -> rc 0
+#   4 the key declared with an EMPTY value                                  -> rc != 0
+#
+# Shape 4 is the contract-consistency one: ADR-6 classifies it as case 5 and WARNs, so a
+# reconciler that reports it as "(not declared)" and exits 0 contradicts the resolver on
+# the one surface an operator is told to run.
 #
 # Shape 2b is the one a config-vs-resolved string comparison cannot see: the configured
 # directory exists, so it is adopted, so the two agree — while the archive at the default
@@ -170,6 +175,40 @@ assert_untouched() {
   [[ "${status}" -eq 0 ]] || { echo "expected rc 0, got ${status}; out=${output}" >&2; return 1; }
   [[ "${output}" == *"(not declared)"* ]] || {
     echo "an undeclared key was not reported as such; out=${output}" >&2
+    return 1
+  }
+  assert_untouched "${before}"
+}
+
+@test "AC-C9(4) the key declared EMPTY -> reported as declared, rc != 0, nothing touched" {
+  local before
+  # ADR-6 case 5: the key is present with an empty value, so the resolver declines it and
+  # WARNs. The reconciler is where that WARN points, so it must not read as an absent key.
+  seed_dumps "${DEFAULT_DIR}" 1
+  write_config ""
+  before="$(tree_snapshot)"
+
+  run_reconcile
+  [[ "${status}" -ne 0 ]] || {
+    echo "a declared-but-empty value is a misconfiguration; expected a non-zero rc, got ${status}; out=${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"declared with an empty value"* ]] || {
+    echo "the empty declaration is not named in the report; out=${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"(not declared)"* ]] || {
+    echo "a declared-but-empty key was reported as undeclared; out=${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"nothing to reconcile"* ]] || {
+    echo "the report claims nothing to reconcile while the resolver is declining the value; out=${output}" >&2
+    return 1
+  }
+  # The operator still needs a way out, and it cannot be "honour the configured location"
+  # because the configuration names none.
+  [[ "${output}" == *"Option 1"* && "${output}" == *"Option 2"* ]] || {
+    echo "the two operator options are not both present; out=${output}" >&2
     return 1
   }
   assert_untouched "${before}"

@@ -442,7 +442,7 @@ backup_resolve() {
   }
 }
 
-@test "AC-C2(5b) a declared-but-empty value -> default + WARN" {
+@test "AC-C2(5b) a declared-but-empty value -> default + WARN naming ITS OWN reason" {
   mkdir -p -- "${WORK}/ga"
   backup_fixture ""
   backup_resolve
@@ -452,6 +452,17 @@ backup_resolve() {
   }
   [[ -n "${stderr}" ]] || {
     printf 'a declared-but-empty value is a misconfiguration and must warn\n' >&2
+    return 1
+  }
+  # The reason has to name the shape the operator actually has. An empty value is not
+  # "not an absolute path" — that reason sends them looking for a path to fix, and the
+  # reconciler and doctor rows quote this same classification back at them.
+  [[ "${stderr}" == *"declared with an empty value"* ]] || {
+    printf 'the WARN must give the empty declaration its own reason: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" != *"not an absolute path"* ]] || {
+    printf 'an empty value must not be reported as a relative path: %s\n' "${stderr}" >&2
     return 1
   }
 }
