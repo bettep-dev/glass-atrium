@@ -26,7 +26,7 @@ export const DIAGRAMS = [
 		slug: "v2-overview-entry",
 		title: "How work enters and gets assigned",
 		description:
-			"Three kinds of input — a code repository, a user's message, or a scheduled background job — wake the main orchestrator, which runs its four-step routine and hands the work to the right specialist agents. Agent tool calls pass through safety checks before any result is saved. Saved results flow onward into the data layer (the second overview diagram).",
+			"Three kinds of input — a code repository, a user's message, or a scheduled background job — wake the main orchestrator, which runs its four-step routine and hands the work to the right specialist agents. Agent tool calls pass through safety checks before any result is saved. Saved results flow onward into the data layer (the second overview diagram), from which finished documents are rendered for export by a headless Chromium.",
 		mermaid_source: `flowchart LR
     subgraph entry["External inputs"]
         repo[Project repository]
@@ -55,6 +55,10 @@ export const DIAGRAMS = [
         pg_db[("PostgreSQL database")]
     end
 
+    subgraph export["Document export"]
+        doc_export["Document export (headless Chromium)"]
+    end
+
     from_improvement[/"← Data · documents · improvement layer<br/>(boundary: instruction updates)"/]
     to_html_gate[/"→ Data · documents · improvement layer<br/>(boundary: document POST)"/]
 
@@ -65,6 +69,7 @@ export const DIAGRAMS = [
     agents -- "tool calls" --> hooks
     agents -- "saves documents" --> to_html_gate
     hooks -- "saves results" --> data
+    data -- "renders stored content" --> export
     from_improvement -- "instruction updates" --> agents`,
 	},
 	{
@@ -432,29 +437,46 @@ export interface CanonicalMap {
 	// drawn 이 그리는 흐름을 말하는 자기 서술 (ADR-9). source 서술은 source 를 말해야 하므로 둘은 갈라짐 —
 	// drawn 에 없는 `repo` 를 source 서술이 부르기 때문. 미설정이면 파서가 source 서술로 되돌아감.
 	description?: string;
+	// 그려지는 것을 말하는 제목 (ADR-16). SVG 의 aria-label 과 내장 <title> 이 이 문자열을 실으므로
+	// source 제목이 남으면 스크린리더가 그리지 않는 그림을 먼저 읽음. 미설정이면 서술과 같은 자리에서 source 제목으로 되돌아감.
+	title?: string;
 	// drawn 에서 빠진 source 노드 id. 각 항목의 실재/부재는 예산 테스트가 검사하나 목록의 완전성은 기계가 보지 못함.
 	omitted_node_ids: readonly string[];
 }
 
 export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
-	detail: "balanced",
-	// 그려지는 것을 말하는 서술 (ADR-9) — 흐름의 다섯 마디를 모두 이름으로 부르고 `repo` 는 부르지 않음.
+	// `faithful` 재배정 (ADR-15) — 확정 흐름은 `balanced`(9/6) 아래에서 엣지 7/6 으로 fail 임.
+	// 상한 행의 값은 건드리지 않고 이미 선언된 행으로 옮김 — 계기를 그림에 맞춰 고치는 것과 다른 행위임.
+	// 정직하게: `faithful` 은 오늘까지 한 번도 집행된 적 없는 행이라 검증된 행이 아니라 처음 켜지는 행임.
+	// 밴드가 느슨해진 만큼(9/14)은 예산이 아니라 회귀 잠금 ①②③ 과 커버리지 단언이 메움.
+	detail: "faithful",
+	// 그려지는 것을 말하는 제목 (ADR-16) — 그림이 배정에서 끝나지 않고 저장·내보내기까지 감.
+	title: "How a command is carried out",
+	// 그려지는 것을 말하는 서술 (ADR-9) — 흐름의 일곱 마디를 모두 이름으로 부르고 `repo` 는 부르지 않음.
 	description:
-		"A user utterance or a scheduled background job wakes the orchestrator; the orchestrator plans the work and assigns it to the specialist agents; every tool call the agents make passes through the hook pipeline's safety checks and tracking, and the resulting records are saved to the PostgreSQL database.",
+		"A user utterance or a scheduled background job wakes the orchestrator; the orchestrator plans the work and assigns it to the specialist agents; every tool call the agents make passes through the hook pipeline's safety checks and tracking, and the resulting records are saved to the PostgreSQL database, from which finished documents are rendered for export by a headless Chromium.",
 	/**
 	 * 감축본 — 렌더 제약(폭·content-budget 계수기)을 통과하도록 손본 형태.
-	 * 지도가 아니라 명령이 수행되는 흐름임 (ADR-6): 발화·예약 작업 → 오케스트레이터 → 에이전트 → 훅 → PostgreSQL.
+	 * 지도가 아니라 명령이 수행되는 흐름임 (ADR-6): 발화·예약 작업 → 오케스트레이터 → 에이전트 → 훅 →
+	 * PostgreSQL → 문서 내보내기. 마지막 마디는 장식이 아니라 `/api/health` 의 `browser` 판정이 실제로 재는
+	 * 대상임 — clauded-docs 내보내기용 공유 chromium 의 기동 결과이고, 저장된 것을 사람이 가져갈 형태로
+	 * 만드는 것이 명령이 끝나는 자리임 (ADR-14: 지배값은 예산이 아니라 부품 커버리지임).
 	 * 감축: 경계 노드 2종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
+	 * source 의 문서 마디는 경계 노드(`to_html_gate`)로 나가나 drawn 은 그 경계를 지우므로 목적지를
+	 * 데이터 존으로 당김 — 39546 ADR-7 이 `to_data` 에 대해 한 것과 같은 흡수임.
 	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8, 사용자 비준 2026-08-31) — source 에는 그대로 남고 원장에 오름.
-	 * 라벨 벼랑: `hook_pipeline` 의 `Hook pipeline (safety checks + tracking)` 이 최장 라벨로 정확히 40자이고
-	 * balanced 라벨 상한은 45 임 — 비율 40/45 = 0.889 로 pass 이나, 한 글자만 늘어도 0.911 이 되어 warn 으로 뒤집힘.
-	 * 같은 여유 0 이 노드(8/9)와 엣지(5/6)에도 걸림 — 상한까지의 칸수는 fail 까지의 거리이지 pass 의 여유가 아님.
+	 * 자리가 없어서가 아님: `faithful` 아래에서 되돌려도 10노드·8엣지로 여전히 pass 임 (ADR-15 §8).
+	 * 라벨 여유: `hook_pipeline` 의 `Hook pipeline (safety checks + tracking)` 이 최장 라벨로 정확히 40자이고
+	 * faithful 라벨 상한은 50 임 — 40/50 = 0.8 로 pass 이며 warn(0.9)까지 다섯 글자 남음.
+	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
+	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
 	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
 	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
-	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 가 엣지로 세어져 상한을 넘김.
+	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 두 줄이 엣지로 세어져 계수가 정확히 2 늘어남
+	 * (`faithful` 아래에서는 그래도 상한 안이므로 계기는 상한 위반이 아니라 그 증분을 잼).
 	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
 	mermaid_drawn: `flowchart TD
@@ -484,11 +506,17 @@ export const CANONICAL_MAP: CanonicalMap = {
         pg_db[("PostgreSQL database")]
     end
 
+    subgraph export["Document export"]
+        doc_export["Document export (headless Chromium)"]
+    end
+
     user --> orch
     daemon --> orch
     orch -- "assigns work" --> agents
     agents -- "tool calls" --> hooks
+    agents -- "saves documents" --> data
     hooks -- "saves results" --> data
+    data -- "renders stored content" --> export
 
     classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
     classDef external fill:#332e2a,stroke:#544c47,color:#a09a96

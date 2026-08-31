@@ -22,9 +22,11 @@ import {
 import { buildSingleDiagram } from "../src/server/architecture/parser.js";
 import { extractFlows } from "../src/server/architecture/flow-extractor.js";
 
-// T3 grade assignment for the canonical map — the budget test compares the declared value against it,
-// so raising `detail` to dodge a cap reddens here instead of silently widening the budget.
-const ASSIGNED_GRADE = "balanced";
+// T3 grade assignment for the canonical map — the budget test compares the declared value against it.
+// ADR-15 재배정: `balanced`(9/6) 아래에서 확정 흐름은 엣지 7/6 으로 fail 이므로 이미 선언된 `faithful` 행으로 옮겼음.
+// 이 대조(AC-7)는 관문이 아니라 두 리터럴의 악수임 — 둘을 함께 고치면 초록으로 남으므로 등급을 지키지 못함.
+// 등급 이동이 값을 넓히는 것으로 번지지 않게 하는 실제 보증은 아래 회귀 잠금 ②(상한 두 행의 값 고정)임.
+const ASSIGNED_GRADE = "faithful";
 
 const canonicalSource = DIAGRAMS.find((d) => d.slug === CANONICAL_MAP.slug);
 const drawn = CANONICAL_MAP.mermaid_drawn;
@@ -94,8 +96,9 @@ test("AC-5 drawn node label chars <= its grade cap outside the literal exemption
   assert.equal(getBudgetReport(over, ASSIGNED_GRADE).state, "fail");
 });
 
-// P0-2 — 설정을 소스에 싣는 두 방법 중 frontmatter 는 ARROW 정규식이 `---` 를 엣지로 세어
-// balanced 상한(edges 6)을 넘긴다. 아래 픽스처가 그 사실의 반증 가능한 형태(ADR-2).
+// P0-2 — 설정을 소스에 싣는 두 방법 중 frontmatter 는 ARROW 정규식이 `---` 를 엣지로 센다.
+// 아래 픽스처가 그 사실의 반증 가능한 형태(ADR-2). 계기는 상한 위반이 아니라 엣지 증분임 —
+// `faithful` 아래에서는 펜스를 실어도 9/18 로 여전히 pass 라, 상한을 계기로 쓰면 영구 초록이 된다.
 const FRONTMATTER_FIXTURE = `---
 config:
   layout: elk
@@ -124,9 +127,10 @@ test("P1-1 the drawn source carries no %%{init}%% directive — layout and theme
   assert.deepEqual(getMermaidCensus(`%%{init: {"layout": "dagre"}}%%\n${drawn}`), getMermaidCensus(drawn));
 
   // 설정을 소스 밖으로 옮겨도 콘텐츠 계수는 그대로여야 함 — 상한 대비 여유가 아니라 실측값을 고정한다.
+  // 잠금 ①에도 같은 두 리터럴이 있으나 합치지 말 것 — 여기가 재는 것은 지시자 유무이지 볼륨이 아님.
   const census = getMermaidCensus(drawn);
-  assert.equal(census.nodeCount, 8, "the drawn map counts 8 nodes");
-  assert.equal(census.edgeCount, 5, "the drawn map counts 5 edges");
+  assert.equal(census.nodeCount, 9, "the drawn map counts 9 nodes");
+  assert.equal(census.edgeCount, 7, "the drawn map counts 7 edges");
 });
 
 test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {
@@ -139,11 +143,14 @@ test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {
     [],
     `frontmatter fence at line(s) ${fences.map(([i]) => i).join(", ")} — ARROW counts each as an edge`,
   );
-  // adversarial: 같은 콘텐츠를 frontmatter 로 실으면 상한을 넘김 — 위 규칙이 지키는 대상.
-  const report = getBudgetReport(FRONTMATTER_FIXTURE, ASSIGNED_GRADE);
-  assert.equal(report.state, "fail");
-  const edges = report.measures.find((m) => m.metric === "edges");
-  assert.ok(edges !== undefined && edges.measured > edges.cap, `frontmatter edges ${edges?.measured}`);
+  // AC-B2-1h adversarial: 같은 콘텐츠를 frontmatter 로 실으면 펜스 두 줄이 엣지로 세어짐 — 위 규칙이 지키는 대상.
+  // 계기는 상한 위반이 아니라 증분임: 상한을 쓰면 `faithful` 아래에서 9/18 로 pass 가 되어 영구 초록이 된다.
+  // 증분은 콘텐츠 비의존임 — 펜스 헤더는 drawn 이 무엇을 그리든 `---` 토큰 둘을 더하고 노드는 하나도 안 더함.
+  // 계수기를 직접 통과해 잼 — 예산 판정을 경유하면 B2-0 의 형태 술어가 픽스처를 먼저 분류한다.
+  const plain = getMermaidCensus(drawn);
+  const fenced = getMermaidCensus(FRONTMATTER_FIXTURE);
+  assert.equal(fenced.edgeCount - plain.edgeCount, 2, "the two fence lines must each count as an edge");
+  assert.equal(fenced.nodeCount - plain.nodeCount, 0, "the fence header declares no node");
 });
 
 test("P0-2 accent stays scarce — one or two nodes carry the focal class", () => {
@@ -157,43 +164,75 @@ test("P0-2 accent stays scarce — one or two nodes carry the focal class", () =
   assert.match(drawn, /^\s*classDef focal\s/m, "the focal class must be declared before it is assigned");
 });
 
-// ----- B2-1 회귀 잠금 (둘은 서로 다른 일을 함 — 하나로 대체 금지) -----------------
-// ① 아래 "실측값" 테스트가 노드가 **줄어드는** 변경(8 → 7)을 잡음 — 그 변경은 `pass` 를 유지하므로
+// ----- B2-1 회귀 잠금 (셋은 서로 다른 일을 함 — 서로를 대체 못 함) -----------------
+// 예산이 `faithful` 로 느슨해졌으므로(9/14 · 7/18) 볼륨을 지키는 것은 밴드가 아니라 이 셋임.
+// ① 아래 "실측값" 테스트가 노드가 **줄어드는** 변경(9 → 8)을 잡음 — 그 변경은 `pass` 를 유지하므로
 //    상한 대비 관계식(measured <= cap)만 재는 AC-3/4/5 는 전부 통과시킴.
-// ② 아래 "balanced 상한 행" 테스트가 상한을 **넓히는** 변경을 잡음 — 예산 테스트는 배정 등급으로
+// ② 아래 "상한 두 행" 테스트가 상한을 **넓히는** 변경을 잡음 — 예산 테스트는 배정 등급으로
 //    상한 행을 동적으로 읽고 픽스처마저 상한에서 생성되므로, 이 값 대조가 없으면 상한 확대가 전 스위트를 초록으로 지나감.
+//    배정이 옮겨 갔으므로 `balanced` 와 `faithful` 두 행 모두 잠금 대상임.
+// ③ 아래 "drawn ⊆ source" 테스트가 source 를 건너뛰고 drawn 에만 노드를 **더하는** 변경을 잡음 —
+//    AC-8 은 원장 항목의 실재/부재만 보므로 drawn 전용 노드는 그 검사를 그대로 통과함.
 
-test("B2-1 회귀 잠금 ① drawn 의 실측값 고정 — 노드 8 · 엣지 5 · 라벨 40 · 판정 pass", () => {
+test("B2-1 회귀 잠금 ① drawn 의 실측값 고정 — 노드 9 · 엣지 7 · 라벨 40 · 판정 pass", () => {
   const census = getMermaidCensus(drawn);
   const report = getBudgetReport(drawn, ASSIGNED_GRADE);
   const measured = Object.fromEntries(report.measures.map((m) => [m.metric, m.measured]));
 
-  assert.equal(census.nodeCount, 8, "the drawn flow counts 8 nodes");
-  assert.equal(census.edgeCount, 5, "the drawn flow counts 5 edges");
+  assert.equal(census.nodeCount, 9, "the drawn flow counts 9 nodes");
+  assert.equal(census.edgeCount, 7, "the drawn flow counts 7 edges");
   assert.equal(measured.label_chars, 40, "the longest drawn label is 40 chars");
   assert.equal(measured.subgraph_depth, 1);
   assert.equal(report.state, "pass");
 
-  // 여유 0 의 근거를 값으로 남김 — 노드 하나 · 엣지 하나 · 라벨 한 글자면 곧바로 warn 임.
-  assert.equal(getBudgetReport(`${drawn}\n    extra_node["x"]`, ASSIGNED_GRADE).state, "warn");
+  // "한 칸 더하면 warn" 줄은 여기 없음 — `faithful` 아래에서 노드 +1 · 엣지 +1 · 라벨 +1 이 전부 pass 라
+  // 그 명제가 사실로서 없어졌음. 값을 조정해 되살리면 없는 사실을 계기로 만드는 것이 됨(ADR-15 §5.2).
 
   // 흐름의 출처 마디 — 데몬 3노드가 drawn 에 남아 있어야 live overlay 의 노드 바인딩이 도착지를 가짐.
   const ids = new Set(census.nodes.map((n) => n.id));
   for (const id of ["autoagent_d", "wiki_d", "cron"]) {
     assert.ok(ids.has(id), `daemon node '${id}' left the drawn flow`);
   }
+  // 부품 명부 일곱이 서는 노드 — 커버리지가 지배값이므로(ADR-14) 볼륨 이전에 이 넷의 실재가 잠김.
+  for (const id of ["pg_db", "doc_export", "hook_pipeline", "cron"]) {
+    assert.ok(ids.has(id), `health-bearing node '${id}' left the drawn flow`);
+  }
   // 강조는 흐름의 주체 하나 — 상한 2 를 재는 P0-2 와 달리 배정 자체를 고정함.
   assert.deepEqual(getClassMembers(drawn, "focal"), ["main_session"]);
 });
 
-test("B2-1 회귀 잠금 ② balanced 상한 행이 네 리터럴로 고정됨", () => {
-  // 이름이 아니라 값 — AC-7 은 `balanced` 라는 배정 이름만 잡고 그 행의 수치는 잡지 않음.
+test("B2-1 회귀 잠금 ② 상한 두 행이 각각 네 리터럴로 고정됨", () => {
+  // 이름이 아니라 값 — AC-7 은 배정 이름만 잡고 그 행의 수치는 잡지 않음.
+  // 배정 등급(`faithful`)은 이 그림이 소비하는 행이고, `balanced` 는 배정이 떠나온 행이라 둘 다 잠금 대상임 —
+  // 어느 한쪽을 넓히면 이 계획이 기각한 R3(계기를 그림에 맞춰 고침)이 조용히 실행됨.
+  assert.deepEqual(BUDGET_CAPS.faithful, { nodes: 14, edges: 18, labelChars: 50, subgraphDepth: 1 });
   assert.deepEqual(BUDGET_CAPS.balanced, { nodes: 9, edges: 6, labelChars: 45, subgraphDepth: 1 });
 });
 
-test("AC-B2-1a drawn 은 `pg_db` 를 그리고 `repo` 를 그리지 않으며 원장이 그 사실을 말함", () => {
+test("B2-1 회귀 잠금 ③ drawn id 집합 ⊆ source id 집합 — 차집합이 정확히 원장", () => {
+  // 편집 규칙(source 를 먼저 고치고 drawn 을 그로부터 감축)의 기계적 대응물.
+  // AC-8 은 원장 항목만 훑으므로 source 를 건너뛰고 drawn 에만 더한 노드는 그 검사를 그대로 통과함.
+  assert.ok(canonicalSource !== undefined);
+  const sourceIds = new Set(getMermaidCensus(canonicalSource.mermaid_source).nodes.map((n) => n.id));
+  const drawnIds = getMermaidCensus(drawn).nodes.map((n) => n.id);
+  assert.deepEqual(
+    drawnIds.filter((id) => !sourceIds.has(id)),
+    [],
+    "a node is drawn that no source declares — drawn was edited without its source",
+  );
+  // 반대 방향의 차집합은 원장 그 자체 — 공허한 통과(양쪽이 같아서 빈 차집합) 를 막음.
+  const drawnSet = new Set(drawnIds);
+  assert.deepEqual(
+    [...sourceIds].filter((id) => !drawnSet.has(id)),
+    [...CANONICAL_MAP.omitted_node_ids],
+  );
+});
+
+test("AC-B2-1a drawn 은 `pg_db` 와 `doc_export` 를 그리고 `repo` 를 그리지 않으며 원장이 그 사실을 말함", () => {
   const drawnIds = new Set(getMermaidCensus(drawn).nodes.map((n) => n.id));
-  assert.ok(drawnIds.has("pg_db"), "the flow terminus is not drawn");
+  assert.ok(drawnIds.has("pg_db"), "the store node is not drawn");
+  // `browser` 부품이 서는 자리 — 일곱 중 유일하게 노드가 없던 부품이고, 그 부재가 39552 의 실제 결함이었음.
+  assert.ok(drawnIds.has("doc_export"), "the flow terminus is not drawn — `browser` has no node again");
   assert.ok(!drawnIds.has("repo"), "`repo` is still drawn — the flow has no node for a workspace");
   // 원장은 순서까지 고정 — `to_data` 는 source 에서 사라졌으므로 원장에 남으면 AC-8 실재 검사가 붉어짐.
   assert.deepEqual(CANONICAL_MAP.omitted_node_ids, ["repo", "from_improvement", "to_html_gate"]);
@@ -202,7 +241,7 @@ test("AC-B2-1a drawn 은 `pg_db` 를 그리고 `repo` 를 그리지 않으며 �
 test("AC-B2-1d canonical 서술이 그려진 흐름을 말하고 파서가 그 서술을 실어 나름", async () => {
   const description = CANONICAL_MAP.description;
   assert.ok(description !== undefined && description.length > 0, "canonical carries no self-description");
-  // 흐름의 다섯 마디를 모두 이름으로 부름 — 하나라도 빠지면 서술이 그림보다 짧아짐.
+  // 흐름의 일곱 마디를 모두 이름으로 부름 — 하나라도 빠지면 서술이 그림보다 짧아짐.
   for (const node of [
     "user utterance",
     "scheduled background job",
@@ -210,6 +249,7 @@ test("AC-B2-1d canonical 서술이 그려진 흐름을 말하고 파서가 그 �
     "specialist agents",
     "hook pipeline",
     "PostgreSQL database",
+    "headless Chromium",
   ]) {
     assert.ok(description.includes(node), `description never names '${node}'`);
   }
@@ -230,6 +270,25 @@ test("AC-B2-1d canonical 서술이 그려진 흐름을 말하고 파서가 그 �
   const otherSource = DIAGRAMS.find((d) => d.slug === "v2-overview-data");
   assert.ok(other !== undefined && otherSource !== undefined);
   assert.equal(other.description, otherSource.description);
+});
+
+test("AC-B2-1e canonical 제목이 그려진 흐름을 말하고 파서가 canonical 에만 그것을 실음", async () => {
+  // 제목은 SVG 의 aria-label 과 내장 <title> 에 그대로 실림 — source 제목이 남으면
+  // 스크린리더가 배정에서 끝나는 그림을 먼저 읽고, 실제 그림은 저장·내보내기까지 감 (ADR-16).
+  assert.equal(CANONICAL_MAP.title, "How a command is carried out");
+  assert.ok(canonicalSource !== undefined);
+  assert.notEqual(CANONICAL_MAP.title, canonicalSource.title, "canonical still reuses the source title");
+
+  resetArchitectureCache();
+  const { doc } = await getArchitecture({ warn() {}, info() {} });
+  const built = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_MAP.slug);
+  assert.ok(built !== undefined, "canonical diagram missing from the payload");
+  assert.equal(built.title, CANONICAL_MAP.title);
+  // 비-canonical 여섯은 각자 source 제목을 유지함 — 3항 연산이 전편에 새지 않음.
+  const other = doc.diagrams.diagrams.find((d) => d.id === "v2-overview-data");
+  const otherSource = DIAGRAMS.find((d) => d.slug === "v2-overview-data");
+  assert.ok(other !== undefined && otherSource !== undefined);
+  assert.equal(other.title, otherSource.title);
 });
 
 test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", () => {

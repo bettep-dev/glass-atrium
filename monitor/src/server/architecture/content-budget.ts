@@ -120,8 +120,10 @@ export interface BudgetCaps {
 }
 
 // 등급별 상한 — T2 census(7편 노드 중앙값 14 · 엣지 18 · 최장 라벨 50)에서 파생함.
-// 오늘 소비되는 행은 canonical 맵이 배정받은 balanced 한 줄뿐이며 나머지 두 행은 선언만 되어 있음(집행 없음).
-// balanced 파생 근거 — canonical source 계수(노드 11 · 엣지 8 · 라벨 69)보다 작고(a) 코퍼스 중앙값 이하(b)를 동시에 만족함.
+// 오늘 소비되는 행은 canonical 맵이 배정받은 faithful 한 줄뿐이며 나머지 두 행은 선언만 되어 있음(집행 없음).
+// faithful 재배정 근거 (ADR-15) — 확정 흐름이 balanced(9/6) 아래에서 엣지 7/6 으로 fail 이라 배정을 옮겼음.
+// 행의 값은 무변경임: 코퍼스에서 유도된 상한을 그림에 맞춰 넓히는 것과 이미 선언된 행으로 배정을 옮기는 것은 다른 행위임.
+// balanced 파생 근거 — canonical source 계수(노드 12 · 엣지 9 · 라벨 69)보다 작고(a) 코퍼스 중앙값 이하(b)를 동시에 만족함.
 export const BUDGET_CAPS: Readonly<Record<DetailGrade, BudgetCaps>> = {
 	faithful: { nodes: 14, edges: 18, labelChars: 50, subgraphDepth: 1 },
 	balanced: { nodes: 9, edges: 6, labelChars: 45, subgraphDepth: 1 },

@@ -247,10 +247,13 @@ const CLASSIFICATION_ORACLE: Record<
   // canonical 맵은 payload 가 drawn 을 실어 나름 — 이 오라클 한 줄만 drawn 계측이고 나머지 여섯은 source 계측임.
   // drawn 이 명령의 흐름이 된 뒤의 값(ADR-6): `repo` 가 빠져 store 가 하나 줄고, 데이터 존 + `pg_db` 가 들어와
   // store 가 둘 늘며(존 id 가 엣지 endpoint 로 참조돼 노드로도 등록됨), `saves results` 가 data_flow 로 분류됨.
+  // B2-1 이 내보내기 마디를 더한 뒤(ADR-14): `doc_export` 가 external 하나를 세우고(ADR-17 의 분류 규칙),
+  // export 존 id 가 엣지 endpoint 로 참조돼 agent 노드가 하나 늘며 execution 레이어도 하나 늘어남.
+  // `renders stored content` 의 `content` 가 기존 data_flow 키워드라 두 번째 data_flow 가 됨.
   "v2-overview-entry": {
-    edges: { control_flow: 4, data_flow: 1 },
-    nodes: { agent: 6, daemon: 3, hook: 2, store: 2 },
-    roles: { data: 1, execution: 4, orchestration: 2 },
+    edges: { control_flow: 5, data_flow: 2 },
+    nodes: { agent: 7, daemon: 3, hook: 2, store: 2, external: 1 },
+    roles: { data: 1, execution: 5, orchestration: 2 },
   },
   "v2-overview-data": {
     edges: { control_flow: 17, data_flow: 1 },
@@ -328,9 +331,11 @@ const CANONICAL_SOURCE_ORACLE: {
 } = {
   // ADR-7 흡수 후: `to_data` 경계 노드가 데이터 존 + `pg_db` 로 교체되어 agent 가 하나 줄고 store 가 둘 늘며
   // 존 라벨의 `DB` 키워드가 store 를, 존 제목의 `Data` 가 data 역할을 각각 부름. 엣지는 목적지만 바뀌어 불변.
-  edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
-  nodes: { agent: 7, daemon: 3, gateway: 1, hook: 2, store: 3 },
-  roles: { data: 1, execution: 3, orchestration: 2 },
+  // B2-1 의 내보내기 마디(ADR-14) 뒤: `doc_export` 가 external 을 세우고 export 존 id 가 endpoint 로
+  // 참조돼 agent 가 하나 늘며 execution 역할도 하나 늚. `renders stored content` 가 둘째 data_flow 임.
+  edges: { control_flow: 6, data_flow: 2, writes_to: 1 },
+  nodes: { agent: 8, daemon: 3, external: 1, gateway: 1, hook: 2, store: 3 },
+  roles: { data: 1, execution: 4, orchestration: 2 },
 };
 
 test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그램 == source oracle", () => {
@@ -343,6 +348,33 @@ test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그�
     histogram(out.subgraphs.map((s) => roleForSyntheticSubgraph(s.label))),
     CANONICAL_SOURCE_ORACLE.roles,
   );
+});
+
+test("AC-B2-1f `doc_export` 는 external 로 분류되고 그 규칙이 다른 노드를 재분류하지 않음", () => {
+  // 노드 type 은 노드 상세 드로어에 사람이 읽는 Pill 로 렌더됨 — 분류가 틀리면 화면에 보이는 거짓말이 됨.
+  // 규칙이 없으면 `doc_export` 는 어느 키워드에도 안 걸려 shape 폴백으로 `agent` 가 됨 (ADR-17).
+  const drawnNodes = extract(CANONICAL_MAP.mermaid_drawn).nodes;
+  const exported = drawnNodes.find((n) => n.id.endsWith("doc_export"));
+  assert.ok(exported !== undefined, "the drawn flow declares no `doc_export` node");
+  assert.equal(inferFlowNodeType(exported), "external");
+
+  // 무영향성을 값으로 남김 — 규칙은 키워드 적중에서만 발화하므로, 적중 집합이 `doc_export` 뿐이면
+  // 나머지 전원에 대해 규칙은 구조적으로 no-op 임. 출하 소스에 `browser` 류 라벨이 새로 들어오면 붉어짐.
+  const KEYWORDS = ["chromium", "headless", "browser"];
+  const hits: string[] = [];
+  let total = 0;
+  for (const [name, mermaid] of [
+    ...DIAGRAMS.map((d) => [d.slug, d.mermaid_source] as const),
+    ["drawn", CANONICAL_MAP.mermaid_drawn] as const,
+  ]) {
+    for (const node of extract(mermaid).nodes) {
+      total += 1;
+      const haystack = `${node.id} ${node.label}`.toLowerCase();
+      if (KEYWORDS.some((k) => haystack.includes(k))) hits.push(`${name}:${node.id}`);
+    }
+  }
+  assert.ok(total > 100, `the sweep must actually cover the corpus; it saw ${total} nodes`);
+  assert.deepEqual(hits, ["v2-overview-entry:doc_export", "drawn:doc_export"]);
 });
 
 test("AC-B2-1c 교체된 `to_data` 경계 노드는 일곱 source 어디에도 남아 있지 않음", () => {
