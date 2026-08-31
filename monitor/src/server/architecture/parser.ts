@@ -192,8 +192,11 @@ function buildSystemDiagrams(options: BuildDiagramsOptions): SystemDiagrams {
 
   for (const src of DIAGRAMS) {
     // canonical 항목만 그려지는 문자열(drawn)로 치환 — 렌더가 읽는 payload 필드와 legend/클릭 인덱스가 같은 문자열이어야 SVG 와 일치함.
-    const mermaid = src.slug === CANONICAL_MAP.slug ? CANONICAL_MAP.mermaid_drawn : src.mermaid_source;
-    const built = buildSingleDiagram(src.slug, src.title, src.description, mermaid, logger);
+    const isCanonical = src.slug === CANONICAL_MAP.slug;
+    const mermaid = isCanonical ? CANONICAL_MAP.mermaid_drawn : src.mermaid_source;
+    // 서술도 같은 자리에서 갈림 (ADR-9) — drawn 이 그리지 않는 것을 source 서술이 부르면 a11y 서술이 그림과 어긋남.
+    const description = isCanonical ? CANONICAL_MAP.description ?? src.description : src.description;
+    const built = buildSingleDiagram(src.slug, src.title, description, mermaid, logger);
     if (built === null) {
       logger.warn(
         { title: src.title, id: src.id },

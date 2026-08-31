@@ -51,7 +51,10 @@ export const DIAGRAMS = [
         hook_pipeline["Hook pipeline (safety checks + tracking)"]
     end
 
-    to_data[/"→ Data · documents · improvement layer<br/>(boundary: saved results)"/]
+    subgraph data["Data layer (PostgreSQL glass_atrium DB)"]
+        pg_db[("PostgreSQL database")]
+    end
+
     from_improvement[/"← Data · documents · improvement layer<br/>(boundary: instruction updates)"/]
     to_html_gate[/"→ Data · documents · improvement layer<br/>(boundary: document POST)"/]
 
@@ -61,7 +64,7 @@ export const DIAGRAMS = [
     orch -- "assigns work" --> agents
     agents -- "tool calls" --> hooks
     agents -- "saves documents" --> to_html_gate
-    hooks -- "saves results" --> to_data
+    hooks -- "saves results" --> data
     from_improvement -- "instruction updates" --> agents`,
 	},
 	{
@@ -426,6 +429,9 @@ export interface CanonicalMap {
 	slug: DiagramSlug;
 	mermaid_drawn: string;
 	detail: DetailGrade;
+	// drawn 이 그리는 흐름을 말하는 자기 서술 (ADR-9). source 서술은 source 를 말해야 하므로 둘은 갈라짐 —
+	// drawn 에 없는 `repo` 를 source 서술이 부르기 때문. 미설정이면 파서가 source 서술로 되돌아감.
+	description?: string;
 	// drawn 에서 빠진 source 노드 id. 각 항목의 실재/부재는 예산 테스트가 검사하나 목록의 완전성은 기계가 보지 못함.
 	omitted_node_ids: readonly string[];
 }
@@ -433,9 +439,18 @@ export interface CanonicalMap {
 export const CANONICAL_MAP: CanonicalMap = {
 	slug: "v2-overview-entry",
 	detail: "balanced",
+	// 그려지는 것을 말하는 서술 (ADR-9) — 흐름의 다섯 마디를 모두 이름으로 부르고 `repo` 는 부르지 않음.
+	description:
+		"A user utterance or a scheduled background job wakes the orchestrator; the orchestrator plans the work and assigns it to the specialist agents; every tool call the agents make passes through the hook pipeline's safety checks and tracking, and the resulting records are saved to the PostgreSQL database.",
 	/**
 	 * 감축본 — 렌더 제약(폭·content-budget 계수기)을 통과하도록 손본 형태.
-	 * 감축(T9): 경계 노드 3종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
+	 * 지도가 아니라 명령이 수행되는 흐름임 (ADR-6): 발화·예약 작업 → 오케스트레이터 → 에이전트 → 훅 → PostgreSQL.
+	 * 감축: 경계 노드 2종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
+	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8, 사용자 비준 2026-08-31) — source 에는 그대로 남고 원장에 오름.
+	 * 라벨 벼랑: `hook_pipeline` 의 `Hook pipeline (safety checks + tracking)` 이 최장 라벨로 정확히 40자이고
+	 * balanced 라벨 상한은 45 임 — 비율 40/45 = 0.889 로 pass 이나, 한 글자만 늘어도 0.911 이 되어 warn 으로 뒤집힘.
+	 * 같은 여유 0 이 노드(8/9)와 엣지(5/6)에도 걸림 — 상한까지의 칸수는 fail 까지의 거리이지 pass 의 여유가 아님.
+	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
 	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
 	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
@@ -444,7 +459,6 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 */
 	mermaid_drawn: `flowchart TD
     subgraph entry["External inputs"]
-        repo[Project repository]
         user[User utterance]
     end
 
@@ -466,17 +480,21 @@ export const CANONICAL_MAP: CanonicalMap = {
         hook_pipeline["Hook pipeline (safety checks + tracking)"]
     end
 
-    repo --> orch
+    subgraph data["Data layer (PostgreSQL glass_atrium DB)"]
+        pg_db[("PostgreSQL database")]
+    end
+
     user --> orch
     daemon --> orch
     orch -- "assigns work" --> agents
     agents -- "tool calls" --> hooks
+    hooks -- "saves results" --> data
 
     classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
     classDef external fill:#332e2a,stroke:#544c47,color:#a09a96
     classDef security fill:#332e2a,stroke:#fbbf2480,stroke-width:2px,stroke-dasharray:4 4,color:#fafaf9
     class main_session focal
-    class repo,user external
+    class user external
     class hook_pipeline security`,
-	omitted_node_ids: ["to_data", "from_improvement", "to_html_gate"],
+	omitted_node_ids: ["repo", "from_improvement", "to_html_gate"],
 };

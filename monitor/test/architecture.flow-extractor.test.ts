@@ -244,10 +244,12 @@ const CLASSIFICATION_ORACLE: Record<
   { edges: Record<string, number>; nodes: Record<string, number>; roles: Record<string, number> }
 > = {
   // canonical 맵은 payload 가 drawn 을 실어 나름 — 이 오라클 한 줄만 drawn 계측이고 나머지 여섯은 source 계측임.
+  // drawn 이 명령의 흐름이 된 뒤의 값(ADR-6): `repo` 가 빠져 store 가 하나 줄고, 데이터 존 + `pg_db` 가 들어와
+  // store 가 둘 늘며(존 id 가 엣지 endpoint 로 참조돼 노드로도 등록됨), `saves results` 가 data_flow 로 분류됨.
   "v2-overview-entry": {
-    edges: { control_flow: 5 },
-    nodes: { agent: 6, daemon: 3, hook: 2, store: 1 },
-    roles: { execution: 4, orchestration: 2 },
+    edges: { control_flow: 4, data_flow: 1 },
+    nodes: { agent: 6, daemon: 3, hook: 2, store: 2 },
+    roles: { data: 1, execution: 4, orchestration: 2 },
   },
   "v2-overview-data": {
     edges: { control_flow: 17, data_flow: 1 },
@@ -323,9 +325,11 @@ const CANONICAL_SOURCE_ORACLE: {
   nodes: Record<string, number>;
   roles: Record<string, number>;
 } = {
+  // ADR-7 흡수 후: `to_data` 경계 노드가 데이터 존 + `pg_db` 로 교체되어 agent 가 하나 줄고 store 가 둘 늘며
+  // 존 라벨의 `DB` 키워드가 store 를, 존 제목의 `Data` 가 data 역할을 각각 부름. 엣지는 목적지만 바뀌어 불변.
   edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
-  nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
-  roles: { execution: 3, orchestration: 2 },
+  nodes: { agent: 7, daemon: 3, gateway: 1, hook: 2, store: 3 },
+  roles: { data: 1, execution: 3, orchestration: 2 },
 };
 
 test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그램 == source oracle", () => {
@@ -338,6 +342,12 @@ test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그�
     histogram(out.subgraphs.map((s) => roleForSyntheticSubgraph(s.label))),
     CANONICAL_SOURCE_ORACLE.roles,
   );
+});
+
+test("AC-B2-1c 교체된 `to_data` 경계 노드는 일곱 source 어디에도 남아 있지 않음", () => {
+  // 존재하는 채로 원장에서만 빠지면 AC-8 의 부재 검사가 아니라 실재 검사가 붉어짐 — 죽음을 여기서 못박음.
+  const survivors = DIAGRAMS.filter((d) => /(^|[\s;])to_data([[({\s]|$)/m.test(d.mermaid_source));
+  assert.deepEqual(survivors.map((d) => d.slug), []);
 });
 
 // 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 
 import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
+import { getArchitecture, resetArchitectureCache } from "../src/server/architecture/parser.js";
 import { registerHealthDetailRoutes } from "../src/server/routes/health-detail.js";
 import {
   BUDGET_CAPS,
@@ -149,6 +150,81 @@ test("P0-2 accent stays scarce — one or two nodes carry the focal class", () =
     assert.ok(drawnIds.has(id), `focal class assigned to '${id}', which the drawn source does not declare`);
   }
   assert.match(drawn, /^\s*classDef focal\s/m, "the focal class must be declared before it is assigned");
+});
+
+// ----- B2-1 회귀 잠금 (둘은 서로 다른 일을 함 — 하나로 대체 금지) -----------------
+// ① 아래 "실측값" 테스트가 노드가 **줄어드는** 변경(8 → 7)을 잡음 — 그 변경은 `pass` 를 유지하므로
+//    상한 대비 관계식(measured <= cap)만 재는 AC-3/4/5 는 전부 통과시킴.
+// ② 아래 "balanced 상한 행" 테스트가 상한을 **넓히는** 변경을 잡음 — 예산 테스트는 배정 등급으로
+//    상한 행을 동적으로 읽고 픽스처마저 상한에서 생성되므로, 이 값 대조가 없으면 상한 확대가 전 스위트를 초록으로 지나감.
+
+test("B2-1 회귀 잠금 ① drawn 의 실측값 고정 — 노드 8 · 엣지 5 · 라벨 40 · 판정 pass", () => {
+  const census = getMermaidCensus(drawn);
+  const report = getBudgetReport(drawn, ASSIGNED_GRADE);
+  const measured = Object.fromEntries(report.measures.map((m) => [m.metric, m.measured]));
+
+  assert.equal(census.nodeCount, 8, "the drawn flow counts 8 nodes");
+  assert.equal(census.edgeCount, 5, "the drawn flow counts 5 edges");
+  assert.equal(measured.label_chars, 40, "the longest drawn label is 40 chars");
+  assert.equal(measured.subgraph_depth, 1);
+  assert.equal(report.state, "pass");
+
+  // 여유 0 의 근거를 값으로 남김 — 노드 하나 · 엣지 하나 · 라벨 한 글자면 곧바로 warn 임.
+  assert.equal(getBudgetReport(`${drawn}\n    extra_node["x"]`, ASSIGNED_GRADE).state, "warn");
+
+  // 흐름의 출처 마디 — 데몬 3노드가 drawn 에 남아 있어야 live overlay 의 노드 바인딩이 도착지를 가짐.
+  const ids = new Set(census.nodes.map((n) => n.id));
+  for (const id of ["autoagent_d", "wiki_d", "cron"]) {
+    assert.ok(ids.has(id), `daemon node '${id}' left the drawn flow`);
+  }
+  // 강조는 흐름의 주체 하나 — 상한 2 를 재는 P0-2 와 달리 배정 자체를 고정함.
+  assert.deepEqual(getClassMembers(drawn, "focal"), ["main_session"]);
+});
+
+test("B2-1 회귀 잠금 ② balanced 상한 행이 네 리터럴로 고정됨", () => {
+  // 이름이 아니라 값 — AC-7 은 `balanced` 라는 배정 이름만 잡고 그 행의 수치는 잡지 않음.
+  assert.deepEqual(BUDGET_CAPS.balanced, { nodes: 9, edges: 6, labelChars: 45, subgraphDepth: 1 });
+});
+
+test("AC-B2-1a drawn 은 `pg_db` 를 그리고 `repo` 를 그리지 않으며 원장이 그 사실을 말함", () => {
+  const drawnIds = new Set(getMermaidCensus(drawn).nodes.map((n) => n.id));
+  assert.ok(drawnIds.has("pg_db"), "the flow terminus is not drawn");
+  assert.ok(!drawnIds.has("repo"), "`repo` is still drawn — the flow has no node for a workspace");
+  // 원장은 순서까지 고정 — `to_data` 는 source 에서 사라졌으므로 원장에 남으면 AC-8 실재 검사가 붉어짐.
+  assert.deepEqual(CANONICAL_MAP.omitted_node_ids, ["repo", "from_improvement", "to_html_gate"]);
+});
+
+test("AC-B2-1d canonical 서술이 그려진 흐름을 말하고 파서가 그 서술을 실어 나름", async () => {
+  const description = CANONICAL_MAP.description;
+  assert.ok(description !== undefined && description.length > 0, "canonical carries no self-description");
+  // 흐름의 다섯 마디를 모두 이름으로 부름 — 하나라도 빠지면 서술이 그림보다 짧아짐.
+  for (const node of [
+    "user utterance",
+    "scheduled background job",
+    "orchestrator",
+    "specialist agents",
+    "hook pipeline",
+    "PostgreSQL database",
+  ]) {
+    assert.ok(description.includes(node), `description never names '${node}'`);
+  }
+  // 그리지 않는 것은 부르지 않음 — source 서술은 세 입력의 하나로 이것을 부르므로 서술이 갈렸다는 증거가 됨.
+  assert.doesNotMatch(description, /code repository/i);
+  assert.ok(canonicalSource !== undefined);
+  assert.notEqual(description, canonicalSource.description, "canonical still reuses the source description");
+  assert.match(canonicalSource.description, /code repository/i, "the source description must keep saying source");
+
+  // 파서 경로 — payload 가 실어 나르는 것이 source 의 것이 아니라 canonical 의 것임.
+  resetArchitectureCache();
+  const { doc } = await getArchitecture({ warn() {}, info() {} });
+  const built = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_MAP.slug);
+  assert.ok(built !== undefined, "canonical diagram missing from the payload");
+  assert.equal(built.description, description);
+  // 비-canonical 은 자기 source 서술을 그대로 유지함 — 3항 연산이 전편에 새지 않음.
+  const other = doc.diagrams.diagrams.find((d) => d.id === "v2-overview-data");
+  const otherSource = DIAGRAMS.find((d) => d.slug === "v2-overview-data");
+  assert.ok(other !== undefined && otherSource !== undefined);
+  assert.equal(other.description, otherSource.description);
 });
 
 test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", () => {
