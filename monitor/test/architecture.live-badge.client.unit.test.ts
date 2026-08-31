@@ -75,17 +75,15 @@ interface HealthCardDef {
   id: string;
   kind: string;
 }
-interface GlobalDetailBlock {
-  id: string;
-  // 접힌 상태의 유일한 표시 문자열 — 펼침 컨트롤의 이름이 여기서 나옴 (T11).
-  title?: string;
-  render: (states: unknown) => unknown;
-}
 // T11: 훅 구성 한 줄 — 이벤트 하나와 그 이벤트에 걸린 matcher 들.
 interface HookChainRow {
   event: string;
   hookCount: number;
   groups: { matcher: string; hooks: { command: string; type: string | null; timeout: number | null }[] }[];
+}
+// 표 행 확장의 본문 렌더러 — kind 별로 하나씩. hook 행은 구성과 실패 이력을 함께 냄 (AC-B2-5a).
+interface RowDetailRenderers {
+  hook: (row: unknown, states: MapHealthStates) => unknown;
 }
 interface HealthModelGlobal {
   HEALTH_CARD_DEFS: HealthCardDef[];
@@ -97,11 +95,6 @@ interface ArchHelpers {
   getMapHealthEndpoints: (payloadDaemon: string) => string[];
   // KPI 집계 위임 — 맵은 카드 목록을 다시 적지 않고 window.HealthModel 에 넘김.
   getMapHealthKpis: (states: MapHealthStates) => OverviewKpis | null;
-  // 전역 확장 블록 컨테이너 — 등록된 블록이 없으면 렌더 트리에 아무것도 남기지 않음.
-  GlobalDetailRegion: (props: { blocks?: GlobalDetailBlock[] }) => unknown;
-  getGlobalDetailBlocks: () => GlobalDetailBlock[];
-  // T11: 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 이 값을 가리킴.
-  getGlobalBlockDetailId: (blockId: string) => string;
   // T11: hook-chain 응답을 이벤트 → matcher → 훅 줄로 접는 순수 fold.
   getHookChainRows: (state: FetchState | null | undefined) => HookChainRow[] | null;
   buildLiveDaemonsByNodeId: (
@@ -136,7 +129,12 @@ const DAEMON_STATUS_TONE: Record<string, { tone: string; label: string }> = {
 // Build once, evaluate in a sandbox — the real top-level helper declarations.
 // 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
 // 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
-async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthModel: HealthModelGlobal }> {
+async function loadArch(): Promise<{
+  helpers: ArchHelpers;
+  code: string;
+  healthModel: HealthModelGlobal;
+  rowDetails: RowDetailRenderers;
+}> {
   const built = await esbuild.build({
     entryPoints: [ARCH_SRC],
     bundle: false,
@@ -155,7 +153,12 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
   // bodies touch React, so the stubs never actually drive a render.
   const reactStub = new Proxy(
     {
-      createElement: () => ({}),
+      // 요소를 실제로 지음 — 렌더러가 낸 트리를 읽어야 '무엇이 그려졌는가' 를 잴 수 있음.
+      createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => ({
+        type,
+        props: { ...(props || {}), children },
+        children,
+      }),
       Fragment: "frag",
       useState: () => [undefined, () => {}],
       useEffect: () => {},
@@ -166,6 +169,10 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     { get: (t: Record<string, unknown>, p: string) => (p in t ? t[p] : () => ({})) },
   );
   const uiStub = {
+    // 표시 문장은 이 테스트의 대상이 아님 — 값이 렌더러를 통과했는지만 보이면 됨.
+    formatRelativeTime: (v: string) => `rel:${v}`,
+    formatKstFull: (v: string) => `kst:${v}`,
+    resolveBadge: (tone: string) => ({ label: tone }),
     daemonStatusTone: (s: string) =>
       (DAEMON_STATUS_TONE[s] || { tone: "info" }).tone,
     daemonStatusLabel: (s: string) =>
@@ -212,11 +219,6 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     "getMapHealthKpis must be reachable (T7 KPI instrument)",
   );
   assert.strictEqual(
-    typeof h.GlobalDetailRegion,
-    "function",
-    "GlobalDetailRegion must be reachable (T7 global-block container)",
-  );
-  assert.strictEqual(
     typeof h.getRowDetailId,
     "function",
     "getRowDetailId must be reachable (T8 aria-controls instrument)",
@@ -227,14 +229,16 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     "getDaemonRunRows must be reachable (T9c date+reason fold instrument)",
   );
   assert.strictEqual(
-    typeof h.getGlobalBlockDetailId,
-    "function",
-    "getGlobalBlockDetailId must be reachable (T11 aria-controls instrument)",
-  );
-  assert.strictEqual(
     typeof h.getHookChainRows,
     "function",
     "getHookChainRows must be reachable (T11 hook-configuration fold instrument)",
+  );
+
+  const rowDetails = vm.runInContext("HEALTH_ROW_DETAILS", ctx) as RowDetailRenderers;
+  assert.strictEqual(
+    typeof rowDetails.hook,
+    "function",
+    "HEALTH_ROW_DETAILS.hook must be reachable (AC-B2-5e hook row renderer instrument)",
   );
 
   const healthModel = (ctx.window as { HealthModel?: HealthModelGlobal }).HealthModel;
@@ -242,10 +246,10 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     healthModel && Array.isArray(healthModel.HEALTH_CARD_DEFS),
     "window.HealthModel must carry the card definitions the map's KPI denominator reads",
   );
-  return { helpers: h, code, healthModel };
+  return { helpers: h, code, healthModel, rowDetails };
 }
 
-const { helpers: arch, code: archCode, healthModel } = await loadArch();
+const { helpers: arch, code: archCode, healthModel, rowDetails } = await loadArch();
 
 // 기본값은 서버가 임계 미만에서 내는 모양 — 판정이 마지막 상태와 같음.
 // 초과 구간은 `effective_status` 를 명시해 덮어씀.
@@ -571,67 +575,51 @@ test("T7 an empty definition list yields an empty denominator, never a stale tot
   }
 });
 
-// --- T7: the global expansion container ------------------------------------
+// --- T11: the hook chain fold and the row renderer that consumes it -------
 
-test("T7 the global block container renders nothing while no block is registered", () => {
-  assert.strictEqual(
-    arch.GlobalDetailRegion({ blocks: [] }),
-    null,
-    "an empty registry must leave no container in the tree (no empty box under the map)",
-  );
-});
+// 함수 컴포넌트를 실제로 불러 그 결과까지 펼침 — 렌더러가 낸 글을 재려면 트리를 끝까지 풀어야 함.
+function renderToText(node: unknown): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(renderToText).join(" ");
 
-// T7 이 세운 통과 규칙 — render 를 갖춘 항목만 컨테이너에 닿음. 명부의 내용은 T11·T12c 가
-// 채우므로 여기서는 '무엇이 등록됐는가' 가 아니라 '반쯤 등록된 항목이 통과하지 못함' 을 잼.
-// 원소가 아니라 길이/문자열로 잼 — 반환 배열은 vm 렐름 소속이라 구조 비교가 프로토타입에서 걸림.
-test("T7 only blocks carrying a render function reach the container", () => {
-  const blocks = arch.getGlobalDetailBlocks();
-  assert.strictEqual(
-    blocks.filter((b) => typeof b.render !== "function").length,
-    0,
-    "a half-registered block would open the container onto an empty box",
-  );
-  // 정렬해 비교함 — 명부의 차례는 화면에 그려지는 차례이고 그 순서는 merged-surface e2e 의
-  // deepEqual 이 소유함. 여기서 순서를 한 번 더 못 박으면 명부를 재배열하는 변경이 두 곳에서
-  // 붉어지면서 어느 쪽이 진짜 계약인지 흐려짐 — 이 자리는 '무엇이 등록됐는가'만 잼.
-  // 블록을 더하는 작업은 제 id 를 아래 목록에 더함 (T11 → hook-chain · T12c → hook-failures).
-  assert.strictEqual(
-    blocks
-      .map((b) => b.id)
-      .sort()
-      .join(","),
-    "hook-chain,hook-failures",
-    "the registry holds exactly the blocks registered so far — an appending task adds its id here",
-  );
-});
+  const el = node as { type?: unknown; props?: { children?: unknown }; children?: unknown };
+  if (typeof el.type === "function")
+    return renderToText((el.type as (props: unknown) => unknown)(el.props));
 
-test("T7 the global block container renders a registered block", () => {
-  const rendered = arch.GlobalDetailRegion({
-    blocks: [{ id: "probe", title: "Probe", render: () => ({}) }],
-  });
-  assert.notStrictEqual(
-    rendered,
-    null,
-    "a registered block must reach the tree — an always-null container would silently swallow T11/T12c",
-  );
-});
+  return renderToText(el.children ?? null);
+}
 
-// --- T11: the hook chain block ---------------------------------------------
+// 렌더된 트리의 모든 요소 부분트리 글 — 함수 컴포넌트는 불러서 그 결과까지 폄.
+// 포함 여부만 보는 단언은 matcher 를 한 목록에, 명령을 다른 목록에 평평히 늘어놓은 렌더러도
+// 통과함(둘 다 어딘가에는 있음). '어느 자리 안에서' 를 재려면 자리마다의 글이 필요함.
+function collectSubtreeTexts(node: unknown, out: string[] = []): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return out;
+  if (typeof node === "string" || typeof node === "number") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectSubtreeTexts(child, out);
+    return out;
+  }
 
-test("T11 the hook chain block is registered with a title and a renderer", () => {
-  const block = arch.getGlobalDetailBlocks().find((b) => b.id === "hook-chain");
-  assert.ok(block, "the hook chain block must be registered — the map consumed /api/health/hook-chain for nothing otherwise");
-  assert.strictEqual(typeof block.render, "function");
-  // 제목은 접힌 상태에서 유일하게 보이는 문자열 — 없으면 펼침 컨트롤에 이름이 안 남음.
-  assert.ok(block.title && block.title.length > 0, "a collapsed block shows only its title");
-});
+  const el = node as { type?: unknown; props?: { children?: unknown }; children?: unknown };
+  if (typeof el.type === "function")
+    return collectSubtreeTexts((el.type as (props: unknown) => unknown)(el.props), out);
 
-test("T11 the block's expansion region id is stable, per-block, and a legal DOM id", () => {
-  const id = arch.getGlobalBlockDetailId("hook-chain");
-  assert.strictEqual(id, arch.getGlobalBlockDetailId("hook-chain"), "aria-controls and the region are wired by the same call");
-  assert.notStrictEqual(id, arch.getGlobalBlockDetailId("hook-failures"), "two blocks must not share one region id");
-  assert.match(id, /^[A-Za-z][A-Za-z0-9_-]*$/, "the id must remain a legal getElementById target");
-});
+  out.push(renderToText(el));
+  return collectSubtreeTexts(el.children ?? null, out);
+}
+
+// 렌더러에 먹일 훅 구성 — matcher 둘 · 훅 둘. 폴드 케이스와 같은 모양을 쓰되 값은 따로 둠:
+// 한 픽스처를 둘이 나눠 쓰면 어느 쪽이 그 값을 통과시킨 것인지 메시지에서 갈리지 않음.
+const HOOK_RENDER_EVENTS = [
+  {
+    event: "PreToolUse",
+    groups: [
+      { matcher: "Write|Edit", hooks: [{ command: "render-a.sh", type: "command", timeout: 5 }] },
+      { matcher: "Bash", hooks: [{ command: "render-b.sh", type: "command", timeout: null }] },
+    ],
+  },
+];
 
 test("T11 the hook chain fold names every hook under the matcher it fires on", () => {
   const rows = arch.getHookChainRows({
@@ -656,6 +644,42 @@ test("T11 the hook chain fold names every hook under the matcher it fires on", (
   assert.strictEqual(rows[0].hookCount, 2, "the count must span every matcher of the event");
   assert.strictEqual(rows[0].groups.map((g) => g.matcher).join(","), "Write|Edit,Bash");
   assert.strictEqual(rows[1].hookCount, 0, "an event with no hooks reads zero, not absent");
+
+  // AC-B2-5e — 같은 사실을 렌더러가 이사한 자리에서 다시 잼. 접기 명부를 거치지 않고 hook 행의
+  // 본문 렌더러를 직접 부름: 폴드가 옳아도 렌더러가 matcher 를 안 부르면 화면에는 관계가 없음.
+  const rendered = rowDetails.hook(null, {
+    hookState: { status: "ready", error: null, data: { events: HOOK_RENDER_EVENTS, source_path: "/fixture/settings.json" } },
+    hookFailState: { status: "ready", error: null, data: { days: 30, failures: [], last_failure_ts: null } },
+  } as unknown as MapHealthStates);
+  const text = renderToText(rendered);
+  for (const group of HOOK_RENDER_EVENTS[0].groups) {
+    assert.ok(text.includes(group.matcher), `the row renderer must name the ${group.matcher} matcher, but it read: ${text}`);
+    for (const hook of group.hooks) {
+      assert.ok(
+        text.includes(hook.command),
+        `the row renderer must name ${hook.command}, but it read: ${text}`,
+      );
+    }
+  }
+
+  // 여기까지는 '둘 다 어딘가에 있음' 뿐임 — 이 테스트의 이름이 부르는 사실은 관계임.
+  // 그래서 자리로 잼: 제 matcher 와 제 훅을 함께 담고 남의 matcher·훅은 담지 않는 부분트리가
+  // 하나는 있어야 함. matcher 를 한 목록에, 명령을 다른 목록에 늘어놓은 렌더러에서는 둘을
+  // 함께 담는 자리가 트리 전체뿐이고 그 자리는 남의 것도 담으므로 여기서 붉어짐.
+  const subtrees = collectSubtreeTexts(rendered);
+  for (const group of HOOK_RENDER_EVENTS[0].groups) {
+    const own = [group.matcher, ...group.hooks.map((h) => h.command)];
+    const foreign = HOOK_RENDER_EVENTS[0].groups
+      .filter((other) => other.matcher !== group.matcher)
+      .flatMap((other) => [other.matcher, ...other.hooks.map((h) => h.command)]);
+
+    assert.ok(
+      subtrees.some(
+        (subtree) => own.every((s) => subtree.includes(s)) && foreign.every((s) => !subtree.includes(s)),
+      ),
+      `no place in the tree holds ${group.matcher} together with its own hooks and nothing of the other matcher — the renderer lists them flat, so the fold's grouping does not survive to the screen. It read: ${text}`,
+    );
+  }
 });
 
 test("T11 a response that has not arrived folds to null, never to an empty configuration", () => {

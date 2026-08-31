@@ -155,39 +155,24 @@ function getMapStripReadings(states) {
 		.filter((reading) => Boolean(reading));
 }
 
-// 전역 확장 블록 레지스트리 — 맵 하단의 화면-폭 상세 블록. T11(Hook chain) 이 첫 항목이고
-// T12c(Hook failure log) 가 뒤를 이음. 접힘/펼침은 항목이 아니라 컨테이너가 관리함.
-const GLOBAL_DETAIL_BLOCKS = [
-	{
-		id: "hook-chain",
-		title: "Hook chain",
-		render: (states) => <HookChainDetail state={states.hookState} />,
-	},
-	{
-		id: "hook-failures",
-		title: "Hook failure log",
-		render: (states) => <HookFailureDetail state={states.hookFailState} />,
-	},
-];
-
 // 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
 // 여기 없으므로 확장 컨트롤도 서지 않음: 빈 영역을 여는 버튼은 읽을 것이 있다고 거짓말함.
 const HEALTH_ROW_DETAILS = {
 	daemon: (row, states) => (
 		<DaemonRunDetail daemon={row.daemonName} state={states.payloadState} />
 	),
-	hook: (_row, states) => <HookChainDetail state={states.hookState} />,
+	// 구성과 실패 이력이 한 확장 영역에 같이 옴 — "무엇이 걸렸나" 와 "무엇이 실패했나" 는
+	// 훅 신고 하나를 가르는 두 반쪽이라 떨어뜨려 두면 조작자가 화면 두 곳을 오가며 맞춰야 함.
+	hook: (_row, states) => (
+		<>
+			<HookChainDetail state={states.hookState} />
+			<HookFailureDetail state={states.hookFailState} />
+		</>
+	),
 };
 
-// render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
-function getGlobalDetailBlocks() {
-	return GLOBAL_DETAIL_BLOCKS.filter(
-		(block) => block && typeof block.render === "function",
-	);
-}
-
 // 이름을 id 조각으로 — id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는
-// 이미 합법이라 그대로 통과). 두 펼침 영역이 같은 규칙을 써야 한쪽만 문법을 바꿔 어긋나지 않음.
+// 이미 합법이라 그대로 통과).
 function toDetailIdPart(name) {
 	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
 }
@@ -200,11 +185,6 @@ function toDetailIdPart(name) {
 // id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
 function getRowDetailId(rowKey) {
 	return `arch-row-detail-${toDetailIdPart(rowKey)}`;
-}
-
-// 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 가리키는 값 (T11).
-function getGlobalBlockDetailId(blockId) {
-	return `arch-global-detail-${toDetailIdPart(blockId)}`;
 }
 
 // hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
@@ -573,12 +553,6 @@ function ScreenArchitecture(
 					// 지도 위 두 줄이 서로 다른 상자로 읽힘.
 					".arch-queue-strip, .arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					// 전역 확장 블록 — 지도 아래 화면-폭 상세. 블록이 없으면 컨테이너 자체가 렌더되지 않음.
-					".arch-global-blocks { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; } " +
-					".arch-global-block { background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
-					// 블록 머리 = 펼침 컨트롤. 표 행과 같은 button 클래스를 쓰되 블록 폭을 다 차지해 클릭 면이 넓음.
-					".arch-global-block > .arch-row-toggle { width: 100%; padding: 6px 10px; } " +
-					".arch-global-block-body { padding: 0 10px 8px 22px; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
 					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
@@ -636,6 +610,8 @@ function ScreenArchitecture(
 					".arch-row-caret { color: rgb(var(--faint)); font-size: var(--fs-micro); } " +
 					// 상세 셀만 줄바꿈 허용 — 표 본문의 nowrap 이 걸리면 사유 문장이 가로로 흘러 표를 벌림.
 					".arch-live-table td.arch-run-cell { white-space: normal; padding: 6px 8px 8px 22px; } " +
+					// 한 확장 영역에 상세가 둘 이상 오면 서로 붙어 한 덩어리로 읽힘 — 사이를 벌림.
+					".arch-live-table td.arch-run-cell > * + * { margin-top: 8px; } " +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
@@ -729,17 +705,6 @@ function ScreenArchitecture(
 					partBindings={liveState.data?.part_bindings}
 					payloadState={payloadState}
 					onSelectDaemon={setPayloadDaemon}
-				/>
-
-				{/* 전역 확장 블록 — 명부(GLOBAL_DETAIL_BLOCKS)가 채움: Hook chain · Hook failure log. */}
-				<GlobalDetailRegion
-					states={{
-						daemonState: daemonHealthState,
-						pgState,
-						hookState,
-						hookFailState,
-						payloadState,
-					}}
 				/>
 			</div>
 
@@ -1377,61 +1342,7 @@ function HealthStrip({
 }
 
 /**
- * 전역 확장 블록 자리 — 지도 아래 화면-폭 상세. T11(Hook chain) · T12c(Hook failure log) 가 채움.
- * 등록된 블록이 없으면 null 을 냄: 빈 컨테이너가 지도와 표 사이에 여백만 남기지 않게 함.
- * blocks 를 인자로도 받음 — 레지스트리를 건드리지 않고 컨테이너 계약만 재는 자리를 남김.
- * 접힘/펼침은 여기가 관리함 — 블록마다 제 상태를 들면 같은 규율을 항목 수만큼 다시 적게 됨.
- */
-function GlobalDetailRegion({ blocks = getGlobalDetailBlocks(), states }) {
-	// 한 번에 한 블록 — 화면-폭 상세가 여럿 열리면 지도 아래가 세로로 길어져 비교가 스크롤이 됨
-	// (확장 행과 같은 규율).
-	const [expandedBlock, setExpandedBlock] = useStateAR(null);
-
-	const toggleBlock = useCallbackAR((id) => {
-		setExpandedBlock((current) => (current === id ? null : id));
-	}, []);
-
-	if (blocks.length === 0) return null;
-
-	return (
-		<section className="arch-global-blocks" aria-label="System detail">
-			{blocks.map((block) => {
-				const detailId = getGlobalBlockDetailId(block.id);
-				const isExpanded = expandedBlock === block.id;
-
-				return (
-					<div
-						key={block.id}
-						className="arch-global-block"
-						data-global-block={block.id}
-					>
-						{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
-						<button
-							type="button"
-							className="arch-row-toggle"
-							aria-expanded={isExpanded}
-							aria-controls={detailId}
-							onClick={() => toggleBlock(block.id)}>
-							<span className="arch-row-caret" aria-hidden="true">
-								{isExpanded ? "▾" : "▸"}
-							</span>
-							{block.title || block.id}
-						</button>
-						{/* 접힌 블록은 본문을 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음 */}
-						{isExpanded && (
-							<div id={detailId} className="arch-global-block-body">
-								{block.render(states)}
-							</div>
-						)}
-					</div>
-				);
-			})}
-		</section>
-	);
-}
-
-/**
- * Hook chain 전역 블록 본문 — 이벤트 → matcher → 훅 (T11). 카드가 내던 요약(이벤트 수 · 훅 수)은
+ * Hook chain 상세 — 이벤트 → matcher → 훅 (T11). 카드가 내던 요약(이벤트 수 · 훅 수)은
  * "어느 훅이 어느 matcher 에 걸렸는가" 를 대답하지 못하므로 그 관계를 그대로 폄.
  * 경로 · matcher · 명령 문자열은 settings.json 에서 읽어 온 서버 텍스트임. JSX 텍스트 자식으로만
  * 두어 React 가 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면
@@ -1502,7 +1413,7 @@ function HookChainDetail({ state }) {
 }
 
 /**
- * Hook failure log 전역 블록 본문 — 창 안 실패 목록 + 창 무관 최종기록 (T12c).
+ * Hook failure log 상세 — 창 안 실패 목록 + 창 무관 최종기록 (T12c).
  * 두 사실을 따로 부름: 목록은 days 창에 매인 값이라 창이 비면 사라지지만, 마지막으로 실패한
  * 시각은 창 밖 MAX 이므로 남음. 빈 창을 '한 번도 실패한 적 없음'으로 읽히게 두면 조작자가
  * 조사할 사건을 조사하지 않게 됨 — 서버가 그 둘을 갈라 주는 이유가 여기임.
@@ -1689,7 +1600,7 @@ function HealthPartTable({
 								data-health-detail={row.id}
 								data-daemon-detail={row.daemonName || undefined}>
 								<td id={detailId} colSpan={4} className="arch-run-cell">
-									{renderDetail(row, { payloadState, hookState })}
+									{renderDetail(row, { payloadState, hookState, hookFailState })}
 								</td>
 							</tr>,
 						];
