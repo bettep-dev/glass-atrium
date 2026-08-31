@@ -479,7 +479,7 @@ function ScreenArchitecture(
 					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
-					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
+					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; padding: 4px 8px; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
@@ -517,7 +517,10 @@ function ScreenArchitecture(
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
 					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 링은 그려진 노드만 짚으므로 미렌더 바인딩은 여기서만 보임.
-					".arch-live-table-wrap { flex-shrink: 0; max-height: 220px; overflow: auto; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					".arch-live-table-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					// 스크롤은 표에만 걸림 — 경보가 스크롤 영역 안에 있으면 마지막 행이나 펼친 상세로
+					// 내려간 순간 화면 밖으로 밀림(계측: 경보 포함 scrollHeight 247 / clientHeight 218).
+					".arch-live-table-scroll { max-height: 220px; overflow: auto; } " +
 					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
 					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
@@ -1294,9 +1297,9 @@ function HealthPartTable({
 		[onSelectDaemon],
 	);
 
-	if (rows.length === 0) return null;
-
 	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸('—')만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
+	// 명부 가드보다 위에서 셈 — 명부는 window.HealthModel 에서 오므로 그 모듈이 통째로 빠지면
+	// rows 가 비고, 다섯 저장소를 못 읽었다는 사실을 부를 자리가 이 경보 말고는 없음.
 	const storeErrors = getHealthStoreErrorsAR({
 		daemonState,
 		pgState,
@@ -1304,92 +1307,103 @@ function HealthPartTable({
 		hookFailState,
 		payloadState,
 	});
+	const storeAlert =
+		storeErrors.length > 0 ? (
+			<StripAlertAR
+				className="arch-queue-error"
+				message="Couldn't load system health"
+				detail={storeErrors.join(" · ")}
+				onRetry={onRetry}
+			/>
+		) : null;
+
+	// 표가 못 서도 경보는 섬 — 함께 사라지면 '못 읽음' 이 '아무 일 없음' 과 같은 화면이 됨.
+	if (rows.length === 0) {
+		return storeAlert ? (
+			<div className="arch-live-table-wrap">{storeAlert}</div>
+		) : null;
+	}
 
 	return (
 		<div className="arch-live-table-wrap">
-			{storeErrors.length > 0 && (
-				<StripAlertAR
-					className="arch-queue-error"
-					message="Couldn't load system health"
-					detail={storeErrors.join(" · ")}
-					onRetry={onRetry}
-				/>
-			)}
-			<table className="arch-live-table">
-				{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
-				    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
-				<thead>
-					<tr>
-						<th scope="col">HEALTH</th>
-						<th scope="col">Status</th>
-						<th scope="col">Last run</th>
-						<th scope="col">Nodes</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.flatMap((row) => {
-						const renderDetail = HEALTH_ROW_DETAILS[row.kind];
-						const detailId = getRowDetailId(row.daemonName || row.id);
-						const isExpanded = expandedRow === row.id;
+			{storeAlert}
+			<div className="arch-live-table-scroll">
+				<table className="arch-live-table">
+					{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
+					    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
+					<thead>
+						<tr>
+							<th scope="col">HEALTH</th>
+							<th scope="col">Status</th>
+							<th scope="col">Last run</th>
+							<th scope="col">Nodes</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.flatMap((row) => {
+							const renderDetail = HEALTH_ROW_DETAILS[row.kind];
+							const detailId = getRowDetailId(row.daemonName || row.id);
+							const isExpanded = expandedRow === row.id;
 
-						// tone 속성은 판정이 확정된 행에만 붙음 — 미수신 행을 정상으로 꾸미지 않고,
-						// 하네스가 '판정이 도착함' 을 기다릴 앵커도 이 속성임.
-						const summaryRow = (
-							<tr
-								key={row.id}
-								data-health-row={row.id}
-								data-health-tone={row.tone || undefined}
-								data-daemon-row={row.daemonName || undefined}>
-								<th scope="row" className="text-ink font-mono">
-									{renderDetail ? (
-										/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */
-										<button
-											type="button"
-											className="arch-row-toggle"
-											aria-expanded={isExpanded}
-											aria-controls={detailId}
-											onClick={() => toggleRow(row)}>
-											<span className="arch-row-caret" aria-hidden="true">
-												{isExpanded ? "▾" : "▸"}
+							// tone 속성은 판정이 확정된 행에만 붙음 — 미수신 행을 정상으로 꾸미지 않고,
+							// 하네스가 '판정이 도착함' 을 기다릴 앵커도 이 속성임.
+							const summaryRow = (
+								<tr
+									key={row.id}
+									data-health-row={row.id}
+									data-health-tone={row.tone || undefined}
+									data-daemon-row={row.daemonName || undefined}>
+									<th scope="row" className="text-ink font-mono">
+										{renderDetail ? (
+											/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */
+											<button
+												type="button"
+												className="arch-row-toggle"
+												aria-expanded={isExpanded}
+												aria-controls={detailId}
+												onClick={() => toggleRow(row)}>
+												<span className="arch-row-caret" aria-hidden="true">
+													{isExpanded ? "▾" : "▸"}
+												</span>
+												{row.name}
+											</button>
+										) : (
+											row.name
+										)}
+									</th>
+									<td>
+										{row.tone ? (
+											<span className="inline-flex items-center gap-1.5">
+												<StatusDot status={row.tone} />
+												{row.statusLabel}
 											</span>
-											{row.name}
-										</button>
-									) : (
-										row.name
-									)}
-								</th>
-								<td>
-									{row.tone ? (
-										<span className="inline-flex items-center gap-1.5">
-											<StatusDot status={row.tone} />
-											{row.statusLabel}
-										</span>
-									) : (
-										"—"
-									)}
-								</td>
-								<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
-								<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
-							</tr>
-						);
+										) : (
+											"—"
+										)}
+									</td>
+									<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
+									<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
+								</tr>
+							);
 
-						// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
-						if (!renderDetail || !isExpanded) return [summaryRow];
+							// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
+							if (!renderDetail || !isExpanded) return [summaryRow];
 
-						return [
-							summaryRow,
-							<tr
-								key={`${row.id}-detail`}
-								data-health-detail={row.id}
-								data-daemon-detail={row.daemonName || undefined}>
-								<td id={detailId} colSpan={4} className="arch-run-cell">
-									{renderDetail(row, { payloadState, hookState, hookFailState })}
-								</td>
-							</tr>,
-						];
-					})}
-				</tbody>
-			</table>
+							return [
+								summaryRow,
+								<tr
+									key={`${row.id}-detail`}
+									data-health-detail={row.id}
+									data-daemon-detail={row.daemonName || undefined}>
+									<td id={detailId} colSpan={4} className="arch-run-cell">
+										{renderDetail(row, { payloadState, hookState, hookFailState })}
+									</td>
+								</tr>,
+							];
+						})}
+					</tbody>
+				</table>
+			</div>
 		</div>
 	);
 }

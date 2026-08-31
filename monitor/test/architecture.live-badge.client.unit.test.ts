@@ -126,29 +126,9 @@ const DAEMON_STATUS_TONE: Record<string, { tone: string; label: string }> = {
   quota_exceeded: { tone: "warn", label: "Usage limit" },
 };
 
-// Build once, evaluate in a sandbox — the real top-level helper declarations.
-// 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
-// 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
-async function loadArch(): Promise<{
-  helpers: ArchHelpers;
-  code: string;
-  healthModel: HealthModelGlobal;
-  rowDetails: RowDetailRenderers;
-}> {
-  const built = await esbuild.build({
-    entryPoints: [ARCH_SRC],
-    bundle: false,
-    write: false,
-    loader: { ".jsx": "jsx" },
-    jsx: "transform",
-    jsxFactory: "React.createElement",
-    jsxFragment: "React.Fragment",
-    target: "es2022",
-    // No import/export → top-level fn decls become vm-context-global properties.
-    format: "esm",
-  });
-  const code = built.outputFiles[0].text;
-
+// 샌드박스 전역 — React/window.UI 스텁만 둔 빈 문맥. 무엇을 실을지는 부르는 쪽이 정함:
+// health-model.js 의 부재가 이 파일이 재는 사실 중 하나라 적재 순서를 고정하면 안 됨.
+function createArchContext(): Record<string, unknown> {
   // React stub — every hook returns a benign default; the (uninvoked) component
   // bodies touch React, so the stubs never actually drive a render.
   const reactStub = new Proxy(
@@ -187,6 +167,46 @@ async function loadArch(): Promise<{
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
+  return ctx;
+}
+
+// health-model.js 를 싣지 않은 문맥 — index.html:103 의 <script> 하나가 빠진 상태.
+// 화면 스크립트는 이미 빌드된 같은 원문을 씀: 두 문맥의 유일한 차이가 그 부재여야 함.
+function loadArchWithoutHealthModel(code: string): Record<string, unknown> {
+  const ctx = createArchContext();
+  vm.runInContext(code, ctx);
+  assert.strictEqual(
+    (ctx.window as { HealthModel?: unknown }).HealthModel,
+    undefined,
+    "fixture precondition: the health model must be absent from this context",
+  );
+  return ctx;
+}
+
+// Build once, evaluate in a sandbox — the real top-level helper declarations.
+// 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
+// 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
+async function loadArch(): Promise<{
+  helpers: ArchHelpers;
+  code: string;
+  healthModel: HealthModelGlobal;
+  rowDetails: RowDetailRenderers;
+}> {
+  const built = await esbuild.build({
+    entryPoints: [ARCH_SRC],
+    bundle: false,
+    write: false,
+    loader: { ".jsx": "jsx" },
+    jsx: "transform",
+    jsxFactory: "React.createElement",
+    jsxFragment: "React.Fragment",
+    target: "es2022",
+    // No import/export → top-level fn decls become vm-context-global properties.
+    format: "esm",
+  });
+  const code = built.outputFiles[0].text;
+
+  const ctx = createArchContext();
   // index.html 의 적재 순서를 그대로 재현 — 모델 먼저, 화면 나중.
   // 사본이 아니라 출하되는 원본을 실어야 정의 목록이 진짜 참조로 공유됨.
   vm.runInContext(readFileSync(HEALTH_MODEL_SRC, "utf8"), ctx);
@@ -797,4 +817,88 @@ test("T9c a response still in flight folds to null and an empty roster folds to 
     "autoagent",
   );
   assert.deepStrictEqual(empty, [], "a ready response with no entries must fold to an empty list");
+});
+
+// --- AC-B2-6a: '못 읽음' 을 부르는 유일한 표면은 표에 딸리면 안 됨 ------------------
+// 표의 행 명부는 window.HealthModel 에서 옴 — index.html:103 이 architecture.js 와 따로 싣는
+// <script> 라 그 태그 하나만 빠져도 rows 가 통째로 빔. 경보가 그 명부 가드 아래 있으면
+// 다섯 저장소가 전부 안 읽히는 화면이 '아무 일 없음' 과 같은 그림이 됨.
+
+// role="alert" 요소만 모음 — 트리 어딘가에 저장소 이름이 있는지가 아니라
+// '경보로 불렸는가' 를 재야 함 (표 셀에 적힌 이름은 경보가 아님).
+function collectAlertTexts(node: unknown, out: string[] = []): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return out;
+  if (typeof node === "string" || typeof node === "number") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectAlertTexts(child, out);
+    return out;
+  }
+
+  const el = node as {
+    type?: unknown;
+    props?: Record<string, unknown>;
+    children?: unknown;
+  };
+  if (typeof el.type === "function")
+    return collectAlertTexts((el.type as (props: unknown) => unknown)(el.props), out);
+
+  if (el.props && el.props.role === "alert") out.push(renderToText(el));
+  return collectAlertTexts(el.children ?? null, out);
+}
+
+// 화면이 흡수한 health 응답 5종 — PG 만 끊고 나머지는 답하게 둠.
+// 넷을 함께 끊으면 경보가 떴다는 사실만 보이고 '누가 끊겼는지' 를 못 가림.
+function healthPartProps(overrides: Record<string, unknown> = {}) {
+  return {
+    daemonState: { status: "ready", data: { daemons: [] }, error: null },
+    pgState: { status: "error", data: null, error: "ECONNREFUSED" },
+    hookState: { status: "ready", data: { events: [] }, error: null },
+    hookFailState: {
+      status: "ready",
+      data: { count_24h: 0, unretried_count_24h: 0 },
+      error: null,
+    },
+    payloadState: { status: "ready", data: null, error: null },
+    partBindings: undefined,
+    onSelectDaemon: () => {},
+    onRetry: () => {},
+    ...overrides,
+  };
+}
+
+function renderHealthPartTable(
+  ctx: Record<string, unknown>,
+  props: Record<string, unknown>,
+): unknown {
+  const component = vm.runInContext("HealthPartTable", ctx) as (p: unknown) => unknown;
+  return component(props);
+}
+
+test("AC-B2-6a a store that failed is still named when the health model never loaded", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const alerts = collectAlertTexts(renderHealthPartTable(ctx, healthPartProps()));
+
+  assert.strictEqual(
+    alerts.length,
+    1,
+    "the model is gone so no row can stand — the alert is then the only thing that can say the stores were unreadable",
+  );
+  assert.ok(
+    alerts[0].includes("PostgreSQL"),
+    `the alert must still name the store that failed — read: "${alerts[0]}"`,
+  );
+});
+
+test("AC-B2-6a no model and no failure renders nothing — the alert is not a permanent fixture", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const quiet = renderHealthPartTable(
+    ctx,
+    healthPartProps({ pgState: { status: "ready", data: { status: "ok" }, error: null } }),
+  );
+
+  assert.strictEqual(
+    quiet,
+    null,
+    "every store answered, so an alert here would call five live stores dead",
+  );
 });

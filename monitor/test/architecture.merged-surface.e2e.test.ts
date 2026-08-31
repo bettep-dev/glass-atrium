@@ -2265,13 +2265,18 @@ async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null
 
 // 끊긴 health 저장소를 부르는 경보 — 이름·자리·복구 컨트롤을 함께 읽음.
 // 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '표 밖에 떴음' 이 초록으로 지나감.
-async function getStoreAlerts(): Promise<{ text: string; inTable: boolean; retries: number }[]> {
+async function getStoreAlerts(): Promise<
+	{ text: string; inTable: boolean; inScroll: boolean; retries: number }[]
+> {
 	return await page.evaluate(() =>
 		[...document.querySelectorAll('[role="alert"]')]
 			.filter((el) => (el.textContent || "").includes("system health"))
 			.map((el) => ({
 				text: (el.textContent || "").replace(/\s+/g, " ").trim(),
 				inTable: Boolean(el.closest(".arch-live-table-wrap")),
+				// 표에 딸려 있음과 표와 함께 스크롤됨은 다른 사실임 — 스크롤 영역(220px) 안에 서면
+				// 마지막 행이나 펼친 상세로 내려간 순간 경보가 시야 밖으로 밀림.
+				inScroll: Boolean(el.closest(".arch-live-table-scroll")),
 				retries: el.querySelectorAll("button").length,
 			})),
 	);
@@ -2295,11 +2300,12 @@ test("AC-B2-6b a health store that failed is named by an alert standing in the t
 	assert.deepEqual(
 		{
 			inTable: alerts[0].inTable,
+			inScroll: alerts[0].inScroll,
 			namesStore: alerts[0].text.includes("PostgreSQL"),
 			retries: alerts[0].retries,
 		},
-		{ inTable: true, namesStore: true, retries: 1 },
-		`the alert must name the store that failed, stand with the table, and carry a way back — read: "${alerts[0].text}"`,
+		{ inTable: true, inScroll: false, namesStore: true, retries: 1 },
+		`the alert must name the store that failed, stand with the table without scrolling away with it, and carry a way back — read: "${alerts[0].text}"`,
 	);
 
 	// 실패 표면이 성공 경로로 새지 않음 — 다섯이 모두 답하면 경보가 없어야 함.
