@@ -55,7 +55,6 @@ const LIVE_TONE_CLASS = {
 	warn: "arch-node-live-warn",
 	crit: "arch-node-live-crit",
 };
-const LIVE_TONE_CLASSES = Object.values(LIVE_TONE_CLASS);
 
 // 값은 DAEMON_NODE_BINDINGS 의 실제 키여야 함 — 키가 아니면 node_ids 가 비어 전제가 무너짐.
 const BOUND_DAEMON = "autoagent";
@@ -223,14 +222,6 @@ function countLiveToneClass(
 	);
 }
 
-// 리터럴 tone 클래스 3종의 캔버스 내 개수 합.
-async function countLiveToneClasses(page: Page, canvas: string): Promise<number> {
-	const counts = await Promise.all(
-		LIVE_TONE_CLASSES.map((cls) => countLiveToneClass(page, canvas, cls)),
-	);
-	return counts.reduce((sum, n) => sum + n, 0);
-}
-
 // 이름이 바뀐 링까지 잡는 두 번째 다리 — 리터럴 목록이 아니라 접두사 패턴.
 // SVG 요소의 className 은 SVGAnimatedString 이므로 class 속성을 직접 읽음.
 function countLiveClassPattern(page: Page, canvas: string): Promise<number> {
@@ -262,19 +253,24 @@ function getLitNodeIds(page: Page, canvas: string): Promise<string[]> {
 	}, canvas);
 }
 
-// 바인딩 id 중 이 캔버스가 실제로 그린 것들 — 링이 켜져야 하는 정확한 집합.
-// 캔버스가 그리는 것은 canonical 맵 한 장뿐이므로 바인딩 id 4개가 모두 나오지는 않음.
+// 바인딩 id 중 이 캔버스가 실제로 그린 것들 — 링이 켜져야 하는(또는 켜지지 않아야 하는) 정확한 집합.
+// 캔버스가 그리는 것은 canonical 맵 한 장뿐이므로 바인딩 id 전부가 나오지는 않음.
 // 리터럴 상수로 박지 않고 매 실행 교집합으로 구함 — 바인딩 SoT 가 바뀌면 기대값이 같이 움직임.
-async function getRenderedBoundNodeIds(
+async function getRenderedBoundIds(
 	page: Page,
 	canvas: string,
+	boundIds: readonly string[],
 ): Promise<string[]> {
-	const bound = new Set(DAEMON_NODE_BINDINGS[BOUND_DAEMON] ?? []);
+	const bound = new Set(boundIds);
 	const stamped = await getStampedNodeIds(page, canvas);
 	const rendered = new Set(
 		stamped.map(getUnscopedNodeId).filter((id) => bound.has(id)),
 	);
 	return [...rendered].sort();
+}
+
+function getRenderedBoundNodeIds(page: Page, canvas: string): Promise<string[]> {
+	return getRenderedBoundIds(page, canvas, DAEMON_NODE_BINDINGS[BOUND_DAEMON] ?? []);
 }
 
 // 화면과 같은 tone 테이블을 vm 샌드박스로 불러 판정값→tone 을 직접 잼.
@@ -365,12 +361,90 @@ describe("healthy live fixture", () => {
 		assert.equal(tabCount, 0, `tab control count for ${ctx.selectors.tabControl}`);
 	});
 
-	test("AC-15(b) rendered SVG carries no live ring tone class", async () => {
-		const toneCount = await countLiveToneClasses(ctx.page, ctx.selectors.canvas);
-		assert.equal(toneCount, 0, `live tone classes present: ${LIVE_TONE_CLASSES.join(", ")}`);
+	/**
+	 * AC-B2-3a — 정상 판정도 링을 켬.
+	 * 링 근거원이 데몬 판정 ∪ 부품 판정이므로 '정상은 안 켠다' 는 계약이 아님.
+	 * 이 하네스는 health 라우트를 세우지 않으므로 부품 판정은 도착하지 않음.
+	 * 여기서 켜지는 것은 데몬 원천뿐 — 기대 집합이 데몬 바인딩 ∩ 각인 id 로 정확히 닫힘.
+	 */
+	test("AC-B2-3a healthy verdict lights the ok ring on exactly the bound rendered nodes", async () => {
+		const expectedIds = await getRenderedBoundNodeIds(ctx.page, ctx.selectors.canvas);
+		assert.ok(
+			expectedIds.length > 0,
+			`fixture precondition: none of ${BOUND_DAEMON}'s bound ids (${(DAEMON_NODE_BINDINGS[BOUND_DAEMON] ?? []).join(", ")}) is rendered in ${CANONICAL_DIAGRAM_ID} — the assertion below would be vacuous`,
+		);
 
+		const okCount = await countLiveToneClass(
+			ctx.page,
+			ctx.selectors.canvas,
+			LIVE_TONE_CLASS.ok,
+		);
+		assert.equal(
+			okCount,
+			expectedIds.length,
+			`${LIVE_TONE_CLASS.ok} count vs bound rendered nodes ${expectedIds.join(", ")}`,
+		);
+
+		for (const cls of [LIVE_TONE_CLASS.warn, LIVE_TONE_CLASS.crit]) {
+			const count = await countLiveToneClass(ctx.page, ctx.selectors.canvas, cls);
+			assert.equal(count, 0, `${cls} present under a healthy verdict`);
+		}
+
+		// 접두사 다리 — 리터럴 3종 밖의 이름으로 켜진 링까지 총계에 포함시켜 잼.
 		const patternCount = await countLiveClassPattern(ctx.page, ctx.selectors.canvas);
-		assert.equal(patternCount, 0, "arch-node-live-* class pattern present on a rendered node");
+		assert.equal(
+			patternCount,
+			expectedIds.length,
+			`arch-node-live-* pattern count vs bound rendered nodes ${expectedIds.join(", ")}`,
+		);
+
+		const litIds = await getLitNodeIds(ctx.page, ctx.selectors.canvas);
+		assert.deepStrictEqual(
+			[...new Set(litIds.map(getUnscopedNodeId))].sort(),
+			expectedIds,
+			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
+		);
+	});
+
+	/**
+	 * AC-B2-3c — 각인된 부품 바인딩에 판정이 없으면 그 노드는 켜지지 않음.
+	 * 각인 전제를 먼저 세우는 이유 — 각인이 없으면 "바인딩이 없어서 안 켜졌다" 와 구별되지 않음.
+	 * 그래서 (1) 픽스처가 싣는 표가 두 부품을 비어 있지 않게 각인함.
+	 * (2) 그 id 들이 실제로 그려졌음을 먼저 재고, 그 다음에야 링 부재를 잼.
+	 * 이 하네스는 health 라우트를 세우지 않으므로 각인은 있고 판정만 비는 상태가 성립함.
+	 */
+	const UNVERDICTED_PARTS = ["pg", "hook-chain"] as const;
+
+	test("AC-B2-3c a stamped part binding with no verdict leaves its nodes unlit", async () => {
+		const stampedIds = UNVERDICTED_PARTS.flatMap((part) => {
+			const ids = PART_NODE_BINDINGS[part] ?? [];
+			assert.ok(
+				ids.length > 0,
+				`fixture precondition: the stamped part table must bind '${part}' to a non-empty node list — an empty list makes the unlit assertion vacuous`,
+			);
+			return [...ids];
+		});
+
+		const renderedIds = await getRenderedBoundIds(
+			ctx.page,
+			ctx.selectors.canvas,
+			stampedIds,
+		);
+		assert.deepStrictEqual(
+			renderedIds,
+			[...new Set(stampedIds)].sort(),
+			`fixture precondition: every stamped node (${stampedIds.join(", ")}) must be drawn in ${CANONICAL_DIAGRAM_ID} — an undrawn node is unlit for the wrong reason`,
+		);
+
+		const litIds = new Set(
+			(await getLitNodeIds(ctx.page, ctx.selectors.canvas)).map(getUnscopedNodeId),
+		);
+		const litStamped = renderedIds.filter((id) => litIds.has(id));
+		assert.deepStrictEqual(
+			litStamped,
+			[],
+			"a part with a stamped binding but no arrived verdict must stay unlit — an unresolved response is not a healthy one",
+		);
 	});
 });
 

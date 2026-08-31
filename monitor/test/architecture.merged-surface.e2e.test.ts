@@ -993,7 +993,53 @@ test("T27-fix the loaded queue raises no failure alert", async () => {
  * 대조군 데몬을 함께 심는 이유: fault 하나만으로는 링이 자기 노드 밖으로 새지 않았음을 못 잼.
  */
 const RING_CRIT_CLASS = "arch-node-live-crit";
+const RING_OK_CLASS = "arch-node-live-ok";
 const OK_DAEMON = "wiki";
+
+// 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
+const DAEMON_PART_ID = "daemon-cycle";
+
+// 데몬 넷 밖의 부품 — 이 셋은 부품 경로가 없으면 어떤 링도 받지 못함.
+const VERDICT_PART_IDS = ["pg", "browser", "hook-chain"] as const;
+
+// 폴링 재도착을 재는 경로 — PG·Chromium 판정이 같은 응답에서 옴.
+const PG_HEALTH_PATH = "/api/health";
+
+// 화면의 HEALTH_POLL_MS(60s) 한 틱 + 왕복 여유. 상수를 내보내지 않으므로 하네스가 상한만 가짐.
+const HEALTH_POLL_WAIT_MS = 100_000;
+
+// 캔버스 SVG 의 element id — mermaid 가 렌더마다 새로 짓는 값이라 재렌더 여부의 지표가 됨.
+async function getCanvasSvgId(): Promise<string> {
+	return await page.evaluate((canvas) => {
+		const svgEl = document.querySelector(`${canvas} svg`);
+		return svgEl?.getAttribute("id") || "";
+	}, selectors.canvas);
+}
+
+// 해당 경로의 누적 요청 수가 목표에 닿을 때까지 대기 — 폴링 한 틱이 실제로 나갔는지의 근거.
+async function waitForHealthPoll(path: string, target: number): Promise<boolean> {
+	const deadline = Date.now() + HEALTH_POLL_WAIT_MS;
+	while (Date.now() < deadline) {
+		if ((getHealthCounts()[path] || 0) >= target) return true;
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	return false;
+}
+
+// 부품 노드가 기대 클래스를 들 때까지 대기 — 응답 도착과 DOM 반영 사이의 틈만 흡수함.
+// 시간이 다하면 마지막 판독을 그대로 돌려줌: 단언은 호출부가 하고, 여기서 초록을 만들지 않음.
+async function waitForPartRing(partId: string, expected: string): Promise<RingProbe> {
+	const deadline = Date.now() + 10_000;
+	let probe = await getRingProbe();
+	while (Date.now() < deadline) {
+		const nodes = getRenderedPart(probe.rendered, partId);
+		if (nodes.length > 0 && nodes.every((id) => (probe.classByNode[id] || []).includes(expected)))
+			return probe;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		probe = await getRingProbe();
+	}
+	return probe;
+}
 
 function getDaemon(name: string, effectiveStatus: string): DaemonLiveStatus {
 	const nodeIds = [...(DAEMON_NODE_BINDINGS[name] ?? [])];
@@ -1019,15 +1065,21 @@ function getRenderedBound(rendered: string[], daemonName: string): string[] {
 	return rendered.filter((id) => bound.has(id.slice(id.lastIndexOf(".") + 1)));
 }
 
-async function getRingProbe(): Promise<{
+interface RingProbe {
 	rendered: string[];
 	ringed: string[];
 	ringClasses: string[];
-}> {
+	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
+	// 두 원천이 같은 노드를 짚는 자리(autoagent_d · cron)의 최악-우선 결과를 재는 유일한 다리임.
+	classByNode: Record<string, string[]>;
+}
+
+async function getRingProbe(): Promise<RingProbe> {
 	return await page.evaluate((canvas) => {
 		const rendered: string[] = [];
 		const ringed: string[] = [];
 		const ringClasses: string[] = [];
+		const classByNode: Record<string, string[]> = {};
 
 		for (const el of Array.from(document.querySelectorAll(`${canvas} g.node`))) {
 			const nodeId = el.getAttribute("data-arch-node-id");
@@ -1037,13 +1089,37 @@ async function getRingProbe(): Promise<{
 			const hits = (el.getAttribute("class") || "")
 				.split(/\s+/)
 				.filter((c) => c.startsWith("arch-node-live-"));
+			if (nodeId) classByNode[nodeId] = hits;
 			if (hits.length === 0) continue;
 
 			ringed.push(nodeId || "(unmatched node)");
 			ringClasses.push(...hits);
 		}
-		return { rendered, ringed, ringClasses };
+		return { rendered, ringed, ringClasses, classByNode };
 	}, selectors.canvas);
+}
+
+// 부품 바인딩 중 이 캔버스가 실제로 그린 것들 — 데몬 쪽 getRenderedBound 의 부품 판임.
+function getRenderedPart(rendered: string[], partId: string): string[] {
+	const bound = new Set(PART_NODE_BINDINGS[partId] ?? []);
+	return rendered.filter((id) => bound.has(id.slice(id.lastIndexOf(".") + 1)));
+}
+
+// 부품 하나의 그려진 노드 전원이 정확히 이 클래스 하나만 들었는지 — 전제(그려짐)까지 함께 잼.
+// 전제를 빼면 "노드가 없어서 어긋남이 없다" 가 초록으로 지나감.
+function assertPartRing(probe: RingProbe, partId: string, expected: string): void {
+	const nodes = getRenderedPart(probe.rendered, partId);
+	assert.ok(
+		nodes.length > 0,
+		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn — the ring assertion below would be vacuous`,
+	);
+	for (const nodeId of nodes) {
+		assert.deepEqual(
+			probe.classByNode[nodeId],
+			[expected],
+			`part '${partId}' node ${nodeId} must carry exactly ${expected}`,
+		);
+	}
 }
 
 test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
@@ -1063,35 +1139,111 @@ test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", asy
 		getRenderedBound(probe.rendered, OK_DAEMON).length > 0,
 		`canonical map must render at least one ${OK_DAEMON} node — the ok leg is vacuous without it`,
 	);
-	assert.deepEqual(
-		probe.ringed.slice().sort(),
-		faultNodes.slice().sort(),
-		"the ring must land on exactly the fault daemon's rendered bound nodes",
+	// 정상 판정도 링을 켜므로 '켜진 노드 전체' 는 결함 집합이 아님.
+	// 새는지를 재는 자리는 crit 클래스를 든 노드 집합.
+	const critNodes = probe.ringed.filter((id) =>
+		(probe.classByNode[id] || []).includes(RING_CRIT_CLASS),
 	);
 	assert.deepEqual(
-		[...new Set(probe.ringClasses)],
-		[RING_CRIT_CLASS],
-		"a stale verdict must light the crit ring and nothing else",
+		critNodes.slice().sort(),
+		faultNodes.slice().sort(),
+		"the crit ring must land on exactly the fault daemon's rendered bound nodes",
 	);
 });
 
-test("AC-T5 a healthy roster lights no node at all", async () => {
+/**
+ * AC-B2-3b — 결함 판정이 같은 노드의 정상 부품 판정에 덮이지 않음 (최악-우선).
+ * 두 원천이 실제로 겹치는 유일한 종류의 노드 — /live 는 autoagent 를 stale 로, health 명부는 같은 데몬을 ok 로 냄.
+ * 겹침이 비면 단언이 공허해지므로 먼저 잼.
+ */
+test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the same node", async () => {
+	const health = getHealthFixture();
+	assert.ok(
+		health.daemons.some((d) => d.daemon_name === BOUND_DAEMON && d.effective_status === "ok"),
+		`fixture precondition: the health roster must call ${BOUND_DAEMON} healthy — otherwise no ok verdict competes for the node`,
+	);
+
+	// 대조군 — 데몬 명부를 비워 부품 판정만 남김.
+	// 겹침 노드가 여기서 ok 로 켜져야 아래 crit 이 '경쟁에서 이겼다' 가 됨.
+	// 부품 판정이 아예 없으면 단언이 공허해짐.
+	await openMap(getLiveFixture({ daemons: [] }), getQueueFixture(), health);
+	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_OK_CLASS);
+
 	await openMap(
-		getLiveFixture({
-			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(OK_DAEMON, "ok")],
-		}),
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "stale")] }),
+		getQueueFixture(),
+		health,
 	);
 	const probe = await getRingProbe();
 
+	const daemonNodes = new Set(getRenderedBound(probe.rendered, BOUND_DAEMON));
+	const contested = getRenderedPart(probe.rendered, DAEMON_PART_ID).filter((id) =>
+		daemonNodes.has(id),
+	);
 	assert.ok(
-		getRenderedBound(probe.rendered, BOUND_DAEMON).length > 0,
-		"bound nodes must be rendered — otherwise the zero below counts nothing",
+		contested.length > 0,
+		`fixture precondition: no drawn node is bound by both ${BOUND_DAEMON} and part '${DAEMON_PART_ID}' — nothing competes, so the assertion below is vacuous`,
 	);
-	assert.deepEqual(
-		probe.ringed,
-		[],
-		"a healthy roster must leave every node unlit — this is the un-reverted half of AC-15(b)",
+
+	for (const nodeId of contested) {
+		assert.deepEqual(
+			probe.classByNode[nodeId],
+			[RING_CRIT_CLASS],
+			`${nodeId} carries both a fault daemon verdict and a healthy part verdict — only the worst may be painted`,
+		);
+	}
+});
+
+/**
+ * AC-B2-3d — 부품 판정이 자기 바인딩 노드를 켬.
+ * 데몬 넷 밖의 세 부품(PG · Chromium export · hook chain)은 이 경로가 없으면 영영 판정 없이 남음.
+ */
+test("AC-B2-3d healthy part verdicts light their bound nodes", async () => {
+	await openMapWithHealth(getHealthFixture());
+	const probe = await getRingProbe();
+
+	for (const partId of VERDICT_PART_IDS) assertPartRing(probe, partId, RING_OK_CLASS);
+});
+
+test("AC-B2-3d an unreachable PG and a failed export probe light theirs crit", async () => {
+	await openMapWithHealth(
+		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "failed" } }),
 	);
+	const probe = await getRingProbe();
+
+	assertPartRing(probe, "pg", RING_CRIT_CLASS);
+	assertPartRing(probe, "browser", RING_CRIT_CLASS);
+});
+
+/**
+ * AC-B2-3e — health 폴링만 도착하고 캔버스 재렌더가 없는 상황에서 부품 링이 갱신됨.
+ * 폴링 한 틱을 실제로 기다림(HEALTH_POLL_MS).
+ * 수동 Refresh 로 대신하면 live 응답까지 다시 와 데몬 원천의 참조가 바뀜.
+ * 그러면 부품 tone 이 효과 deps 에 없어도 초록이 되어 재는 것이 사라짐.
+ * SVG 노드 동일성을 함께 잼 — 재렌더가 끼면 '재렌더 없이' 라는 전제 자체가 무너짐.
+ */
+test("AC-B2-3e a health poll with no canvas re-render repaints the part ring", async () => {
+	await openMapWithHealth(getHealthFixture());
+	assertPartRing(await getRingProbe(), "pg", RING_OK_CLASS);
+
+	const svgIdBefore = await getCanvasSvgId();
+	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
+
+	// 라우트가 요청마다 이 모듈 변수를 읽으므로, 화면을 다시 세우지 않고 응답만 갈아끼움.
+	healthFixture = getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "ok" } });
+	assert.equal(
+		await waitForHealthPoll(PG_HEALTH_PATH, pollsBefore + 1),
+		true,
+		`the 60s health poll must re-request ${PG_HEALTH_PATH} — without a second arrival the repaint is untested`,
+	);
+
+	const probe = await waitForPartRing("pg", RING_CRIT_CLASS);
+	assert.equal(
+		await getCanvasSvgId(),
+		svgIdBefore,
+		"the canvas must not have re-rendered — a re-render repaints the ring for the wrong reason",
+	);
+	assertPartRing(probe, "pg", RING_CRIT_CLASS);
 });
 
 // 링이 기존 경보를 밀어내지 않았음을 잠금 — 셋이 동시에 뜨는 픽스처로 잼.

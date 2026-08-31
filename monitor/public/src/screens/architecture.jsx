@@ -52,13 +52,19 @@ const ARCH_SELECTORS = {
 	desc: `#${ARCH_DESC_ID}`,
 };
 
-// 결함 tone → 캔버스 노드 링 클래스. ok 와 info(no data)는 항목이 없음 — 결함만 짚는 노출이고,
-// 정상 전역 점등은 되돌림 폭이 과함(계획 Non-Goal). 정상 명부는 라이브 상태 표가 냄.
-const FAULT_RING_CLASS = {
+// 판정 tone → 캔버스 노드 링 클래스.
+// info(no data)만 항목이 없음 — 판정을 못 받은 노드는 정상으로도 결함으로도 꾸미지 않음.
+// 링을 켜는 근거는 데몬 판정 ∪ 부품 판정.
+const LIVE_RING_CLASS = {
+	ok: "arch-node-live-ok",
 	warn: "arch-node-live-warn",
 	crit: "arch-node-live-crit",
 };
-const FAULT_RING_CLASSES = Object.values(FAULT_RING_CLASS);
+const LIVE_RING_CLASSES = Object.values(LIVE_RING_CLASS);
+
+// 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
+// cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
+const RING_TONE_RANK = { ok: 1, warn: 2, crit: 3 };
 
 // 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스.
 // 최다 빈도는 표 전체가 아니라 이 슬라이스 안에서 고름 — 읽기 경로가 표 전체 최댓값을 내주지 않음.
@@ -485,6 +491,30 @@ function ScreenArchitecture(
 		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
 	}, [liveState.status, liveState.data]);
 
+	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
+	// 데몬은 /live 의 node_ids 로, 부품은 같은 응답의 part_bindings 로 노드를 찾음.
+	// 판정 자체는 부품 쪽만 health 응답에서 옴.
+	// 두 원천을 한 Map 으로 접는 이유 — cron 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
+	// health 응답 넷이 deps 에 있어야 폴링 한 틱이 새 Map 이 됨.
+	// 캔버스 효과는 이 참조가 바뀔 때만 다시 칠함 — 빼면 첫 렌더만 맞고 이후 조용히 낡음.
+	const ringToneByNodeId = useMemoAR(
+		() =>
+			buildRingToneByNodeId(liveDaemonsByNodeId, liveState.data?.part_bindings, {
+				daemonState: daemonHealthState,
+				pgState,
+				hookState,
+				hookFailState,
+			}),
+		[
+			liveDaemonsByNodeId,
+			liveState.data,
+			daemonHealthState,
+			pgState,
+			hookState,
+			hookFailState,
+		],
+	);
+
 	const handleSelectNode = useCallbackAR((nodeId) => {
 		if (!nodeId) return;
 		setDetail({
@@ -568,8 +598,9 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					// 결함 링 — fault 판정 데몬의 바인딩 노드만 점등. ok/no-data 는 규칙 자체가 없음.
+					// 상태 링 — 판정을 받은 노드의 테두리. no-data 는 규칙 자체가 없음.
 					// focus-visible 규칙보다 앞에 둠 — 특이도가 같아 나중 규칙이 이기고, 포커스 표식이 링을 덮어야 함.
+					".arch-mermaid-canvas .node.arch-node-live-ok rect, .arch-mermaid-canvas .node.arch-node-live-ok polygon { stroke: rgb(var(--ok)) !important; stroke-width: 2.5 !important; } " +
 					".arch-mermaid-canvas .node.arch-node-live-warn rect, .arch-mermaid-canvas .node.arch-node-live-warn polygon { stroke: rgb(var(--warn)) !important; stroke-width: 2.5 !important; } " +
 					".arch-mermaid-canvas .node.arch-node-live-crit rect, .arch-mermaid-canvas .node.arch-node-live-crit polygon { stroke: rgb(var(--crit)) !important; stroke-width: 2.5 !important; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
@@ -581,7 +612,7 @@ function ScreenArchitecture(
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
-					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 캔버스 링은 결함만 짚으므로 정상분은 여기서만 보임.
+					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 링은 그려진 노드만 짚으므로 미렌더 바인딩은 여기서만 보임.
 					".arch-live-table-wrap { flex-shrink: 0; max-height: 220px; overflow: auto; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
 					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
 					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
@@ -668,7 +699,7 @@ function ScreenArchitecture(
 								diagState={diagState}
 								activeDiagram={activeDiagram}
 								nodeByLabel={nodeByLabel}
-								liveDaemonsByNodeId={liveDaemonsByNodeId}
+								ringToneByNodeId={ringToneByNodeId}
 								onSelectNode={handleSelectNode}
 								onRetry={triggerRefresh}
 							/>
@@ -718,7 +749,7 @@ function DiagramBody({
 	diagState,
 	activeDiagram,
 	nodeByLabel,
-	liveDaemonsByNodeId,
+	ringToneByNodeId,
 	onSelectNode,
 	onRetry,
 }) {
@@ -769,7 +800,7 @@ function DiagramBody({
 			source={source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
-			liveDaemonsByNodeId={liveDaemonsByNodeId}
+			ringToneByNodeId={ringToneByNodeId}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -783,7 +814,7 @@ function MermaidCanvas({
 	source,
 	diagramTitle,
 	nodeByLabel,
-	liveDaemonsByNodeId,
+	ringToneByNodeId,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -862,25 +893,24 @@ function MermaidCanvas({
 		});
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
-	// 결함 링 — 서버 판정이 fault 인 데몬의 바인딩 노드에만 클래스를 붙임 (정상 명부는 라이브 표가 맡음).
+	// 상태 링 — 노드에 걸린 판정(데몬 ∪ 부품) 하나를 테두리로 냄.
 	//   위 효과가 심은 data-arch-node-id 를 되읽으므로 선언 순서가 곧 실행 순서임 — 앞으로 옮기면 첫 렌더에서 빈다.
 	//   폴링 tick 마다 다시 도는 유일한 캔버스 효과 — 재렌더 없이 판정만 바뀌는 경로가 여기임.
+	//   그래서 ringToneByNodeId 가 deps 에 있어야 함: 빼면 health 폴링이 와도 다시 칠하지 않음.
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
 		if (!root) return;
 
 		root.querySelectorAll("g.node").forEach((el) => {
-			el.classList.remove(...FAULT_RING_CLASSES);
+			el.classList.remove(...LIVE_RING_CLASSES);
 			const nodeId = el.getAttribute("data-arch-node-id");
 			if (!nodeId) return;
 
-			const ringClass = getFaultRingClassAR(
-				liveDaemonsByNodeId.get(unscopedNodeIdAR(nodeId)),
-			);
+			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscopedNodeIdAR(nodeId))];
 			if (ringClass) el.classList.add(ringClass);
 		});
-	}, [renderState.status, renderState.svgHtml, nodeByLabel, liveDaemonsByNodeId]);
+	}, [renderState.status, renderState.svgHtml, nodeByLabel, ringToneByNodeId]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -2195,16 +2225,37 @@ function getLiveDaemonRows(daemons) {
 	});
 }
 
-// 한 노드에 걸린 daemon 목록 → 링 클래스. 결함이 없으면 null (클래스 자체가 안 붙음).
-//   cron 노드처럼 복수 바인딩인 자리는 최악 severity 하나만 링 근거로 삼음 — 두 겹을 칠할 수 없음.
-function getFaultRingClassAR(daemons) {
-	let hasWarn = false;
-	for (const d of daemons || []) {
-		const tone = window.UI.daemonStatusTone(d?.effective_status);
-		if (tone === "crit") return FAULT_RING_CLASS.crit;
-		if (tone === "warn") hasWarn = true;
+// unscoped mermaid node id → 링 tone — 데몬 판정과 부품 판정을 한 표로 접음.
+//   데몬 tone 은 서버 effective_status 를, 부품 tone 은 health 카드 모델을 그대로 소비함.
+//   어느 쪽도 여기서 다시 재지 않음 — 같은 입력에 답이 둘이 되면 링과 카드 격자가 갈라짐.
+//   판정을 못 받은 부품(status !== 'ready')은 항목을 만들지 않음.
+//   미도착과 정상은 다른 사실임.
+function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
+	const byNodeId = new Map();
+
+	const putTone = (nodeId, tone) => {
+		if (!nodeId || !RING_TONE_RANK[tone]) return;
+		const prev = byNodeId.get(nodeId);
+		if (prev && RING_TONE_RANK[prev] >= RING_TONE_RANK[tone]) return;
+		byNodeId.set(nodeId, tone);
+	};
+
+	for (const [nodeId, daemons] of daemonsByNodeId) {
+		for (const d of daemons || [])
+			putTone(nodeId, window.UI.daemonStatusTone(d?.effective_status));
 	}
-	return hasWarn ? FAULT_RING_CLASS.warn : null;
+
+	const model = window.HealthModel;
+	if (!model || typeof model.resolveCardFacts !== "function") return byNodeId;
+
+	for (const def of model.HEALTH_CARD_DEFS || []) {
+		const facts = model.resolveCardFacts(def, cardStates);
+		if (facts.status !== "ready") continue;
+
+		for (const nodeId of partBindings?.[def.id] || []) putTone(nodeId, facts.tone);
+	}
+
+	return byNodeId;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).
