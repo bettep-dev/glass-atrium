@@ -487,14 +487,20 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
-	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
-	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
+	 * 방향 LR (사용자 요청 2026-09-01) — source 일곱 편이 모두 `flowchart LR` 이라 drawn 만 갈라져 있던 것을 되붙임.
+	 * 캔버스는 초기 배율을 `max(min(contain, 1), 0.6)` 으로 깔아 하한 0.6 아래로 내려가지 않고 넘치는 만큼을 자름
+	 * (architecture.jsx getLegibleFitScaleAR) — 그래서 잘림은 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
+	 * 재측정 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): TD 903×1147 · LR 2246×429.
+	 * 안 잘리는 최소치는 TD 가 pane 높이 688px, LR 이 pane 폭 1348px — pane 폭 = 뷰포트 폭 - 290px, 높이 ≈ 뷰포트의 0.68 배.
+	 * 1920×1080(pane 1630×736)에서 LR 은 0.73 배로 전부 들어오고 TD 는 0.642 로 겨우 맞음.
+	 * 1512×850(pane 1222×575)에서는 둘 다 하한에 걸리나 잘리는 양이 TD 세로 113px(16%) · LR 가로 126px(9%) 임.
+	 * 방향을 되돌리려면 두 수치를 같은 방법으로 다시 잴 것 — 노드나 라벨이 늘면 둘 다 움직임.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
 	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 두 줄이 엣지로 세어져 계수가 정확히 2 늘어남
 	 * (`faithful` 아래에서는 그래도 상한 안이므로 계기는 상한 위반이 아니라 그 증분을 잼).
 	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
-	mermaid_drawn: `flowchart TD
+	mermaid_drawn: `flowchart LR
     subgraph entry["External inputs"]
         user[User utterance]
     end
