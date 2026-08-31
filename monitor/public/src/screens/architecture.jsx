@@ -120,22 +120,6 @@ const HEALTH_ROW_DETAILS = {
 	),
 };
 
-// 이름을 id 조각으로 — id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는
-// 이미 합법이라 그대로 통과).
-function toDetailIdPart(name) {
-	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
-}
-
-// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값. 키는 데몬 행이면 데몬 이름,
-// 아니면 부품 명부 id 임(둘은 같은 이름공간을 쓰지 않음).
-// 접힌 문자만 다른 두 이름(`a b` 와 `a-b`)은 같은 id 로 떨어짐. 지금 중복 id 가 생기지 않는 것은
-// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(HealthPartTable 의 expandedRow
-// 는 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
-// id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
-function getRowDetailId(rowKey) {
-	return `arch-row-detail-${toDetailIdPart(rowKey)}`;
-}
-
 // hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
 // null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 설정된 이벤트가 없음 — 다른 문장임.
 function getHookChainRows(state) {
@@ -428,14 +412,47 @@ function ScreenArchitecture(
 		],
 	);
 
-	const handleSelectNode = useCallbackAR((nodeId) => {
-		if (!nodeId) return;
-		setDetail({
-			kind: "node",
-			payload: { id: nodeId },
-			diagramId: CANONICAL_DIAGRAM_ID,
-		});
-	}, []);
+	// 부품 행 — 표를 걷어낸 뒤로 상세 패널과 노드 클릭이 함께 읽으므로 화면 높이에서 한 번만 셈.
+	// 판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 (ADR-5).
+	const healthPartRows = useMemoAR(
+		() =>
+			getHealthPartRows(
+				{ daemonState: daemonHealthState, pgState, hookState, hookFailState },
+				liveState.data?.part_bindings,
+			),
+		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
+	);
+
+	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
+	// 표 안에 서 있던 경보인데 표가 사라졌으므로 페이지로 올림: 노드를 눌러야 보이는 자리에 두면
+	// 헬스를 통째로 못 읽은 사실이 클릭 뒤에 숨음 — 그건 누르기 전에 알아야 하는 사실임.
+	const healthStoreErrors = getHealthStoreErrorsAR({
+		daemonState: daemonHealthState,
+		pgState,
+		hookState,
+		hookFailState,
+		payloadState,
+	});
+
+	const handleSelectNode = useCallbackAR(
+		(nodeId) => {
+			if (!nodeId) return;
+			setDetail({
+				kind: "node",
+				payload: { id: nodeId },
+				diagramId: CANONICAL_DIAGRAM_ID,
+			});
+			// 이 노드의 첫 데몬 부품으로 드릴다운을 옮김 — 패널이 열리는 순간 실행 목록이 차 있어야
+			// 하고, 응답은 한 번에 한 데몬 것임. 같은 이름이면 세터를 부르지 않음: 다시 부르면
+			// 요청이 한 번 더 나가 방금 읽은 실행 목록이 왕복 동안 로딩으로 비워짐.
+			const unscoped = unscopedNodeIdAR(nodeId);
+			const bound = healthPartRows.find(
+				(row) => row.daemonName && row.nodeIds.includes(unscoped),
+			);
+			if (bound) setPayloadDaemon((current) => bound.daemonName || current);
+		},
+		[healthPartRows],
+	);
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
 
@@ -513,25 +530,23 @@ function ScreenArchitecture(
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
-					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 링은 그려진 노드만 짚으므로 미렌더 바인딩은 여기서만 보임.
-					".arch-live-table-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
-					// 스크롤은 표에만 걸림 — 경보가 스크롤 영역 안에 있으면 마지막 행이나 펼친 상세로
-					// 내려간 순간 화면 밖으로 밀림(계측: 경보 포함 scrollHeight 247 / clientHeight 218).
-					".arch-live-table-scroll { max-height: 220px; overflow: auto; } " +
-					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
-					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
-					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
-					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
-					// 확장 컨트롤 — 표 셀 안에서 서체를 물려받아 행 그대로 보이되 진짜 button 으로 남음.
-					".arch-row-toggle { display: inline-flex; align-items: baseline; gap: 6px; background: none; " +
-					"border: 0; margin: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; } " +
-					".arch-row-toggle:hover { color: rgb(var(--ink)); } " +
-					".arch-row-toggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
-					".arch-row-caret { color: rgb(var(--faint)); font-size: var(--fs-micro); } " +
-					// 상세 셀만 줄바꿈 허용 — 표 본문의 nowrap 이 걸리면 사유 문장이 가로로 흘러 표를 벌림.
-					".arch-live-table td.arch-run-cell { white-space: normal; padding: 6px 8px 8px 22px; } " +
-					// 한 확장 영역에 상세가 둘 이상 오면 서로 붙어 한 덩어리로 읽힘 — 사이를 벌림.
-					".arch-live-table td.arch-run-cell > * + * { margin-top: 8px; } " +
+					// 헬스 저장소 경보의 자리 — 표를 걷어내며 페이지로 올라온 유일한 조각.
+					// 지도가 pane 을 다 쓰므로 flex-shrink:0 으로 제 높이를 지킴(경보가 눌리면 사유가 잘림).
+					".arch-health-alert-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); " +
+					"border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
+					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
+					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
+					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: 10px; } " +
+					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
+					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
+					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬(cron). 진짜 button 이라
+					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
+					".arch-part-drill { align-self: flex-start; background: none; border: 0; margin: 0; padding: 0 0 0 10px; " +
+					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
+					".arch-part-drill:hover { color: rgb(var(--ink)); } " +
+					".arch-part-drill:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
@@ -579,6 +594,17 @@ function ScreenArchitecture(
 
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
+				{healthStoreErrors.length > 0 && (
+					<div className="arch-health-alert-wrap">
+						<StripAlertAR
+							className="arch-queue-error"
+							message="Couldn't load system health"
+							detail={healthStoreErrors.join(" · ")}
+							onRetry={triggerRefresh}
+						/>
+					</div>
+				)}
+
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
 					<div className="card arch-col-card">
@@ -599,25 +625,21 @@ function ScreenArchitecture(
 					{activeDiagram?.description || "No description available."}
 				</div>
 
-				<HealthPartTable
-					daemonState={daemonHealthState}
-					pgState={pgState}
-					hookState={hookState}
-					hookFailState={hookFailState}
-					partBindings={liveState.data?.part_bindings}
-					payloadState={payloadState}
-					onSelectDaemon={setPayloadDaemon}
-					onRetry={triggerRefresh}
-				/>
 			</div>
 
-			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
+			{/* 노드 클릭 → 드로어 (이름 / 설명 / 이 노드에 묶인 부품 헬스 + 그 로그 / 연결 flows) */}
 			{detail && (
 				<DetailModal
 					detail={detail}
 					nodeIndex={nodeIndex}
 					activeDiagram={activeDiagram}
 					liveDaemonsByNodeId={liveDaemonsByNodeId}
+					healthPartRows={healthPartRows}
+					payloadDaemon={payloadDaemon}
+					onSelectDaemon={setPayloadDaemon}
+					payloadState={payloadState}
+					hookState={hookState}
+					hookFailState={hookFailState}
 					onClose={closeDetail}
 				/>
 			)}
@@ -771,7 +793,18 @@ function MermaidCanvas({
 			if (!labelText) return;
 			const norm = normalizeLabelAR(labelText);
 			const matchedId = nodeByLabel.get(norm) || null;
-			if (matchedId) el.setAttribute("data-arch-node-id", matchedId);
+			if (!matchedId) return;
+
+			el.setAttribute("data-arch-node-id", matchedId);
+			// 키보드 진입 — 표를 걷어내며 노드가 헬스 상세로 가는 유일한 문이 됐음 (ADR-20).
+			// 표의 행은 진짜 button 이라 탭으로 닿았는데 노드는 캔버스만 포커스를 받아
+			// (tabIndex 는 캔버스에 있고 키 핸들러는 줌/팬뿐임) 마우스 없이는 상세에 닿을 길이
+			// 사라짐. 파일에 이미 `.node:focus-visible` 규칙이 있으나 포커스를 받을 수 있는
+			// 노드가 없어 죽어 있었음 — 여기서 살아남.
+			el.setAttribute("tabindex", "0");
+			el.setAttribute("role", "button");
+			// 접근명은 라벨 그대로 — 화면이 읽은 그 글자여야 스크린리더와 보이는 것이 갈라지지 않음.
+			el.setAttribute("aria-label", labelText.replace(/\s+/g, " ").trim());
 		});
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
@@ -929,6 +962,24 @@ function MermaidCanvas({
 		[onSelectNode],
 	);
 
+	// 포커스된 노드에서의 Enter/Space — 클릭과 같은 문. 캔버스의 줌/팬 키와 한 핸들러에 섞지
+	// 않음: 그쪽은 캔버스가 포커스일 때 도는 것이고 이쪽은 노드가 포커스일 때만 돌아야 함.
+	// Space 는 기본 스크롤을 막음 — 안 막으면 상세가 열리면서 페이지가 함께 내려감.
+	const handleNodeKeyDown = useCallbackAR(
+		(e) => {
+			if (e.key !== "Enter" && e.key !== " ") return;
+			const nodeEl = e.target.closest("g.node");
+			if (!nodeEl) return;
+			const matchedId = nodeEl.getAttribute("data-arch-node-id");
+			if (!matchedId) return;
+
+			e.preventDefault();
+			e.stopPropagation();
+			onSelectNode(matchedId);
+		},
+		[onSelectNode],
+	);
+
 	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 맞춤. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
 	const handleKeyDown = useCallbackAR(
 		(e) => {
@@ -987,6 +1038,7 @@ function MermaidCanvas({
 					style={{ width: "100%", height: "100%" }}
 					onMouseDown={handleMouseDown}
 					onClick={handleClick}
+					onKeyDown={handleNodeKeyDown}
 					// SECURITY: internal trusted source — 위 SECURITY 주석 참조 (sanitize 생략).
 					dangerouslySetInnerHTML={{ __html: renderState.svgHtml }}
 				/>
@@ -1258,148 +1310,99 @@ function HookFailureDetail({ state }) {
 	);
 }
 
-// 라이브 상태 표 — 노드 링 점등을 대체함. 행 원천은 데몬 응답이 아니라 부품 명부임 (ADR-5):
-// 명부 한 항목 = 한 행이므로 응답에 없는 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
+// 노드 상세의 헬스 구획 — 걷어낸 표가 서던 자리 (ADR-20). 표는 부품 명부 전체를 한 화면에
+// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 일곱 전원이 여전히 닿는 근거는 화면이 아니라
+// 바인딩 계기임: 모든 부품이 노드를 최소 하나 갖고(AC-B2-2b) 그 노드가 전부 그려지므로
+// (AC-B2-2a) 그려지지 않는 노드 뒤에 숨는 부품이 있을 수 없음 — 그 조합은 붉은 테스트임.
+// 표가 내던 네 열 중 Nodes 만 형태가 바뀜: 클릭한 노드는 여는 행위가 이미 말했으므로 나머지
+// 바인딩만 남겨 부름(1:1 부품은 낼 것이 없어 아무것도 그리지 않음).
 
-function HealthPartTable({
-	daemonState,
-	pgState,
+function NodePartHealth({
+	nodeId,
+	partRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
 	hookState,
 	hookFailState,
-	partBindings,
-	payloadState,
-	onSelectDaemon,
-	onRetry,
 }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
-	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 명부를 다시 훑지 않음.
-	const rows = useMemoAR(
-		() =>
-			getHealthPartRows(
-				{ daemonState, pgState, hookState, hookFailState },
-				partBindings,
-			),
-		[daemonState, pgState, hookState, hookFailState, partBindings],
-	);
 
-	// 한 번에 한 행만 펼침 — 여럿이 열리면 표가 세로로 길어져 실패 비교가 아니라 스크롤이 됨.
-	const [expandedRow, setExpandedRow] = useStateAR(null);
+	const unscoped = unscopedNodeIdAR(nodeId);
+	const rows = partRows.filter((row) => row.nodeIds.includes(unscoped));
 
-	const toggleRow = useCallbackAR(
-		(row) => {
-			setExpandedRow((current) => (current === row.id ? null : row.id));
-			// 접을 때도 같은 이름을 올림 — 값이 그대로라 재요청은 없고, 방금 읽은 실패가 남음.
-			if (row.daemonName) onSelectDaemon?.(row.daemonName);
-		},
-		[onSelectDaemon],
-	);
-
-	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸('—')만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
-	// 명부 가드보다 위에서 셈 — 명부는 window.HealthModel 에서 오므로 그 모듈이 통째로 빠지면
-	// rows 가 비고, 다섯 저장소를 못 읽었다는 사실을 부를 자리가 이 경보 말고는 없음.
-	const storeErrors = getHealthStoreErrorsAR({
-		daemonState,
-		pgState,
-		hookState,
-		hookFailState,
-		payloadState,
-	});
-	const storeAlert =
-		storeErrors.length > 0 ? (
-			<StripAlertAR
-				className="arch-queue-error"
-				message="Couldn't load system health"
-				detail={storeErrors.join(" · ")}
-				onRetry={onRetry}
-			/>
-		) : null;
-
-	// 표가 못 서도 경보는 섬 — 함께 사라지면 '못 읽음' 이 '아무 일 없음' 과 같은 화면이 됨.
-	if (rows.length === 0) {
-		return storeAlert ? (
-			<div className="arch-live-table-wrap">{storeAlert}</div>
-		) : null;
-	}
+	// 이 노드에 묶인 부품이 없으면 구획 자체가 없음 — 빈 제목은 판정이 비었다고 거짓말함.
+	if (rows.length === 0) return null;
 
 	return (
-		<div className="arch-live-table-wrap">
-			{storeAlert}
-			<div className="arch-live-table-scroll">
-				<table className="arch-live-table">
-					{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
-					    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
-					<thead>
-						<tr>
-							<th scope="col">HEALTH</th>
-							<th scope="col">Status</th>
-							<th scope="col">Last run</th>
-							<th scope="col">Nodes</th>
-						</tr>
-					</thead>
-					<tbody>
-						{rows.flatMap((row) => {
-							const renderDetail = HEALTH_ROW_DETAILS[row.kind];
-							const detailId = getRowDetailId(row.daemonName || row.id);
-							const isExpanded = expandedRow === row.id;
+		<div data-node-health={unscoped}>
+			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+				Health ({rows.length})
+			</div>
+			<div className="arch-part-list">
+				{rows.map((row) => {
+					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
+					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
+					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (cron 은 데몬 부품 둘이 같은 노드에 묶임).
+					const isDrilled = !row.daemonName || row.daemonName === payloadDaemon;
+					// 남은 바인딩만 부름 — 클릭한 노드는 패널을 연 행위가 이미 말했음.
+					const alsoLights = row.nodeIds.filter((id) => id !== unscoped);
 
-							// tone 속성은 판정이 확정된 행에만 붙음 — 미수신 행을 정상으로 꾸미지 않고,
-							// 하네스가 '판정이 도착함' 을 기다릴 앵커도 이 속성임.
-							const summaryRow = (
-								<tr
-									key={row.id}
-									data-health-row={row.id}
-									data-health-tone={row.tone || undefined}
-									data-daemon-row={row.daemonName || undefined}>
-									<th scope="row" className="text-ink font-mono">
-										{renderDetail ? (
-											/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */
-											<button
-												type="button"
-												className="arch-row-toggle"
-												aria-expanded={isExpanded}
-												aria-controls={detailId}
-												onClick={() => toggleRow(row)}>
-												<span className="arch-row-caret" aria-hidden="true">
-													{isExpanded ? "▾" : "▸"}
-												</span>
-												{row.name}
-											</button>
-										) : (
-											row.name
-										)}
-									</th>
-									<td>
-										{row.tone ? (
-											<span className="inline-flex items-center gap-1.5">
-												<StatusDot status={row.tone} />
-												{row.statusLabel}
-											</span>
-										) : (
-											"—"
-										)}
-									</td>
-									<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
-									<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
-								</tr>
-							);
+					return (
+						<div
+							key={row.id}
+							className="arch-part-entry"
+							data-health-row={row.id}
+							data-health-tone={row.tone || undefined}
+							data-daemon-row={row.daemonName || undefined}>
+							<div className="arch-part-head">
+								<span className="fs-meta font-mono text-ink">{row.name}</span>
+								{row.tone ? (
+									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
+										<StatusDot status={row.tone} />
+										{row.statusLabel}
+									</span>
+								) : (
+									<span className="fs-meta text-dim">—</span>
+								)}
+								{/* 마지막 실행은 데몬 부품만 갖는 사실임 — 나머지 부품에서는 빈 값이 정답이라
+								    칸을 아예 두지 않음. 데몬인데 값이 없으면 그 없음은 보여야 하므로 '—' 로 냄. */}
+								{row.daemonName && (
+									<span className="fs-meta text-dim">
+										Last run{" "}
+										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}
+									</span>
+								)}
+							</div>
 
-							// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
-							if (!renderDetail || !isExpanded) return [summaryRow];
+							{alsoLights.length > 0 && (
+								<div className="fs-micro font-mono text-faint">
+									Also lights: {alsoLights.join(", ")}
+								</div>
+							)}
 
-							return [
-								summaryRow,
-								<tr
-									key={`${row.id}-detail`}
-									data-health-detail={row.id}
-									data-daemon-detail={row.daemonName || undefined}>
-									<td id={detailId} colSpan={4} className="arch-run-cell">
+							{/* 펼칠 것이 없는 kind(pg · browser)는 아무것도 그리지 않음 — 빈 영역을 여는
+							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 접지 않고 바로 폄:
+							    패널이 이미 노드 하나로 좁혀져 있어 접어 둘 비교 대상이 없음. */}
+							{renderDetail &&
+								(isDrilled ? (
+									<div
+										className="arch-part-detail"
+										data-health-detail={row.id}
+										data-daemon-detail={row.daemonName || undefined}>
 										{renderDetail(row, { payloadState, hookState, hookFailState })}
-									</td>
-								</tr>,
-							];
-						})}
-					</tbody>
-				</table>
+									</div>
+								) : (
+									<button
+										type="button"
+										className="arch-part-drill"
+										onClick={() => onSelectDaemon?.(row.daemonName)}>
+										Show recent runs for {row.daemonName}
+									</button>
+								))}
+						</div>
+					);
+				})}
 			</div>
 		</div>
 	);
@@ -1466,6 +1469,12 @@ function DetailModal({
 	nodeIndex,
 	activeDiagram,
 	liveDaemonsByNodeId,
+	healthPartRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
+	hookState,
+	hookFailState,
 	onClose,
 }) {
 	// detail undefined 시 React state batching edge case 방어.
@@ -1484,6 +1493,12 @@ function DetailModal({
 				flows={activeDiagram?.flows || []}
 				nodeIndex={nodeIndex}
 				liveDaemonsByNodeId={liveDaemonsByNodeId}
+				healthPartRows={healthPartRows}
+				payloadDaemon={payloadDaemon}
+				onSelectDaemon={onSelectDaemon}
+				payloadState={payloadState}
+				hookState={hookState}
+				hookFailState={hookFailState}
 			/>
 		);
 
@@ -1506,7 +1521,18 @@ function DetailModal({
 	);
 }
 
-function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
+function NodeDetailBody({
+	info,
+	flows,
+	nodeIndex,
+	liveDaemonsByNodeId,
+	healthPartRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
+	hookState,
+	hookFailState,
+}) {
 	const { Pill, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
 		window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
@@ -1533,6 +1559,15 @@ function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
 			{info.description && (
 				<FieldBlock label="Description" value={info.description} mono={false} />
 			)}
+			<NodePartHealth
+				nodeId={info.id}
+				partRows={healthPartRows}
+				payloadDaemon={payloadDaemon}
+				onSelectDaemon={onSelectDaemon}
+				payloadState={payloadState}
+				hookState={hookState}
+				hookFailState={hookFailState}
+			/>
 			<FlowSummary
 				inbound={inbound}
 				outbound={outbound}

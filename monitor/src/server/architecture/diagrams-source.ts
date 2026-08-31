@@ -436,6 +436,31 @@ export const PART_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> = {
 	"hook-chain": ["hook_pipeline"],
 };
 
+// 그려지는 노드 → 상세 패널이 읽는 서술 (ADR-20). 스키마의 FlowNode.description 은 처음부터
+// 클릭 상세용으로 선언돼 있었으나(types/architecture.ts) 채우는 자리가 없어 아홉 노드 전부 비어
+// 있었음 — 표를 걷어내며 상세가 유일한 표면이 되므로 여기서 채움.
+// 키는 unscoped mermaid id 임: 같은 id 를 쓰는 source 여섯 편의 노드에도 같은 서술이 붙는데,
+// 그쪽은 그려지지 않는 문서이고 id 가 같으면 같은 부품이라 어긋나지 않음.
+// 내용 규칙 — 라벨을 고쳐 쓰지 않음(패널이 라벨을 이미 이름으로 냄). 그린 엣지와 canonical
+// 서술이 말하는 것만 적음: 여기 없는 사실을 적으면 지도가 아니라 이 표가 출처가 됨.
+export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
+	user: "Where a run starts when a person types. The utterance goes to the orchestrator, which decides what work it implies.",
+	autoagent_d:
+		"Scheduled job that reads the recorded outcomes and proposes instruction improvements. It wakes the orchestrator rather than editing anything itself.",
+	wiki_d:
+		"Scheduled job that compiles and indexes the wiki store, then wakes the orchestrator with what it found.",
+	cron: "The schedule itself — the background jobs that start the daemons and restart them daily.",
+	main_session:
+		"The orchestrator. It plans the work and assigns it; carrying the work out is the specialist agents' job, not its own.",
+	agent_layer:
+		"The specialist agents the orchestrator assigns work to. Their tool calls are what the hook pipeline sees.",
+	hook_pipeline:
+		"Every tool call an agent makes passes through here first — the safety checks that can stop a call, and the tracking that records what happened.",
+	pg_db:
+		"The PostgreSQL database. Agent documents and hook records both land here, and it is the single store the export path reads from.",
+	doc_export: "Renders the stored documents for export through a headless Chromium.",
+};
+
 // 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
 // import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
 export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
@@ -498,8 +523,9 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 재측정 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): LR 2246×429 → 1774.6×471.
 	 * 남은 폭의 3분의 1은 존이 아니라 엣지 라벨이 벌린 랭크 사이 간격임 — 더 줄이려면 세 줄짜리 엣지 라벨이
 	 * 되는데 그렇게 얻는 값이 45 단위뿐이라(실측) 여기서 멈춤.
-	 * pane 폭 = 뷰포트 폭 - 290px · 높이 ≈ 뷰포트의 0.55 배 (실측 1396×800→1106×427 · 1512×850→1222×477 ·
-	 * 1920×1080→1630×707) — 종전 주석의 0.68 배는 과대였음. 세 폭 모두 폭이 먼저 걸리고 높이는 남음.
+	 * pane 폭 = 뷰포트 폭 - 290px · 높이 ≈ 뷰포트의 0.68 배 (실측 1396×800→1106×540 · 1512×850→1222×575 ·
+	 * 1920×1080→1630×736). 표를 걷어내기 전에는 0.55 배였고 지도가 pane 을 다 쓰게 되며 돌아온 값임 (ADR-20).
+	 * 세 폭 모두 폭이 먼저 걸리고 높이는 남으므로, 높이가 113px 늘어도 배율은 한 자리도 움직이지 않음.
 	 * 실측 배율(라벨 렌더 크기): 1396 폭 0.6314(8.84px) · 1512 폭 0.6977(9.77px) · 1920 폭 0.9306(13.03px) — 셋 다 안 잘림.
 	 * 감축 전 1396 폭에서는 하한 0.6(8.40px)에 걸려 `export` 존이 218.8px 잘렸음 — 폭을 줄인 결과가 글자를
 	 * 줄이는 것이 아니라 키우는 쪽이라 가독과 완전함이 맞바꿈 관계가 아니었음.

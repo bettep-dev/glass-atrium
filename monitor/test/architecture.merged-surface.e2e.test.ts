@@ -1598,48 +1598,51 @@ test("AC-B2-6c the map requests neither self-improvement store", async () => {
 	);
 });
 
-// AC-B2-5c: 지도 아래의 화면-폭 상세 블록은 사라졌음 — 펼칠 것은 이제 표의 행뿐임.
-// 이름이 아니라 자리로 잼: 다른 클래스를 달고 돌아온 전역 블록도 표 밖의 컨트롤이므로 붉어짐.
+// AC-B2-5c: 지도 아래의 화면-폭 상세 블록은 사라졌음 — 표까지 걷어낸 지금 펼칠 것은 노드 상세뿐임.
+// 이름이 아니라 자리로 잼: 다른 클래스를 달고 돌아온 전역 블록도 패널 밖의 상세이므로 붉어짐.
 // 죽은 토큰으로 재지 않는 이유 — 그 이름들은 원장(architecture.removal-ledger.static.test.ts)의
 // 것이고, 여기 다시 적으면 원장이 제 파일 밖에서 그 이름을 보고 붉어짐.
-test("AC-B2-5c every expansion control on the map belongs to a health row", async () => {
+test("AC-B2-5c the hook detail exists only inside the node panel", async () => {
 	await openMapWithHealth(getHookChainFixture());
-	await waitForDaemonRows();
+	await page.waitForSelector("svg g.node[data-arch-node-id]", { timeout: 30_000 });
 
-	const toggles = await page.evaluate(() => {
-		const all = [...document.querySelectorAll("button[aria-expanded]")];
-		return { total: all.length, inTable: all.filter((el) => el.closest(".arch-live-table")).length };
-	});
-
-	assert.ok(toggles.total > 0, "fixture precondition: the map must render at least one expandable row");
+	// 노드를 누르기 전 — 훅 구성은 화면 어디에도 없어야 함. 지도는 설정 덤프가 아님.
+	// 컨트롤만 세는 절은 컨트롤 없이 늘 펼쳐진 채 돌아온 화면-폭 상세를 못 봄(그런 블록은
+	// 컨트롤이 0 건이라 초록으로 통과함) — 그래서 내용 자체를 자리로 잼.
 	assert.equal(
-		toggles.total,
-		toggles.inTable,
-		"an expansion control outside the health table is a screen-wide detail block returning under the map",
+		await page.evaluate(() => document.querySelectorAll(".arch-hook-chain, .arch-hook-fails").length),
+		0,
+		"the map must render no hook configuration before a node is opened — a block standing there is the screen-wide detail returning",
 	);
 
-	// 컨트롤만 세는 절은 컨트롤 없이 늘 펼쳐진 채 돌아온 화면-폭 상세를 못 봄 — 그런 블록은
-	// 컨트롤이 0 건이라 위 절을 초록으로 통과함. 그래서 그 블록들이 들고 있던 내용 자체를
-	// 자리로 잼: 훅 구성과 실패 이력은 행 확장 안에서만 나옴. 안쪽이 0 이면 선택자가 죽어
-	// 단언이 공허해지므로 그 방향도 함께 잼.
-	await expandHookRow(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
+	await openHookHealth(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
 
 	const detail = await page.evaluate(() => {
 		const all = [...document.querySelectorAll(".arch-hook-chain, .arch-hook-fails")];
-		return { total: all.length, inTable: all.filter((el) => el.closest(".arch-live-table")).length };
+		return {
+			total: all.length,
+			inPanel: all.filter((el) => el.closest("[data-node-health]")).length,
+		};
 	});
-
-	assert.ok(detail.total > 0, "fixture precondition: the expanded hook row must render the hook detail");
+	assert.ok(detail.total > 0, "fixture precondition: the opened hook part must render the hook detail");
 	assert.equal(
 		detail.total,
-		detail.inTable,
-		"hook detail outside the health table is a screen-wide block returning under the map — with a control of its own or without one",
+		detail.inPanel,
+		"hook detail outside the node panel is a screen-wide block returning under the map — with a control of its own or without one",
+	);
+
+	// 패널을 닫으면 상세도 트리에서 나가야 함 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
+	await closePanel();
+	assert.equal(
+		await page.evaluate(() => document.querySelectorAll(".arch-hook-chain, .arch-hook-fails").length),
+		0,
+		"closing the panel must take the detail out of the tree, not merely restyle it",
 	);
 });
 
 // --- T11: the hook chain configuration in the hook row's expansion ---------
 
-// 표의 hook 행 — 부품 명부(HEALTH_CARD_DEFS)의 id 이고, 확장 영역이 그 id 로 달림.
+// hook 부품 — 명부(HEALTH_CARD_DEFS)의 id 이고, 패널의 상세 영역이 그 id 로 달림.
 const HOOK_ROW_ID = "hook-chain";
 
 // 훅 구성 픽스처 — 화면이 지어낼 수 없는 값들. 이벤트 2종 · matcher 2종 · 훅 3개.
@@ -1679,11 +1682,10 @@ async function getHookRowText(): Promise<string> {
 	return await getNodeText(`[data-health-detail="${HOOK_ROW_ID}"]`);
 }
 
-// hook 행을 펼치고 확장 영역 텍스트를 냄. 응답 왕복이 끝나야 채워지므로 기한을 두고 기다림 —
-// 초과하면 마지막으로 읽은 텍스트를 그대로 돌려 단언이 무엇을 봤는지 메시지에 남게 함.
-async function expandHookRow(needle: string): Promise<string> {
-	await page.waitForSelector(`[data-health-row="${HOOK_ROW_ID}"] button[aria-expanded]`, { timeout: 30_000 });
-	await page.click(`[data-health-row="${HOOK_ROW_ID}"] button[aria-expanded]`);
+// hook 부품의 노드를 열고 상세 영역 텍스트를 냄. 응답 왕복이 끝나야 채워지므로 기한을 두고
+// 기다림 — 초과하면 마지막으로 읽은 텍스트를 그대로 돌려 단언이 무엇을 봤는지 메시지에 남게 함.
+async function openHookHealth(needle: string): Promise<string> {
+	await openPartHealth(HOOK_ROW_ID);
 
 	const deadline = Date.now() + 15_000;
 	let text = "";
@@ -1695,51 +1697,30 @@ async function expandHookRow(needle: string): Promise<string> {
 	return text;
 }
 
-test("T11 the hook row stays collapsed until its control is pressed", async () => {
+// 접힘/펼침을 재던 절은 접을 것과 함께 사라졌음 — 패널은 노드 하나로 이미 좁혀져 있어 접어 둘
+// 비교 대상이 없음. 그 자리에 남는 계약은 '열면 서버가 준 구성이 빠짐없이 온다' 이고, '열기 전에는
+// 어디에도 없다' 는 AC-B2-5c 가 자리로 잼.
+test("T11 opening the hook part renders the whole configuration it was served", async () => {
 	await openMapWithHealth(getHookChainFixture());
-	await page.waitForSelector(`[data-health-row="${HOOK_ROW_ID}"] button[aria-expanded]`, { timeout: 30_000 });
 
-	const control = page.locator(`[data-health-row="${HOOK_ROW_ID}"] button[aria-expanded]`);
-	assert.equal(
-		await control.getAttribute("aria-expanded"),
-		"false",
-		"the row must start collapsed — the map is not a settings dump",
-	);
-	const collapsed = await getHookRowText();
-	assert.ok(
-		!collapsed.includes(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command),
-		`a collapsed row must not render its body, but it read: ${collapsed}`,
-	);
-
-	await control.click();
-	assert.equal(await control.getAttribute("aria-expanded"), "true");
-
-	// aria-controls 가 실제 요소를 가리켜야 함 — 가리키는 곳이 없으면 스크린리더에 관계가 안 남음.
-	const controlled = await page.evaluate((id) => {
-		const btn = document.querySelector(`[data-health-row="${id}"] button[aria-expanded]`);
-		const target = btn ? document.getElementById(btn.getAttribute("aria-controls") || "") : null;
-		return { hasTarget: Boolean(target) };
-	}, HOOK_ROW_ID);
-	assert.ok(controlled.hasTarget, "aria-controls must resolve to the expanded region");
-
-	const expanded = await getHookRowText();
+	const expanded = await openHookHealth(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
 	for (const group of HOOK_FIXTURE_EVENTS[0].groups) {
-		assert.ok(expanded.includes(group.matcher), `the expanded row must name the ${group.matcher} matcher`);
+		assert.ok(expanded.includes(group.matcher), `the detail must name the ${group.matcher} matcher`);
 		for (const hook of group.hooks) {
-			assert.ok(expanded.includes(hook.command), `the expanded row must name ${hook.command}`);
+			assert.ok(expanded.includes(hook.command), `the detail must name ${hook.command}`);
 		}
 	}
-	assert.ok(expanded.includes("PreToolUse"), "the expanded row must name the event the hooks fire on");
+	assert.ok(expanded.includes("PreToolUse"), "the detail must name the event the hooks fire on");
 	assert.ok(
 		expanded.includes(HOOK_FIXTURE_SOURCE),
-		"the expanded row must name the file the configuration was read from",
+		"the detail must name the file the configuration was read from",
 	);
 });
 
-// AC-B2-5a: 한 확장 영역이 구성과 실패 이력을 함께 냄 — 훅 신고 하나를 가르는 두 반쪽이
+// AC-B2-5a: 한 상세 영역이 구성과 실패 이력을 함께 냄 — 훅 신고 하나를 가르는 두 반쪽이
 // 화면 두 곳에 흩어져 있으면 조작자가 그 둘을 손으로 맞춰야 함.
 // 두 사실을 한 영역 안에서 잼: 각각이 어딘가에 있음이 아니라 '같은 자리에 있음' 이 계약임.
-test("AC-B2-5a the hook row expansion carries the configuration and the failure log together", async () => {
+test("AC-B2-5a the hook part detail carries the configuration and the failure log together", async () => {
 	await openMapWithHealth(
 		{
 			...getHookChainFixture(),
@@ -1752,15 +1733,15 @@ test("AC-B2-5a the hook row expansion carries the configuration and the failure 
 		},
 	);
 
-	const text = await expandHookRow(FAIL_HOOK_NAME);
+	const text = await openHookHealth(FAIL_HOOK_NAME);
 
 	const group = HOOK_FIXTURE_EVENTS[0].groups[0];
-	assert.ok(text.includes(group.matcher), `one expansion must carry the matcher, but it read: ${text}`);
+	assert.ok(text.includes(group.matcher), `one detail region must carry the matcher, but it read: ${text}`);
 	assert.ok(
 		text.includes(group.hooks[0].command),
-		`one expansion must carry the hook the matcher fires, but it read: ${text}`,
+		`one detail region must carry the hook the matcher fires, but it read: ${text}`,
 	);
-	assert.ok(text.includes(FAIL_HOOK_NAME), `one expansion must carry the failing hook, but it read: ${text}`);
+	assert.ok(text.includes(FAIL_HOOK_NAME), `one detail region must carry the failing hook, but it read: ${text}`);
 
 	// 실패 항목은 날짜를 실은 기계값이어야 함 — 표시 문장이 아니라 그 값으로 잼.
 	const rowStamps = await page.evaluate(
@@ -1770,10 +1751,10 @@ test("AC-B2-5a the hook row expansion carries the configuration and the failure 
 			),
 		HOOK_ROW_ID,
 	);
-	assert.deepEqual(rowStamps, [FAIL_WINDOW_TS], "the same expansion must carry the dated failure entry");
+	assert.deepEqual(rowStamps, [FAIL_WINDOW_TS], "the same detail region must carry the dated failure entry");
 });
 
-// --- T8 · T9c: the daemon row expands to its last failure -------------------
+// --- T8 · T9c: the daemon part detail carries its last failure ---------------
 
 // 드릴다운을 옮겨 볼 둘째 데몬 — 바인딩 키여야 node_ids 가 비지 않음.
 const DRILLDOWN_DAEMON = "wiki";
@@ -1818,83 +1799,225 @@ function getFailingPayload(): Pick<HealthDaemonPayloadResponse, "entries"> {
 
 interface RowExpansionProbe {
 	rowFound: boolean;
-	tag: string;
-	type: string | null;
-	name: string;
-	expanded: string | null;
-	controls: string;
 	regionFound: boolean;
+	regionNames: string;
+	regionInsidePart: boolean;
 	regionText: string;
 }
 
+// 데몬 이름 → 그 데몬을 실은 부품 id. 패널은 부품 단위이고 픽스처는 데몬 이름으로 말하므로
+// 둘 사이를 옮기는 자리가 필요함. 명부(health-model.js)와 같은 짝이지만 여기서 다시 적지 않고
+// 하네스가 쓰는 넷만 이름으로 고정함 — 유도하면 구현의 규칙을 되읽어 무엇을 세든 초록이 됨.
+const DAEMON_PART_BY_NAME: Record<string, string> = {
+	autoagent: "daemon-cycle",
+	wiki: "glass-atrium-wiki-curator",
+	"daily-restart-autoagent": "daily-restart-autoagent",
+	"daily-restart-wiki": "daily-restart-wiki",
+};
+
 /**
- * 확장 컨트롤에서 출발해 aria-controls 가 가리키는 id 를 실제로 되짚어 읽음.
- * 하네스가 id 상수를 다시 적으면 배선이 끊겨도 초록이 되므로 컨트롤에서 출발함.
+ * 부품 항목에서 출발해 그 안의 상세 영역을 읽음. 표 시절에는 확장 컨트롤의 aria-controls 를
+ * 되짚었으나 패널에는 접을 것이 없어 컨트롤이 없음 — 대신 영역이 제 부품 '안에' 있고 제
+ * 데몬을 이름으로 실었는지를 잼. 자리와 이름을 함께 재지 않으면, 아무 데나 떠 있는 영역
+ * 하나로도 단언이 통과함.
  */
-async function getRowExpansionProbe(daemon: string): Promise<RowExpansionProbe> {
+async function getPanelDetailProbe(daemon: string): Promise<RowExpansionProbe> {
 	return await page.evaluate((name) => {
 		const row = document.querySelector(`[data-daemon-row="${name}"]`);
-		const control = row?.querySelector("[aria-expanded]") as HTMLElement | null;
-		const controls = control?.getAttribute("aria-controls") || "";
-		const region = controls ? document.getElementById(controls) : null;
+		const region = document.querySelector(`[data-daemon-detail="${name}"]`) as HTMLElement | null;
 		return {
 			rowFound: Boolean(row),
-			tag: control ? control.tagName : "",
-			type: control ? control.getAttribute("type") : null,
-			name: control ? (control as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "",
-			expanded: control ? control.getAttribute("aria-expanded") : null,
-			controls,
 			regionFound: Boolean(region),
-			regionText: region
-				? (region as HTMLElement).innerText.replace(/\s+/g, " ").trim()
-				: "",
+			regionNames: region?.getAttribute("data-daemon-detail") || "",
+			regionInsidePart: Boolean(region && row && row.contains(region)),
+			regionText: region ? region.innerText.replace(/\s+/g, " ").trim() : "",
 		};
 	}, daemon);
 }
 
-async function waitForDaemonRows(): Promise<void> {
-	await page.waitForSelector(".arch-live-table tbody tr", { timeout: 30_000 });
+// 부품 → 그 부품을 켜는 노드를 열어 상세 패널을 세움. 표를 걷어낸 뒤로 헬스 단언은 전부 이 문을
+// 지남: 명부 일곱을 한 화면에 펴던 표 대신 부품은 제 노드의 패널에서만 보임. 짝은 서버 상수에서
+// 뽑음 — 하네스가 부품↔노드를 다시 적으면 바인딩이 어긋나도 두 사본이 함께 틀린 채 초록이 됨.
+async function openPartHealth(partId: string): Promise<void> {
+	const [nodeId] = PART_NODE_BINDINGS[partId] ?? [];
+	assert.ok(nodeId, `fixture precondition: part '${partId}' binds no node, so no panel can carry it`);
+
+	// 드로어는 모달이라 열린 채로는 오버레이가 지도의 클릭을 가로챔 — 조작자도 닫고 다시 눌러야
+	// 함(표는 일곱을 한 화면에 폈으므로 그 왕복이 없었음). 하네스가 그 순서를 그대로 밟음.
+	await closePanelIfOpen();
+
+	const selector = `svg g.node[data-arch-node-id$=".${nodeId}"]`;
+	await page.waitForSelector(selector, { timeout: 30_000 });
+	await waitForFittedCanvas();
+
+	// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
+	// 드라이버는 누르기 전에 대상을 시야로 끌어오려 스크롤하는데, 캔버스의 휠 확대(svg-pan-zoom,
+	// 기본 감도 0.1)가 그 스크롤을 확대로 읽어 배율이 틱마다 1.1 배씩 올라감. 한 번 커지면 노드는
+	// 더 밖으로 나가 스크롤이 다시 일어나고, 상한에 걸릴 때까지 되풀이됨
+	// (실측: 0.6566 → 1.7071 = 0.6566 × 1.1^10, 그 뒤 어떤 노드도 못 누름).
+	// 좌표로 누르면 스크롤이 아예 없고, 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
+	const box = await page.evaluate((sel) => {
+		const el = document.querySelector(sel);
+		const canvas = document.querySelector(".arch-mermaid-canvas");
+		if (!el || !canvas) return null;
+		const r = el.getBoundingClientRect();
+		const c = canvas.getBoundingClientRect();
+		const vp = canvas.querySelector(".svg-pan-zoom_viewport");
+		const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+		return {
+			x: r.left + r.width / 2,
+			y: r.top + r.height / 2,
+			inside:
+				r.left >= c.left && r.right <= c.right && r.top >= c.top && r.bottom <= c.bottom,
+			node: `${r.left.toFixed(0)},${r.top.toFixed(0)} ${r.width.toFixed(0)}x${r.height.toFixed(0)}`,
+			pane: `${c.left.toFixed(0)},${c.top.toFixed(0)} ${c.width.toFixed(0)}x${c.height.toFixed(0)}`,
+			scale: m ? m.a.toFixed(4) : "(no transform)",
+			overlays: document.querySelectorAll(".detail-overlay").length,
+		};
+	}, selector);
+
+	assert.ok(box, `fixture precondition: node '${nodeId}' and the canvas must both be in the tree`);
+	assert.ok(
+		box.inside,
+		`node '${nodeId}' (part '${partId}') is drawn outside the pane, so no click can reach it — ` +
+			`node ${box.node} · pane ${box.pane} · scale ${box.scale} · ${box.overlays} overlay(s) standing`,
+	);
+
+	await page.mouse.click(box.x, box.y);
+	await page.waitForSelector(`[data-health-row="${partId}"]`, { timeout: 30_000 });
 }
 
-// 표가 선언하는 열 — AC-T8 첫 절("접힘 상태 행에 4열")이 재는 값. 첫 열 이름은 B2-4 에서
-// job → HEALTH 로 옮겼음: 행 원천이 데몬 응답에서 부품 명부로 갔으므로 데몬 아닌 행까지
-// 일감이라 부르던 이름이 더는 이 표가 세는 것을 부르지 않음.
-// 이름까지 고정함: 개수만 세면 열 하나가 다른 사실로 바뀌어도 초록이 됨.
-const LIVE_TABLE_HEADERS = ["HEALTH", "Status", "Last run", "Nodes"];
+// 지도를 맞춤 배율에 세움. 노드가 그려진 것과 맞춤이 걸린 것은 다른 순간이고, openMap 은 SVG 가
+// 나타나면 돌아오므로 그 사이에 재면 원래 배율의 자리를 재게 됨 — 그 상태에서는 지도가 pane 을
+// 넘어 가장자리 노드가 아예 못 눌림(실측: 맞춤 전 1.7071 · 맞춤 후 0.6566, pane 1150x610).
+// 자동 맞춤이 앉기를 기다리는 대신 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러
+// 결정적으로 세움 — 언제 앉는지에 기대지 않게 됨. 하네스가 변환행렬을 직접 쓰지는 않음:
+// 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
+async function waitForFittedCanvas(): Promise<void> {
+	const canvas = page.locator(".arch-mermaid-canvas");
+	if ((await canvas.count()) === 0) return;
 
-interface LiveTableShape {
-	headers: string[];
-	rowCells: number;
-	detailColSpan: number | null;
+	// 변환행렬이 붙기 전에는 누를 것도 없음 — svg-pan-zoom 이 붙기를 먼저 기다림.
+	await page.waitForFunction(
+		() => {
+			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+			return Boolean(m && m.a > 0);
+		},
+		null,
+		{ timeout: 30_000 },
+	);
+
+	await canvas.focus();
+	await page.keyboard.press("0");
+
+	// 화면의 상한이 1 이므로 그것을 앵커로 씀 — 안 내려오면 맞춤이 걸리지 않은 것이고,
+	// 그 사실 자체가 결함이라 여기서 붉어져야 함.
+	await page.waitForFunction(
+		() => {
+			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+			return Boolean(m && m.a > 0 && m.a <= 1);
+		},
+		null,
+		{ timeout: 15_000 },
+	);
 }
 
-// 표의 '모양'을 한 번에 읽음 — 머리글 · 행의 칸 수 · 상세 칸이 가로지르는 폭.
-// 셋을 따로 재면 "열은 넷인데 colSpan 은 여전히 4" 같은 어긋남을 아무 단언도 보지 못함.
-async function getLiveTableShape(daemon: string): Promise<LiveTableShape> {
-	return await page.evaluate((name) => {
-		const table = document.querySelector(".arch-live-table");
-		// textContent 로 읽음 — innerText 는 스타일시트의 text-transform 까지 반영해서
-		// 열 이름이 아니라 대소문자 규칙을 재게 됨. 여기서 잴 것은 마크업이 쓴 이름임.
-		const headers = [...(table?.querySelectorAll("thead th") || [])].map((el) =>
+async function closePanelIfOpen(): Promise<void> {
+	if ((await page.locator(".detail-overlay").count()) === 0) return;
+	await closePanel();
+}
+
+// 데몬 부품의 노드를 엶 — 걷어낸 표에서 행 등장을 기다리던 자리. 드릴다운은 패널이 열릴 때
+// 그 데몬으로 옮겨가므로(architecture.jsx handleSelectNode) 여는 것과 드릴다운이 한 동작임.
+async function openDaemonHealth(daemonName: string): Promise<void> {
+	const partId = DAEMON_PART_BY_NAME[daemonName];
+	assert.ok(partId, `fixture precondition: no roster part carries daemon '${daemonName}'`);
+	await openPartHealth(partId);
+}
+
+// 패널을 닫음 — 부품마다 노드가 다르므로 표에서 한 번에 읽던 것을 여기서는 순회로 읽음.
+async function closePanel(): Promise<void> {
+	await page.keyboard.press("Escape");
+	// 헬스 구획이 아니라 오버레이의 사라짐을 기다림 — 헬스를 싣지 않은 노드를 연 경우
+	// 구획이 애초에 없어 detached 를 영원히 기다리게 됨.
+	await page.waitForSelector(".detail-overlay", { state: "detached", timeout: 15_000 });
+}
+
+// 부품 하나를 그 노드에서 읽어 오고 패널을 닫음.
+async function readPart<T>(partId: string, read: () => Promise<T>): Promise<T> {
+	await openPartHealth(partId);
+	const value = await read();
+	await closePanel();
+	return value;
+}
+
+/**
+ * 표의 네 열이 실어 나르던 사실 — 이름 · 판정 · 마지막 실행 · 바인딩. 열은 사라졌지만 사실은
+ * 사라지면 안 됨(그 조용한 소실이 이 작업의 실패 형태임)이라, 표의 모양을 재던 자리가 이제
+ * 사실의 이사를 잼. `nodes` 는 형태만 바뀜: 연 노드는 여는 행위가 이미 말했으므로 남은
+ * 바인딩만 부르고, 1:1 부품은 낼 것이 없어 빈 문자열임.
+ */
+interface PartFacts {
+	found: boolean;
+	name: string;
+	tone: string | null;
+	status: string;
+	lastRun: string;
+	alsoLights: string;
+	hasDetail: boolean;
+	// 드릴다운 응답은 한 번에 한 데몬 것임 — 한 노드에 데몬 부품이 둘이면(cron) 한쪽은 상세를,
+	// 다른 쪽은 그 상세를 불러오는 컨트롤을 냄. 둘 중 하나는 반드시 있어야 함.
+	hasDrill: boolean;
+}
+
+async function getPartFacts(partId: string): Promise<PartFacts> {
+	return await page.evaluate((id) => {
+		const row = document.querySelector(`[data-health-row="${id}"]`);
+		if (!row)
+			return {
+				found: false,
+				name: "",
+				tone: null,
+				status: "",
+				lastRun: "",
+				alsoLights: "",
+				hasDetail: false,
+				hasDrill: false,
+			};
+
+		// 머리글이 없으므로 자리로 읽음 — 이름 · 판정 · 마지막 실행이 head 안에서 이 순서임.
+		// 안쪽에 이름 붙은 함수를 두지 않음: 번들러가 keepNames 도우미(`__name`)를 끼워 넣는데
+		// 그 도우미는 페이지 문맥에 없어 evaluate 가 통째로 던짐.
+		const head = [...(row.querySelector(".arch-part-head")?.children || [])].map((el) =>
 			(el.textContent || "").replace(/\s+/g, " ").trim(),
 		);
-		const row = table?.querySelector(`[data-daemon-row="${name}"]`);
-		const detailCell = table?.querySelector(`[data-daemon-detail="${name}"] td`);
+		const also =
+			[...row.children]
+				.map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+				.find((t) => t.startsWith("Also lights:")) || "";
+
 		return {
-			headers,
-			// 행 없음(-1)과 칸 0개를 갈라 부름 — 둘 다 0 으로 접으면 픽스처 붕괴가 결함으로 읽힘.
-			rowCells: row ? row.querySelectorAll("th, td").length : -1,
-			detailColSpan: detailCell ? Number(detailCell.getAttribute("colspan")) : null,
+			found: true,
+			name: head[0] || "",
+			tone: row.getAttribute("data-health-tone"),
+			status: head[1] || "",
+			// 데몬 부품만 갖는 사실 — 없는 자리는 칸 자체가 없음이 정답임.
+			lastRun: (head[2] || "").replace(/^Last run\s*/, ""),
+			alsoLights: also.replace(/^Also lights:\s*/, ""),
+			hasDetail: Boolean(row.querySelector("[data-health-detail]")),
+			hasDrill: Boolean(row.querySelector(".arch-part-drill")),
 		};
-	}, daemon);
+	}, partId);
 }
 
-// 확장 영역은 페이로드 왕복이 끝나야 채워짐 — 기한을 두고 기다리되 초과는 붉어짐.
+// 상세 영역은 페이로드 왕복이 끝나야 채워짐 — 기한을 두고 기다리되 초과는 붉어짐.
 async function waitForRegionText(daemon: string, needle: string): Promise<string> {
 	const deadline = Date.now() + 15_000;
 	let text = "";
 	while (Date.now() < deadline) {
-		text = (await getRowExpansionProbe(daemon)).regionText;
+		text = (await getPanelDetailProbe(daemon)).regionText;
 		if (text.includes(needle)) return text;
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
@@ -1910,122 +2033,143 @@ async function waitForHealthHit(path: string): Promise<boolean> {
 	return false;
 }
 
-test("AC-T8 each daemon row carries a real expand control wired by aria", async () => {
+test("AC-T8 a daemon part's detail stands open in the panel, named by the part it belongs to", async () => {
 	await openMap(getLiveFixture());
-	await waitForDaemonRows();
+	await openDaemonHealth(BOUND_DAEMON);
 
-	const probe = await getRowExpansionProbe(BOUND_DAEMON);
-	assert.equal(probe.rowFound, true, `the live table must carry a row for ${BOUND_DAEMON}`);
+	const probe = await getPanelDetailProbe(BOUND_DAEMON);
+	assert.equal(probe.rowFound, true, `the panel must carry an entry for ${BOUND_DAEMON}`);
 	assert.equal(
-		probe.tag,
-		"BUTTON",
-		"the expand control must be a real button — a click-only cell is unreachable by keyboard",
+		probe.regionFound,
+		true,
+		"the detail region must stand open — the panel is already scoped to one node, so there is nothing to collapse it against",
 	);
-	assert.equal(probe.type, "button", "the control must not submit a form");
-	assert.equal(probe.expanded, "false", "a collapsed row must report aria-expanded=false");
-	assert.ok(probe.controls, "the control must name the region it opens via aria-controls");
+	assert.equal(
+		probe.regionNames,
+		BOUND_DAEMON,
+		`the region must name the daemon it belongs to — read "${probe.regionNames}"`,
+	);
+	assert.ok(
+		probe.regionInsidePart,
+		"the region must sit inside its own part entry — a region hanging outside it belongs to no part in particular",
+	);
+});
+
+/**
+ * 이 작업의 지배 단언 — 표의 네 열이 나르던 사실이 전부 패널에 있는지.
+ * 표가 사라지면 어느 열이 조용히 빠져도 지금 도는 어떤 테스트도 붉어지지 않음(열을 세던 계기가
+ * 열과 함께 사라졌으므로). 그래서 사실 넷을 이름으로 고정해 여기서 잼:
+ *   HEALTH → 이름 · Status → 판정(속성 + 글자) · Last run → 경과 판독 · Nodes → 남은 바인딩.
+ * 넷째만 형태가 바뀜(연 노드는 빼고 남은 것만 부름) — 그 규칙 자체를 아래 마지막 절이 잼.
+ */
+test("AC-T8 the panel entry carries every fact the table's four columns named", async () => {
+	await openMap(getLiveFixture(), getQueueFixture(), getRanDaemonFixture(DAEMON_RUN_TS));
+	await openDaemonHealth(BOUND_DAEMON);
+
+	const facts = await getPartFacts(DAEMON_PART_BY_NAME[BOUND_DAEMON]);
+	assert.equal(facts.found, true, "fixture precondition: the panel must carry the daemon part");
+	assert.equal(facts.name, BOUND_DAEMON, `HEALTH column → the entry must name the part — read "${facts.name}"`);
+	assert.ok(facts.tone, `Status column → the entry must carry the verdict as an attribute — read ${facts.tone}`);
+	assert.ok(
+		facts.status.length > 0 && facts.status !== "—",
+		`Status column → the entry must state the verdict in words too — read "${facts.status}"`,
+	);
 	assert.match(
-		probe.name,
-		new RegExp(BOUND_DAEMON),
-		"the control's accessible name must be the job it opens",
+		facts.lastRun,
+		/^\d+[smhd] ago$/,
+		`Last run column → the entry must read the served instant as an elapsed time — read "${facts.lastRun}"`,
 	);
+
+	// Nodes 열 — 연 노드는 빼고 남은 바인딩만. autoagent 는 노드 하나뿐이라 낼 것이 없음.
 	assert.equal(
-		probe.regionFound,
+		facts.alsoLights,
+		"",
+		`Nodes column → a part bound to only the node you opened has no residual binding to name — read "${facts.alsoLights}"`,
+	);
+	await closePanel();
+
+	// 반증 방향 — 응답이 노드를 더 실어 주면 그 나머지가 이름으로 나와야 함. 이 절이 없으면
+	// 위의 빈 문자열은 '규칙대로 비었음' 과 '칸이 아예 없음' 을 구별하지 못함.
+	await openMap(
+		getLiveFixture({ part_bindings: { ...PART_NODE_BINDINGS, pg: ["pg_db", "injected_b"] } }),
+	);
+	await openPartHealth("pg");
+	const spread = await getPartFacts("pg");
+	assert.equal(
+		spread.alsoLights,
+		"injected_b",
+		`Nodes column → the bindings other than the opened node must be named — read "${spread.alsoLights}"`,
+	);
+});
+
+test("AC-T8 opening another node moves the panel to that node's parts alone", async () => {
+	await openMap(getLiveFixture());
+	await openDaemonHealth(BOUND_DAEMON);
+	assert.equal(
+		(await getPartFacts(DAEMON_PART_BY_NAME[BOUND_DAEMON])).found,
+		true,
+		"fixture precondition: the first node's part must stand",
+	);
+
+	// 드로어가 모달이라 다른 노드를 열려면 먼저 닫아야 함 — openPartHealth 가 그 순서를 밟음.
+	await openPartHealth("hook-chain");
+	assert.equal(
+		(await getPartFacts(DAEMON_PART_BY_NAME[BOUND_DAEMON])).found,
 		false,
-		"a collapsed row must leave no region in the tree — aria-controls names what expanding creates",
+		"the panel must carry only the opened node's parts — a part from the previous node is the panel keeping stale content",
 	);
+	assert.equal((await getPartFacts("hook-chain")).found, true, "the newly opened node's part must stand");
 });
 
-// AC-T8 첫 절이 사는 자리 — 표를 flatMap 으로 다시 쓴 자리(architecture.jsx)가 열을 하나
-// 떨어뜨려도, 열 수만 바꾸고 상세 칸의 colSpan 을 그대로 두어도 여기서 붉어짐.
-// 접힘/펼침 양쪽을 다 잼: 펼침이 요약 행의 칸을 건드리면 표가 한 행만 다른 폭이 됨.
-test("AC-T8 a collapsed row carries the four columns the header names", async () => {
+// 키보드만으로 상세에 닿는지 재는 반증 케이스. 표의 행은 진짜 button 이라 탭으로 닿았음 —
+// 표를 걷어내며 노드가 그 유일한 문이 됐으므로, 노드가 포커스를 못 받으면 마우스 없는
+// 조작자에게서 헬스 상세가 통째로 사라짐. 그 손실은 어떤 필드 단언에도 걸리지 않음.
+test("AC-T8 the keyboard alone reaches a node and opens its health detail", async () => {
 	await openMap(getLiveFixture());
-	await waitForDaemonRows();
+	const [nodeId] = PART_NODE_BINDINGS["hook-chain"];
+	const selector = `svg g.node[data-arch-node-id$=".${nodeId}"]`;
+	await page.waitForSelector(selector, { timeout: 30_000 });
 
-	const collapsed = await getLiveTableShape(BOUND_DAEMON);
+	const affordance = await page.evaluate((sel) => {
+		const nodes = [...document.querySelectorAll("svg g.node[data-arch-node-id]")];
+		const target = document.querySelector(sel);
+		return {
+			total: nodes.length,
+			focusable: nodes.filter((n) => n.getAttribute("tabindex") === "0").length,
+			roled: nodes.filter((n) => n.getAttribute("role") === "button").length,
+			named: nodes.filter((n) => (n.getAttribute("aria-label") || "").trim().length > 0).length,
+			targetName: target?.getAttribute("aria-label") || "",
+		};
+	}, selector);
+	assert.ok(affordance.total > 0, "fixture precondition: the map must have imprinted nodes");
 	assert.deepEqual(
-		collapsed.headers,
-		LIVE_TABLE_HEADERS,
-		`the live table must name ${LIVE_TABLE_HEADERS.join("/")} — dropping or renaming a column changes this list`,
+		{ focusable: affordance.focusable, roled: affordance.roled, named: affordance.named },
+		{ focusable: affordance.total, roled: affordance.total, named: affordance.total },
+		`every imprinted node must be focusable, roled and named — read ${JSON.stringify(affordance)}`,
 	);
-	assert.equal(
-		collapsed.rowCells,
-		LIVE_TABLE_HEADERS.length,
-		`a collapsed row must fill every column the header declares — read ${collapsed.rowCells} cells against ${LIVE_TABLE_HEADERS.length} headers`,
-	);
-	assert.equal(
-		collapsed.detailColSpan,
-		null,
-		"fixture precondition: nothing is expanded yet, so no detail cell exists",
-	);
+	assert.ok(affordance.targetName.length > 0, "the node must carry an accessible name, not only a tab stop");
 
-	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
-
-	const expanded = await getLiveTableShape(BOUND_DAEMON);
+	await page.focus(selector);
 	assert.equal(
-		expanded.rowCells,
-		LIVE_TABLE_HEADERS.length,
-		"expanding must not change the summary row's own cells",
-	);
-	assert.equal(
-		expanded.detailColSpan,
-		expanded.headers.length,
-		`the detail cell must span exactly the columns the header declares — read colSpan ${expanded.detailColSpan} against ${expanded.headers.length} headers`,
-	);
-});
-
-test("AC-T8 clicking the control expands the row and the region it names appears", async () => {
-	await openMap(getLiveFixture());
-	await waitForDaemonRows();
-	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
-
-	const probe = await getRowExpansionProbe(BOUND_DAEMON);
-	assert.equal(probe.expanded, "true", "an expanded row must report aria-expanded=true");
-	assert.equal(
-		probe.regionFound,
+		await page.evaluate((sel) => document.activeElement === document.querySelector(sel), selector),
 		true,
-		`aria-controls target #${probe.controls} must exist once the row is open`,
-	);
-});
-
-// 키보드만으로 여닫는지 재는 반증 케이스 — tabindex 없는 div 에 onClick 만 단 구현은 여기서 붉어짐.
-test("AC-T8 the keyboard alone opens and closes the row", async () => {
-	await openMap(getLiveFixture());
-	await waitForDaemonRows();
-
-	const control = `[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`;
-	await page.focus(control);
-	assert.equal(
-		await page.evaluate(
-			(sel) => document.activeElement === document.querySelector(sel),
-			control,
-		),
-		true,
-		"the control must be focusable",
+		"the node must actually take focus — a tabindex the browser refuses is not a keyboard path",
 	);
 
 	await page.keyboard.press("Enter");
-	assert.equal(
-		(await getRowExpansionProbe(BOUND_DAEMON)).expanded,
-		"true",
-		"Enter on the focused control must open the row",
-	);
+	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 15_000 });
+	assert.equal((await getPartFacts("hook-chain")).found, true, "Enter on a focused node must open its detail");
 
-	await page.keyboard.press("Space");
-	const collapsed = await getRowExpansionProbe(BOUND_DAEMON);
-	assert.equal(collapsed.expanded, "false", "Space must close the row again");
-	assert.equal(
-		collapsed.regionFound,
-		false,
-		"closing must take the region back out of the a11y tree, not merely restyle it",
-	);
+	await closePanel();
+	await page.focus(selector);
+	await page.keyboard.press(" ");
+	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 15_000 });
+	assert.equal((await getPartFacts("hook-chain")).found, true, "Space must open it too");
 });
 
 test("AC-T9 the expanded region names the failure date and the reason behind it", async () => {
 	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
-	await waitForDaemonRows();
-	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+	await openDaemonHealth(BOUND_DAEMON);
 
 	const text = await waitForRegionText(BOUND_DAEMON, PAYLOAD_FAIL_DATE);
 	assert.ok(
@@ -2051,29 +2195,29 @@ test("AC-T9 the expanded region names the failure date and the reason behind it"
 	);
 });
 
-// 드릴다운이 고른 행을 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
-test("AC-T9 expanding a second daemon drills the payload request into THAT daemon", async () => {
+// 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
+test("AC-T9 opening a second daemon's node drills the payload request into THAT daemon", async () => {
 	await openMap(
 		getLiveFixture({
 			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")],
 		}),
 	);
-	await waitForDaemonRows();
+	await page.waitForSelector("svg g.node[data-arch-node-id]", { timeout: 30_000 });
 	assert.equal(
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${BOUND_DAEMON}`),
 		true,
 		"fixture precondition: the map drills into its default daemon on mount",
 	);
 
-	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+	await openDaemonHealth(DRILLDOWN_DAEMON);
 	assert.equal(
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
 		true,
-		`expanding ${DRILLDOWN_DAEMON} must move the drilldown — a frozen literal keeps asking for ${BOUND_DAEMON}`,
+		`opening ${DRILLDOWN_DAEMON}'s node must move the drilldown — a frozen literal keeps asking for ${BOUND_DAEMON}`,
 	);
 });
 
-// 표의 판정이 서 있는 네 응답 — 드릴다운은 이들을 건드리면 안 됨.
+// 부품 판정이 서 있는 네 응답 — 드릴다운은 이들을 건드리면 안 됨.
 const TABLE_BACKING_PATHS = [
 	"/api/health",
 	"/api/health/daemons",
@@ -2082,15 +2226,16 @@ const TABLE_BACKING_PATHS = [
 ];
 
 // 다섯 응답을 한 effect 에 묶고 payloadDaemon 을 그 deps 에 넣은 구현은 여기서 붉어짐:
-// 행 하나를 펼치면 네 응답이 함께 다시 나가고, 왕복이 끝날 때까지 표의 PG·브라우저 판정이
-// 빈 칸으로 떨어짐. 표는 드릴다운을 따라 흔들리면 안 됨.
-test("AC-T9 drilling into another daemon re-requests the payload alone", async () => {
+// 노드 하나를 열면 네 응답이 함께 다시 나가고, 왕복이 끝날 때까지 PG·브라우저 판정이 빈 칸으로
+// 떨어짐 — 그 넷은 드릴다운을 따라 흔들리면 안 됨. 노드를 여는 것이 곧 드릴다운이 된 지금
+// (handleSelectNode) 이 절이 재는 위험은 오히려 커졌음.
+test("AC-T9 opening another daemon's node re-requests the payload alone", async () => {
 	await openMap(
 		getLiveFixture({
 			daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")],
 		}),
 	);
-	await waitForDaemonRows();
+	await page.waitForSelector("svg g.node[data-arch-node-id]", { timeout: 30_000 });
 	assert.equal(
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${BOUND_DAEMON}`),
 		true,
@@ -2100,7 +2245,7 @@ test("AC-T9 drilling into another daemon re-requests the payload alone", async (
 	await page.waitForTimeout(500);
 
 	const before = getHealthCounts();
-	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+	await openDaemonHealth(DRILLDOWN_DAEMON);
 	assert.equal(
 		await waitForHealthHit(`/api/health/daemon-payload?daemon=${DRILLDOWN_DAEMON}`),
 		true,
@@ -2113,7 +2258,7 @@ test("AC-T9 drilling into another daemon re-requests the payload alone", async (
 	assert.deepEqual(
 		TABLE_BACKING_PATHS.filter((path) => after[path] !== before[path]),
 		[],
-		"expanding a row must not re-fire the four responses the table's verdicts stand on",
+		"opening a node must not re-fire the four responses the part verdicts stand on",
 	);
 });
 
@@ -2122,8 +2267,7 @@ test("AC-T9 drilling into another daemon re-requests the payload alone", async (
 // 끊긴 응답에도 "Loading …" 을 남겨 조작자가 기다릴지 고칠지 못 정하게 만듦.
 test("AC-T9 an errored payload response says it could not be read, not that it is loading", async () => {
 	await openMapWithHealth(getHealthFixture({ payloadFails: true }));
-	await waitForDaemonRows();
-	await page.click(`[data-daemon-row="${BOUND_DAEMON}"] [aria-expanded]`);
+	await openDaemonHealth(BOUND_DAEMON);
 
 	const text = await waitForRegionText(BOUND_DAEMON, "Couldn't read");
 	assert.ok(
@@ -2146,9 +2290,8 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 		getQueueFixture(),
 		getHealthFixture({ payloadDelayMs: 5_000 }),
 	);
-	await waitForDaemonRows();
 	// 아직 한 번도 응답이 오지 않은 데몬으로 드릴다운함 — 기본 데몬은 마운트분이 이미 앉았을 수 있음.
-	await page.click(`[data-daemon-row="${DRILLDOWN_DAEMON}"] [aria-expanded]`);
+	await openDaemonHealth(DRILLDOWN_DAEMON);
 
 	const text = await waitForRegionText(DRILLDOWN_DAEMON, "Loading recent runs");
 	assert.ok(
@@ -2174,9 +2317,11 @@ const EXPANDABLE_PART_IDS = [
 	"hook-chain",
 ];
 
-// 판정 앵커 — 행의 '등장' 이 아니라 tone 이 붙은 것을 기다림. 행은 부품 명부로 서므로 health 응답
-// 없이도 마운트 시점에 그려짐: 등장을 기다리면 마운트를 기다린 것이지 판정을 기다린 것이 아님.
+// 판정 앵커 — 항목의 '등장' 이 아니라 tone 이 붙은 것을 기다림. 항목은 부품 명부로 서므로 health
+// 응답 없이도 패널을 여는 순간 그려짐: 등장을 기다리면 여는 것을 기다린 것이지 판정을 기다린 것이
+// 아님. 패널이 먼저 서야 하므로 여는 것과 기다리는 것이 여기서 한 동작임.
 async function waitForPartVerdict(partId: string): Promise<void> {
+	await openPartHealth(partId);
 	await page.waitForSelector(`[data-health-row="${partId}"][data-health-tone]`, {
 		timeout: 30_000,
 	});
@@ -2193,12 +2338,37 @@ async function getPartRowText(partId: string): Promise<string> {
 	return await getNodeText(`[data-health-row="${partId}"]`);
 }
 
+// 지금 열려 있는 패널이 내는 부품 id 들.
 async function getPartRowIds(): Promise<string[]> {
 	return await page.evaluate(() =>
 		[...document.querySelectorAll("[data-health-row]")].map(
 			(row) => row.getAttribute("data-health-row") || "",
 		),
 	);
+}
+
+// 그려지는 노드를 전부 열어 거기서 나온 부품 id 를 모음 — 표가 한 화면에 펴던 '명부 전원'을
+// 패널에서 재는 방법. 노드 목록은 화면이 실제로 각인한 것에서 뽑음: 하네스가 짝을 다시 적으면
+// 지도가 부품을 잃어도 두 사본이 함께 틀린 채 초록이 됨.
+async function sweepPartIdsAcrossNodes(): Promise<string[]> {
+	await page.waitForSelector("svg g.node[data-arch-node-id]", { timeout: 30_000 });
+	const nodeIds: string[] = await page.evaluate(() =>
+		[...document.querySelectorAll("svg g.node[data-arch-node-id]")].map(
+			(el) => el.getAttribute("data-arch-node-id") || "",
+		),
+	);
+
+	const seen: string[] = [];
+	for (const nodeId of nodeIds) {
+		await closePanelIfOpen();
+		await waitForFittedCanvas();
+		await page.click(`svg g.node[data-arch-node-id="${nodeId}"]`);
+		// 헬스를 실은 노드만 구획을 냄 — 없는 노드는 건너뜀(빈 제목을 그리지 않는 것이 계약임).
+		await page.waitForTimeout(120);
+		for (const id of await getPartRowIds()) if (!seen.includes(id)) seen.push(id);
+		await closePanel();
+	}
+	return seen;
 }
 
 // 화면이 읽는 그 명부를 브라우저 안에서 그대로 읽음 — 하네스가 id 목록을 다시 적으면
@@ -2245,48 +2415,49 @@ async function waitForRowCount(expected: number): Promise<number> {
 // 데몬 행 — 확장 컨트롤을 갖는 다섯 중 hook 행을 뺀 넷. 이 넷만 데몬 응답을 원천으로 삼음.
 const DAEMON_PART_IDS = EXPANDABLE_PART_IDS.filter((id) => id !== "hook-chain");
 
-// 행 하나가 내는 판정 두 갈래 — tone 속성과 Status 칸의 글자. 둘을 함께 읽는 이유는
-// 속성만 재면 글자로 지어낸 판정('Healthy')을 못 보고, 글자만 재면 앵커 계약이 안 걸리기 때문임.
+// 항목 하나가 내는 판정 두 갈래 — tone 속성과 판정 글자. 둘을 함께 읽는 이유는 속성만 재면
+// 글자로 지어낸 판정('Healthy')을 못 보고, 글자만 재면 앵커 계약이 안 걸리기 때문임.
+// 데몬 넷은 서로 다른 노드에 묶여 있으므로 표에서 한 번에 읽던 것을 노드 순회로 읽음.
 async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null; status: string }[]> {
-	return await page.evaluate(
-		(ids) =>
-			ids.map((id) => {
-				const row = document.querySelector(`[data-health-row="${id}"]`);
-				const cell = row ? row.querySelectorAll("td")[0] : null;
-				return {
-					id,
-					tone: row ? row.getAttribute("data-health-tone") : "<the row did not render>",
-					status: cell ? (cell.textContent || "").replace(/\s+/g, " ").trim() : "<no status cell>",
-				};
-			}),
-		DAEMON_PART_IDS,
-	);
+	const out: { id: string; tone: string | null; status: string }[] = [];
+	for (const id of DAEMON_PART_IDS) {
+		const facts = await readPart(id, () => getPartFacts(id));
+		out.push({
+			id,
+			// 항목 자체가 안 선 경우와 판정이 없는 경우를 갈라 부름 — 둘 다 null 로 접으면
+			// 픽스처 붕괴가 결함으로 읽힘.
+			tone: facts.found ? facts.tone : "<the part did not render>",
+			status: facts.found ? facts.status : "<the part did not render>",
+		});
+	}
+	return out;
 }
 
 // 끊긴 health 저장소를 부르는 경보 — 이름·자리·복구 컨트롤을 함께 읽음.
-// 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '표 밖에 떴음' 이 초록으로 지나감.
+// 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '노드를 눌러야 보임' 이 초록으로 지나감.
+// 경보는 표 안에 서 있었고 표가 사라지며 페이지로 올라왔음 — `onPage` 가 그 이사를 잼.
 async function getStoreAlerts(): Promise<
-	{ text: string; inTable: boolean; inScroll: boolean; retries: number }[]
+	{ text: string; onPage: boolean; inPanel: boolean; retries: number }[]
 > {
 	return await page.evaluate(() =>
 		[...document.querySelectorAll('[role="alert"]')]
 			.filter((el) => (el.textContent || "").includes("system health"))
 			.map((el) => ({
 				text: (el.textContent || "").replace(/\s+/g, " ").trim(),
-				inTable: Boolean(el.closest(".arch-live-table-wrap")),
-				// 표에 딸려 있음과 표와 함께 스크롤됨은 다른 사실임 — 스크롤 영역(220px) 안에 서면
-				// 마지막 행이나 펼친 상세로 내려간 순간 경보가 시야 밖으로 밀림.
-				inScroll: Boolean(el.closest(".arch-live-table-scroll")),
+				onPage: Boolean(el.closest(".arch-health-alert-wrap")),
+				// 패널 안에 서면 노드를 눌러야 보임 — 헬스를 통째로 못 읽었다는 사실이
+				// 클릭 뒤에 숨는 것이 이 절이 막는 결함임.
+				inPanel: Boolean(el.closest("[data-node-health]")),
 				retries: el.querySelectorAll("button").length,
 			})),
 	);
 }
 
-test("AC-B2-6b a health store that failed is named by an alert standing in the table", async () => {
+test("AC-B2-6b a health store that failed is named by an alert standing on the page", async () => {
 	await openMapWithHealth(getHealthFixture({ failedStores: ["health"] }));
-	// 끊긴 저장소의 행은 tone 을 못 받으므로 판정 앵커를 쓸 수 없음 — 경보 자체를 기다림.
+	// 끊긴 저장소의 부품은 tone 을 못 받으므로 판정 앵커를 쓸 수 없음 — 경보 자체를 기다림.
 	// 부재는 아래 단언이 문장으로 보고함(여기서 던지면 붉은 이유가 타임아웃으로 바뀜).
-	await page.waitForSelector(".arch-live-table-wrap .arch-queue-error", { timeout: 15_000 }).then(
+	await page.waitForSelector(".arch-health-alert-wrap .arch-queue-error", { timeout: 15_000 }).then(
 		() => true,
 		() => false,
 	);
@@ -2299,13 +2470,13 @@ test("AC-B2-6b a health store that failed is named by an alert standing in the t
 	);
 	assert.deepEqual(
 		{
-			inTable: alerts[0].inTable,
-			inScroll: alerts[0].inScroll,
+			onPage: alerts[0].onPage,
+			inPanel: alerts[0].inPanel,
 			namesStore: alerts[0].text.includes("PostgreSQL"),
 			retries: alerts[0].retries,
 		},
-		{ inTable: true, inScroll: false, namesStore: true, retries: 1 },
-		`the alert must name the store that failed, stand with the table without scrolling away with it, and carry a way back — read: "${alerts[0].text}"`,
+		{ onPage: true, inPanel: false, namesStore: true, retries: 1 },
+		`the alert must name the store that failed, stand on the page where no click is needed to find it, and carry a way back — read: "${alerts[0].text}"`,
 	);
 
 	// 실패 표면이 성공 경로로 새지 않음 — 다섯이 모두 답하면 경보가 없어야 함.
@@ -2318,45 +2489,40 @@ test("AC-B2-6b a health store that failed is named by an alert standing in the t
 	);
 });
 
-test("AC-B2-6f a daemon row with no response carries no verdict, never a fabricated one", async () => {
+test("AC-B2-6f a daemon part with no response carries no verdict, never a fabricated one", async () => {
 	await openMapWithHealth(getHealthFixture({ failedStores: ["daemons"] }));
-	// 데몬 응답만 끊었으므로 PG 행은 판정을 받음 — 표가 실제로 섰음을 그 앵커로 확인함.
+	// 데몬 응답만 끊었으므로 PG 부품은 판정을 받음 — 패널이 실제로 섰음을 그 앵커로 확인함.
 	await waitForPartVerdict("pg");
+	await closePanel();
 
 	const unread = await getDaemonRowVerdicts();
 	assert.deepEqual(
 		unread.filter((row) => row.tone !== null || row.status !== "—"),
 		[],
-		"a daemon row whose response never arrived must carry no tone and no status word — either one is an invented verdict",
+		"a daemon part whose response never arrived must carry no tone and no status word — either one is an invented verdict",
 	);
 
-	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '행이 없어서' 초록일 수 있음.
+	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("daemon-cycle");
+	await closePanel();
 
 	const read = await getDaemonRowVerdicts();
 	assert.deepEqual(
 		read.filter((row) => row.tone === null),
 		[],
-		"the daemon rows must carry a tone once the response arrives, or the reading above measured absent rows",
+		"the daemon parts must carry a tone once the response arrives, or the reading above measured absent entries",
 	);
 });
 
-test("AC-B2-4a the table stands one row per roster part under a HEALTH header", async () => {
+/**
+ * 표가 명부 전원을 한 화면에 펴던 자리를 패널이 대신함 — 그런데 패널은 연 노드의 부품만 냄.
+ * 그래서 '전원이 여전히 닿는가' 를 화면 한 장이 아니라 노드 순회로 잼: 그려지는 노드를 전부 열어
+ * 나온 부품의 합집합이 명부와 같아야 함. 어느 부품이 그려지지 않는 노드 뒤에 숨는 순간 이 절이
+ * 붉어지고, 그 상황 자체는 바인딩 계기(architecture.health-binding AC-B2-2a/2b)가 따로 막음.
+ */
+test("AC-B2-4a every roster part is reachable by opening its node", async () => {
 	await openMap(getLiveFixture());
-	await waitForPartVerdict("pg");
-
-	// textContent 로 읽음 — innerText 는 스타일시트의 text-transform 을 반영하므로 마크업이 쓴
-	// 이름이 아니라 대소문자 규칙을 재게 됨.
-	const firstHeader = await page.evaluate(() => {
-		const th = document.querySelector(".arch-live-table thead th");
-		return th ? (th.textContent || "").replace(/\s+/g, " ").trim() : "";
-	});
-	assert.equal(
-		firstHeader,
-		LIVE_TABLE_HEADERS[0],
-		`the first column must name the health part it stands for — read "${firstHeader}"`,
-	);
 
 	const roster = await getRosterPartIds();
 	assert.equal(
@@ -2364,45 +2530,50 @@ test("AC-B2-4a the table stands one row per roster part under a HEALTH header", 
 		HEALTH_EXPECTED_TOTAL,
 		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
 	);
+
+	const reached = await sweepPartIdsAcrossNodes();
 	assert.deepEqual(
-		await getPartRowIds(),
-		roster,
-		"the rows must be the roster itself, in its order — a daemon-response source drops every part that answers no daemon",
+		[...reached].sort(),
+		[...roster].sort(),
+		"opening every drawn node must reach every roster part — a part reachable nowhere is one the map no longer states",
 	);
+
 	assert.match(
-		await getPartRowText("pg"),
+		(await readPart("pg", () => getPartFacts("pg"))).name,
 		/PostgreSQL/,
-		"the PostgreSQL part must stand as a row of its own, named",
+		"the PostgreSQL part must stand as an entry of its own, named",
 	);
 });
 
-test("AC-B2-4b the row count follows the roster, and an empty roster leaves no rows", async () => {
+test("AC-B2-4b the entries follow the roster, and an empty roster leaves none", async () => {
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("pg");
-	assert.equal(
-		(await getPartRowIds()).length,
-		HEALTH_EXPECTED_TOTAL,
-		"fixture precondition: the untouched roster must fill every row",
+	assert.deepEqual(
+		await getPartRowIds(),
+		["pg"],
+		"fixture precondition: the pg node carries exactly its own part",
 	);
+	await closePanel();
 
-	const remaining = await spliceRoster(1);
+	// 명부에서 pg 를 덜어냄 — 같은 노드를 열어도 낼 부품이 없으므로 구획 자체가 서지 않아야 함.
+	await spliceRoster(1);
 	await refreshMap();
-	assert.equal(
-		await waitForRowCount(remaining),
-		remaining,
-		`dropping one part must drop exactly one row — a map-local row source keeps the old ${HEALTH_EXPECTED_TOTAL}`,
-	);
-
-	await spliceRoster(remaining);
-	await refreshMap();
+	const [pgNode] = PART_NODE_BINDINGS.pg;
+	await closePanelIfOpen();
+	await page.click(`svg g.node[data-arch-node-id$=".${pgNode}"]`);
 	assert.equal(
 		await waitForRowCount(0),
 		0,
-		"an empty roster must leave no rows — a surviving row is the map stating a total its source no longer states",
+		"dropping a part must drop its entry — a surviving entry is the map stating a part its source no longer states",
+	);
+	assert.equal(
+		await page.evaluate(() => document.querySelectorAll("[data-node-health]").length),
+		0,
+		"a node with no roster part left must render no health section at all — an empty heading claims a verdict is missing",
 	);
 });
 
-test("AC-B2-4c an unreachable database turns the PostgreSQL row, not only the strip", async () => {
+test("AC-B2-4c an unreachable database turns the PostgreSQL entry, not only the strip", async () => {
 	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "ok" } }),
 	);
@@ -2411,36 +2582,67 @@ test("AC-B2-4c an unreachable database turns the PostgreSQL row, not only the st
 	assert.equal(
 		await getPartTone("pg"),
 		"crit",
-		"an unreachable database must turn its own row crit — a verdict that lives only in the strip dies with the strip",
+		"an unreachable database must turn its own entry crit — a verdict that lives only in the strip dies with the strip",
 	);
 	// 색만으로 판정을 말하면 색을 못 읽는 조작자와 하네스가 같은 문장을 못 읽음.
 	const text = await getPartRowText("pg");
-	assert.match(text, /PostgreSQL/, `the row must name the part it judges — read "${text}"`);
-	assert.match(text, /\bDown\b/, `the row must state the verdict in words — read "${text}"`);
+	assert.match(text, /PostgreSQL/, `the entry must name the part it judges — read "${text}"`);
+	assert.match(text, /\bDown\b/, `the entry must state the verdict in words — read "${text}"`);
 });
 
-test("AC-B2-4d only a row with something to open carries an expand control", async () => {
-	await openMap(getLiveFixture());
-	await waitForPartVerdict("browser");
+// 확장 컨트롤은 접을 것과 함께 사라졌음 — 남은 계약은 '읽을 것이 있는 부품만 상세를 낸다' 이고,
+// 그것이 원래 그 컨트롤이 지키던 약속임(빈 영역을 여는 자리는 읽을 것이 있다고 거짓말함).
+// 다만 한 노드에 데몬 부품이 둘이면(cron) 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
+// 다른 쪽은 그것을 불러오는 컨트롤을 냄 — 둘 다 '읽을 것이 있음' 이므로 함께 셈. 그 대신
+// '같은 노드에서 상세는 한 번에 하나' 를 아래 마지막 절이 따로 못 박음.
+test("AC-B2-4d only a part with something to show offers a detail or a way to load one", async () => {
+	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
 
-	const expandable = await page.evaluate(() =>
-		[...document.querySelectorAll("[data-health-row]")]
-			.filter((row) => row.querySelector("[aria-expanded]"))
-			.map((row) => row.getAttribute("data-health-row") || ""),
-	);
+	const offering: string[] = [];
+	for (const partId of await getRosterPartIds()) {
+		const facts = await readPart(partId, () => getPartFacts(partId));
+		assert.equal(facts.found, true, `fixture precondition: part '${partId}' must stand in its node's panel`);
+		if (facts.hasDetail || facts.hasDrill) offering.push(partId);
+	}
 
 	assert.ok(
-		!expandable.includes("browser"),
-		"the Chromium export row opens onto nothing — a control there promises a detail that does not exist",
+		!offering.includes("browser"),
+		"the Chromium export part opens onto nothing — a region or a control there promises a detail that does not exist",
 	);
 	assert.deepEqual(
-		[...expandable].sort(),
+		[...offering].sort(),
 		[...EXPANDABLE_PART_IDS].sort(),
-		"exactly the four daemon rows and the hook chain row may open — nothing else has a detail to show",
+		"exactly the four daemon parts and the hook chain part have something to show — nothing else does",
+	);
+
+	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 컨트롤은 다른 쪽에만. 둘 다 상세를 그리면
+	// 한 데몬의 실행 목록이 다른 데몬의 것으로 읽히고, 둘 다 컨트롤이면 열자마자 비어 있음.
+	const shared = ["daily-restart-autoagent", "daily-restart-wiki"];
+	await openPartHealth(shared[0]);
+	const both = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
+	assert.deepEqual(
+		both.map((f) => f.hasDetail),
+		[true, false],
+		"two daemon parts on one node must not both render a detail — the payload response carries one daemon",
+	);
+	assert.deepEqual(
+		both.map((f) => f.hasDrill),
+		[false, true],
+		"the part whose runs are not loaded must carry the control that loads them, or its log is unreachable",
+	);
+
+	// 그 컨트롤을 누르면 드릴다운이 옮겨가고 둘의 역할이 맞바뀜.
+	await page.click(`[data-health-row="${shared[1]}"] .arch-part-drill`);
+	await page.waitForSelector(`[data-health-row="${shared[1]}"] [data-health-detail]`, { timeout: 15_000 });
+	const swapped = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
+	assert.deepEqual(
+		swapped.map((f) => f.hasDetail),
+		[false, true],
+		"pressing the control must move the drilldown to that daemon, not add a second one",
 	);
 });
 
-test("AC-B2-4e the Chromium export row's tone follows the launch probe through all three of its values", async () => {
+test("AC-B2-4e the Chromium export entry's tone follows the launch probe through all three of its values", async () => {
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("browser");
 	assert.equal(await getPartTone("browser"), "ok", "a launching browser must read ok");
@@ -2472,87 +2674,78 @@ test("AC-B2-4e the Chromium export row's tone follows the launch probe through a
 			),
 		),
 		[],
-		"an unprobed browser must leave no row in crit",
+		"an unprobed browser must leave no entry in crit",
 	);
 });
 
-// --- B2-4 guard: what the Nodes column reads --------------------------------
+// --- B2-4 / B2-5 guards: what the two moved columns read ---------------------
 
 // B2-4 는 Nodes 열의 원천을 /live 의 `daemons[].node_ids` 에서 같은 응답의 `part_bindings` 로
-// 옮겼는데, 옮긴 자리에 칸 '내용' 을 재는 단언이 없었음 — getLiveTableShape 는 칸 '수' 만 세므로
-// 표가 사라지거나 키가 어긋나 전 칸이 '—' 로 떨어져도 초록이 남음. 아래 두 절은 서로 다른 결함을
-// 잡음: 1절은 응답이 준 값을 그대로 싣는지, 2절은 그 값을 정말 응답에서 읽는지(제 사본이 아닌지).
+// 옮겼고, 이번 작업은 그 열을 통째로 패널의 'Also lights' 로 옮겼음. 옮긴 자리에 값을 재는 단언이
+// 없으면 두 이사 모두 조용히 빈 칸으로 떨어질 수 있음 — 아래 두 절은 서로 다른 결함을 잡음:
+// 1절은 응답이 준 값을 그대로 싣는지, 2절은 그 값을 정말 응답에서 읽는지(제 사본이 아닌지).
+//
+// 형태가 하나 바뀐 것을 여기 못 박음: 패널은 '연 노드를 뺀 나머지' 만 부름. 연 노드는 패널을
+// 여는 행위가 이미 말했으므로 다시 부르면 같은 사실이 두 번 서고, 1:1 부품은 낼 것이 없어 빔.
+// 그 규칙 자체는 AC-T8 의 필드 이사 단언이 양방향으로 잼.
 
-const NODES_HEADER = LIVE_TABLE_HEADERS[3];
-const LAST_RUN_HEADER = LIVE_TABLE_HEADERS[2];
-
-// 부품 id → 그 열의 칸 글.
-async function getPartCells(header: string): Promise<Record<string, string>> {
-	return await page.evaluate((headerName) => {
-		const table = document.querySelector(".arch-live-table");
-		const headers = [...(table?.querySelectorAll("thead th") || [])].map((el) =>
-			(el.textContent || "").replace(/\s+/g, " ").trim(),
-		);
-		// 칸 자리를 머리글에서 찾음 — 상수 3 으로 세면 열이 하나 끼어들 때 조용히 옆 칸을 읽어
-		// 다른 사실을 재게 됨. 머리글이 없으면 -1 이라 모든 칸이 빈 글로 떨어져 붉어짐.
-		const col = headers.indexOf(headerName);
-		return Object.fromEntries(
-			[...(table?.querySelectorAll("[data-health-row]") || [])].map((row): [string, string] => [
-				row.getAttribute("data-health-row") || "",
-				(row.querySelectorAll("th, td")[col]?.textContent || "")
-					.replace(/\s+/g, " ")
-					.trim(),
-			]),
-		);
-	}, header);
+// 부품 id → 그 부품의 남은 바인딩 글(패널을 열어 읽음).
+async function getAlsoLightsByPart(): Promise<Record<string, string>> {
+	const out: Record<string, string> = {};
+	for (const partId of await getRosterPartIds()) {
+		out[partId] = (await readPart(partId, () => getPartFacts(partId))).alsoLights;
+	}
+	return out;
 }
 
-test("B2-4 guard the Nodes column carries the served part_bindings, not a map-local copy", async () => {
+test("B2-4 guard the residual bindings come from the served part_bindings, not a map-local copy", async () => {
 	await openMap(getLiveFixture());
-	await waitForPartVerdict("pg");
 
 	// 기대값은 서버 상수에서 뽑음 — 하네스가 목록을 다시 적으면 두 사본이 함께 틀린 채 초록이 됨.
+	// 연 노드를 뺀 나머지가 기대값이고, 오늘 일곱 부품은 모두 노드 하나에만 묶여 있으므로 전부 빔.
 	const roster = await getRosterPartIds();
-	const expected = Object.fromEntries(
-		roster.map((id): [string, string] => [
-			id,
-			(PART_NODE_BINDINGS[id] ?? []).join(", ") || "—",
-		]),
-	);
 	assert.equal(
 		roster.length,
 		HEALTH_EXPECTED_TOTAL,
 		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
 	);
-	assert.ok(
-		!Object.values(expected).includes("—"),
-		"fixture precondition: the served table binds every roster part, so a blanket em dash is the map failing to read it, never the data",
+	const expected = Object.fromEntries(
+		roster.map((id): [string, string] => [id, (PART_NODE_BINDINGS[id] ?? []).slice(1).join(", ")]),
 	);
 	assert.deepEqual(
-		await getPartCells(NODES_HEADER),
+		await getAlsoLightsByPart(),
 		expected,
-		"every Nodes cell must carry the binding the response served — an absent or re-keyed table empties them all, and counting cells alone stays green through it",
+		"the residual binding of every part must follow the table the response served",
 	);
 
-	// 2절 — 응답을 갈아끼우면 칸이 따라가야 함. 1절은 화면이 마침 같은 값을 든 제 사본을 읽어도
-	// 통과하므로, 응답만 아는 값을 심어야 원천이 어디인지가 갈림.
-	await openMap(getLiveFixture({ part_bindings: { pg: ["injected_a", "injected_b"] } }));
-	await waitForPartVerdict("pg");
-
-	const injected = await getPartCells(NODES_HEADER);
+	// 2절 — 응답을 갈아끼우면 글이 따라가야 함. 1절은 오늘의 기대값이 전부 빈 문자열이라
+	// 아무것도 그리지 않는 구현으로도 통과하므로, 응답만 아는 값을 심어야 원천이 어디인지가 갈림.
+	await openMap(
+		getLiveFixture({
+			part_bindings: { ...PART_NODE_BINDINGS, pg: ["pg_db", "injected_a", "injected_b"] },
+		}),
+	);
+	const injected = await readPart("pg", () => getPartFacts("pg"));
 	assert.equal(
-		injected.pg,
+		injected.alsoLights,
 		"injected_a, injected_b",
-		"a re-keyed table must move the cell with it — a cell holding a value this response never sent is the map reading a copy of its own",
+		"a re-keyed table must move the value with it — a value this response never sent is the map reading a copy of its own",
 	);
+
+	// 반대 방향 — 응답이 노드를 하나도 안 실으면 부품이 아예 닿지 않아야 함(빈 글이 아니라 부재).
+	await openMap(getLiveFixture({ part_bindings: { ...PART_NODE_BINDINGS, browser: [] } }));
+	const [browserNode] = PART_NODE_BINDINGS.browser;
+	await closePanelIfOpen();
+	await page.click(`svg g.node[data-arch-node-id$=".${browserNode}"]`);
+	await page.waitForTimeout(300);
 	assert.equal(
-		injected.browser,
-		"—",
-		"a part the served table no longer binds must read empty, not the nodes it used to carry",
+		(await getPartFacts("browser")).found,
+		false,
+		"a part the served table no longer binds must vanish from the node it used to light, not linger there empty",
 	);
 });
 
-// 응답이 실행을 실어 준 데몬 행 — 명부에 있는 둘. 나머지 부품은 낼 실행이 없음.
+// 응답이 실행을 실어 준 데몬 부품 — 명부에 있는 둘. 나머지 부품은 낼 실행이 없음.
 const RAN_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator"];
 
 // 대조 순간 — 첫 절이 실은 값과 자릿수까지 떨어뜨림. 상대시각은 버킷으로 접히므로 가까운 두 값은
@@ -2570,23 +2763,28 @@ function getRanDaemonFixture(runTs: string): HealthFixture {
 	});
 }
 
-// 부품 id → Last run 칸 글. 판정이 도착한 뒤에 읽음 — 실행 시각과 tone 이 같은 응답에서 오므로
-// 데몬 행의 tone 이 붙었다는 것이 그 응답이 화면에 닿았다는 뜻임.
-async function getLastRunCells(runTs: string): Promise<Record<string, string>> {
+// 부품 id → Last run 글. 판정이 도착한 뒤에 읽음 — 실행 시각과 tone 이 같은 응답에서 오므로
+// 데몬 부품의 tone 이 붙었다는 것이 그 응답이 화면에 닿았다는 뜻임.
+// 실행을 갖지 않는 부품은 칸 자체가 없음이 정답이라 빈 문자열로 떨어짐(표에서는 '—' 였음).
+async function getLastRunByPart(runTs: string): Promise<Record<string, string>> {
 	await openMap(getLiveFixture(), getQueueFixture(), getRanDaemonFixture(runTs));
 	await waitForPartVerdict(RAN_PART_IDS[0]);
-	await waitForPartVerdict("pg");
+	await closePanel();
 
-	return await getPartCells(LAST_RUN_HEADER);
+	const out: Record<string, string> = {};
+	for (const partId of await getRosterPartIds()) {
+		out[partId] = (await readPart(partId, () => getPartFacts(partId))).lastRun;
+	}
+	return out;
 }
 
 // B2-4 는 Nodes 열에 두 절짜리 계기를 남겼지만 Last run 열에는 남기지 않았음. 그 칸의 '비어 있음'
 // 은 부품 대부분에서 정답이라 상수를 실은 구현이 눈에 띄지 않고 통과함 — 널 검사만 남기고 값을
 // 지어낸 구현(`row.lastRunAt ? "moments ago" : "—"`)은 '비어 있지 않음' 만 재는 단언 아래에서
-// 초록임. 그래서 두 절로 잼: 1절은 그 칸이 경과 판독으로 읽히고 보고할 실행이 없는 행만 비어
-// 있음을, 2절은 다른 순간을 실어 보내면 그 칸이 따라 움직임을 잼. 상수는 2절에서 붉어짐.
-test("B2-5 guard the Last run column tracks the served instant and empties only the rows without one", async () => {
-	const served = await getLastRunCells(DAEMON_RUN_TS);
+// 초록임. 그래서 두 절로 잼: 1절은 그 값이 경과 판독으로 읽히고 보고할 실행이 없는 부품만 비어
+// 있음을, 2절은 다른 순간을 실어 보내면 그 값이 따라 움직임을 잼. 상수는 2절에서 붉어짐.
+test("B2-5 guard the last-run reading tracks the served instant and empties only the parts without one", async () => {
+	const served = await getLastRunByPart(DAEMON_RUN_TS);
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
@@ -2601,14 +2799,20 @@ test("B2-5 guard the Last run column tracks the served instant and empties only 
 			`a part whose response carried a run must read it as an elapsed time, but ${id} read "${served[id]}"`,
 		);
 	}
-	assert.deepEqual(
-		roster.filter((id) => !RAN_PART_IDS.includes(id) && served[id] !== "—"),
-		[],
-		"a part with no run to report must read empty — a filled cell there is the column inventing a run",
-	);
+	// 실행을 보고하지 않은 데몬 부품은 '—' 로 남아야 함(없음이 보여야 하는 사실임).
+	// 데몬이 아닌 부품은 그 칸 자체가 없음이 정답이라 빈 문자열임 — 둘을 갈라 잼.
+	for (const id of roster) {
+		if (RAN_PART_IDS.includes(id)) continue;
+		const expected = DAEMON_PART_IDS.includes(id) ? "—" : "";
+		assert.equal(
+			served[id],
+			expected,
+			`a part with no run to report must read ${expected === "" ? "no last-run field at all" : 'an em dash'} — ${id} read "${served[id]}"`,
+		);
+	}
 
-	// 2절 — 값의 방향. 같은 행에 다른 순간을 실어 보내면 그 칸의 글이 달라져야 함.
-	const moved = await getLastRunCells(DAEMON_RUN_ALT_TS);
+	// 2절 — 값의 방향. 같은 부품에 다른 순간을 실어 보내면 그 글이 달라져야 함.
+	const moved = await getLastRunByPart(DAEMON_RUN_ALT_TS);
 	for (const id of RAN_PART_IDS) {
 		assert.match(
 			moved[id] || "",
@@ -2618,17 +2822,17 @@ test("B2-5 guard the Last run column tracks the served instant and empties only 
 		assert.notEqual(
 			moved[id],
 			served[id],
-			`${id} read "${moved[id]}" for both instants — the cell carries a map-local constant, not the run the response served`,
+			`${id} read "${moved[id]}" for both instants — the reading carries a map-local constant, not the run the response served`,
 		);
 	}
 	assert.deepEqual(
-		roster.filter((id) => !RAN_PART_IDS.includes(id) && moved[id] !== "—"),
+		roster.filter((id) => !RAN_PART_IDS.includes(id) && moved[id] !== served[id]),
 		[],
-		"the rows without a run must stay empty across both servings",
+		"the parts without a run must stay unchanged across both servings",
 	);
 });
 
-// --- T12c: the hook failure log, in the same hook row expansion -------------
+// --- T12c: the hook failure log, in the same hook part detail --------------
 
 // 하네스 라우트가 내는 창 폭 — 화면이 "지난 N일" 을 응답에서 읽는지 재는 값이라 상수로 둠.
 const HOOK_FAIL_WINDOW_DAYS = 30;
@@ -2671,7 +2875,7 @@ async function getLastFailureStamp(): Promise<string | null> {
 	}, HOOK_ROW_ID);
 }
 
-test("AC-T12 the hook row expansion lists the failures the window actually returned", async () => {
+test("AC-T12 the hook part detail lists the failures the window actually returned", async () => {
 	await openMapWithHealth(
 		getFailuresFixture({
 			count_24h: 1,
@@ -2680,12 +2884,12 @@ test("AC-T12 the hook row expansion lists the failures the window actually retur
 		}),
 	);
 
-	const text = await expandHookRow(FAIL_HOOK_NAME);
-	assert.ok(text.includes(FAIL_HOOK_NAME), `the expansion must name the failing hook, but it read: ${text}`);
-	assert.ok(text.includes(FAIL_TABLE), `the expansion must name the table the write targeted, but it read: ${text}`);
+	const text = await openHookHealth(FAIL_HOOK_NAME);
+	assert.ok(text.includes(FAIL_HOOK_NAME), `the detail must name the failing hook, but it read: ${text}`);
+	assert.ok(text.includes(FAIL_TABLE), `the detail must name the table the write targeted, but it read: ${text}`);
 	assert.ok(
 		text.includes(String(HOOK_FAIL_WINDOW_DAYS)),
-		`the expansion must state the window it counted over, but it read: ${text}`,
+		`the detail must state the window it counted over, but it read: ${text}`,
 	);
 
 	// 행의 시각은 응답 값에서 나와야 함 — 표시 문장이 아니라 기계값으로 잼.
@@ -2702,11 +2906,11 @@ test("AC-T12 the hook row expansion lists the failures the window actually retur
 test("AC-B2-5b an empty window still names when the last failure was", async () => {
 	await openMapWithHealth(getFailuresFixture({ failures: [], last_failure_ts: FAIL_STALE_TS }));
 
-	const text = await expandHookRow("Last failure");
+	const text = await openHookHealth("Last failure");
 	assert.equal(
 		await getLastFailureStamp(),
 		FAIL_STALE_TS,
-		`the expansion must carry the whole-table last failure even with an empty window, but it read: ${text}`,
+		`the detail must carry the whole-table last failure even with an empty window, but it read: ${text}`,
 	);
 	assert.equal(
 		await page.evaluate(
@@ -2714,7 +2918,7 @@ test("AC-B2-5b an empty window still names when the last failure was", async () 
 			HOOK_ROW_ID,
 		),
 		0,
-		"fixture precondition: the window returned no rows, so the expansion must render none",
+		"fixture precondition: the window returned no rows, so the detail must render none",
 	);
 
 	// AC-T12 의 "둘 중 하나라도 빠지면 실패" 를 나머지 방향에서 잼 — 최종기록만으로는
@@ -2728,7 +2932,7 @@ test("AC-B2-5b an empty window still names when the last failure was", async () 
 	// 반증 방향 — 표가 정말 비어 있으면 최종기록 줄 자체가 없어야 함.
 	// 이 줄이 상수라면 여기서도 나타나 붉어짐.
 	await openMapWithHealth(getFailuresFixture({ last_failure_ts: null }));
-	await expandHookRow("never");
+	await openHookHealth("never");
 	assert.equal(
 		await getLastFailureStamp(),
 		null,
