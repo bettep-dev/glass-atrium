@@ -109,7 +109,7 @@ interface ArchHelpers {
   ) => Map<string, DaemonLiveStatus[]>;
   getLiveDaemonRows: (daemons: DaemonLiveStatus[] | null | undefined) => DaemonRow[];
   // T8: 확장 영역의 DOM id — 행 컨트롤의 aria-controls 가 이 값을 가리킴.
-  getDaemonDetailId: (daemonName: string) => string;
+  getRowDetailId: (rowKey: string) => string;
   // T9c: 선택 데몬의 payload 응답을 날짜 + 사유 줄로 접는 순수 fold.
   getDaemonRunRows: (
     payloadState: FetchState | null | undefined,
@@ -217,9 +217,9 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string; healthM
     "GlobalDetailRegion must be reachable (T7 global-block container)",
   );
   assert.strictEqual(
-    typeof h.getDaemonDetailId,
+    typeof h.getRowDetailId,
     "function",
-    "getDaemonDetailId must be reachable (T8 aria-controls instrument)",
+    "getRowDetailId must be reachable (T8 aria-controls instrument)",
   );
   assert.strictEqual(
     typeof h.getDaemonRunRows,
@@ -671,22 +671,22 @@ test("T11 a response that has not arrived folds to null, never to an empty confi
 
 // --- T8: the expansion region's DOM id --------------------------------------
 
-test("T8 the detail id is derived from the daemon name and stays a legal DOM id", () => {
-  const id = arch.getDaemonDetailId("autoagent");
+test("T8 the detail id is derived from the row key it is handed and stays a legal DOM id", () => {
+  const id = arch.getRowDetailId("autoagent");
   assert.match(id, /autoagent$/, "the id must name the row it belongs to");
   assert.strictEqual(
     id,
-    arch.getDaemonDetailId("autoagent"),
+    arch.getRowDetailId("autoagent"),
     "the id must be stable — aria-controls and the region are wired by the same call",
   );
   assert.notStrictEqual(
     id,
-    arch.getDaemonDetailId("wiki"),
+    arch.getRowDetailId("wiki"),
     "two rows must not share one region id",
   );
-  // 명부의 데몬 이름은 하이픈을 포함함 — id 문법을 벗어나는 문자만 접히고 나머지는 남아야 함.
+  // 행 키(데몬 이름 · 부품 id)는 하이픈을 포함함 — id 문법을 벗어나는 문자만 접히고 나머지는 남아야 함.
   assert.match(
-    arch.getDaemonDetailId("daily-restart-autoagent"),
+    arch.getRowDetailId("daily-restart-autoagent"),
     /^[A-Za-z][A-Za-z0-9_-]*$/,
     "the id must remain a legal getElementById target for every roster name",
   );

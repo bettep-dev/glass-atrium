@@ -2093,9 +2093,11 @@ async function waitForDaemonRows(): Promise<void> {
 	await page.waitForSelector(".arch-live-table tbody tr", { timeout: 30_000 });
 }
 
-// 표가 선언하는 열 — AC-T8 첫 절("접힘 상태 행에 job/status/last run/nodes 4열")이 재는 값.
+// 표가 선언하는 열 — AC-T8 첫 절("접힘 상태 행에 4열")이 재는 값. 첫 열 이름은 B2-4 에서
+// job → HEALTH 로 옮겼음: 행 원천이 데몬 응답에서 부품 명부로 갔으므로 데몬 아닌 행까지
+// 일감이라 부르던 이름이 더는 이 표가 세는 것을 부르지 않음.
 // 이름까지 고정함: 개수만 세면 열 하나가 다른 사실로 바뀌어도 초록이 됨.
-const LIVE_TABLE_HEADERS = ["Job", "Status", "Last run", "Nodes"];
+const LIVE_TABLE_HEADERS = ["HEALTH", "Status", "Last run", "Nodes"];
 
 interface LiveTableShape {
 	headers: string[];
@@ -2182,7 +2184,7 @@ test("AC-T8 a collapsed row carries the four columns the header names", async ()
 	assert.deepEqual(
 		collapsed.headers,
 		LIVE_TABLE_HEADERS,
-		"the live table must name job/status/last run/nodes — dropping or renaming a column changes this list",
+		`the live table must name ${LIVE_TABLE_HEADERS.join("/")} — dropping or renaming a column changes this list`,
 	);
 	assert.equal(
 		collapsed.rowCells,
@@ -2393,6 +2395,296 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 	assert.ok(
 		!text.includes("Couldn't read"),
 		`a slow response must not be reported as an unreadable one — read "${text}"`,
+	);
+});
+
+// --- AC-B2-4: the health table stands on the part roster ---------------------
+
+// 확장 컨트롤을 내야 하는 행 — 데몬 넷 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
+// 고정함: 유도하면 구현의 규칙을 그대로 되읽어 무엇을 세든 초록이 됨. 부품이 하나 늘면 여기가
+// 붉어지는 것이 맞음 — 새 부품은 '펼칠 것이 있는가' 를 스스로 밝혀야 함.
+const EXPANDABLE_PART_IDS = [
+	"daemon-cycle",
+	"glass-atrium-wiki-curator",
+	"daily-restart-autoagent",
+	"daily-restart-wiki",
+	"hook-chain",
+];
+
+// 판정 앵커 — 행의 '등장' 이 아니라 tone 이 붙은 것을 기다림. 행은 부품 명부로 서므로 health 응답
+// 없이도 마운트 시점에 그려짐: 등장을 기다리면 마운트를 기다린 것이지 판정을 기다린 것이 아님.
+async function waitForPartVerdict(partId: string): Promise<void> {
+	await page.waitForSelector(`[data-health-row="${partId}"][data-health-tone]`, {
+		timeout: 30_000,
+	});
+}
+
+async function getPartTone(partId: string): Promise<string | null> {
+	return await page.evaluate((id) => {
+		const row = document.querySelector(`[data-health-row="${id}"]`);
+		return row ? row.getAttribute("data-health-tone") : null;
+	}, partId);
+}
+
+async function getPartRowText(partId: string): Promise<string> {
+	return await getNodeText(`[data-health-row="${partId}"]`);
+}
+
+async function getPartRowIds(): Promise<string[]> {
+	return await page.evaluate(() =>
+		[...document.querySelectorAll("[data-health-row]")].map(
+			(row) => row.getAttribute("data-health-row") || "",
+		),
+	);
+}
+
+// 화면이 읽는 그 명부를 브라우저 안에서 그대로 읽음 — 하네스가 id 목록을 다시 적으면
+// 표가 명부를 떠나도 두 사본이 함께 틀린 채 초록이 됨.
+async function getRosterPartIds(): Promise<string[]> {
+	return await page.evaluate(
+		() =>
+			(
+				window as never as { HealthModel: { HEALTH_CARD_DEFS: { id: string }[] } }
+			).HealthModel.HEALTH_CARD_DEFS.map((def) => def.id),
+	);
+}
+
+// 명부에서 앞의 n 항목을 덜어냄 — `HEALTH_CARD_DEFS` 는 동결되지 않은 채 참조로 내보내지므로
+// 행 수가 명부를 따르는지 반증할 수 있음. 케이스마다 페이지를 다시 여므로 되돌릴 필요가 없음.
+async function spliceRoster(count: number): Promise<number> {
+	return await page.evaluate((n) => {
+		const defs = (
+			window as never as { HealthModel: { HEALTH_CARD_DEFS: { id: string }[] } }
+		).HealthModel.HEALTH_CARD_DEFS;
+		defs.splice(0, n);
+		return defs.length;
+	}, count);
+}
+
+// 수동 새로고침 — health 응답 넷이 다시 나가 새 상태 객체가 오므로 표가 명부를 다시 읽음.
+async function refreshMap(): Promise<void> {
+	await page.click('[aria-label="Refresh system map"]');
+}
+
+// 기한을 두고 행 수가 기대값에 닿기를 기다림 — 초과하면 마지막으로 읽은 수를 그대로 돌려
+// 단언 메시지가 무엇을 봤는지 남기게 함.
+async function waitForRowCount(expected: number): Promise<number> {
+	const deadline = Date.now() + 15_000;
+	let count = -1;
+	while (Date.now() < deadline) {
+		count = (await getPartRowIds()).length;
+		if (count === expected) return count;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return count;
+}
+
+test("AC-B2-4a the table stands one row per roster part under a HEALTH header", async () => {
+	await openMap(getLiveFixture());
+	await waitForPartVerdict("pg");
+
+	// textContent 로 읽음 — innerText 는 스타일시트의 text-transform 을 반영하므로 마크업이 쓴
+	// 이름이 아니라 대소문자 규칙을 재게 됨.
+	const firstHeader = await page.evaluate(() => {
+		const th = document.querySelector(".arch-live-table thead th");
+		return th ? (th.textContent || "").replace(/\s+/g, " ").trim() : "";
+	});
+	assert.equal(
+		firstHeader,
+		LIVE_TABLE_HEADERS[0],
+		`the first column must name the health part it stands for — read "${firstHeader}"`,
+	);
+
+	const roster = await getRosterPartIds();
+	assert.equal(
+		roster.length,
+		HEALTH_EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+	);
+	assert.deepEqual(
+		await getPartRowIds(),
+		roster,
+		"the rows must be the roster itself, in its order — a daemon-response source drops every part that answers no daemon",
+	);
+	assert.match(
+		await getPartRowText("pg"),
+		/PostgreSQL/,
+		"the PostgreSQL part must stand as a row of its own, named",
+	);
+});
+
+test("AC-B2-4b the row count follows the roster, and an empty roster leaves no rows", async () => {
+	await openMap(getLiveFixture());
+	await waitForPartVerdict("pg");
+	assert.equal(
+		(await getPartRowIds()).length,
+		HEALTH_EXPECTED_TOTAL,
+		"fixture precondition: the untouched roster must fill every row",
+	);
+
+	const remaining = await spliceRoster(1);
+	await refreshMap();
+	assert.equal(
+		await waitForRowCount(remaining),
+		remaining,
+		`dropping one part must drop exactly one row — a map-local row source keeps the old ${HEALTH_EXPECTED_TOTAL}`,
+	);
+
+	await spliceRoster(remaining);
+	await refreshMap();
+	assert.equal(
+		await waitForRowCount(0),
+		0,
+		"an empty roster must leave no rows — a surviving row is the map stating a total its source no longer states",
+	);
+});
+
+test("AC-B2-4c an unreachable database turns the PostgreSQL row, not only the strip", async () => {
+	await openMapWithHealth(
+		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "ok" } }),
+	);
+	await waitForPartVerdict("pg");
+
+	assert.equal(
+		await getPartTone("pg"),
+		"crit",
+		"an unreachable database must turn its own row crit — a verdict that lives only in the strip dies with the strip",
+	);
+	// 색만으로 판정을 말하면 색을 못 읽는 조작자와 하네스가 같은 문장을 못 읽음.
+	const text = await getPartRowText("pg");
+	assert.match(text, /PostgreSQL/, `the row must name the part it judges — read "${text}"`);
+	assert.match(text, /\bDown\b/, `the row must state the verdict in words — read "${text}"`);
+});
+
+test("AC-B2-4d only a row with something to open carries an expand control", async () => {
+	await openMap(getLiveFixture());
+	await waitForPartVerdict("browser");
+
+	const expandable = await page.evaluate(() =>
+		[...document.querySelectorAll("[data-health-row]")]
+			.filter((row) => row.querySelector("[aria-expanded]"))
+			.map((row) => row.getAttribute("data-health-row") || ""),
+	);
+
+	assert.ok(
+		!expandable.includes("browser"),
+		"the Chromium export row opens onto nothing — a control there promises a detail that does not exist",
+	);
+	assert.deepEqual(
+		[...expandable].sort(),
+		[...EXPANDABLE_PART_IDS].sort(),
+		"exactly the four daemon rows and the hook chain row may open — nothing else has a detail to show",
+	);
+});
+
+test("AC-B2-4e the Chromium export row's tone follows the launch probe through all three of its values", async () => {
+	await openMap(getLiveFixture());
+	await waitForPartVerdict("browser");
+	assert.equal(await getPartTone("browser"), "ok", "a launching browser must read ok");
+
+	await openMapWithHealth(
+		getHealthFixture({ pg: { status: "ok", db: "open", browser: "failed" } }),
+	);
+	await waitForPartVerdict("browser");
+	assert.equal(
+		await getPartTone("browser"),
+		"crit",
+		"a browser that cannot launch must read crit — every HTML export is failing",
+	);
+
+	// 미프로브는 실패가 아님 — 정상으로 꾸미지도, 장애로 부르지도 않는 셋째 값.
+	await openMapWithHealth(
+		getHealthFixture({ pg: { status: "ok", db: "open", browser: "unprobed" } }),
+	);
+	await waitForPartVerdict("browser");
+	assert.equal(
+		await getPartTone("browser"),
+		"info",
+		"an unprobed browser must read info — calling it a failure invents a verdict the probe never gave",
+	);
+	assert.deepEqual(
+		await page.evaluate(() =>
+			[...document.querySelectorAll('[data-health-row][data-health-tone="crit"]')].map(
+				(row) => row.getAttribute("data-health-row") || "",
+			),
+		),
+		[],
+		"an unprobed browser must leave no row in crit",
+	);
+});
+
+// --- B2-4 guard: what the Nodes column reads --------------------------------
+
+// B2-4 는 Nodes 열의 원천을 /live 의 `daemons[].node_ids` 에서 같은 응답의 `part_bindings` 로
+// 옮겼는데, 옮긴 자리에 칸 '내용' 을 재는 단언이 없었음 — getLiveTableShape 는 칸 '수' 만 세므로
+// 표가 사라지거나 키가 어긋나 전 칸이 '—' 로 떨어져도 초록이 남음. 아래 두 절은 서로 다른 결함을
+// 잡음: 1절은 응답이 준 값을 그대로 싣는지, 2절은 그 값을 정말 응답에서 읽는지(제 사본이 아닌지).
+
+const NODES_HEADER = LIVE_TABLE_HEADERS[3];
+
+// 부품 id → Nodes 칸 글.
+async function getPartNodeCells(): Promise<Record<string, string>> {
+	return await page.evaluate((headerName) => {
+		const table = document.querySelector(".arch-live-table");
+		const headers = [...(table?.querySelectorAll("thead th") || [])].map((el) =>
+			(el.textContent || "").replace(/\s+/g, " ").trim(),
+		);
+		// 칸 자리를 머리글에서 찾음 — 상수 3 으로 세면 열이 하나 끼어들 때 조용히 옆 칸을 읽어
+		// 다른 사실을 재게 됨. 머리글이 없으면 -1 이라 모든 칸이 빈 글로 떨어져 붉어짐.
+		const col = headers.indexOf(headerName);
+		return Object.fromEntries(
+			[...(table?.querySelectorAll("[data-health-row]") || [])].map((row): [string, string] => [
+				row.getAttribute("data-health-row") || "",
+				(row.querySelectorAll("th, td")[col]?.textContent || "")
+					.replace(/\s+/g, " ")
+					.trim(),
+			]),
+		);
+	}, NODES_HEADER);
+}
+
+test("B2-4 guard the Nodes column carries the served part_bindings, not a map-local copy", async () => {
+	await openMap(getLiveFixture());
+	await waitForPartVerdict("pg");
+
+	// 기대값은 서버 상수에서 뽑음 — 하네스가 목록을 다시 적으면 두 사본이 함께 틀린 채 초록이 됨.
+	const roster = await getRosterPartIds();
+	const expected = Object.fromEntries(
+		roster.map((id): [string, string] => [
+			id,
+			(PART_NODE_BINDINGS[id] ?? []).join(", ") || "—",
+		]),
+	);
+	assert.equal(
+		roster.length,
+		HEALTH_EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+	);
+	assert.ok(
+		!Object.values(expected).includes("—"),
+		"fixture precondition: the served table binds every roster part, so a blanket em dash is the map failing to read it, never the data",
+	);
+	assert.deepEqual(
+		await getPartNodeCells(),
+		expected,
+		"every Nodes cell must carry the binding the response served — an absent or re-keyed table empties them all, and counting cells alone stays green through it",
+	);
+
+	// 2절 — 응답을 갈아끼우면 칸이 따라가야 함. 1절은 화면이 마침 같은 값을 든 제 사본을 읽어도
+	// 통과하므로, 응답만 아는 값을 심어야 원천이 어디인지가 갈림.
+	await openMap(getLiveFixture({ part_bindings: { pg: ["injected_a", "injected_b"] } }));
+	await waitForPartVerdict("pg");
+
+	const injected = await getPartNodeCells();
+	assert.equal(
+		injected.pg,
+		"injected_a, injected_b",
+		"a re-keyed table must move the cell with it — a cell holding a value this response never sent is the map reading a copy of its own",
+	);
+	assert.equal(
+		injected.browser,
+		"—",
+		"a part the served table no longer binds must read empty, not the nodes it used to carry",
 	);
 });
 

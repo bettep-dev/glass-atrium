@@ -170,6 +170,15 @@ const GLOBAL_DETAIL_BLOCKS = [
 	},
 ];
 
+// 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
+// 여기 없으므로 확장 컨트롤도 서지 않음: 빈 영역을 여는 버튼은 읽을 것이 있다고 거짓말함.
+const HEALTH_ROW_DETAILS = {
+	daemon: (row, states) => (
+		<DaemonRunDetail daemon={row.daemonName} state={states.payloadState} />
+	),
+	hook: (_row, states) => <HookChainDetail state={states.hookState} />,
+};
+
 // render 를 갖춘 항목만 통과 — 반쯤 등록된 블록이 컨테이너를 열어 빈 상자를 남기지 않게 함.
 function getGlobalDetailBlocks() {
 	return GLOBAL_DETAIL_BLOCKS.filter(
@@ -183,13 +192,14 @@ function toDetailIdPart(name) {
 	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
-// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값.
+// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값. 키는 데몬 행이면 데몬 이름,
+// 아니면 부품 명부 id 임(둘은 같은 이름공간을 쓰지 않음).
 // 접힌 문자만 다른 두 이름(`a b` 와 `a-b`)은 같은 id 로 떨어짐. 지금 중복 id 가 생기지 않는 것은
-// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(LiveDaemonTable 의 expandedDaemon
-// 은 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
+// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(HealthPartTable 의 expandedRow
+// 는 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
 // id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
-function getDaemonDetailId(daemonName) {
-	return `arch-daemon-detail-${toDetailIdPart(daemonName)}`;
+function getRowDetailId(rowKey) {
+	return `arch-row-detail-${toDetailIdPart(rowKey)}`;
 }
 
 // 전역 블록 펼침 영역의 DOM id — 블록 컨트롤의 aria-controls 가 가리키는 값 (T11).
@@ -711,8 +721,12 @@ function ScreenArchitecture(
 					{activeDiagram?.description || "No description available."}
 				</div>
 
-				<LiveDaemonTable
-					state={liveState}
+				<HealthPartTable
+					daemonState={daemonHealthState}
+					pgState={pgState}
+					hookState={hookState}
+					hookFailState={hookFailState}
+					partBindings={liveState.data?.part_bindings}
 					payloadState={payloadState}
 					onSelectDaemon={setPayloadDaemon}
 				/>
@@ -1568,37 +1582,51 @@ function HookFailureDetail({ state }) {
 	);
 }
 
-// 라이브 상태 표 — 노드 링 점등을 대체함. daemon 1개 = 1행.
+// 라이브 상태 표 — 노드 링 점등을 대체함. 행 원천은 데몬 응답이 아니라 부품 명부임 (ADR-5):
+// 명부 한 항목 = 한 행이므로 응답에 없는 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
 
-function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
+function HealthPartTable({
+	daemonState,
+	pgState,
+	hookState,
+	hookFailState,
+	partBindings,
+	payloadState,
+	onSelectDaemon,
+}) {
 	const { StatusDot, formatRelativeTime } = window.UI;
-	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 daemon 배열을 다시 훑지 않음.
+	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 명부를 다시 훑지 않음.
 	const rows = useMemoAR(
-		() => (state.status === "ready" ? getLiveDaemonRows(state.data?.daemons) : []),
-		[state.status, state.data],
+		() =>
+			getHealthPartRows(
+				{ daemonState, pgState, hookState, hookFailState },
+				partBindings,
+			),
+		[daemonState, pgState, hookState, hookFailState, partBindings],
 	);
 
 	// 한 번에 한 행만 펼침 — 여럿이 열리면 표가 세로로 길어져 실패 비교가 아니라 스크롤이 됨.
-	const [expandedDaemon, setExpandedDaemon] = useStateAR(null);
+	const [expandedRow, setExpandedRow] = useStateAR(null);
 
 	const toggleRow = useCallbackAR(
-		(name) => {
-			setExpandedDaemon((current) => (current === name ? null : name));
+		(row) => {
+			setExpandedRow((current) => (current === row.id ? null : row.id));
 			// 접을 때도 같은 이름을 올림 — 값이 그대로라 재요청은 없고, 방금 읽은 실패가 남음.
-			onSelectDaemon?.(name);
+			if (row.daemonName) onSelectDaemon?.(row.daemonName);
 		},
 		[onSelectDaemon],
 	);
 
-	if (state.status !== "ready") return null;
 	if (rows.length === 0) return null;
 
 	return (
 		<div className="arch-live-table-wrap">
 			<table className="arch-live-table">
+				{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
+				    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
 				<thead>
 					<tr>
-						<th scope="col">Job</th>
+						<th scope="col">HEALTH</th>
 						<th scope="col">Status</th>
 						<th scope="col">Last run</th>
 						<th scope="col">Nodes</th>
@@ -1606,30 +1634,45 @@ function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 				</thead>
 				<tbody>
 					{rows.flatMap((row) => {
-						const detailId = getDaemonDetailId(row.name);
-						const isExpanded = expandedDaemon === row.name;
+						const renderDetail = HEALTH_ROW_DETAILS[row.kind];
+						const detailId = getRowDetailId(row.daemonName || row.id);
+						const isExpanded = expandedRow === row.id;
 
+						// tone 속성은 판정이 확정된 행에만 붙음 — 미수신 행을 정상으로 꾸미지 않고,
+						// 하네스가 '판정이 도착함' 을 기다릴 앵커도 이 속성임.
 						const summaryRow = (
-							<tr key={row.name} data-daemon-row={row.name}>
+							<tr
+								key={row.id}
+								data-health-row={row.id}
+								data-health-tone={row.tone || undefined}
+								data-daemon-row={row.daemonName || undefined}>
 								<th scope="row" className="text-ink font-mono">
-									{/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */}
-									<button
-										type="button"
-										className="arch-row-toggle"
-										aria-expanded={isExpanded}
-										aria-controls={detailId}
-										onClick={() => toggleRow(row.name)}>
-										<span className="arch-row-caret" aria-hidden="true">
-											{isExpanded ? "▾" : "▸"}
-										</span>
-										{row.name}
-									</button>
+									{renderDetail ? (
+										/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */
+										<button
+											type="button"
+											className="arch-row-toggle"
+											aria-expanded={isExpanded}
+											aria-controls={detailId}
+											onClick={() => toggleRow(row)}>
+											<span className="arch-row-caret" aria-hidden="true">
+												{isExpanded ? "▾" : "▸"}
+											</span>
+											{row.name}
+										</button>
+									) : (
+										row.name
+									)}
 								</th>
 								<td>
-									<span className="inline-flex items-center gap-1.5">
-										<StatusDot status={row.tone} />
-										{row.statusLabel}
-									</span>
+									{row.tone ? (
+										<span className="inline-flex items-center gap-1.5">
+											<StatusDot status={row.tone} />
+											{row.statusLabel}
+										</span>
+									) : (
+										"—"
+									)}
 								</td>
 								<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
 								<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
@@ -1637,13 +1680,16 @@ function LiveDaemonTable({ state, payloadState, onSelectDaemon }) {
 						);
 
 						// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
-						if (!isExpanded) return [summaryRow];
+						if (!renderDetail || !isExpanded) return [summaryRow];
 
 						return [
 							summaryRow,
-							<tr key={`${row.name}-detail`} data-daemon-detail={row.name}>
+							<tr
+								key={`${row.id}-detail`}
+								data-health-detail={row.id}
+								data-daemon-detail={row.daemonName || undefined}>
 								<td id={detailId} colSpan={4} className="arch-run-cell">
-									<DaemonRunDetail daemon={row.name} state={payloadState} />
+									{renderDetail(row, { payloadState, hookState })}
 								</td>
 							</tr>,
 						];
@@ -2223,6 +2269,41 @@ function getLiveDaemonRows(daemons) {
 			lastRunAt: d?.last_run_at || null,
 		};
 	});
+}
+
+// 표 행 목록 — 부품 명부 한 항목 = 한 행 (ADR-5). 데몬 응답이 행 수를 정하지 않으므로 응답에 없는
+// 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
+//   판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 — 어느 쪽도 여기서
+//   다시 재지 않음. 판정을 못 받은 행은 tone 을 아예 싣지 않음: 미수신과 정상은 다른 사실임.
+function getHealthPartRows(cardStates, partBindings) {
+	const model = window.HealthModel;
+	if (!model || typeof model.resolveCardFacts !== "function") return [];
+
+	return (model.HEALTH_CARD_DEFS || []).map((def) => {
+		const facts = model.resolveCardFacts(def, cardStates);
+		const isReady = facts.status === "ready";
+
+		return {
+			id: def.id,
+			name: def.name,
+			kind: def.kind,
+			// 데몬 행만 드릴다운 이름을 듦 — 나머지 행에는 부를 데몬이 없음.
+			daemonName: def.kind === "daemon" ? def.daemonName : null,
+			tone: isReady ? facts.tone : null,
+			statusLabel: isReady ? getPartStatusLabel(def, facts) : null,
+			// 마지막 실행은 데몬 행만 갖는 사실임 — 나머지 칸은 비어 있음이 정답임.
+			lastRunAt: isReady && facts.daemon ? facts.daemon.last_run_at || null : null,
+			nodeIds: partBindings?.[def.id] || [],
+		};
+	});
+}
+
+// 행의 상태 문장 — 데몬 행은 데몬 배지 표를 씀(stale 은 'Overdue' 라서 crit 의 기본 문장과 다름).
+// 나머지는 tone 기본 문장을 씀. 어느 쪽도 이 파일이 새로 짓지 않음 (ui.jsx 단일 SoT).
+function getPartStatusLabel(def, facts) {
+	if (def.kind === "daemon" && facts.daemon)
+		return window.UI.daemonStatusLabel(facts.daemon.effective_status);
+	return window.UI.resolveBadge(facts.tone).label;
 }
 
 // unscoped mermaid node id → 링 tone — 데몬 판정과 부품 판정을 한 표로 접음.
