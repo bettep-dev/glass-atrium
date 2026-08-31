@@ -1850,13 +1850,40 @@ async function openPartHealth(partId: string): Promise<void> {
 	await page.waitForSelector(selector, { timeout: 30_000 });
 	await waitForFittedCanvas();
 
-	// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
-	// 드라이버는 누르기 전에 대상을 시야로 끌어오려 스크롤하는데, 캔버스의 휠 확대(svg-pan-zoom,
-	// 기본 감도 0.1)가 그 스크롤을 확대로 읽어 배율이 틱마다 1.1 배씩 올라감. 한 번 커지면 노드는
-	// 더 밖으로 나가 스크롤이 다시 일어나고, 상한에 걸릴 때까지 되풀이됨
-	// (실측: 0.6566 → 1.7071 = 0.6566 × 1.1^10, 그 뒤 어떤 노드도 못 누름).
-	// 좌표로 누르면 스크롤이 아예 없고, 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
-	const box = await page.evaluate((sel) => {
+	await clickNodeAt(selector, `${nodeId}' for part '${partId}`);
+	await page.waitForSelector(`[data-health-row="${partId}"]`, { timeout: 30_000 });
+}
+
+// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
+// 드라이버는 누르기 전에 대상을 시야로 끌어오려 스크롤하는데, 캔버스의 휠 확대(svg-pan-zoom,
+// 기본 감도 0.1)가 그 스크롤을 확대로 읽어 배율이 틱마다 1.1 배씩 올라감. 한 번 커지면 노드는
+// 더 밖으로 나가 스크롤이 다시 일어나고, 상한에 걸릴 때까지 되풀이됨
+// (실측: 0.6566 → 1.7071 = 0.6566 × 1.1^10, 그 뒤 어떤 노드도 못 누름).
+// 좌표로 누르면 스크롤이 아예 없고, 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
+// 노드를 누르는 자리는 전부 이 문을 지남 — 한 곳이라도 locator.click 으로 남으면 그 한 번이
+// 배율을 올려 놓고, 그 뒤의 모든 누르기가 실패함.
+async function clickNodeAt(selector: string, describe: string): Promise<void> {
+	let box = await readNodeBox(selector);
+	// 자리를 못 잡았으면 맞춤을 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
+	// 밀릴 수 있어(부하가 높으면 자동 맞춤이 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
+	// 되민 뒤에도 밖이면 그때는 진짜 결함이므로 아래 단언이 붉어짐 — 자가 치유가 실패를 삼키지 않음.
+	if (box && !box.inside) {
+		await forceRefitCanvas();
+		box = await readNodeBox(selector);
+	}
+
+	assert.ok(box, `fixture precondition: node '${describe}' and the canvas must both be in the tree`);
+	assert.ok(
+		box.inside,
+		`node '${describe}' is drawn outside the pane, so no click can reach it — ` +
+			`node ${box.node} · pane ${box.pane} · scale ${box.scale} · ${box.overlays} overlay(s) standing`,
+	);
+
+	await page.mouse.click(box.x, box.y);
+}
+
+async function readNodeBox(selector: string) {
+	return await page.evaluate((sel) => {
 		const el = document.querySelector(sel);
 		const canvas = document.querySelector(".arch-mermaid-canvas");
 		if (!el || !canvas) return null;
@@ -1875,16 +1902,6 @@ async function openPartHealth(partId: string): Promise<void> {
 			overlays: document.querySelectorAll(".detail-overlay").length,
 		};
 	}, selector);
-
-	assert.ok(box, `fixture precondition: node '${nodeId}' and the canvas must both be in the tree`);
-	assert.ok(
-		box.inside,
-		`node '${nodeId}' (part '${partId}') is drawn outside the pane, so no click can reach it — ` +
-			`node ${box.node} · pane ${box.pane} · scale ${box.scale} · ${box.overlays} overlay(s) standing`,
-	);
-
-	await page.mouse.click(box.x, box.y);
-	await page.waitForSelector(`[data-health-row="${partId}"]`, { timeout: 30_000 });
 }
 
 // 지도를 맞춤 배율에 세움. 노드가 그려진 것과 맞춤이 걸린 것은 다른 순간이고, openMap 은 SVG 가
@@ -1893,6 +1910,32 @@ async function openPartHealth(partId: string): Promise<void> {
 // 자동 맞춤이 앉기를 기다리는 대신 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러
 // 결정적으로 세움 — 언제 앉는지에 기대지 않게 됨. 하네스가 변환행렬을 직접 쓰지는 않음:
 // 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
+// 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러 배율을 되돌림.
+// 하네스가 변환행렬을 직접 쓰지는 않음: 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
+async function forceRefitCanvas(): Promise<void> {
+	const canvas = page.locator(".arch-mermaid-canvas");
+	if ((await canvas.count()) === 0) return;
+	await canvas.focus();
+	await page.keyboard.press("0");
+	await page.waitForFunction(
+		() => {
+			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+			return Boolean(m && m.a > 0 && m.a <= 1);
+		},
+		null,
+		{ timeout: 30_000 },
+	);
+}
+
+async function isCanvasFitted(): Promise<boolean> {
+	return await page.evaluate(() => {
+		const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+		const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+		return Boolean(m && m.a > 0 && m.a <= 1);
+	});
+}
+
 async function waitForFittedCanvas(): Promise<void> {
 	const canvas = page.locator(".arch-mermaid-canvas");
 	if ((await canvas.count()) === 0) return;
@@ -1908,8 +1951,12 @@ async function waitForFittedCanvas(): Promise<void> {
 		{ timeout: 30_000 },
 	);
 
-	await canvas.focus();
-	await page.keyboard.press("0");
+	// 이미 맞춰져 있으면 그대로 둠 — 부품 일곱을 순회하는 절은 여기를 열네 번 지나는데, 매번
+	// 포커스 + 키 + 폴링을 다시 돌리면 전체 스위트를 함께 돌릴 때 그 값이 기한을 넘겼음(실측 30.5초).
+	// 여기서 놓친 밀림은 clickNodeAt 이 누르기 직전에 다시 재어 되밀음.
+	if (await isCanvasFitted()) return;
+
+	await forceRefitCanvas();
 
 	// 화면의 상한이 1 이므로 그것을 앵커로 씀 — 안 내려오면 맞춤이 걸리지 않은 것이고,
 	// 그 사실 자체가 결함이라 여기서 붉어져야 함.
@@ -1920,7 +1967,7 @@ async function waitForFittedCanvas(): Promise<void> {
 			return Boolean(m && m.a > 0 && m.a <= 1);
 		},
 		null,
-		{ timeout: 15_000 },
+		{ timeout: 30_000 },
 	);
 }
 
@@ -1942,7 +1989,10 @@ async function closePanel(): Promise<void> {
 	await page.keyboard.press("Escape");
 	// 헬스 구획이 아니라 오버레이의 사라짐을 기다림 — 헬스를 싣지 않은 노드를 연 경우
 	// 구획이 애초에 없어 detached 를 영원히 기다리게 됨.
-	await page.waitForSelector(".detail-overlay", { state: "detached", timeout: 15_000 });
+	// 기한은 파일의 다른 요소 대기와 같은 30초 — 브라우저 스위트 셋이 동시에 도는 조합 실행에서
+	// 15초는 한 번 걸렸음(맵 렌더 + 맞춤이 그만큼 늦어짐). 붉게 실패하므로 위험은 flake 뿐이지만,
+	// 흔들리는 스위트는 이 시험들이 내는 신호 자체를 깎음.
+	await page.waitForSelector(".detail-overlay", { state: "detached", timeout: 30_000 });
 }
 
 // 부품 하나를 그 노드에서 읽어 오고 패널을 닫음.
@@ -2121,6 +2171,138 @@ test("AC-T8 opening another node moves the panel to that node's parts alone", as
 	assert.equal((await getPartFacts("hook-chain")).found, true, "the newly opened node's part must stand");
 });
 
+/**
+ * ADR-20 — 상태 링과 포커스 표식이 아홉 노드 전부에서 실제로 보이는지. 둘은 같은 채널을 쓰므로
+ * 한 시험이 함께 잼.
+ *
+ * 이 자리가 비어 있어서 두 결함이 초록으로 지나갔음:
+ *  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임. 인라인
+ *     !important 는 스타일시트의 !important 보다 세므로 stroke 로는 이길 수 없음
+ *     (focal=main_session · security=hook_pipeline · external=user).
+ *  ② 선택자가 rect/polygon 만 짚어 원통(path)으로 그려지는 pg_db 를 놓쳤음.
+ * 그 결과 판정을 받는 여섯 중 둘(pg_db · hook_pipeline)에 상태 링이 아예 안 떴음 — 표를 걷어낸
+ * 근거("지도가 이미 상태를 보여 줌")가 그 둘에서는 거짓이었고, 포커스는 키보드가 헬스 상세로 가는
+ * 유일한 길이라 안 보이는 포커스 자리는 WCAG 2.4.7 위반임.
+ *
+ * 노드 목록은 DOM 에서 뽑음 — 하네스가 이름을 다시 적으면 노드가 하나 늘 때 그 노드는 안 재짐.
+ * 그리고 두 원인이 픽스처에 실제로 있는지를 먼저 못 박음(공허 방지): classDef 인라인
+ * !important 를 단 도형이 최소 하나, rect 아닌 도형이 최소 하나 있어야 이 시험이 무언가를 잼.
+ */
+interface RingProbeStyle {
+	id: string;
+	shapeTag: string;
+	inlineImportant: boolean;
+	outlineStyle: string;
+	outlineWidth: number;
+	outlineColor: string;
+}
+
+// 디자인 토큰(`--accent` 등, `r g b` 3원소)을 computed 색 문자열로 — 기대색을 하네스가 다시
+// 적지 않게 함. 토큰이 바뀌면 화면과 시험이 함께 따라감.
+async function getTokenColour(token: string): Promise<string> {
+	return await page.evaluate((name) => {
+		const probe = document.createElement("span");
+		probe.style.color = `rgb(var(${name}))`;
+		document.body.appendChild(probe);
+		const colour = getComputedStyle(probe).color;
+		probe.remove();
+		return colour;
+	}, token);
+}
+
+async function readNodeOutlines(applyState: "focus" | "crit"): Promise<RingProbeStyle[]> {
+	return await page.evaluate((mode) => {
+		const out = [];
+		for (const g of document.querySelectorAll("svg g.node[data-arch-node-id]")) {
+			const el = g as SVGGElement;
+			const shape = el.querySelector("rect, polygon, path, circle, ellipse") as SVGElement | null;
+			for (const c of ["arch-node-live-ok", "arch-node-live-warn", "arch-node-live-crit"])
+				el.classList.remove(c);
+			if (mode === "focus") el.focus();
+			else el.classList.add("arch-node-live-crit");
+
+			const cs = getComputedStyle(el);
+			out.push({
+				id: el.getAttribute("data-arch-node-id") || "",
+				shapeTag: shape ? shape.tagName : "(none)",
+				// classDef 가 인라인으로 찍은 !important — 스타일시트가 이길 수 없는 채널의 표식.
+				inlineImportant: /!important/i.test(shape?.getAttribute("style") || ""),
+				outlineStyle: cs.outlineStyle,
+				outlineWidth: Number.parseFloat(cs.outlineWidth) || 0,
+				outlineColor: cs.outlineColor,
+			});
+
+			if (mode === "focus") el.blur();
+			else el.classList.remove("arch-node-live-crit");
+		}
+		return out;
+	}, applyState);
+}
+
+test("ADR-20 every node shows its focus position, whatever classDef or shape it has", async () => {
+	await openMap(getLiveFixture());
+	await waitForFittedCanvas();
+
+	const focused = await readNodeOutlines("focus");
+	assert.ok(focused.length > 0, "fixture precondition: the map must have imprinted nodes");
+	assert.ok(
+		focused.some((n) => n.inlineImportant),
+		"fixture precondition: at least one node must carry a classDef inline !important, or this measures nothing",
+	);
+	assert.ok(
+		focused.some((n) => n.shapeTag !== "rect"),
+		"fixture precondition: at least one node must be drawn with a non-rect shape, or the shape half measures nothing",
+	);
+
+	const invisible = focused.filter((n) => n.outlineStyle === "none" || n.outlineWidth <= 0);
+	assert.deepEqual(
+		invisible.map((n) => `${n.id} (${n.shapeTag}${n.inlineImportant ? ", classDef !important" : ""})`),
+		[],
+		"a focused node with no visible marker is unreachable by sight — the keyboard is the only path to health detail",
+	);
+
+	// 색까지, 그것도 '우리가 정한 색' 인지 잼. 존재만 재면 이 절은 아무것도 못 잡음: 노드가
+	// 포커스를 받는 순간 Chromium 이 UA 기본 포커스 링(`auto 5px rgb(0,95,204)`)을 그리므로,
+	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '외곽선 있음' 으로 균일하게 통과함(실측 — 종전의
+	// stroke 규칙은 classDef 인라인 !important 에 막혀 네 노드에서 안 걸렸는데, 그 자리를 UA 링이
+	// 덮고 있었음). 그래서 토큰에서 기대색을 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 갈라짐.
+	const accent = await getTokenColour("--accent");
+	const wrongColour = focused.filter((n) => n.outlineColor !== accent);
+	assert.deepEqual(
+		wrongColour.map((n) => `${n.id}: ${n.outlineColor}`),
+		[],
+		`every node must mark focus in the accent the screen declares (${accent}) — another colour is the browser's own ring standing in for a rule that did not apply`,
+	);
+});
+
+test("ADR-20 every node can carry a state ring, whatever classDef or shape it has", async () => {
+	await openMap(getLiveFixture());
+	await waitForFittedCanvas();
+
+	const unlit = await readNodeOutlines("focus").then(() => readNodeOutlines("crit"));
+	const missing = unlit.filter((n) => n.outlineStyle === "none" || n.outlineWidth <= 0);
+	assert.deepEqual(
+		missing.map((n) => `${n.id} (${n.shapeTag}${n.inlineImportant ? ", classDef !important" : ""})`),
+		[],
+		"a node whose verdict cannot be drawn breaks the reason the health table was removed — the map does not show its state",
+	);
+
+	// 판정도 '우리가 정한 색' 이어야 함 — 존재만 재면 UA 포커스 링이나 남은 포커스 자국이
+	// 대신 서 있어도 통과함. 그리고 판정 색과 포커스 색은 달라야 함: 같으면 둘을 구별할 수 없음.
+	const crit = await getTokenColour("--crit");
+	const wrongColour = unlit.filter((n) => n.outlineColor !== crit);
+	assert.deepEqual(
+		wrongColour.map((n) => `${n.id}: ${n.outlineColor}`),
+		[],
+		`every verdict must read in the crit token the screen declares (${crit}) — another colour is not this verdict`,
+	);
+	assert.notEqual(
+		crit,
+		await getTokenColour("--accent"),
+		"the verdict and the focus position must not read as the same colour",
+	);
+});
+
 // 키보드만으로 상세에 닿는지 재는 반증 케이스. 표의 행은 진짜 button 이라 탭으로 닿았음 —
 // 표를 걷어내며 노드가 그 유일한 문이 됐으므로, 노드가 포커스를 못 받으면 마우스 없는
 // 조작자에게서 헬스 상세가 통째로 사라짐. 그 손실은 어떤 필드 단언에도 걸리지 않음.
@@ -2157,13 +2339,13 @@ test("AC-T8 the keyboard alone reaches a node and opens its health detail", asyn
 	);
 
 	await page.keyboard.press("Enter");
-	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 15_000 });
+	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 30_000 });
 	assert.equal((await getPartFacts("hook-chain")).found, true, "Enter on a focused node must open its detail");
 
 	await closePanel();
 	await page.focus(selector);
 	await page.keyboard.press(" ");
-	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 15_000 });
+	await page.waitForSelector('[data-health-row="hook-chain"]', { timeout: 30_000 });
 	assert.equal((await getPartFacts("hook-chain")).found, true, "Space must open it too");
 });
 
@@ -2362,9 +2544,11 @@ async function sweepPartIdsAcrossNodes(): Promise<string[]> {
 	for (const nodeId of nodeIds) {
 		await closePanelIfOpen();
 		await waitForFittedCanvas();
-		await page.click(`svg g.node[data-arch-node-id="${nodeId}"]`);
-		// 헬스를 실은 노드만 구획을 냄 — 없는 노드는 건너뜀(빈 제목을 그리지 않는 것이 계약임).
-		await page.waitForTimeout(120);
+		await clickNodeAt(`svg g.node[data-arch-node-id="${nodeId}"]`, nodeId);
+		// 드로어가 선 것을 기다림 — 헬스를 실은 노드만 구획을 내므로(빈 제목을 그리지 않는 것이
+		// 계약임) 구획의 등장을 기다릴 수는 없고, 드로어는 어느 노드를 눌러도 서므로 그것이 앵커임.
+		// 고정 sleep 을 쓰면 느린 기계에서 아직 안 선 패널을 '부품 없음' 으로 읽어 조용히 통과함.
+		await page.waitForSelector(".detail-overlay", { timeout: 30_000 });
 		for (const id of await getPartRowIds()) if (!seen.includes(id)) seen.push(id);
 		await closePanel();
 	}
@@ -2560,7 +2744,8 @@ test("AC-B2-4b the entries follow the roster, and an empty roster leaves none", 
 	await refreshMap();
 	const [pgNode] = PART_NODE_BINDINGS.pg;
 	await closePanelIfOpen();
-	await page.click(`svg g.node[data-arch-node-id$=".${pgNode}"]`);
+	await waitForFittedCanvas();
+	await clickNodeAt(`svg g.node[data-arch-node-id$=".${pgNode}"]`, pgNode);
 	assert.equal(
 		await waitForRowCount(0),
 		0,
@@ -2633,7 +2818,7 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 
 	// 그 컨트롤을 누르면 드릴다운이 옮겨가고 둘의 역할이 맞바뀜.
 	await page.click(`[data-health-row="${shared[1]}"] .arch-part-drill`);
-	await page.waitForSelector(`[data-health-row="${shared[1]}"] [data-health-detail]`, { timeout: 15_000 });
+	await page.waitForSelector(`[data-health-row="${shared[1]}"] [data-health-detail]`, { timeout: 30_000 });
 	const swapped = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
 	assert.deepEqual(
 		swapped.map((f) => f.hasDetail),
@@ -2736,7 +2921,8 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	await openMap(getLiveFixture({ part_bindings: { ...PART_NODE_BINDINGS, browser: [] } }));
 	const [browserNode] = PART_NODE_BINDINGS.browser;
 	await closePanelIfOpen();
-	await page.click(`svg g.node[data-arch-node-id$=".${browserNode}"]`);
+	await waitForFittedCanvas();
+	await clickNodeAt(`svg g.node[data-arch-node-id$=".${browserNode}"]`, browserNode);
 	await page.waitForTimeout(300);
 	assert.equal(
 		(await getPartFacts("browser")).found,

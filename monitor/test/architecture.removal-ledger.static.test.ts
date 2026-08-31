@@ -67,8 +67,9 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "data-health-fact", kind: "attribute", ac: "AC-B2-6d" },
 
   // B2-6b 가 지운 KPI 집계 — 스트립이 사라지면서 그 셈을 그리는 자리가 없어졌음. 화면 몫의
-  // 분모는 이제 표의 행 수이고(AC-B2-4b), 카드 tone 버킷의 분할 불변식은 health-model 단위
-  // 시험이 resolveCardFacts 에서 직접 잼. 남은 것은 아무도 부르지 않는 세 이름뿐이었음.
+  // 분모는 표의 행 수였다가 표마저 걷히며(ADR-20) 노드 상세 패널의 부품 항목 수가 됐고, 그 사실은
+  // AC-B2-4b 가 여전히 잼(다만 이제 '연 노드의 항목 수'를 셈). 카드 tone 버킷의 분할 불변식은
+  // health-model 단위 시험이 resolveCardFacts 에서 직접 잼. 남은 것은 아무도 부르지 않는 세 이름뿐이었음.
   { name: "computeOverviewKpis", kind: "identifier", ac: "AC-B2-6b" },
   { name: "EMPTY_OVERVIEW_KPIS", kind: "identifier", ac: "AC-B2-6b" },
   { name: "getMapHealthKpis", kind: "identifier", ac: "AC-B2-6b" },

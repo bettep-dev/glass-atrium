@@ -366,13 +366,6 @@ function ScreenArchitecture(
 			for (const node of layer.nodes || []) {
 				const norm = normalizeLabelAR(node.label);
 				if (norm) m.set(norm, node.id);
-				// soft-wrap 을 되돌린 형태로도 색인 — 추출기는 라벨의 `<br/>` 을 조각 trim 후 " · " 로 이어
-				// 한 줄 라벨을 만드는데(flow-extractor), 이쪽이 대조하는 SVG textContent 에는 그 표식이 없어
-				// 줄바꿈이 든 라벨만 조용히 매칭에서 빠짐 — 빠지면 그 노드의 클릭과 상태 링이 함께 사라짐.
-				// 되돌림은 공백 하나임: 조각이 trim 되어 공백이 어느 쪽에 있었는지가 남지 않으므로, 줄바꿈을
-				// 공백 자리에 넣은 라벨에서만 성립함(감축본이 지키는 규칙 — diagrams-source 의 감축 주석).
-				const unwrapped = normalizeLabelAR(node.label.replace(/\s·\s/g, " "));
-				if (unwrapped && !m.has(unwrapped)) m.set(unwrapped, node.id);
 				// 라벨의 첫 segment (·, — 분리 전)로도 색인 — mermaid 가 메타를 잘라낸 경우 대비
 				const head = normalizeLabelAR(node.label.split(/\s[·—]\s/)[0]);
 				if (head && !m.has(head)) m.set(head, node.id);
@@ -517,10 +510,19 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
 					// 상태 링 — 판정을 받은 노드의 테두리. no-data 는 규칙 자체가 없음.
+					// 채널은 stroke 가 아니라 outline 임. stroke 로는 낼 수 없음이 두 번 측정됨:
+					//  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임
+					//     (`style="fill:… !important;stroke:… !important"`). 인라인 !important 는 스타일시트의
+					//     !important 보다 세므로 여기서 무엇을 적어도 지지 못함 — focal(main_session) ·
+					//     security(hook_pipeline) · external(user) 세 노드가 그 자리임.
+					//  ② 선택자가 rect/polygon 만 짚어 원통으로 그려지는 pg_db(path)를 통째로 놓쳤음.
+					// 그래서 판정을 받은 노드 여섯 중 둘(pg_db · hook_pipeline)에 링이 아예 안 떴음 —
+					// "지도가 이미 상태를 보여 주므로 표가 중복" 이라는 전제가 그 둘에서는 거짓이었음.
+					// outline 은 mermaid 가 쓰지 않는 채널이고 g 하나에 걸리므로 도형 종류와 무관함.
 					// focus-visible 규칙보다 앞에 둠 — 특이도가 같아 나중 규칙이 이기고, 포커스 표식이 링을 덮어야 함.
-					".arch-mermaid-canvas .node.arch-node-live-ok rect, .arch-mermaid-canvas .node.arch-node-live-ok polygon { stroke: rgb(var(--ok)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-warn rect, .arch-mermaid-canvas .node.arch-node-live-warn polygon { stroke: rgb(var(--warn)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-crit rect, .arch-mermaid-canvas .node.arch-node-live-crit polygon { stroke: rgb(var(--crit)) !important; stroke-width: 2.5 !important; } " +
+					".arch-mermaid-canvas .node.arch-node-live-ok { outline: 2.5px solid rgb(var(--ok)); outline-offset: 1px; } " +
+					".arch-mermaid-canvas .node.arch-node-live-warn { outline: 2.5px solid rgb(var(--warn)); outline-offset: 1px; } " +
+					".arch-mermaid-canvas .node.arch-node-live-crit { outline: 2.5px solid rgb(var(--crit)); outline-offset: 1px; } " +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -529,7 +531,14 @@ function ScreenArchitecture(
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
-					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
+					// 링과 같은 채널·같은 특이도이고 뒤에 서므로 포커스가 판정을 덮음. 키보드가 헬스
+					// 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
+					// 종전 stroke 규칙은 위 ①②와 같은 이유로 네 노드에서 걸리지 않았음. 다만 그 자리가
+					// 비어 있지는 않았음 — Chromium 이 UA 기본 포커스 링(`auto 5px rgb(0,95,204)`)을
+					// 대신 그렸고 픽셀로 확인함. 그러니 종전 상태는 '포커스가 안 보임' 이 아니라 '우리가
+					// 정한 표식 대신 브라우저 것이 서 있었음' 이고, 아홉이 두 색으로 갈려 있었음.
+					// 상태 링 쪽은 그런 대타가 없어 그냥 사라졌던 것과 대비됨.
+					".arch-mermaid-canvas .node:focus-visible { outline: 2.5px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 헬스 저장소 경보의 자리 — 표를 걷어내며 페이지로 올라온 유일한 조각.
 					// 지도가 pane 을 다 쓰므로 flex-shrink:0 으로 제 높이를 지킴(경보가 눌리면 사유가 잘림).
 					".arch-health-alert-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); " +
