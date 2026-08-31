@@ -20,6 +20,7 @@ CI_YML="${GA}/.github/workflows/ci.yml"
 POLICY_PATHS='requirements.txt
 requirements-dev.txt
 config.toml.example
+agent-registry.json
 .github/workflows/ci.yml'
 
 # Emits one glob per `- '<glob>'` line of the detect-changes `bash:` filter. The range ends at

@@ -40,14 +40,19 @@ retired_residue'
 # IDENTIFIER stems, not section titles: the check greps the operand and reference NAMES, so a
 # token no identifier can carry asserts nothing (the retired `permission` was exactly that —
 # section 20's names are all `perms_`). The fossil assertion pins each stem to a real name.
+# `tools_mirror` carries its qualifier for that reason: the bare word `mirror` already appears
+# inside the prose tokens `mirroring`/`mirrors`, which the token census cannot tell from a variable
+# name, so the fossil assertion would stay green with §23's row deleted.
 KIND_B_STEMS='perms
 rewire
-cfgkey'
+cfgkey
+tools_mirror'
 
 # One synthetic operand per registered stem, in stem order — the promotion the guard must catch.
 KIND_B_SYNTHETIC='perms_missing
 rewire_pending
-cfgkey_missing'
+cfgkey_missing
+tools_mirror_drift'
 
 KIND_B_PATTERN="$(printf '%s\n' "${KIND_B_STEMS}" | tr '\n' '|' | sed 's/|$//')"
 

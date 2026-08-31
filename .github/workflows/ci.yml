@@ -177,6 +177,31 @@ jobs:
         run: |
           GA_TARGET_HOME="$(mktemp -d)" ./glass-atrium doctor
 
+      # Registry `tools` mirror vs. agent frontmatter, REPORTED not enforced. The frontmatter is the
+      # SoT and both remedies (write the mirror, or correct the frontmatter) are the PR author's
+      # call, so a mismatch annotates and this job stays green — the same kind-B posture doctor §23
+      # takes. `--check` writes nothing by construction, and `--root` aims it at the checkout rather
+      # than at a live install this runner does not have. rc 3 is drift; any other non-zero is the
+      # check failing to answer (a runner without PyYAML, say) and must NOT be reported as drift.
+      #
+      # ACCEPTANCE (one-off, deliberately not a local recipe — a GitHub annotation has no local
+      # surface to assert against): open a throwaway PR whose head drifts one agent's registry
+      # `tools` entry, confirm this job is GREEN and the run carries the warning annotation, then
+      # close the PR without merging. Run once before the delivery PRs; nothing re-runs it.
+      - name: Report agent-registry tools mirror drift (warning only)
+        run: |
+          if out="$(bash scripts/sync-registry-tools.sh --check --root "${GITHUB_WORKSPACE}" 2>&1)"; then
+            rc=0
+          else
+            rc=$?
+          fi
+          printf '%s\n' "${out}"
+          case "${rc}" in
+            0) ;;
+            3) echo "::warning title=agent-registry tools mirror drift::the registry tools array differs from agent frontmatter — run scripts/sync-registry-tools.sh to write the mirror (reported, not enforced)" ;;
+            *) echo "::warning title=agent-registry mirror check unavailable::the mirror check exited ${rc}; drift was NOT evaluated on this run" ;;
+          esac
+
   # ===========================================================================
   # STAGE 2 — language jobs. Gated on the fast-gate passing AND on a per-stack
   # `detect-changes` path filter so an unrelated diff skips the irrelevant
@@ -237,6 +262,11 @@ jobs:
               - 'requirements.txt'
               - 'requirements-dev.txt'
               - 'config.toml.example'
+              # Root-level file: no glob above reaches it, and scripts/test reads
+              # it as a policy input (the tools mirror the Capability Probe pairs
+              # with agent frontmatter), so a registry-only PR must still run the
+              # bash leg. Pinned by scripts/test/ci-change-filter-coverage.bats.
+              - 'agent-registry.json'
               - '.github/workflows/ci.yml'
             python:
               - 'autoagent/**'

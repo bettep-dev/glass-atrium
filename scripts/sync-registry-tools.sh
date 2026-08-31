@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # sync-registry-tools.sh — propagate `tools:` from agent .md frontmatter to agent-registry.json
-# Usage: sync-registry-tools.sh [--dry-run]
+# Usage: sync-registry-tools.sh [--root <dir>] [--dry-run | --check]
 #
-# Mirror each agent's authoritative frontmatter `tools:` array (~/.claude/agents/<name>.md)
-# into the matching `agents` entry of ~/.claude/agent-registry.json. The
+# Mirror each agent's authoritative frontmatter `tools:` array (<root>/agents/<name>.md)
+# into the matching `agents` entry of <root>/agent-registry.json. The
 # orchestrator-role.md Decision-phase Capability Probe reads frontmatter `tools:` at
 # delegation time, but tooling that prefers the JSON form consumes this mirror
 # (avoids re-parsing 23 markdown files); drift between the two breaks the probe.
 #
+# Root resolution (three steps, FIRST match wins) — the three consumers want
+# different roots: a CI checkout (`--root`), a sandbox (`GA_ROOT`), and the live
+# install (the default):
+#   1. `--root <dir>`   2. `${GA_ROOT}`   3. `${HOME}/.glass-atrium`
+# AGENTS_DIR and REGISTRY_PATH are DERIVED from the resolved root and readonly:
+# neither is an interface, and an inherited variable of either name cannot
+# silently redirect the read behind a caller's `--root`.
+#
 # Re-run after editing any `tools:` array, adding/removing an agent, or as a
-# periodic drift check (`--dry-run` then inspect diff).
+# periodic drift check (`--check` for an exit code, `--dry-run` to read the
+# planned updates on stderr).
 #
 # Key-order: `tools` inserted at index 1 (between `domains` and `phase`) to match
 # the `design-designer` entry. JSON output = 2-space indent + trailing newline +
@@ -19,33 +28,98 @@
 # overwrites the registry; the script NEVER writes any agent file.
 #
 # Reporting (stdout one line): synced=N updated=N skipped=N orphans=N missing=N —
-#   synced=already matching · updated=written · skipped=active file lacking `tools:` ·
+#   synced=already matching · updated=entries reconciled (written unless dry-run,
+#   where the count is the PLAN) · skipped=active file lacking `tools:` ·
 #   orphans=registry entry with no file (reported, NOT removed) · missing=active file
 #   with no registry entry (reported, NOT added).
 #
+# DRY_RUN contract — the shell PRESERVES an inherited value (it does not
+# overwrite it), and the verdict is an exclusion rule, not an equality test:
+#   unset · empty · `false` · `0` → write mode (an explicit, exact-case opt-out)
+#   any other value               → dry-run, nothing written
+#   `--dry-run`                   → dry-run, overrides whatever env said
+#   `--check`                     → dry-run + exit 3 on drift, NEVER writes
+# The comparison is exact-case on purpose: an unrecognised spelling (`False`)
+# selects dry-run, so a misread errs toward not writing.
+#
 # Exit codes: 0=success · 1=JSON parse/write error · 2=frontmatter parse error
 #   (includes a DUPLICATE frontmatter key — last-wins would let a second
-#   `tools:` line pick the mirrored value; the mirror refuses instead).
+#   `tools:` line pick the mirrored value; the mirror refuses instead) ·
+#   3=`--check` found drift (registry differs from frontmatter; nothing written).
 #
 # Idempotency: re-run on a clean tree yields `updated=0` + zero file changes
 # (post-merge JSON computed in memory, compared to on-disk bytes, write skipped if equal).
+#
+# Write path: the registry is read live by routing and the monitor, so the write
+# goes through the shared atomic helper (`agent_lifecycle.atomic`) — sibling temp
+# file, re-parse, structure check, then one `os.replace`. A crash or a rejected
+# payload leaves the live file untouched and removes the temp. The direct
+# `write_text` this used to call could leave a half-written registry in place.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly REGISTRY_PATH="${HOME}/.claude/agent-registry.json"
-readonly AGENTS_DIR="${HOME}/.claude/agents"
+# The atomic helper ships beside this script (scripts/agent_lifecycle/). Resolve
+# it from the SCRIPT's own location, never from the resolved ROOT: a `--root` run
+# targets a different tree and must still use the helper it was shipped with.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
-DRY_RUN=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=true
-elif [[ $# -gt 0 ]]; then
-  printf 'usage: %s [--dry-run]\n' "$(basename "$0")" >&2
-  exit 1
+usage() {
+  local self
+  self="$(basename -- "${0}")"
+  printf 'usage: %s [--root <dir>] [--dry-run | --check]\n' "${self}" >&2
+}
+
+# Preserve any INHERITED DRY_RUN — assigning a default here unconditionally is
+# what made `DRY_RUN=1 sync-registry-tools.sh` silently write. Unset and empty
+# both mean write mode, so `:-` collapsing them is the documented behaviour.
+DRY_RUN="${DRY_RUN:-}"
+CHECK_MODE=false
+ROOT=""
+
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+    --root)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        printf '%s\n' 'ERROR: --root requires a directory argument' >&2
+        usage
+        exit 1
+      fi
+      ROOT="${2}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --check)
+      # `--check` is a dry-run that reports drift through its exit code.
+      CHECK_MODE=true
+      DRY_RUN=1
+      shift
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+# Root resolution: --root > GA_ROOT > the live install. An empty GA_ROOT falls
+# through to the default rather than resolving paths against "/".
+if [[ -z "${ROOT}" ]]; then
+  ROOT="${GA_ROOT:-${HOME}/.glass-atrium}"
 fi
+readonly ROOT
+
+# Derived from the resolved root, never from a same-named inherited variable.
+REGISTRY_PATH="${ROOT}/agent-registry.json"
+AGENTS_DIR="${ROOT}/agents"
+readonly REGISTRY_PATH AGENTS_DIR
 
 # Capture the python source up-front (NOT inlined into `python3 -c` alongside a
-# heredoc — SC2259: stdin would be overwritten, blocking pipe input). We pass
-# the registry path + dry-run flag via env vars so the script body stays clean.
+# heredoc — SC2259: stdin would be overwritten, blocking pipe input). Every
+# resolved path and mode flag reaches it through the env exports at the bottom.
 PY_SRC="$(
   cat <<'PY'
 import json
@@ -87,7 +161,12 @@ class DuplicateKeyRejectingLoader(yaml.SafeLoader):
 
 registry_path = Path(os.environ["REGISTRY_PATH"])
 agents_dir = Path(os.environ["AGENTS_DIR"])
-dry_run = os.environ.get("DRY_RUN") == "true"
+# Exclusion rule, NOT an equality test against one magic spelling: unset, empty,
+# `false` and `0` are the write-mode opt-outs; every other value is a dry run.
+# An equality test here is what let `DRY_RUN=1` fall through to writing.
+DRY_RUN_WRITE_MODE_VALUES = ("", "false", "0")
+dry_run = os.environ.get("DRY_RUN", "") not in DRY_RUN_WRITE_MODE_VALUES
+check_mode = os.environ.get("CHECK_MODE") == "true"
 
 # 1. Load current registry — preserve dict order via standard json.load
 #    (Python 3.7+ dicts preserve insertion order).
@@ -198,24 +277,79 @@ if updates and dry_run:
         old_repr = "MISSING" if old is None else repr(old)
         print(f"  - {name}: {old_repr} -> {new!r}", file=sys.stderr)
 
-# 6. Serialize back — preserve formatting (2-space indent, ensure_ascii=false,
-#    trailing newline). Compare against on-disk bytes; skip write on no-op.
+def write_registry(payload) -> None:
+    """Replace the registry through the shared atomic helper (temp + rename).
+
+    The helper is imported HERE rather than at module scope so `--check` and
+    `--dry-run` — the modes CI and doctor run — keep working on a tree where it
+    is absent; only the write path depends on it, and there a missing helper is
+    a broken tree that must fail loudly rather than fall back to a direct write.
+    Bytecode is disabled before the import: it would otherwise drop a
+    `__pycache__` into scripts/agent_lifecycle/, which the live recovery
+    snapshot refuses as an untracked path.
+    """
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, os.environ["SYNC_LIB_DIR"])
+    try:
+        from agent_lifecycle.atomic import (
+            AtomicWriteError,
+            atomic_write_json,
+            has_agents_dict,
+        )
+    except ImportError as exc:
+        print(
+            f"ERROR: atomic write helper unavailable ({exc}) — refusing to "
+            "write the registry through an unsafe direct path",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    def validate(reparsed) -> bool:
+        # TEST SEAM: a non-empty SYNC_REGISTRY_FAIL_VALIDATE makes the PUBLIC
+        # `validate=` callback reject, so the helper raises immediately before
+        # the rename — the one failure point a caller can reach, since
+        # `before_replace` is bound inside atomic_write_json.
+        if os.environ.get("SYNC_REGISTRY_FAIL_VALIDATE"):
+            return False
+        return has_agents_dict(reparsed)
+
+    try:
+        atomic_write_json(registry_path, payload, validate=validate)
+    except AtomicWriteError as exc:
+        print(f"ERROR: registry write failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+# 6. Serialize back — the helper re-serializes with the SAME format this
+#    comparison assumes (2-space indent, ensure_ascii=false, trailing newline),
+#    so comparing against on-disk bytes still skips the write on a no-op.
 new_text = json.dumps(registry, indent=2, ensure_ascii=False) + "\n"
 current_text = registry_path.read_text(encoding="utf-8")
 
 write_needed = new_text != current_text
 if write_needed and not dry_run:
-    registry_path.write_text(new_text, encoding="utf-8")
+    write_registry(registry)
 
 print(
     f"synced={synced} updated={updated} "
     f"skipped={len(skipped)} orphans={len(orphans)} missing={len(missing_entries)}"
 )
+
+# 7. `--check`: report drift through the exit code. The metric line above is
+#    emitted first so a checking caller still gets the counts.
+if check_mode and write_needed:
+    print(
+        "DRIFT: registry does not match frontmatter — re-run without --check to write",
+        file=sys.stderr,
+    )
+    sys.exit(3)
 PY
 )"
 
 # Export env for the python invocation. The python source reads them.
 export REGISTRY_PATH AGENTS_DIR
 export DRY_RUN="${DRY_RUN}"
+export CHECK_MODE="${CHECK_MODE}"
+export SYNC_LIB_DIR="${SCRIPT_DIR}"
 
 python3 -c "${PY_SRC}"
