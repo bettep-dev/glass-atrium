@@ -490,11 +490,22 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 방향 LR (사용자 요청 2026-09-01) — source 일곱 편이 모두 `flowchart LR` 이라 drawn 만 갈라져 있던 것을 되붙임.
 	 * 캔버스는 초기 배율을 `max(min(contain, 1), 0.6)` 으로 깔아 하한 0.6 아래로 내려가지 않고 넘치는 만큼을 자름
 	 * (architecture.jsx getLegibleFitScaleAR) — 그래서 잘림은 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
-	 * 재측정 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): TD 903×1147 · LR 2246×429.
-	 * 안 잘리는 최소치는 TD 가 pane 높이 688px, LR 이 pane 폭 1348px — pane 폭 = 뷰포트 폭 - 290px, 높이 ≈ 뷰포트의 0.68 배.
-	 * 1920×1080(pane 1630×736)에서 LR 은 0.73 배로 전부 들어오고 TD 는 0.642 로 겨우 맞음.
-	 * 1512×850(pane 1222×575)에서는 둘 다 하한에 걸리나 잘리는 양이 TD 세로 113px(16%) · LR 가로 126px(9%) 임.
-	 * 방향을 되돌리려면 두 수치를 같은 방법으로 다시 잴 것 — 노드나 라벨이 늘면 둘 다 움직임.
+	 * 줄바꿈 감축 (2026-09-01) — 라벨·존 제목·엣지 라벨 열다섯 자리에 `<br/>` 을 넣어 폭을 높이로 옮김.
+	 * 글자는 한 자도 빠지지 않음: `<br/>` 을 이미 있는 공백 옆에 넣었고 계수기가 태그를 지우므로
+	 * (content-budget getLabelText) 라벨 40 자가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
+	 * 감축은 drawn 에만 넣음 — source 일곱 편은 그려지지 않는 문서인데 flow-extractor 테스트가 그 존 제목
+	 * 문자열을 정확히 대조하므로, 같은 `<br/>` 을 source 에 넣으면 그리는 것은 그대로인 채 그 대조만 깨짐.
+	 * 재측정 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): LR 2246×429 → 1774.6×471.
+	 * 남은 폭의 3분의 1은 존이 아니라 엣지 라벨이 벌린 랭크 사이 간격임 — 더 줄이려면 세 줄짜리 엣지 라벨이
+	 * 되는데 그렇게 얻는 값이 45 단위뿐이라(실측) 여기서 멈춤.
+	 * pane 폭 = 뷰포트 폭 - 290px · 높이 ≈ 뷰포트의 0.55 배 (실측 1396×800→1106×427 · 1512×850→1222×477 ·
+	 * 1920×1080→1630×707) — 종전 주석의 0.68 배는 과대였음. 세 폭 모두 폭이 먼저 걸리고 높이는 남음.
+	 * 실측 배율(라벨 렌더 크기): 1396 폭 0.6314(8.84px) · 1512 폭 0.6977(9.77px) · 1920 폭 0.9306(13.03px) — 셋 다 안 잘림.
+	 * 감축 전 1396 폭에서는 하한 0.6(8.40px)에 걸려 `export` 존이 218.8px 잘렸음 — 폭을 줄인 결과가 글자를
+	 * 줄이는 것이 아니라 키우는 쪽이라 가독과 완전함이 맞바꿈 관계가 아니었음.
+	 * 안 잘리는 최소 뷰포트는 약 1331px (1340 은 8.7px 남고 1320 은 11.3px 넘침) — 감축 전에는 약 1615px.
+	 * 그 아래에서는 다시 하한 0.6 에 걸려 잘림. 방향을 되돌리거나 노드·라벨을 늘리면 같은 방법으로 다시 잴 것 —
+	 * 계기는 test/architecture.map-fit.e2e 이고, 그 세 뷰포트에서 잘림을 배율이 아니라 상자 위치로 직접 잼.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
 	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 두 줄이 엣지로 세어져 계수가 정확히 2 늘어남
 	 * (`faithful` 아래에서는 그래도 상한 안이므로 계기는 상한 위반이 아니라 그 증분을 잼).
@@ -505,39 +516,39 @@ export const CANONICAL_MAP: CanonicalMap = {
         user[User utterance]
     end
 
-    subgraph daemon["Scheduled background jobs (daemons)"]
-        autoagent_d[Self-improvement daemon]
+    subgraph daemon["Scheduled background jobs <br/>(daemons)"]
+        autoagent_d["Self-improvement <br/>daemon"]
         wiki_d[Wiki daemon]
-        cron["Scheduled background jobs"]
+        cron["Scheduled <br/>background jobs"]
     end
 
-    subgraph orch["Orchestrator (main session)"]
-        main_session["Plans the work, then assigns it"]
+    subgraph orch["Orchestrator <br/>(main session)"]
+        main_session["Plans the work, <br/>then assigns it"]
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["Specialist agents (23)"]
+        agent_layer["Specialist agents <br/>(23)"]
     end
 
-    subgraph hooks["Safety checks & tracking"]
-        hook_pipeline["Hook pipeline (safety checks + tracking)"]
+    subgraph hooks["Safety checks <br/>& tracking"]
+        hook_pipeline["Hook pipeline <br/>(safety checks + tracking)"]
     end
 
-    subgraph data["Data layer (PostgreSQL glass_atrium DB)"]
+    subgraph data["Data layer <br/>(PostgreSQL <br/>glass_atrium DB)"]
         pg_db[("PostgreSQL database")]
     end
 
     subgraph export["Document export"]
-        doc_export["Document export (headless Chromium)"]
+        doc_export["Document export <br/>(headless Chromium)"]
     end
 
     user --> orch
     daemon --> orch
-    orch -- "assigns work" --> agents
-    agents -- "tool calls" --> hooks
-    agents -- "saves documents" --> data
-    hooks -- "saves results" --> data
-    data -- "renders stored content" --> export
+    orch -- "assigns <br/>work" --> agents
+    agents -- "tool <br/>calls" --> hooks
+    agents -- "saves <br/>documents" --> data
+    hooks -- "saves <br/>results" --> data
+    data -- "renders stored <br/>content" --> export
 
     classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
     classDef external fill:#332e2a,stroke:#544c47,color:#a09a96

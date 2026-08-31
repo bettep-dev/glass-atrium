@@ -382,6 +382,13 @@ function ScreenArchitecture(
 			for (const node of layer.nodes || []) {
 				const norm = normalizeLabelAR(node.label);
 				if (norm) m.set(norm, node.id);
+				// soft-wrap 을 되돌린 형태로도 색인 — 추출기는 라벨의 `<br/>` 을 조각 trim 후 " · " 로 이어
+				// 한 줄 라벨을 만드는데(flow-extractor), 이쪽이 대조하는 SVG textContent 에는 그 표식이 없어
+				// 줄바꿈이 든 라벨만 조용히 매칭에서 빠짐 — 빠지면 그 노드의 클릭과 상태 링이 함께 사라짐.
+				// 되돌림은 공백 하나임: 조각이 trim 되어 공백이 어느 쪽에 있었는지가 남지 않으므로, 줄바꿈을
+				// 공백 자리에 넣은 라벨에서만 성립함(감축본이 지키는 규칙 — diagrams-source 의 감축 주석).
+				const unwrapped = normalizeLabelAR(node.label.replace(/\s·\s/g, " "));
+				if (unwrapped && !m.has(unwrapped)) m.set(unwrapped, node.id);
 				// 라벨의 첫 segment (·, — 분리 전)로도 색인 — mermaid 가 메타를 잘라낸 경우 대비
 				const head = normalizeLabelAR(node.label.split(/\s[·—]\s/)[0]);
 				if (head && !m.has(head)) m.set(head, node.id);
