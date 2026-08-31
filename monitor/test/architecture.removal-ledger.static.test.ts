@@ -25,22 +25,68 @@ const LEDGER_PATH = relative(REPO_ROOT, resolve(__dirname, "architecture.removal
 
 type TokenKind = "identifier" | "attribute";
 
-interface LedgerToken {
+// 경계 고정 일치가 필요한 최소 형태 — 원장 항목과 제외 항목이 같은 계기를 나눠 씀.
+interface NamedToken {
   name: string;
   kind: TokenKind;
+}
+
+interface LedgerToken extends NamedToken {
+  // 이 이름을 죽인 AC — 원장이 여러 작업의 어휘를 함께 들고 있으므로 실패 제목이 작업을 불러야 함.
+  ac: string;
 }
 
 // B2-5 가 지운 전역 확장 블록의 어휘 — 레지스트리 · 컨테이너 · 그 컨테이너가 그리던 마크업.
 // 하나라도 남아 있으면 죽음이 절반만 이뤄진 것임(선언이 남으면 다음 작업이 그것을 되살림).
 const LEDGER_TOKENS: LedgerToken[] = [
-  { name: "GLOBAL_DETAIL_BLOCKS", kind: "identifier" },
-  { name: "GlobalDetailRegion", kind: "identifier" },
-  { name: "getGlobalDetailBlocks", kind: "identifier" },
-  { name: "getGlobalBlockDetailId", kind: "identifier" },
-  { name: "arch-global-blocks", kind: "attribute" },
-  { name: "arch-global-block", kind: "attribute" },
-  { name: "arch-global-block-body", kind: "attribute" },
-  { name: "data-global-block", kind: "attribute" },
+  { name: "GLOBAL_DETAIL_BLOCKS", kind: "identifier", ac: "AC-B2-5d" },
+  { name: "GlobalDetailRegion", kind: "identifier", ac: "AC-B2-5d" },
+  { name: "getGlobalDetailBlocks", kind: "identifier", ac: "AC-B2-5d" },
+  { name: "getGlobalBlockDetailId", kind: "identifier", ac: "AC-B2-5d" },
+  { name: "arch-global-blocks", kind: "attribute", ac: "AC-B2-5d" },
+  { name: "arch-global-block", kind: "attribute", ac: "AC-B2-5d" },
+  { name: "arch-global-block-body", kind: "attribute", ac: "AC-B2-5d" },
+  { name: "data-global-block", kind: "attribute", ac: "AC-B2-5d" },
+
+  // B2-6a 가 지운 지도 위 두 줄 — 큐 스트립과 health 요약 스트립, 그리고 둘만 부르던 읽기 함수들.
+  // `getStoreErrorAR` 의 호출 둘은 함께 사라진 큐 효과 안에 있었고, `.arch-queue-fact` 는
+  // 두 스트립의 사실 칸 전용 클래스였음 — 이사한 경보는 `arch-queue-error` 를 씀.
+  { name: "QueueStrip", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "getPendingCountAR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "getTopSignalAR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "getStoreErrorAR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "QUEUE_PROPOSALS_LABEL", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "QUEUE_LEARNING_LABEL", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "arch-queue-strip", kind: "attribute", ac: "AC-B2-6d" },
+  { name: "data-queue-source", kind: "attribute", ac: "AC-B2-6d" },
+  { name: "arch-queue-fact", kind: "attribute", ac: "AC-B2-6d" },
+  { name: "HealthStrip", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "getMapStripReadings", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "MAP_STRIP_CARD_IDS", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "arch-health-strip", kind: "attribute", ac: "AC-B2-6d" },
+  { name: "data-health-fact", kind: "attribute", ac: "AC-B2-6d" },
+];
+
+// 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
+// 텍스트 계수는 영원히 0 이 되지 않음. 이유를 주석이 아니라 단언으로 두어, 밖의 선언이 사라지는
+// 날 이 자리가 붉어지며 '이제 원장에 올릴 수 있음' 을 알리게 함.
+const DISCRIMINABILITY_EXCLUSIONS: { name: string; kind: TokenKind; declaredIn: string }[] = [
+  // 지도의 학습 로그 상수는 죽었지만 improvement 화면이 같은 이름을 제 몫으로 선언함.
+  // 그 죽음은 텍스트가 아니라 AC-B2-6c 의 요청 계수 0 이 잼.
+  { name: "LEARNING_LOG_URL", kind: "identifier", declaredIn: "monitor/public/src/screens/improvement.jsx" },
+  // tone 속성은 스트립과 함께 죽지 않음 — 표의 행이 같은 어휘로 판정을 실으며,
+  // 하네스의 준비 앵커가 바로 그 속성임.
+  { name: "data-health-tone", kind: "attribute", declaredIn: "monitor/public/src/screens/architecture.jsx" },
+];
+
+// 지우지 않은 것 — 이사한 경보의 본체와 live 스트립. 원장이 넘치게 지워지지 않았음을 재는 반대 방향.
+const SURVIVING_TOKENS: LedgerToken[] = [
+  { name: "StripAlertAR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "HEALTH_STORE_LABELS_AR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "getHealthStoreErrorsAR", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "LiveStrip", kind: "identifier", ac: "AC-B2-6d" },
+  { name: "arch-queue-error", kind: "attribute", ac: "AC-B2-6d" },
+  { name: "arch-live-strip", kind: "attribute", ac: "AC-B2-6d" },
 ];
 
 // 경계 문자 집합 — 식별자와 CSS 이름이 서로 다름. 하이픈이 갈림길임.
@@ -49,7 +95,7 @@ const BOUNDARY: Record<TokenKind, string> = {
   attribute: "-A-Za-z0-9_",
 };
 
-function getTokenPattern(token: LedgerToken): RegExp {
+function getTokenPattern(token: NamedToken): RegExp {
   const literal = token.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const edge = BOUNDARY[token.kind];
   return new RegExp(`(?<![${edge}])${literal}(?![${edge}])`, "g");
@@ -63,7 +109,7 @@ function getRootFiles(): string[] {
 }
 
 // 토큰 하나가 살아 있는 자리 — 파일과 줄까지 냄. 개수만 내면 어디를 고칠지가 메시지에 없음.
-function getTokenHits(token: LedgerToken, files: string[]): string[] {
+function getTokenHits(token: NamedToken, files: string[]): string[] {
   const pattern = getTokenPattern(token);
   const hits: string[] = [];
 
@@ -112,7 +158,7 @@ test("ADR-13 the ledger scans the whole tracked tree, minus itself", () => {
 // 그런 계기 위에 세운 0 건은 아무것도 증명하지 않음. 두 방향을 함께 잼: 감싼 이름은 안 잡히고,
 // 진짜 쓰임은 잡힘.
 test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
-  const cssToken: LedgerToken = { name: "arch-global-block", kind: "attribute" };
+  const cssToken: LedgerToken = { name: "arch-global-block", kind: "attribute", ac: "AC-B2-5d" };
   assert.equal(
     getTokenPattern(cssToken).test('className="arch-global-block-body"'),
     false,
@@ -124,7 +170,7 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
     "the real use must still be caught, or the ledger is green by blindness",
   );
 
-  const idToken: LedgerToken = { name: "HealthStrip", kind: "identifier" };
+  const idToken: LedgerToken = { name: "HealthStrip", kind: "identifier", ac: "AC-B2-6d" };
   assert.equal(
     getTokenPattern(idToken).test("await waitForHealthStrip();"),
     false,
@@ -134,12 +180,38 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 });
 
 for (const token of LEDGER_TOKENS) {
-  test(`AC-B2-5d the removed ${token.name} is gone from the whole tracked tree`, () => {
+  test(`${token.ac} the removed ${token.name} is gone from the whole tracked tree`, () => {
     const hits = getTokenHits(token, ROOT_FILES);
     assert.deepEqual(
       hits,
       [],
       `${token.name} was removed, but it still reads at: ${hits.join(", ")}`,
+    );
+  });
+}
+
+for (const excluded of DISCRIMINABILITY_EXCLUSIONS) {
+  test(`AC-B2-6d ${excluded.name} stays off the ledger — a live declaration outside the removal unit holds it`, () => {
+    assert.equal(
+      LEDGER_TOKENS.some((token) => token.name === excluded.name),
+      false,
+      `${excluded.name} is on the ledger, but ADR-13 discriminability forbids it — its count can never reach zero`,
+    );
+
+    // 이유가 실재하는지 잼 — 밖의 선언이 사라지면 이 절이 붉어지고, 그때 비로소 원장 후보가 됨.
+    const hits = getTokenHits(excluded, ROOT_FILES);
+    assert.ok(
+      hits.some((hit) => hit.startsWith(`${excluded.declaredIn}:`)),
+      `${excluded.name} must still read in ${excluded.declaredIn} — without that declaration the exclusion has no ground, and the token belongs on the ledger`,
+    );
+  });
+}
+
+for (const token of SURVIVING_TOKENS) {
+  test(`${token.ac} the surviving ${token.name} still reads somewhere in the tracked tree`, () => {
+    assert.ok(
+      getTokenHits(token, ROOT_FILES).length > 0,
+      `${token.name} survives this removal — it reads nowhere, so the deletion went one name too far`,
     );
   });
 }

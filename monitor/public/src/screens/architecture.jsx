@@ -66,14 +66,6 @@ const LIVE_RING_CLASSES = Object.values(LIVE_RING_CLASS);
 // cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
 const RING_TONE_RANK = { ok: 1, warn: 2, crit: 3 };
 
-// 자기개선 학습 로그 — limit 는 improvement 화면과 같은 슬라이스.
-// 최다 빈도는 표 전체가 아니라 이 슬라이스 안에서 고름 — 읽기 경로가 표 전체 최댓값을 내주지 않음.
-const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
-
-// 두 저장소의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
-const QUEUE_PROPOSALS_LABEL = "Approval queue";
-const QUEUE_LEARNING_LABEL = "Top learned signal";
-
 // ── health 응답 흡수 (ADR-B1 R2) ────────────────────────────────────────────
 // health.jsx 가 읽던 다섯 응답을 맵이 그대로 읽음 — 서버 계약 무변경, 요청 자리만 옮김.
 // 카드/KPI 모델(window.HealthModel)은 index.html 이 화면과 무관하게 싣고 있어
@@ -120,39 +112,6 @@ function getMapHealthKpis(states) {
 	const model = window.HealthModel;
 	if (!model || typeof model.computeOverviewKpis !== "function") return null;
 	return model.computeOverviewKpis(states);
-}
-
-// 스트립이 tone 한 줄로 내는 카드 — 정의(kind · 표시 이름)는 공용 카드 목록에서 찾음 (T10).
-// 목록에서 사라지면 줄도 사라짐: 맵이 없는 카드의 판정을 지어내지 않음.
-const MAP_STRIP_CARD_IDS = ["pg", "browser"];
-
-// 카드 id → 스트립 한 줄. 판정(tone)은 health-model 의 resolveCardFacts 가, 표시 문장은 ui.jsx 의
-// 배지 표가 냄 — 맵은 어느 쪽도 다시 적지 않음. 둘째 tone 표를 들이면 KPI 분자와 이 줄이 갈라짐.
-// 문장은 tone 기본값(BADGE_TONE_META)을 씀: 카드별 오버라이드('Disconnected' 등)의 선택 로직은
-// 카드 격자의 것이고, 한 줄 요약이 그 분기를 복제하면 같은 판정을 두 곳에서 말하게 됨.
-// 모르는 tone 은 resolveBadge 가 info 로 떨어뜨림 — 가짜 ok 를 만들지 않음.
-// ready 가 아닌 응답은 줄을 내지 않음: 못 읽은 저장소는 아래 로드 실패 경보가 이름으로 부르고
-// (getHealthStoreErrorsAR), KPI fold 도 같은 규칙으로 ready 아닌 카드를 분모에서 뺌.
-function getMapStripReadings(states) {
-	const model = window.HealthModel;
-	if (!model || typeof model.resolveCardFacts !== "function") return [];
-
-	return MAP_STRIP_CARD_IDS.map((id) =>
-		(model.HEALTH_CARD_DEFS || []).find((def) => def.id === id),
-	)
-		.filter((def) => Boolean(def))
-		.map((def) => {
-			const facts = model.resolveCardFacts(def, states);
-			if (facts.status !== "ready") return null;
-
-			return {
-				id: def.id,
-				name: def.name,
-				tone: facts.tone,
-				statusLabel: window.UI.resolveBadge(facts.tone).label,
-			};
-		})
-		.filter((reading) => Boolean(reading));
 }
 
 // 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
@@ -286,14 +245,6 @@ function ScreenArchitecture(
 		error: null,
 	});
 
-	// 자기개선 큐 두 사실 — 각각 독립적으로 null 가능. 한 저장소가 실패해도 다른 쪽은 그대로 보임.
-	// errors 가 그 실패를 들고 있음 — 값 없음과 못 읽음을 화면에서 구별하는 유일한 자리임.
-	const [queueState, setQueueState] = useStateAR({
-		pendingCount: null,
-		topSignal: null,
-		errors: [],
-	});
-
 	// health 응답 5종 — 각각 독립적으로 실패 가능. 한 응답이 죽어도 나머지 사실은 그대로 보임.
 	const [daemonHealthState, setDaemonHealthState] = useStateAR(INITIAL_FETCH_STATE_AR);
 	const [hookState, setHookState] = useStateAR(INITIAL_FETCH_STATE_AR);
@@ -302,7 +253,7 @@ function ScreenArchitecture(
 	const [hookFailState, setHookFailState] = useStateAR(INITIAL_FETCH_STATE_AR);
 
 	// 페이로드 드릴다운 대상 — 확장 행이 고름 (T9c). 접어도 되돌리지 않음: 되돌리면 다섯 응답이
-	// 한 번 더 나가고 방금 읽은 실패가 스트립에서도 지워짐.
+	// 한 번 더 나가고 방금 읽은 실패가 표에서도 지워짐.
 	const [payloadDaemon, setPayloadDaemon] = useStateAR(MAP_PAYLOAD_DAEMON);
 
 	const [refreshTick, setRefreshTick] = useStateAR(0);
@@ -352,35 +303,10 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	// 자기개선 큐 — 두 저장소를 각각 읽어 각각 담음.
-	// 잇는 키(pattern_label ↔ pattern_signature)의 대응이 확인되지 않아 조인하지 않음.
-	// allSettled 라 한쪽 실패가 다른 쪽 값을 지우지 않음.
-	useEffectAR(() => {
-		const ctrl = new AbortController();
-
-		Promise.allSettled([
-			fetchJsonAR("/api/improvement", ctrl.signal),
-			fetchJsonAR(LEARNING_LOG_URL, ctrl.signal),
-		]).then(([queue, log]) => {
-			if (ctrl.signal.aborted) return;
-			setQueueState({
-				pendingCount:
-					queue.status === "fulfilled" ? getPendingCountAR(queue.value) : null,
-				topSignal: log.status === "fulfilled" ? getTopSignalAR(log.value) : null,
-				errors: [
-					getStoreErrorAR(QUEUE_PROPOSALS_LABEL, queue),
-					getStoreErrorAR(QUEUE_LEARNING_LABEL, log),
-				].filter(Boolean),
-			});
-		});
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
 	// 머리글이 서 있는 health 응답 4종 — 병렬 발화. 수동 Refresh(refreshTick)와 60s 폴링(healthTick)
 	// 에서만 다시 나감. 드릴다운(payloadDaemon)은 일부러 deps 에 없음: 행 하나를 펼쳤다고 이 넷이
-	// 다시 나가면 왕복 동안 스트립의 PG·브라우저 줄이 DOM 에서 사라지고 KPI 가 —/— 로 떨어져,
-	// 방금 읽은 실패를 조작자가 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
+	// 다시 나가면 왕복 동안 표의 PG·브라우저 판정이 빈 칸으로 떨어져 방금 읽은 실패를 조작자가
+	// 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		healthAbortRef.current?.abort();
@@ -548,17 +474,11 @@ function ScreenArchitecture(
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
-					// 사실 스트립 두 줄(자기개선 큐 · health 요약) — 상시 노출, 같은 면.
-					// 좁은 폭에서는 사실들이 줄바꿈으로 쌓임. 한 규칙에 둘을 묶어 둠: 면이 갈라지면
-					// 지도 위 두 줄이 서로 다른 상자로 읽힘.
-					".arch-queue-strip, .arch-health-strip { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; " +
-					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
 					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
-					".arch-queue-fact { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; } " +
 					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
@@ -659,24 +579,6 @@ function ScreenArchitecture(
 
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
-				<QueueStrip
-					pendingCount={queueState.pendingCount}
-					topSignal={queueState.topSignal}
-					errors={queueState.errors}
-					onRetry={triggerRefresh}
-				/>
-
-				{/* health 요약 — 이관된 health 화면의 KPI 가 지도 상단에 앉는 자리 (ADR-B1). */}
-				<HealthStrip
-					daemonState={daemonHealthState}
-					pgState={pgState}
-					hookState={hookState}
-					hookFailState={hookFailState}
-					payloadState={payloadState}
-					payloadDaemon={payloadDaemon}
-					onRetry={triggerRefresh}
-				/>
-
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
 					<div className="card arch-col-card">
@@ -705,6 +607,7 @@ function ScreenArchitecture(
 					partBindings={liveState.data?.part_bindings}
 					payloadState={payloadState}
 					onSelectDaemon={setPayloadDaemon}
+					onRetry={triggerRefresh}
 				/>
 			</div>
 
@@ -1141,8 +1044,8 @@ function ArchIconTargetAR() {
 // Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
 //   같은 페치가 드리프트·거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 셋의 예고이기도 함.
 
-// 스트립 로드 실패 줄 — live 와 큐가 같은 모양을 씀. 컨테이너 클래스는 호출부가 정함:
-// 두 경보는 각자의 클래스(.arch-live-strip / .arch-queue-error)로 구별돼야 함.
+// 로드 실패 줄 — live 스트립과 표의 health 저장소 경보가 같은 모양을 씀. 컨테이너 클래스는
+// 호출부가 정함: 두 경보는 각자의 클래스(.arch-live-strip / .arch-queue-error)로 구별돼야 함.
 // detail 은 끊긴 원인을 이름으로 부르는 자리 — 없으면 그 줄만 빠짐.
 function StripAlertAR({ className, message, detail, onRetry }) {
 	return (
@@ -1187,48 +1090,6 @@ function LiveStrip({ state, onRetry }) {
 	return null;
 }
 
-/**
- * 자기개선 큐 상태 — 두 저장소의 사실을 나란히 놓되 하나로 합치지 않음(잇는 키의 대응 미확인).
- * 접힘 컨트롤 없이 상시 노출.
- * 컨테이너를 .arch-live-strip 과 나눠 씀 — 그 클래스는 live 로드 실패 경보와 스켈레톤의 자리임.
- * 실패는 경보로 나감 — 값 없음을 못 읽음처럼 보이게 두면 조작자가 둘을 구별할 길이 없음.
- */
-function QueueStrip({ pendingCount, topSignal, errors, onRetry }) {
-	const { formatRelativeTime } = window.UI;
-
-	if (pendingCount === null && topSignal === null && errors.length === 0) return null;
-
-	return (
-		<section className="arch-queue-strip" aria-label="Self-improvement queue">
-			{pendingCount !== null && (
-				<div className="arch-queue-fact" data-queue-source="autoagent-proposals">
-					<span className="fs-micro text-faint">{QUEUE_PROPOSALS_LABEL}</span>
-					<span className="fs-meta text-ink">{pendingCount} pending</span>
-				</div>
-			)}
-			{topSignal && (
-				<div className="arch-queue-fact" data-queue-source="learning-log">
-					<span className="fs-micro text-faint">{QUEUE_LEARNING_LABEL}</span>
-					<span className="fs-meta font-mono text-ink">{topSignal.signature}</span>
-					<span className="fs-meta text-dim">seen {topSignal.frequency}×</span>
-					<span className="fs-meta text-dim">
-						updated {formatRelativeTime(topSignal.lastUpdated)}
-					</span>
-				</div>
-			)}
-			{/* 끊긴 저장소를 이름으로 부름 — 어느 쪽이 죽었는지가 복구의 첫 단서임 */}
-			{errors.length > 0 && (
-				<StripAlertAR
-					className="arch-queue-error"
-					message="Couldn't load the self-improvement queue"
-					detail={errors.join(" · ")}
-					onRetry={onRetry}
-				/>
-			)}
-		</section>
-	);
-}
-
 // 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
 // 값 없음(빈 배열)과 못 읽음을 화면에서 구별하는 유일한 자리임.
 const HEALTH_STORE_LABELS_AR = {
@@ -1243,102 +1104,6 @@ function getHealthStoreErrorsAR(states) {
 	return Object.keys(HEALTH_STORE_LABELS_AR)
 		.filter((key) => states[key] && states[key].status === "error")
 		.map((key) => HEALTH_STORE_LABELS_AR[key]);
-}
-
-/**
- * health 응답 요약 스트립 — 이관된 health 화면의 KPI '정상 N/M' 이 앉는 지도 상단 한 줄.
- * 분모는 window.HealthModel 의 카드 정의 목록에서 나옴 — 맵이 총계를 자기 파일에 다시 적지
- * 않으므로 정의가 늘거나 줄면 분모가 따라 움직임 (F02 불변식의 화면 몫 · T14 가 잠금).
- * PG · Chromium 은 KPI 숫자에 접힌 채로도 각자의 tone 한 줄을 냄 (T10) — 분자가 하나 줄었다는
- * 사실만으로는 어느 부품이 죽었는지 대답하지 못함.
- */
-function HealthStrip({
-	daemonState,
-	pgState,
-	hookState,
-	hookFailState,
-	payloadState,
-	payloadDaemon,
-	onRetry,
-}) {
-	const { StatusDot } = window.UI;
-
-	// 카드 판정이 읽는 네 응답 — KPI 분자/분모와 부품 한 줄이 같은 묶음을 봐야 두 값이 갈라지지 않음.
-	// 페이로드는 카드 정의에 없어 이 묶음 밖임: 로드 실패 경보에만 이름으로 참여함.
-	const cardStates = { daemonState, pgState, hookState, hookFailState };
-
-	const kpis = getMapHealthKpis(cardStates);
-
-	const readings = getMapStripReadings(cardStates);
-
-	const errors = getHealthStoreErrorsAR({ ...cardStates, payloadState });
-
-	// 최근 실행 페이로드 도착 건수 — 확장 행이 날짜·사유로 펼치는 원자료(T9c)를 같은 응답에서 읽음.
-	// 여기서는 도착 여부만 한 줄로 드러냄 (읽지 않는 상태로 두면 흡수가 아니라 적재일 뿐임).
-	const payloadCount =
-		payloadState.status === "ready"
-			? (payloadState.data?.entries || []).length
-			: null;
-
-	if (kpis === null && payloadCount === null && readings.length === 0 && errors.length === 0)
-		return null;
-
-	// 정보 버킷 공개 — 정상도 장애도 아닌 카드(미수신/미검증/한도)의 분모 귀속을 밝힘.
-	const infoHint = kpis && kpis.infoCount > 0 ? `${kpis.infoCount} informational` : "";
-
-	return (
-		<section className="arch-health-strip" aria-label="System health">
-			{kpis && (
-				<>
-					<div className="arch-queue-fact" data-health-fact="healthy-parts">
-						<span className="fs-micro text-faint">Healthy parts</span>
-						<span className="fs-meta text-ink">
-							{kpis.okCount}/{kpis.totalCount}
-						</span>
-						{infoHint && <span className="fs-meta text-dim">{infoHint}</span>}
-					</div>
-					<div className="arch-queue-fact" data-health-fact="needs-attention">
-						<span className="fs-micro text-faint">Needs attention</span>
-						<span className="fs-meta text-ink">{kpis.degradedCount}</span>
-					</div>
-					<div className="arch-queue-fact" data-health-fact="overdue-jobs">
-						<span className="fs-micro text-faint">Overdue jobs</span>
-						<span className="fs-meta text-ink">{kpis.staleCount}</span>
-					</div>
-				</>
-			)}
-			{/* 부품 한 줄 — tone 은 속성으로도 실림. 색만으로 판정을 말하면 색을 못 읽는 조작자와
-			    하네스가 같은 문장을 못 읽음(문장은 statusLabel 이 냄). */}
-			{readings.map((reading) => (
-				<div
-					key={reading.id}
-					className="arch-queue-fact"
-					data-health-fact={reading.id}
-					data-health-tone={reading.tone}>
-					<span className="fs-micro text-faint">{reading.name}</span>
-					<span className="fs-meta text-ink inline-flex items-center gap-1.5">
-						<StatusDot status={reading.tone} />
-						{reading.statusLabel}
-					</span>
-				</div>
-			))}
-			{payloadCount !== null && (
-				<div className="arch-queue-fact" data-health-fact="run-payloads">
-					<span className="fs-micro text-faint">Run payloads</span>
-					<span className="fs-meta font-mono text-ink">{payloadDaemon}</span>
-					<span className="fs-meta text-dim">{payloadCount} recent</span>
-				</div>
-			)}
-			{errors.length > 0 && (
-				<StripAlertAR
-					className="arch-queue-error"
-					message="Couldn't load system health"
-					detail={errors.join(" · ")}
-					onRetry={onRetry}
-				/>
-			)}
-		</section>
-	);
 }
 
 /**
@@ -1504,6 +1269,7 @@ function HealthPartTable({
 	partBindings,
 	payloadState,
 	onSelectDaemon,
+	onRetry,
 }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
 	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 명부를 다시 훑지 않음.
@@ -1530,8 +1296,25 @@ function HealthPartTable({
 
 	if (rows.length === 0) return null;
 
+	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸('—')만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
+	const storeErrors = getHealthStoreErrorsAR({
+		daemonState,
+		pgState,
+		hookState,
+		hookFailState,
+		payloadState,
+	});
+
 	return (
 		<div className="arch-live-table-wrap">
+			{storeErrors.length > 0 && (
+				<StripAlertAR
+					className="arch-queue-error"
+					message="Couldn't load system health"
+					detail={storeErrors.join(" · ")}
+					onRetry={onRetry}
+				/>
+			)}
 			<table className="arch-live-table">
 				{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
 				    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
@@ -2028,53 +1811,6 @@ async function fetchJsonAR(url, signal) {
 		);
 	}
 	return res.json();
-}
-
-/**
- * pending 수 — 두 배열의 합집합을 id 로 중복 제거함.
- * proposals 는 limit 로 잘리고 actionable_proposals 는 safety tier 만 담아,
- * 한쪽만으로는 pending 을 과소 계수함.
- */
-function getPendingCountAR(data) {
-	const rows = [
-		...(Array.isArray(data?.proposals) ? data.proposals : []),
-		...(Array.isArray(data?.actionable_proposals) ? data.actionable_proposals : []),
-	];
-	const ids = new Set();
-	for (const row of rows) {
-		if (row && row.status === "pending") ids.add(row.id);
-	}
-	return ids.size;
-}
-
-/**
- * allSettled 결과 1건을 경보 문구로 — 거부만 문구가 되고 이행은 null 임.
- * 중단(AbortError)은 실패가 아니라 화면 교체이므로 걸러냄.
- */
-function getStoreErrorAR(label, settled) {
-	if (settled.status !== "rejected") return null;
-
-	const err = settled.reason;
-	if (err && err.name === "AbortError") return null;
-
-	return `${label}: ${err && err.message ? err.message : String(err)}`;
-}
-
-// 최다 빈도 패턴 1건 — 응답은 last_updated DESC 정렬이라 빈도 최댓값은 직접 훑어야 나옴.
-function getTopSignalAR(data) {
-	const rows = Array.isArray(data?.patterns) ? data.patterns : [];
-	let top = null;
-	for (const row of rows) {
-		if (!row || !row.pattern_signature) continue;
-		if (!top || Number(row.frequency || 0) > Number(top.frequency || 0)) top = row;
-	}
-	if (!top) return null;
-
-	return {
-		signature: top.pattern_signature,
-		frequency: Number(top.frequency || 0),
-		lastUpdated: top.last_updated || null,
-	};
 }
 
 function handleErrorAR(err, setter) {
