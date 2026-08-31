@@ -33,7 +33,11 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
-import { CANONICAL_MAP, DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
+import {
+	CANONICAL_MAP,
+	DAEMON_NODE_BINDINGS,
+	PART_NODE_BINDINGS,
+} from "../src/server/architecture/diagrams-source.js";
 import type {
 	ArchitectureLiveResponse,
 	ArchDriftDiff,
@@ -115,6 +119,10 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 		stale: false,
 		diffs: [],
 		governance: { absent: [], sourceMissing: false },
+		// 서버가 실제로 싣는 표 그대로 — 이 하네스의 기본 payload 는 /live 응답의 본이어야 함.
+		// `{}` 면 부품 링을 재는 AC-B2-3d 가 바인딩 부재로 공허 통과함. overrides 뒤에 있으므로
+		// 개별 케이스는 여전히 다른 표(또는 빈 표)로 덮어쓸 수 있음.
+		part_bindings: PART_NODE_BINDINGS,
 		...overrides,
 	};
 }

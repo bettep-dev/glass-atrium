@@ -32,7 +32,10 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
-import { DAEMON_NODE_BINDINGS } from "../src/server/architecture/diagrams-source.js";
+import {
+	DAEMON_NODE_BINDINGS,
+	PART_NODE_BINDINGS,
+} from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
 import { buildScreenSandbox } from "./client-sandbox.js";
 
@@ -96,6 +99,11 @@ function getLiveFixture(
 		stale: false,
 		diffs: [],
 		governance: { absent: [], sourceMissing: false },
+		// 서버 표 그대로 각인함 — `{}` 로 두면 AC-B2-3c 가 공허해짐. 그 AC 는 `pg_db` 와
+		// `hook_pipeline` 이 비어 있지 않게 각인된 것을 먼저 단언한 뒤 그 두 노드에 링이
+		// 없음을 재는데, 각인이 없으면 "바인딩이 없어서 링이 없다"와 구별되지 않음.
+		// 이 하네스는 health 라우트를 스텁하지 않으므로 각인은 있고 판정만 비는 상태가 됨.
+		part_bindings: PART_NODE_BINDINGS,
 	};
 }
 
