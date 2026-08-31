@@ -1433,7 +1433,7 @@
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
     "scripts/test/manifest-check-clean.bats": "225a031698873f182a5b80f43d67e6c5b2316c55b07cb5303a9d5353d3149f76",
     "scripts/test/manifest-drift-exclusion.bats": "1d990ae848192488e16fa879d1e67caea1340efec255ec98b308d9406f261e08",
-    "scripts/test/manifest-mode-integrity.bats": "050cb6fd235d10d93fe6393136c1d9c69a0f6eb8697d69f602d10585846669e6",
+    "scripts/test/manifest-mode-integrity.bats": "dae3005dc8f1125f57ec18379c75f4affdf9ee0b61f444eca6baecdd2e7348d7",
     "scripts/test/migrate-claude-to-ga-data.bats": "71d7ad10246670c9f81877345789643fff13e83a57c2d1702d263fe8b4c1a87c",
     "scripts/test/mirror-farm.bats": "86e8018e2398346f68f63b2418bae68afa506122fe79eca2de51018e59bd1ecd",
     "scripts/test/monitor-log-rotate-size.bats": "854b822803d65f04ac9c61aea75e923f6936e70fd97af0eb3e369907e1bd66a5",
