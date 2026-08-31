@@ -46,18 +46,31 @@ interface HealthStates {
   hookFailState: FetchState;
 }
 
-interface OverviewKpis {
-  okCount: number | string;
-  degradedCount: number | string;
-  infoCount: number | string;
-  staleCount: number | string;
-  totalCount: number | string;
+// 카드 facts 집계 — KPI 가 세던 것과 같은 셈을 카드에서 직접 냄.
+// 버킷 이름은 KPI 의 것을 그대로 씀: 재는 사실이 같으므로 이름까지 바꾸면 무엇이
+// 이사했는지가 아니라 무엇이 사라졌는지로 읽힘.
+interface CardTally {
+  ok: number;
+  degraded: number;
+  info: number;
+  stale: number;
+  ready: number;
+}
+
+interface HealthCardDef {
+  id: string;
+  kind: string;
+  daemonName?: string;
 }
 
 interface HealthModelApi {
-  HEALTH_CARD_DEFS: ReadonlyArray<{ id: string; kind: string; daemonName?: string }>;
-  resolveCardFacts: (def: unknown, states: HealthStates) => { status: string; tone?: string };
-  computeOverviewKpis: (states: HealthStates) => OverviewKpis;
+  // Mutable on purpose, not a missed `readonly`: the T14 fixtures below splice the live
+  // exported array and restore it — the module leaves it unfrozen for exactly that.
+  HEALTH_CARD_DEFS: HealthCardDef[];
+  resolveCardFacts: (
+    def: unknown,
+    states: HealthStates,
+  ) => { status: string; tone?: string; isStale?: boolean };
   resolveDaemonDisplayMeta: (d: unknown) => { tone: string; label: string };
 }
 
@@ -67,11 +80,18 @@ const stubWindow: StubWindow = {
     daemonStatusLabel: (status) => status ?? "—",
   },
 };
-(globalThis as { window?: StubWindow }).window = stubWindow;
+// Double-cast is required, not laziness: with the DOM lib loaded `globalThis.window` is
+// `Window & typeof globalThis`, which does not overlap this stub — and installing a
+// non-Window stub is exactly the point, since the module under test is a browser
+// module loaded in node.
+(globalThis as unknown as { window?: StubWindow }).window = stubWindow;
 
 await import("../public/src/data/health-model.js");
-const HealthModel = stubWindow.HealthModel;
-assert.ok(HealthModel, "health-model.js must register window.HealthModel");
+const registeredHealthModel = stubWindow.HealthModel;
+assert.ok(registeredHealthModel, "health-model.js must register window.HealthModel");
+// Re-bind to a non-optional handle: `assert.ok` narrows the value here, but that narrowing
+// does not survive into the helper closures below, which are where the model is used.
+const HealthModel: HealthModelApi = registeredHealthModel;
 
 function ready(data: unknown): FetchState {
   return { status: "ready", data, error: null };
@@ -107,58 +127,73 @@ function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
   };
 }
 
-// F02 core assertion — denominator == ready card count, buckets partition it exactly.
-function assertKpiInvariant(states: HealthStates): OverviewKpis {
-  const kpis = HealthModel.computeOverviewKpis(states);
-  const readyCardCount = HealthModel.HEALTH_CARD_DEFS.filter(
-    (def) => HealthModel.resolveCardFacts(def, states).status === "ready",
-  ).length;
-  assert.strictEqual(
-    Number(kpis.okCount) + Number(kpis.degradedCount) + Number(kpis.infoCount),
-    kpis.totalCount,
-    "ok + degraded + info must equal totalCount",
-  );
-  assert.strictEqual(kpis.totalCount, readyCardCount, "KPI denominator must equal ready card count");
-  return kpis;
+// 세 버킷이 아는 tone 어휘 — KPI fold 의 else 가지가 'info = info + neutral' 이라고
+// 명시 귀속을 적어 두었던 그 목록임. 밖의 값은 조용히 info 로 떨어지므로 어휘를 직접 잼.
+const BUCKET_TONES = new Set(["ok", "warn", "crit", "info", "neutral"]);
+
+// 카드 facts 집계 — KPI 접기 전에는 모델의 집계 fold 가 같은 셈을 냈음. 그 fold 는 카드
+// facts 위의 얇은 층이었으므로 사실은 카드에 그대로 남았고, 아래 절들이 그것을 직접 잼.
+//
+// 옛 계기가 함께 내던 분할 불변식(ok + degraded + info === 분모)은 여기 다시 적지 않음:
+// 이 함수가 분모와 버킷을 같은 루프에서 세므로 그 등식은 어떤 코드 변경으로도 깨지지
+// 않는 항진명제가 됨 — 붉어질 수 없는 단언은 초록으로 안심만 시킴. 그 등식이 실제로
+// 지키던 것(ready 카드가 반드시 어느 버킷 하나에 귀속됨)은 tone 어휘 단언이 대신 잼.
+function tallyCardFacts(states: HealthStates): CardTally {
+  const tally: CardTally = { ok: 0, degraded: 0, info: 0, stale: 0, ready: 0 };
+  for (const def of HealthModel.HEALTH_CARD_DEFS) {
+    const facts = HealthModel.resolveCardFacts(def, states);
+    if (facts.status !== "ready") continue;
+
+    assert.ok(
+      BUCKET_TONES.has(String(facts.tone)),
+      `a ready card carried tone "${facts.tone}", which no bucket claims — an unknown tone lands in info by default and reads as a healthy-enough card`,
+    );
+
+    tally.ready += 1;
+    if (facts.tone === "ok") tally.ok += 1;
+    else if (facts.tone === "warn" || facts.tone === "crit") tally.degraded += 1;
+    else tally.info += 1;
+    if (facts.isStale) tally.stale += 1;
+  }
+
+  return tally;
 }
 
-test("all sources healthy: denominator covers all 7 cards incl. browser probe", () => {
-  const kpis = assertKpiInvariant(allHealthyStates());
-  assert.strictEqual(kpis.totalCount, HealthModel.HEALTH_CARD_DEFS.length);
-  assert.strictEqual(kpis.okCount, HealthModel.HEALTH_CARD_DEFS.length);
-  assert.strictEqual(kpis.degradedCount, 0);
-  assert.strictEqual(kpis.infoCount, 0);
+test("all sources healthy: every one of the 7 cards resolves, browser probe included", () => {
+  const tally = tallyCardFacts(allHealthyStates());
+  assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length);
+  assert.strictEqual(tally.ok, HealthModel.HEALTH_CARD_DEFS.length);
+  assert.strictEqual(tally.degraded, 0);
+  assert.strictEqual(tally.info, 0);
 });
 
-test("browser probe failed: counted in denominator AND degraded bucket", () => {
-  const kpis = assertKpiInvariant(
+test("browser probe failed: the card still resolves AND lands in the degraded bucket", () => {
+  const tally = tallyCardFacts(
     allHealthyStates({ pgState: ready({ status: "ok", db: "open", browser: "failed" }) }),
   );
-  assert.strictEqual(kpis.totalCount, 7);
-  assert.strictEqual(kpis.degradedCount, 1);
+  assert.strictEqual(tally.ready, 7);
+  assert.strictEqual(tally.degraded, 1);
 });
 
 test("browser unprobed: info bucket, never ok or degraded", () => {
-  const kpis = assertKpiInvariant(
-    allHealthyStates({ pgState: ready({ status: "ok", db: "open" }) }),
-  );
-  assert.strictEqual(kpis.infoCount, 1);
-  assert.strictEqual(kpis.okCount, 6);
+  const tally = tallyCardFacts(allHealthyStates({ pgState: ready({ status: "ok", db: "open" }) }));
+  assert.strictEqual(tally.info, 1);
+  assert.strictEqual(tally.ok, 6);
 });
 
-test("pg not ready: pg + browser cards drop out of the denominator", () => {
-  const kpis = assertKpiInvariant(allHealthyStates({ pgState: LOADING }));
-  assert.strictEqual(kpis.totalCount, 5);
+test("pg not ready: pg + browser cards stop resolving", () => {
+  const tally = tallyCardFacts(allHealthyStates({ pgState: LOADING }));
+  assert.strictEqual(tally.ready, 5);
 });
 
-test("hook config not ready: hook card drops out of the denominator", () => {
-  const kpis = assertKpiInvariant(allHealthyStates({ hookState: LOADING }));
-  assert.strictEqual(kpis.totalCount, 6);
+test("hook config not ready: the hook card stops resolving", () => {
+  const tally = tallyCardFacts(allHealthyStates({ hookState: LOADING }));
+  assert.strictEqual(tally.ready, 6);
 });
 
 test("bucket attribution: missing daemon row → info; quota_exceeded → degraded (warn re-tone)", () => {
   // quota_exceeded 는 warn 톤으로 재분류 → degraded 버킷. missing 행만 info 유지.
-  const kpis = assertKpiInvariant(
+  const tally = tallyCardFacts(
     allHealthyStates({
       daemonState: ready({
         daemons: [
@@ -173,13 +208,13 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
       }),
     }),
   );
-  assert.strictEqual(kpis.totalCount, 7);
-  assert.strictEqual(kpis.infoCount, 1);
-  assert.strictEqual(kpis.degradedCount, 1);
+  assert.strictEqual(tally.ready, 7);
+  assert.strictEqual(tally.info, 1);
+  assert.strictEqual(tally.degraded, 1);
 });
 
-test("stale daemon (server verdict): degraded bucket + staleCount", () => {
-  const kpis = assertKpiInvariant(
+test("stale daemon (server verdict): degraded bucket + counted as stale", () => {
+  const tally = tallyCardFacts(
     allHealthyStates({
       daemonState: ready({
         daemons: [
@@ -192,21 +227,21 @@ test("stale daemon (server verdict): degraded bucket + staleCount", () => {
       }),
     }),
   );
-  assert.strictEqual(kpis.degradedCount, 1);
-  assert.strictEqual(kpis.staleCount, 1);
+  assert.strictEqual(tally.degraded, 1);
+  assert.strictEqual(tally.stale, 1);
 });
 
 test("hook failures: unretried 24h failure → crit; retried-only → warn (F08)", () => {
-  const crit = assertKpiInvariant(
+  const crit = tallyCardFacts(
     allHealthyStates({ hookFailState: ready({ count_24h: 2, unretried_count_24h: 1 }) }),
   );
-  assert.strictEqual(crit.degradedCount, 1);
+  assert.strictEqual(crit.degraded, 1);
 
-  const warn = assertKpiInvariant(
+  const warn = tallyCardFacts(
     allHealthyStates({ hookFailState: ready({ count_24h: 2, unretried_count_24h: 0 }) }),
   );
-  assert.strictEqual(warn.degradedCount, 1);
-  assert.strictEqual(warn.okCount, 6);
+  assert.strictEqual(warn.degraded, 1);
+  assert.strictEqual(warn.ok, 6);
 });
 
 test("stale verdict: display meta comes from the tone table, tone stays crit (Rule 4)", () => {
@@ -253,10 +288,17 @@ test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says",
   assert.strictEqual(stale.tone, "crit", "the server verdict must survive a low staleness");
 });
 
-test("daemonState not ready: KPI renders '—' sentinels, never fabricated zeros", () => {
-  const kpis = HealthModel.computeOverviewKpis(allHealthyStates({ daemonState: LOADING }));
-  assert.strictEqual(kpis.okCount, "—");
-  assert.strictEqual(kpis.totalCount, "—");
+// KPI 가 '—' 로 내던 '아직 안 옴' 은 이제 행이 냄 — 판정이 없는 데몬 행은 tone 없이 '—' 를
+// 실음. 그 사실은 화면 계기가 재야 하므로 AC-B2-6f(merged-surface e2e)로 옮겼고,
+// 여기서는 카드가 애초에 ready 로 서지 않는다는 그 앞단만 남김.
+test("daemonState not ready: the daemon cards do not resolve, so nothing counts them", () => {
+  const tally = tallyCardFacts(allHealthyStates({ daemonState: LOADING }));
+  assert.strictEqual(
+    tally.ready,
+    3,
+    "only the pg, browser and hook cards can stand without a daemon response",
+  );
+  assert.strictEqual(tally.ok, 3, "a card that never resolved must not be counted as healthy");
 });
 
 // --- AC-T4 (health half): the board follows the one server threshold and holds none of its own.
@@ -286,3 +328,7 @@ test("AC-T4 the server threshold moves, the row does not, and the card moves wit
     "a threshold of its own would hold this at crit — the staleness figure never changed",
   );
 });
+
+// T14 는 분모가 정의 목록을 따른다는 사실이었음. 그 분모는 이제 표의 행 수이고,
+// 그 사실은 AC-B2-4b(merged-surface e2e — '행 수가 명부를 따르고 빈 명부는 행을 남기지 않음')가
+// 화면에서 직접 잼. 여기 있던 splice 기구는 그 계기를 두 번 세우던 자리라 함께 접음.

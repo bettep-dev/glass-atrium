@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type HtmlStructureCheck,
   type HtmlStructureMissingField,
   type D8Thresholds,
   type StyleFinding,
@@ -50,16 +51,26 @@ function check(html: string) {
 // assertions state both halves — the verdict AND the absence of notices.
 const OK_NO_NOTICES = { ok: true, notices: [] };
 
-function expectMissing(html: string, expected: HtmlStructureMissingField[]): void {
-  const result = check(html);
-  assert.strictEqual(result.ok, false, "expected validation to fail");
-  if (result.ok === false) {
-    assert.deepStrictEqual(
-      result.missing.slice().sort(),
-      expected.slice().sort(),
-      `missing field set mismatch — got: ${JSON.stringify(result.missing)}`,
-    );
+// The failure arm is a 4-variant union discriminated by `code`, so `ok === false`
+// alone never reaches `missing`. Narrowing on the discriminant is also stricter
+// than the old `if (result.ok === false)` guard: a wrong failure variant now
+// fails the assertion instead of silently skipping the block.
+type StructureInvalid = Extract<HtmlStructureCheck, { code: "html_structure_invalid" }>;
+
+function expectStructureInvalid(result: HtmlStructureCheck): StructureInvalid {
+  if (result.ok !== false || result.code !== "html_structure_invalid") {
+    assert.fail(`expected html_structure_invalid, got: ${JSON.stringify(result)}`);
   }
+  return result;
+}
+
+function expectMissing(html: string, expected: HtmlStructureMissingField[]): void {
+  const result = expectStructureInvalid(check(html));
+  assert.deepStrictEqual(
+    result.missing.slice().sort(),
+    expected.slice().sort(),
+    `missing field set mismatch — got: ${JSON.stringify(result.missing)}`,
+  );
 }
 
 // happy path.
@@ -133,13 +144,10 @@ test("validateHtmlStructure: missing body → missing includes 'body'", () => {
   // Without <body>, the semantic landmark and heading also vanish (they lived
   // inside it). Assert that body is among the missing — alongside landmark
   // and heading, which is the realistic shape.
-  const result = check(html);
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false) {
-    assert.ok(result.missing.includes("body"), "body must be reported missing");
-    assert.ok(result.missing.includes("semantic_landmark"));
-    assert.ok(result.missing.includes("heading"));
-  }
+  const result = expectStructureInvalid(check(html));
+  assert.ok(result.missing.includes("body"), "body must be reported missing");
+  assert.ok(result.missing.includes("semantic_landmark"));
+  assert.ok(result.missing.includes("heading"));
 });
 
 test("validateHtmlStructure: only <div> containers (no main/article/section) → 'semantic_landmark'", () => {
@@ -189,18 +197,16 @@ test("validateHtmlStructure: Content-Type meta without charset substring → 'ch
 test("validateHtmlStructure: bare div soup → many missing", () => {
   const html = "<p>no doctype no title</p>";
   const result = check(html);
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false) {
-    // node-html-parser synthesizes neither <html> nor <body> for a fragment,
-    // so we expect a near-complete absence list. Assert the must-haves are
-    // all reported; do not over-specify the exact set in case the parser's
-    // synthesis behavior evolves.
-    assert.ok(result.missing.includes("doctype"));
-    assert.ok(result.missing.includes("head_title"));
-    assert.ok(result.missing.includes("semantic_landmark"));
-    assert.ok(result.missing.includes("heading"));
-    assert.ok(result.missing.includes("charset"));
-  }
+  const invalid = expectStructureInvalid(result);
+  // node-html-parser synthesizes neither <html> nor <body> for a fragment,
+  // so we expect a near-complete absence list. Assert the must-haves are
+  // all reported; do not over-specify the exact set in case the parser's
+  // synthesis behavior evolves.
+  assert.ok(invalid.missing.includes("doctype"));
+  assert.ok(invalid.missing.includes("head_title"));
+  assert.ok(invalid.missing.includes("semantic_landmark"));
+  assert.ok(invalid.missing.includes("heading"));
+  assert.ok(invalid.missing.includes("charset"));
 });
 
 test("validateHtmlStructure: missing array stays in canonical declaration order", () => {
@@ -218,11 +224,8 @@ test("validateHtmlStructure: missing array stays in canonical declaration order"
     "</body>",
     "</html>",
   ].join("\n");
-  const result = check(html);
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false) {
-    assert.deepStrictEqual(result.missing, ["doctype", "head_title", "charset"]);
-  }
+  const result = expectStructureInvalid(check(html));
+  assert.deepStrictEqual(result.missing, ["doctype", "head_title", "charset"]);
 });
 
 // determinism + DoS guard.
@@ -244,22 +247,16 @@ test("validateHtmlStructure: 6 MB input rejected gracefully without parser crash
   const start = Date.now();
   const result = check(oversized);
   const elapsedMs = Date.now() - start;
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false) {
-    // Should report all 7 fields as missing — short-circuit path.
-    assert.strictEqual(result.missing.length, 7);
-  }
+  // Should report all 7 fields as missing — short-circuit path.
+  assert.strictEqual(expectStructureInvalid(result).missing.length, 7);
   // Sanity perf bound — the short-circuit should be near-instant. 200 ms is a
   // generous CI margin; if this ever exceeds it, the DoS guard regressed.
   assert.ok(elapsedMs < 200, `short-circuit elapsed ${elapsedMs}ms exceeds 200 ms`);
 });
 
 test("validateHtmlStructure: empty string input → all 7 fields missing", () => {
-  const result = check("");
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false) {
-    assert.strictEqual(result.missing.length, 7);
-  }
+  const result = expectStructureInvalid(check(""));
+  assert.strictEqual(result.missing.length, 7);
 });
 
 // comparison-table column cap.
@@ -440,7 +437,9 @@ test("D8_THRESHOLDS is deeply frozen (no runtime mutation of policy)", () => {
   assert.ok(Object.isFrozen(D8_THRESHOLDS));
   assert.ok(Object.isFrozen(D8_THRESHOLDS.comparisonTable));
   assert.throws(() => {
-    // @ts-expect-error — frozen at runtime; compile-time readonly too.
+    // Runtime-frozen only: `D8Thresholds` declares no `readonly` modifiers, so this
+    // assignment type-checks and the guarantee under test is Object.freeze's throw.
+    // (A `@ts-expect-error` here would be unused — TS2578.)
     D8_THRESHOLDS.comparisonTable.maxColumns = 99;
   });
 });

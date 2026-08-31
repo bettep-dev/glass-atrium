@@ -9,7 +9,6 @@ const NAV = [
 	{ id: "agents", label: "Agents", icon: "bot" },
 	{ id: "outcomes", label: "Task results", icon: "target" },
 	{ id: "improvement", label: "Learning", icon: "spark" },
-	{ id: "health", label: "System health", icon: "pulse" },
 	{ id: "wiki", label: "Wiki", icon: "brain" },
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
@@ -30,7 +29,6 @@ const Screens = {
 	agents: window.ScreenAgents,
 	outcomes: window.ScreenOutcomes,
 	improvement: window.ScreenImprovement,
-	health: window.ScreenHealth,
 	wiki: window.ScreenWiki,
 	architecture: window.ScreenArchitecture,
 	"clauded-docs": window.ScreenClaudedDocs,
@@ -121,50 +119,54 @@ function fetchJson(url) {
 	);
 }
 
+// 실패 카운트 목적지는 architecture(System map) 슬롯 — 맵이 health 판독을 흡수했음.
 function kpiToBadges(kpi) {
 	const fails = Number(kpi.last_1h_fail_count) || 0;
 	// cost 키는 항상 반환(null 이라도) — 정적 fallback 배지 차단 계약 유지. 예산은 per-call HARD CAP
 	// (월 누적 한도 아님)이라 cost-slot 에 매핑할 소진율 신호가 없으므로 항상 null.
 	return {
-		health: fails > 0 ? { badge: String(fails), badgeTone: "warn" } : null,
+		architecture: fails > 0 ? { badge: String(fails), badgeTone: "warn" } : null,
 		cost: null,
 	};
 }
 
-// live 신호 두 개를 독립 슬롯으로 분리:
-//   · 구조 드리프트(stale)        → architecture(System map) info "Update needed" (설계도 카운트 mismatch)
-//   · 데몬 다운(daemon status≠ok) → health(System health) warn 카운트 (런타임 헬스)
-// 슬롯이 분리돼 서로 덮지 않음. health 슬롯은 KPI 배지와 mergeHealthBadge 로 병치.
+// live 신호 두 개가 architecture(System map) 한 슬롯에 병치:
+//   · 구조 드리프트(stale)              → info "Update needed" (설계도 카운트 mismatch)
+//   · 데몬 다운(effective_status≠ok)    → warn 카운트 (런타임 헬스)
+// 목적지가 같아졌으므로 KPI 배지까지 세 소스가 mergeHealthBadge 의 소스 태그로 공존함.
+// 계수 근거는 effective_status — 전환용 status 중복이 아니라 판정 필드가 기록의 근거임.
 function liveToBadge(live) {
-	const architecture =
+	const drift =
 		live?.stale === true
 			? { badge: "Update needed", badgeTone: "info" }
 			: null;
 
 	const badDaemons = (live?.daemons || []).filter(
-		(d) => d.status !== "ok",
+		(d) => d.effective_status !== "ok",
 	).length;
-	const daemonHealth =
+	const daemonDown =
 		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
 
-	return { architecture, daemonHealth };
+	return { drift, daemonDown };
 }
 
-// ALL SYSTEMS 풋터 도트 = health nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
-// 미폴링(health 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · 이슈 0 → ok · 이슈 N → warn.
+// ALL SYSTEMS 풋터 도트 = architecture nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
+// 미폴링(architecture 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · warn 0 → ok · warn N → warn.
+// 같은 슬롯의 드리프트 info 배지는 세지 않음 — 설계도 갱신 필요는 런타임 이상이 아님.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
 function systemsRollup(dynamicBadges) {
 	const polled =
 		dynamicBadges &&
-		Object.prototype.hasOwnProperty.call(dynamicBadges, "health");
+		Object.prototype.hasOwnProperty.call(dynamicBadges, "architecture");
 	if (!polled) return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
 
-	const badges = dynamicBadges.health?.badges || [];
-	if (badges.length === 0) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	const badges = dynamicBadges.architecture?.badges || [];
+	const warns = badges.filter((b) => b.badgeTone === "warn").length;
+	if (warns === 0) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
 	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 }
 
-// health nav 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운 카운트)가 한 슬롯에 병치.
+// nav 슬롯 배지 병합 — 독립 세 소스(KPI 실패 카운트 · 구조 드리프트 · 데몬 다운)가 한 슬롯에 병치.
 // 소스 태그로 자기 기여분만 교체 → 한 소스 재폴링이 다른 소스 배지를 덮지 않음.
 // badges-array-coexistence 관용(Sidebar 가 배열/단일 양쪽 호환) 재사용.
 function mergeHealthBadge(prevHealth, source, badge) {
@@ -219,11 +221,15 @@ function App() {
 			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
 			setNavBadges((prev) => {
 				const kpi = kpiToBadges(kpiR[0].value);
-				// health 는 데몬 다운 소스와 병치되므로 스프레드로 덮지 않고 merge.
+				// architecture 는 드리프트·데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
 				return {
 					...prev,
 					cost: kpi.cost,
-					health: mergeHealthBadge(prev.health, "kpi", kpi.health),
+					architecture: mergeHealthBadge(
+						prev.architecture,
+						"kpi",
+						kpi.architecture,
+					),
 				};
 			});
 		};
@@ -241,12 +247,14 @@ function App() {
 		fetchJson("/api/architecture/live")
 			.then((live) => {
 				if (cancelled) return;
-				const { architecture, daemonHealth } = liveToBadge(live);
-				setNavBadges((prev) => ({
-					...prev,
-					architecture,
-					health: mergeHealthBadge(prev.health, "daemon", daemonHealth),
-				}));
+				const { drift, daemonDown } = liveToBadge(live);
+				setNavBadges((prev) => {
+					const withDrift = mergeHealthBadge(prev.architecture, "drift", drift);
+					return {
+						...prev,
+						architecture: mergeHealthBadge(withDrift, "daemon", daemonDown),
+					};
+				});
 			})
 			.catch(() => {
 				// 무시 — 직전 navBadges/동기화 시각 보존

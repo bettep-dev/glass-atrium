@@ -15,7 +15,10 @@ import type {
 	WriterLiveStatus,
 } from "../types/architecture.js";
 import type { PrismaClient } from "../../generated/prisma/client.js";
-import { DAEMON_NODE_BINDINGS } from "./diagrams-source.js";
+import {
+	DAEMON_NODE_BINDINGS,
+	PART_NODE_BINDINGS,
+} from "./diagrams-source.js";
 import { createTtlCache } from "./ttl-cache.js";
 import {
 	DAEMON_CRON_SCHEDULE,
@@ -223,6 +226,7 @@ async function getLiveOverlayUncached(
 		daemons,
 		writers,
 		recent_activity: recentActivity,
+		part_bindings: PART_NODE_BINDINGS,
 	};
 }
 

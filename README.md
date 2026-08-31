@@ -136,7 +136,7 @@ What a single consent can install: `postgresql@18` · `node@24` · `bun` · `sql
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:16145`. The install is not finished until it clears a health gate, and you can re-check that state at any point afterwards with `glass-atrium doctor` or the monitor's **System health** screen.
+When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:16145`. The install is not finished until it clears a health gate, and you can re-check that state at any point afterwards with `glass-atrium doctor` or the **System health** strip on the monitor's **System map** screen.
 
 > **Leave the installed folder where it is.** The installer downloads a release bundle, unpacks it into the `~/.glass-atrium` folder, and links it into your Claude config directory through a **per-file symlink farm** (the method described earlier). The real files live here, so moving or deleting the folder breaks the links.
 

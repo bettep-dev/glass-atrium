@@ -45,6 +45,24 @@ function getLabelText(raw: string): string {
 	return text.replace(/<[^>]*>/g, "").trim();
 }
 
+// 계수 규칙이 성립하는 유일한 문법 — 노드 = shape opener 선언, 엣지 = 화살표 토큰.
+// 헤더가 첫 줄이라는 보장은 없음: 한 줄 %%{init}%% 지시자나 frontmatter 펜스가 앞설 수 있어 줄 단위로 찾음.
+const DIAGRAM_HEADER = /^\s*(?:flowchart|graph)\s+\S+/i;
+
+/** 헤더 줄의 인덱스 — 없으면 -1. 형태 판정과 방향 재작성이 같은 정의 하나를 씀. */
+export function getDiagramHeaderIndex(mermaid: string): number {
+	return mermaid.split("\n").findIndex((line) => DIAGRAM_HEADER.test(line));
+}
+
+/**
+ * 계수기가 읽을 수 있는 형태인가 — `sequenceDiagram` 처럼 헤더가 없는 형태를 거름.
+ * 소비자는 예산 리포트와 파서 진입 둘뿐이다. getMermaidCensus 는 의도적으로 이 게이트를 타지 않음:
+ * 계수 자체를 막으면 헤더 앞에 무엇이 오는 픽스처든 계수 불가가 되어 계수기의 관측 가능성이 사라짐.
+ */
+export function isSupportedDiagramForm(mermaid: string): boolean {
+	return getDiagramHeaderIndex(mermaid) !== -1;
+}
+
 /**
  * 계수 규칙(단일 경로) — 어떤 mermaid 문자열에도 동일하게 적용됨.
  * 노드 = shape opener 를 동반한 선언 1건(`subgraph` 존 선언과 엣지 전용 참조는 제외 · 중복 id 는 1회).
@@ -102,8 +120,10 @@ export interface BudgetCaps {
 }
 
 // 등급별 상한 — T2 census(7편 노드 중앙값 14 · 엣지 18 · 최장 라벨 50)에서 파생함.
-// 오늘 소비되는 행은 canonical 맵이 배정받은 balanced 한 줄뿐이며 나머지 두 행은 선언만 되어 있음(집행 없음).
-// balanced 파생 근거 — canonical source 계수(노드 11 · 엣지 8 · 라벨 69)보다 작고(a) 코퍼스 중앙값 이하(b)를 동시에 만족함.
+// 오늘 소비되는 행은 canonical 맵이 배정받은 faithful 한 줄뿐이며 나머지 두 행은 선언만 되어 있음(집행 없음).
+// faithful 재배정 근거 (ADR-15) — 확정 흐름이 balanced(9/6) 아래에서 엣지 7/6 으로 fail 이라 배정을 옮겼음.
+// 행의 값은 무변경임: 코퍼스에서 유도된 상한을 그림에 맞춰 넓히는 것과 이미 선언된 행으로 배정을 옮기는 것은 다른 행위임.
+// balanced 파생 근거 — canonical source 계수(노드 12 · 엣지 9 · 라벨 69)보다 작고(a) 코퍼스 중앙값 이하(b)를 동시에 만족함.
 export const BUDGET_CAPS: Readonly<Record<DetailGrade, BudgetCaps>> = {
 	faithful: { nodes: 14, edges: 18, labelChars: 50, subgraphDepth: 1 },
 	balanced: { nodes: 9, edges: 6, labelChars: 45, subgraphDepth: 1 },
@@ -135,9 +155,10 @@ export interface BudgetReport {
 const PROXY_NOTE =
 	"Proxy metric: node/edge/label counts are the upstream lever of legibility, not legibility itself " +
 	"(on-screen readability is judged by human review). The omitted_node_ids ledger is checked for " +
-	"existence/absence of each listed id, never for completeness of the list. subgraph_depth is an " +
-	"invariant, not a volume metric: it is judged by measured > cap alone and is exempt from the ratio " +
-	"band (depth equal to the cap stays pass).";
+	"existence/absence of each listed id, never for completeness of the list. Two measures are invariants " +
+	"rather than volume metrics and are judged directly, outside the ratio band: subgraph_depth (measured > " +
+	"cap alone, so depth equal to the cap stays pass) and diagram_format (a form the counter cannot read " +
+	"fails outright, because every other measure on such a string is meaningless rather than green).";
 
 /** 비율 밴드 — ratio > 1.0 fail · 0.9 ≤ ratio ≤ 1.0 warn · ratio < 0.9 pass. */
 function getRatioState(ratio: number): BudgetState {
@@ -155,6 +176,13 @@ function getDepthMeasure(measured: number, cap: number): BudgetMeasure {
 	return { metric: "subgraph_depth", measured, cap, state: measured > cap ? "fail" : "pass" };
 }
 
+// 형태는 볼륨이 아니라 계수의 전제 — 비율 밴드에 넣으면 두 판정이 모두 뒤집힘:
+// 지원 형태는 measured/cap = 1/1 = 1.0 이라 영구 warn 이 되고, 미지원 형태는 0/1 = 0 이라 pass 로 떨어짐.
+// 후자가 이 지표를 만든 이유다 — 계수기가 한 글자도 못 읽은 그림이 초록으로 나가는 결함.
+function getFormatMeasure(supported: boolean): BudgetMeasure {
+	return { metric: "diagram_format", measured: supported ? 1 : 0, cap: 1, state: supported ? "pass" : "fail" };
+}
+
 const STATE_RANK: Readonly<Record<BudgetState, number>> = { pass: 0, warn: 1, fail: 2 };
 
 /** 그려지는 문자열 하나를 자기 등급의 상한 행으로 판정함. */
@@ -166,6 +194,7 @@ export function getBudgetReport(mermaid: string, grade: DetailGrade): BudgetRepo
 		.reduce((max, n) => Math.max(max, n.label.length), 0);
 
 	const measures = [
+		getFormatMeasure(isSupportedDiagramForm(mermaid)),
 		getMeasure("nodes", census.nodeCount, caps.nodes),
 		getMeasure("edges", census.edgeCount, caps.edges),
 		getMeasure("label_chars", labelChars, caps.labelChars),

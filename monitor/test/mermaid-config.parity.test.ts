@@ -18,6 +18,7 @@ import { parse as parseHtml } from "node-html-parser";
 
 import {
   ELK_LOADER_PATH,
+  ELK_PREP_PATH,
   MERMAID_CONFIG_PATH,
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
@@ -53,10 +54,30 @@ test("P1-2 the export reads the config file index.html loads", () => {
   );
 });
 
-test("P1-2 the export reads the ELK loader index.html registers", () => {
+test("P1-2 the export reads the ELK prep module index.html loads", () => {
   assert.ok(
-    viewerScripts.includes(ELK_LOADER_PATH),
-    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${ELK_LOADER_PATH}`,
+    viewerScripts.includes(ELK_PREP_PATH),
+    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${ELK_PREP_PATH}`,
+  );
+});
+
+// index.html no longer carries a tag for the vendored bundle itself: the prep module above
+// fetches it on demand, from a path written inside that module. So the two surfaces agree on
+// the ENGINE only if the path the viewer's module fetches is the file the export injects —
+// a claim the script-tag list can no longer answer, and the one thing it used to answer here.
+test("P1-2 the export injects the same vendored bundle the prep module fetches", () => {
+  // Whole-line comments dropped first: the module's own header quotes the tag it replaced.
+  const code = readFileSync(ELK_PREP_PATH, "utf8").replace(/^[ \t]*\/\/.*$/gm, "");
+  const named = [...code.matchAll(/"(assets\/vendor\/[^"]+)"/g)].map((m) => m[1]);
+  assert.equal(
+    named.length,
+    1,
+    `the prep module names ${named.length} vendor paths (${named.join(", ")}) — exactly one carries the fetch`,
+  );
+  assert.equal(
+    resolve(PUBLIC_ROOT, named[0]),
+    ELK_LOADER_PATH,
+    "the viewer fetches a different vendored bundle than the export injects — same config, two engines",
   );
 });
 
@@ -83,6 +104,51 @@ test("P1-2 the injected config carries the two keys the export's own guards stan
   assert.ok(
     Number(config.logLevel) <= WARN_LOG_LEVEL,
     `logLevel is ${String(config.logLevel)} — above ${WARN_LOG_LEVEL} the fallback warning is never logged at all`,
+  );
+});
+
+// ── 후속-5 document language parity ──────────────────────────────────────────
+// The two surfaces render the same stored bodies, and the document language is an input
+// to that render: mermaid's C4 renderer measures its row-wrap limit from text metrics the
+// document language feeds, so a viewer declaring one language and the export another lay
+// the same source out at different widths. The value itself is a decision (ADR-B3 R1: ko);
+// what goes red here is the two surfaces disagreeing about it, whichever way one is edited.
+//
+// Read out of the sources rather than off a rendered page — a width comparison would need a
+// diagram whose width happens to move, and would report a layout difference rather than the
+// declaration that caused it.
+
+/** The `<html lang>` of the page the viewer serves. */
+function getViewerHtmlLang(): string | null {
+  return parseHtml(readFileSync(INDEX_PATH, "utf8")).querySelector("html")?.getAttribute("lang") ?? null;
+}
+
+/**
+ * The `<html lang>` of the shell the export builds. The shell is assembled from string
+ * concatenation, not a template file, so the declaration is read as the literal it is —
+ * anchored on the opening tag so a `lang` elsewhere in the module cannot answer for it.
+ */
+function getExportShellHtmlLang(): string | null {
+  const source = readFileSync(EXPORT_MODULE_PATH, "utf8");
+  const matches = [...source.matchAll(/<html\s+lang="([^"]*)"/g)].map((m) => m[1]);
+  assert.equal(
+    matches.length,
+    1,
+    `html-export.ts declares ${matches.length} <html lang> literals (${matches.join(", ")}) — ` +
+      "with more than one, the assertion below is made against a shell that may not be the one that ships",
+  );
+  return matches[0];
+}
+
+test("후속-5 the viewer and the export declare the same document language", () => {
+  const viewerLang = getViewerHtmlLang();
+  const exportLang = getExportShellHtmlLang();
+  assert.ok(viewerLang, "public/index.html declares no <html lang> — the viewer inherits whatever the browser guesses");
+  assert.equal(
+    viewerLang,
+    exportLang,
+    `index.html declares lang="${String(viewerLang)}" while the export shell declares lang="${String(exportLang)}" — ` +
+      "one stored body renders under two document languages, and the width difference that causes is reported nowhere",
   );
 });
 

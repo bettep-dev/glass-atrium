@@ -27,6 +27,7 @@ import {
   DIAGRAMS,
   DIAGRAMS_SOURCE_PATH,
 } from "./diagrams-source.js";
+import { isSupportedDiagramForm } from "./content-budget.js";
 
 // Minimal Pino-compatible logger — avoids Fastify dependency (same signature for test/standalone).
 export interface ParserLogger {
@@ -192,8 +193,14 @@ function buildSystemDiagrams(options: BuildDiagramsOptions): SystemDiagrams {
 
   for (const src of DIAGRAMS) {
     // canonical 항목만 그려지는 문자열(drawn)로 치환 — 렌더가 읽는 payload 필드와 legend/클릭 인덱스가 같은 문자열이어야 SVG 와 일치함.
-    const mermaid = src.slug === CANONICAL_MAP.slug ? CANONICAL_MAP.mermaid_drawn : src.mermaid_source;
-    const built = buildSingleDiagram(src.slug, src.title, src.description, mermaid, logger);
+    const isCanonical = src.slug === CANONICAL_MAP.slug;
+    const mermaid = isCanonical ? CANONICAL_MAP.mermaid_drawn : src.mermaid_source;
+    // 제목도 같은 자리에서 갈림 (ADR-16) — SVG 의 aria-label 과 내장 <title> 이 이 문자열을 실으므로
+    // source 제목이 남으면 스크린리더가 그리지 않는 그림(배정에서 끝나는 흐름)을 먼저 읽음.
+    const title = isCanonical ? CANONICAL_MAP.title ?? src.title : src.title;
+    // 서술도 같은 자리에서 갈림 (ADR-9) — drawn 이 그리지 않는 것을 source 서술이 부르면 a11y 서술이 그림과 어긋남.
+    const description = isCanonical ? CANONICAL_MAP.description ?? src.description : src.description;
+    const built = buildSingleDiagram(src.slug, title, description, mermaid, logger);
     if (built === null) {
       logger.warn(
         { title: src.title, id: src.id },
@@ -232,13 +239,26 @@ function buildSystemDiagrams(options: BuildDiagramsOptions): SystemDiagrams {
 
 // Per-diagram builder — extracts a single mermaid block into a SystemDiagram.
 // slug arg ensures DIAGRAMS slug matches frontend TAB_ORDER 1:1.
-function buildSingleDiagram(
+// Exported for the form-refusal test only: DIAGRAMS holds supported sources exclusively,
+// so the refusal branch below is unreachable through the module data.
+export function buildSingleDiagram(
   diagramId: string,
   title: string,
   description: string,
   mermaidSource: string,
   logger: ParserLogger,
 ): SystemDiagram | null {
+  // Form first, before extraction. On an unsupported form the extractor still yields a junk
+  // phantom node off the header line, so `nodes === 0 && edges === 0` below is FALSE and a
+  // diagram the counter cannot read would ship degraded rather than be skipped.
+  if (!isSupportedDiagramForm(mermaidSource)) {
+    logger.warn(
+      { diagramId, title },
+      "unsupported diagram form (no flowchart/graph header); skipped from /diagrams output",
+    );
+    return null;
+  }
+
   const extracted: ExtractedFlow = extractFlows(mermaidSource, {
     idPrefix: diagramId,
     edgeIdPrefix: diagramId,

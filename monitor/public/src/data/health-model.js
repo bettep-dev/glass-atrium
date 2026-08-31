@@ -1,8 +1,10 @@
-// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — health.jsx 표시층·monitor/test 공용.
+// 헬스 카드/KPI 순수 모델 (React/JSX 비의존) — architecture.jsx 표시층·monitor/test 공용.
 // 카드 tone 과 KPI 버킷을 단일 출처에서 결정 → '정상 N/M' 분모 == 렌더 카드 수 불변식 보장 (F02).
 // window.UI 는 호출 시점 참조 — node 테스트는 import 전 window.UI 스텁 주입으로 로드.
 
 // 컴포넌트 카드 정의 — PG / browser / daemon×4 / hook. KPI 분모 = 이 목록 중 ready 카드 수.
+// 의도적으로 동결하지 않음 — 참조로 내보낸 이 배열을 픽스처가 splice 로 줄였다 복원해
+// '분모가 정의 목록을 따른다'를 붉게 만들 수 있어야 함 (T14 · architecture.live-badge 픽스처).
 const HEALTH_CARD_DEFS = [
   { id: 'pg',            name: 'PostgreSQL',      icon: 'db',       kind: 'pg' },
   { id: 'browser',       name: 'Chromium Export', icon: 'download', kind: 'browser' },
@@ -80,35 +82,6 @@ function resolveCardFacts(def, states) {
   return resolver(def, states);
 }
 
-const EMPTY_OVERVIEW_KPIS = {
-  okCount: '—', degradedCount: '—', infoCount: '—', staleCount: '—', totalCount: '—',
-};
-
-// KPI 집계 — 카드 facts 와 동일 출처 fold (KPI 와 카드 tone 분기 불일치 차단).
-// ready 카드만 분모 (loading/error 가짜 0 금지) · info 버킷 = info+neutral 명시 귀속.
-// 불변식: okCount + degradedCount + infoCount === totalCount === ready 카드 수.
-function computeOverviewKpis(states) {
-  if (states.daemonState.status !== 'ready') return EMPTY_OVERVIEW_KPIS;
-
-  let okCount = 0;
-  let degradedCount = 0;
-  let infoCount = 0;
-  let staleCount = 0;
-  let totalCount = 0;
-  for (const def of HEALTH_CARD_DEFS) {
-    const facts = resolveCardFacts(def, states);
-    if (facts.status !== 'ready') continue;
-
-    totalCount += 1;
-    if (facts.tone === 'ok') okCount += 1;
-    else if (facts.tone === 'warn' || facts.tone === 'crit') degradedCount += 1;
-    else infoCount += 1;
-    if (facts.isStale) staleCount += 1;
-  }
-
-  return { okCount, degradedCount, infoCount, staleCount, totalCount };
-}
-
 // daemon_run_payload jsonb 키 → 표시 라벨 (P18) — 동적/write-only 키라 하드코딩 맵 없이 humanize.
 // snake/kebab/camel → 공백 분리 후 첫 글자만 대문자 (키 원형 보존, 과도 변형 금지).
 function humanizePayloadKey(key) {
@@ -151,7 +124,6 @@ window.HealthModel = {
   isDaemonStale,
   resolveDaemonDisplayMeta,
   resolveCardFacts,
-  computeOverviewKpis,
   humanizePayloadKey,
   formatPayloadValue,
   toPayloadRows,
