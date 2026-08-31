@@ -31,7 +31,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - File names, class names, lines, APIs → Use **only verified** references.
   - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
     - These are examples of the class, not the class itself; if unsure, treat the claim as a relation.
-  - Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first.
+    - Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first.
   - **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it.
   - Without shell access, report both texts and mark the relation **unverified** — never assert it.
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission)
@@ -117,7 +117,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - cross-match listed slugs against current user request
   - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
   - no match → treat as informational (do NOT auto-Read all — context budget)
-  - header absence = no open progress files (silent — proceed normally)
+- header absence = no open progress files (silent — proceed normally)
 
 ### Turn Budget & Graceful Exit [ALL]
 
@@ -131,6 +131,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
   - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
   - **splitting > truncation** (next /loop tick resumes cleanly)
+- **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 #### Work-unit checkpoint dimension
 
@@ -156,13 +157,9 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call — the StructuredOutput call still terminates the run (this does not violate the never-end-on-prose rule; the block turn precedes the final tool call).
   - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing); the RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
     - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, runs the multi-line field parser over it, and records the run as WRITER-emitted with attribution `structuredoutput-completion` (a healthy row, NOT synthesized).
-    - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
-    - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
-    - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
-
-#### Exempt
-
-- `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+  - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
+  - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
+  - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
 
 ### Context Compression Strategies
 
