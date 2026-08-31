@@ -231,3 +231,47 @@ load 'lib/stat-mode'
     return 1
   }
 }
+
+@test "AC-C7b the creation mask is RESTORED when the backup dir cannot be created" {
+  local blocker="${SANDBOX}/not-a-dir" probe="${SANDBOX}/mkdir-fail-probe" mode
+  # The mkdir-failure arm returns EARLY, ahead of the restore that closes the function,
+  # so it carries a restore of its own — and AC-C7 cannot speak for it: that probe only
+  # ever walks the success path, so deleting this arm's restore leaves every other
+  # assertion in this file green. A regular file standing in for the parent makes
+  # `mkdir -p` fail on both platforms (ENOTDIR), which is the one way to reach the early
+  # return with the 077 mask already set.
+  : >"${blocker}"
+  run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
+    GA_DB_BACKUP_DIR="${blocker}/backups" PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c '
+      set -Eeuo pipefail
+      umask 022
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      DRY_RUN=false
+      drop_databases
+      : >"$2"
+    ' _ "${GA}" "${probe}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  # the arm under test is the one that fired, and it preserved the data
+  [[ "${output}" == *"cannot create backup dir"* ]] || {
+    echo "the mkdir-failure arm never fired; out=${output}" >&2
+    return 1
+  }
+  [[ ! -f "${SANDBOX}/dropdb-args" ]] || {
+    echo "a database was dropped with no backup dir: $(cat "${SANDBOX}/dropdb-args")" >&2
+    return 1
+  }
+  [[ -f "${probe}" ]] || {
+    echo "the post-call probe was never created; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${probe}")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-call creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+}

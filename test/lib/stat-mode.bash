@@ -9,7 +9,9 @@
 # is not a file; the fallback then appends the GNU mode and the caller compares a
 # multi-line block against "700". `stat --version` succeeds on GNU and fails on BSD, so
 # it settles the flavour BEFORE either spelling is attempted — the same discriminator
-# scripts/test/apply-spine.bats uses for inode_of and lib/ga-env.sh for stat_perms.
+# scripts/test/apply-spine.bats uses for inode_of. lib/ga-env.sh routes stat_perms to the
+# same two spellings but decides between them differently, from a `uname -s` memo warmed
+# at load; either discriminator is sound, and neither is a fallback chain.
 #
 # GNU `%a` prepends the setuid/setgid/sticky nibble only when it is non-zero, so a 0700
 # directory reads "700" on both platforms; a sticky one reads "1777" on GNU and "777"

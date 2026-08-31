@@ -459,8 +459,19 @@ atrium_canonical_config_path() {
   _atrium_path_canonicalize "${value}"
 }
 
-# Whether stat(1) is GNU coreutils. Resolved ONCE per shell into a memo, the shape
-# lib/ga-env.sh already uses for its own stat wrappers.
+# Whether stat(1) is GNU coreutils. Probed on FIRST USE in the shell that calls it, and
+# deliberately NOT warmed at load: the sole caller reads the mode through a command
+# substitution (_atrium_path_is_safe below), so the assignment lands in that subshell and
+# is gone when it exits. The probe therefore runs once per _atrium_path_is_safe call,
+# which is once per atrium_backup_dir resolve — its two adopting arms are exclusive and
+# each calls the predicate at most once, so a memo that survived would deduplicate
+# nothing. What the `-z` guard still does is honour a value the CALLER preset.
+#
+# lib/ga-env.sh does warm its own flavour memo at load (from `uname -s`, not from this
+# probe), because ITS stat wrappers are the hot path. Here the hot caller is
+# hooks/lib/hook-utils.sh, which sources this file per hook invocation to resolve the
+# monitor port and never reads a mode — warming would move the fork onto that path and
+# buy the resolve nothing. Measure before copying the shape over.
 #
 # A `||` chain between the two SPELLINGS is NOT a platform branch, which is the trap
 # this exists to close: `-f` is a FORMAT flag on BSD but --file-system on GNU, so
@@ -482,10 +493,16 @@ _atrium_detect_stat_flavour() {
 }
 
 # Octal permission mode of $1, including the setuid/setgid/sticky nibble. Empty when it
-# cannot be read, which the caller treats as UNSAFE. BSD needs both halves spelled
-# (`%Lp` alone drops the sticky bit, the one bit this check needs most); GNU `%a`
-# already carries it and prints the nibble only when non-zero, so BSD returns 0700 where
-# GNU returns 700 — the same number to the caller's `8#` arithmetic.
+# cannot be read, which the caller treats as UNSAFE.
+#
+# The nibble is NOT what the decision reads: _atrium_path_is_safe tests the world-writable
+# bit alone, and sticky does not rescue an o+w directory (the reason is spelled there).
+# Both BSD halves are spelled so the two platforms print the SAME digits for the same
+# directory — GNU `%a` carries the nibble and prints it only when non-zero, while BSD
+# `%Lp` alone would drop it, so a sticky directory reads 1777 under `%OMp%OLp` and 1777
+# under GNU `%a`, where `%Lp` would report 777. A plain directory reads 0700 under BSD
+# against GNU's 700 — the same number to the caller's `8#` arithmetic either way.
+# Simplifying to `%Lp` would change the printed shape on one platform, not the verdict.
 _atrium_path_mode() {
   local path="$1" mode
   _atrium_detect_stat_flavour
@@ -503,8 +520,9 @@ _atrium_path_mode() {
 # invoking user AND not world-writable. Returns 0 when safe; a non-zero status names
 # WHICH rule declined, so the caller can report the one that actually fired instead of
 # a disjunction the operator has to re-derive against their own directory:
-#   1 = not owned by the invoking user, or the mode could not be read
+#   1 = not owned by the invoking user
 #   2 = world-writable
+#   3 = the mode could not be read
 # READ-ONLY — a `-O` test and one stat(1) read; nothing is created or changed, the same
 # constraint that governs the creatability probe above.
 #
@@ -512,12 +530,15 @@ _atrium_path_mode() {
 # destination is the operator's own; "could not tell" is not evidence. The asymmetry
 # is the point — a wrong decline is loud and closed by one command, a wrong adoption
 # writes the database somewhere a second local user can pre-place the dump's name.
+# It carries status 3 rather than sharing 1, for the same reason 1 and 2 are separate:
+# a host whose stat(1) cannot answer sends the operator to check an ownership that is
+# already right, which is the one thing the reason string exists to prevent.
 _atrium_path_is_safe() {
   local path="$1" mode dec
   [[ -O "${path}" ]] || return 1
   # shellcheck disable=SC2312  # the helper returns 0 on every path, echoing empty on failure
   mode="$(_atrium_path_mode "${path}")"
-  [[ "${mode}" =~ ^[0-7]+$ ]] || return 1
+  [[ "${mode}" =~ ^[0-7]+$ ]] || return 3
   dec=$((8#${mode}))
   # o+w is declined UNCONDITIONALLY — owning the directory does not rescue it and
   # neither does the sticky bit. Ownership restricts nobody from CREATING an entry in an
@@ -542,6 +563,8 @@ _atrium_unsafe_reason() {
   local rc="$1" subject="$2"
   if [[ "${rc}" -eq 2 ]]; then
     printf '%s is world-writable\n' "${subject}"
+  elif [[ "${rc}" -eq 3 ]]; then
+    printf '%s mode could not be read\n' "${subject}"
   else
     printf '%s is not owned by the invoking user\n' "${subject}"
   fi

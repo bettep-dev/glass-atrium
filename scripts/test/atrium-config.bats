@@ -670,6 +670,37 @@ backup_resolve() {
   }
 }
 
+@test "AC-C2(6i) an unreadable MODE declines under its own reason, not ownership" {
+  # The predicate's three statuses exist so the WARN names the rule that fired. This
+  # directory is owned by the runner and is not o+w, so both other rules pass and the
+  # only thing missing is the mode itself — reporting that as an ownership problem sends
+  # the operator to check the one thing already correct. A host reaches this with a
+  # stat(1) that cannot answer (a stripped image, a PATH without coreutils); the stub
+  # reproduces it without needing one.
+  mkdir -p -- "${WORK}/stub-bin" "${WORK}/owned-dir"
+  chmod 0700 "${WORK}/owned-dir"
+  printf '#!/bin/sh\nexit 1\n' >"${WORK}/stub-bin/stat"
+  chmod +x "${WORK}/stub-bin/stat"
+  [[ -O "${WORK}/owned-dir" ]] || skip "the fixture is not owned by this runner"
+  backup_fixture "${WORK}/owned-dir"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    PATH="${WORK}/stub-bin:${PATH}" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'an unreadable mode must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory mode could not be read"* ]] || {
+    printf 'the decline must name the unreadable mode; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" != *"not owned by the invoking user"* ]] || {
+    printf 'the decline must not blame an ownership the operator holds; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
 @test "AC-C2(6h) the canonicalizer TERMINATES on a relative operand" {
   # The resolver's shape arms keep a relative value away from the canonicalizer, so this
   # is about the helper's own contract rather than about that path: its walk shortens
