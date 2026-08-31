@@ -46,13 +46,15 @@ retired_residue'
 KIND_B_STEMS='perms
 rewire
 cfgkey
-tools_mirror'
+tools_mirror
+bkpdir'
 
 # One synthetic operand per registered stem, in stem order — the promotion the guard must catch.
 KIND_B_SYNTHETIC='perms_missing
 rewire_pending
 cfgkey_missing
-tools_mirror_drift'
+tools_mirror_drift
+bkpdir_default_dumps'
 
 KIND_B_PATTERN="$(printf '%s\n' "${KIND_B_STEMS}" | tr '\n' '|' | sed 's/|$//')"
 

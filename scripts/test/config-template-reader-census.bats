@@ -12,7 +12,7 @@
 #   AC2  no fossils         -> every census row names a key the template still declares
 #   AC3  reader integrity   -> a claimed reader file exists and still carries its anchor literal
 #   AC4  exemption integrity-> a readerless row carries a `G-<n>` backlog id, never a blank
-#   AC5  exemption scope    -> exactly one exemption, and it is [paths].backup_dir -> G-05
+#   AC5  exemption scope    -> no exemptions remain; every key names a real reader
 #
 # Anchor scope is the TEMPLATE file only: monitor test fixtures synthesize config.toml bodies of
 # their own, and pulling those into scope would red this suite on an unrelated file's fixture.
@@ -108,15 +108,19 @@ census_rows() {
   }
 }
 
-@test "AC5 exactly one exemption, and it is [paths].backup_dir -> G-05" {
+# The exemption column existed for keys the template exposed before anything read them.
+# The backlog cleared, so the population is now EMPTY — and staying empty is the property
+# worth pinning: a new readerless key must be wired, not parked behind a fresh backlog id.
+# AC4 above still governs the shape of an exemption if one is ever added back.
+@test "AC5 no exemptions remain: every template key names a real reader" {
   local exemptions=""
   while IFS='|' read -r section key reader _anchor exempt; do
     [[ -n "${section}" ]] || continue
     [[ -z "${reader}" ]] || continue
     exemptions="${exemptions}${exemptions:+, }${section}.${key}->${exempt}"
   done < <(census_rows)
-  [[ "${exemptions}" == "[paths].backup_dir->G-05" ]] || {
-    echo "exemption population is not the single planned row: '${exemptions}'" >&2
+  [[ -z "${exemptions}" ]] || {
+    echo "readerless census rows remain: '${exemptions}'" >&2
     return 1
   }
 }
