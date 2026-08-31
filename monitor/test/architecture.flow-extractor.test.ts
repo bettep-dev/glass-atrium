@@ -11,6 +11,7 @@ import {
   type ExtractedFlow,
 } from "../src/server/architecture/flow-extractor.js";
 import { CANONICAL_MAP, DIAGRAMS } from "../src/server/architecture/diagrams-source.js";
+import { getDiagramHeaderIndex } from "../src/server/architecture/content-budget.js";
 import {
   getArchitecture,
   resetArchitectureCache,
@@ -350,10 +351,10 @@ test("AC-B2-1c 교체된 `to_data` 경계 노드는 일곱 source 어디에도 �
   assert.deepEqual(survivors.map((d) => d.slug), []);
 });
 
-// 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음(budget 테스트와 같은 규칙, 파일별 자립).
-// 헤더가 첫 줄이라는 보장은 없음 — 소스가 한 줄 %%{init}%% 지시자를 앞세우면 그 다음 줄임.
+// 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음.
+// 헤더 탐색은 production 의 getDiagramHeaderIndex 하나를 씀 — 같은 정규식이 테스트에만 살아 있던 상태를 끝냄.
 function getHeaderIndex(mermaid: string): number {
-  const at = mermaid.split("\n").findIndex((line) => /^\s*(?:flowchart|graph)\s+\S+/i.test(line));
+  const at = getDiagramHeaderIndex(mermaid);
   assert.notEqual(at, -1, "canonical must carry a flowchart header");
   return at;
 }

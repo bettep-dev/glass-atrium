@@ -27,6 +27,7 @@ import {
   DIAGRAMS,
   DIAGRAMS_SOURCE_PATH,
 } from "./diagrams-source.js";
+import { isSupportedDiagramForm } from "./content-budget.js";
 
 // Minimal Pino-compatible logger — avoids Fastify dependency (same signature for test/standalone).
 export interface ParserLogger {
@@ -235,13 +236,26 @@ function buildSystemDiagrams(options: BuildDiagramsOptions): SystemDiagrams {
 
 // Per-diagram builder — extracts a single mermaid block into a SystemDiagram.
 // slug arg ensures DIAGRAMS slug matches frontend TAB_ORDER 1:1.
-function buildSingleDiagram(
+// Exported for the form-refusal test only: DIAGRAMS holds supported sources exclusively,
+// so the refusal branch below is unreachable through the module data.
+export function buildSingleDiagram(
   diagramId: string,
   title: string,
   description: string,
   mermaidSource: string,
   logger: ParserLogger,
 ): SystemDiagram | null {
+  // Form first, before extraction. On an unsupported form the extractor still yields a junk
+  // phantom node off the header line, so `nodes === 0 && edges === 0` below is FALSE and a
+  // diagram the counter cannot read would ship degraded rather than be skipped.
+  if (!isSupportedDiagramForm(mermaidSource)) {
+    logger.warn(
+      { diagramId, title },
+      "unsupported diagram form (no flowchart/graph header); skipped from /diagrams output",
+    );
+    return null;
+  }
+
   const extracted: ExtractedFlow = extractFlows(mermaidSource, {
     idPrefix: diagramId,
     edgeIdPrefix: diagramId,

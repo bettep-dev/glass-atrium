@@ -13,9 +13,14 @@ import { registerHealthDetailRoutes } from "../src/server/routes/health-detail.j
 import {
   BUDGET_CAPS,
   LABEL_CAP_EXEMPT_NODE_IDS,
+  type DetailGrade,
   getBudgetReport,
+  getDiagramHeaderIndex,
   getMermaidCensus,
+  isSupportedDiagramForm,
 } from "../src/server/architecture/content-budget.js";
+import { buildSingleDiagram } from "../src/server/architecture/parser.js";
+import { extractFlows } from "../src/server/architecture/flow-extractor.js";
 
 // T3 grade assignment for the canonical map — the budget test compares the declared value against it,
 // so raising `detail` to dodge a cap reddens here instead of silently widening the budget.
@@ -284,10 +289,10 @@ test("AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node
   assert.ok(body.note.length > 0);
 });
 
-// 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음(두 테스트 파일에 각자 두어 픽스처처럼 자립시킴).
-// 헤더가 첫 줄이라는 보장은 없음 — 소스가 한 줄 %%{init}%% 지시자를 앞세우면 그 다음 줄임.
+// 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음.
+// 헤더 탐색은 production 의 getDiagramHeaderIndex 하나를 씀 — 같은 정규식이 테스트에만 살아 있던 상태를 끝냄.
 function getHeaderIndex(mermaid: string): number {
-  const at = mermaid.split("\n").findIndex((line) => /^\s*(?:flowchart|graph)\s+\S+/i.test(line));
+  const at = getDiagramHeaderIndex(mermaid);
   assert.notEqual(at, -1, "canonical must carry a flowchart header");
   return at;
 }
@@ -322,4 +327,116 @@ test("AC-10 계수는 레이아웃 방향에 비의존 — 같은 canonical 콘�
   // 체크인된 방향의 실물도 같은 수치 — 방향을 바꿔도 예산 리포트 숫자는 고정임.
   assert.deepEqual(getMermaidCensus(drawn), censusLr);
   assert.deepEqual(getBudgetReport(drawn, ASSIGNED_GRADE), getBudgetReport(lr, ASSIGNED_GRADE));
+});
+
+// ----- B2-0 형태 게이트 -------------------------------------------------------
+// 두 결함을 함께 닫음: ① 계수기가 못 읽는 형태에서 리포트가 `pass` 를 냄(측정을 멈추고 초록을 반환).
+// ② 파서의 빈-추출 가드를 헤더 줄에서 나온 유령 노드가 통과시켜 열화된 그림이 그대로 나감.
+// 이 계획이 노드 예산을 지침으로 강등하기 때문에 더 중요함 — 강등된 예산은 무력화된 예산과 구별되어야 함.
+
+const SEQUENCE_FIXTURE = `sequenceDiagram
+    participant U as User
+    participant S as Server
+    U->>S: request
+    S-->>U: response`;
+
+/** 형태 지표만 뽑음 — 없으면 undefined 로 어서션이 붉어짐. */
+function getFormat(mermaid: string, grade: DetailGrade = ASSIGNED_GRADE) {
+  return getBudgetReport(mermaid, grade).measures.find((m) => m.metric === "diagram_format");
+}
+
+test("AC-B2-0a 계수기가 못 읽는 형태는 fail — 측정을 멈춘 채 초록으로 지나가지 않음", () => {
+  const report = getBudgetReport(SEQUENCE_FIXTURE, ASSIGNED_GRADE);
+  assert.equal(report.state, "fail");
+  assert.equal(getFormat(SEQUENCE_FIXTURE)?.state, "fail");
+  assert.ok(
+    report.violations.some((m) => m.metric === "diagram_format"),
+    "the violation must be nameable, not just a state",
+  );
+
+  // 이 게이트가 공허하지 않다는 근거를 값으로 남김 — 나머지 네 지표는 전부 pass 다.
+  // 즉 형태 지표가 없으면 이 리포트는 `pass` 였다(변경 전 실측 그대로).
+  assert.deepEqual(
+    report.measures.filter((m) => m.metric !== "diagram_format").map((m) => m.state),
+    ["pass", "pass", "pass", "pass"],
+  );
+});
+
+test("AC-B2-0b 파서는 미지원 형태를 경고와 함께 건너뜀 — 유령 노드로 가드를 통과하지 못함", () => {
+  // 결함의 실체: 헤더 줄이 노드 하나로 잡혀 빈-추출 가드(nodes 0 && edges 0)가 거짓이 됨.
+  // 형태를 먼저 거르지 않으면 이 소스는 SystemDiagram 으로 그려져 나감.
+  const probe = extractFlows(SEQUENCE_FIXTURE, {
+    idPrefix: "probe",
+    edgeIdPrefix: "probe",
+    logger: { warn: () => {}, info: () => {} },
+  });
+  assert.equal(
+    probe.nodes.length === 0 && probe.edges.length === 0,
+    false,
+    "the empty-extraction guard does not fire here — that is why the form check must precede it",
+  );
+
+  const warnings: string[] = [];
+  const logger = {
+    warn: (_obj: object, msg?: string) => {
+      warnings.push(msg ?? "");
+    },
+    info: () => {},
+  };
+  const built = buildSingleDiagram("seq", "Sequence", "desc", SEQUENCE_FIXTURE, logger);
+  assert.equal(built, null, "an unsupported form must not produce a SystemDiagram");
+  assert.ok(
+    warnings.some((w) => /unsupported diagram form/i.test(w)),
+    `the skip must be loud; warnings were: ${warnings.join(" | ")}`,
+  );
+});
+
+test("AC-B2-0c 게이트는 모든 것을 거부해서 만족되지 않음 — 출하되는 여덟 문자열 전부 통과", () => {
+  assert.equal(DIAGRAMS.length, 7, "the shipped corpus is seven sources");
+  for (const d of DIAGRAMS) {
+    assert.ok(isSupportedDiagramForm(d.mermaid_source), `shipped source '${d.slug}' is rejected by the form gate`);
+    assert.equal(getFormat(d.mermaid_source)?.state, "pass", `shipped source '${d.slug}' reports a format violation`);
+  }
+  // 여덟 번째 — 실제로 그려지는 문자열. 헤더 방향이 source 와 다름(TD vs LR)이라 따로 셈.
+  assert.ok(isSupportedDiagramForm(drawn), "the canonical drawn string is rejected by the form gate");
+  assert.equal(getBudgetReport(drawn, ASSIGNED_GRADE).state, "pass", "the canonical report must stay pass");
+});
+
+test("AC-B2-0d 형태 지표는 비율 밴드 밖 — 자기 생성자를 가짐", () => {
+  const getNodeLines = (n: number) => Array.from({ length: n }, (_, i) => `    n${i}["x"]`).join("\n");
+
+  // 대조군: 밴드를 타는 지표는 measured/cap = 1.0 에서 warn 이다.
+  const atCap = getBudgetReport(`flowchart LR\n${getNodeLines(caps.nodes)}`, ASSIGNED_GRADE);
+  assert.equal(atCap.measures.find((m) => m.metric === "nodes")?.state, "warn");
+
+  // 실험군 ①: 형태 지표도 지원 형태에서 비율이 정확히 1.0 인데 pass 다 → 밴드를 타지 않음.
+  // getMeasure 로 접으면 정상 다이어그램이 전부 영구 warn 이 되어 여기가 붉어짐.
+  const ok = atCap.measures.find((m) => m.metric === "diagram_format");
+  assert.ok(ok !== undefined, "the report must carry a diagram_format measure");
+  assert.equal(ok.measured / ok.cap, 1);
+  assert.equal(ok.state, "pass");
+
+  // 실험군 ②: 미지원 형태의 비율은 0.0 — 밴드가 판정했다면 `pass` 로 떨어졌을 값인데 fail 이다.
+  // 이 두 줄이 이 지표가 존재하는 이유이자, 접었을 때 붉어지는 다른 한쪽.
+  const bad = getFormat(SEQUENCE_FIXTURE);
+  assert.ok(bad !== undefined, "the report must carry a diagram_format measure");
+  assert.ok(bad.measured / bad.cap < 0.9, "the unsupported ratio sits inside the band's pass region");
+  assert.equal(bad.state, "fail");
+
+  // 밴드 밖이라는 사실이 출력 표면에도 실려야 함 — note 가 두 예외를 다 이름.
+  assert.match(getBudgetReport(drawn, ASSIGNED_GRADE).note, /subgraph_depth/);
+  assert.match(getBudgetReport(drawn, ASSIGNED_GRADE).note, /diagram_format/);
+});
+
+test("AC-B2-0 형태 게이트는 census 를 막지 않음 — 계수기는 그대로 열려 있음", () => {
+  // 명시적 제외: census 를 게이트하면 헤더 앞에 무엇이 오는 픽스처든 계수 불가가 되어
+  // frontmatter 펜스를 재는 P0-2 계열 AC 가 만족 불가능해짐.
+  const census = getMermaidCensus(SEQUENCE_FIXTURE);
+  assert.equal(census.nodeCount, 0);
+  assert.equal(census.edgeCount, 1, "the ARROW rule still counts the `-->>` token — the counter is unchanged");
+
+  // 펜스가 앞서도 형태 판정은 본문 헤더를 찾아 통과시키고, 계수도 정상 동작함.
+  assert.equal(isSupportedDiagramForm(FRONTMATTER_FIXTURE), true);
+  assert.ok(getMermaidCensus(FRONTMATTER_FIXTURE).nodeCount > 0);
+  assert.ok(getDiagramHeaderIndex(FRONTMATTER_FIXTURE) > 0, "the header is not the first line here");
 });
