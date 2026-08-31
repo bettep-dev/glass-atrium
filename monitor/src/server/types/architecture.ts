@@ -54,6 +54,10 @@ export interface ArchitectureLiveResponse {
 	stale: boolean;
 	diffs: ArchDriftDiff[];
 	governance: GovernanceMembershipStatus;
+	// Health part id -> drawn mermaid node ids (PART_NODE_BINDINGS) — the ring/table binding
+	// the client reads beside the per-daemon node_ids above. Static per build, carried here
+	// so one server table decides both surfaces.
+	part_bindings: Readonly<Record<string, readonly string[]>>;
 }
 
 // Base layer/node/edge types composing the /api/architecture/diagrams response.

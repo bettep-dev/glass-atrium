@@ -421,6 +421,21 @@ export const DAEMON_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> =
 	"daily-restart-wiki": ["cron"],
 };
 
+// 헬스 부품(health-model.js HEALTH_CARD_DEFS) → canonical drawn 노드 id (ADR-11).
+// 링과 표가 같은 명부를 읽게 하는 자리 — 부품 일곱 전원이 그려지는 노드를 가져야 하고
+// 빈 목록은 실패임 (ADR-14: 지배값은 예산이 아니라 부품 커버리지임).
+// DAEMON_NODE_BINDINGS 와 겹치는 데몬 넷은 그 표의 drawn 투영임 — 나머지 여섯 다이어그램에만 있는
+// 노드(`*_loop_self` · `*_ka` · `*_fc`)는 그려지지 않으므로 여기 실리지 않음 (ADR-19).
+export const PART_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> = {
+	pg: ["pg_db"],
+	browser: ["doc_export"],
+	"daemon-cycle": ["autoagent_d"],
+	"glass-atrium-wiki-curator": ["wiki_d"],
+	"daily-restart-autoagent": ["cron"],
+	"daily-restart-wiki": ["cron"],
+	"hook-chain": ["hook_pipeline"],
+};
+
 // 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
 // import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
 export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
