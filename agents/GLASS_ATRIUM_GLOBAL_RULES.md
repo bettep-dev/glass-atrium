@@ -114,23 +114,23 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ### Session-Start Continuity Header
 
 - `[CONTINUITY]` header activation contract (main session — `inject-session-context.sh` SessionStart hook inject): on turn-0 of every new session, if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action
-- cross-match listed slugs against current user request
-- matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
-- no match → treat as informational (do NOT auto-Read all — context budget)
-- header absence = no open progress files (silent — proceed normally)
+  - cross-match listed slugs against current user request
+  - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
+  - no match → treat as informational (do NOT auto-Read all — context budget)
+  - header absence = no open progress files (silent — proceed normally)
 
 ### Turn Budget & Graceful Exit [ALL]
 
 - Frontmatter `maxTurns` = **hard cap** (kills mid-tool-use)
-  - body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32)
-    - approaching ceiling → **STOP**, never push through
+- body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32)
+- approaching ceiling → **STOP**, never push through
 - **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`).
   - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
   - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
 - On approach: finish current write to valid state (no partial files)
-- log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
-- return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
-- **splitting > truncation** (next /loop tick resumes cleanly)
+  - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
+  - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
+  - **splitting > truncation** (next /loop tick resumes cleanly)
 - **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 #### Work-unit checkpoint dimension
