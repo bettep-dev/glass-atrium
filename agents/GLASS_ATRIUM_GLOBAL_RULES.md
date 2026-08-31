@@ -35,8 +35,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it.
   - Without shell access, report both texts and mark the relation **unverified** — never assert it.
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission)
-  - No API keys in handoff payloads
-  - Sensitive info in logs MUST be masked
+- No API keys in handoff payloads
+- Sensitive info in logs MUST be masked
 - **Output Contract**: Pre-define deliverable format and conditions for complex tasks
 
 ## Position Bias Mitigation [ALL]
@@ -114,23 +114,23 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ### Session-Start Continuity Header
 
 - `[CONTINUITY]` header activation contract (main session — `inject-session-context.sh` SessionStart hook inject): on turn-0 of every new session, if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action
-  - cross-match listed slugs against current user request
-  - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
-  - no match → treat as informational (do NOT auto-Read all — context budget)
+- cross-match listed slugs against current user request
+- matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
+- no match → treat as informational (do NOT auto-Read all — context budget)
 - header absence = no open progress files (silent — proceed normally)
 
 ### Turn Budget & Graceful Exit [ALL]
 
 - Frontmatter `maxTurns` = **hard cap** (kills mid-tool-use)
   - body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32)
-  - approaching ceiling → **STOP**, never push through
+    - approaching ceiling → **STOP**, never push through
 - **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`).
   - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
   - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
 - On approach: finish current write to valid state (no partial files)
-  - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
-  - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
-  - **splitting > truncation** (next /loop tick resumes cleanly)
+- log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
+- return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
+- **splitting > truncation** (next /loop tick resumes cleanly)
 - **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 #### Work-unit checkpoint dimension
@@ -151,8 +151,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
   - Never end a schema-mode turn on prose.
   - **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries; this rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
-  - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
-  - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
+    - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
+    - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
   - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema; this charter prescribes no cap of its own, so any cap rule restated here is drift.
   - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call — the StructuredOutput call still terminates the run (this does not violate the never-end-on-prose rule; the block turn precedes the final tool call).
   - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing); the RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
