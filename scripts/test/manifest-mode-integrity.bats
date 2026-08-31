@@ -269,6 +269,67 @@ require_install_sh() {
   [[ "${output}" == *"not a valid octal mode"* ]] || return 1
 }
 
+@test "install: file_mode_octal settles the stat flavour, so enforce completes on GNU (PATH shim)" {
+  require_install_sh
+  [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
+  # GNU-emulating stat shim, faithful to a MEASURED GNU coreutils run:
+  #   --version → exit 0 (what the discriminator keys on; BSD stat fails it)
+  #   -f        → --file-system on GNU, so the STATFS BLOCK lands on STDOUT and
+  #               the status is 1 only because '%Lp' is read as a missing PATH
+  #   -c '%a'   → the real mode, delegated to the runner's own BSD stat
+  # An exit-code-only `stat -f … || stat -c …` chain therefore concatenates the
+  # block and the mode into a six-line value. The resulting damage is SILENT,
+  # which is why this row asserts convergence rather than an exit code: the
+  # `$((8#…))` that reads it sits inside an `if` CONDITION, where `set -e` is
+  # suppressed, so the "invalid integer constant" error aborts nothing — the
+  # comparison merely reads FALSE, every row is taken for already-correct, and
+  # install exits 0 having converged nothing (verified: this row's assertions
+  # are what go red, not its `run -0`). Pins the discriminate-before-spelling
+  # contract on a macOS runner, the shape the update_file_mode_octal shim row
+  # below already uses.
+  make_install_fixture with-modes
+  local shim="${SANDBOX}/gnu-shim"
+  mkdir -p "${shim}"
+  cat >"${shim}/stat" <<'SHIM'
+#!/usr/bin/env bash
+last=""
+for a in "$@"; do last="${a}"; done
+case "$1" in
+  --version)
+    printf 'stat (GNU coreutils) 9.1\n'
+    exit 0
+    ;;
+  -f)
+    printf '  File: "%s"\n' "${last}"
+    printf '    ID: 0 Namelen: 255     Type: overlayfs\n'
+    printf 'Block size: 4096       Fundamental block size: 4096\n'
+    printf 'Blocks: Total: 1          Free: 1          Available: 1\n'
+    printf 'Inodes: Total: 1          Free: 1\n'
+    exit 1
+    ;;
+  -c)
+    exec /usr/bin/stat -f '%Lp' -- "${last}"
+    ;;
+esac
+exit 1
+SHIM
+  chmod 755 "${shim}/stat"
+  run -0 env PATH="${shim}:${PATH}" GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
+    GA_INSTALL_SRC_MANIFEST="${SRC_MANIFEST}" GA_INSTALL_SRC_BUNDLE="${SRC_BUNDLE}" \
+    "${GA}/install.sh"
+  local install_out="${output}"
+  # a SINGLE octal token was read for the known-mode file: the concatenated
+  # statfs-plus-mode value could never render as one
+  [[ "${install_out}" == *"mode applied: hooks/probe.sh 644 -> 755"* ]] || return 1
+  [[ "${install_out}" != *"Block size"* ]] || return 1
+  [[ "${install_out}" != *"invalid integer constant"* ]] || return 1
+  # enforce_manifest_modes ran to COMPLETION rather than aborting: the row
+  # converged and the run reached the no-run hint
+  [ -x "${GA_DIR_FIX}/hooks/probe.sh" ] || return 1
+  [ "$(mode_of "${GA_DIR_FIX}/hooks/probe.sh")" = "755" ] || return 1
+}
+
+
 # --- update.sh -------------------------------------------------------------
 
 @test "update: _update_agent_apply re-applies the manifest mode post-copy" {
