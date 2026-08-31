@@ -104,16 +104,6 @@ function getMapHealthEndpoints(payloadDaemon) {
 // 파생시킴: URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라져 한쪽만 고쳐지는 자리가 생김.
 const MAP_PAYLOAD_URL_INDEX = 3;
 
-// KPI 집계는 공용 모델에 위임 — 맵이 카드 목록을 다시 적지 않음.
-// 분모(정상 N/M 의 M)가 HEALTH_CARD_DEFS 를 따라 움직여야 정의가 늘거나 줄 때
-// 화면이 조용히 옛 총계를 들고 있지 않음 (F02 불변식의 화면 몫 · T14).
-// 모델 미적재 시 null — 가짜 0 을 그리는 대신 KPI 행 자체를 비움.
-function getMapHealthKpis(states) {
-	const model = window.HealthModel;
-	if (!model || typeof model.computeOverviewKpis !== "function") return null;
-	return model.computeOverviewKpis(states);
-}
-
 // 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
 // 여기 없으므로 확장 컨트롤도 서지 않음: 빈 영역을 여는 버튼은 읽을 것이 있다고 거짓말함.
 const HEALTH_ROW_DETAILS = {

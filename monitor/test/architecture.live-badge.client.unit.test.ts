@@ -64,13 +64,6 @@ interface MapHealthStates {
   hookState: FetchState;
   hookFailState: FetchState;
 }
-interface OverviewKpis {
-  okCount: number | string;
-  degradedCount: number | string;
-  infoCount: number | string;
-  staleCount: number | string;
-  totalCount: number | string;
-}
 interface HealthCardDef {
   id: string;
   kind: string;
@@ -87,14 +80,11 @@ interface RowDetailRenderers {
 }
 interface HealthModelGlobal {
   HEALTH_CARD_DEFS: HealthCardDef[];
-  computeOverviewKpis: (states: MapHealthStates) => OverviewKpis;
 }
 
 interface ArchHelpers {
   // 맵이 흡수한 health 엔드포인트 표(ADR-B1 R2) — health.jsx:42-47 의 5종.
   getMapHealthEndpoints: (payloadDaemon: string) => string[];
-  // KPI 집계 위임 — 맵은 카드 목록을 다시 적지 않고 window.HealthModel 에 넘김.
-  getMapHealthKpis: (states: MapHealthStates) => OverviewKpis | null;
   // T11: hook-chain 응답을 이벤트 → matcher → 훅 줄로 접는 순수 fold.
   getHookChainRows: (state: FetchState | null | undefined) => HookChainRow[] | null;
   buildLiveDaemonsByNodeId: (
@@ -189,7 +179,6 @@ function loadArchWithoutHealthModel(code: string): Record<string, unknown> {
 async function loadArch(): Promise<{
   helpers: ArchHelpers;
   code: string;
-  healthModel: HealthModelGlobal;
   rowDetails: RowDetailRenderers;
 }> {
   const built = await esbuild.build({
@@ -234,11 +223,6 @@ async function loadArch(): Promise<{
     "getMapHealthEndpoints must be reachable (T7 fetch-table instrument)",
   );
   assert.strictEqual(
-    typeof h.getMapHealthKpis,
-    "function",
-    "getMapHealthKpis must be reachable (T7 KPI instrument)",
-  );
-  assert.strictEqual(
     typeof h.getRowDetailId,
     "function",
     "getRowDetailId must be reachable (T8 aria-controls instrument)",
@@ -266,10 +250,10 @@ async function loadArch(): Promise<{
     healthModel && Array.isArray(healthModel.HEALTH_CARD_DEFS),
     "window.HealthModel must carry the card definitions the map's KPI denominator reads",
   );
-  return { helpers: h, code, healthModel, rowDetails };
+  return { helpers: h, code, rowDetails };
 }
 
-const { helpers: arch, code: archCode, healthModel, rowDetails } = await loadArch();
+const { helpers: arch, code: archCode, rowDetails } = await loadArch();
 
 // 기본값은 서버가 임계 미만에서 내는 모양 — 판정이 마지막 상태와 같음.
 // 초과 구간은 `effective_status` 를 명시해 덮어씀.
@@ -526,74 +510,10 @@ test("T7 a daemon name carrying a space is encoded before the URL leaves the scr
   );
 });
 
-// 카드 7종이 모두 ready 로 떨어지는 상태 묶음 — 분모가 정의 목록 길이와 같아지는 조건.
-// daemonState 가 ready 면 daemon 카드는 명부에 없어도 info tone 으로 ready 임.
-function getAllReadyHealthStates(): MapHealthStates {
-  return {
-    daemonState: { status: "ready", data: { daemons: [] }, error: null },
-    pgState: {
-      status: "ready",
-      data: { status: "ok", db: "open", browser: "ok" },
-      error: null,
-    },
-    hookState: { status: "ready", data: { events: [{ hook: "x" }] }, error: null },
-    hookFailState: {
-      status: "ready",
-      data: { count_24h: 0, unretried_count_24h: 0 },
-      error: null,
-    },
-  };
-}
-
-test("T7 the KPI denominator equals the health card definition count, not a map-local literal", () => {
-  const kpis = arch.getMapHealthKpis(getAllReadyHealthStates());
-  assert.ok(kpis, "KPI fold must resolve while window.HealthModel is loaded");
-  assert.strictEqual(kpis.totalCount, healthModel.HEALTH_CARD_DEFS.length);
-  // 분모 = ok + degraded + info (F02 불변식의 화면 몫).
-  assert.strictEqual(
-    Number(kpis.okCount) + Number(kpis.degradedCount) + Number(kpis.infoCount),
-    kpis.totalCount,
-  );
-});
-
-// RED 확보 기구 — `HEALTH_CARD_DEFS` 는 동결되지 않은 채 참조로 내보내지므로 픽스처가
-// 변형했다 복원할 수 있음. 맵이 목록 길이를 자기 파일에 다시 적었다면 이 단언이 붉어짐.
-// T14 가 쓸 기구를 여기서 먼저 세움 (§6 T14 행의 '의도적 파괴' 경로와 같은 기구).
-test("T7 shrinking the shared definition list shrinks the map's KPI denominator", () => {
-  const defs = healthModel.HEALTH_CARD_DEFS;
-  const full = defs.length;
-  const removed = defs.splice(1, 3);
-  try {
-    assert.strictEqual(removed.length, 3, "fixture precondition: three defs removed");
-    const kpis = arch.getMapHealthKpis(getAllReadyHealthStates());
-    assert.ok(kpis);
-    assert.strictEqual(
-      kpis.totalCount,
-      full - 3,
-      "denominator must follow HEALTH_CARD_DEFS — a map-local count would stay at the old total",
-    );
-    assert.strictEqual(kpis.totalCount, defs.length);
-  } finally {
-    // 복원 — 뒤 테스트가 온전한 목록을 보게 함. splice 반환분을 원래 자리에 되꽂음.
-    defs.splice(1, 0, ...removed);
-    assert.strictEqual(defs.length, full, "definition list must be restored");
-  }
-});
-
-test("T7 an empty definition list yields an empty denominator, never a stale total", () => {
-  const defs = healthModel.HEALTH_CARD_DEFS;
-  const backup = defs.slice();
-  defs.splice(0, defs.length);
-  try {
-    const kpis = arch.getMapHealthKpis(getAllReadyHealthStates());
-    assert.ok(kpis);
-    assert.strictEqual(kpis.totalCount, 0);
-    assert.strictEqual(kpis.okCount, 0);
-  } finally {
-    defs.splice(0, 0, ...backup);
-    assert.strictEqual(defs.length, backup.length, "definition list must be restored");
-  }
-});
+// T7 의 KPI 세 절은 맵이 분모를 HEALTH_CARD_DEFS 에 위임하는지를 쟀음. 그 위임층(맵의
+// KPI 대리 함수와 모델의 집계 fold)이 함께 접히면서 분모는 표의 행 수가 됐고, 그 사실은
+// AC-B2-4b(merged-surface e2e)가 화면에서 직접 잼. 죽은 이름은 제거 원장이 따로 지킴.
+// 픽스처도 그 셋만 쓰던 것이라 함께 걷음.
 
 // --- T11: the hook chain fold and the row renderer that consumes it -------
 

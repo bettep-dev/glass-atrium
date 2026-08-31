@@ -65,6 +65,13 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "MAP_STRIP_CARD_IDS", kind: "identifier", ac: "AC-B2-6d" },
   { name: "arch-health-strip", kind: "attribute", ac: "AC-B2-6d" },
   { name: "data-health-fact", kind: "attribute", ac: "AC-B2-6d" },
+
+  // B2-6b 가 지운 KPI 집계 — 스트립이 사라지면서 그 셈을 그리는 자리가 없어졌음. 화면 몫의
+  // 분모는 이제 표의 행 수이고(AC-B2-4b), 카드 tone 버킷의 분할 불변식은 health-model 단위
+  // 시험이 resolveCardFacts 에서 직접 잼. 남은 것은 아무도 부르지 않는 세 이름뿐이었음.
+  { name: "computeOverviewKpis", kind: "identifier", ac: "AC-B2-6b" },
+  { name: "EMPTY_OVERVIEW_KPIS", kind: "identifier", ac: "AC-B2-6b" },
+  { name: "getMapHealthKpis", kind: "identifier", ac: "AC-B2-6b" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -87,6 +94,8 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   { name: "LiveStrip", kind: "identifier", ac: "AC-B2-6d" },
   { name: "arch-queue-error", kind: "attribute", ac: "AC-B2-6d" },
   { name: "arch-live-strip", kind: "attribute", ac: "AC-B2-6d" },
+  // KPI 가 읽던 카드 fold — 집계가 접힌 뒤 tone 버킷 불변식이 서는 자리가 바로 여기임.
+  { name: "resolveCardFacts", kind: "identifier", ac: "AC-B2-6b" },
 ];
 
 // 경계 문자 집합 — 식별자와 CSS 이름이 서로 다름. 하이픈이 갈림길임.

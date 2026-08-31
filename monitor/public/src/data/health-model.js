@@ -82,35 +82,6 @@ function resolveCardFacts(def, states) {
   return resolver(def, states);
 }
 
-const EMPTY_OVERVIEW_KPIS = {
-  okCount: '—', degradedCount: '—', infoCount: '—', staleCount: '—', totalCount: '—',
-};
-
-// KPI 집계 — 카드 facts 와 동일 출처 fold (KPI 와 카드 tone 분기 불일치 차단).
-// ready 카드만 분모 (loading/error 가짜 0 금지) · info 버킷 = info+neutral 명시 귀속.
-// 불변식: okCount + degradedCount + infoCount === totalCount === ready 카드 수.
-function computeOverviewKpis(states) {
-  if (states.daemonState.status !== 'ready') return EMPTY_OVERVIEW_KPIS;
-
-  let okCount = 0;
-  let degradedCount = 0;
-  let infoCount = 0;
-  let staleCount = 0;
-  let totalCount = 0;
-  for (const def of HEALTH_CARD_DEFS) {
-    const facts = resolveCardFacts(def, states);
-    if (facts.status !== 'ready') continue;
-
-    totalCount += 1;
-    if (facts.tone === 'ok') okCount += 1;
-    else if (facts.tone === 'warn' || facts.tone === 'crit') degradedCount += 1;
-    else infoCount += 1;
-    if (facts.isStale) staleCount += 1;
-  }
-
-  return { okCount, degradedCount, infoCount, staleCount, totalCount };
-}
-
 // daemon_run_payload jsonb 키 → 표시 라벨 (P18) — 동적/write-only 키라 하드코딩 맵 없이 humanize.
 // snake/kebab/camel → 공백 분리 후 첫 글자만 대문자 (키 원형 보존, 과도 변형 금지).
 function humanizePayloadKey(key) {
@@ -153,7 +124,6 @@ window.HealthModel = {
   isDaemonStale,
   resolveDaemonDisplayMeta,
   resolveCardFacts,
-  computeOverviewKpis,
   humanizePayloadKey,
   formatPayloadValue,
   toPayloadRows,
