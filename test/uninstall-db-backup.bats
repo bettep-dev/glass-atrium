@@ -167,12 +167,10 @@ STUB
 
 # --- creation mask (CWE-732) --------------------------------------------------
 
-# Octal permission bits of $1. BSD and GNU stat spell this differently AND their
-# flags collide (`-f` is a format on BSD, --file-system on GNU), so each errors out
-# on the other platform and the `||` chain IS the branch.
-mode_of() {
-  stat -f '%Lp' -- "$1" 2>/dev/null || stat -c '%a' -- "$1" 2>/dev/null
-}
+# mode_of — SHARED, because that `||` chain between the two stat SPELLINGS was never a
+# platform branch: on GNU it read a statfs block as a mode and reddened this assertion
+# and its two siblings together. See test/lib/stat-mode.bash.
+load 'lib/stat-mode'
 
 @test "AC-C7 pre-drop dumps and the dir created for them are owner-only (0700 / 0600)" {
   local dump dir_mode dump_mode
@@ -197,6 +195,39 @@ mode_of() {
   dump_mode="$(mode_of "${dump}")"
   [[ "${dump_mode}" == "600" ]] || {
     echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+}
+
+@test "AC-C7 the creation mask is RESTORED when drop_databases returns" {
+  local probe="${SANDBOX}/post-drop-probe" mode
+  # The 077 scope is process-global, and drop_databases is called from the uninstall
+  # engine mid-run: a leaked mask silently makes every file the REST of the uninstall
+  # creates owner-only. Deleting the restore line keeps every other assertion green, so
+  # the probe is a file created after the call in the SAME shell — the only thing that
+  # can tell the two states apart.
+  run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
+    GA_DB_BACKUP_DIR="${BACKUPS}" PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c '
+      set -Eeuo pipefail
+      umask 022
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      DRY_RUN=false
+      drop_databases
+      : >"$2"
+    ' _ "${GA}" "${probe}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  [[ -f "${probe}" ]] || {
+    echo "the post-call probe was never created; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${probe}")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-call creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
     return 1
   }
 }

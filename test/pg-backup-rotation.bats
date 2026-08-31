@@ -208,12 +208,10 @@ run_backup_with() {
 # a 077 mask around the two creating steps so a directory it creates is 0700 and
 # the dump inside it 0600.
 
-# Octal permission bits of $1. BSD and GNU stat spell this differently AND their
-# flags collide (`-f` is a format on BSD, --file-system on GNU), so each errors out
-# on the other platform and the `||` chain IS the branch.
-mode_of() {
-  stat -f '%Lp' -- "$1" 2>/dev/null || stat -c '%a' -- "$1" 2>/dev/null
-}
+# mode_of — SHARED, because that `||` chain between the two stat SPELLINGS was never a
+# platform branch: on GNU it read a statfs block as a mode and reddened this assertion
+# and its two siblings together. See test/lib/stat-mode.bash.
+load 'lib/stat-mode'
 
 @test "AC-C7 a backup dir and dump this script CREATES are owner-only (0700 / 0600)" {
   local fresh="${SANDBOX}/fresh-dumps" dump dir_mode dump_mode default_mode
@@ -248,6 +246,47 @@ mode_of() {
   default_mode="$(mode_of "${BACKUP_DIR}")"
   [[ "${default_mode}" == "755" ]] || {
     echo "the pre-existing dir was re-moded to ${default_mode}; the mask must not chmod" >&2
+    return 1
+  }
+}
+
+@test "AC-C7 the creation mask is RESTORED before rotation" {
+  local trash_file mode
+  # Nothing downstream of the 077 scope creates a file on its own — rotation only MOVES,
+  # and a real `mv` PRESERVES the source mode, so the mask in effect there is invisible
+  # and deleting the restore line keeps every suite green. A stub that RE-CREATES the
+  # destination by redirection is what makes it observable, and observable is the whole
+  # point: the mask is process-global, so a leaked 077 governs every later step this
+  # script grows.
+  cat >"${FAKE_BIN}/mv" <<'STUB'
+#!/usr/bin/env bash
+set -u
+cat -- "$1" >"$2" || exit 1
+rm -f -- "$1"
+STUB
+  chmod +x "${FAKE_BIN}/mv"
+  # No backup_dir key: the default location under this sandbox HOME, silently.
+  printf '[paths]\n' >"${SANDBOX}/config.toml"
+  # Exactly one over the window, so rotation runs and moves exactly one dump.
+  seed_nightly "${RETAIN_COUNT}"
+
+  run env -u GA_DATA_ROOT -u GA_ROOT -u GA_DB_BACKUP_DIR \
+    HOME="${FAKE_HOME}" PATH="${FAKE_BIN}:${PATH}" \
+    ATRIUM_CONFIG_TOML="${SANDBOX}/config.toml" \
+    ATRIUM_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh" \
+    bash -c 'umask 022; exec bash "$1"' _ "${REAL_SCRIPT}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "script exit ${status}: ${output}" >&2
+    return 1
+  }
+  trash_file="$(find "${TRASH_DIR}" -maxdepth 1 -type f -name 'glass_atrium-*.dump.*' | head -n 1)"
+  [[ -n "${trash_file}" ]] || {
+    echo "nothing was rotated, so the post-scope mask was never exercised; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${trash_file}")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-rotation creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
     return 1
   }
 }

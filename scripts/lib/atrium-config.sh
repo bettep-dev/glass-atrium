@@ -296,7 +296,7 @@ atrium_resolve_haiku_model() {
 #   4 a value nobody acted on               | absent   | >0            | default + WARN
 #   5 relative, empty, or not a directory   | -        | any           | default + WARN
 #   6 unsafe: dot segment, foreign owner,   | any      | any           | default + WARN
-#     or world-writable without sticky      |          |               |
+#     or world-writable                     |          |               |
 #
 # Case 5 is reported by THREE surfaces that have to agree: this WARN, the reconciler's
 # report and doctor §24 each classify a DECLARED-but-empty value as a misconfiguration
@@ -309,7 +309,12 @@ atrium_resolve_haiku_model() {
 # a file at the name the dump will open. The resolver therefore RESOLVES the value
 # (every probe below follows symlinks, so an unresolved value would guard a different
 # inode than the one the write sites open) and then requires the directory it would
-# write to be owned by the invoking user and not world-writable without the sticky bit.
+# write to be owned by the invoking user and not world-writable. The sticky bit does
+# NOT rescue an o+w directory and neither does owning it: sticky stops one local user
+# REPLACING another's entry, while PRE-CREATING the dump's predictable name is exactly
+# what this attack needs, and `pg_dump -f` opens that name non-exclusively (O_TRUNC,
+# symlinks followed). macOS ships neither protected_regular nor protected_symlinks, so
+# there is no second line of defence behind this one.
 # Every check is read-only: a `-O` test, a stat(1) read and a `cd -P`, nothing created.
 # RECOVERY is one command: an operator who genuinely wants a location under a
 # foreign-owned parent creates the directory themselves, at which point the existence
@@ -393,6 +398,16 @@ _atrium_parent_dir() {
 # run first and this is reached only after they pass.
 _atrium_path_canonicalize() {
   local path="$1" head="$1" tail="" resolved
+  # The caller contract above is also this loop's TERMINATION condition, so it is
+  # enforced rather than assumed: the walk shortens `head` with `${head%/*}`, which is a
+  # NO-OP on a value holding no slash, and a relative operand therefore spins forever
+  # rather than failing. Echoing the value back keeps the helper total (it returns 0 on
+  # every input) and leaves a relative value looking exactly as unresolved as the shape
+  # arms already treat it.
+  if [[ "${path}" != /* ]]; then
+    printf '%s\n' "${path}"
+    return 0
+  fi
   while [[ "${head}" != "/" && ! -d "${head}" ]]; do
     tail="${head##*/}${tail:+/}${tail}"
     head="${head%/*}"
@@ -444,22 +459,54 @@ atrium_canonical_config_path() {
   _atrium_path_canonicalize "${value}"
 }
 
-# Octal permission mode of $1, four digits including the setuid/setgid/sticky nibble.
-# Empty when it cannot be read. BSD and GNU stat spell this differently AND their
-# flags collide (`-f` is a format string on BSD and --file-system on GNU), so each
-# errors out on the other platform and the `||` chain IS the platform branch.
-# BSD `%Lp` alone drops the sticky bit, which is the one bit this check needs most.
+# Whether stat(1) is GNU coreutils. Resolved ONCE per shell into a memo, the shape
+# lib/ga-env.sh already uses for its own stat wrappers.
+#
+# A `||` chain between the two SPELLINGS is NOT a platform branch, which is the trap
+# this exists to close: `-f` is a FORMAT flag on BSD but --file-system on GNU, so
+# `stat -f '%OMp%OLp' -- /path` on GNU reads the STATFS block of /path, prints those
+# five lines to STDOUT, and exits non-zero only because '%OMp%OLp' is not a file. The
+# fallback then appends the GNU mode, the caller receives a multi-line value no octal
+# guard can accept, and every configured backup_dir is declined on Linux under a reason
+# naming ownership. `stat --version` succeeds on GNU and fails on BSD, so it settles the
+# flavour BEFORE either spelling is attempted.
+__ATRIUM_STAT_IS_GNU="${__ATRIUM_STAT_IS_GNU:-}"
+_atrium_detect_stat_flavour() {
+  if [[ -z "${__ATRIUM_STAT_IS_GNU}" ]]; then
+    if stat --version >/dev/null 2>&1; then
+      __ATRIUM_STAT_IS_GNU=1
+    else
+      __ATRIUM_STAT_IS_GNU=0
+    fi
+  fi
+}
+
+# Octal permission mode of $1, including the setuid/setgid/sticky nibble. Empty when it
+# cannot be read, which the caller treats as UNSAFE. BSD needs both halves spelled
+# (`%Lp` alone drops the sticky bit, the one bit this check needs most); GNU `%a`
+# already carries it and prints the nibble only when non-zero, so BSD returns 0700 where
+# GNU returns 700 — the same number to the caller's `8#` arithmetic.
 _atrium_path_mode() {
   local path="$1" mode
-  # GA-ABSORB[benign]: the || chain IS the BSD/GNU platform branch — each spelling errors on the other platform, and an unreadable mode is a valid empty answer the caller treats as UNSAFE
-  mode="$(stat -f '%OMp%OLp' -- "${path}" 2>/dev/null || stat -c '%a' -- "${path}" 2>/dev/null || true)"
+  _atrium_detect_stat_flavour
+  if [[ "${__ATRIUM_STAT_IS_GNU}" == "1" ]]; then
+    # GA-ABSORB[handled@_atrium_path_is_safe octal guard]: an unreadable mode is a valid empty answer — the caller's ^[0-7]+$ guard rejects it and declines the path
+    mode="$(stat -c '%a' -- "${path}" 2>/dev/null || true)"
+  else
+    # GA-ABSORB[handled@_atrium_path_is_safe octal guard]: same — "could not tell" is not evidence of safety, so empty declines
+    mode="$(stat -f '%OMp%OLp' -- "${path}" 2>/dev/null || true)"
+  fi
   printf '%s\n' "${mode}"
 }
 
 # Adoption safety predicate for an EXISTING path (CWE-59/CWE-377): owned by the
-# invoking user AND not world-writable unless the sticky bit is set. Returns 0 when
-# safe. READ-ONLY — a `-O` test and one stat(1) read; nothing is created or changed,
-# which is the same constraint that governs the creatability probe above.
+# invoking user AND not world-writable. Returns 0 when safe; a non-zero status names
+# WHICH rule declined, so the caller can report the one that actually fired instead of
+# a disjunction the operator has to re-derive against their own directory:
+#   1 = not owned by the invoking user, or the mode could not be read
+#   2 = world-writable
+# READ-ONLY — a `-O` test and one stat(1) read; nothing is created or changed, the same
+# constraint that governs the creatability probe above.
 #
 # An UNREADABLE mode counts as UNSAFE. Adoption needs positive evidence that the
 # destination is the operator's own; "could not tell" is not evidence. The asymmetry
@@ -472,13 +519,32 @@ _atrium_path_is_safe() {
   mode="$(_atrium_path_mode "${path}")"
   [[ "${mode}" =~ ^[0-7]+$ ]] || return 1
   dec=$((8#${mode}))
-  # o+w without the sticky bit: any local user can replace an entry here. Sticky
-  # (the /tmp shape) still admits creating names, so it is not sufficient on its own
-  # — it only matters alongside the ownership test above, never instead of it.
-  if ((dec & 2)) && ! ((dec & 512)); then
-    return 1
+  # o+w is declined UNCONDITIONALLY — owning the directory does not rescue it and
+  # neither does the sticky bit. Ownership restricts nobody from CREATING an entry in an
+  # o+w directory, and sticky only stops one local user REPLACING another's entry, while
+  # pre-creating the dump's predictable name as one's own 0666 file or symlink is
+  # precisely the move: `pg_dump -f` then O_TRUNCs it (or follows the link) rather than
+  # opening exclusively, and the whole database lands somewhere attacker-readable. macOS
+  # has neither protected_regular nor protected_symlinks. No legitimate backup directory
+  # is world-writable, so this costs no real install anything.
+  if ((dec & 2)); then
+    return 2
   fi
   return 0
+}
+
+# The decline reason for a non-zero _atrium_path_is_safe status. Spelled ONCE so the two
+# adopting arms cannot drift into describing the same status differently — and so the
+# message names the rule that actually fired: reporting "not owned" for a directory the
+# operator does own sends them to check the one thing that is already correct.
+# Args: $1 = that status · $2 = subject ('directory' or 'parent directory').
+_atrium_unsafe_reason() {
+  local rc="$1" subject="$2"
+  if [[ "${rc}" -eq 2 ]]; then
+    printf '%s is world-writable\n' "${subject}"
+  else
+    printf '%s is not owned by the invoking user\n' "${subject}"
+  fi
 }
 
 # Whether the config file DECLARES a key at all, distinct from declaring it empty.
@@ -528,7 +594,7 @@ _atrium_backup_dir_warn() {
 # Precedence: exported GA_DB_BACKUP_DIR → [paths].backup_dir when the adoption rule
 # admits it → the default location. Always echoes a path and returns 0.
 atrium_backup_dir() {
-  local default_dir configured canonical default_dumps cand_dumps reason=""
+  local default_dir configured canonical default_dumps cand_dumps reason="" safe_rc
 
   # 1. explicit seam — the caller's own override (sandbox, test, one-off restore).
   #    It names a destination the caller is acting on RIGHT NOW, which is the state
@@ -590,22 +656,28 @@ atrium_backup_dir() {
     # shellcheck disable=SC2312  # the canonicalizer returns 0 on every path, echoing the input on failure
     canonical="$(_atrium_path_canonicalize "${configured}")"
     if [[ -d "${canonical}" ]]; then
-      if _atrium_path_is_safe "${canonical}"; then
+      safe_rc=0
+      _atrium_path_is_safe "${canonical}" || safe_rc=$?
+      if [[ "${safe_rc}" -eq 0 ]]; then
         printf '%s\n' "${canonical}" # case 2 — the destination is real, safe and in use
         return 0
       fi
-      reason="directory is not owned by the invoking user, or is world-writable without the sticky bit"
+      # shellcheck disable=SC2312  # the helper returns 0 on every status it is given
+      reason="$(_atrium_unsafe_reason "${safe_rc}" 'directory')"
     elif [[ -e "${canonical}" ]]; then
       reason="exists but is not a directory"
     elif _atrium_dir_is_creatable "${canonical}" && [[ "${default_dumps}" -eq 0 ]]; then
       # The ONLY arm that leads to a directory being created, so it is the only one
       # where the PARENT's ownership decides who could have pre-placed the name.
-      # shellcheck disable=SC2312  # the helper returns 0 on every path
-      if _atrium_path_is_safe "$(_atrium_parent_dir "${canonical}")"; then
+      safe_rc=0
+      # shellcheck disable=SC2312  # the parent helper returns 0 on every path
+      _atrium_path_is_safe "$(_atrium_parent_dir "${canonical}")" || safe_rc=$?
+      if [[ "${safe_rc}" -eq 0 ]]; then
         printf '%s\n' "${canonical}" # case 3 — creatable, safe, and no dumps are left behind
         return 0
       fi
-      reason="parent directory is not owned by the invoking user, or is world-writable without the sticky bit"
+      # shellcheck disable=SC2312  # the helper returns 0 on every status it is given
+      reason="$(_atrium_unsafe_reason "${safe_rc}" 'parent directory')"
     elif [[ "${default_dumps}" -ne 0 ]]; then
       reason="directory absent while the default location already holds dumps"
     else

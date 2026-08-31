@@ -225,3 +225,36 @@ warn_total_of_output() {
     return 1
   }
 }
+
+@test "AC7 canonical comparison: a symlinked declaration and a symlinked default emit no row" {
+  # Both §24 comparisons are canonical, and on macOS both are exercised for free — `mktemp -d`
+  # hands back /var/... for /private/var/..., so every fixture path here already traverses a
+  # symlink. Linux has no such link, and canonicalizing these roots would retire the accident on
+  # macOS too: a raw comparison would then pass the whole suite while firing both rows on every
+  # install whose backup path crosses a symlink. Each arm below builds its own link, so each
+  # comparison is pinned deliberately and on both platforms.
+
+  # (a) the DECLARED value is a link to the location the resolver adopts.
+  ln -sfn "${DEFAULT_DIR}" "${SANDBOX}/link-to-default"
+  seed_dump "${DEFAULT_DIR}"
+  seed_config "${SANDBOX}/link-to-default"
+  run_doctor_sandbox
+  assert_row_count 0 || return 1
+
+  # (b) the DEFAULT location is reached through a link while the resolver adopts its target,
+  #     which is the relocation row rather than the unreconciled one.
+  ln -sfn "${SANDBOX}/data" "${SANDBOX}/data-link"
+  seed_config "${DEFAULT_DIR}"
+  run env -u GA_DB_BACKUP_DIR \
+    GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
+    GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
+    GA_DATA_ROOT="${SANDBOX}/data-link" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$2"
+      run_doctor
+    ' _ "${GA}" "${GA_SANDBOX}"
+  assert_row_count 0 || return 1
+}

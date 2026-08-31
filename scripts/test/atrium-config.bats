@@ -568,7 +568,7 @@ backup_resolve() {
   }
 }
 
-@test "AC-C2(6c) a world-writable non-sticky PARENT is declined (creatable arm)" {
+@test "AC-C2(6c) a world-writable PARENT is declined (creatable arm)" {
   # The creatable arm is the only one that leads to a directory being created, so the
   # parent decides who could have pre-placed the dump's name there.
   mkdir -p -- "${WORK}/open-parent"
@@ -579,8 +579,8 @@ backup_resolve() {
     printf 'a world-writable parent must not be adopted; got %s\n' "${output}" >&2
     return 1
   }
-  [[ "${stderr}" == *"parent directory is not owned"* ]] || {
-    printf 'the decline must name the parent reason; got %s\n' "${stderr}" >&2
+  [[ "${stderr}" == *"parent directory is world-writable"* ]] || {
+    printf 'the decline must name the world-writable parent, not ownership; got %s\n' "${stderr}" >&2
     return 1
   }
   [[ ! -e "${WORK}/open-parent/dumps" ]] || {
@@ -589,7 +589,7 @@ backup_resolve() {
   }
 }
 
-@test "AC-C2(6d) a world-writable non-sticky EXISTING destination is declined" {
+@test "AC-C2(6d) a world-writable EXISTING destination is declined" {
   mkdir -p -- "${WORK}/open-dir"
   chmod 0777 "${WORK}/open-dir"
   backup_fixture "${WORK}/open-dir"
@@ -598,16 +598,17 @@ backup_resolve() {
     printf 'a 0777 destination must not be adopted; got %s\n' "${output}" >&2
     return 1
   }
-  [[ "${stderr}" == *"directory is not owned"* ]] || {
-    printf 'the decline must name the destination reason; got %s\n' "${stderr}" >&2
+  [[ "${stderr}" == *"directory is world-writable"* ]] || {
+    printf 'the decline must name world-writability, not ownership; got %s\n' "${stderr}" >&2
     return 1
   }
 }
 
 @test "AC-C2(6e) the sticky bit alone does not admit a FOREIGN-owned parent" {
   # A genuine owner mismatch, constructible without root: /tmp is root-owned and 1777
-  # on both platforms this runs on. Sticky stops one local user REPLACING another's
-  # entry, not creating a name first, so ownership is the test that has to hold.
+  # on both platforms this runs on. Both rules decline it, and the ORDER is what this
+  # pins: ownership is judged first, so the operator is told the thing they cannot fix
+  # by chmod. 6g covers the same 1777 mode under an owner who CAN.
   # Nothing is created here — the resolver declines, and its probes are read-only.
   [[ ! -O /tmp ]] || skip "this runner owns /tmp, so no owner mismatch is available"
   backup_fixture "/tmp/atrium-config-bats-never-created"
@@ -642,6 +643,64 @@ backup_resolve() {
   }
   [[ "${stderr}" == *"not an absolute path"* ]] || {
     printf 'the decline must keep the relative reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6g) a directory the invoking user OWNS at 1777 is still declined" {
+  # The gap 6d and 6e leave between them: 6d's 0777 dir and this one differ only in the
+  # sticky bit, and 6e's 1777 dir differs only in its owner. Owning a directory does not
+  # restrict who may CREATE an entry in it while it is o+w, and sticky only stops one
+  # local user REPLACING another's — so any local account can pre-place the dump's
+  # predictable name as its own 0666 file or symlink, and `pg_dump -f` O_TRUNCs it (or
+  # follows the link) rather than opening exclusively. The whole database then lands
+  # somewhere attacker-readable, and macOS has no protected_regular to catch it.
+  mkdir -p -- "${WORK}/owned-sticky-open"
+  chmod 1777 "${WORK}/owned-sticky-open"
+  [[ -O "${WORK}/owned-sticky-open" ]] || skip "the fixture is not owned by this runner"
+  backup_fixture "${WORK}/owned-sticky-open"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a user-owned 1777 destination must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory is world-writable"* ]] || {
+    printf 'the decline must name world-writability; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6h) the canonicalizer TERMINATES on a relative operand" {
+  # The resolver's shape arms keep a relative value away from the canonicalizer, so this
+  # is about the helper's own contract rather than about that path: its walk shortens
+  # `head` with \${head%/*}, a NO-OP on a value holding no slash, and a relative operand
+  # therefore spun forever instead of failing. A future caller reaching it directly would
+  # hang the nightly job with nothing on stderr, which is why it is pinned here and not
+  # left to the callers that happen to guard it today.
+  #
+  # WATCHDOG, not `timeout`: macOS ships no timeout(1), so the probe runs in the
+  # background and is polled — a regression fails in ~5s instead of hanging CI.
+  local pid waited=0
+  bash -c 'source "$1"; _atrium_path_canonicalize "relative/dir"' _ "${REAL_LIB}" \
+    >"${WORK}/canon-out" 2>&1 &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -9 "${pid}" 2>/dev/null || true
+    printf 'the canonicalizer did not terminate on a relative operand\n' >&2
+    return 1
+  fi
+  wait "${pid}" || {
+    printf 'the canonicalizer exited non-zero: %s\n' "$(cat "${WORK}/canon-out")" >&2
+    return 1
+  }
+  # Echoed back verbatim: it is not a path this helper resolves, and resolving it
+  # against the current directory is exactly the rescue AC-C2(6f) forbids.
+  [[ "$(cat "${WORK}/canon-out")" == "relative/dir" ]] || {
+    printf 'want the operand echoed back, got %s\n' "$(cat "${WORK}/canon-out")" >&2
     return 1
   }
 }

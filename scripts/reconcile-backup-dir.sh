@@ -96,6 +96,12 @@ declare -F atrium_backup_dir >/dev/null \
   || die "${EXIT_NO_LIB}" "atrium_backup_dir not defined by ${CONFIG_LIB}"
 declare -F atrium_config_has_key >/dev/null \
   || die "${EXIT_NO_LIB}" "atrium_config_has_key not defined by ${CONFIG_LIB}"
+# Guarded for the same reason as the two above and NOT optional to it: add_location and
+# every report line below call this, so through the ATRIUM_CONFIG_LIB seam an older or
+# stubbed library reaches them and dies "command not found" — the generic shell failure
+# this whole block exists to convert into a named exit the wrapper can branch on.
+declare -F atrium_canonical_config_path >/dev/null \
+  || die "${EXIT_NO_LIB}" "atrium_canonical_config_path not defined by ${CONFIG_LIB}"
 
 # add_location <dir> — append to LOCATIONS unless already present (bash 3.2 has no sets).
 # Presence is judged on the CANONICAL form while the RAW spelling is what gets stored:

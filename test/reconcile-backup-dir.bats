@@ -214,6 +214,73 @@ assert_untouched() {
   assert_untouched "${before}"
 }
 
+@test "AC-C9(5) a SYMLINKED declaration the resolver honours is not reported as a mismatch" {
+  local before
+  # The canonical comparison has a deliberate link here because otherwise it is pinned
+  # only by an accident of the platform: macOS `mktemp -d` hands back /var/... for
+  # /private/var/..., so every fixture path already traverses a symlink and the compare
+  # is exercised for free. Linux has no such link, and canonicalizing these roots would
+  # retire it on macOS too — at which point a raw comparison passes the whole suite while
+  # calling every symlinked-but-honoured install unreconciled.
+  mkdir -p -- "${ELSEWHERE}"
+  ln -sfn "${ELSEWHERE}" "${WORK}/link-to-elsewhere"
+  seed_dumps "${ELSEWHERE}" 2
+  write_config "${WORK}/link-to-elsewhere"
+  before="$(tree_snapshot)"
+
+  run_reconcile
+  [[ "${status}" -eq 0 ]] || {
+    echo "a honoured symlinked declaration must reconcile; rc=${status}, out=${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"nothing to reconcile"* ]] || {
+    echo "no reconciled line for the symlinked declaration; out=${output}" >&2
+    return 1
+  }
+  # The link's own spelling must not surface as a SECOND location holding the same dumps.
+  [[ "${output}" != *"MISMATCH"* ]] || {
+    echo "the link and its target were counted as two locations; out=${output}" >&2
+    return 1
+  }
+  assert_untouched "${before}"
+}
+
+@test "AC-C9(6) a library without atrium_canonical_config_path dies with the named exit" {
+  # The seam lets an OLDER library reach this script, and every report line below the
+  # guard calls this function — so an unguarded absence surfaces as `command not found`
+  # from wherever the ERR trap happens to fire, which is the generic shell failure the
+  # loud-precondition block exists to convert into a code the wrapper can branch on.
+  local stub="${WORK}/stub-lib.sh"
+  cat >"${stub}" <<'STUB'
+atrium_backup_dir() { printf '%s
+' "/dev/null/never"; }
+atrium_config_has_key() { return 1; }
+atrium_backup_dir_default() { printf '%s
+' "/dev/null/never"; }
+atrium_backup_dump_count() { printf '0
+'; }
+atrium_toml_get() { printf '
+'; }
+STUB
+  write_config "${ELSEWHERE}"
+
+  run --separate-stderr env -u GA_DB_BACKUP_DIR -u GA_ROOT \
+    ATRIUM_CONFIG_LIB="${stub}" \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash "${SCRIPT}"
+
+  # 4 is EXIT_NO_LIB — the same code the two sibling guards use, never a bare 1 and never
+  # the 127 an unguarded call would produce.
+  [[ "${status}" -eq 4 ]] || {
+    echo "expected EXIT_NO_LIB (4), got ${status}; out=${output} err=${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"atrium_canonical_config_path"* ]] || {
+    echo "the failure must name the missing function; err=${stderr}" >&2
+    return 1
+  }
+}
+
 @test "the reconciler's code contains no filesystem-mutating command" {
   local hits
   # A second net beside the per-shape snapshots: those cover the branches they exercise,
