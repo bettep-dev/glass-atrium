@@ -108,8 +108,23 @@
 # `glass-atrium wire-hooks`; no rollback of applied files) · 14 release asset
 # fetch/derivation failed BEFORE apply (manifest or bundle HTTP download failed,
 # or the manifest carries no .version to derive the bundle name — nothing was
-# applied). A commit callback returns a plain non-zero on failure and its caller
-# maps that to the named code above.
+# applied) · 15 post-apply `prisma migrate deploy` failed (files APPLIED but the
+# database schema was NOT migrated — run `glass-atrium db-setup`; no rollback of
+# applied files). A commit callback returns a plain non-zero on failure and its
+# caller maps that to the named code above. Code 13 is RETIRED (it belonged to
+# the deleted vendor-removal sweep) and is deliberately not reused, so an old log
+# line reading `exit=13` never resolves to a live cause.
+#
+# Post-apply schema parity: the file apply ships the new prisma/migrations
+# directories but applies none of them, so an install that only ever ran
+# `glass-atrium update` sat on "new code + old schema" until somebody ran
+# `glass-atrium db-setup` by hand. update_migrate_deploy_post_apply now applies
+# PENDING migrations between the apply and the monitor restart (named exit 15 on
+# failure, never a silent skip, never a rollback of the applied files). It no-ops —
+# loudly, naming the remedy — under GA_SKIP_DB_SETUP, with no migrations directory,
+# and on a monitor whose node_modules were never installed (a recoverable state
+# `npm ci` self-heals, not a broken one worth failing an update over).
+# `glass-atrium doctor` §21 reports any migration left pending.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -128,7 +143,9 @@
 # (<GA root>/rendered/launchd) · ATRIUM_UPDATE_MONITOR_DIR ·
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
-# ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base).
+# ATRIUM_UPDATE_CLAUDE_BIN · ATRIUM_UPDATE_PRISMA (the monitor's prisma CLI) ·
+# AUTOAGENT_BACKUP_DIR (agents-bak base). GA_SKIP_DB_SETUP (the shared install /
+# doctor DB opt-out) additionally skips the post-apply migrate step.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -2019,6 +2036,104 @@ update_wire_hooks_post_apply() {
 }
 
 # ---------------------------------------------------------------------------
+# Post-apply Prisma migration deploy — schema parity with the applied code
+# ---------------------------------------------------------------------------
+#
+# The apply above ships the new server code AND the new prisma/migrations
+# directories, but applied none of them: an install that only ever ran
+# `glass-atrium update` sat on "new code + old schema" until somebody ran
+# `glass-atrium db-setup` by hand, and nothing told them to. Observed shape (the
+# monitor.model_config key rename): the Model Config screen rendered the
+# daemon-cycle model as an empty "custom…", the per-call cap as a stale
+# placeholder, and a sync badge reading "in sync" over nothing.
+#
+# Fix: apply PENDING migrations HERE — after the verified apply has landed and
+# BEFORE the post-step rebuilds/restarts the monitor — so the restarted server
+# never runs over a schema older than its own code.
+#
+# NOT db-setup: `glass-atrium db-setup` is the interactive FIRST-INSTALL path
+# (createdb + .env render + prisma generate + deploy, via
+# monitor/scripts/oss-db-setup.sh). This step is only its narrow tail —
+# `prisma migrate deploy`, which is non-interactive, needs no shadow database,
+# applies PENDING migrations only, and no-ops when none are pending, so a repeat
+# run costs nothing.
+#
+# Resolution mirrors that script's step 5 rather than re-deriving it: run from the
+# monitor root so prisma.config.ts is the config in scope, and let ITS
+# `dotenv/config` + env("DATABASE_URL") supply the connection string (Prisma 7
+# does not auto-load .env). The URL is never read, reconstructed, echoed or
+# logged here — no credential enters this process (core-security.md). The CLI is
+# the monitor's OWN installed binary rather than `npx prisma`: npx silently
+# reaches the registry when node_modules is absent, which inside an updater is a
+# hang rather than a diagnosis.
+#
+# LOUD-FAIL (Precondition Loud-Fail Principle): an unresolvable prisma CLI, an
+# unreachable database, or a failing migration all exit with the NAMED code 15
+# carrying the cause and the recovery. No `|| true`, no `2>/dev/null` — prisma's
+# own stderr IS the diagnosis and flows through untouched.
+#
+# It does NOT roll back the applied files (the exit-11 / exit-12 post-apply
+# precedent: a post-apply step reports its OWN failure and never unwinds the
+# apply). Deliberate here beyond precedent — the shipped code carries legacy read
+# paths for exactly this window, so "new code + old schema" is survivable while a
+# half-reverted install is not. In headless mode update_cleanup marks the
+# update_job row failed with the exit code, so the post-step status reflects it.
+#
+# Scope is the APPLIED path only. The "already up to date" early return changed no
+# file, so it ships no new migration, and gating an up-to-date run on a reachable
+# database would fail a run with nothing to do. A migration left pending by a
+# FAILED run of this step is therefore NOT retried by a later no-op update —
+# `glass-atrium doctor` §21 is the surface that keeps it visible, naming the count
+# and the remedy.
+#
+# Three documented no-ops, all loud, none an absorption:
+#   * GA_SKIP_DB_SETUP — the same opt-out setup_database (lib/ga-db.sh) and doctor
+#     §21 honour, so a sandbox/CI run never touches machine-global PostgreSQL.
+#   * no prisma/migrations directory under the monitor root — nothing to apply.
+#   * no monitor node_modules at all — the dependencies were never installed here.
+#     That is a DEGRADED but recoverable install, not a broken one: `npm ci` is this
+#     project's documented self-heal for it (lib/ga-core.sh and lib/ga-tui-run.sh both
+#     run it before the monitor build) and uninstall deliberately REMOVES node_modules
+#     as a regenerable artifact. Hard-failing here would brick `glass-atrium update` on
+#     every machine sitting in that state — including one mid-reinstall — while the
+#     migrations directory itself ships with the release, so the state is reached by
+#     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
+#     override bypasses the branch: naming a binary means use it.
+update_migrate_deploy_post_apply() {
+  local root monitor_dir prisma_bin rc=0
+  root="$(update_ga_root)"
+  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
+  prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
+
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    update_log "migrate: SKIPPED (GA_SKIP_DB_SETUP set) — pending migrations stay pending; apply with '${root}/glass-atrium db-setup'"
+    return 0
+  fi
+  if [[ ! -d "${monitor_dir}/prisma/migrations" ]]; then
+    update_log "migrate: no migrations directory under ${monitor_dir} — nothing to apply"
+    return 0
+  fi
+  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+    update_log "migrate: SKIPPED — monitor dependencies not installed (${monitor_dir}/node_modules absent); PENDING migrations stay pending. Run 'npm ci' in ${monitor_dir}, then '${root}/glass-atrium db-setup'; '${root}/glass-atrium doctor' reports what is still pending"
+    return 0
+  fi
+  # node_modules IS present (or a binary was named outright) and the CLI still is not
+  # there — that is a broken install rather than an uninstalled one, so it loud-fails.
+  if [[ ! -x "${prisma_bin}" ]]; then
+    update_die_code 15 "prisma CLI missing or not executable (${prisma_bin}) — update files APPLIED but PENDING migrations were NOT applied; reinstall the monitor dependencies (npm ci in ${monitor_dir}), then run '${root}/glass-atrium db-setup'"
+  fi
+
+  update_log "migrate: applying pending Prisma migrations (${monitor_dir})"
+  # Heartbeat first: a long migration must not look like a stalled headless job.
+  update_heartbeat
+  (cd -- "${monitor_dir}" && "${prisma_bin}" migrate deploy) || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'"
+  fi
+  update_log "migrate: pending Prisma migrations applied"
+}
+
+# ---------------------------------------------------------------------------
 # P3 — headless update_job DB tracking (psql; daemon-apply.sh idiom)
 # ---------------------------------------------------------------------------
 #
@@ -3498,6 +3613,13 @@ update_run() {
   # Runs AFTER the verified apply + farm refresh so the atomic-restore/rollback
   # contract is intact and the hook files the bindings point at already exist.
   update_wire_hooks_post_apply
+
+  # Step 9 — apply PENDING Prisma migrations. Position is load-bearing: AFTER the
+  # verified file apply (so the new migration directories are on disk) and BEFORE
+  # update_finalize_success rebuilds/restarts the monitor (so the restarted server
+  # never runs over an older schema). Loud-fails with the named code 15 and leaves
+  # the applied files in place — see update_migrate_deploy_post_apply.
+  update_migrate_deploy_post_apply
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
   # refresh) then mark the update_job row completed. Interactive mode no-ops both.
