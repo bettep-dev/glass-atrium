@@ -77,7 +77,7 @@ class DedupProposal:
     source_slugs: list[str]     # slugs to merge IN (will become redirects)
     similarity_score: float     # heuristic score [0.0, 1.0]
     llm_verdict: str            # 'duplicate' | 'not-duplicate' | 'skipped' | 'error:<msg>'
-    llm_rationale: str          # Haiku's one-sentence rationale
+    llm_rationale: str          # verifier's one-sentence rationale
     suggested_action: str       # human-readable merge instruction
     cluster_hash: str           # deterministic ID for idempotency
 
@@ -428,7 +428,7 @@ def _call_haiku_dedup(
             env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
         )
     except subprocess.TimeoutExpired:
-        return "error:haiku-timeout", "Haiku call timed out", "either"
+        return "error:haiku-timeout", "dedup verifier call timed out", "either"
     except FileNotFoundError:
         return f"error:claude-cli-missing:{claude_bin}", "claude CLI not found", "either"
 
@@ -612,7 +612,7 @@ def _main(argv: list[str]) -> int:
     parser.add_argument("--notes-dir", type=Path, default=None,
                         help="Override wiki/notes/ path (for testing)")
     parser.add_argument("--skip-llm", action="store_true",
-                        help="Skip Haiku calls (dry-run / test mode)")
+                        help="Skip LLM verifier calls (dry-run / test mode)")
     parser.add_argument("--max-llm-calls", type=int, default=MAX_LLM_CALLS)
     parser.add_argument("--out-json", type=Path, default=None,
                         help="Append dedup_proposals key to this JSON file")
