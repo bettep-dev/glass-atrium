@@ -13,22 +13,37 @@
 --
 -- VALUE POLICY, stated because the two keys are deliberately NOT treated alike:
 --   * MODEL — an operator's saved non-haiku choice is carried forward verbatim;
---     a haiku id (including the stale init_squashed 'claude-haiku-4-5' seed) is
---     REWRITTEN to 'claude-sonnet-5'. Carrying a haiku id forward would rename the
---     key while leaving the loop running on the retired model, which is the one
---     outcome this migration exists to prevent.
+--     ANY haiku id is REWRITTEN to 'claude-sonnet-5'. Carrying a haiku id forward
+--     would rename the key while leaving the loop running on the retired model,
+--     which is the one outcome this migration exists to prevent. The detection is a
+--     SUBSTRING match, not a prefix: the family name sits in the middle of the
+--     API-style ids ('claude-3-5-haiku-20241022', 'claude-3-5-haiku-latest'), which
+--     monitor-side FREE_TEXT_MODEL_PATTERN accepts and REJECTED_ALIAS_VALUES does
+--     not block, so a prefix test would let exactly those through. Twin of
+--     model-config-consts.ts isRetiredWorkerModelId, which applies the same rule on
+--     the daemon-config.json carry-forward path.
 --   * BUDGET — carried forward VERBATIM, always. A per-call cap is a spending
 --     decision that belongs to the operator; a rename must not move it. The
 --     ceiling's adequacy under the more expensive model is a separate, explicit
 --     decision and is deliberately NOT made here.
 --
--- Rollback: INSERT the two old keys back from the new ones and DELETE the new rows.
+-- Rollback, stated with what it does NOT recover: re-INSERTing the two old keys from
+-- the new ones and DELETEing the new rows restores the KEY NAMES, and restores the
+-- BUDGET value exactly (it moves verbatim in both directions). It does NOT restore a
+-- REWRITTEN model id — the haiku -> 'claude-sonnet-5' rewrite is lossy, so the rolled-back
+-- 'model.daemon_cycle_haiku' would read 'claude-sonnet-5', not whatever haiku id was
+-- there before. Nor is it a clean inverse on a DB that carried neither source row: the
+-- floor INSERT below creates the new rows from literals, and rolling those back would
+-- materialize old keys that never existed on that install. Recovering the original model
+-- id requires a backup taken before this migration ran.
 
 INSERT INTO "monitor"."model_config" ("config_key", "config_value", "updated_by")
 SELECT
     'model.daemon_cycle_worker',
     CASE
-        WHEN "config_value" LIKE 'claude-haiku%' OR "config_value" = 'haiku'
+        -- Substring, not a prefix: see the VALUE POLICY note above. Subsumes the bare
+        -- 'haiku' alias, so no separate equality arm is needed.
+        WHEN "config_value" LIKE '%haiku%'
             THEN 'claude-sonnet-5'
         ELSE "config_value"
     END,
