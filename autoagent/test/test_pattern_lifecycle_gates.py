@@ -15,7 +15,13 @@ gates before any Haiku spend. Covered here:
 (2) staleness skip — the pattern's live rate recomputed from a rolling
     outcomes window (poisoned rows excluded inside ``read_outcomes_since``)
     below the aggregator's emit threshold → skipped this cycle with a logged
-    reason (``eval_result='stale-pattern-skip'``), no lifecycle transition.
+    reason (``eval_result='stale-pattern-skip'``), no lifecycle transition;
+(2b) unknown-family fallback — the live-rate recompute covers two label families
+    and the aggregator emits more, so a family it does not know used to fail open
+    SILENTLY and forever. Now: no aggregator re-observation inside the window →
+    snoozed (``eval_result='stale-unobserved-skip'``); re-observed recently →
+    still kept, but LOUD (``eval_result='stale-gate-unknown-family'``). Both are
+    snoozes — neither writes a lifecycle transition.
 Terminal protection: a 'rejected' learning_log row can never resurrect to
 'identified' (state-machine pin), so a snoozed row generates no proposal on
 any later cycle.
@@ -69,6 +75,16 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 _LEGACY_LABEL = "에이전트 지침 개선 후보 (실패율 )"
 _LEGACY_PROPOSAL_LABEL = "에이전트 지침 개선 후보 (실패율 62%)"
 _PROBE_AGENT = "ap4-snooze-probe-agent"
+
+
+def _today_iso() -> str:
+    """Today as the intake carries it (core.learning_log.discovered_date).
+
+    Computed, never a literal: the re-observation branch compares against
+    ``date.today()``, so a hardcoded date would silently cross the window as the
+    suite ages and flip a fail-open test into a snooze test.
+    """
+    return date.today().isoformat()
 
 
 def _pattern(
@@ -433,11 +449,77 @@ class TestDropStalePatterns(_GateFixture):
         self.assertEqual(kept, [])
         self.assertIn("live sample 1 < 3", stderr_text)
 
-    def test_when_label_family_unknown_then_fail_open(self) -> None:
+    def test_when_label_family_unknown_but_recently_observed_then_fail_open(
+        self,
+    ) -> None:
+        # Fail-open is PRESERVED on the branch where it is still the right answer:
+        # the family is unrecomputable but the row was re-observed today, so
+        # nothing has gone quiet and suppressing it would be suppression on
+        # ignorance. The date is what moves this row off the re-observation
+        # branch — _pattern's default (2026-06-01) is deliberately ancient.
         pattern = _pattern(label="some future pattern family")
+        pattern = dc.Pattern(**{**vars(pattern), "date": _today_iso()})
         kept, _ = self._drop([], [pattern])
 
         self.assertEqual(kept, [pattern])
+
+    def test_when_label_family_unknown_then_fail_open_is_loud(self) -> None:
+        # The defect: the fail-open above was SILENT, so a family the gate cannot
+        # recompute produced no signal anywhere — and covering_apply_count counts
+        # applies, never re-observations, so the repeat-apply cap could not tell a
+        # dead pattern from a live one. Keeping is still correct; keeping quietly
+        # is not.
+        pattern = _pattern(label="some future pattern family")
+        pattern = dc.Pattern(**{**vars(pattern), "date": _today_iso()})
+        kept, stderr_text = self._drop([], [pattern])
+
+        self.assertEqual(kept, [pattern])
+        self.assertEqual(self._event_results(), [dc.STALE_UNKNOWN_FAMILY_EVAL])
+        self.assertIn("fail-open", stderr_text)
+
+    def test_when_unknown_family_not_reobserved_then_skipped(self) -> None:
+        # The gap itself: before this branch existed, an unknown family fell
+        # through to a silent keep FOREVER, so a pattern whose evidence stopped
+        # arriving could never be dropped. _pattern's default date is months old
+        # and no live-rate recompute covers this label.
+        pattern = _pattern(label="size-est under-estimate concentration (avg overrun)")
+        kept, stderr_text = self._drop([], [pattern])
+
+        self.assertEqual(kept, [])
+        self.assertEqual(self._event_results(), [dc.STALE_UNOBSERVED_EVAL])
+        self.assertIn("no aggregator re-observation", stderr_text)
+
+    def test_when_unknown_family_skipped_then_no_lifecycle_transition(self) -> None:
+        # Snooze, not terminalization. The re-observation signal reads a column
+        # named discovered_date for a last-observed meaning; if a future change
+        # stops refreshing it, every unknown-family row looks unobserved. A
+        # terminal transition would make that mistake permanent — a snooze
+        # re-arms on the next re-observation.
+        pattern = _pattern(label="size-est under-estimate concentration (avg overrun)")
+        self._drop([], [pattern])
+
+        self.assertEqual(self.transitions, [])
+
+    def test_when_unknown_family_date_unreadable_then_fail_open(self) -> None:
+        # A date we cannot parse is not evidence of silence. Fail OPEN, loudly —
+        # never snooze a pattern on an unreadable timestamp.
+        pattern = _pattern(label="some future pattern family")
+        pattern = dc.Pattern(**{**vars(pattern), "date": "not-a-date"})
+        kept, _ = self._drop([], [pattern])
+
+        self.assertEqual(kept, [pattern])
+        self.assertEqual(self._event_results(), [dc.STALE_UNKNOWN_FAMILY_EVAL])
+
+    def test_when_known_family_stale_then_token_stays_distinct(self) -> None:
+        # The three tokens must not collapse into one: an operator reading the
+        # eval_result distribution has to separate "recomputed and dropped" from
+        # "unobserved and dropped" from "kept unchecked". _pattern's default date
+        # is also stale here, so a re-observation check that ran on EVERY family
+        # would steal this row and emit the wrong token.
+        kept, _ = self._drop(["done"] * 10 + ["fail"], [_pattern(label=_LEGACY_LABEL)])
+
+        self.assertEqual(kept, [])
+        self.assertEqual(self._event_results(), ["stale-pattern-skip"])
 
     def test_when_pg_unavailable_then_fail_open(self) -> None:
         pattern = _pattern(label=_LEGACY_LABEL)
