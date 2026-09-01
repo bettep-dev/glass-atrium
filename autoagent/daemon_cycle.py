@@ -8380,13 +8380,25 @@ def _reobservation_reason(pattern_date: str, today: date) -> str:
 
     Signal = core.learning_log.discovered_date, carried on Pattern.date and already
     in hand at intake (no extra read, no projection widening). Despite the column
-    NAME it is a LAST-OBSERVED date: the aggregator UPSERT
-    (_pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL) sets
-    ``discovered_date = EXCLUDED.discovered_date`` on every re-emit, and a pattern
-    that is not re-emitted is not UPSERTed at all. The row's only other writers are
-    the reject / discharge TERMINAL transitions, which remove it from intake — so a
-    row reaching this gate at status='identified' can only have been dated by an
-    aggregator re-emit.
+    NAME it is a LAST-OBSERVED date. Every writer of the column, in full — the
+    enumeration is the claim, so an incomplete one is worth nothing:
+
+      1. _pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL — the live aggregator
+         path (learning-aggregator.py passes discovered_date=today). Sets
+         ``discovered_date = EXCLUDED.discovered_date`` on conflict, so every
+         re-emit restamps the row to today; a pattern that is not re-emitted is
+         not UPSERTed at all.
+      2. _pg_outcome_dualwrite._LEARNING_LOG_UPSERT_SQL — same refresh on
+         conflict. DORMANT today: its only producer (track-outcome.sh) emits
+         ``learning_hint: null``, so it writes nothing until that is wired. It
+         omitted the refresh until the fix that added this enumeration, which is
+         exactly the divergence this list exists to make visible.
+      3. _LEARNING_LOG_REJECT_SQL and 4. _LEARNING_LOG_DISCHARGE_SQL — the
+         TERMINAL transitions. Neither touches discovered_date, and both remove
+         the row from intake.
+
+    So a row reaching this gate at status='identified' carries the date of its
+    last aggregator re-observation, from writer 1 or (once wired) writer 2.
 
     Unparseable / empty date → '' (fail-OPEN — never snooze on a date we cannot
     read). SNOOZE, never a terminal transition: a future change that stopped
