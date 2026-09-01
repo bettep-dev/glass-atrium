@@ -14,8 +14,8 @@ invariants:
     missing key / non-string value / empty-string value) falls back per-key
     WITHOUT raising — a partially-valid file still contributes its good keys;
 (3) the ``_comment`` documentation key is ignored (never leaks into output);
-(4) the values are STRINGS preserving the trailing zero ('0.50', not 0.5) —
-    the CLI consumes the decimal as-is, so a float re-serialize would drift;
+(4) the values are STRINGS in 2-decimal form ('10.00', not 10 or 10.0) — the
+    CLI consumes the decimal as-is, so a float re-serialize would drift;
 (5) the module-level constants (WORKER_MAX_BUDGET_USD / PRE_VERIFY_MAX_BUDGET_USD
     / WORKER_MODEL) — the names the daemon binds to — equal the loaded values.
 
@@ -34,6 +34,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -251,6 +252,57 @@ class WorkerModelFallbackTest(unittest.TestCase):
             }
         )
         self.assertEqual(dc.load_daemon_config(path=path)["worker_model"], "claude-opus-4-8")
+
+
+class BudgetFloorTest(unittest.TestCase):
+    """The absent-config budget floor.
+
+    The rest of this module asserts degradation branches AGAINST ``_FALLBACK``,
+    which means the floor VALUE itself was pinned by nothing — it could drift to
+    any string and every other test here would stay green. These pin it.
+    """
+
+    _EXPECTED_FLOOR = "10.00"
+    _BUDGET_KEYS = ("worker_max_budget_usd", "pre_verify_max_budget_usd")
+
+    def test_floor_is_the_expected_value(self) -> None:
+        for key in self._BUDGET_KEYS:
+            self.assertEqual(dc._FALLBACK[key], self._EXPECTED_FLOOR, key)
+
+    def test_floor_is_two_decimal_string_form(self) -> None:
+        # Passed verbatim to `claude -p --max-budget-usd`; the monitor validates
+        # the same shape (BUDGET_VALUE_PATTERN). '10' or a float 10.0 would drift.
+        for key in self._BUDGET_KEYS:
+            value = dc._FALLBACK[key]
+            self.assertIsInstance(value, str, key)
+            self.assertRegex(value, r"^\d+\.\d{2}$", key)
+
+    def test_floor_clears_the_cli_exit_1_threshold(self) -> None:
+        # Below ~0.05 the CLI exits 1 immediately, whatever the model.
+        for key in self._BUDGET_KEYS:
+            self.assertGreaterEqual(float(dc._FALLBACK[key]), 0.05, key)
+
+    def test_floor_matches_the_shipped_db_seed(self) -> None:
+        # The floor's stated rationale is PARITY WITH THE DB SEED, so check it
+        # against the seed rather than restating the number in prose. Raising one
+        # side without the other re-opens the pre-Save/post-Save split this closes.
+        migrations = (
+            Path(dc.__file__).resolve().parents[1] / "monitor" / "prisma" / "migrations"
+        )
+        seeded = {
+            value
+            for sql in migrations.glob("*/migration.sql")
+            for key, value in re.findall(
+                r"\('(budget\.[a-z_]+)',\s*'([0-9]+\.[0-9]{2})'", sql.read_text(encoding="utf-8")
+            )
+        }
+        self.assertTrue(seeded, "no budget seed literal found in any migration")
+        self.assertEqual(
+            seeded,
+            {self._EXPECTED_FLOOR},
+            f"DB budget seeds {sorted(seeded)} disagree with the in-code floor "
+            f"{self._EXPECTED_FLOOR} — the two must move together",
+        )
 
 
 class LegacyKeyCompatTest(unittest.TestCase):

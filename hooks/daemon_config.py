@@ -54,17 +54,27 @@ CONFIG_PATH = Path(
     or str(ga_paths.get_data_root() / "daemon-config.json")
 )
 
-# Defensive fallback literals. The budget floors mirror the validated ceiling so a
-# missing/unreadable config file preserves budget behavior exactly.
-# 0.10 is too low (triggers immediate CLI exit 1); 0.50 is the validated ceiling.
-# NOTE: '0.50' here is the absent-file safety floor (used only when daemon-config.json
-#   is missing/unreadable), NOT the shipped DB default — the monitor.model_config seed
-#   defaults budget.worker_max_usd / budget.pre_verify_max_usd to '10.00'. A fresh
-#   install runs on this floor only until the first monitor Save writes the config file.
+# Defensive fallback literals, used ONLY when daemon-config.json is missing or
+# unreadable — i.e. on a fresh install, until the first monitor Save writes the file.
+#
+# BUDGETS: '10.00' is PARITY WITH THE SHIPPED DB SEED. The monitor.model_config
+# seed defaults budget.worker_max_usd / budget.pre_verify_max_usd to '10.00', so
+# the pre-Save window now behaves like the post-Save steady state instead of being
+# a distinct, much tighter regime. These are per-call RUNAWAY GUARDS, not spend
+# targets: a single generation call costs cents, and the cap exists to bound a
+# pathological one. Sizing them for the current model's rates is what matters —
+# the previous '0.50' was validated against Haiku 4.5, and at Sonnet 5's 3x rates
+# ($3/$15 per MTok vs $1/$5) it bought a third as many tokens, so a fresh install
+# could hit budget-exhaustion exits before its first Save. Raised on that basis.
+#   Lower bound that still applies: below ~0.05 the CLI exits 1 immediately, so a
+#   floor must clear that regardless of model.
+#   These are STRINGS in 2-decimal form (see the module docstring) — passed verbatim
+#   to `claude -p --max-budget-usd`, and the monitor validates the same shape
+#   (BUDGET_VALUE_PATTERN /^\d+\.\d{2}$/). '10.00', never '10' or a float 10.0.
 # Single declaration site per value — inlined into the dict (single-SoT intent).
 _FALLBACK: dict[str, str] = {
-    "worker_max_budget_usd": "0.50",
-    "pre_verify_max_budget_usd": "0.50",
+    "worker_max_budget_usd": "10.00",
+    "pre_verify_max_budget_usd": "10.00",
     # CONCRETE ID, deliberately — this REPLACES the former T13 unpinned-alias
     # policy ('haiku'), which is retired here rather than carried over. Three
     # reasons the alias form cannot be kept for this key:

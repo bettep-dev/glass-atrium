@@ -827,10 +827,14 @@ def match_sensitive_diff(diff: str) -> str | None:
 # -- pre-verify config ------------------------------------------------------
 
 # Verification budget per patch — the verifier prompt is small (≤4KB) and the
-# rule excerpts are also bounded, so $0.02 is a generous cap (Haiku 4.5 input
-# at ~$1/MTok + output ~$5/MTok → typical call ≈ $0.005).
+# rule excerpts are also bounded, so a typical call is cents: at Sonnet 5 rates
+# (~$3/MTok input, ~$15/MTok output) it lands around $0.015. The figures here were
+# previously computed at Haiku 4.5 rates (~$1/$5 per MTok, ~$0.005/call); they are
+# restated for the model the loop actually runs on now.
 # PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT (unified
-# at 0.50, same as HAIKU — lower caps cause systematic 5/5 reject).
+# with the generation cap — the two move together; lower caps cause systematic
+# 5/5 reject, which is why the cap is generous relative to a typical call rather
+# than tuned close to it).
 PRE_VERIFY_TIMEOUT_SEC = 90
 
 # AD-9 evaluator independence (GOAL precedent from CALM self-preference; the CALM
