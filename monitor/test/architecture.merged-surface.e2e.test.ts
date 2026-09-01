@@ -1983,6 +1983,14 @@ async function openPartHealth(partId: string): Promise<void> {
 // 노드를 누르는 자리는 전부 이 문을 지남 — 한 곳이라도 locator.click 으로 남으면 그 한 번이
 // 배율을 올려 놓고, 그 뒤의 모든 누르기가 실패함.
 async function clickNodeAt(selector: string, describe: string): Promise<void> {
+	// 노드가 트리에 들어오기를 먼저 기다림. 아래 되밀기는 '자리가 밀렸다' 만 고치고 '아직 없다' 는
+	// 못 고침 — box 가 null 이면 되밀기를 건너뛰고 바로 단언으로 감. 캔버스를 갈아끼우는 경로
+	// (수동 새로고침)가 그 창을 만듦. 기한이 다해도 삼키지 않음: 그대로 아래 단언이 무엇을 봤는지
+	// 말하며 붉어지므로, 이 기다림이 실패를 초록으로 만들지 않음.
+	await page
+		.waitForSelector(selector, { timeout: 15_000, state: "attached" })
+		.catch(() => null);
+
 	let box = await readNodeBox(selector);
 	// 자리를 못 잡았으면 맞춤을 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
 	// 밀릴 수 있어(부하가 높으면 자동 맞춤이 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
@@ -2729,8 +2737,26 @@ async function spliceRoster(count: number): Promise<number> {
 }
 
 // 수동 새로고침 — health 응답 넷이 다시 나가 새 상태 객체가 오므로 표가 명부를 다시 읽음.
+// 누른 뒤 지도가 다시 설 때까지 기다림. 안 기다리면 호출부가 갈아끼우는 도중을 재게 됨:
+// refreshTick 이 오르면 설계도 응답이 돌아오기 전에 diagState 가 loading 으로 서고, 그동안
+// DiagramBody 가 skeleton 을 대신 세워 캔버스 element 자체가 트리에서 빠짐 — 그 창에서는
+// 캔버스도 각인 노드도 함께 0 임(실측: 누른 뒤 85ms 지점). 그 창에 든 측정은 자리가 밀린 것이
+// 아니라 요소가 아예 없는 것이라, 되밀기로는 못 고침.
+// 기다리는 앵커를 응답으로 잡는 이유: skeleton 교체는 누르는 즉시 일어나므로, 응답이 온 시점은
+// 이미 그 창의 뒤임 — 옛 노드를 보고 일찍 돌아갈 여지가 없음.
 async function refreshMap(): Promise<void> {
+	const landed = page.waitForResponse(
+		(response) => response.url().includes("/api/architecture/diagrams"),
+		{ timeout: 30_000 },
+	);
 	await page.click('[aria-label="Refresh system map"]');
+	await landed;
+
+	// 응답이 온 뒤에도 mermaid 가 다시 그리기 전까지는 노드가 없음 — 각인까지 기다림.
+	await page.waitForSelector(`${selectors.canvas} svg g.node[data-arch-node-id]`, {
+		timeout: 30_000,
+		state: "attached",
+	});
 }
 
 // 기한을 두고 행 수가 기대값에 닿기를 기다림 — 초과하면 마지막으로 읽은 수를 그대로 돌려
