@@ -260,9 +260,10 @@ export async function renderSelfContainedHtml(
         // cannot draw its fences must return the document, not a 503 — a source
         // this grammar reads as a diagram and mermaid does not is a disagreement
         // between two parsers, and the reader loses a document over it either way.
-        // The shell it falls back to is the same one every md export shipped
-        // before, plus a marker naming what failed so the degradation is visible
-        // in the artifact rather than silent.
+        // What ships is the pre-render shell plus a marker naming what failed, so
+        // the degradation is visible in the artifact rather than silent — NOT the
+        // artifact md exported before fences were spliced; see degradeMdToPlainShell
+        // for what that shell actually renders.
         return degradeMdToPlainShell(shell, error);
       }
     }
@@ -768,7 +769,17 @@ export const MD_DIAGRAM_DEGRADED_COMMENT = "diagram render unavailable; body shi
 /** Detail cap — a mermaid parse error quotes the source it choked on back at you. */
 const DEGRADED_DETAIL_MAX = 200;
 
-/** The plain shell every md export shipped before, plus the marker naming what failed. */
+/**
+ * Ships the already-built md shell with a marker naming what failed.
+ *
+ * That shell is NOT the artifact md exported before fences were spliced:
+ * renderMdInner built it, so each fence's ``` markers are already gone and its
+ * source sits in a <pre class="mermaid"> — which SHELL_STYLE's pre:not(.mermaid)
+ * rules deliberately skip, and which DIAGRAM_CONTAINER_STYLE never reaches (that
+ * sheet is injected on the browser path this fallback is escaping). So a degraded
+ * export shows fence-less, unstyled diagram source in the UA's default <pre>,
+ * a shape no historical md export produced — a report of that is THIS path.
+ */
 function degradeMdToPlainShell(shell: string, error: unknown): string {
   const stage = error instanceof HtmlExportError ? error.stage : "render";
   const detail = error instanceof Error ? error.message : String(error);
