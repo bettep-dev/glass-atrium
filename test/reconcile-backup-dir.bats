@@ -42,8 +42,20 @@ SCRIPT="${GA}/scripts/reconcile-backup-dir.sh"
 LIB="${GA}/scripts/lib/atrium-config.sh"
 
 setup() {
-  [[ -f "${SCRIPT}" ]] || skip "script not found: ${SCRIPT}"
-  [[ -f "${LIB}" ]] || skip "config library not found: ${LIB}"
+  # Loud, never `skip`: both are SHIPPED tree members, so their absence is a broken
+  # tree rather than an unmet environment. Skipping would turn a deletion of the
+  # feature into a fully-skipped GREEN suite — and the daemon green gate consumes only
+  # the exit code, so the deletion would pass unseen while doctor §24 still names this
+  # script as its remedy. Matches the broken-tree form in
+  # scripts/test/run-bats-parallel.bats.
+  if [[ ! -f "${SCRIPT}" ]]; then
+    echo "broken tree: reconcile-backup-dir.sh missing at ${SCRIPT}" >&2
+    return 1
+  fi
+  if [[ ! -f "${LIB}" ]]; then
+    echo "broken tree: atrium-config.sh missing at ${LIB}" >&2
+    return 1
+  fi
   WORK="$(mktemp -d -t ga-reconcile-bats.XXXXXX)"
   DEFAULT_DIR="${WORK}/ga/backups/postgres"
   ELSEWHERE="${WORK}/elsewhere"

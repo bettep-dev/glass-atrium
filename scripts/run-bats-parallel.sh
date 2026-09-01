@@ -6,8 +6,16 @@
 # tests WITHIN a file stay sequential, preserving setup_file-once and ordered-
 # side-effect semantics. The job count derives from the host core count at
 # runtime (macOS sysctl first, GNU nproc fallback for Linux).
-# Stage 2 runs the hooks/test unittest suites in a sandbox HOME; stage 3 runs the
-# scripts/test pytest suites, but only when pytest is importable.
+# Stage 2 runs the hooks/test unittest suites in a sandbox HOME with the data-root
+# env scrubbed alongside it (see the stage itself); stage 3 runs the scripts/test
+# pytest suites, but only when pytest is importable.
+#
+# The hooks/test unittest corpus therefore runs TWICE per invocation, deliberately:
+# stage 1's hooks/test/suite-hermeticity.bats drives the same `unittest discover` to
+# probe for sandbox escape, and stage 2 then runs it as the corpus's own verdict. The
+# probe asserts a property of the run (nothing escaped, something ran) while stage 2
+# owns the rc, and neither can stand in for the other. The daemon's one flaky-retry
+# doubles the pair again on a red cycle, which the per-stage duration banners expose.
 #
 # The stages are RUN, not `exec`'d, and the runner exits with the MAXIMUM stage rc
 # rather than the last one — a stage-1 failure must not be erased by green python
@@ -117,11 +125,19 @@ main() {
   run_stage 'stage 1/3 bats' \
     bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
 
-  # The unittest suites are hermetic under a sandbox HOME (they write nothing below
-  # it), so the stage cannot mutate the operator's real home on a daemon-driven run.
+  # The unittest suites are hermetic under a sandbox HOME (they write nothing below it)
+  # ONLY once GA_DATA_ROOT is scrubbed with it: ga_paths.get_base_root PREFERS
+  # GA_DATA_ROOT and falls back to $HOME/.glass-atrium, so redirecting HOME alone leaves
+  # an ambient GA_DATA_ROOT (a sandbox install, an outer test harness) pointing a module
+  # that forgets its own sandbox at the live data root — silently, since the redirected
+  # HOME then reads clean. ATRIUM_UPDATE_STATE_DIR is the update-side twin of that seam.
+  # This is the same scrub hooks/test/suite-hermeticity.bats applies to the identical
+  # discover run; the two are kept identical on purpose, so the probe cannot read green
+  # under conditions this stage does not share.
   SANDBOX_HOME="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
   run_stage "stage 2/3 ${HOOKS_TEST_ROOT} unittest" \
-    env "HOME=${SANDBOX_HOME}" python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
+    env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR "HOME=${SANDBOX_HOME}" \
+    python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
 
   # Stage 3 is conditional: the live install has no pytest, and the honest outcome
   # there is a LOUD skip (one stderr line naming the interpreter) rather than a silent

@@ -15,6 +15,7 @@
 #   AC3  python3 without PyYAML        -> one note row, comparison announced skipped
 #   AC4  the tool cannot answer (rc 2) -> one note row carrying the exit code
 #   AC5  the warning total             -> identical across all four cases (kind B)
+#   AC6  the section identifier stem   -> registered kind B in the summary contract
 #
 # FIXTURE BYTE-SHAPE: `--check` reports drift by comparing the SERIALIZED registry against the file's
 # current bytes, so a clean fixture must already be `json.dumps(indent=2, ensure_ascii=false)` +
@@ -35,10 +36,25 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+CONTRACT="${GA}/test/doctor-summary-contract.bats"
 
 setup() {
-  [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
-  [[ -f "${GA}/scripts/sync-registry-tools.sh" ]] || skip "sync tool not found (the section delegates to it)"
+  # Loud, never `skip`, for the two SHIPPED tree members: their absence is a broken
+  # tree rather than an unmet environment, and skipping would turn a deletion of the
+  # section or its delegate into a fully-skipped GREEN suite. The daemon green gate
+  # consumes only the exit code, so that deletion would pass unseen while §23 still
+  # prints the remedy command naming the missing tool. Matches the broken-tree form in
+  # scripts/test/run-bats-parallel.bats.
+  if [[ ! -f "${GA}/lib/ga-core.sh" ]]; then
+    echo "broken tree: ga-core.sh missing at ${GA}/lib/ga-core.sh" >&2
+    return 1
+  fi
+  if [[ ! -f "${GA}/scripts/sync-registry-tools.sh" ]]; then
+    echo "broken tree: sync-registry-tools.sh missing at ${GA}/scripts/sync-registry-tools.sh (the section delegates to it)" >&2
+    return 1
+  fi
+  # PyYAML stays a `skip`: it is an interpreter dependency of the reader, not a tree
+  # member, so its absence really is an unmet environment and not a deletion.
   python3 -c 'import yaml' >/dev/null 2>&1 || skip "python3 with PyYAML absent — the section's own dependency"
   SANDBOX="$(mktemp -d -t ga-doctor-mirror-bats.XXXXXX)"
   GA_SANDBOX="${SANDBOX}/ga"
@@ -211,6 +227,29 @@ warn_total_of_output() {
 
   [[ "${synced}" == "${drifted}" && "${synced}" == "${unavailable}" && "${synced}" == "${unanswerable}" ]] || {
     echo "kind-B violation: warning total moved — synced=${synced} drifted=${drifted} unavailable=${unavailable} unanswerable=${unanswerable}" >&2
+    return 1
+  }
+}
+
+# The symmetric twin of doctor-backup-dir-relocation.bats AC6, for the same reason: AC5 pins the
+# kind-B property BEHAVIOURALLY, but only registration makes the contract suite's promotion guard
+# bind to this stem. Drop `tools_mirror` from KIND_B_STEMS and its synthetic operand together and
+# the contract suite stays green — its own guard compares the two list LENGTHS — leaving a future
+# edit free to fold this section into the warning total unnoticed. Two greps, because registration
+# without an identifier in the doctor is a dead entry and an identifier without registration is an
+# unguarded section.
+@test "AC6 the §23 identifier stem is registered kind B in the summary contract" {
+  [[ -f "${CONTRACT}" ]] || {
+    printf 'summary contract suite missing: %s\n' "${CONTRACT}" >&2
+    return 1
+  }
+  # The last stem on the list carries the closing quote, so the anchor tolerates it.
+  grep -qE "^tools_mirror'?\$" "${CONTRACT}" || {
+    printf 'stem `tools_mirror` is not registered in KIND_B_STEMS of %s\n' "${CONTRACT}" >&2
+    return 1
+  }
+  grep -q 'tools_mirror' "${GA}/lib/ga-doctor.sh" || {
+    printf 'stem `tools_mirror` names no identifier in lib/ga-doctor.sh\n' >&2
     return 1
   }
 }

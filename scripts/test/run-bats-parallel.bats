@@ -29,6 +29,11 @@
 # which runs its python modules directly. A per-corpus ignore file catches what the
 # env misses, and the two legs are pinned together because neither is sufficient alone.
 # The eighth then pins those ignore files as manifest-eligible, so they actually ship.
+#
+# The ninth pins stage 2's environment. Redirecting HOME does not sandbox a python suite
+# on its own — ga_paths.get_base_root PREFERS GA_DATA_ROOT — so the stage scrubs that
+# variable and its update-side twin alongside the redirect, and the stub records what it
+# actually inherited. Dropping any one of the three from the runner reds this test.
 
 bats_require_minimum_version 1.5.0
 
@@ -108,6 +113,12 @@ STUB
   write_stub python3 <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/python3-args.log"
+# One TAB-separated row per call: the argv is what identifies the stage, and the three
+# path variables are what stage 2 claims to control. The sentinel distinguishes "unset"
+# from "set to empty", which is the whole distinction `env -u` makes.
+printf '%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
+  "${ATRIUM_UPDATE_STATE_DIR-__UNSET__}" "${HOME-__UNSET__}" \
+  >>"${STUB_LOG_DIR}/python3-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
   *unittest*) exit "${STUB_UNITTEST_RC:-0}" ;;
@@ -344,4 +355,48 @@ teardown() {
       return 1
     fi
   done
+}
+
+# Stage 2's sandbox is THREE variables, not one. ga_paths.get_base_root reads GA_DATA_ROOT
+# first and only falls back to $HOME/.glass-atrium, so a HOME-only redirect leaves an
+# ambient GA_DATA_ROOT — a sandbox install, an outer harness — steering a module that
+# forgot its own sandbox into the live data root, while the redirected HOME reads clean.
+# hooks/test/suite-hermeticity.bats scrubs the pair on the identical discover run; this
+# pins the runner to the same environment, so the probe cannot pass under conditions the
+# stage it stands for does not share. The ambient values below are set deliberately: with
+# them unset, a runner that scrubbed nothing would look identical.
+@test "(9) stage 2 scrubs GA_DATA_ROOT and ATRIUM_UPDATE_STATE_DIR alongside the sandbox HOME" {
+  export GA_DATA_ROOT="${TMPROOT}/ambient-data-root"
+  export ATRIUM_UPDATE_STATE_DIR="${TMPROOT}/ambient-update-state"
+  run_runner_expecting 0 || return 1
+
+  local row seen_data_root seen_update_dir seen_home
+  row="$(grep -m1 -- '-m unittest discover' "${STUB_LOG_DIR}/python3-env.log" || true)"
+  [[ -n "${row}" ]] || {
+    printf 'no stage-2 row in the python3 env log:\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
+    return 1
+  }
+
+  seen_data_root="$(printf '%s\n' "${row}" | cut -f2)"
+  [[ "${seen_data_root}" == "__UNSET__" ]] || {
+    printf 'stage 2 inherited GA_DATA_ROOT=%s; the scrub is missing\n' "${seen_data_root}" >&2
+    return 1
+  }
+
+  seen_update_dir="$(printf '%s\n' "${row}" | cut -f3)"
+  [[ "${seen_update_dir}" == "__UNSET__" ]] || {
+    printf 'stage 2 inherited ATRIUM_UPDATE_STATE_DIR=%s; the scrub is missing\n' \
+      "${seen_update_dir}" >&2
+    return 1
+  }
+
+  # The redirect is the third leg of the same claim: scrubbing the two variables while
+  # leaving HOME at the operator's own would put the fallback root back on the live install.
+  seen_home="$(printf '%s\n' "${row}" | cut -f4)"
+  [[ "${seen_home}" != "__UNSET__" && "${seen_home}" != "${HOME}" ]] || {
+    printf 'stage 2 ran under HOME=%s (want a sandbox, not the caller HOME and not unset)\n' \
+      "${seen_home}" >&2
+    return 1
+  }
 }

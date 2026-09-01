@@ -34,7 +34,16 @@ setup() {
   TRASH_DIR="${FAKE_HOME}/.Trash"
   # The script assumes ~/.Trash exists (a real user always has it); create it so
   # rotation mv targets resolve instead of silently WARN-skipping.
-  mkdir -p -- "${BACKUP_DIR}" "${TRASH_DIR}"
+  #
+  # Created under a PINNED 022 mask, in a subshell so the pin cannot leak into the
+  # rest of the test: AC-C7 reads 0755 back off this fixture to prove the script's own
+  # 077 mask never chmods a directory an operator already made. Left to the caller's
+  # mask, a runner at 027/077 creates it 0750/0700 and reds that assertion with a
+  # "was re-moded" message naming a chmod that never happened.
+  (
+    umask 022
+    mkdir -p -- "${BACKUP_DIR}" "${TRASH_DIR}"
+  )
   FAKE_BIN="${SANDBOX}/bin"
   mkdir -p -- "${FAKE_BIN}"
   # Stub pg_dump: write a small non-empty payload to the -f target so the

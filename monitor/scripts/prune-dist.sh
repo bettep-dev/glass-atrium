@@ -24,7 +24,11 @@
 # `rm` (not a Trash move) is deliberate and sanctioned: public/dist is a
 # gitignored build artifact, fully regenerable by `npm run build:jsx`, and
 # pruning runs on every build — a Trash move would grow ~1 MB of residue per
-# build. Only regular files directly under the resolved outdir are touched.
+# build. Only regular `.js` files are ever unlinked, and the walk RECURSES through
+# the outdir on purpose: screen bundles land at dist/screens/<name>.js, so a depth-1
+# walk would exempt exactly the stale screen bundle that motivated this script.
+# Containment comes from the resolved-prefix check at the unlink site below, never
+# from walk depth.
 #
 # Idempotent: a second run finds no orphan and exits 0 silently.
 #
