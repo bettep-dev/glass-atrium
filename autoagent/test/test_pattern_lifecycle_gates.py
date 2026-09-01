@@ -90,10 +90,12 @@ def _pattern(
     label: str = _LEGACY_LABEL,
     agent: str = "wiki-curator",
     row_id: int = 15,
-    date: str = "2026-06-01",
+    discovered_date: str = "2026-06-01",
 ) -> "dc.Pattern":
+    # Named for the column it feeds, NOT `date` — a `date` parameter shadows the
+    # module-level `from datetime import date` that _today_iso() calls.
     return dc.Pattern(
-        date=date,
+        date=discovered_date,
         label=label,
         frequency="64",
         agent=agent,
@@ -456,7 +458,9 @@ class TestDropStalePatterns(_GateFixture):
         # applies, never re-observations, so the repeat-apply cap could not tell a
         # dead pattern from a live one. Keeping is correct; keeping quietly is not.
         # The date is what moves this row off the re-observation branch.
-        pattern = _pattern(label="some future pattern family", date=_today_iso())
+        pattern = _pattern(
+            label="some future pattern family", discovered_date=_today_iso()
+        )
         kept, stderr_text = self._drop([], [pattern])
 
         self.assertEqual(kept, [pattern])
@@ -489,7 +493,9 @@ class TestDropStalePatterns(_GateFixture):
     def test_when_unknown_family_date_unreadable_then_fail_open(self) -> None:
         # A date we cannot parse is not evidence of silence. Fail OPEN, loudly —
         # never snooze a pattern on an unreadable timestamp.
-        pattern = _pattern(label="some future pattern family", date="not-a-date")
+        pattern = _pattern(
+            label="some future pattern family", discovered_date="not-a-date"
+        )
         kept, _ = self._drop([], [pattern])
 
         self.assertEqual(kept, [pattern])
