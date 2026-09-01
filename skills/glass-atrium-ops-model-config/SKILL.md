@@ -23,7 +23,7 @@ The monitor records DESIRED config in its DB and write-throughs `daemon-config.j
 - **(a) orchestrator model** lives in `~/.claude/settings.json`, which the monitor never writes (Harness Path Protection), and the running session reads it only at start.
 - **(b) autoagent / wiki daemon models** live in long-lived tmux REPL sessions (`claude-autoagent-daemon`, `claude-wiki-daemon`) that need a restart to pick up a new model.
 
-The **next-spawn** (dev/research frontmatter) and **next-cycle** (budget caps, `daemon_cycle_haiku`) domains already auto-apply and need NO action — this skill only reports them.
+The **next-spawn** (dev/research frontmatter) and **next-cycle** (budget caps, `daemon_cycle_worker`) domains already auto-apply and need NO action — this skill only reports them.
 
 ## Per-`apply_mode` Action Table
 
@@ -32,7 +32,7 @@ Every domain in the GET response carries an `apply_mode`. This table is the auth
 | apply_mode | Domains | Skill action |
 |------------|---------|--------------|
 | `next-spawn` | `model.dev`, `model.research` | **No-op + report** — monitor already wrote frontmatter; takes effect on the agent's next spawn |
-| `next-cycle` | `model.daemon_cycle_haiku`, `budget.haiku_max_usd`, `budget.pre_verify_max_usd` | **No-op + report** — monitor already wrote `daemon-config.json`; takes effect on the next daemon cycle |
+| `next-cycle` | `model.daemon_cycle_worker`, `budget.worker_max_usd`, `budget.pre_verify_max_usd` | **No-op + report** — monitor already wrote `daemon-config.json`; takes effect on the next daemon cycle |
 | `tmux-restart` | `model.autoagent_daemon`, `model.wiki_daemon` | **APPLY** — restart the drifted daemon via `daemon-daily-restart.sh {autoagent\|wiki}` |
 | `session-restart-manual` | `model.orchestrator` | **APPLY (confirm-gated)** — merge desired `model` + `effortLevel` into `~/.claude/settings.json`, then tell the user to restart the session |
 | `immediate` | (none currently) | **No-op + report** — takes effect on the very next call |

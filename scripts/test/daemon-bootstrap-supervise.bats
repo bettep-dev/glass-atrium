@@ -338,10 +338,10 @@ wait_for_log() {
 }
 
 # --channels REPL model injection (create path). The daemon REPL must run on the
-# menu-configured daemon LLM tier (daemon-config.json haiku_model) instead of the
+# menu-configured daemon LLM tier (daemon-config.json worker_model) instead of the
 # settings.json default (Fable 5, whose usage cap the autoagent daemon hits). BOTH
 # pane_cmd branches (auth-load + plain) MUST carry --model; the value is the
-# resolved haiku_model, or the claude-haiku-4-5 fallback when the key/file/jq is
+# resolved worker_model, or the claude-sonnet-5 fallback when the key/file/jq is
 # absent. The tmux stub records $* to TMUX_CALLS, so the new-session pane_cmd is
 # asserted directly. launch_bootstrap points DAEMON_CONFIG at the sandbox (hermetic).
 
@@ -352,22 +352,22 @@ wait_for_log() {
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"
   pid="${LAUNCHED_PID}"
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
-  grep -qF -- "--channels plugin:fakechat@claude-plugins-official --model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  grep -qF -- "--channels plugin:fakechat@claude-plugins-official --model 'claude-sonnet-5'" "${TMUX_CALLS}" || return 1
   # plain branch: no auth-lib source prefix (sandbox has no claude-auth-env.sh)
   ! grep -qF -- "claude-auth-env.sh'; claude_auth_load_env" "${TMUX_CALLS}" || return 1
   kill -0 "${pid}"
 }
 
-@test "model injection (plain branch, key present): --model carries the configured haiku_model" {
+@test "model injection (plain branch, key present): --model carries the configured worker_model" {
   local s pid
   s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
-  printf '{"haiku_model":"claude-sonnet-4-5"}\n' >"${TMPROOT}/daemon-config.json"
+  printf '{"worker_model":"claude-sonnet-4-5"}\n' >"${TMPROOT}/daemon-config.json"
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"
   pid="${LAUNCHED_PID}"
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
   grep -qF -- "--model 'claude-sonnet-4-5'" "${TMUX_CALLS}" || return 1
   # the configured value overrides the fallback literal
-  ! grep -qF -- "--model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  ! grep -qF -- "--model 'claude-sonnet-5'" "${TMUX_CALLS}" || return 1
   kill -0 "${pid}"
 }
 
@@ -381,7 +381,7 @@ wait_for_log() {
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"
   pid="${LAUNCHED_PID}"
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
-  grep -qF -- "claude-auth-env.sh'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  grep -qF -- "claude-auth-env.sh'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model 'claude-sonnet-5'" "${TMUX_CALLS}" || return 1
   kill -0 "${pid}"
 }
 
@@ -418,6 +418,6 @@ wait_for_log() {
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"
   pid="${LAUNCHED_PID}"
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
-  grep -qF -- "--model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  grep -qF -- "--model 'claude-sonnet-5'" "${TMUX_CALLS}" || return 1
   kill -0 "${pid}"
 }

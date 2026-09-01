@@ -69,10 +69,10 @@ teardown() {
 @test "atrium-config.sh: daemon-config default resolves under \$HOME/.glass-atrium/data" {
   command -v jq >/dev/null 2>&1 || skip "jq required for daemon-config resolution"
   mkdir -p "${SANDBOX}/.glass-atrium/data"
-  printf '{"haiku_model":"sentinel-model-xyz"}\n' >"${SANDBOX}/.glass-atrium/data/daemon-config.json"
+  printf '{"worker_model":"sentinel-model-xyz"}\n' >"${SANDBOX}/.glass-atrium/data/daemon-config.json"
   # Empty arg → the canonical default path; must read the .glass-atrium store, not .claude.
   run env -u GA_DATA_ROOT -u GA_ROOT HOME="${SANDBOX}" \
-    bash -c 'source "$1"; atrium_resolve_haiku_model ""' _ "${REAL_CONFIG}"
+    bash -c 'source "$1"; atrium_resolve_worker_model ""' _ "${REAL_CONFIG}"
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
   [[ "${output}" == "sentinel-model-xyz" ]] || { echo "model=${output}" >&2; return 1; }
 }

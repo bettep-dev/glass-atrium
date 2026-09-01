@@ -140,7 +140,7 @@ test("client model-format regex mirror matches server FREE_TEXT_MODEL_PATTERN (v
 });
 
 test("client budget regex + bound mirrors match server SoT (via validateFormMC)", () => {
-  const key = "budget.haiku_max_usd";
+  const key = "budget.worker_max_usd";
   // regex: exactly-2-decimal contract.
   for (const value of ["0.50", "12.34", "0.5", "1", "0.500", "abc"]) {
     const clientErr = !!sameRealm(mc.validateFormMC({ models: {}, budgets: { [key]: value } }, []))[
@@ -185,21 +185,21 @@ test("modelOptionsMC: research = inherit + known_models verbatim, no bare alias 
   }
 });
 
-test("modelOptionsMC: daemon_cycle_haiku — no inherit (concrete id only)", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", KNOWN_MODELS_FIXTURE));
+test("modelOptionsMC: daemon_cycle_worker — no inherit (concrete id only)", () => {
+  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", KNOWN_MODELS_FIXTURE));
   assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
   assert.ok(!opts.includes("inherit"), "daemon cycle helper does not inherit");
 });
 
 test("modelOptionsMC: options track the injected roster, not a baked-in mirror", () => {
   const altRoster = ["some-brand-new-model", "another-id"];
-  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", altRoster));
+  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", altRoster));
   assert.deepStrictEqual(opts, altRoster, "a different roster yields different options");
 });
 
 test("modelOptionsMC: empty known_models (SoT fail-open, D3) → inherit-only where allowed", () => {
   assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.dev", [])), ["inherit"]);
-  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", [])), []);
+  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", [])), []);
 });
 
 // --- validateFormMC: client mirror of the server PUT contract ---
@@ -211,7 +211,7 @@ test("validateFormMC: a valid known id + valid 2-decimal budget → no errors", 
     mc.validateFormMC(
       {
         models: { "model.dev": "claude-opus-4-8" },
-        budgets: { "budget.haiku_max_usd": "0.50" },
+        budgets: { "budget.worker_max_usd": "0.50" },
       },
       KNOWN_MODELS_FIXTURE,
     ),
@@ -238,27 +238,27 @@ test("validateFormMC: uppercase free-text model → format error (mirrors FREE_T
 test("validateFormMC: budget without exactly 2 decimals → error", () => {
   for (const bad of ["0.5", "1", "0.500", "1.2.3", "abc"]) {
     const errors = sameRealm(
-      mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": bad } }, []),
+      mc.validateFormMC({ models: {}, budgets: { "budget.worker_max_usd": bad } }, []),
     );
-    assert.ok(errors["budget.haiku_max_usd"], `'${bad}' rejected`);
+    assert.ok(errors["budget.worker_max_usd"], `'${bad}' rejected`);
     assert.ok(!BUDGET_VALUE_PATTERN.test(bad), `server pattern also rejects '${bad}'`);
   }
 });
 
 test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds → ok", () => {
   const below = sameRealm(
-    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "0.04" } }, []),
+    mc.validateFormMC({ models: {}, budgets: { "budget.worker_max_usd": "0.04" } }, []),
   );
-  assert.ok(below["budget.haiku_max_usd"], "below floor flagged");
+  assert.ok(below["budget.worker_max_usd"], "below floor flagged");
   const above = sameRealm(
-    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "50.01" } }, []),
+    mc.validateFormMC({ models: {}, budgets: { "budget.worker_max_usd": "50.01" } }, []),
   );
-  assert.ok(above["budget.haiku_max_usd"], "above ceiling flagged");
+  assert.ok(above["budget.worker_max_usd"], "above ceiling flagged");
   const edge = sameRealm(
     mc.validateFormMC(
       {
         models: {},
-        budgets: { "budget.haiku_max_usd": "0.05", "budget.pre_verify_max_usd": "50.00" },
+        budgets: { "budget.worker_max_usd": "0.05", "budget.pre_verify_max_usd": "50.00" },
       },
       [],
     ),
@@ -269,7 +269,7 @@ test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds �
 // --- diffFormMC: partial-PUT payload builder (only changed fields, null when none) ---
 
 test("diffFormMC: no change → null (clean state — save-banner hidden, Save dormant not error-disabled)", () => {
-  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.haiku_max_usd": "0.50" } };
+  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
   const result = mc.diffFormMC(baseline, { models: { ...baseline.models }, budgets: { ...baseline.budgets } });
   assert.strictEqual(result, null);
 });
@@ -283,11 +283,11 @@ test("diffFormMC: only the changed model field is sent (partial contract)", () =
 });
 
 test("diffFormMC: model + budget both changed → both keys present", () => {
-  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.haiku_max_usd": "0.50" } };
-  const form = { models: { "model.dev": "claude-fable-5" }, budgets: { "budget.haiku_max_usd": "0.75" } };
+  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
+  const form = { models: { "model.dev": "claude-fable-5" }, budgets: { "budget.worker_max_usd": "0.75" } };
   const result = sameRealm(mc.diffFormMC(baseline, form)) as { models?: unknown; budgets?: unknown };
   assert.deepStrictEqual(result.models, { "model.dev": "claude-fable-5" });
-  assert.deepStrictEqual(result.budgets, { "budget.haiku_max_usd": "0.75" });
+  assert.deepStrictEqual(result.budgets, { "budget.worker_max_usd": "0.75" });
 });
 
 // --- buildFormMC: GET response → edit buffer (desired mirror) ---
@@ -295,12 +295,12 @@ test("diffFormMC: model + budget both changed → both keys present", () => {
 test("buildFormMC: maps domains/budgets desired into the form buffer", () => {
   const data = {
     domains: [{ domain: "model.dev", desired: "claude-opus-4-8" }, { domain: "model.research", desired: null }],
-    budgets: [{ domain: "budget.haiku_max_usd", desired: "0.50" }],
+    budgets: [{ domain: "budget.worker_max_usd", desired: "0.50" }],
   };
   const form = sameRealm(mc.buildFormMC(data));
   assert.strictEqual(form.models["model.dev"], "claude-opus-4-8");
   assert.strictEqual(form.models["model.research"], "", "null desired → empty string buffer");
-  assert.strictEqual(form.budgets["budget.haiku_max_usd"], "0.50");
+  assert.strictEqual(form.budgets["budget.worker_max_usd"], "0.50");
 });
 
 // --- sortDomainsMC / sortBudgetsMC: known order first, unknown appended (no silent drop) ---
@@ -322,10 +322,10 @@ test("sortDomainsMC: canonical order applied, an unknown domain is appended (nev
 test("sortBudgetsMC: known order first, unknown budget appended (never dropped)", () => {
   const input = [
     { domain: "budget.future_unknown" },
-    { domain: "budget.haiku_max_usd" },
+    { domain: "budget.worker_max_usd" },
   ];
   const sorted = sameRealm(mc.sortBudgetsMC(input)).map((b) => b.domain);
-  assert.strictEqual(sorted[0], "budget.haiku_max_usd");
+  assert.strictEqual(sorted[0], "budget.worker_max_usd");
   assert.ok(sorted.includes("budget.future_unknown"));
   assert.strictEqual(sorted.length, 2);
 });

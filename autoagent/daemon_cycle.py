@@ -226,8 +226,8 @@ if HAIKU_ESCALATED_TIMEOUT_SEC < HAIKU_TIMEOUT_SEC:
 # EXIT 1); 0.50 passes (Anthropic minimum call cost ~$0.02-0.10). Cost ceiling:
 # agents-per-cycle × 0.50.
 from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-relative + $HOME)
-    HAIKU_MAX_BUDGET_USD,
-    HAIKU_MODEL,
+    WORKER_MAX_BUDGET_USD,
+    WORKER_MODEL,
     PRE_VERIFY_MAX_BUDGET_USD,
 )
 
@@ -835,12 +835,12 @@ PRE_VERIFY_TIMEOUT_SEC = 90
 
 # AD-9 evaluator independence (GOAL precedent from CALM self-preference; the CALM
 # mapping is inferred, not code-verified — mechanism independently designed here): the
-# patch generator runs on HAIKU_MODEL; an evaluator systematically favors output from
+# patch generator runs on WORKER_MODEL; an evaluator systematically favors output from
 # its own model class, so the verifier SHOULD run on a different class where
 # feasible. AUTOAGENT_PRE_VERIFY_MODEL overrides the verifier model id; when
-# absent it defaults to HAIKU_MODEL (same class as the author) and the run
+# absent it defaults to WORKER_MODEL (same class as the author) and the run
 # proceeds under a loud advisory — never blocking (ADVISORY-FIRST rollout).
-PRE_VERIFY_MODEL = os.environ.get("AUTOAGENT_PRE_VERIFY_MODEL", "").strip() or HAIKU_MODEL
+PRE_VERIFY_MODEL = os.environ.get("AUTOAGENT_PRE_VERIFY_MODEL", "").strip() or WORKER_MODEL
 
 # Compliance source files — the verifier reads excerpts and must check
 # the patch against all 4 axes independently.
@@ -3053,8 +3053,8 @@ def _invoke_haiku_cli(
                 claude_bin,
                 "-p", prompt,
                 "--output-format", "text",
-                "--max-budget-usd", HAIKU_MAX_BUDGET_USD,
-                "--model", HAIKU_MODEL,
+                "--max-budget-usd", WORKER_MAX_BUDGET_USD,
+                "--model", WORKER_MODEL,
             ],
             capture_output=True,
             text=True,
@@ -3468,7 +3468,7 @@ def _run_haiku_with_retry(
                 target_file=target_file,
                 rationale=(
                     f"local --max-budget-usd ceiling too low "
-                    f"(HAIKU_MAX_BUDGET_USD={HAIKU_MAX_BUDGET_USD}, "
+                    f"(WORKER_MAX_BUDGET_USD={WORKER_MAX_BUDGET_USD}, "
                     f"returncode={completed.returncode}); NOT an external quota cap"
                 ),
                 raw_response=(completed.stderr or completed.stdout or "")[:400],
@@ -6102,7 +6102,7 @@ def _model_class(model_id: str) -> str:
 
 
 def resolve_verifier_model(
-    author_model: str = HAIKU_MODEL,
+    author_model: str = WORKER_MODEL,
     verifier_model: str = PRE_VERIFY_MODEL,
 ) -> str:
     """Return the verifier model, warning when it shares the author's class.
@@ -9940,7 +9940,7 @@ def run_cycle(
             # Informational only (not a gate).
             "max_haiku_calls": agent_cap,
             "agent_cap": agent_cap,
-            "haiku_max_budget_usd_per_call": HAIKU_MAX_BUDGET_USD,
+            "worker_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
             "pre_verify_max_budget_usd_per_call": PRE_VERIFY_MAX_BUDGET_USD,
             "skip_haiku": str(skip_haiku),
             "skip_pre_verify": str(skip_pre_verify),

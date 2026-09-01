@@ -16,8 +16,8 @@ invariants:
 (3) the ``_comment`` documentation key is ignored (never leaks into output);
 (4) the values are STRINGS preserving the trailing zero ('0.50', not 0.5) —
     the CLI consumes the decimal as-is, so a float re-serialize would drift;
-(5) the module-level constants (HAIKU_MAX_BUDGET_USD / PRE_VERIFY_MAX_BUDGET_USD
-    / HAIKU_MODEL) — the names the daemon binds to — equal the loaded values.
+(5) the module-level constants (WORKER_MAX_BUDGET_USD / PRE_VERIFY_MAX_BUDGET_USD
+    / WORKER_MODEL) — the names the daemon binds to — equal the loaded values.
 
 No database needed. Each error-branch case writes a throwaway config into a
 TemporaryDirectory and passes it via the ``path`` injection arg.
@@ -33,7 +33,8 @@ from __future__ import annotations
 
 import io
 import json
-import re
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -49,12 +50,7 @@ if str(_HOOKS_ROOT) not in sys.path:
 
 import daemon_config as dc  # noqa: E402 — sys.path insert immediately above
 
-_CONTRACT_KEYS = ("haiku_max_budget_usd", "pre_verify_max_budget_usd", "haiku_model")
-
-# A pinned/dated model version, e.g. claude-haiku-4-5 — the shape T13 bars from the
-# automation module (the daemon reads its model from config; the absent-config
-# fallback is an unpinned family alias, never a dated pin).
-_PINNED_MODEL = re.compile(r"claude-[a-z]+-\d")
+_CONTRACT_KEYS = ("worker_max_budget_usd", "pre_verify_max_budget_usd", "worker_model")
 
 
 def _write_config(payload: object) -> Path:
@@ -92,7 +88,7 @@ class LiveConfigReadTest(unittest.TestCase):
         # The CLI consumes the decimal verbatim — a float-coerced value would
         # re-serialize without the trailing zero and drift from the contract.
         out = dc.load_daemon_config()
-        for key in ("haiku_max_budget_usd", "pre_verify_max_budget_usd"):
+        for key in ("worker_max_budget_usd", "pre_verify_max_budget_usd"):
             self.assertIsInstance(out[key], str)
             # parseable as a float, yet retained as a string token
             float(out[key])
@@ -127,49 +123,49 @@ class FallbackBranchTest(unittest.TestCase):
         # Two valid keys + one absent → the absent one falls back, others honored.
         path = _write_config(
             {
-                "haiku_max_budget_usd": "1.25",
+                "worker_max_budget_usd": "1.25",
                 "pre_verify_max_budget_usd": "1.25",
-                # haiku_model intentionally absent
+                # worker_model intentionally absent
             }
         )
         out = dc.load_daemon_config(path=path)
-        self.assertEqual(out["haiku_max_budget_usd"], "1.25")
+        self.assertEqual(out["worker_max_budget_usd"], "1.25")
         self.assertEqual(out["pre_verify_max_budget_usd"], "1.25")
-        self.assertEqual(out["haiku_model"], dc._FALLBACK["haiku_model"])
+        self.assertEqual(out["worker_model"], dc._FALLBACK["worker_model"])
 
     def test_non_string_value_degrades_to_fallback(self) -> None:
         # A JSON number (the most likely human mistake) must NOT be accepted —
         # it would break the verbatim-string CLI contract.
         path = _write_config(
             {
-                "haiku_max_budget_usd": 0.5,  # number, not "0.50"
+                "worker_max_budget_usd": 0.5,  # number, not "0.50"
                 "pre_verify_max_budget_usd": "0.75",
-                "haiku_model": "claude-haiku-4-5",
+                "worker_model": "claude-haiku-4-5",
             }
         )
         out = dc.load_daemon_config(path=path)
-        self.assertEqual(out["haiku_max_budget_usd"], dc._FALLBACK["haiku_max_budget_usd"])
+        self.assertEqual(out["worker_max_budget_usd"], dc._FALLBACK["worker_max_budget_usd"])
         self.assertEqual(out["pre_verify_max_budget_usd"], "0.75")
 
     def test_empty_string_value_degrades_to_fallback(self) -> None:
         path = _write_config(
             {
-                "haiku_max_budget_usd": "",
+                "worker_max_budget_usd": "",
                 "pre_verify_max_budget_usd": "0.60",
-                "haiku_model": "claude-haiku-4-5",
+                "worker_model": "claude-haiku-4-5",
             }
         )
         out = dc.load_daemon_config(path=path)
-        self.assertEqual(out["haiku_max_budget_usd"], dc._FALLBACK["haiku_max_budget_usd"])
+        self.assertEqual(out["worker_max_budget_usd"], dc._FALLBACK["worker_max_budget_usd"])
         self.assertEqual(out["pre_verify_max_budget_usd"], "0.60")
 
     def test_comment_key_is_ignored(self) -> None:
         path = _write_config(
             {
                 "_comment": "documentation only",
-                "haiku_max_budget_usd": "0.50",
+                "worker_max_budget_usd": "0.50",
                 "pre_verify_max_budget_usd": "0.50",
-                "haiku_model": "claude-haiku-4-5",
+                "worker_model": "claude-haiku-4-5",
             }
         )
         out = dc.load_daemon_config(path=path)
@@ -182,53 +178,169 @@ class ConsumerBindingTest(unittest.TestCase):
 
     def test_module_constants_match_loaded_config(self) -> None:
         loaded = dc.load_daemon_config()
-        self.assertEqual(dc.HAIKU_MAX_BUDGET_USD, loaded["haiku_max_budget_usd"])
+        self.assertEqual(dc.WORKER_MAX_BUDGET_USD, loaded["worker_max_budget_usd"])
         self.assertEqual(dc.PRE_VERIFY_MAX_BUDGET_USD, loaded["pre_verify_max_budget_usd"])
-        self.assertEqual(dc.HAIKU_MODEL, loaded["haiku_model"])
+        self.assertEqual(dc.WORKER_MODEL, loaded["worker_model"])
 
     def test_module_constants_are_non_empty_strings(self) -> None:
-        for value in (dc.HAIKU_MAX_BUDGET_USD, dc.PRE_VERIFY_MAX_BUDGET_USD, dc.HAIKU_MODEL):
+        for value in (dc.WORKER_MAX_BUDGET_USD, dc.PRE_VERIFY_MAX_BUDGET_USD, dc.WORKER_MODEL):
             self.assertIsInstance(value, str)
             self.assertTrue(value)
 
 
-class ModelTierDescopeTest(unittest.TestCase):
-    """T13 — honest de-scope of the daemon model constant.
+class WorkerModelFallbackTest(unittest.TestCase):
+    """The absent-config worker-model fallback.
 
-    AC2: the automation module holds no pinned/dated model version — the model is
-    read from configuration (``load_daemon_config`` → ``haiku_model``).
-    AC3: an absent config falls back to the unpinned session default (a family
-    alias), never a dated version pin.
+    SUPERSEDES the former T13 alias-de-scope assertions, which required the
+    fallback to be an UNPINNED family alias with no digit in it. That policy was
+    retired together with haiku: the monitor rejects bare aliases on this very
+    domain (REJECTED_ALIAS_VALUES), and a bare alias has no hooks/pricing.json row,
+    so an alias fallback could never be costed. The requirement it is replaced by
+    is strictly stronger than "contains no digit" — the fallback must be an id the
+    pricing SoT can actually price, which a family alias never was.
     """
 
-    def test_source_holds_no_pinned_model_version(self) -> None:
-        # AC2 grep: the constant's absence — no dated claude-<family>-<n> pin in
-        # the automation module (the fallback is now a family alias).
-        src = Path(dc.__file__).read_text(encoding="utf-8")
-        self.assertIsNone(
-            _PINNED_MODEL.search(src),
-            "daemon_config.py must not hardcode a dated model version — read from config",
+    def test_absent_config_falls_back_to_a_concrete_priceable_id(self) -> None:
+        missing = Path(tempfile.mkdtemp()) / "does-not-exist.json"
+        model = dc.load_daemon_config(path=missing)["worker_model"]
+        self.assertNotIn(
+            model,
+            {"haiku", "sonnet", "opus"},
+            "fallback must not be a bare alias — the monitor rejects those and "
+            "pricing.json cannot price them",
+        )
+        pricing = json.loads(
+            (Path(dc.__file__).parent / "pricing.json").read_text(encoding="utf-8")
+        )
+        models = pricing.get("models", pricing)
+        self.assertIn(
+            model,
+            models,
+            f"fallback {model!r} has no hooks/pricing.json row — the loop's spend "
+            f"would be uncosted",
         )
 
-    def test_absent_config_falls_back_to_session_default_not_pinned(self) -> None:
-        # AC3: missing config → the session-default family alias, not a dated pin.
+    def test_absent_config_fallback_is_not_a_retired_haiku_id(self) -> None:
+        # The point of the retirement: a fresh install must not land on haiku.
         missing = Path(tempfile.mkdtemp()) / "does-not-exist.json"
-        model = dc.load_daemon_config(path=missing)["haiku_model"]
-        self.assertNotRegex(model, r"\d", "fallback must not be a dated version pin")
+        model = dc.load_daemon_config(path=missing)["worker_model"]
+        self.assertNotIn("haiku", model, "haiku is retired for the daemon loops")
+
+    def test_shell_seam_fallback_matches_the_python_fallback(self) -> None:
+        # The two seams read the SAME daemon-config.json, so a divergent literal
+        # means the shell and Python halves of one cycle run different models —
+        # the drift this pair actually carried before the retirement
+        # (python 'haiku' vs shell 'claude-haiku-4-5').
+        shell = (
+            Path(dc.__file__).resolve().parents[1] / "scripts" / "lib" / "atrium-config.sh"
+        ).read_text(encoding="utf-8")
+        body = shell.split("atrium_resolve_worker_model() {", 1)[1].split("\n}", 1)[0]
         self.assertIn(
-            model, {"haiku", "sonnet", "opus"}, "fallback must be an unpinned family alias"
+            f'local model="{dc._FALLBACK["worker_model"]}"',
+            body,
+            "shell resolver fallback literal must equal _FALLBACK['worker_model']",
         )
 
     def test_config_present_model_is_honored(self) -> None:
         # The config lookup still wins when present — the daemon reads from config.
         path = _write_config(
             {
-                "haiku_max_budget_usd": "0.50",
+                "worker_max_budget_usd": "0.50",
                 "pre_verify_max_budget_usd": "0.50",
-                "haiku_model": "claude-haiku-4-5",
+                "worker_model": "claude-opus-4-8",
             }
         )
-        self.assertEqual(dc.load_daemon_config(path=path)["haiku_model"], "claude-haiku-4-5")
+        self.assertEqual(dc.load_daemon_config(path=path)["worker_model"], "claude-opus-4-8")
+
+
+class LegacyKeyCompatTest(unittest.TestCase):
+    """Read-side compatibility for a daemon-config.json written before the rename.
+
+    Without this an existing install silently falls back to the in-code literals
+    the moment its saved keys stop being read, discarding the operator's values.
+    """
+
+    def test_legacy_keys_are_read_when_current_keys_absent(self) -> None:
+        path = _write_config(
+            {
+                "haiku_max_budget_usd": "1.25",
+                "pre_verify_max_budget_usd": "0.50",
+                "haiku_model": "claude-opus-4-8",
+            }
+        )
+        out = dc.load_daemon_config(path=path)
+        self.assertEqual(out["worker_model"], "claude-opus-4-8")
+        self.assertEqual(out["worker_max_budget_usd"], "1.25")
+
+    def test_current_key_wins_over_legacy_key(self) -> None:
+        path = _write_config(
+            {
+                "worker_model": "claude-sonnet-4-6",
+                "haiku_model": "claude-haiku-4-5",
+                "worker_max_budget_usd": "2.00",
+                "haiku_max_budget_usd": "9.99",
+                "pre_verify_max_budget_usd": "0.50",
+            }
+        )
+        out = dc.load_daemon_config(path=path)
+        self.assertEqual(out["worker_model"], "claude-sonnet-4-6")
+        self.assertEqual(out["worker_max_budget_usd"], "2.00")
+
+    def test_legacy_read_warns_loudly(self) -> None:
+        # Precondition Loud-Fail: a legacy read is a live misconfiguration, so it
+        # must never be silent — the operator has to know to re-save.
+        path = _write_config({"haiku_model": "claude-opus-4-8"})
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            dc.load_daemon_config(path=path)
+        self.assertIn("haiku_model", buf.getvalue())
+        self.assertIn("WARN", buf.getvalue())
+
+    def test_module_import_is_stderr_silent_on_a_legacy_config(self) -> None:
+        # REGRESSION: the legacy WARN originally fired from the module-level
+        # _CONFIG resolution, so merely IMPORTING this module printed to stderr.
+        # That broke the sensitive-patterns guard CLI's byte-silent clean-path
+        # contract (test_sensitive_patterns.CliExitContract), which imports this
+        # transitively. Import must stay silent; the loud channel is the shell seam.
+        path = _write_config({"haiku_model": "claude-opus-4-8"})
+        res = subprocess.run(
+            [sys.executable, "-c", "import daemon_config"],
+            cwd=str(Path(dc.__file__).parent),
+            env={**os.environ, "DAEMON_CONFIG": str(path)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stderr, "", "importing daemon_config must not write to stderr")
+
+    def test_legacy_keys_in_use_is_exposed_for_callers(self) -> None:
+        # The silent import still has to make the fact retrievable.
+        path = _write_config({"haiku_model": "claude-opus-4-8"})
+        dc.load_daemon_config(path=path, warn=False)
+        self.assertIn("haiku_model", dc.LEGACY_KEYS_IN_USE)
+        clean = _write_config(
+            {
+                "worker_model": "claude-sonnet-4-6",
+                "worker_max_budget_usd": "0.50",
+                "pre_verify_max_budget_usd": "0.50",
+            }
+        )
+        dc.load_daemon_config(path=clean, warn=False)
+        self.assertEqual(dc.LEGACY_KEYS_IN_USE, ())
+
+    def test_no_warning_when_no_legacy_key_present(self) -> None:
+        path = _write_config(
+            {
+                "worker_model": "claude-sonnet-4-6",
+                "worker_max_budget_usd": "0.50",
+                "pre_verify_max_budget_usd": "0.50",
+            }
+        )
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            dc.load_daemon_config(path=path)
+        self.assertEqual(buf.getvalue(), "")
 
 
 class CostTierRuleTextTest(unittest.TestCase):

@@ -122,11 +122,11 @@ export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
     allowInherit: true,
   },
   {
-    key: "model.daemon_cycle_haiku",
+    key: "model.daemon_cycle_worker",
     applyMode: "next-cycle",
     editable: true,
     surface: "daemon-config",
-    daemonConfigKey: "haiku_model",
+    daemonConfigKey: "worker_model",
     allowInherit: false,
   },
 ];
@@ -140,11 +140,11 @@ export interface BudgetDomainDef {
 }
 
 // Per-call hard-cap budgets written through to daemon-config.json; both keys read fresh at daemon module-init each launchd cycle (edit applies next cycle, no restart).
-// haiku cap governs BOTH the autoagent generation AND wiki compile calls (shared key); pre-verify cap governs the autoagent pre-verify call only.
+// worker cap governs BOTH the autoagent generation AND wiki compile calls (shared key); pre-verify cap governs the autoagent pre-verify call only.
 export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
   {
-    key: "budget.haiku_max_usd",
-    daemonConfigKey: "haiku_max_budget_usd",
+    key: "budget.worker_max_usd",
+    daemonConfigKey: "worker_max_budget_usd",
     applyMode: "next-cycle",
   },
   {
@@ -160,6 +160,15 @@ export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
 export const DEPRECATED_DAEMON_CONFIG_KEYS: ReadonlyArray<string> = [
   "cost_daily_limit_usd",
   "cost_monthly_limit_usd",
+  // Pre-retirement worker-model/budget names. The daemon read paths
+  // (hooks/daemon_config.py _LEGACY_KEY_ALIASES, atrium_resolve_worker_model)
+  // still READ these so an un-resaved install keeps its operator values; listing
+  // them here is what makes a single monitor Save the migration — the renderer
+  // writes the current names and deletes these, after which the legacy read paths
+  // go quiet. Removing them from this list would strand the old keys in the file
+  // forever, permanently warning on every daemon start.
+  "haiku_model",
+  "haiku_max_budget_usd",
 ];
 
 /**

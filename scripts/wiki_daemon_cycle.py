@@ -64,7 +64,7 @@ HAIKU_TIMEOUT_SEC = 90
 # Anthropic minimum call cost ~$0.02-0.10 — 0.50 is the verified safe ceiling (measured ~$0.02-0.05/call).
 # Budget ceiling + model id are read from the daemon-config.json SoT (shared loader
 # hooks/daemon_config.py — the single fallback-policy SoT, degrades to verified literals if the file is
-# absent/corrupt). wiki has no pre-verify budget, so it uses only haiku_max_budget_usd + haiku_model.
+# absent/corrupt). wiki has no pre-verify budget, so it uses only worker_max_budget_usd + worker_model.
 # hooks/ is not on this module's sys.path — self-locate it from THIS file (store:
 # ~/.glass-atrium/{scripts,hooks} siblings; CI checkout: repo/{scripts,hooks}).
 # ~/.claude/hooks is no longer farmed, so a HOME-anchored insert breaks fresh installs.
@@ -72,8 +72,8 @@ _HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 from daemon_config import (  # noqa: E402 — sys.path insert immediately above
-    HAIKU_MAX_BUDGET_USD,
-    HAIKU_MODEL,
+    WORKER_MAX_BUDGET_USD,
+    WORKER_MODEL,
 )
 import ga_paths  # noqa: E402 — hooks dir pinned by the insert above
 
@@ -635,8 +635,8 @@ def propose_compilation(
                 claude_bin,
                 "-p", prompt,
                 "--output-format", "text",
-                "--max-budget-usd", HAIKU_MAX_BUDGET_USD,
-                "--model", HAIKU_MODEL,
+                "--max-budget-usd", WORKER_MAX_BUDGET_USD,
+                "--model", WORKER_MODEL,
             ],
             capture_output=True,
             text=True,
@@ -667,7 +667,7 @@ def propose_compilation(
                 duplicate_hint="unknown",
                 haiku_rationale=(
                     f"local --max-budget-usd ceiling too low "
-                    f"(HAIKU_MAX_BUDGET_USD={HAIKU_MAX_BUDGET_USD}, "
+                    f"(WORKER_MAX_BUDGET_USD={WORKER_MAX_BUDGET_USD}, "
                     f"returncode={completed.returncode}); NOT an external quota cap"
                 ),
                 haiku_status="skipped:budget-too-low",
@@ -1001,7 +1001,7 @@ def run_cycle(
         raw_processed=0,
         cost_guard={
             "max_haiku_calls": limit,
-            "haiku_max_budget_usd_per_call": HAIKU_MAX_BUDGET_USD,
+            "worker_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
             "skip_haiku": str(skip_haiku),
             "skip_sync": str(skip_sync),
         },

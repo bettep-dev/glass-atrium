@@ -29,8 +29,8 @@ if _AUTOAGENT_DIR not in sys.path:
 
 import daemon_cycle  # noqa: E402 — sys.path insert immediately above
 from daemon_config import (  # noqa: E402 — reached via the daemon cycle's hooks-dir pin
-    HAIKU_MAX_BUDGET_USD,
-    HAIKU_MODEL,
+    WORKER_MAX_BUDGET_USD,
+    WORKER_MODEL,
     CONFIG_PATH,
 )
 
@@ -507,7 +507,7 @@ def get_decision(
         # in stdout, which parses to no answer and takes the unparseable ladder
         # below after its strict retry. Both land loudly and keep local — the class
         # differs, the outcome does not.
-        return _build_local_decision(request, FAILURE_BUDGET, HAIKU_MAX_BUDGET_USD)
+        return _build_local_decision(request, FAILURE_BUDGET, WORKER_MAX_BUDGET_USD)
 
     answer = parse_answer(completed.stdout)
     if answer is None:
@@ -536,7 +536,7 @@ def get_decision(
         rejected_stale=(
             count_rejected_stale(request) if answer.choice == CHOICE_INTERLEAVE else 0
         ),
-        row=build_row(request, f"resolved:{answer.choice}", HAIKU_MODEL),
+        row=build_row(request, f"resolved:{answer.choice}", WORKER_MODEL),
         refs=answer.refs,
     )
 

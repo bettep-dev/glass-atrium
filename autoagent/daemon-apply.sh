@@ -1736,7 +1736,7 @@ get_model_id() {
         printf '[daemon-apply] WARN provenance model_id unresolved lib_source_failed=%s\n' "${lib}" >&2
         return 0
     fi
-    atrium_resolve_haiku_model
+    atrium_resolve_worker_model
 }
 
 # update_db_status — transition core.autoagent_proposals.status

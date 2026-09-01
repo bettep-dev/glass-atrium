@@ -411,7 +411,7 @@ ga_render_auth_script() { printf '%s\n' "${GA_DIR}/scripts/render-claude-auth.sh
 ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.sh"; }
 
 # headless_auth_selftest — source the rendered secrets file (claude_auth_load_env) and run a minimal
-# `claude -p` (on the daemons' configured cheap haiku model, never the default Fable-class model) in a
+# `claude -p` (on the daemons' configured background-worker model, never the default Fable-class model) in a
 # keychain-bypassing manner; return 0 iff the CLI answers (rc 0 AND no 401/credential
 # signature in its output). This is THE gate signal: a green self-test means the launchd daemons will
 # authenticate headlessly. Keychain-bypass: claude_auth_load_env exports CLAUDE_CODE_OAUTH_TOKEN from
@@ -431,7 +431,7 @@ ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.
 # lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
 # drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
-  local claude_bin env_lib probe_out probe_rc=0 haiku_model
+  local claude_bin env_lib probe_out probe_rc=0 worker_model
   claude_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
   env_lib="${GA_AUTH_ENV_LIB:-$(ga_claude_auth_env_lib)}"
 
@@ -440,12 +440,12 @@ headless_auth_selftest() {
     return 2
   fi
 
-  # CHEAP-MODEL PIN: verify auth on the daemons' configured haiku model, never the default Fable-class
-  # model — resolved from the daemon-config.json SoT via atrium_resolve_haiku_model (sourced at startup
+  # WORKER-MODEL PIN: verify auth on the daemons' configured worker model, never the default Fable-class
+  # model — resolved from the daemon-config.json SoT via atrium_resolve_worker_model (sourced at startup
   # by ga-env.sh's E5 loop) so the self-test and the nightly daemons authenticate against the SAME model
   # id (no dated-pin drift). GA_AUTH_DAEMON_CONFIG override hook is a bats test seam (mirrors
   # GA_AUTH_CLAUDE_BIN / DOCTOR_AUTH_REPORTS_DIR); empty → the helper's canonical default.
-  haiku_model="$(atrium_resolve_haiku_model "${GA_AUTH_DAEMON_CONFIG:-}")"
+  worker_model="$(atrium_resolve_worker_model "${GA_AUTH_DAEMON_CONFIG:-}")"
 
   # Run the source + probe in a SUBSHELL so the exported credential never leaks into the install
   # process environment beyond the probe (set -a side effects contained). The lib's claude_auth_load_env
@@ -472,7 +472,7 @@ headless_auth_selftest() {
     # hung CLI (network stall / stuck credential prompt) can never freeze the install. `env` exec-chains
     # into claude in the SAME process group, so the timeout still bounds it. stdin is pinned to /dev/null
     # so the CLI cannot block reading it. exit 124 is non-zero → caught by the probe_rc gate below.
-    run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${haiku_model}" "reply with OK" </dev/null 2>&1
+    run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${worker_model}" "reply with OK" </dev/null 2>&1
   )" || probe_rc=$?
 
   # QUOTA PRECEDENCE — tested BEFORE the rc/AUTH_FAIL_RE fold because a session-limit response proves the
