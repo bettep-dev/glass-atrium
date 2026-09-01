@@ -315,7 +315,6 @@ export function resolveDaemonStatuses(
 			const verdict = isDead ? "stale" : "missing";
 			return {
 				daemon_name: name,
-				status: verdict,
 				effective_status: verdict,
 				last_run_at: null,
 				staleness_minutes: null,
@@ -330,7 +329,6 @@ export function resolveDaemonStatuses(
 		const verdict = isOverdue ? "stale" : (row.last_status ?? "missing");
 		return {
 			daemon_name: name,
-			status: verdict,
 			effective_status: verdict,
 			last_run_at: row.last_run_at.toISOString(),
 			staleness_minutes: stalenessMinutes,
@@ -448,7 +446,6 @@ function emptyDaemons(): DaemonLiveStatus[] {
 	return DAEMON_NAMES.map(
 		(name): DaemonLiveStatus => ({
 			daemon_name: name,
-			status: "missing",
 			effective_status: "missing",
 			last_run_at: null,
 			staleness_minutes: null,

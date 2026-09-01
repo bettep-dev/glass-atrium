@@ -55,7 +55,7 @@ test("never-reported daemon (zero rows) + null anchor → 'missing' with null ti
   assert.strictEqual(daemons.length, DAEMON_NAMES.length);
   for (const name of DAEMON_NAMES) {
     const d = statusOf(daemons, name);
-    assert.strictEqual(d.status, "missing", `${name} should be 'missing'`);
+    assert.strictEqual(d.effective_status, "missing", `${name} should be 'missing'`);
     assert.strictEqual(d.last_run_at, null);
     assert.strictEqual(d.staleness_minutes, null);
   }
@@ -67,7 +67,7 @@ test("never-fired daemon + system older than one cadence (install anchor) → 's
   for (const name of DAEMON_NAMES) {
     const d = statusOf(daemons, name);
     assert.strictEqual(
-      d.status,
+      d.effective_status,
       "stale",
       `${name} never fired past its first full cadence → dead, must escalate to 'stale'`,
     );
@@ -81,7 +81,7 @@ test("never-fired daemon + fresh install (system younger than a cadence) → 'mi
   const daemons = resolveDaemonStatuses([], NOW, anchor);
   for (const name of DAEMON_NAMES) {
     assert.strictEqual(
-      statusOf(daemons, name).status,
+      statusOf(daemons, name).effective_status,
       "missing",
       `${name} on a fresh install must stay 'No data', not escalate to crit`,
     );
@@ -91,7 +91,7 @@ test("never-fired daemon + fresh install (system younger than a cadence) → 'mi
 test("install-anchor boundary: system age exactly one cadence is NOT dead (strict >)", () => {
   const anchor = minutesAgo(CADENCE_MIN); // exactly 1440, not > 1440
   const daemons = resolveDaemonStatuses([], NOW, anchor);
-  assert.strictEqual(statusOf(daemons, "autoagent").status, "missing");
+  assert.strictEqual(statusOf(daemons, "autoagent").effective_status, "missing");
 });
 
 test("a firing daemon is unaffected by the install anchor (only never-fired daemons escalate)", () => {
@@ -106,11 +106,11 @@ test("a firing daemon is unaffected by the install anchor (only never-fired daem
     oldAnchor,
   );
   // within-cadence firing daemon → real status, NOT escalated by the old anchor
-  assert.strictEqual(statusOf(daemons, "autoagent").status, "ok");
+  assert.strictEqual(statusOf(daemons, "autoagent").effective_status, "ok");
   // overdue firing daemon → 'stale' via the staleness path (not the never-fired anchor path)
-  assert.strictEqual(statusOf(daemons, "wiki").status, "stale");
+  assert.strictEqual(statusOf(daemons, "wiki").effective_status, "stale");
   // a daemon absent from rows (never fired) still escalates under the old anchor
-  assert.strictEqual(statusOf(daemons, "daily-restart-autoagent").status, "stale");
+  assert.strictEqual(statusOf(daemons, "daily-restart-autoagent").effective_status, "stale");
 });
 
 test("daemon with a NULL last_run_at row + null anchor → 'missing' (no fabricated staleness)", () => {
@@ -120,7 +120,7 @@ test("daemon with a NULL last_run_at row + null anchor → 'missing' (no fabrica
     null,
   );
   const d = statusOf(daemons, "autoagent");
-  assert.strictEqual(d.status, "missing");
+  assert.strictEqual(d.effective_status, "missing");
   assert.strictEqual(d.staleness_minutes, null);
 });
 
@@ -133,7 +133,7 @@ test("overdue daemon (staleness > cadence × 1.5) → synthesized 'stale' (crit 
   );
   const d = statusOf(daemons, "wiki");
   assert.strictEqual(
-    d.status,
+    d.effective_status,
     "stale",
     "an overdue daemon must surface 'stale' regardless of its real last_status",
   );
@@ -148,7 +148,7 @@ test("within-cadence daemon → real last_status passes through (no 'stale' synt
     null,
   );
   const d = statusOf(daemons, "autoagent");
-  assert.strictEqual(d.status, "partial");
+  assert.strictEqual(d.effective_status, "partial");
 });
 
 test("threshold boundary: exactly cadence × 1.5 is NOT overdue (strict >)", () => {
@@ -158,7 +158,7 @@ test("threshold boundary: exactly cadence × 1.5 is NOT overdue (strict >)", () 
     NOW,
     null,
   );
-  assert.strictEqual(statusOf(daemons, "wiki").status, "ok");
+  assert.strictEqual(statusOf(daemons, "wiki").effective_status, "ok");
 });
 
 test("error/quota_exceeded within cadence pass through unchanged", () => {
@@ -170,8 +170,8 @@ test("error/quota_exceeded within cadence pass through unchanged", () => {
     NOW,
     null,
   );
-  assert.strictEqual(statusOf(daemons, "autoagent").status, "error");
-  assert.strictEqual(statusOf(daemons, "wiki").status, "quota_exceeded");
+  assert.strictEqual(statusOf(daemons, "autoagent").effective_status, "error");
+  assert.strictEqual(statusOf(daemons, "wiki").effective_status, "quota_exceeded");
 });
 
 test("soft-deprecated daemon rows (health-check) are dropped — defense in depth", () => {
@@ -191,30 +191,5 @@ test("every resolved daemon carries the server-declared cadence (no FE hardcode)
   const daemons = resolveDaemonStatuses([], NOW, null);
   for (const d of daemons) {
     assert.strictEqual(d.expected_cadence_minutes, CADENCE_MIN);
-  }
-});
-
-test("effective_status carries the same verdict as status at every construction site", () => {
-  const overdueMin = CADENCE_MIN * STALE_MULTIPLIER + 1;
-  const cases: Array<[string, DaemonAggRow[], Date | null]> = [
-    ["no rows, no anchor", [], null],
-    ["no rows, dead anchor", [], minutesAgo(CADENCE_MIN + 1)],
-    [
-      "mixed rows",
-      [
-        row("autoagent", { last_status: "error" }),
-        row("wiki", { last_run_at: minutesAgo(overdueMin) }),
-      ],
-      null,
-    ],
-  ];
-  for (const [label, rows, anchor] of cases) {
-    for (const d of resolveDaemonStatuses(rows, NOW, anchor)) {
-      assert.strictEqual(
-        d.effective_status,
-        d.status,
-        `${label}: ${d.daemon_name} must report one verdict, not two`,
-      );
-    }
   }
 });
