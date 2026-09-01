@@ -22,12 +22,21 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Absolute Rules [ALL]
 
-- All responses are answered in the **user's question language**. · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
-  Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
-  Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
+- All responses are answered in the **user's question language**.
+  - Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
+- Technical terms in original language + parenthetical explanation on first occurrence
+- **No guessing** → Ask when unclear (1 issue = 1 question):
+  - Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
-- File names, class names, lines, APIs → Use **only verified** references. **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it. These are examples of the class, not the class itself; if unsure, treat the claim as a relation. Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first. **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it. Without shell access, report both texts and mark the relation **unverified** — never assert it.
-- **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission) · No API keys in handoff payloads · Sensitive info in logs MUST be masked
+- File names, class names, lines, APIs → Use **only verified** references.
+  - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
+    - These are examples of the class, not the class itself; if unsure, treat the claim as a relation.
+    - Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first.
+    - Without shell access, report both texts and mark the relation **unverified** — never assert it.
+  - **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it.
+- **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission)
+- No API keys in handoff payloads
+- Sensitive info in logs MUST be masked
 - **Output Contract**: Pre-define deliverable format and conditions for complex tasks
 - **Monitor address (never discover it by scanning)**: the Atrium Monitor API — including the `clauded-docs` documents agents read and write — is at `http://127.0.0.1:16145` on this machine: loopback always, port `16145` by default. Discovering the port by probing listening processes (`lsof` / `ps` / port sweep) is FORBIDDEN — a neighbouring project's dev server answers on a nearby port and returns an unrelated page. A non-default install resolves via `ATRIUM_MONITOR_PORT` → `monitor/.env` → `config.toml [ports].monitor` (shell SoT: `scripts/lib/atrium-config.sh` → `atrium_monitor_port`), never by discovery. What to POST and when → `scoped/scope-report.md` Emission contract.
 
@@ -48,8 +57,16 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 - Use `effort` parameter (max / xhigh / high / medium / low) — `budget_tokens` is deprecated on Claude 4.6+.
 - Default `effort=high`; lower for cost-sensitive pipelines; `xhigh` for highest-capability tasks (long-horizon agents, deep reasoning); `max` may overthink — reserve for genuinely hardest tasks.
-- **Thinking is ON by default (Opus 5 — reversed from 4.8's adaptive/as-needed default)**: `effort` governs thinking VOLUME, not visible response length — prompt conciseness explicitly when short output is wanted. Disabling thinking is permitted ONLY at effort ≤ high; `xhigh`/`max` with thinking disabled → 400 error (per-request enforced). Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow, lower it for cost-sensitive work.
-- **5-family capability facts**: models version independently — Opus 5 is the newest release, Fable 5 the capability flagship (distinct axes) · 128k max output unchanged (set budget starting at 64k) · 1M context is default AND maximum on Opus 5 / Fable 5 · mid-conversation `role:"system"` messages accepted since 4.8 (append late instructions without restating the full prompt, preserving cache); Opus 5 adds mid-conversation TOOL changes (beta) · prefill unsupported across the 5-family (Structured Outputs — now GA — for JSON, direct system instruction to remove preamble) · Opus 5 / Fable 5 safety classifiers may return a refusal stop reason (Mythos 5 does not) — harness special-cases it, not a hard error · Fable 5 requests may run many minutes to autonomous hours — client timeout + async posture required; never instruct it to echo its reasoning (refusal-classifier fallback trigger).
+- **Thinking is ON by default** (Opus 5 — reversed from 4.8's adaptive/as-needed default): `effort` governs thinking VOLUME, not visible response length — prompt conciseness explicitly when short output is wanted.
+  - Disabling thinking is permitted ONLY at effort ≤ high; `xhigh`/`max` with thinking disabled → 400 error (per-request enforced).
+  - Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow, lower it for cost-sensitive work.
+- **5-family capability facts**: models version independently — Opus 5 is the newest release, Fable 5 the capability flagship (distinct axes)
+  - 128k max output unchanged (set budget starting at 64k)
+  - 1M context is default AND maximum on Opus 5 / Fable 5
+  - mid-conversation `role:"system"` messages accepted since 4.8 (append late instructions without restating the full prompt, preserving cache); Opus 5 adds mid-conversation TOOL changes (beta)
+  - prefill unsupported across the 5-family (Structured Outputs — now GA — for JSON, direct system instruction to remove preamble)
+  - Opus 5 / Fable 5 safety classifiers may return a refusal stop reason (Mythos 5 does not) — harness special-cases it, not a hard error
+  - Fable 5 requests may run many minutes to autonomous hours — client timeout + async posture required; never instruct it to echo its reasoning (refusal-classifier fallback trigger).
 
 ## Scope Literalism [ALL]
 
@@ -62,8 +79,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Each spawn multiplies token cost: system prompt + tool schemas re-tokenized per child.
 - Spawn only when: (1) tasks are parallelizable AND independent, (2) single-agent capacity confirmed insufficient.
 - Concurrent children > 3 → verify rate-limit headroom before fan-out.
-- **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06). Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
-- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies. Layering detail: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`.
+- **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06).
+  - Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
+- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies.
+  - Layering detail: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`.
 - Detail: `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget`.
 
 ## 3-Tier Boundary [ALL]
@@ -92,17 +111,58 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Template: See `~/.claude/agents/templates/progress.md`
 - Context bloat → Minimize unnecessary file reads, delegate to sub-agents
 - **Scope**: `progress.md` lives under the tracker directory `~/.claude-personal/projects/<home-encoded>/memory/` — the path `scripts/progress-tracker.sh` actually reads, where `<home-encoded>` is `$HOME` with `/` replaced by `-` (e.g. `/Users/x` → `-Users-x`) — as session-internal state — NOT subject to the monitor clauded-docs HTML routing (scope-report.md / scope-planning.md Output Format Routing); always Markdown.
-- **`[CONTINUITY]` header activation contract** (main session — `inject-session-context.sh` SessionStart hook inject): on turn-0 of every new session, if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action · cross-match listed slugs against current user request · matched slug → resume from that progress file's `## Next Steps` (do NOT restart) · no match → treat as informational (do NOT auto-Read all — context budget) · header absence = no open progress files (silent — proceed normally)
+
+### Session-Start Continuity Header
+
+- `[CONTINUITY]` header activation contract (main session — `inject-session-context.sh` SessionStart hook inject) — on turn-0 of every new session:
+  - if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action
+  - cross-match listed slugs against current user request
+  - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
+  - no match → treat as informational (do NOT auto-Read all — context budget)
+  - header absence = no open progress files (silent — proceed normally)
 
 ### Turn Budget & Graceful Exit [ALL]
 
-- Frontmatter `maxTurns` = **hard cap** (kills mid-tool-use) · body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32) · approaching ceiling → **STOP**, never push through
-- **Runtime budget meter (makes the ceiling observable)**: two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`). Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs. **Caveat — observable + advised, NOT enforced**: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
-- On approach: finish current write to valid state (no partial files) · log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` · return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point · **splitting > truncation** (next /loop tick resumes cleanly)
-- **Work-unit checkpoint dimension (token/tool_use blowout, not only turn boundary)**: the turn-based ceiling (80% maxTurns) misses a single-turn token/tool_use blowout — a delegation can run out of budget mid-turn before any turn boundary fires. Checkpoint after each completed work-unit (each file / each fix), NOT only at the turn boundary, recording the resume point into `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the Cross-Session Continuity durable anchor above). This makes a mid-turn truncation resumable.
-- **Truncation recovery (orchestrator step — Failure Recovery Loop / Monitoring phase)**: a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues (the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern, `orchestrator-role.md` Orchestrator Identity). For cross-session durability instead, resume from `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the canonical durable anchor).
-- **Emit-before-cap (schema/workflow agents)**: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with NONE left to emit loses ALL the work. Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage (unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block). Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing). Never end a schema-mode turn on prose. **Second failure mode — invalid-emission / retry-cap-exceeded**: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries; this rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch. Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error. Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim. **Schema-cap authority is single-sited (this charter states a pointer, not a rule)**: the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema; this charter prescribes no cap of its own, so any cap rule restated here is drift. **Print-block-then-emit (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field)**: the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call — the StructuredOutput call still terminates the run (this does not violate the never-end-on-prose rule; the block turn precedes the final tool call). **Schema-mode caveat — the printed text turn does NOT survive**: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing); the RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block. Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, runs the multi-line field parser over it, and records the run as WRITER-emitted with attribution `structuredoutput-completion` (a healthy row, NOT synthesized). The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there. Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from. Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
-- **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+- Frontmatter `maxTurns` = **hard cap** (kills mid-tool-use)
+- body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32)
+- approaching ceiling → **STOP**, never push through
+- **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`).
+  - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
+  - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
+- On approach:
+  - finish current write to valid state (no partial files)
+  - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
+  - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
+  - **splitting > truncation** (next /loop tick resumes cleanly)
+- **Exempt** (section-wide — this entire `### Turn Budget & Graceful Exit` section, including every `####` subsection below): `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+
+#### Work-unit checkpoint dimension
+
+- Token/tool_use blowout, not only turn boundary: the turn-based ceiling (80% maxTurns) misses a single-turn token/tool_use blowout — a delegation can run out of budget mid-turn before any turn boundary fires.
+  - Checkpoint after each completed work-unit (each file / each fix), NOT only at the turn boundary, recording the resume point into `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the Cross-Session Continuity durable anchor above).
+  - This makes a mid-turn truncation resumable.
+
+#### Truncation recovery
+
+- Orchestrator step (Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues (the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern, `orchestrator-role.md` Orchestrator Identity).
+  - For cross-session durability instead, resume from `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the canonical durable anchor).
+
+#### Emit-before-cap
+
+- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with NONE left to emit loses ALL the work.
+  - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage (unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block).
+  - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
+  - Never end a schema-mode turn on prose.
+  - **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries; this rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
+    - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
+    - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
+  - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema; this charter prescribes no cap of its own, so any cap rule restated here is drift.
+  - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call — the StructuredOutput call still terminates the run (this does not violate the never-end-on-prose rule; the block turn precedes the final tool call).
+  - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing); the RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
+    - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, runs the multi-line field parser over it, and records the run as WRITER-emitted with attribution `structuredoutput-completion` (a healthy row, NOT synthesized).
+  - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
+  - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
+  - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
 
 ### Context Compression Strategies
 
@@ -126,7 +186,8 @@ Prevent context bloat during long sessions (10+ turns).
 
 ### Handoff Context
 
-Items to deliver during agent handoff: **Purpose + relevant files + key constraints + expected output** only · Do not pass entire conversation history
+- Items to deliver during agent handoff: **Purpose + relevant files + key constraints + expected output** only
+- Do not pass entire conversation history
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
@@ -152,7 +213,11 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 
 > Detailed rules: See `learning-log` (rules/glass-atrium/core-learning-log.md)
 
-- **Memory persistence is user-instructed-only [ALL]**: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir). A persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language). Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — and the daemon auto-clustering path is NOT implemented in the current code (no such clustering / user-facing-memory-persistence logic exists in learning-aggregator.py), so the prohibition holds by absence of the code path, not by a runtime gate. Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt — only user-facing memory writes require the explicit instruction. Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
+- **Memory persistence** is user-instructed-only [ALL]: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir).
+  - A persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language).
+  - Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — and the daemon auto-clustering path is NOT implemented in the current code (no such clustering / user-facing-memory-persistence logic exists in learning-aggregator.py), so the prohibition holds by absence of the code path, not by a runtime gate.
+  - Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt — only user-facing memory writes require the explicit instruction.
+  - Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
 
 ## Wiki Reference (Knowledge Utilization) [ALL]
 
@@ -163,7 +228,9 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 - **Default behavior**: `exit 0` by default · Return non-zero only when blocking is intended
 - **Timeout**: Command hook default 600 seconds (actual scripts SHOULD be designed to complete within 1 second)
 - **Rollback**: Identify problematic hook → Remove entry from `settings.json` → Restart session
-- **Pre-deployment verification**: Confirm blocking behavior with an intentional-violation probe before treating rollout as complete. Claude Code snapshots the hook config at SESSION START — a `settings.json` binding added mid-session is INERT in every already-running session (and any pre-warmed background/spare process) until restart. Envelope-injection (`echo '{...}' | hook.sh`) tests the SCRIPT in isolation, NOT live dispatch — so rollout is complete only after a restart + a live intentional-violation tool-call probe in a fresh session.
+- **Pre-deployment verification**: Confirm blocking behavior with an intentional-violation probe before treating rollout as complete.
+  - Claude Code snapshots the hook config at SESSION START — a `settings.json` binding added mid-session is INERT in every already-running session (and any pre-warmed background/spare process) until restart.
+  - Envelope-injection (`echo '{...}' | hook.sh`) tests the SCRIPT in isolation, NOT live dispatch — so rollout is complete only after a restart + a live intentional-violation tool-call probe in a fresh session.
 
 ## Rationalization Rejection [ALL]
 
