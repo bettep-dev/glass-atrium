@@ -17,13 +17,16 @@
 //     neither number;
 //   - a pending count that ignores the label: the unpromptable fixtures sit beside
 //     ordinary identified rows;
+//   - a registry-gated pending count: one unpromptable fixture sits on the
+//     off-registry agent, so a gated implementation is one short;
 //   - the registry gate silently eating a parked row (F5): one fixture agent is
 //     absent from the registry fixture on purpose.
 //
 // Hermetic registry — AGENT_REGISTRY_PATH points at a fixture holding only the two
 // registered agents, so the third is off-registry by construction. That isolates the
-// REGISTRY-GATED counts to this suite's rows exactly. The two deliberately UNGATED
-// numbers (per-cycle events, off_registry_parked) cannot be isolated that way — the
+// REGISTRY-GATED counts to this suite's rows exactly. The deliberately UNGATED
+// numbers (per-cycle events, off_registry_parked, the pending split) cannot be
+// isolated that way — the
 // gate is what would have hidden their subject — so those are asserted as DELTAS
 // against a pre-seed snapshot. A delta is the honest assertion for them: the counts
 // are over a live shared table, and pinning an absolute would pin production state.
@@ -136,6 +139,12 @@ function cycleDelta(cause: string): number {
   );
 }
 
+// Same reasoning as cycleDelta: the pending split is ungated, so it counts the
+// live table and only the delta belongs to this suite.
+function pendingDelta(field: "pending_total" | "pending_unpromptable"): number {
+  return body.loop_suppression_state[field] - baseline.loop_suppression_state[field];
+}
+
 before(async () => {
   tmpRoot = await mkdtemp(join(tmpdir(), "impr-suppress-registry-"));
   const registryPath = join(tmpRoot, "agent-registry.json");
@@ -198,8 +207,8 @@ after(async () => {
 
 // Parked population: 2 caps (A, B) · 1 streak (A) · 1 non-auto-fixable (A) ·
 // 1 unmarked control (A) · 1 cap on the OFF-registry agent.
-// Pending population: 4 unpromptable-label rows (one legacy Korean) + 2 ordinary
-// rows, all registered.
+// Pending population: 5 unpromptable-label rows (one legacy Korean, one on the
+// OFF-registry agent) + 2 ordinary rows.
 async function seed(): Promise<void> {
   const prisma = getPrisma();
   const rows: Array<{
@@ -220,6 +229,9 @@ async function seed(): Promise<void> {
     { agent: AGENT_B, status: "identified", reason: null, label: UNPROMPTABLE_LABEL_LEGACY },
     { agent: AGENT_A, status: "identified", reason: null, label: PROMPTABLE_LABEL },
     { agent: AGENT_B, status: "identified", reason: null, label: PROMPTABLE_LABEL },
+    // Off-registry, and unpromptable all the same: the daemon's intake skip reads
+    // the label and never consults the registry. A gated count drops this row.
+    { agent: AGENT_OFF, status: "identified", reason: null, label: UNPROMPTABLE_LABEL },
   ];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
@@ -355,18 +367,36 @@ test("non-suppression loop events are never counted", async (t) => {
 
 test("pending rows that can never propose are separated from the backlog", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
-  const s = body.loop_suppression_state;
-  assert.strictEqual(s.pending_total, 6, "6 registered identified rows");
+  assert.strictEqual(pendingDelta("pending_total"), 7, "7 seeded identified rows");
   assert.strictEqual(
-    s.pending_unpromptable,
-    4,
-    "4 carry an intake-skipped label (one of them the legacy Korean member) — an " +
-      "implementation counting all pending returns 6, one with a broken escape returns 3",
+    pendingDelta("pending_unpromptable"),
+    5,
+    "5 carry an intake-skipped label (one the legacy Korean member, one on the " +
+      "off-registry agent) — an implementation counting all pending returns 7, one " +
+      "with a broken escape returns 3, one still registry-gated returns 4",
   );
   assert.notStrictEqual(
-    s.pending_unpromptable,
-    s.pending_total,
+    body.loop_suppression_state.pending_unpromptable,
+    body.loop_suppression_state.pending_total,
     "reporting the whole backlog as unpromptable is the opposite error",
+  );
+});
+
+test("the pending split counts every agent, not only registry members", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  // The finding this field was added for measured 28 of 47. Registry-gated it
+  // rendered as 6 of 20, which an operator cannot reconcile with the finding and
+  // reads as a total. The gate belongs on the display lists, not on a count of
+  // what the loop skips — the intake predicate never consults the registry.
+  assert.strictEqual(
+    pendingDelta("pending_unpromptable"),
+    5,
+    "the off-registry unpromptable row is part of the backlog that cannot propose",
+  );
+  assert.strictEqual(
+    pendingDelta("pending_total"),
+    7,
+    "and its denominator counts it too — a mixed-scope ratio is unreadable",
   );
 });
 

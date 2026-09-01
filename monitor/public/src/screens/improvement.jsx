@@ -2086,7 +2086,10 @@ function LoopSuppressionCardI({ state, suppression }) {
 					<div className="card-sub is-wrap fs-micro mt-1">
 						These rows sit at status='identified' and are counted as pending
 						backlog, but their label is one the daemon skips at intake every
-						cycle, so no proposal can be generated from them.
+						cycle, so no proposal can be generated from them. Counted across
+						every agent — the intake skip reads the label, not
+						agent-registry.json, so unlike the parked buckets below this pair
+						is not registry-scoped.
 					</div>
 				</div>
 				<div>

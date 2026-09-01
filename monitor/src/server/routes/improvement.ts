@@ -1337,12 +1337,21 @@ async function handleLearningLog(
       // The "healthy pending backlog" split. status_distribution reports these rows
       // as 'identified' with nothing to distinguish them, so a majority that can
       // never produce a proposal reads as capacity.
+      //
+      // Deliberately NOT registry-gated, for the same reason the per-cycle buckets
+      // are not: the daemon's intake skip keys on the pattern LABEL and never
+      // consults agent-registry.json, so gating this count would report a narrower
+      // population than the mechanism it measures. Gated, the figure that motivated
+      // this field read "6 of 20" against a measured 28 of 47 — a number that
+      // silently means something narrower than it appears, which is the failure
+      // this whole payload exists to fix. The registry gate stays on the parked
+      // buckets and the lists, where it scopes a DISPLAY population rather than
+      // a claim about what the loop skips.
       prisma.$queryRaw<PendingSplitDbRow[]>`
         SELECT COUNT(*) FILTER (WHERE ${unpromptablePredicate})::bigint AS unpromptable,
                COUNT(*)::bigint AS total
         FROM core.learning_log
         WHERE status = 'identified'::core."LearningStatus"
-          ${agentAndFilter}
       `,
     ]);
 

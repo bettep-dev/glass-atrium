@@ -491,9 +491,15 @@ export interface ImprovementLoopSuppressionState {
   // status='identified' rows whose pattern label is one the daemon skips at intake
   // (NON_PROMPTABLE_LABELS). These are the rows that look like pending backlog and
   // are not: no proposal can ever be generated from them.
+  //
+  // UNGATED — every agent, registry member or not. The intake skip keys on the
+  // label alone, so a registry-scoped count would answer a narrower question than
+  // the one the field asks. Both numbers below share that scope, so the ratio is
+  // internally consistent; it does NOT agree with the registry-gated parked
+  // buckets, and is not meant to.
   pending_unpromptable: number;
   // status='identified' rows in total, so the ratio above is readable without a
-  // second request.
+  // second request. Same ungated scope as the numerator.
   pending_total: number;
   // F5 — parked rows whose agent is NOT in the registry, and which every other
   // count on this payload (all registry-gated) therefore omits. Reported rather
