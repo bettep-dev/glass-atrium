@@ -1498,26 +1498,80 @@ def _fetch_promotion_stats(agent: str) -> tuple[list[OutcomeSignal], int]:
     return signals, true_count
 
 
-def _is_sustained(pattern_date: str, *, sustain_days: int = PROMOTION_SUSTAIN_DAYS) -> bool:
-    """7-day rolling sustain check against the pattern's first-observed date.
+def _first_observation_ts(agent: str) -> datetime | None:
+    """Oldest qualifying core.outcomes record_ts for `agent` — the sustain signal.
 
-    - core.learning_log discovered_date (YYYY-MM-DD) = first-observed date.
-    - today - date >= sustain_days → sustained.
-    - date parse failure → False (conservative — blocks proposal promotion).
+    core.learning_log.discovered_date CANNOT answer this question, which is why
+    this read exists. That column is a LAST-observed date (its writers, in full,
+    are enumerated on _reobservation_reason), so reading it as first-observed
+    INVERTS the sustain gate: a pattern re-observed every cycle is restamped to
+    today and never sustains, while one whose evidence stopped arriving sustains
+    purely by ageing. The two gates now read two columns with one meaning each,
+    instead of one column with two.
+
+    ASC/limit-1 twin of _fetch_promotion_stats' read — same 90-day lookback, same
+    agent scope, same learning-signal exclusions — so the span is measured over
+    exactly the evidence the posterior scores. Uncapped by OUTCOME_SAMPLE_LIMIT
+    on purpose: the capped sample holds the 5 most RECENT rows, whose span
+    collapses toward zero precisely for the high-volume agents the ladder targets.
+
+    Returns:
+        datetime (tz-aware) of the oldest qualifying outcome · None on PG-off,
+        read failure, or an empty window → caller fails CLOSED (not sustained).
+    """
+    if not HAS_PG_OUTCOME_READ or not agent:
+        return None
+
+    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
+    try:
+        rows = _pg_read_outcomes_since(
+            since_epoch,
+            agent=agent,
+            task_type=None,
+            limit=1,
+            order="ASC",
+        )
+    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: PG first-observation read failed "
+            f"(sustain gate fails closed): {type(exc).__name__}: {exc}\n"
+        )
+        return None
+    if not rows:
+        return None
+    record_ts = rows[0].get("record_ts")
+    return record_ts if isinstance(record_ts, datetime) else None
+
+
+def _is_sustained(
+    first_observed: datetime | None,
+    *,
+    sustain_days: int = PROMOTION_SUSTAIN_DAYS,
+) -> bool:
+    """7-day rolling sustain check — has this agent's evidence spanned the window?
+
+    - `first_observed` = oldest qualifying core.outcomes record_ts
+      (_first_observation_ts), NOT core.learning_log.discovered_date. The column
+      name reads first-observed; the value is last-observed. See
+      _first_observation_ts for why substituting it inverts this gate.
+    - now - first_observed >= sustain_days → sustained.
+    - None (PG off, read failure, empty window) → False (conservative — blocks
+      proposal promotion, same fail-closed posture as the observation_count floor).
 
     Args:
-        pattern_date: Pattern.date (discovered_date as YYYY-MM-DD).
+        first_observed: tz-aware datetime of the oldest qualifying outcome.
         sustain_days: sustain threshold in days (default 7).
 
     Returns:
         bool — whether sustain is met.
     """
-    try:
-        observed = datetime.strptime(pattern_date.strip(), "%Y-%m-%d").replace(
-            tzinfo=timezone.utc
-        )
-    except (ValueError, AttributeError):
+    if not isinstance(first_observed, datetime):
         return False
+    observed = (
+        first_observed.replace(tzinfo=timezone.utc)
+        if first_observed.tzinfo is None
+        else first_observed
+    )
     elapsed_days = (datetime.now(timezone.utc) - observed).days
     return elapsed_days >= sustain_days
 
@@ -10488,7 +10542,7 @@ def run_cycle(
             promotion_tier = classify_promotion_tier(
                 confidence_observed=confidence_observed,
                 observation_count=observation_count,
-                sustained=_is_sustained(lead_pattern.date),
+                sustained=_is_sustained(_first_observation_ts(agent)),
                 touches_frontmatter=proposal.touched_frontmatter,
             )
         elif promotion_state == "floor":
