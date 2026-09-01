@@ -412,12 +412,19 @@ class TestDropStalePatterns(_GateFixture):
         return kept, stderr.getvalue()
 
     def test_when_live_rate_below_floor_then_rate_pattern_skips(self) -> None:
+        # Exact-equality on the event list, not assertIn: the three stale tokens
+        # must not collapse into one — an operator reading the eval_result
+        # distribution has to separate "recomputed and dropped" from "unobserved
+        # and dropped" from "kept unchecked". _pattern's default date is stale
+        # here too, so a re-observation check that ran on EVERY family would
+        # steal this row and emit a second, wrong token; assertIn would not see
+        # that.
         kept, stderr_text = self._drop(
             ["done"] * 10 + ["fail"], [_pattern(label=_LEGACY_LABEL)]
         )
 
         self.assertEqual(kept, [])
-        self.assertIn("stale-pattern-skip", self._event_results())
+        self.assertEqual(self._event_results(), ["stale-pattern-skip"])
         self.assertIn("live negative-signal rate", stderr_text)
 
     def test_when_live_rate_meets_floor_then_rate_pattern_survives(self) -> None:
@@ -500,17 +507,6 @@ class TestDropStalePatterns(_GateFixture):
 
         self.assertEqual(kept, [pattern])
         self.assertEqual(self._event_results(), [dc.STALE_UNKNOWN_FAMILY_EVAL])
-
-    def test_when_known_family_stale_then_token_stays_distinct(self) -> None:
-        # The three tokens must not collapse into one: an operator reading the
-        # eval_result distribution has to separate "recomputed and dropped" from
-        # "unobserved and dropped" from "kept unchecked". _pattern's default date
-        # is also stale here, so a re-observation check that ran on EVERY family
-        # would steal this row and emit the wrong token.
-        kept, _ = self._drop(["done"] * 10 + ["fail"], [_pattern(label=_LEGACY_LABEL)])
-
-        self.assertEqual(kept, [])
-        self.assertEqual(self._event_results(), ["stale-pattern-skip"])
 
     def test_when_pg_unavailable_then_fail_open(self) -> None:
         pattern = _pattern(label=_LEGACY_LABEL)
