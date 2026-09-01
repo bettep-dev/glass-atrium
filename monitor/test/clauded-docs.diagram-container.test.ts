@@ -654,9 +654,16 @@ test("AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 
 // 여기 손으로 적은 수는 맵이 움직인 날 조용히 틀려진다.
 
 /** 맵 캔버스 CSS 가 노드·클러스터 rect 에 선언한 반지름. */
+// `rect` 뒤의 `:not(...)` 한정자를 허용함 — 맵은 상태 링을 노드 g 안에 심은 사각형으로 그리고
+// 그 사각형은 제 반지름(노드 모서리 + 링 간격)을 따로 가지므로, 노드 rect 규칙이 그것을 되누르지
+// 않도록 `rect:not(.arch-ring)` 로 걸러 냄. 한정자만 허용하고 선언 자체는 같은 자리에서 읽으므로
+// 대조의 엄격함은 그대로임: 값이 갈라지면 아래 단언이 여전히 붉어짐.
 function getMapNodeRadius(): string {
   const source = readFileSync(MAP_SCREEN_PATH, "utf8");
-  const match = /:is\(\.node,\s*\.cluster\)\s*rect\s*\{[^}]*\brx:\s*([\d.]+px)/.exec(source);
+  const match =
+    /:is\(\.node,\s*\.cluster\)\s*rect(?::not\([^)]*\))*\s*\{[^}]*\brx:\s*([\d.]+px)/.exec(
+      source,
+    );
   assert.ok(
     match,
     "architecture.jsx 에서 노드 rect 의 rx 선언을 찾지 못함 — 아래 대조가 기준 없이 서 있음",

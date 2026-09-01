@@ -193,6 +193,81 @@ test("container-endpoint label backfill: 실 DIAGRAMS 의 bare container id endp
   );
 });
 
+// ADR-20 — 그려지는 라벨의 문자열 자체를 못 박음. 이 자리가 비어 있어서 감축본에 넣은 `<br/>` 이
+// 상세 패널의 이름과 Layer 칸에 `Self-improvement · daemon` 으로 나가는 동안 어떤 테스트도
+// 붉어지지 않았음: 계수기는 태그를 지운 뒤 글자 수만 세고, 렌더 하네스는 SVG 의 textContent 를
+// 보며, 위의 절들은 source 만 봄 — drawn 의 '파싱된 라벨'을 보는 계기가 하나도 없었음.
+//
+// 계기는 리터럴 목록이 아니라 source 와의 동치임: `<br/>` 은 그리는 폭을 줄이려고 낱말 사이에
+// 넣은 soft-wrap 이므로, 접고 나면 감축본은 source 가 선언한 그 문자열이어야 함. 리터럴을 여기
+// 다시 적으면 감축본이 바뀔 때마다 두 사본을 함께 고쳐야 하고, 둘이 함께 틀리면 초록이 됨.
+test("ADR-20 the drawn map's labels read exactly as the source declares them", () => {
+  const drawn = extract(CANONICAL_MAP.mermaid_drawn);
+  const entry = DIAGRAMS.find((d) => d.slug === CANONICAL_MAP.slug);
+  assert.ok(entry, `fixture precondition: source entry for slug '${CANONICAL_MAP.slug}' must exist`);
+  const source = extract(entry.mermaid_source);
+
+  // 공허 방지 — 감축본에 soft-wrap 이 실제로 들어 있어야 이 절이 무언가를 잼.
+  // 줄바꿈이 사라진 날 이 단언이 붉어지며 "이제 이 시험은 아무것도 재지 않는다" 를 알림.
+  assert.match(
+    CANONICAL_MAP.mermaid_drawn,
+    /<br\s*\/?>/i,
+    "the drawn source must still carry a soft wrap, or the equality below is vacuous",
+  );
+
+  const sourceLabels = new Map<string, string>([
+    ...source.nodes.map((n): [string, string] => [n.id, n.label]),
+    ...source.subgraphs.map((g): [string, string] => [g.id, g.label]),
+  ]);
+
+  const divergent: string[] = [];
+  for (const drawnLabelled of [
+    ...drawn.nodes.map((n) => ({ id: n.id, label: n.label })),
+    ...drawn.subgraphs.map((g) => ({ id: g.id, label: g.label })),
+  ]) {
+    const expected = sourceLabels.get(drawnLabelled.id);
+    // drawn id 집합 ⊆ source id 집합은 예산 시험의 회귀 잠금 ③ 이 따로 지킴 — 여기서는
+    // 짝을 찾은 것만 대조하되, 하나도 못 찾으면 아래 개수 절이 붉어짐.
+    if (expected === undefined) continue;
+    if (expected !== drawnLabelled.label)
+      divergent.push(`${drawnLabelled.id}: drawn ${JSON.stringify(drawnLabelled.label)} vs source ${JSON.stringify(expected)}`);
+  }
+
+  const matched = [...drawn.nodes, ...drawn.subgraphs].filter((x) => sourceLabels.has(x.id)).length;
+  assert.ok(matched > 0, "fixture precondition: the drawn ids must overlap the source ids, or nothing was compared");
+  assert.deepEqual(
+    divergent,
+    [],
+    `a soft wrap must fold back to the source's own string — the panel renders these verbatim as the node NAME and the Layer pill: ${divergent.join(" · ")}`,
+  );
+});
+
+// 같은 결함의 나머지 반쪽 — 엣지 라벨은 sanitize 를 거치지 않아 원문 마크업이 API 응답과
+// unmapped_labels 까지 그대로 나갔음. FlowList 가 `f.label` 을 글자로 그리므로 화면까지 닿는 길임.
+test("ADR-20 no drawn label reaches the payload carrying raw markup", () => {
+  const drawn = extract(CANONICAL_MAP.mermaid_drawn);
+
+  const carriers = [
+    ...drawn.nodes.map((n) => ({ where: `node ${n.id}`, text: n.label })),
+    ...drawn.subgraphs.map((g) => ({ where: `subgraph ${g.id}`, text: g.label })),
+    ...drawn.edges.map((e) => ({ where: `edge ${e.id}`, text: e.label ?? "" })),
+    ...drawn.unmappedLabels.map((u, i) => ({ where: `unmapped[${i}]`, text: u })),
+  ];
+
+  // 엣지 라벨이 하나라도 있어야 그 절이 무언가를 잼 — 없으면 공허함.
+  assert.ok(
+    drawn.edges.some((e) => (e.label ?? "") !== ""),
+    "fixture precondition: the drawn map must carry at least one labelled edge",
+  );
+
+  const raw = carriers.filter((c) => /<br\s*\/?>/i.test(c.text));
+  assert.deepEqual(
+    raw.map((c) => `${c.where}: ${JSON.stringify(c.text)}`),
+    [],
+    "a label carrying markup was served to the API — node and subgraph labels are sanitized, and edge labels must be too",
+  );
+});
+
 test("containment guard: 컨테이너-as-source containment 도 제외 (from-side)", () => {
   const out = extract(
     "flowchart LR\n" +

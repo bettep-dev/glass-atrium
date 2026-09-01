@@ -201,6 +201,30 @@ test("B2-1 회귀 잠금 ① drawn 의 실측값 고정 — 노드 9 · 엣지 7
   assert.deepEqual(getClassMembers(drawn, "focal"), ["main_session"]);
 });
 
+// 계수기는 라벨을 재기 전에 shape 구분자를 벗겨야 함 — 원통 `[( … )]` 처럼 바깥 괄호를 떼고도
+// 구분자가 남는 형태에서, 벗기지 않으면 그 구분자 넉 자가 라벨 글자로 세어지고 따옴표마저
+// 첫 글자가 아니게 되어 함께 세어짐. 최댓값(`hook_pipeline` 40)이 그 위에 있어 오늘은
+// label_chars 가 가려 주지만, 상한 근처의 원통 라벨은 그 넷 때문에 없는 초과로 붉어짐.
+test("B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원통 노드가 제 글자 수로 읽힘", () => {
+  const byId = new Map(getMermaidCensus(drawn).nodes.map((n) => [n.id, n.label]));
+
+  assert.equal(byId.get("pg_db"), "PostgreSQL database");
+  assert.equal(byId.get("pg_db")?.length, 19, "the cylinder label counts its own 19 chars, not its delimiters");
+
+  // 픽스처로 형태별 확인 — drawn 이 오늘 원통 하나만 그리므로 그 하나가 사라지면 위 절이 빈 사실이 됨.
+  const shapes = `flowchart LR
+    cyl[("Cylinder label")]
+    circ(("Circle label"))
+    hex{{"Hex label"}}
+    para[/"Para label"/]
+    paren["(a) and (b)"]`;
+  assert.deepEqual(
+    getMermaidCensus(shapes).nodes.map((n) => n.label),
+    ["Cylinder label", "Circle label", "Hex label", "Para label", "(a) and (b)"],
+    "each shape must yield its own label, and a parenthesised label must survive intact",
+  );
+});
+
 test("B2-1 회귀 잠금 ② 상한 두 행이 각각 네 리터럴로 고정됨", () => {
   // 이름이 아니라 값 — AC-7 은 배정 이름만 잡고 그 행의 수치는 잡지 않음.
   // 배정 등급(`faithful`)은 이 그림이 소비하는 행이고, `balanced` 는 배정이 떠나온 행이라 둘 다 잠금 대상임 —

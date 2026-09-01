@@ -288,12 +288,22 @@ function matchNodeRef(text: string): NodeRefMatch | null {
 }
 
 function sanitizeLabel(rawLabel: string): string {
-  // Mermaid label 의 <br> soft-wrap → space-dot 구분자로 정규화(downstream UI/LLM 은 single-line label) · fragment trim 으로 `"foo  bar"` artifact 차단.
+  // Mermaid label 의 <br> soft-wrap → 공백 하나로 접음(downstream UI/LLM 은 single-line label) ·
+  // fragment trim 으로 `"foo  bar"` artifact 차단.
+  //
+  // 구분자가 아니라 공백인 이유: `<br/>` 은 그리는 폭을 줄이려고 낱말 사이에 넣은 soft-wrap 이지
+  // 뜻을 가르는 표식이 아님. 종전에는 " · " 로 이었는데, drawn 에 줄바꿈이 들어간 뒤로 그것이
+  // 상세 패널의 이름과 Layer 칸에 그대로 나와(`Self-improvement · daemon`) 한 낱말을 둘로 갈랐음.
+  // 같은 노드를 부르는 세 문자열이 그때 갈라졌음 — 그린 라벨 · SVG textContent 에서 뜬 aria-label ·
+  // 패널의 이름. 공백으로 접으면 셋이 다시 같아지고, source 일곱 편이 canonical 로 못 박은 형태
+  // (`Orchestrator (main session)` 등, architecture.flow-extractor.test)와도 일치함.
+  // 라벨에 원래부터 들어 있는 리터럴 " · "(예: `design-designer · HTML Co-Emission`)는 건드리지
+  // 않음 — 그쪽은 저자가 쓴 구분자이고 여기서 만드는 것이 아님.
   return rawLabel
     .split(/<br\s*\/?>/i)
     .map((fragment) => fragment.trim())
     .filter((fragment) => fragment !== "")
-    .join(" · ");
+    .join(" ");
 }
 
 // edge parsing
@@ -390,11 +400,15 @@ function parseEdgeLine(line: string, ctx: EdgeParseContext): ParsedEdge[] {
     }
 
     // Label — split 형은 op 매치에 내장, compact 형은 후행 |label| 시도.
-    let label: string | null = opMatch.label;
+    // 노드(matchNodeRef)와 subgraph(parseSubgraph) 라벨처럼 엣지 라벨도 sanitize 함 — 여기만
+    // 빠져 있어서 `"assigns <br/>work"` 가 API 응답과 unmapped_labels 에 원문 마크업 그대로 나갔음.
+    // FlowList 가 `f.label` 을 글자로 그리므로 화면까지 닿는 경로이고, deriveEdgeType 보다 앞에서
+    // 접어야 키워드 대조와 unmapped 기록이 같은 문자열을 봄.
+    let label: string | null = opMatch.label === null ? null : sanitizeLabel(opMatch.label);
     if (label === null) {
       const labelMatch = EDGE_LABEL_RE.exec(line.slice(cursor));
       if (labelMatch !== null) {
-        label = (labelMatch[1] ?? "").trim();
+        label = sanitizeLabel((labelMatch[1] ?? "").trim());
         cursor += labelMatch[0].length;
       }
     }

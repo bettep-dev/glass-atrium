@@ -39,13 +39,6 @@ interface DaemonLiveStatus {
   expected_cadence_minutes?: number;
   staleness_minutes?: number;
 }
-interface DaemonRow {
-  name: string;
-  tone: string;
-  statusLabel: string;
-  nodeIds: string[];
-  lastRunAt: string | null;
-}
 // 확장 영역 한 줄 — 실행 하나의 날짜와 그 실행이 낸 사유들.
 interface DaemonRunRow {
   runDate: string;
@@ -90,9 +83,12 @@ interface ArchHelpers {
   buildLiveDaemonsByNodeId: (
     daemons: DaemonLiveStatus[] | null | undefined,
   ) => Map<string, DaemonLiveStatus[]>;
-  getLiveDaemonRows: (daemons: DaemonLiveStatus[] | null | undefined) => DaemonRow[];
-  // T8: 확장 영역의 DOM id — 행 컨트롤의 aria-controls 가 이 값을 가리킴.
-  getRowDetailId: (rowKey: string) => string;
+  // 링 tone 표 — /live 의 데몬 판정과 health 카드 판정을 한 node id 표로 접는 순수 fold.
+  buildRingToneByNodeId: (
+    daemonsByNodeId: Map<string, DaemonLiveStatus[]>,
+    partBindings: Record<string, string[]> | null | undefined,
+    cardStates: unknown,
+  ) => Map<string, string>;
   // T9c: 선택 데몬의 payload 응답을 날짜 + 사유 줄로 접는 순수 fold.
   getDaemonRunRows: (
     payloadState: FetchState | null | undefined,
@@ -208,9 +204,9 @@ async function loadArch(): Promise<{
     "buildLiveDaemonsByNodeId must be reachable",
   );
   assert.strictEqual(
-    typeof h.getLiveDaemonRows,
+    typeof h.buildRingToneByNodeId,
     "function",
-    "getLiveDaemonRows must be reachable (AC-15(a) instrument)",
+    "buildRingToneByNodeId must be reachable (AC-T2 live-verdict instrument)",
   );
   assert.strictEqual(
     typeof h.getLegibleFitScaleAR,
@@ -221,11 +217,6 @@ async function loadArch(): Promise<{
     typeof h.getMapHealthEndpoints,
     "function",
     "getMapHealthEndpoints must be reachable (T7 fetch-table instrument)",
-  );
-  assert.strictEqual(
-    typeof h.getRowDetailId,
-    "function",
-    "getRowDetailId must be reachable (T8 aria-controls instrument)",
   );
   assert.strictEqual(
     typeof h.getDaemonRunRows,
@@ -312,58 +303,52 @@ test("empty / null daemon input yields an empty map (no throw)", () => {
   assert.strictEqual(arch.buildLiveDaemonsByNodeId(undefined).size, 0);
 });
 
-// --- AC-15(a): 표 행 수 == 소스 상태 행 수 (표 행 빌더 직접 호출) ---
-
-test("AC-15(a) 표 행 수는 daemons 배열 원소 수와 1:1", () => {
-  const daemons = [
-    daemon("autoagent", "ok", { node_ids: ["autoagent_d"] }),
-    daemon("daily-restart-wiki", "error"),
-    daemon("wiki-compile", "missing", { node_ids: [], last_run_at: null }),
-  ];
-  const rows = arch.getLiveDaemonRows(daemons);
-  assert.strictEqual(rows.length, daemons.length);
-  assert.strictEqual(
-    rows.map((r) => r.name).join(","),
-    "autoagent,daily-restart-wiki,wiki-compile",
-  );
-  // 필드 누락 행도 삭제되지 않고 대체값으로 남음.
-  assert.strictEqual(arch.getLiveDaemonRows([{} as DaemonLiveStatus]).length, 1);
-});
-
-test("AC-15(a) 빈/누락 입력은 빈 행 목록 (throw 없음)", () => {
-  assert.strictEqual(arch.getLiveDaemonRows([]).length, 0);
-  assert.strictEqual(arch.getLiveDaemonRows(null).length, 0);
-  assert.strictEqual(arch.getLiveDaemonRows(undefined).length, 0);
-});
-
 // --- AC-T2: 판정은 서버 필드에서만 옴 (화면 재계산 삭제) ---
+//
+// 계기가 바뀌었음(ADR-20): 라이브 상태 표가 걷히며 그 표의 행 빌더도 함께 죽었으므로,
+// 같은 사실을 표가 아니라 링 tone 표에서 잼 — /live 의 데몬 판정을 읽는 화면 경로가 이제
+// 그것임. 축소된 범위를 밝혀 둠: 표가 재던 사실 중 tone 만 여기 남고, 상태 문장(라벨)은
+// 노드 상세 패널의 pill 이 JSX 안에서 직접 그리므로 이 파일에 잴 자리가 없음.
 
-test("AC-T2 초과 판정은 서버 필드에서 tone·라벨로 그대로 나옴", () => {
-  const [row] = arch.getLiveDaemonRows([
-    daemon("autoagent", "ok", { effective_status: "stale" }),
-  ]);
-  assert.strictEqual(row.tone, "crit");
-  assert.strictEqual(row.statusLabel, "Overdue");
+// 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니므로 부품 tone 이 하나도 서지
+// 않음. 데몬 판정만 남은 표를 얻는 자리임(카드가 서면 rank-max 가 두 판정을 하나로 접어 버림).
+const NO_CARD_STATES = {
+  pgState: { status: "loading", data: null, error: null },
+  daemonState: { status: "loading", data: null, error: null },
+  hookState: { status: "loading", data: null, error: null },
+  hookFailState: { status: "loading", data: null, error: null },
+};
+
+// 한 데몬을 제 node id 표로 접어 링 tone 하나를 냄.
+function ringToneOf(daemon: DaemonLiveStatus): string | undefined {
+  return arch
+    .buildRingToneByNodeId(arch.buildLiveDaemonsByNodeId([daemon]), null, NO_CARD_STATES)
+    .get("cron");
+}
+
+test("AC-T2 초과 판정은 서버 필드에서 tone 으로 그대로 나옴", () => {
+  assert.strictEqual(ringToneOf(daemon("autoagent", "ok", { effective_status: "stale" })), "crit");
 });
 
 test("AC-T2 cadence 를 넘긴 staleness 가 있어도 화면은 판정을 올리지 않음", () => {
   // 삭제된 재계산이 되살아나면 tone 이 warn 으로 밀리고 이 단언이 붉어짐.
-  const [row] = arch.getLiveDaemonRows([
-    daemon("autoagent", "ok", {
-      expected_cadence_minutes: 1440,
-      staleness_minutes: 2160,
-    }),
-  ]);
-  assert.strictEqual(row.tone, "ok");
-  assert.strictEqual(row.statusLabel, "Healthy");
+  assert.strictEqual(
+    ringToneOf(
+      daemon("autoagent", "ok", {
+        expected_cadence_minutes: 1440,
+        staleness_minutes: 2160,
+      }),
+    ),
+    "ok",
+  );
 });
 
 test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으로 남김", () => {
-  const [row] = arch.getLiveDaemonRows([
-    { daemon_name: "autoagent", status: "ok", node_ids: [] },
-  ]);
-  assert.strictEqual(row.tone, "info");
-  assert.strictEqual(row.statusLabel, "—");
+  // `info` 는 링 등급표에 없는 tone 임 — 미수신은 링을 칠하지 않음이 정답임.
+  assert.strictEqual(
+    ringToneOf({ daemon_name: "autoagent", status: "ok", node_ids: ["cron"] }),
+    undefined,
+  );
 });
 
 // --- AC-13: 순수 스케일 산식 — 하향 클램프가 되살아나면 붉어짐 ---
@@ -633,28 +618,9 @@ test("T11 a response that has not arrived folds to null, never to an empty confi
   );
 });
 
-// --- T8: the expansion region's DOM id --------------------------------------
-
-test("T8 the detail id is derived from the row key it is handed and stays a legal DOM id", () => {
-  const id = arch.getRowDetailId("autoagent");
-  assert.match(id, /autoagent$/, "the id must name the row it belongs to");
-  assert.strictEqual(
-    id,
-    arch.getRowDetailId("autoagent"),
-    "the id must be stable — aria-controls and the region are wired by the same call",
-  );
-  assert.notStrictEqual(
-    id,
-    arch.getRowDetailId("wiki"),
-    "two rows must not share one region id",
-  );
-  // 행 키(데몬 이름 · 부품 id)는 하이픈을 포함함 — id 문법을 벗어나는 문자만 접히고 나머지는 남아야 함.
-  assert.match(
-    arch.getRowDetailId("daily-restart-autoagent"),
-    /^[A-Za-z][A-Za-z0-9_-]*$/,
-    "the id must remain a legal getElementById target for every roster name",
-  );
-});
+// T8 의 DOM-id 절은 그 id 와 함께 사라졌음 — 패널에는 접을 것이 없어 aria-controls 로 영역을
+// 가리킬 일이 없고, 상세는 제 부품 항목 '안에' 서므로 자리로 이미 결정됨. 그 포함 관계는
+// merged-surface e2e 의 AC-T8 상세 절이 잼(영역이 제 부품 안에 있고 제 데몬을 이름으로 실음).
 
 // --- T9c: the date + reason fold -------------------------------------------
 
@@ -739,36 +705,19 @@ test("T9c a response still in flight folds to null and an empty roster folds to 
   assert.deepStrictEqual(empty, [], "a ready response with no entries must fold to an empty list");
 });
 
-// --- AC-B2-6a: '못 읽음' 을 부르는 유일한 표면은 표에 딸리면 안 됨 ------------------
-// 표의 행 명부는 window.HealthModel 에서 옴 — index.html:103 이 architecture.js 와 따로 싣는
-// <script> 라 그 태그 하나만 빠져도 rows 가 통째로 빔. 경보가 그 명부 가드 아래 있으면
+// --- AC-B2-6a: '못 읽음' 을 부르는 표면은 부품 명부 가드 아래 있으면 안 됨 -----------
+// 부품 명부는 window.HealthModel 에서 옴 — index.html:103 이 architecture.js 와 따로 싣는
+// <script> 라 그 태그 하나만 빠져도 부품 목록이 통째로 빔. 경보가 그 가드 아래 있으면
 // 다섯 저장소가 전부 안 읽히는 화면이 '아무 일 없음' 과 같은 그림이 됨.
-
-// role="alert" 요소만 모음 — 트리 어딘가에 저장소 이름이 있는지가 아니라
-// '경보로 불렸는가' 를 재야 함 (표 셀에 적힌 이름은 경보가 아님).
-function collectAlertTexts(node: unknown, out: string[] = []): string[] {
-  if (node === null || node === undefined || typeof node === "boolean") return out;
-  if (typeof node === "string" || typeof node === "number") return out;
-  if (Array.isArray(node)) {
-    for (const child of node) collectAlertTexts(child, out);
-    return out;
-  }
-
-  const el = node as {
-    type?: unknown;
-    props?: Record<string, unknown>;
-    children?: unknown;
-  };
-  if (typeof el.type === "function")
-    return collectAlertTexts((el.type as (props: unknown) => unknown)(el.props), out);
-
-  if (el.props && el.props.role === "alert") out.push(renderToText(el));
-  return collectAlertTexts(el.children ?? null, out);
-}
+//
+// 표가 사라지며 경보는 화면(ScreenArchitecture)으로 올라갔으므로 컴포넌트를 불러 그릴 자리가
+// 없어졌음 — 대신 그 경보를 세우는 두 순수 함수를 같은 문맥에서 직접 잼: 명부가 없을 때
+// 부품 목록은 비지만 저장소 사유는 여전히 이름을 부름. 그려진 경보의 자리(패널이 아니라
+// 페이지)는 merged-surface e2e 의 AC-B2-6b 가 잼.
 
 // 화면이 흡수한 health 응답 5종 — PG 만 끊고 나머지는 답하게 둠.
 // 넷을 함께 끊으면 경보가 떴다는 사실만 보이고 '누가 끊겼는지' 를 못 가림.
-function healthPartProps(overrides: Record<string, unknown> = {}) {
+function healthStoreStates(overrides: Record<string, unknown> = {}) {
   return {
     daemonState: { status: "ready", data: { daemons: [] }, error: null },
     pgState: { status: "error", data: null, error: "ECONNREFUSED" },
@@ -779,46 +728,52 @@ function healthPartProps(overrides: Record<string, unknown> = {}) {
       error: null,
     },
     payloadState: { status: "ready", data: null, error: null },
-    partBindings: undefined,
-    onSelectDaemon: () => {},
-    onRetry: () => {},
     ...overrides,
   };
 }
 
-function renderHealthPartTable(
-  ctx: Record<string, unknown>,
-  props: Record<string, unknown>,
-): unknown {
-  const component = vm.runInContext("HealthPartTable", ctx) as (p: unknown) => unknown;
-  return component(props);
+function callInCtx<T>(ctx: Record<string, unknown>, name: string, ...args: unknown[]): T {
+  const fn = vm.runInContext(name, ctx) as (...a: unknown[]) => T;
+  return fn(...args);
 }
 
 test("AC-B2-6a a store that failed is still named when the health model never loaded", () => {
   const ctx = loadArchWithoutHealthModel(archCode);
-  const alerts = collectAlertTexts(renderHealthPartTable(ctx, healthPartProps()));
+  const states = healthStoreStates();
 
+  // 명부가 없으므로 부품 목록은 비어야 함 — 이 절이 없으면 아래 사유 목록이 '명부가 살아 있어서'
+  // 나온 것인지 갈리지 않음.
+  // vm 문맥이 낸 배열은 프로토타입이 이 realm 의 것이 아님 — 파일의 다른 절들과 같이 펴서 비교함
+  // (펴지 않으면 값이 맞아도 deepStrictEqual 이 프로토타입에서 갈라짐).
+  assert.deepStrictEqual(
+    [...callInCtx<unknown[]>(ctx, "getHealthPartRows", states, undefined)],
+    [],
+    "without the model no part can stand — the store reasons are then the only thing that can speak",
+  );
+
+  const reasons = callInCtx<string[]>(ctx, "getHealthStoreErrorsAR", states);
   assert.strictEqual(
-    alerts.length,
+    reasons.length,
     1,
-    "the model is gone so no row can stand — the alert is then the only thing that can say the stores were unreadable",
+    `exactly the cut store must be named — read: ${JSON.stringify(reasons)}`,
   );
   assert.ok(
-    alerts[0].includes("PostgreSQL"),
-    `the alert must still name the store that failed — read: "${alerts[0]}"`,
+    reasons[0].includes("PostgreSQL"),
+    `the reason must still name the store that failed — read: "${reasons[0]}"`,
   );
 });
 
-test("AC-B2-6a no model and no failure renders nothing — the alert is not a permanent fixture", () => {
+test("AC-B2-6a no model and no failure names nothing — the alert is not a permanent fixture", () => {
   const ctx = loadArchWithoutHealthModel(archCode);
-  const quiet = renderHealthPartTable(
+  const quiet = callInCtx<string[]>(
     ctx,
-    healthPartProps({ pgState: { status: "ready", data: { status: "ok" }, error: null } }),
+    "getHealthStoreErrorsAR",
+    healthStoreStates({ pgState: { status: "ready", data: { status: "ok" }, error: null } }),
   );
 
-  assert.strictEqual(
-    quiet,
-    null,
-    "every store answered, so an alert here would call five live stores dead",
+  assert.deepStrictEqual(
+    [...quiet],
+    [],
+    "every store answered, so a reason here would call five live stores dead",
   );
 });

@@ -67,11 +67,44 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "data-health-fact", kind: "attribute", ac: "AC-B2-6d" },
 
   // B2-6b 가 지운 KPI 집계 — 스트립이 사라지면서 그 셈을 그리는 자리가 없어졌음. 화면 몫의
-  // 분모는 이제 표의 행 수이고(AC-B2-4b), 카드 tone 버킷의 분할 불변식은 health-model 단위
-  // 시험이 resolveCardFacts 에서 직접 잼. 남은 것은 아무도 부르지 않는 세 이름뿐이었음.
+  // 분모는 표의 행 수였다가 표마저 걷히며(ADR-20) 노드 상세 패널의 부품 항목 수가 됐고, 그 사실은
+  // AC-B2-4b 가 여전히 잼(다만 이제 '연 노드의 항목 수'를 셈). 카드 tone 버킷의 분할 불변식은
+  // health-model 단위 시험이 resolveCardFacts 에서 직접 잼. 남은 것은 아무도 부르지 않는 세 이름뿐이었음.
   { name: "computeOverviewKpis", kind: "identifier", ac: "AC-B2-6b" },
   { name: "EMPTY_OVERVIEW_KPIS", kind: "identifier", ac: "AC-B2-6b" },
   { name: "getMapHealthKpis", kind: "identifier", ac: "AC-B2-6b" },
+
+  // ADR-20 이 지운 라이브 상태 표 — 컴포넌트 · 그 행의 확장 영역 id 를 짓던 두 함수 ·
+  // 표 전용 클래스 여섯. 판정은 노드가, 나머지 사실은 노드 상세 패널이 실어 나름.
+  // `getRowDetailId`/`toDetailIdPart` 는 행의 aria-controls 전용이었음 — 패널에는 접을 것이
+  // 없어 영역을 id 로 가리킬 일이 없고, 상세는 제 부품 항목 안에 서므로 자리로 결정됨.
+  // 세 클래스(`arch-live-table` · `-wrap` · `-scroll`)를 따로 적음: 경계 문자에 하이픈이
+  // 들어가 있어 짧은 이름이 긴 이름 안에서 잡히지 않으므로, 하나만 적으면 나머지가 남아도 초록임.
+  { name: "HealthPartTable", kind: "identifier", ac: "ADR-20" },
+  { name: "getRowDetailId", kind: "identifier", ac: "ADR-20" },
+  { name: "toDetailIdPart", kind: "identifier", ac: "ADR-20" },
+  { name: "arch-live-table", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-live-table-wrap", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-live-table-scroll", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-row-toggle", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-row-caret", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-run-cell", kind: "attribute", ac: "ADR-20" },
+
+  // 표를 재던 하네스 어휘 — 열 이름표 · 표 모양 판독기 · 칸 판독기 · 확장 컨트롤 프로브 ·
+  // 행 등장 대기 · 행 펼치기. 표가 사라진 자리에 이 이름들이 남으면 다음 작업이 그것을 보고
+  // 표가 아직 있다고 읽음. 재던 사실 자체는 패널을 여는 계기로 옮겨 갔음(merged-surface e2e).
+  { name: "LIVE_TABLE_HEADERS", kind: "identifier", ac: "ADR-20" },
+  { name: "getLiveTableShape", kind: "identifier", ac: "ADR-20" },
+  { name: "getPartCells", kind: "identifier", ac: "ADR-20" },
+  { name: "getRowExpansionProbe", kind: "identifier", ac: "ADR-20" },
+  { name: "waitForDaemonRows", kind: "identifier", ac: "ADR-20" },
+  { name: "expandHookRow", kind: "identifier", ac: "ADR-20" },
+
+  // 표가 걷힌 뒤 남아 있던 표 행 빌더 — 표를 지울 때 함께 죽었어야 했으나 시험만이 그것을
+  // 불러 살아 있었음. 스스로를 확인하는 핀은 재는 것이 없음: 계기가 계기 자신의 생존을 증명함.
+  // 그 함수가 재던 사실(판정을 화면이 다시 재지 않음)은 링 tone 표로 옮겨 감 — /live 의
+  // effective_status 를 읽는 화면 경로가 이제 그것임(live-badge AC-T2 · daemon-binding AC-T4).
+  { name: "getLiveDaemonRows", kind: "identifier", ac: "ADR-20" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -81,8 +114,8 @@ const DISCRIMINABILITY_EXCLUSIONS: { name: string; kind: TokenKind; declaredIn: 
   // 지도의 학습 로그 상수는 죽었지만 improvement 화면이 같은 이름을 제 몫으로 선언함.
   // 그 죽음은 텍스트가 아니라 AC-B2-6c 의 요청 계수 0 이 잼.
   { name: "LEARNING_LOG_URL", kind: "identifier", declaredIn: "monitor/public/src/screens/improvement.jsx" },
-  // tone 속성은 스트립과 함께 죽지 않음 — 표의 행이 같은 어휘로 판정을 실으며,
-  // 하네스의 준비 앵커가 바로 그 속성임.
+  // tone 속성은 스트립과 함께 죽지 않았고 표와 함께 죽지도 않음 — 노드 상세 패널의 부품 항목이
+  // 같은 어휘로 판정을 실으며(ADR-20), 하네스의 준비 앵커가 여전히 바로 그 속성임.
   { name: "data-health-tone", kind: "attribute", declaredIn: "monitor/public/src/screens/architecture.jsx" },
 ];
 
@@ -96,6 +129,25 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   { name: "arch-live-strip", kind: "attribute", ac: "AC-B2-6d" },
   // KPI 가 읽던 카드 fold — 집계가 접힌 뒤 tone 버킷 불변식이 서는 자리가 바로 여기임.
   { name: "resolveCardFacts", kind: "identifier", ac: "AC-B2-6b" },
+
+  // 표가 나르던 사실이 이사한 자리 (ADR-20) — 넘치게 지워지지 않았음을 재는 반대 방향.
+  // 행을 부르던 두 data 속성은 그대로 살아 항목과 상세를 이름으로 붙듦: 이름이 같아야
+  // 하네스가 재던 사실이 옮겨졌음을 보일 수 있고, 다른 어휘로 바꾸면 이사가 아니라 재작성이 됨.
+  { name: "NodePartHealth", kind: "identifier", ac: "ADR-20" },
+  { name: "getHealthPartRows", kind: "identifier", ac: "ADR-20" },
+  // 죽은 표 행 빌더가 재던 판정 소비를 이어받은 자리 — 이 이름이 사라지면 그 사실이 갈 곳이 없음.
+  { name: "buildRingToneByNodeId", kind: "identifier", ac: "ADR-20" },
+  { name: "HEALTH_ROW_DETAILS", kind: "identifier", ac: "ADR-20" },
+  { name: "DaemonRunDetail", kind: "identifier", ac: "ADR-20" },
+  { name: "data-node-health", kind: "attribute", ac: "ADR-20" },
+  { name: "data-health-row", kind: "attribute", ac: "ADR-20" },
+  { name: "data-daemon-row", kind: "attribute", ac: "ADR-20" },
+  { name: "data-health-detail", kind: "attribute", ac: "ADR-20" },
+  { name: "data-daemon-detail", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-part-entry", kind: "attribute", ac: "ADR-20" },
+  { name: "arch-part-drill", kind: "attribute", ac: "ADR-20" },
+  // 표 안에 서 있던 경보가 페이지로 올라간 자리 — 이 클래스가 그 이사 자체임.
+  { name: "arch-health-alert-wrap", kind: "attribute", ac: "ADR-20" },
 ];
 
 // 경계 문자 집합 — 식별자와 CSS 이름이 서로 다름. 하이픈이 갈림길임.

@@ -26,6 +26,7 @@ import {
   CANONICAL_MAP,
   DIAGRAMS,
   DIAGRAMS_SOURCE_PATH,
+  NODE_DESCRIPTIONS,
 } from "./diagrams-source.js";
 import { isSupportedDiagramForm } from "./content-budget.js";
 
@@ -123,10 +124,15 @@ function buildFlowNodeFromMermaid(
   extracted: ExtractedNode,
   layerScopeId: string,
 ): FlowNode {
+  // description 은 서술이 있는 노드에만 실림 — 빈 문자열을 실으면 패널이 빈 칸을 제목과 함께
+  // 그려 "서술이 없음" 이 "서술을 못 읽음" 처럼 읽힘. 없는 키는 키가 없는 채로 둠.
+  const description = NODE_DESCRIPTIONS[extracted.id];
+
   return {
     id: `${layerScopeId}.${extracted.id}`,
     label: extracted.label,
     type: inferFlowNodeType(extracted),
+    ...(description ? { description } : {}),
   };
 }
 

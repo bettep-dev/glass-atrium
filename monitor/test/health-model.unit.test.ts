@@ -64,8 +64,10 @@ interface HealthCardDef {
 }
 
 interface HealthModelApi {
-  // Mutable on purpose, not a missed `readonly`: the T14 fixtures below splice the live
-  // exported array and restore it — the module leaves it unfrozen for exactly that.
+  // Mirrors the module, which exports this array unfrozen. Nothing in this file mutates it
+  // any more — the fixtures that spliced and restored it went with the removed T14 cases —
+  // so the mutability is unexercised here, and this type says nothing about whether the
+  // module means to keep it writable.
   HEALTH_CARD_DEFS: HealthCardDef[];
   resolveCardFacts: (
     def: unknown,
@@ -329,6 +331,7 @@ test("AC-T4 the server threshold moves, the row does not, and the card moves wit
   );
 });
 
-// T14 는 분모가 정의 목록을 따른다는 사실이었음. 그 분모는 이제 표의 행 수이고,
-// 그 사실은 AC-B2-4b(merged-surface e2e — '행 수가 명부를 따르고 빈 명부는 행을 남기지 않음')가
-// 화면에서 직접 잼. 여기 있던 splice 기구는 그 계기를 두 번 세우던 자리라 함께 접음.
+// T14 는 분모가 정의 목록을 따른다는 사실이었음. 그 분모는 표의 행 수였다가 표가 걷히며
+// (ADR-20) 노드 상세 패널의 부품 항목 수가 됐고, 그 사실은 AC-B2-4b(merged-surface e2e —
+// '항목이 명부를 따르고 빈 명부는 항목을 남기지 않음')가 화면에서 직접 잼.
+// 여기 있던 splice 기구는 그 계기를 두 번 세우던 자리라 함께 접음.

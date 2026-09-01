@@ -436,6 +436,31 @@ export const PART_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> = {
 	"hook-chain": ["hook_pipeline"],
 };
 
+// 그려지는 노드 → 상세 패널이 읽는 서술 (ADR-20). 스키마의 FlowNode.description 은 처음부터
+// 클릭 상세용으로 선언돼 있었으나(types/architecture.ts) 채우는 자리가 없어 아홉 노드 전부 비어
+// 있었음 — 표를 걷어내며 상세가 유일한 표면이 되므로 여기서 채움.
+// 키는 unscoped mermaid id 임: 같은 id 를 쓰는 source 여섯 편의 노드에도 같은 서술이 붙는데,
+// 그쪽은 그려지지 않는 문서이고 id 가 같으면 같은 부품이라 어긋나지 않음.
+// 내용 규칙 — 라벨을 고쳐 쓰지 않음(패널이 라벨을 이미 이름으로 냄). 그린 엣지와 canonical
+// 서술이 말하는 것만 적음: 여기 없는 사실을 적으면 지도가 아니라 이 표가 출처가 됨.
+export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
+	user: "Where a run starts when a person types. The utterance goes to the orchestrator, which decides what work it implies.",
+	autoagent_d:
+		"Scheduled job that reads the recorded outcomes and proposes instruction improvements. It wakes the orchestrator rather than editing anything itself.",
+	wiki_d:
+		"Scheduled job that compiles and indexes the wiki store, then wakes the orchestrator with what it found.",
+	cron: "The schedule itself — the background jobs that start the daemons and restart them daily.",
+	main_session:
+		"The orchestrator. It plans the work and assigns it; carrying the work out is the specialist agents' job, not its own.",
+	agent_layer:
+		"The specialist agents the orchestrator assigns work to. Their tool calls are what the hook pipeline sees.",
+	hook_pipeline:
+		"Every tool call an agent makes passes through here first — the safety checks that can stop a call, and the tracking that records what happened.",
+	pg_db:
+		"The PostgreSQL database. Agent documents and hook records both land here, and it is the single store the export path reads from.",
+	doc_export: "Renders the stored documents for export through a headless Chromium.",
+};
+
 // 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
 // import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
 export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
@@ -480,58 +505,80 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 감축: 경계 노드 2종과 그 엣지 제거 — 나머지 여섯 편이 그려지지 않아 도착지 없는 표식임.
 	 * source 의 문서 마디는 경계 노드(`to_html_gate`)로 나가나 drawn 은 그 경계를 지우므로 목적지를
 	 * 데이터 존으로 당김 — 39546 ADR-7 이 `to_data` 에 대해 한 것과 같은 흡수임.
-	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8, 사용자 비준 2026-08-31) — source 에는 그대로 남고 원장에 오름.
+	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8) — source 에는 그대로 남고 원장에 오름.
 	 * 자리가 없어서가 아님: `faithful` 아래에서 되돌려도 10노드·8엣지로 여전히 pass 임 (ADR-15 §8).
 	 * 라벨 여유: `hook_pipeline` 의 `Hook pipeline (safety checks + tracking)` 이 최장 라벨로 정확히 40자이고
 	 * faithful 라벨 상한은 50 임 — 40/50 = 0.8 로 pass 이며 warn(0.9)까지 다섯 글자 남음.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
-	 * 방향 TD 고정: 렌더 pane 은 폭만 제약되고 높이는 `max-height: none` 로 자유로움.
-	 * LR 은 랭크가 가로로 누적돼 우측이 잘렸음 — 복귀하려면 폭 초과를 먼저 재측정할 것.
+	 * 방향 LR — source 일곱 편과 같은 방향임. drawn 만 다른 방향을 쓰면 계수는 같아도(AC-10) 사람이 읽는 형태가 갈라짐.
+	 * 캔버스는 초기 배율을 `max(min(contain, 1), 0.6)` 으로 깔아 하한 0.6 아래로 내려가지 않고 넘치는 만큼을 자름
+	 * (architecture.jsx getLegibleFitScaleAR) — 그래서 잘림은 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
+	 * 라벨·존 제목·엣지 라벨 열다섯 자리의 `<br/>` 은 폭을 높이로 옮기는 장치임.
+	 * 글자는 한 자도 빠지지 않음: `<br/>` 을 이미 있는 공백 옆에 넣었고 계수기가 태그를 지우므로
+	 * (content-budget getLabelText) 라벨 40 자가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
+	 * 감축은 drawn 에만 넣음 — source 일곱 편은 그려지지 않는 문서인데 flow-extractor 테스트가 그 존 제목
+	 * 문자열을 정확히 대조하므로, 같은 `<br/>` 을 source 에 넣으면 그리는 것은 그대로인 채 그 대조만 깨짐.
+	 * 그래프 변 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): LR 1774.6×471.
+	 * 남은 폭의 3분의 1은 존이 아니라 엣지 라벨이 벌린 랭크 사이 간격임 — 더 줄이려면 세 줄짜리 엣지 라벨이
+	 * 되는데 그렇게 얻는 값이 45 단위뿐이라(실측) 여기서 멈춤.
+	 * pane 폭 = 뷰포트 폭 - 290px · 높이 = 뷰포트 높이 - 158px (실측 1396×800→1106×642 · 1512×850→1222×692 ·
+	 * 1920×1080→1630×922) — 지도가 pane 을 다 쓰는 배분임 (ADR-20).
+	 * 높이 쪽이 비율이 아니라 상수인 이유: 위 chrome(main padding · PageHeader · 카드 테두리/여백)이
+	 * 픽셀 고정이라 뷰포트가 커져도 그 몫은 안 커짐. 위 실측 158 은 헬스 저장소 경보 띠(45)가 서 있는
+	 * 계기 픽스처의 값이고, 그 띠가 없으면 113 임(같은 세 뷰포트에서 687 · 737 · 967).
+	 * 종전에는 여기에 base.css 의 `.card-body { max-height: 70vh }` 가 얹혀 높이가 뷰포트의 0.68 배로
+	 * 잘렸고(1396×800 에서 pane 540), 그 상한을 이 화면에서 풀어 지금 값이 됨.
+	 * 세 폭 모두 폭이 먼저 걸리고 높이는 남으므로, 배율을 정하는 것은 폭 하나임 — 높이를 100 남짓 더 준
+	 * 뒤에도 배율 셋이 그대로인 것이 그 근거임(실측).
+	 * 실측 배율(라벨 렌더 크기): 1396 폭 0.6314(8.84px) · 1512 폭 0.6977(9.77px) · 1920 폭 0.9306(13.03px) — 셋 다 안 잘림.
+	 * 안 잘리는 최소 뷰포트는 약 1331px (1340 은 8.7px 남고 1320 은 11.3px 넘침).
+	 * 그 아래에서는 다시 하한 0.6 에 걸려 잘림. 방향을 되돌리거나 노드·라벨을 늘리면 같은 방법으로 다시 잴 것 —
+	 * 계기는 test/architecture.map-fit.e2e 이고, 그 세 뷰포트에서 잘림을 배율이 아니라 상자 위치로 직접 잼.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.
 	 * 같은 설정을 YAML frontmatter 로 실으면 `---` 두 줄이 엣지로 세어져 계수가 정확히 2 늘어남
 	 * (`faithful` 아래에서는 그래도 상한 안이므로 계기는 상한 위반이 아니라 그 증분을 잼).
 	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
-	mermaid_drawn: `flowchart TD
+	mermaid_drawn: `flowchart LR
     subgraph entry["External inputs"]
         user[User utterance]
     end
 
-    subgraph daemon["Scheduled background jobs (daemons)"]
-        autoagent_d[Self-improvement daemon]
+    subgraph daemon["Scheduled background jobs <br/>(daemons)"]
+        autoagent_d["Self-improvement <br/>daemon"]
         wiki_d[Wiki daemon]
-        cron["Scheduled background jobs"]
+        cron["Scheduled <br/>background jobs"]
     end
 
-    subgraph orch["Orchestrator (main session)"]
-        main_session["Plans the work, then assigns it"]
+    subgraph orch["Orchestrator <br/>(main session)"]
+        main_session["Plans the work, <br/>then assigns it"]
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["Specialist agents (23)"]
+        agent_layer["Specialist agents <br/>(23)"]
     end
 
-    subgraph hooks["Safety checks & tracking"]
-        hook_pipeline["Hook pipeline (safety checks + tracking)"]
+    subgraph hooks["Safety checks <br/>& tracking"]
+        hook_pipeline["Hook pipeline <br/>(safety checks + tracking)"]
     end
 
-    subgraph data["Data layer (PostgreSQL glass_atrium DB)"]
+    subgraph data["Data layer <br/>(PostgreSQL <br/>glass_atrium DB)"]
         pg_db[("PostgreSQL database")]
     end
 
     subgraph export["Document export"]
-        doc_export["Document export (headless Chromium)"]
+        doc_export["Document export <br/>(headless Chromium)"]
     end
 
     user --> orch
     daemon --> orch
-    orch -- "assigns work" --> agents
-    agents -- "tool calls" --> hooks
-    agents -- "saves documents" --> data
-    hooks -- "saves results" --> data
-    data -- "renders stored content" --> export
+    orch -- "assigns <br/>work" --> agents
+    agents -- "tool <br/>calls" --> hooks
+    agents -- "saves <br/>documents" --> data
+    hooks -- "saves <br/>results" --> data
+    data -- "renders stored <br/>content" --> export
 
     classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
     classDef external fill:#332e2a,stroke:#544c47,color:#a09a96

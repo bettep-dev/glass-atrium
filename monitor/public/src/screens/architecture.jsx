@@ -46,6 +46,10 @@ const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
 // 캔버스·탭 컨트롤 셀렉터 SoT — 구조 하네스가 window.ARCH_SELECTORS 로 같은 문자열을 읽음.
 const ARCH_DESC_ID = "arch-svg-desc";
+// 캔버스 element id — 링 규칙의 특이도를 mermaid 의 classDef 규칙 위로 올리는 유일한 용도.
+// mermaid 가 `#<renderId> .security>*{…!important}` 꼴로 찍으므로(특이도 1,1,0) 클래스만으로는
+// 무엇을 적어도 못 이김 — 여기 id 하나가 그 한 칸을 벌어 줌. 하네스 셀렉터는 클래스 그대로임.
+const ARCH_CANVAS_ID = "arch-map-canvas";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -61,6 +65,26 @@ const LIVE_RING_CLASS = {
 	crit: "arch-node-live-crit",
 };
 const LIVE_RING_CLASSES = Object.values(LIVE_RING_CLASS);
+
+// 판정 tone → 존 상자 링 클래스. 노드 쪽과 접두사를 가른 이유는 계수임 — `arch-node-live-` 를
+// 세는 다리가 여럿이라(render-structure 의 접두사 다리) 존 링이 그 총계에 섞이면 노드 계약이 흐려짐.
+const ZONE_RING_CLASS = {
+	ok: "arch-zone-live-ok",
+	warn: "arch-zone-live-warn",
+	crit: "arch-zone-live-crit",
+};
+const ZONE_RING_CLASSES = Object.values(ZONE_RING_CLASS);
+
+// 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
+const RING_STATE_CLASS = "arch-ring-state";
+const RING_FOCUS_CLASS = "arch-ring-focus";
+
+// 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
+// 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
+// 않도록 그쪽 선택자에서 이 클래스를 뺐고, 그래서 반경의 SoT 가 여기 하나임.
+const NODE_CORNER_RADIUS = 8;
+const RING_GAP = 3;
+const RING_RADIUS = NODE_CORNER_RADIUS + RING_GAP;
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
 // cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
@@ -119,22 +143,6 @@ const HEALTH_ROW_DETAILS = {
 		</>
 	),
 };
-
-// 이름을 id 조각으로 — id 문법을 벗어나는 문자만 하이픈으로 접음 (명부의 daily-restart-* 는
-// 이미 합법이라 그대로 통과).
-function toDetailIdPart(name) {
-	return String(name || "").replace(/[^A-Za-z0-9_-]/g, "-");
-}
-
-// 확장 행 상세의 DOM id — 행 컨트롤의 aria-controls 가 가리키는 값. 키는 데몬 행이면 데몬 이름,
-// 아니면 부품 명부 id 임(둘은 같은 이름공간을 쓰지 않음).
-// 접힌 문자만 다른 두 이름(`a b` 와 `a-b`)은 같은 id 로 떨어짐. 지금 중복 id 가 생기지 않는 것은
-// 이름이 유일해서가 아니라 펼쳐진 행이 한 번에 하나이기 때문임(HealthPartTable 의 expandedRow
-// 는 값 하나만 듦). 동시 펼침을 들이는 변경은 이 전제를 깨므로 그때는 행을 구별하는 값(자리 등)을
-// id 에 함께 실어야 함 — aria-controls 가 엉뚱한 영역을 가리키게 됨.
-function getRowDetailId(rowKey) {
-	return `arch-row-detail-${toDetailIdPart(rowKey)}`;
-}
 
 // hook-chain 응답 → 이벤트 한 줄씩 (T11). 훅 수는 그 이벤트의 모든 matcher 를 합친 값임.
 // null = 응답이 아직 없음(로딩/실패) · [] = 응답은 왔고 설정된 이벤트가 없음 — 다른 문장임.
@@ -421,14 +429,59 @@ function ScreenArchitecture(
 		],
 	);
 
-	const handleSelectNode = useCallbackAR((nodeId) => {
-		if (!nodeId) return;
-		setDetail({
-			kind: "node",
-			payload: { id: nodeId },
-			diagramId: CANONICAL_DIAGRAM_ID,
-		});
-	}, []);
+	// 존 대표 계획 — 헬스 노드를 하나만 담은 존의 목록. 소스의 subgraph 멤버십과 part_bindings 로만 짜임.
+	// 판정 자체는 안 들어옴(폴링마다 바뀌는 값) — 여기 들어오면 존과 노드 사이에서 링이 깜빡임.
+	const zoneRingPlan = useMemoAR(
+		() =>
+			buildZoneRingPlanAR(
+				activeDiagram?.mermaid_source,
+				liveState.data?.part_bindings,
+			),
+		[activeDiagram, liveState.data],
+	);
+
+	// 부품 행 — 표를 걷어낸 뒤로 상세 패널과 노드 클릭이 함께 읽으므로 화면 높이에서 한 번만 셈.
+	// 판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 (ADR-5).
+	const healthPartRows = useMemoAR(
+		() =>
+			getHealthPartRows(
+				{ daemonState: daemonHealthState, pgState, hookState, hookFailState },
+				liveState.data?.part_bindings,
+			),
+		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
+	);
+
+	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
+	// 표 안에 서 있던 경보인데 표가 사라졌으므로 페이지로 올림: 노드를 눌러야 보이는 자리에 두면
+	// 헬스를 통째로 못 읽은 사실이 클릭 뒤에 숨음 — 그건 누르기 전에 알아야 하는 사실임.
+	const healthStoreErrors = getHealthStoreErrorsAR({
+		daemonState: daemonHealthState,
+		pgState,
+		hookState,
+		hookFailState,
+		payloadState,
+	});
+
+	const handleSelectNode = useCallbackAR(
+		(nodeId) => {
+			if (!nodeId) return;
+			setDetail({
+				kind: "node",
+				payload: { id: nodeId },
+				diagramId: CANONICAL_DIAGRAM_ID,
+			});
+			// 이 노드의 첫 데몬 부품으로 드릴다운을 옮김 — 패널이 열리는 순간 실행 목록이 차 있어야
+			// 하고, 응답은 한 번에 한 데몬 것임. 세터는 바인딩이 있으면 언제나 부르되 함수형으로
+			// 부름: 같은 이름이 돌아오면 React 가 동일값 bail-out 으로 리렌더를 접어 요청이 다시
+			// 나가지 않음. 함수형을 벗기면 그 bail-out 이 사라져 왕복 동안 실행 목록이 비워짐.
+			const unscoped = unscopedNodeIdAR(nodeId);
+			const bound = healthPartRows.find(
+				(row) => row.daemonName && row.nodeIds.includes(unscoped),
+			);
+			if (bound) setPayloadDaemon((current) => bound.daemonName || current);
+		},
+		[healthPartRows],
+	);
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
 
@@ -460,7 +513,10 @@ function ScreenArchitecture(
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
-					".arch-col-card .card-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; } " +
+					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
+					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
+					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
+					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
@@ -483,7 +539,9 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
 					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
 					// (소스 shape 를 바꾸는 대안은 content-budget 계수와 존 rect 를 동시에 흔들어 기각).
-					".arch-mermaid-canvas svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; } " +
+					// 심은 링 사각형은 제 반경(RING_RADIUS)을 표현 속성으로 가지므로 여기서 뺌 — CSS 기하
+					// 속성이 표현 속성을 이기니, 안 빼면 링이 8 로 되눌려 도형과 동심이 아니게 됨.
+					".arch-mermaid-canvas svg :is(.node, .cluster) rect:not(.arch-ring) { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
@@ -492,11 +550,35 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					// 상태 링 — 판정을 받은 노드의 테두리. no-data 는 규칙 자체가 없음.
-					// focus-visible 규칙보다 앞에 둠 — 특이도가 같아 나중 규칙이 이기고, 포커스 표식이 링을 덮어야 함.
-					".arch-mermaid-canvas .node.arch-node-live-ok rect, .arch-mermaid-canvas .node.arch-node-live-ok polygon { stroke: rgb(var(--ok)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-warn rect, .arch-mermaid-canvas .node.arch-node-live-warn polygon { stroke: rgb(var(--warn)) !important; stroke-width: 2.5 !important; } " +
-					".arch-mermaid-canvas .node.arch-node-live-crit rect, .arch-mermaid-canvas .node.arch-node-live-crit polygon { stroke: rgb(var(--crit)) !important; stroke-width: 2.5 !important; } " +
+					// 상태 링 — 판정을 받은 노드·존의 테두리. no-data 는 규칙 자체가 없음.
+					// 채널은 mermaid 의 도형도 outline 도 아니고, 우리가 g 안에 심은 사각형임. 세 번 재서 여기까지 옴:
+					//  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임
+					//     (`style="fill:… !important;stroke:… !important"`). 인라인 !important 는 스타일시트의
+					//     !important 보다 세므로 도형의 stroke 로는 못 냄 — focal(main_session) · security(hook_pipeline) ·
+					//     external(user) 세 노드가 그 자리임.
+					//  ② 선택자가 rect/polygon 만 짚으면 원통(path)으로 그려지는 pg_db 를 통째로 놓침.
+					//  ③ 그래서 g 하나에 outline 을 걸었는데, outline 은 SVG 에서 bbox 를 네모로 두를 뿐이라
+					//     모서리를 못 굴림 — 굴린 도형 위에 각진 테두리가 서는 어긋남이 남았음.
+					// 심은 사각형은 mermaid 가 만들지 않은 element 라 인라인 !important 와 겹치지 않고(①),
+					// 도형 bbox 로 재므로 종류를 안 가리며(②), 제 rx 를 가져 굴림(③).
+					// id 선택자와 !important 가 둘 다 필요한 이유 — mermaid 가 SVG 안에 스타일시트를 심고,
+					// 거기에 (a) `#<renderId> .node rect { fill:…; stroke:…; stroke-width:1px }` 와
+					// (b) classDef 마다 `#<renderId> .security>*{ stroke:…!important; stroke-dasharray:4,4!important }`
+					// 가 있음. 심은 사각형은 `.node rect` 이면서 classDef 를 단 g 의 직계 자식이라 둘 다에 걸림 —
+					// !important 만으로는 (b) 를 못 이기고(특이도 1,1,0), id 하나를 벌어야 넘어섬(실측: 안 붙이면
+					// 링이 fill=#332e2a 를 물려 안 보이고, security 노드에서는 점선이 됨).
+					// 도형 쪽 인라인 !important 와는 다른 자리임 — 심은 사각형에는 인라인 style 이 없음.
+					// stroke-dasharray 를 명시로 되돌리는 것도 (b) 때문임: 우리가 안 적은 속성은 그쪽이 그대로 이김.
+					// 선택자에 `rect` 를 붙여 두는 것도 같은 이유임 — (b) 는 (1,1,0) 이라 클래스 하나짜리
+					// `#… .arch-ring` 과 동점이 되고, 동점이면 나중에 선언된 쪽이 이기는데 mermaid 의 스타일시트는
+					// SVG 안에 있어 항상 나중임(실측: focal 노드 두께 2px · security 노드 점선).
+					// display 에는 !important 를 안 붙임: 아래 tone 규칙이 같은 속성을 특이도로 이겨야 링이 켜짐.
+					`#${ARCH_CANVAS_ID} rect.arch-ring { display: none; fill: none !important; ` +
+					"stroke-width: 2.5 !important; stroke-dasharray: none !important; " +
+					"vector-effect: non-scaling-stroke; pointer-events: none; } " +
+					`#${ARCH_CANVAS_ID} .arch-node-live-ok > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-ok > rect.arch-ring-state { display: inline; stroke: rgb(var(--ok)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -505,26 +587,33 @@ function ScreenArchitecture(
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
-					".arch-mermaid-canvas .node:focus-visible rect, .arch-mermaid-canvas .node:focus-visible polygon { stroke: rgb(var(--accent)) !important; stroke-width: 2.5 !important; } " +
-					// 라이브 상태 표 — 전체 데몬 명부를 읽는 표면. 링은 그려진 노드만 짚으므로 미렌더 바인딩은 여기서만 보임.
-					".arch-live-table-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
-					// 스크롤은 표에만 걸림 — 경보가 스크롤 영역 안에 있으면 마지막 행이나 펼친 상세로
-					// 내려간 순간 화면 밖으로 밀림(계측: 경보 포함 scrollHeight 247 / clientHeight 218).
-					".arch-live-table-scroll { max-height: 220px; overflow: auto; } " +
-					".arch-live-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); } " +
-					".arch-live-table th, .arch-live-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid rgb(var(--line)); white-space: nowrap; } " +
-					".arch-live-table thead th { color: rgb(var(--faint)); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .05em; } " +
-					".arch-live-table tbody td { color: rgb(var(--dim)); } " +
-					// 확장 컨트롤 — 표 셀 안에서 서체를 물려받아 행 그대로 보이되 진짜 button 으로 남음.
-					".arch-row-toggle { display: inline-flex; align-items: baseline; gap: 6px; background: none; " +
-					"border: 0; margin: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; } " +
-					".arch-row-toggle:hover { color: rgb(var(--ink)); } " +
-					".arch-row-toggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
-					".arch-row-caret { color: rgb(var(--faint)); font-size: var(--fs-micro); } " +
-					// 상세 셀만 줄바꿈 허용 — 표 본문의 nowrap 이 걸리면 사유 문장이 가로로 흘러 표를 벌림.
-					".arch-live-table td.arch-run-cell { white-space: normal; padding: 6px 8px 8px 22px; } " +
-					// 한 확장 영역에 상세가 둘 이상 오면 서로 붙어 한 덩어리로 읽힘 — 사이를 벌림.
-					".arch-live-table td.arch-run-cell > * + * { margin-top: 8px; } " +
+					// 상태 링과 같은 사각형 채널·같은 반경 가족이라 두 표식이 한 모양으로 읽힘.
+					// 포커스가 상태 링을 끔 — 같은 자리에 두 겹이 겹치면 어느 쪽도 제 색으로 안 읽힘.
+					// (종전 outline 규칙에서 포커스가 뒤에 서서 링을 덮던 것과 같은 결과를 명시적으로 씀.)
+					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
+					// UA 기본 포커스 링은 여기서 끔 — 안 끄면 Chromium 이 `auto 5px rgb(0,95,204)` 를 네모로
+					// 덧그려, 굴린 표식 옆에 각진 표식이 하나 더 섬. 종전 stroke 규칙이 네 노드에서 안 걸렸을 때
+					// 그 자리를 대신 채우고 있던 것이 이 UA 링이었음(실측).
+					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
+					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--accent)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-state { display: none; } ` +
+					// 헬스 저장소 경보의 자리 — 표를 걷어내며 페이지로 올라온 유일한 조각.
+					// 지도가 pane 을 다 쓰므로 flex-shrink:0 으로 제 높이를 지킴(경보가 눌리면 사유가 잘림).
+					".arch-health-alert-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); " +
+					"border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
+					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
+					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
+					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
+					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: 10px; } " +
+					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
+					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
+					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬(cron). 진짜 button 이라
+					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
+					".arch-part-drill { align-self: flex-start; background: none; border: 0; margin: 0; padding: 0 0 0 10px; " +
+					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
+					".arch-part-drill:hover { color: rgb(var(--ink)); } " +
+					".arch-part-drill:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
@@ -572,6 +661,17 @@ function ScreenArchitecture(
 
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
+				{healthStoreErrors.length > 0 && (
+					<div className="arch-health-alert-wrap">
+						<StripAlertAR
+							className="arch-queue-error"
+							message="Couldn't load system health"
+							detail={healthStoreErrors.join(" · ")}
+							onRetry={triggerRefresh}
+						/>
+					</div>
+				)}
+
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
 					<div className="card arch-col-card">
@@ -581,6 +681,7 @@ function ScreenArchitecture(
 								activeDiagram={activeDiagram}
 								nodeByLabel={nodeByLabel}
 								ringToneByNodeId={ringToneByNodeId}
+								zoneRingPlan={zoneRingPlan}
 								onSelectNode={handleSelectNode}
 								onRetry={triggerRefresh}
 							/>
@@ -592,25 +693,21 @@ function ScreenArchitecture(
 					{activeDiagram?.description || "No description available."}
 				</div>
 
-				<HealthPartTable
-					daemonState={daemonHealthState}
-					pgState={pgState}
-					hookState={hookState}
-					hookFailState={hookFailState}
-					partBindings={liveState.data?.part_bindings}
-					payloadState={payloadState}
-					onSelectDaemon={setPayloadDaemon}
-					onRetry={triggerRefresh}
-				/>
 			</div>
 
-			{/* 노드 클릭 → 중앙 modal (파일명 / 설명 / 연결 flows) */}
+			{/* 노드 클릭 → 드로어 (이름 / 설명 / 이 노드에 묶인 부품 헬스 + 그 로그 / 연결 flows) */}
 			{detail && (
 				<DetailModal
 					detail={detail}
 					nodeIndex={nodeIndex}
 					activeDiagram={activeDiagram}
 					liveDaemonsByNodeId={liveDaemonsByNodeId}
+					healthPartRows={healthPartRows}
+					payloadDaemon={payloadDaemon}
+					onSelectDaemon={setPayloadDaemon}
+					payloadState={payloadState}
+					hookState={hookState}
+					hookFailState={hookFailState}
 					onClose={closeDetail}
 				/>
 			)}
@@ -625,6 +722,7 @@ function DiagramBody({
 	activeDiagram,
 	nodeByLabel,
 	ringToneByNodeId,
+	zoneRingPlan,
 	onSelectNode,
 	onRetry,
 }) {
@@ -676,6 +774,7 @@ function DiagramBody({
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
+			zoneRingPlan={zoneRingPlan}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -690,6 +789,7 @@ function MermaidCanvas({
 	diagramTitle,
 	nodeByLabel,
 	ringToneByNodeId,
+	zoneRingPlan,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -764,14 +864,27 @@ function MermaidCanvas({
 			if (!labelText) return;
 			const norm = normalizeLabelAR(labelText);
 			const matchedId = nodeByLabel.get(norm) || null;
-			if (matchedId) el.setAttribute("data-arch-node-id", matchedId);
+			if (!matchedId) return;
+
+			el.setAttribute("data-arch-node-id", matchedId);
+			// 키보드 진입 — 표를 걷어내며 노드가 헬스 상세로 가는 유일한 문이 됐음 (ADR-20).
+			// 표의 행은 진짜 button 이라 탭으로 닿았는데 노드는 캔버스만 포커스를 받아
+			// (tabIndex 는 캔버스에 있고 키 핸들러는 줌/팬뿐임) 마우스 없이는 상세에 닿을 길이
+			// 사라짐. 파일에 이미 `.node:focus-visible` 규칙이 있으나 포커스를 받을 수 있는
+			// 노드가 없어 죽어 있었음 — 여기서 살아남.
+			el.setAttribute("tabindex", "0");
+			el.setAttribute("role", "button");
+			// 접근명은 라벨 그대로 — 화면이 읽은 그 글자여야 스크린리더와 보이는 것이 갈라지지 않음.
+			el.setAttribute("aria-label", labelText.replace(/\s+/g, " ").trim());
 		});
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
-	// 상태 링 — 노드에 걸린 판정(데몬 ∪ 부품) 하나를 테두리로 냄.
+	// 상태 링 — 판정(데몬 ∪ 부품) 하나를 테두리로 냄. 클래스만 켜고, 그리는 것은 심어 둔 사각형임.
 	//   위 효과가 심은 data-arch-node-id 를 되읽으므로 선언 순서가 곧 실행 순서임 — 앞으로 옮기면 첫 렌더에서 빈다.
 	//   폴링 tick 마다 다시 도는 유일한 캔버스 효과 — 재렌더 없이 판정만 바뀌는 경로가 여기임.
 	//   그래서 ringToneByNodeId 가 deps 에 있어야 함: 빼면 health 폴링이 와도 다시 칠하지 않음.
+	//   헬스 노드를 하나만 담은 존은 그 존 상자가 판정을 대신 냄 — 존이 낸 판정을 노드가 또 내면
+	//   같은 사실이 두 겹으로 읽히므로, 그 노드는 여기서 건너뜀.
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
@@ -782,10 +895,29 @@ function MermaidCanvas({
 			const nodeId = el.getAttribute("data-arch-node-id");
 			if (!nodeId) return;
 
-			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscopedNodeIdAR(nodeId))];
+			const unscoped = unscopedNodeIdAR(nodeId);
+			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
+
+			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscoped)];
 			if (ringClass) el.classList.add(ringClass);
 		});
-	}, [renderState.status, renderState.svgHtml, nodeByLabel, ringToneByNodeId]);
+
+		root.querySelectorAll("g.cluster").forEach((el) => {
+			el.classList.remove(...ZONE_RING_CLASSES);
+			const zoneId = matchZoneIdAR(el.id || "", zoneRingPlan.zoneIds);
+			if (!zoneId) return;
+
+			const nodeId = zoneRingPlan.nodeIdByZoneId.get(zoneId);
+			const ringClass = nodeId && ZONE_RING_CLASS[ringToneByNodeId.get(nodeId)];
+			if (ringClass) el.classList.add(ringClass);
+		});
+	}, [
+		renderState.status,
+		renderState.svgHtml,
+		nodeByLabel,
+		ringToneByNodeId,
+		zoneRingPlan,
+	]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -829,6 +961,27 @@ function MermaidCanvas({
 			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
 			rect.dataset.archTitleBand = "1";
 		});
+	}, [renderState.status, renderState.svgHtml]);
+
+	/**
+	 * 링 사각형 심기 — 노드와 존마다 자리를 하나씩 만들어 둠. 켜고 끄는 것은 위 tone 효과의 클래스이고
+	 * 여기서는 기하만 정함, 그래서 폴링 tick 에는 다시 돌지 않음(deps 가 렌더에만 매임).
+	 * 존 제목 띠 효과 뒤에 서야 함 — 띠가 존 rect 를 위로 늘리므로, 먼저 재면 링이 옛 높이를 두름.
+	 * 판정을 못 받는 노드에도 심음: 심는 값은 기하뿐이고 display:none 이라 bbox 에 들어가지 않으므로
+	 * 맞춤 계산이 흔들리지 않고, "어느 노드든 판정을 그릴 수 있다" 는 성질이 클래스 하나로 성립함.
+	 */
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const root = containerRef.current;
+		if (!root) return;
+
+		root.querySelectorAll("svg g.node").forEach((el) => {
+			ensureRingRectAR(el, RING_STATE_CLASS);
+			ensureRingRectAR(el, RING_FOCUS_CLASS);
+		});
+		root
+			.querySelectorAll("svg g.cluster")
+			.forEach((el) => ensureRingRectAR(el, RING_STATE_CLASS));
 	}, [renderState.status, renderState.svgHtml]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
@@ -922,6 +1075,24 @@ function MermaidCanvas({
 		[onSelectNode],
 	);
 
+	// 포커스된 노드에서의 Enter/Space — 클릭과 같은 문. 캔버스의 줌/팬 키와 한 핸들러에 섞지
+	// 않음: 그쪽은 캔버스가 포커스일 때 도는 것이고 이쪽은 노드가 포커스일 때만 돌아야 함.
+	// Space 는 기본 스크롤을 막음 — 안 막으면 상세가 열리면서 페이지가 함께 내려감.
+	const handleNodeKeyDown = useCallbackAR(
+		(e) => {
+			if (e.key !== "Enter" && e.key !== " ") return;
+			const nodeEl = e.target.closest("g.node");
+			if (!nodeEl) return;
+			const matchedId = nodeEl.getAttribute("data-arch-node-id");
+			if (!matchedId) return;
+
+			e.preventDefault();
+			e.stopPropagation();
+			onSelectNode(matchedId);
+		},
+		[onSelectNode],
+	);
+
 	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 맞춤. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
 	const handleKeyDown = useCallbackAR(
 		(e) => {
@@ -969,6 +1140,7 @@ function MermaidCanvas({
 	return (
 		<>
 			<div
+				id={ARCH_CANVAS_ID}
 				className="arch-mermaid-canvas"
 				role="group"
 				aria-label={`${diagramTitle} — pan and zoom diagram`}
@@ -980,6 +1152,7 @@ function MermaidCanvas({
 					style={{ width: "100%", height: "100%" }}
 					onMouseDown={handleMouseDown}
 					onClick={handleClick}
+					onKeyDown={handleNodeKeyDown}
 					// SECURITY: internal trusted source — 위 SECURITY 주석 참조 (sanitize 생략).
 					dangerouslySetInnerHTML={{ __html: renderState.svgHtml }}
 				/>
@@ -1251,148 +1424,99 @@ function HookFailureDetail({ state }) {
 	);
 }
 
-// 라이브 상태 표 — 노드 링 점등을 대체함. 행 원천은 데몬 응답이 아니라 부품 명부임 (ADR-5):
-// 명부 한 항목 = 한 행이므로 응답에 없는 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
+// 노드 상세의 헬스 구획 — 걷어낸 표가 서던 자리 (ADR-20). 표는 부품 명부 전체를 한 화면에
+// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 일곱 전원이 여전히 닿는 근거는 화면이 아니라
+// 바인딩 계기임: 모든 부품이 노드를 최소 하나 갖고(AC-B2-2b) 그 노드가 전부 그려지므로
+// (AC-B2-2a) 그려지지 않는 노드 뒤에 숨는 부품이 있을 수 없음 — 그 조합은 붉은 테스트임.
+// 표가 내던 네 열 중 Nodes 만 형태가 바뀜: 클릭한 노드는 여는 행위가 이미 말했으므로 나머지
+// 바인딩만 남겨 부름(1:1 부품은 낼 것이 없어 아무것도 그리지 않음).
 
-function HealthPartTable({
-	daemonState,
-	pgState,
+function NodePartHealth({
+	nodeId,
+	partRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
 	hookState,
 	hookFailState,
-	partBindings,
-	payloadState,
-	onSelectDaemon,
-	onRetry,
 }) {
 	const { StatusDot, formatRelativeTime } = window.UI;
-	// 파일 관례대로 메모 — 범례 토글/드로어 개폐/새로고침 틱마다 명부를 다시 훑지 않음.
-	const rows = useMemoAR(
-		() =>
-			getHealthPartRows(
-				{ daemonState, pgState, hookState, hookFailState },
-				partBindings,
-			),
-		[daemonState, pgState, hookState, hookFailState, partBindings],
-	);
 
-	// 한 번에 한 행만 펼침 — 여럿이 열리면 표가 세로로 길어져 실패 비교가 아니라 스크롤이 됨.
-	const [expandedRow, setExpandedRow] = useStateAR(null);
+	const unscoped = unscopedNodeIdAR(nodeId);
+	const rows = partRows.filter((row) => row.nodeIds.includes(unscoped));
 
-	const toggleRow = useCallbackAR(
-		(row) => {
-			setExpandedRow((current) => (current === row.id ? null : row.id));
-			// 접을 때도 같은 이름을 올림 — 값이 그대로라 재요청은 없고, 방금 읽은 실패가 남음.
-			if (row.daemonName) onSelectDaemon?.(row.daemonName);
-		},
-		[onSelectDaemon],
-	);
-
-	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸('—')만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
-	// 명부 가드보다 위에서 셈 — 명부는 window.HealthModel 에서 오므로 그 모듈이 통째로 빠지면
-	// rows 가 비고, 다섯 저장소를 못 읽었다는 사실을 부를 자리가 이 경보 말고는 없음.
-	const storeErrors = getHealthStoreErrorsAR({
-		daemonState,
-		pgState,
-		hookState,
-		hookFailState,
-		payloadState,
-	});
-	const storeAlert =
-		storeErrors.length > 0 ? (
-			<StripAlertAR
-				className="arch-queue-error"
-				message="Couldn't load system health"
-				detail={storeErrors.join(" · ")}
-				onRetry={onRetry}
-			/>
-		) : null;
-
-	// 표가 못 서도 경보는 섬 — 함께 사라지면 '못 읽음' 이 '아무 일 없음' 과 같은 화면이 됨.
-	if (rows.length === 0) {
-		return storeAlert ? (
-			<div className="arch-live-table-wrap">{storeAlert}</div>
-		) : null;
-	}
+	// 이 노드에 묶인 부품이 없으면 구획 자체가 없음 — 빈 제목은 판정이 비었다고 거짓말함.
+	if (rows.length === 0) return null;
 
 	return (
-		<div className="arch-live-table-wrap">
-			{storeAlert}
-			<div className="arch-live-table-scroll">
-				<table className="arch-live-table">
-					{/* 첫 열은 행이 선 원천을 부름 — 행은 데몬 응답이 아니라 부품 명부에서 서므로
-					    'Job'(데몬 일감)은 데몬 아닌 부품 행까지 일감이라 부르게 됨. */}
-					<thead>
-						<tr>
-							<th scope="col">HEALTH</th>
-							<th scope="col">Status</th>
-							<th scope="col">Last run</th>
-							<th scope="col">Nodes</th>
-						</tr>
-					</thead>
-					<tbody>
-						{rows.flatMap((row) => {
-							const renderDetail = HEALTH_ROW_DETAILS[row.kind];
-							const detailId = getRowDetailId(row.daemonName || row.id);
-							const isExpanded = expandedRow === row.id;
+		<div data-node-health={unscoped}>
+			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+				Health ({rows.length})
+			</div>
+			<div className="arch-part-list">
+				{rows.map((row) => {
+					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
+					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
+					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (cron 은 데몬 부품 둘이 같은 노드에 묶임).
+					const isDrilled = !row.daemonName || row.daemonName === payloadDaemon;
+					// 남은 바인딩만 부름 — 클릭한 노드는 패널을 연 행위가 이미 말했음.
+					const alsoLights = row.nodeIds.filter((id) => id !== unscoped);
 
-							// tone 속성은 판정이 확정된 행에만 붙음 — 미수신 행을 정상으로 꾸미지 않고,
-							// 하네스가 '판정이 도착함' 을 기다릴 앵커도 이 속성임.
-							const summaryRow = (
-								<tr
-									key={row.id}
-									data-health-row={row.id}
-									data-health-tone={row.tone || undefined}
-									data-daemon-row={row.daemonName || undefined}>
-									<th scope="row" className="text-ink font-mono">
-										{renderDetail ? (
-											/* 진짜 button — 키보드 활성(Enter/Space)과 포커스 순서를 브라우저에서 그대로 받음 */
-											<button
-												type="button"
-												className="arch-row-toggle"
-												aria-expanded={isExpanded}
-												aria-controls={detailId}
-												onClick={() => toggleRow(row)}>
-												<span className="arch-row-caret" aria-hidden="true">
-													{isExpanded ? "▾" : "▸"}
-												</span>
-												{row.name}
-											</button>
-										) : (
-											row.name
-										)}
-									</th>
-									<td>
-										{row.tone ? (
-											<span className="inline-flex items-center gap-1.5">
-												<StatusDot status={row.tone} />
-												{row.statusLabel}
-											</span>
-										) : (
-											"—"
-										)}
-									</td>
-									<td>{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}</td>
-									<td className="font-mono">{row.nodeIds.join(", ") || "—"}</td>
-								</tr>
-							);
+					return (
+						<div
+							key={row.id}
+							className="arch-part-entry"
+							data-health-row={row.id}
+							data-health-tone={row.tone || undefined}
+							data-daemon-row={row.daemonName || undefined}>
+							<div className="arch-part-head">
+								<span className="fs-meta font-mono text-ink">{row.name}</span>
+								{row.tone ? (
+									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
+										<StatusDot status={row.tone} />
+										{row.statusLabel}
+									</span>
+								) : (
+									<span className="fs-meta text-dim">—</span>
+								)}
+								{/* 마지막 실행은 데몬 부품만 갖는 사실임 — 나머지 부품에서는 빈 값이 정답이라
+								    칸을 아예 두지 않음. 데몬인데 값이 없으면 그 없음은 보여야 하므로 '—' 로 냄. */}
+								{row.daemonName && (
+									<span className="fs-meta text-dim">
+										Last run{" "}
+										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}
+									</span>
+								)}
+							</div>
 
-							// 접힌 행은 상세를 아예 렌더하지 않음 — 숨긴 채 남기면 접근성 트리에 빈 영역이 남음.
-							if (!renderDetail || !isExpanded) return [summaryRow];
+							{alsoLights.length > 0 && (
+								<div className="fs-micro font-mono text-faint">
+									Also lights: {alsoLights.join(", ")}
+								</div>
+							)}
 
-							return [
-								summaryRow,
-								<tr
-									key={`${row.id}-detail`}
-									data-health-detail={row.id}
-									data-daemon-detail={row.daemonName || undefined}>
-									<td id={detailId} colSpan={4} className="arch-run-cell">
+							{/* 펼칠 것이 없는 kind(pg · browser)는 아무것도 그리지 않음 — 빈 영역을 여는
+							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 접지 않고 바로 폄:
+							    패널이 이미 노드 하나로 좁혀져 있어 접어 둘 비교 대상이 없음. */}
+							{renderDetail &&
+								(isDrilled ? (
+									<div
+										className="arch-part-detail"
+										data-health-detail={row.id}
+										data-daemon-detail={row.daemonName || undefined}>
 										{renderDetail(row, { payloadState, hookState, hookFailState })}
-									</td>
-								</tr>,
-							];
-						})}
-					</tbody>
-				</table>
+									</div>
+								) : (
+									<button
+										type="button"
+										className="arch-part-drill"
+										onClick={() => onSelectDaemon?.(row.daemonName)}>
+										Show recent runs for {row.daemonName}
+									</button>
+								))}
+						</div>
+					);
+				})}
 			</div>
 		</div>
 	);
@@ -1459,6 +1583,12 @@ function DetailModal({
 	nodeIndex,
 	activeDiagram,
 	liveDaemonsByNodeId,
+	healthPartRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
+	hookState,
+	hookFailState,
 	onClose,
 }) {
 	// detail undefined 시 React state batching edge case 방어.
@@ -1477,6 +1607,12 @@ function DetailModal({
 				flows={activeDiagram?.flows || []}
 				nodeIndex={nodeIndex}
 				liveDaemonsByNodeId={liveDaemonsByNodeId}
+				healthPartRows={healthPartRows}
+				payloadDaemon={payloadDaemon}
+				onSelectDaemon={onSelectDaemon}
+				payloadState={payloadState}
+				hookState={hookState}
+				hookFailState={hookFailState}
 			/>
 		);
 
@@ -1499,7 +1635,18 @@ function DetailModal({
 	);
 }
 
-function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
+function NodeDetailBody({
+	info,
+	flows,
+	nodeIndex,
+	liveDaemonsByNodeId,
+	healthPartRows,
+	payloadDaemon,
+	onSelectDaemon,
+	payloadState,
+	hookState,
+	hookFailState,
+}) {
 	const { Pill, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
 		window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
@@ -1526,6 +1673,15 @@ function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
 			{info.description && (
 				<FieldBlock label="Description" value={info.description} mono={false} />
 			)}
+			<NodePartHealth
+				nodeId={info.id}
+				partRows={healthPartRows}
+				payloadDaemon={payloadDaemon}
+				onSelectDaemon={onSelectDaemon}
+				payloadState={payloadState}
+				hookState={hookState}
+				hookFailState={hookFailState}
+			/>
 			<FlowSummary
 				inbound={inbound}
 				outbound={outbound}
@@ -1907,21 +2063,6 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-// 라이브 상태 표의 행 목록 — daemon 1개 = 1행. 표현 계층과 무관한 순수 파생.
-function getLiveDaemonRows(daemons) {
-	return (daemons || []).map((d) => {
-		// 서버가 임계를 적용해 낸 판정만 읽음 — 화면이 다시 재면 같은 입력에 답이 둘이 됨.
-		const verdict = d?.effective_status;
-		return {
-			name: d?.daemon_name || "—",
-			tone: window.UI.daemonStatusTone(verdict),
-			statusLabel: window.UI.daemonStatusLabel(verdict),
-			nodeIds: Array.isArray(d?.node_ids) ? d.node_ids : [],
-			lastRunAt: d?.last_run_at || null,
-		};
-	});
-}
-
 // 표 행 목록 — 부품 명부 한 항목 = 한 행 (ADR-5). 데몬 응답이 행 수를 정하지 않으므로 응답에 없는
 // 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
 //   판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 — 어느 쪽도 여기서
@@ -1988,6 +2129,96 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 	}
 
 	return byNodeId;
+}
+
+// 존 하나가 헬스 노드를 정확히 하나만 담을 때, 그 판정은 노드가 아니라 존 상자가 냄.
+//   근거는 이미 있는 자료 둘뿐임 — 그려지는 mermaid 소스의 subgraph 블록(어느 노드가 어느 존인가)과
+//   /live 의 part_bindings(어느 노드가 판정을 받을 수 있는가). 존 이름을 여기 적어 두면 존이 늘거나
+//   갈릴 때 지도만 조용히 어긋나므로, 이름은 한 줄도 적지 않음.
+//   기준이 '판정이 지금 와 있는가' 가 아니라 '판정을 받을 수 있는가' 인 이유: 앞의 것으로 재면
+//   폴링이 한 번 늦을 때마다 같은 사실이 존과 노드 사이를 오가며 깜빡임.
+//   subgraph 중첩은 다루지 않음 — content-budget 의 subgraphDepth 상한이 1 이라 중첩이 오면
+//   그쪽이 먼저 붉어짐.
+function buildZoneRingPlanAR(source, partBindings) {
+	const healthNodeIds = new Set();
+	for (const nodeIds of Object.values(partBindings || {}))
+		for (const nodeId of nodeIds || []) healthNodeIds.add(nodeId);
+
+	const nodeIdByZoneId = new Map();
+	const zoneByNodeId = new Map();
+
+	let zoneId = "";
+	let inZone = [];
+	for (const raw of String(source || "").split("\n")) {
+		const line = raw.trim();
+
+		const opened = /^subgraph\s+([A-Za-z_][\w-]*)/.exec(line);
+		if (opened) {
+			zoneId = opened[1];
+			inZone = [];
+			continue;
+		}
+		if (line === "end") {
+			if (zoneId && inZone.length === 1) {
+				nodeIdByZoneId.set(zoneId, inZone[0]);
+				zoneByNodeId.set(inZone[0], zoneId);
+			}
+			zoneId = "";
+			continue;
+		}
+		if (!zoneId) continue;
+
+		// 선언 줄만 셈 — 여는 괄호가 붙은 첫 토큰. 엣지 줄과 `end` 는 여기서 걸러짐.
+		const declared = /^([A-Za-z_][\w-]*)\s*[[({]/.exec(line);
+		if (declared && healthNodeIds.has(declared[1])) inZone.push(declared[1]);
+	}
+
+	return { zoneIds: [...nodeIdByZoneId.keys()], nodeIdByZoneId, zoneByNodeId };
+}
+
+// mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —
+// 앞부분을 화면이 모르므로 뒤에서 맞춤. 하이픈 경계를 함께 봐서 `data` 가 `metadata` 를 물지 않게 하고,
+// 가장 긴 일치를 골라 한 존 id 가 다른 존 id 의 꼬리인 경우까지 가름.
+function matchZoneIdAR(elementId, zoneIds) {
+	let matched = "";
+	for (const zoneId of zoneIds) {
+		if (elementId !== zoneId && !elementId.endsWith(`-${zoneId}`)) continue;
+		if (zoneId.length > matched.length) matched = zoneId;
+	}
+	return matched;
+}
+
+// 도형 bbox 를 따 링 사각형 하나를 그 g 안에 심음 (없으면 만들고, 있으면 좌표만 갱신).
+//   g 안에 두므로 그룹 transform 을 그대로 물려받아 도형과 같은 좌표계에서 잼.
+//   mermaid 가 만들지 않은 element 라 classDef 인라인 !important 와 겹칠 자리가 없음.
+//   이미 심은 링은 셈에서 뺌 — 안 빼면 두 번째 호출이 링의 bbox 를 재서 매번 한 겹씩 커짐.
+function ensureRingRectAR(groupEl, ringClass) {
+	const shape = groupEl.querySelector(
+		":scope > :is(rect, path, polygon, circle, ellipse):not(.arch-ring)",
+	);
+	if (!shape) return null;
+
+	let box = null;
+	try {
+		box = shape.getBBox();
+	} catch {
+		return null;
+	}
+	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+
+	let ring = groupEl.querySelector(`:scope > rect.${ringClass}`);
+	if (!ring) {
+		ring = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		ring.setAttribute("class", `arch-ring ${ringClass}`);
+		groupEl.appendChild(ring);
+	}
+	ring.setAttribute("x", String(box.x - RING_GAP));
+	ring.setAttribute("y", String(box.y - RING_GAP));
+	ring.setAttribute("width", String(box.width + RING_GAP * 2));
+	ring.setAttribute("height", String(box.height + RING_GAP * 2));
+	ring.setAttribute("rx", String(RING_RADIUS));
+	ring.setAttribute("ry", String(RING_RADIUS));
+	return ring;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).
