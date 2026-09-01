@@ -384,3 +384,122 @@ run_recreate() {
   [[ ! -d "${fake_home}/.claude/backups/postgres" ]] \
     || { echo "legacy .claude/backups/postgres created (seam leaked)" >&2; return 1; }
 }
+
+# --- AC-C3: the recreate backup follows the ADR-6 resolver -------------------
+#
+# The DEFAULT case above pins where the dump goes with nothing configured. This pins
+# the other half: a CONFIGURED relocation must reach the recreate backup, which it
+# can only do if the site resolves through atrium_backup_dir instead of deriving the
+# path itself. Case 2 of the ADR-6 table (destination EXISTS) is used so the value
+# is adopted and therefore differs from the default under the sandbox HOME.
+#
+# NO LIVE PATH LITERAL beyond the negative assertion already present in this file:
+# the fixture is built from sandbox paths.
+#
+# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every
+# assertion below `return 1`s with its own message so each fails independently.
+
+@test "AC-C3 GA_DB_RECREATE backup lands under a CONFIGURED backup_dir" {
+  # Same stub shape as the DEFAULT test: dropdb fails (exit 1) so the run stops at
+  # EXIT_RECREATE=8 right after the backup dir + dump file are created.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nexit 1\n' >"${STUB_BIN}/dropdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
+
+  local fake_home="${SANDBOX}/home" relocated="${SANDBOX}/relocated"
+  mkdir -p "${fake_home}" "${relocated}"
+  printf '[paths]\nbackup_dir = "%s"\n' "${relocated}" >"${SANDBOX}/config.toml"
+
+  # env -u options MUST precede the NAME=value assignments (else env treats -u as the cmd).
+  run env -u GA_DB_BACKUP_DIR -u GA_DATA_ROOT -u GA_ROOT \
+    GA_DB_RECREATE=1 GA_DB_NAME=claude_oss_e2e HOME="${fake_home}" \
+    ATRIUM_CONFIG_TOML="${SANDBOX}/config.toml" \
+    PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
+  [[ "${status}" -eq 8 ]] || { echo "expected EXIT_RECREATE=8, got ${status}; out=${output}" >&2; return 1; }
+  # the recreate dump landed at the CONFIGURED location …
+  local dumps=("${relocated}"/claude_oss_e2e-recreate-*.dump)
+  [[ -e "${dumps[0]}" ]] || { echo "no dump under the configured dir; out=${output}" >&2; return 1; }
+  # … and the default location under HOME was never used.
+  [[ ! -d "${fake_home}/.glass-atrium/backups/postgres" ]] \
+    || { echo "dump leaked to the default location while a relocation was configured" >&2; return 1; }
+}
+
+# --- creation mask (CWE-732) --------------------------------------------------
+
+# mode_of — SHARED, because that `||` chain between the two stat SPELLINGS was never a
+# platform branch: on GNU it read a statfs block as a mode and reddened this assertion
+# and its two siblings together. See test/lib/stat-mode.bash.
+load 'lib/stat-mode'
+
+@test "AC-C7 the recreate backup and the dir created for it are owner-only (0700 / 0600)" {
+  local dump dir_mode dump_mode
+  # Same stub shape as the backup-before-drop test above: the main db reports
+  # 'exists' until dropdb clears its sentinel, so recreate_database engages and its
+  # own mkdir creates ${SANDBOX}/backups (setup() does not pre-create it).
+  : >"${SANDBOX}/main-present"
+  printf '#!/bin/bash\ncase "$*" in\n  *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;;\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
+    >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
+
+  run_recreate "claude_oss_e2e"
+  [[ "${status}" -eq 0 ]] || {
+    echo "recreate exit ${status}: ${output}" >&2
+    return 1
+  }
+  dir_mode="$(mode_of "${SANDBOX}/backups")"
+  [[ "${dir_mode}" == "700" ]] || {
+    echo "created backup dir mode = ${dir_mode}, expected 700" >&2
+    return 1
+  }
+  dump="$(find "${SANDBOX}/backups" -maxdepth 1 -type f -name 'claude_oss_e2e-recreate-*.dump' | head -n 1)"
+  [[ -n "${dump}" ]] || {
+    echo "no recreate dump landed; out=${output}" >&2
+    return 1
+  }
+  dump_mode="$(mode_of "${dump}")"
+  [[ "${dump_mode}" == "600" ]] || {
+    echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+}
+
+@test "AC-C7 the creation mask is RESTORED for the steps after the recreate backup" {
+  local mode
+  # Two 077 scopes run on this path — one around recreate_database's mkdir, one inside
+  # backup_db_to_file around pg_dump — and the mask is process-global, so a leaked one
+  # governs every later step. The .env render is the first file the script creates after
+  # both scopes close, which makes it the probe; deleting EITHER restore line leaves the
+  # mask at 077 there (the inner scope captures whatever the outer one leaked) and turns
+  # this red, while every other assertion in this file stays green.
+  : >"${SANDBOX}/main-present"
+  printf '#!/bin/bash\ncase "$*" in\n  *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;;\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
+    >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
+
+  run env GA_DB_RECREATE=1 GA_DB_NAME="claude_oss_e2e" \
+    GA_DB_BACKUP_DIR="${SANDBOX}/backups" PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c "cd \"${FAKE_ROOT}\" && umask 022 && exec bash \"${SETUP_SH}\""
+  [[ "${status}" -eq 0 ]] || {
+    echo "recreate exit ${status}: ${output}" >&2
+    return 1
+  }
+  [[ -f "${FAKE_ROOT}/.env" ]] || {
+    echo "the .env render never ran, so the post-scope mask was never exercised; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${FAKE_ROOT}/.env")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-scope creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+}

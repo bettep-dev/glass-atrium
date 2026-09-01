@@ -345,6 +345,28 @@ _NON_ADJUDICATION_CLASSES = frozenset(
 # prefix-matches this literal to separate a refusal row from a quality reject.
 REMOVAL_REFUSAL_REASON_PREFIX = "removal-preserving refusal"
 
+# Rationale prefix stamped on a proposal REFUSED at the storage entry because its
+# diff exceeded STORED_DIFF_CHAR_LIMIT. Unlike REMOVAL_REFUSAL_REASON_PREFIX this
+# literal is deliberately NOT prefix-matched by classify_failure_rationale: an
+# unrecognized rationale takes that function's default-to-advance QUALITY branch,
+# which is the intended disposition. The bound EQUALS DIFF_EXCERPT_CHAR_CAP, so a
+# diff past it can never be handed to the verifier whole -- nothing downstream can
+# adjudicate it on its own complete evidence, and regenerating the pattern that
+# produced it is futile. That is the same ADJUDICATING reading that keeps
+# FAILURE_CLASS_REMOVAL_REFUSAL out of _NON_ADJUDICATION_CLASSES. Stated here
+# because the outcome arrives via a default: it is a considered disposition, not
+# an oversight.
+#
+# Residual, stated rather than justified away: a LEGITIMATE patch can exceed the
+# bound. Live agent bodies reach ~52 KB with EDITABLE regions near 29 KB, so "past
+# the bound" is NOT synonymous with "whole-file rewrite" -- do not read the
+# neighbouring DIFF_EXCERPT_CHAR_CAP note's "<= 8 KB agent body" as a claim that
+# bodies are that small; it bounds the cases that cap comfortably fits. Such a
+# patch is refused loudly and its pattern terminalizes. Accepted, because raising
+# the storage bound above the excerpt cap reintroduces exactly the fragment the
+# refusal exists to eliminate, and raising BOTH is a separate prompt-cost call.
+OVERSIZE_DIFF_REFUSAL_REASON_PREFIX = "oversize-diff refusal"
+
 # Per-call Haiku failure logs — one NON-overwritten file per (date, agent,
 # attempt) so the NEXT 04:30 failure carries the full untruncated streams that
 # the raw_response[:400] collapse currently destroys.
@@ -835,8 +857,12 @@ COMPLIANCE_AXIS_KEYS = ("C1", "C2", "C3", "C4")
 # Non-compliance passenger sharing the pre_verify_axes payload: the per-proposal
 # prose-only-add verdict (detection-only, never a gate). Absent ≠ false — the key
 # is written only when a diff existed to classify, so a reader treats absence as
-# UNCLASSIFIED. The verdict inherits the classifier's DIFF_EXCERPT_CHAR_CAP
-# truncation sensitivity: removals past the cut read as prose-only-add.
+# UNCLASSIFIED. The verdict no longer carries a truncation sensitivity: it is
+# computed over the STORED diff, which is now whole or absent (a diff past
+# STORED_DIFF_CHAR_LIMIT is refused, stored empty). The former storage slice was
+# the live instance of that sensitivity — removals past the cut vanished, so a
+# subtraction patch read to this classifier as prose-only-add — and a refused row
+# writes NO key, i.e. reads as UNCLASSIFIED rather than as a false negative.
 PROSE_ONLY_ADD_AXIS_KEY = "prose_only_add"
 
 # Runaway bounds for the verifier prompt's rule/target excerpts — NOT content
@@ -857,6 +883,23 @@ TARGET_AGENT_EXCERPT_CHAR_CAP = 120_000
 # hunk pair over an <= 8 KB agent body fits. A bound remains, unbounded excerpt
 # is forbidden (LLM10 unbounded consumption).
 DIFF_EXCERPT_CHAR_CAP = 12_000
+
+# Storage-entry bound on the diff PERSISTED onto the proposal row. Deliberately
+# EQUAL to DIFF_EXCERPT_CHAR_CAP, and the equality is the mechanism: a stored diff
+# can never exceed the excerpt bound, so _diff_excerpt returns every stored diff
+# byte-identical and the verifier is never handed a fragment of one. It also
+# retires the truncation sensitivity PROSE_ONLY_ADD_AXIS_KEY documents -- with no
+# cut there are no removals past it to misread as prose-only-add.
+#
+# Past this bound the diff is REFUSED, never truncated. The former storage entry
+# was a bare `diff[:4000]` character slice applied AFTER the F2 validation gate,
+# which voided that gate's own contract ("never store a diff that fails git apply
+# --check") and reproduced the measured excerpt incident one layer down: a partial
+# diff is indistinguishable from a real one, so a reader cannot tell a genuine
+# add-only patch from the surviving head of one that removed lines past the cut.
+# Refusal is the only disposition that keeps the two distinguishable. A bound
+# still remains -- an unbounded stored diff is forbidden (LLM10).
+STORED_DIFF_CHAR_LIMIT = DIFF_EXCERPT_CHAR_CAP
 
 # Optimizer-side memory (SkillOpt R2): the consolidated generation prompt
 # prepends this agent's recent pre_verify-FAILED diff shapes so the generator
@@ -1711,10 +1754,12 @@ class PatchProposal:
     touched_frontmatter: bool   # classification hint
     estimated_added_lines: int  # for body-auto threshold
     raw_response: str           # full Haiku stdout (truncated for storage)
-    # '-' line count from the FULL (pre-truncation) diff, symmetric with
-    # estimated_added_lines: proposed_diff is capped at 4000 chars, so a count
-    # re-derived from it under-reports exactly the large patches the subtraction
-    # ratchet is measured by.
+    # '-' line count from the FULL diff, symmetric with estimated_added_lines.
+    # proposed_diff is no longer truncated -- it is either byte-identical to that
+    # full diff or EMPTY, because a diff past STORED_DIFF_CHAR_LIMIT is refused
+    # rather than stored. Re-deriving the count from it would therefore report 0
+    # for exactly the refused rows, erasing the size of what was refused from the
+    # subtraction ratchet the count is measured by.
     estimated_removed_lines: int = 0
     # Parse-path indicator (observability honesty):
     #   'strict'  — both RATIONALE/DIFF markers parsed via canonical regex
@@ -1806,10 +1851,11 @@ class PatchResult:
     # 'ok' | 'skipped:<reason>' | 'error:<short>'; updater-origin rows add
     # 'verified:<gate>' for a gate that ran without a model call.
     haiku_status: str
-    # Accurate '+' line count from the FULL (pre-truncation) diff. proposed_diff
-    # is capped at 4000 chars, so re-deriving the count from it under-reports any
-    # patch whose diff exceeds the cap → carry the proposal's count instead. Default
-    # 0 keeps historical rows / partial constructions backward-compatible.
+    # Accurate '+' line count from the FULL diff. proposed_diff is stored whole or
+    # not at all (a diff past STORED_DIFF_CHAR_LIMIT is refused, stored empty), so
+    # re-deriving the count from it reports 0 for every refused row → carry the
+    # proposal's count instead. Default 0 keeps historical rows / partial
+    # constructions backward-compatible.
     estimated_added_lines: int = 0
     # Symmetric '-' count, same full-diff provenance as estimated_added_lines.
     estimated_removed_lines: int = 0
@@ -5100,10 +5146,26 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
 
     added = int(lines_m.group(1)) if lines_m else _count_added_lines(diff)
 
+    # Storage entry -- REFUSE past the bound, never truncate (see
+    # STORED_DIFF_CHAR_LIMIT for why a partial diff is the worse outcome). Stored
+    # empty, exactly as the F2 gate rejects, so the empty-diff arm of
+    # classify_patch_area (R3) reaches the same 'reject' verdict by the path that
+    # already exists; the stamped rationale is what separates this refusal from a
+    # Haiku failure, and reaches the cycle report as the row's error.
+    stored_diff = diff
+    if len(diff) > STORED_DIFF_CHAR_LIMIT:
+        sys.stderr.write(
+            f"[daemon-cycle] OVERSIZE DIFF: {len(diff)} chars exceeds the "
+            f"{STORED_DIFF_CHAR_LIMIT}-char storage bound for "
+            f"{target_file.name} -- refusing (stored empty, never partial)\n"
+        )
+        rationale = f"{OVERSIZE_DIFF_REFUSAL_REASON_PREFIX}: {rationale}"
+        stored_diff = ""
+
     return PatchProposal(
         target_file=str(target_file),
         rationale=rationale[:400],
-        proposed_diff=diff[:4000],
+        proposed_diff=stored_diff,
         touched_frontmatter=touches,
         estimated_added_lines=added,
         estimated_removed_lines=_count_removed_lines(diff),
@@ -6265,10 +6327,11 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
 
     Aggregation rules:
       - changes_added: sum of patches[].estimated_added_lines for the same key.
-        That count is taken from the FULL pre-truncation diff (proposed_diff is
-        capped at 4000 chars, so re-deriving from it under-reports any larger patch).
+        That count is taken from the FULL diff (proposed_diff is stored whole or,
+        past STORED_DIFF_CHAR_LIMIT, refused and stored empty -- so re-deriving
+        from it reports 0 for every refused row).
       - changes_removed: sum of patches[].estimated_removed_lines for the same key,
-        taken from the same FULL pre-truncation diff as changes_added.
+        taken from the same FULL diff as changes_added.
       - rice: None — the daemon does not compute RICE.
 
     Empty patches[] (patterns_processed=0) → empty list.
@@ -6284,8 +6347,8 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
         if not agent:
             continue  # pre-empt a helper NOT NULL violation
         eval_result = _coerce_eval_result(patch)[:EVAL_RESULT_MAX_LEN]
-        # Use the accurate counts carried from the full (pre-truncation) diff;
-        # re-deriving from proposed_diff would under-report >4000-char patches.
+        # Use the accurate counts carried from the full diff; re-deriving from
+        # proposed_diff would report 0 for a row refused at STORED_DIFF_CHAR_LIMIT.
         key = (agent, eval_result)
         added_by_key[key] += max(0, int(patch.estimated_added_lines))
         removed_by_key[key] += max(0, int(patch.estimated_removed_lines))
@@ -10349,8 +10412,9 @@ def run_cycle(
                 proposed_diff=proposal.proposed_diff,
                 outcomes_sampled=len(outcomes),
                 haiku_status=haiku_status,
-                # Accurate count from the FULL diff (proposed_diff is truncated
-                # to 4000 chars → cannot be re-derived without under-reporting).
+                # Accurate count from the FULL diff (proposed_diff is stored
+                # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
+                # → cannot be re-derived without zeroing every refused row).
                 estimated_added_lines=proposal.estimated_added_lines,
                 estimated_removed_lines=proposal.estimated_removed_lines,
                 # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py

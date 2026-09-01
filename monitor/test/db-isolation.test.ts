@@ -13,6 +13,9 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import pg from "pg";
 
@@ -103,6 +106,24 @@ test("AC-B0-2(1): the LIVE store holds no row from this run", async (t) => {
 // must be REFUSED. The cases were written against the raw comparison first and observed
 // to fail there — that run is the evidence the guard was actually widened.
 
+// The symlink case owns its fixture rather than borrowing the OS's. `/tmp` is a symlink
+// to `/private/tmp` on macOS ONLY: on Linux `/private/tmp` does not exist, so a pair
+// written against those two paths asserts nothing there — realpath cannot resolve the
+// second spelling, the identities diverge, and the case reds for a reason that has
+// nothing to do with the guard. A directory plus a sibling symlink to it reproduces the
+// same aliasing on every POSIX system, so the property is now tested wherever the suite
+// runs.
+const SOCKET_FIXTURE_ROOT = mkdtempSync(join(tmpdir(), "db-isolation-socket-"));
+const SOCKET_DIR = join(SOCKET_FIXTURE_ROOT, "socket");
+const SOCKET_LINK = join(SOCKET_FIXTURE_ROOT, "socket-alias");
+
+mkdirSync(SOCKET_DIR);
+symlinkSync(SOCKET_DIR, SOCKET_LINK, "dir");
+
+after(() => {
+  rmSync(SOCKET_FIXTURE_ROOT, { recursive: true, force: true });
+});
+
 const SAME_DATABASE_PAIRS: ReadonlyArray<readonly [string, string, string]> = [
   [
     "an appended non-selecting query parameter",
@@ -126,8 +147,8 @@ const SAME_DATABASE_PAIRS: ReadonlyArray<readonly [string, string, string]> = [
   ],
   [
     "the same socket directory reached through a symlink",
-    "postgresql://bettep@localhost/glass_atrium?host=/tmp",
-    "postgresql://bettep@localhost/glass_atrium?host=/private/tmp",
+    `postgresql://bettep@localhost/glass_atrium?host=${SOCKET_DIR}`,
+    `postgresql://bettep@localhost/glass_atrium?host=${SOCKET_LINK}`,
   ],
   [
     "reordered query parameters",

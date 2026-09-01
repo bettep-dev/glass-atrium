@@ -66,13 +66,20 @@ function decodeOrRaw(value: string): string {
 }
 
 function normalizeHost(host: string): string {
-  const trimmed = host.trim().replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  const trimmed = host.trim().replace(/^\[/, "").replace(/\]$/, "");
   if (trimmed.length === 0) return "";
 
   if (trimmed.startsWith("/")) {
-    // A socket directory, and `/tmp` is a symlink to `/private/tmp` on macOS — the two
-    // spellings reach one socket, so resolve before comparing. A path that does not
-    // exist cannot be resolved and is compared as written.
+    // A socket directory: one directory reachable under two spellings (a symlink and its
+    // target) is one socket, so resolve before comparing. A path that does not exist
+    // cannot be resolved and is compared as written.
+    //
+    // NOT lowercased, unlike a hostname. A filesystem path is case-SENSITIVE on Linux, so
+    // folding the case first hands realpath a path that does not exist there — the resolve
+    // throws, both spellings fall back to their own literal text, and an aliased pair reads
+    // as two databases. That is the fail-OPEN direction: the guard stops refusing a test
+    // DSN that is the live one reached through a symlink. Invisible on macOS, whose
+    // default filesystem is case-insensitive.
     const stripped = trimmed.replace(/\/+$/, "") || "/";
     try {
       return realpathSync(stripped);
@@ -81,7 +88,9 @@ function normalizeHost(host: string): string {
     }
   }
 
-  return LOOPBACK_HOSTS.has(trimmed) ? "localhost" : trimmed;
+  // A hostname is case-insensitive, so this half keeps the fold.
+  const lowered = trimmed.toLowerCase();
+  return LOOPBACK_HOSTS.has(lowered) ? "localhost" : lowered;
 }
 
 /**

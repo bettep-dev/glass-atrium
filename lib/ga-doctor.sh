@@ -1019,6 +1019,134 @@ run_doctor() {
     fi
   fi
 
+  # 23. agent-registry `tools` mirror vs. each agent body's frontmatter `tools:`. The frontmatter is
+  #     the SoT the Capability Probe reads at delegation time; the registry array is a MIRROR that
+  #     tooling preferring JSON reads instead. Nothing on the install compared them, so a mirror
+  #     claiming a grant the agent body does not hold stayed silent until a probe acted on it.
+  #     Registration kind B (report-only): its log line ONLY — no counter, no term in the warning
+  #     total, exit code unchanged. Both remedies (write the mirror, or correct the frontmatter) are
+  #     operator decisions on live routing state, and neither is safe to force through an abort.
+  #     The comparison is DELEGATED to scripts/sync-registry-tools.sh rather than re-implemented
+  #     here: a second frontmatter parser is a second answer to the same question. `--check` is a dry
+  #     run by construction, so this section never writes. The tool is resolved from THIS FILE's
+  #     location (the §18 idiom) and aimed at GA_ROOT with `--root`, so a bats-sourced doctor checks
+  #     the sandbox tree with the shipped tool.
+  local tools_mirror_dir="" tools_mirror_tool="" tools_mirror_out=""
+  local tools_mirror_line="" tools_mirror_name="" tools_mirror_rc=0
+  local tools_mirror_drift="" tools_mirror_count=0
+  tools_mirror_dir="$(cd -- "${BASH_SOURCE[0]%/*}/../scripts" 2>/dev/null && pwd)" || tools_mirror_dir=""
+  tools_mirror_tool="${tools_mirror_dir}/sync-registry-tools.sh"
+  if [[ -z "${tools_mirror_dir}" || ! -f "${tools_mirror_tool}" ]]; then
+    log "  note : registry tools mirror not compared — no sync tool beside this install's lib dir"
+  # ONE probe for BOTH legs: an absent python3 and a python3 without PyYAML are the same condition
+  # for this reader — the tool cannot run — and the tool invokes a bare `python3` itself.
+  elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    log "  note : registry tools mirror not compared — python3 with PyYAML unavailable (the mirror reader needs both)"
+  # The rc IS the verdict: 0 clean, 3 drift, anything else the tool declining to answer. Captured
+  # through an `if` so the drift exit code cannot abort run_doctor under the caller's set -e.
+  elif tools_mirror_out="$(bash "${tools_mirror_tool}" --check --root "${GA_ROOT}" 2>&1)"; then
+    log "  ok   : agent-registry tools mirror matches every agent's frontmatter"
+  else
+    tools_mirror_rc=$?
+    if [[ "${tools_mirror_rc}" -eq 3 ]]; then
+      # The tool names each drifted agent on its own `  - <name>: <old> -> <new>` line under
+      # PLANNED UPDATES. The NAMES are what an operator acts on, so they are lifted onto the row
+      # rather than left in a stderr block nobody re-runs the tool to see.
+      while IFS= read -r tools_mirror_line; do
+        case "${tools_mirror_line}" in
+          '  - '*': '*)
+            tools_mirror_name="${tools_mirror_line#  - }"
+            tools_mirror_name="${tools_mirror_name%%:*}"
+            [[ -n "${tools_mirror_name}" ]] || continue
+            tools_mirror_drift="${tools_mirror_drift}${tools_mirror_drift:+, }${tools_mirror_name}"
+            tools_mirror_count=$((tools_mirror_count + 1))
+            ;;
+          # Every other line (the metric line, the ORPHANS/MISSING/SKIPPED blocks, the DRIFT
+          # notice) carries no agent name for this row — dropped, never an error.
+          *) ;;
+        esac
+      done <<<"${tools_mirror_out}"
+      log "  info : agent-registry tools mirror drift — ${tools_mirror_count} agent(s) differ from frontmatter: ${tools_mirror_drift:-<names unavailable>} (report-only; run 'bash ${tools_mirror_tool} --root ${GA_ROOT}' to write the mirror)"
+    else
+      # Announced rather than silent: a comparison nobody hears fail is the drift channel again.
+      log "  note : registry tools mirror not compared — the check exited ${tools_mirror_rc} (run 'bash ${tools_mirror_tool} --check --root ${GA_ROOT}' to read why)"
+    fi
+  fi
+
+  # 24. backup directory reconciliation surface (ADR-6 resolver + ADR-10 reconciler). Registration
+  #     kind B (report-only): its log lines only — no counter, no term in the warning total, exit
+  #     code unchanged. NUMBERING: §23 (the registry-mirror row) and this section were written on
+  #     separate tracks against a tree ending at §22, each pre-assigned its own number so the two
+  #     could not collide when the branches met. They have since met and both numbers are live.
+  #
+  #     The resolver declines a configured [paths].backup_dir it cannot safely adopt and says so
+  #     ONCE, on stderr, in whichever process resolved it. The nightly launchd job is that process,
+  #     and its stderr goes to /tmp/pg-backup.log (scripts/render-launchd-plists.sh sets both
+  #     StandardOutPath and StandardErrorPath there) — a file nobody opens unless something has
+  #     already gone wrong, and one /tmp clears on reboot. So the WARN is written but unread, and
+  #     between runs of the reconciler a declined value is effectively invisible. These rows are
+  #     the standing surface for that.
+  #
+  #     SILENT WHEN HEALTHY — zero rows, not even an `ok` line, which is why this section holds no
+  #     `else` arm. A row that fires on every legitimately customized install is exactly the alarm
+  #     fatigue ADR-10 split doctor from the reconciler to avoid, so each row states a condition an
+  #     operator still has to close:
+  #       (a) a DECLARED value the resolver is not honouring — the config states an intent nobody
+  #           acted on (ADR-6 cases 4 and 5). A key declared with an EMPTY value is that condition
+  #           too: atrium_toml_get cannot tell it from an absent key, so the row is gated on the
+  #           library's own classifier rather than on a non-empty value — gating on non-empty hid
+  #           exactly the shape whose WARN nobody can read;
+  #       (b) resolution outside the default WHILE the default still holds dumps — that archive sits
+  #           outside both the rotation window and any restore search. A customization whose old
+  #           location is empty is the knob working as documented and stays silent.
+  #     Neither condition implies the other and both can stand at once. WHAT TO DO about either is
+  #     the reconciler's report; this section only says the condition exists.
+  local bkpdir_configured bkpdir_canonical bkpdir_resolved bkpdir_resolved_canonical
+  local bkpdir_default bkpdir_default_canonical bkpdir_default_dumps bkpdir_declared_empty
+  bkpdir_default="$(atrium_backup_dir_default)"
+  bkpdir_configured="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'backup_dir')"
+  # The resolver's WARN carries the same facts the rows below print and fires in whichever process
+  # resolved — re-emitting it here would say one thing twice, on two streams.
+  # GA-ABSORB[handled@the two rows below]: stderr only; the resolver always returns 0 and always echoes a path
+  bkpdir_resolved="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_backup_dir 2>/dev/null)"
+  # Trailing slashes are stripped exactly as the resolver strips them before its own compare, so
+  # `/x/` and `/x` cannot read as a declined value.
+  while [[ "${bkpdir_configured}" == */ && "${bkpdir_configured}" != "/" ]]; do
+    bkpdir_configured="${bkpdir_configured%/}"
+  done
+  # Declared-empty vs. absent, from the library that draws the distinction — never re-derived
+  # here. Trailing-slash stripping cannot turn one into the other, so the order is free.
+  bkpdir_declared_empty=0
+  if [[ -z "${bkpdir_configured}" ]] \
+    && ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_config_has_key '[paths]' 'backup_dir'; then
+    bkpdir_declared_empty=1
+  fi
+  # COMPARISON FORMS. The resolver ADOPTS the canonical path (CWE-59), so both questions
+  # below are asked of the canonical form: comparing the raw spellings would call an
+  # honoured value whose path traverses a symlink a mismatch, and would call a resolution
+  # that lands on the default a relocation — two rows firing on a working install, which
+  # is the alarm fatigue this section exists to avoid. Drawn from the library that owns
+  # the rule, never re-derived here. Each ROW still prints the raw value the operator wrote.
+  # No stderr suppression here, deliberately: the wrapper writes nothing to stderr (the one
+  # cd it can fail on is already silenced inside the library), so a redirect would only be
+  # an unannotated absorption hiding a future diagnostic.
+  bkpdir_canonical="$(atrium_canonical_config_path "${bkpdir_configured}")"
+  bkpdir_resolved_canonical="$(atrium_canonical_config_path "${bkpdir_resolved}")"
+  bkpdir_default_canonical="$(atrium_canonical_config_path "${bkpdir_default}")"
+  # One row for condition (a) under either shape: the arms are mutually exclusive by construction
+  # (empty vs. non-empty), and both carry the `backup dir` stem the census counts.
+  if [[ "${bkpdir_declared_empty}" -eq 1 ]]; then
+    log "  note : backup dir unreconciled — [paths].backup_dir is declared with an empty value, which names no location, so the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
+  elif [[ -n "${bkpdir_configured}" && "${bkpdir_canonical}" != "${bkpdir_resolved_canonical}" ]]; then
+    log "  note : backup dir unreconciled — [paths].backup_dir names ${bkpdir_configured}, but the resolver writes to ${bkpdir_resolved} (report-only; scripts/reconcile-backup-dir.sh names the two ways to close it)"
+  fi
+  if [[ "${bkpdir_resolved_canonical}" != "${bkpdir_default_canonical}" ]]; then
+    bkpdir_default_dumps="$(atrium_backup_dump_count "${bkpdir_default}")"
+    if [[ "${bkpdir_default_dumps}" -gt 0 ]]; then
+      log "  note : backup dir relocated — dumps resolve to ${bkpdir_resolved}, while the default ${bkpdir_default} still holds ${bkpdir_default_dumps} dump(s), outside both the rotation and any restore search (report-only; run scripts/reconcile-backup-dir.sh)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all

@@ -13,7 +13,13 @@ REAL_LIB="${GA}/scripts/lib/atrium-config.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "atrium-config.sh not found: ${REAL_LIB}"
-  WORK="$(mktemp -d -t atrium-config-bats.XXXXXX)"
+  # CANONICAL fixture root. macOS `mktemp -d` hands back /var/folders/..., a symlink
+  # to /private/var/folders/..., and the ADR-6 resolver now resolves the value it
+  # adopts (CWE-59). Without this the adoption tests would compare a resolved path
+  # against an unresolved fixture and fail on the platform rather than on the rule.
+  # It hides no behaviour: the symlink resolution has its own test below, which builds
+  # its link deliberately instead of inheriting one from the temp directory.
+  WORK="$(cd -P -- "$(mktemp -d -t atrium-config-bats.XXXXXX)" && pwd -P)"
 }
 
 teardown() {
@@ -244,4 +250,488 @@ TOML
   resolve_all plist
   [[ "${status}" -eq 0 ]]
   [[ -z "${output}" ]]
+}
+
+# --- atrium_backup_dir: ADR-6 adoption rule (AC-C2) --------------------------
+#
+# The resolver adopts [paths].backup_dir on the FILESYSTEM STATE the value
+# describes, so each case below differs from its neighbour in exactly one piece of
+# state and no two can pass by the same code path:
+#
+#   case 1  value = the default          -> default,    silent
+#   case 2  destination EXISTS           -> configured, silent  (dumps at the
+#                                           default, so ONLY the existence arm
+#                                           can adopt here)
+#   case 3  absent, creatable, 0 dumps   -> configured, silent
+#   case 4  absent, creatable, dumps > 0 -> default + WARN, nothing created or moved
+#   case 5  relative / empty             -> default + WARN
+#
+# Cases 3 and 4 differ ONLY in the dump census, which is what makes the population
+# check independently red-able: drop it and 4 adopts the configured value.
+#
+# NO LIVE PATH LITERAL: test/db-backup-path-consistency.bats greps every tracked
+# file for the stale backup path string, so case 4 reproduces the live SHAPE
+# (absolute, elsewhere, directory absent, dumps already at the default) out of
+# sandbox paths and never spells the live value.
+#
+# SEAM HYGIENE: GA_DB_BACKUP_DIR is unset inside every call (except the test that
+# asserts its precedence) so an exported value in the developer's shell cannot mask
+# the rule under test, and GA_DATA_ROOT is pinned into WORK so "the default
+# location" is a directory these tests own.
+#
+# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict, so every
+# assertion below `return 1`s with its own message and fails independently.
+
+BK_CFG_ABSENT="__no_key__"
+
+# Write a [paths] fixture. Args: $1 = backup_dir value, or BK_CFG_ABSENT to declare
+# no such key at all (the fresh-clone shape, which must stay silent).
+backup_fixture() {
+  local value="$1"
+  {
+    printf '[paths]\n'
+    printf 'target_home = "%s"\n' "${WORK}/facade"
+    if [[ "${value}" != "${BK_CFG_ABSENT}" ]]; then
+      printf 'backup_dir = "%s"\n' "${value}"
+    fi
+  } >"${WORK}/config.toml"
+}
+
+# The default location these tests resolve against.
+backup_default_dir() {
+  printf '%s\n' "${WORK}/ga/backups/postgres"
+}
+
+# Create $2 dump files in $1. The names stay inside pg-backup.sh's rotation glob
+# unless a test deliberately steps outside it.
+seed_dumps() {
+  local dir="$1" want="$2" i=1
+  mkdir -p -- "${dir}"
+  while [[ "${i}" -le "${want}" ]]; do
+    : >"${dir}/glass_atrium-2026010${i}-000000.dump"
+    i=$((i + 1))
+  done
+}
+
+# Resolve once, stdout and stderr captured separately so the WARN can be asserted
+# without polluting the resolved path.
+backup_resolve() {
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+}
+
+@test "AC-C2(1) fresh install: the value IS the default -> default location, silent" {
+  backup_fixture "$(backup_default_dir)"
+  backup_resolve
+  [[ "${status}" -eq 0 ]] || {
+    printf 'resolver failed: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want %s, got %s\n' "$(backup_default_dir)" "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'a config that agrees with the default must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(2) a customization in use: destination EXISTS -> configured value, silent" {
+  # Dumps sit at the DEFAULT here, so the creatable+empty arm cannot adopt: only
+  # the existence arm can, which is what makes that arm independently red-able.
+  seed_dumps "$(backup_default_dir)" 2
+  mkdir -p -- "${WORK}/custom-live"
+  backup_fixture "${WORK}/custom-live"
+  backup_resolve
+  [[ "${output}" == "${WORK}/custom-live" ]] || {
+    printf 'an existing destination must be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'adopting an existing destination must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(3) a customization not yet created, 0 dumps at the default -> configured value, silent" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "${WORK}/custom-new"
+  backup_resolve
+  [[ "${output}" == "${WORK}/custom-new" ]] || {
+    printf 'a creatable destination with nothing left behind must be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'case 3 must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/custom-new" ]] || {
+    printf 'the resolver created %s — resolution must never touch the filesystem\n' "${WORK}/custom-new" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(4) live shape: absolute, elsewhere, absent, dumps at the default -> default + WARN, nothing created" {
+  # The ONLY difference from case 3 is the census: the parent exists, so the
+  # destination is creatable and the creatability probe cannot be what rejects it.
+  mkdir -p -- "${WORK}/stale-render"
+  seed_dumps "$(backup_default_dir)" 3
+  backup_fixture "${WORK}/stale-render/postgres"
+  backup_resolve
+
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a value nobody acted on must NOT relocate the dumps; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"${WORK}/stale-render/postgres"* ]] || {
+    printf 'the WARN must name the configured path: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"$(backup_default_dir)"* ]] || {
+    printf 'the WARN must name the resolved path: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"configured=0"* && "${stderr}" == *"resolved=3"* ]] || {
+    printf 'the WARN must carry both dump censuses: %s\n' "${stderr}" >&2
+    return 1
+  }
+  # NON-DESTRUCTIVE PROBE: `mkdir -p` here would create the configured path, and
+  # the existence arm would then adopt it on the very next run.
+  [[ ! -e "${WORK}/stale-render/postgres" ]] || {
+    printf 'the resolver created the configured path — the next run would adopt it\n' >&2
+    return 1
+  }
+  # NO RELOCATION: every dump is still where it was.
+  local remaining
+  remaining="$(find "$(backup_default_dir)" -maxdepth 1 -name '*.dump' | wc -l | tr -d ' ')"
+  [[ "${remaining}" == "3" ]] || {
+    printf 'dumps moved: %s left at the default location\n' "${remaining}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(4b) the populated census is *.dump, wider than the rotation glob" {
+  # A directory holding only hand-kept dumps — outside pg-backup.sh's
+  # glass_atrium-[0-9]*.dump rotation — must still read as populated, or the
+  # resolver would abandon exactly the archive nobody can regenerate.
+  mkdir -p -- "${WORK}/stale-render" "$(backup_default_dir)"
+  : >"$(backup_default_dir)/keep-forever.dump"
+  backup_fixture "${WORK}/stale-render/postgres"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a non-rotation dump must still count as populated; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"resolved=1"* ]] || {
+    printf 'the census missed the non-rotation dump: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5a) a relative value -> default + WARN naming the reason" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "relative/backups"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a relative value must never be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"not an absolute path"* ]] || {
+    printf 'the WARN must name the reason: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/relative" && ! -e "relative/backups" ]] || {
+    printf 'a relative value produced a directory somewhere — resolution must not write\n' >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5b) a declared-but-empty value -> default + WARN naming ITS OWN reason" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture ""
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want the default, got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -n "${stderr}" ]] || {
+    printf 'a declared-but-empty value is a misconfiguration and must warn\n' >&2
+    return 1
+  }
+  # The reason has to name the shape the operator actually has. An empty value is not
+  # "not an absolute path" — that reason sends them looking for a path to fix, and the
+  # reconciler and doctor rows quote this same classification back at them.
+  [[ "${stderr}" == *"declared with an empty value"* ]] || {
+    printf 'the WARN must give the empty declaration its own reason: %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" != *"not an absolute path"* ]] || {
+    printf 'an empty value must not be reported as a relative path: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(5c) an UNDECLARED key -> default, silent (fresh-clone safety)" {
+  mkdir -p -- "${WORK}/ga"
+  backup_fixture "${BK_CFG_ABSENT}"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'want the default, got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'an absent key is the stock shape and must stay silent: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2 the WARN is emitted once per shell, not once per resolution" {
+  mkdir -p -- "${WORK}/stale-render"
+  seed_dumps "$(backup_default_dir)" 1
+  backup_fixture "${WORK}/stale-render/postgres"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir >/dev/null; atrium_backup_dir >/dev/null' \
+    _ "${REAL_LIB}"
+  local warns
+  warns="$(printf '%s\n' "${stderr}" | grep -c 'backup_dir=' || true)"
+  [[ -n "${warns}" ]] || warns=0
+  [[ "${warns}" -eq 1 ]] || {
+    printf 'want exactly 1 WARN across two resolutions, got %s:\n%s\n' "${warns}" "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2 GA_DB_BACKUP_DIR outranks the config and never warns" {
+  # The seam names a destination the caller is acting on right now, which is the
+  # state the adoption rule has to infer — so it is taken verbatim.
+  seed_dumps "$(backup_default_dir)" 2
+  backup_fixture "${WORK}/stale-render/postgres"
+  run --separate-stderr env GA_DB_BACKUP_DIR="${WORK}/seam-target" \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+  [[ "${output}" == "${WORK}/seam-target" ]] || {
+    printf 'the seam must win verbatim; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'the seam path must not warn: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+# --- atrium_backup_dir: case-6 adoption guardrails (CWE-59 / CWE-377) ---------
+#
+# The adoption rule decides on filesystem STATE, and every probe it runs follows
+# symlinks — so the value has to be RESOLVED before it is judged, and the directory
+# that would actually be written has to be the operator's own. Each test below is red
+# on the unguarded resolver: drop the dot-segment arm and 6a adopts, drop the
+# canonicalizer and 6b reports the link instead of its target, drop the safety
+# predicate and 6c/6d/6e adopt a directory a second local user can write.
+#
+# BATS GATING NOTE (as above): a bare non-final `[[ ]]` does NOT gate the verdict, so
+# every assertion `return 1`s with its own message.
+
+@test "AC-C2(6a) a '..' or '.' segment is declined with its own reason" {
+  local value
+  for value in "${WORK}/real/../evil" "${WORK}/./real"; do
+    backup_fixture "${value}"
+    backup_resolve
+    [[ "${output}" == "$(backup_default_dir)" ]] || {
+      printf '%s must not be adopted; got %s\n' "${value}" "${output}" >&2
+      return 1
+    }
+    [[ "${stderr}" == *"'.' or '..' path segment"* ]] || {
+      printf 'the decline must name the dot-segment reason for %s; got %s\n' "${value}" "${stderr}" >&2
+      return 1
+    }
+  done
+}
+
+@test "AC-C2(6b) a symlinked destination resolves to its TARGET before adoption" {
+  # The consumers open what the link points at, so the resolver has to report that
+  # path — reporting the link would have the WARN, doctor and the reconciler all
+  # naming a location no dump is written to.
+  mkdir -p -- "${WORK}/real-target"
+  ln -sfn "${WORK}/real-target" "${WORK}/link-dir"
+  backup_fixture "${WORK}/link-dir"
+  backup_resolve
+  [[ "${output}" == "${WORK}/real-target" ]] || {
+    printf 'want the resolved target %s, got %s\n' "${WORK}/real-target" "${output}" >&2
+    return 1
+  }
+  [[ -z "${stderr}" ]] || {
+    printf 'a safe symlinked destination must adopt silently: %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6c) a world-writable PARENT is declined (creatable arm)" {
+  # The creatable arm is the only one that leads to a directory being created, so the
+  # parent decides who could have pre-placed the dump's name there.
+  mkdir -p -- "${WORK}/open-parent"
+  chmod 0777 "${WORK}/open-parent"
+  backup_fixture "${WORK}/open-parent/dumps"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a world-writable parent must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"parent directory is world-writable"* ]] || {
+    printf 'the decline must name the world-writable parent, not ownership; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "${WORK}/open-parent/dumps" ]] || {
+    printf 'the probe must stay read-only — it created %s\n' "${WORK}/open-parent/dumps" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6d) a world-writable EXISTING destination is declined" {
+  mkdir -p -- "${WORK}/open-dir"
+  chmod 0777 "${WORK}/open-dir"
+  backup_fixture "${WORK}/open-dir"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a 0777 destination must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory is world-writable"* ]] || {
+    printf 'the decline must name world-writability, not ownership; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6e) the sticky bit alone does not admit a FOREIGN-owned parent" {
+  # A genuine owner mismatch, constructible without root: /tmp is root-owned and 1777
+  # on both platforms this runs on. Both rules decline it, and the ORDER is what this
+  # pins: ownership is judged first, so the operator is told the thing they cannot fix
+  # by chmod. 6g covers the same 1777 mode under an owner who CAN.
+  # Nothing is created here — the resolver declines, and its probes are read-only.
+  [[ ! -O /tmp ]] || skip "this runner owns /tmp, so no owner mismatch is available"
+  backup_fixture "/tmp/atrium-config-bats-never-created"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a foreign-owned sticky parent must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"parent directory is not owned"* ]] || {
+    printf 'the decline must name the parent reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ ! -e "/tmp/atrium-config-bats-never-created" ]] || {
+    printf 'the probe must stay read-only — it created a directory under /tmp\n' >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6f) canonicalization never rescues a RELATIVE value" {
+  # Ordering contract: the shape arms run BEFORE the canonicalizer, which resolves
+  # against the current directory. Reverse the two and a relative value becomes an
+  # absolute one under whatever cwd the nightly job happens to have.
+  mkdir -p -- "${WORK}/cwd-here/relative-dumps"
+  backup_fixture "relative-dumps"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    bash -c 'cd "$2" || exit 1; source "$1"; atrium_backup_dir' \
+    _ "${REAL_LIB}" "${WORK}/cwd-here"
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a relative value must stay declined; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"not an absolute path"* ]] || {
+    printf 'the decline must keep the relative reason; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6g) a directory the invoking user OWNS at 1777 is still declined" {
+  # The gap 6d and 6e leave between them: 6d's 0777 dir and this one differ only in the
+  # sticky bit, and 6e's 1777 dir differs only in its owner. Owning a directory does not
+  # restrict who may CREATE an entry in it while it is o+w, and sticky only stops one
+  # local user REPLACING another's — so any local account can pre-place the dump's
+  # predictable name as its own 0666 file or symlink, and `pg_dump -f` O_TRUNCs it (or
+  # follows the link) rather than opening exclusively. The whole database then lands
+  # somewhere attacker-readable, and macOS has no protected_regular to catch it.
+  mkdir -p -- "${WORK}/owned-sticky-open"
+  chmod 1777 "${WORK}/owned-sticky-open"
+  [[ -O "${WORK}/owned-sticky-open" ]] || skip "the fixture is not owned by this runner"
+  backup_fixture "${WORK}/owned-sticky-open"
+  backup_resolve
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'a user-owned 1777 destination must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory is world-writable"* ]] || {
+    printf 'the decline must name world-writability; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6i) an unreadable MODE declines under its own reason, not ownership" {
+  # The predicate's three statuses exist so the WARN names the rule that fired. This
+  # directory is owned by the runner and is not o+w, so both other rules pass and the
+  # only thing missing is the mode itself — reporting that as an ownership problem sends
+  # the operator to check the one thing already correct. A host reaches this with a
+  # stat(1) that cannot answer (a stripped image, a PATH without coreutils); the stub
+  # reproduces it without needing one.
+  mkdir -p -- "${WORK}/stub-bin" "${WORK}/owned-dir"
+  chmod 0700 "${WORK}/owned-dir"
+  printf '#!/bin/sh\nexit 1\n' >"${WORK}/stub-bin/stat"
+  chmod +x "${WORK}/stub-bin/stat"
+  [[ -O "${WORK}/owned-dir" ]] || skip "the fixture is not owned by this runner"
+  backup_fixture "${WORK}/owned-dir"
+  run --separate-stderr env -u GA_DB_BACKUP_DIR \
+    ATRIUM_CONFIG_TOML="${WORK}/config.toml" GA_DATA_ROOT="${WORK}/ga" \
+    PATH="${WORK}/stub-bin:${PATH}" \
+    bash -c 'source "$1"; atrium_backup_dir' _ "${REAL_LIB}"
+  [[ "${output}" == "$(backup_default_dir)" ]] || {
+    printf 'an unreadable mode must not be adopted; got %s\n' "${output}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"directory mode could not be read"* ]] || {
+    printf 'the decline must name the unreadable mode; got %s\n' "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" != *"not owned by the invoking user"* ]] || {
+    printf 'the decline must not blame an ownership the operator holds; got %s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "AC-C2(6h) the canonicalizer TERMINATES on a relative operand" {
+  # The resolver's shape arms keep a relative value away from the canonicalizer, so this
+  # is about the helper's own contract rather than about that path: its walk shortens
+  # `head` with \${head%/*}, a NO-OP on a value holding no slash, and a relative operand
+  # therefore spun forever instead of failing. A future caller reaching it directly would
+  # hang the nightly job with nothing on stderr, which is why it is pinned here and not
+  # left to the callers that happen to guard it today.
+  #
+  # WATCHDOG, not `timeout`: macOS ships no timeout(1), so the probe runs in the
+  # background and is polled — a regression fails in ~5s instead of hanging CI.
+  local pid waited=0
+  bash -c 'source "$1"; _atrium_path_canonicalize "relative/dir"' _ "${REAL_LIB}" \
+    >"${WORK}/canon-out" 2>&1 &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -9 "${pid}" 2>/dev/null || true
+    printf 'the canonicalizer did not terminate on a relative operand\n' >&2
+    return 1
+  fi
+  wait "${pid}" || {
+    printf 'the canonicalizer exited non-zero: %s\n' "$(cat "${WORK}/canon-out")" >&2
+    return 1
+  }
+  # Echoed back verbatim: it is not a path this helper resolves, and resolving it
+  # against the current directory is exactly the rescue AC-C2(6f) forbids.
+  [[ "$(cat "${WORK}/canon-out")" == "relative/dir" ]] || {
+    printf 'want the operand echoed back, got %s\n' "$(cat "${WORK}/canon-out")" >&2
+    return 1
+  }
 }

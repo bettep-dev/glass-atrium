@@ -17,7 +17,7 @@
 [daemon.wiki-compile]|time|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "time"|
 [daemon.wiki-daemon]|mode|scripts/render-launchd-plists.sh|extract_toml_value "[daemon.${job}]" "mode"|
 [meta]|timezone|scripts/render-launchd-plists.sh|require_toml_value "[meta]" "timezone"|
-[paths]|backup_dir|||G-05
+[paths]|backup_dir|scripts/lib/atrium-config.sh|atrium_toml_get '[paths]' 'backup_dir'|
 [paths]|claude_bin|scripts/render-launchd-plists.sh|extract_toml_value "[paths]" "claude_bin"|
 [paths]|log_root|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "log_root"|
 [paths]|monitor|scripts/render-launchd-plists.sh|require_abs_path "[paths]" "monitor"|
