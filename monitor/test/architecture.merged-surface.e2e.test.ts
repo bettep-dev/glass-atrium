@@ -480,9 +480,9 @@ test("AC-T15 aria-describedby target holds the full description", async () => {
 	assert.equal(probe.found, true, `aria-describedby target #${probe.id} must exist in the document`);
 	assert.ok(expectedDescription.length > 0, "payload description must be non-empty");
 	assert.equal(
-		getNormalized(probe.text).length,
-		expectedDescription.length,
-		`target #${probe.id} exposes ${getNormalized(probe.text).length} chars vs payload ${expectedDescription.length}`,
+		getNormalized(probe.text),
+		expectedDescription,
+		`target #${probe.id} must expose the payload description verbatim`,
 	);
 });
 
@@ -546,9 +546,9 @@ test("AC-T17 the map renders no About this diagram prose section", async () => {
 
 	assert.equal(desc.found, true, `aria-describedby target #${desc.id} must survive the prose removal`);
 	assert.equal(
-		getNormalized(desc.text).length,
-		expectedDescription.length,
-		`target #${desc.id} exposes ${getNormalized(desc.text).length} chars vs payload ${expectedDescription.length}`,
+		getNormalized(desc.text),
+		expectedDescription,
+		`target #${desc.id} must still expose the payload description verbatim`,
 	);
 });
 

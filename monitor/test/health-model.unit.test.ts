@@ -64,8 +64,10 @@ interface HealthCardDef {
 }
 
 interface HealthModelApi {
-  // Mutable on purpose, not a missed `readonly`: the T14 fixtures below splice the live
-  // exported array and restore it — the module leaves it unfrozen for exactly that.
+  // Mirrors the module, which exports this array unfrozen. Nothing in this file mutates it
+  // any more — the fixtures that spliced and restored it went with the removed T14 cases —
+  // so the mutability is unexercised here, and this type says nothing about whether the
+  // module means to keep it writable.
   HEALTH_CARD_DEFS: HealthCardDef[];
   resolveCardFacts: (
     def: unknown,

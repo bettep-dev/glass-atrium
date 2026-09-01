@@ -1,8 +1,8 @@
 // Unit tests for DAEMON_NODE_BINDINGS (F32) — every live-overlay daemon must
 // resolve to >= 1 mermaid node id that actually exists in DIAGRAMS sources,
 // so the FE live rings never bind to dead/renamed nodes. AC-T4 pins the other end of that
-// binding: the map and the health board must render one verdict per daemon, and a move of
-// the one server threshold must carry both or neither.
+// binding: the map's ring and the health board must reach the same verdict per daemon, and a
+// move of the one server threshold must carry both or neither.
 // Runner: npx tsx --test test/architecture.daemon-binding.test.ts
 
 import test from "node:test";
@@ -84,17 +84,17 @@ interface DisplayMeta {
   tone: string;
   label: string;
 }
-interface LiveDaemonRow {
-  name: string;
-  tone: string;
-  statusLabel: string;
-}
 interface UiSandbox {
   window: { UI: Record<string, unknown> };
 }
 interface ArchSandbox {
   window: { UI: Record<string, unknown> };
-  getLiveDaemonRows: (daemons: DaemonLiveStatus[]) => LiveDaemonRow[];
+  buildLiveDaemonsByNodeId: (daemons: DaemonLiveStatus[]) => Map<string, DaemonLiveStatus[]>;
+  buildRingToneByNodeId: (
+    daemonsByNodeId: Map<string, DaemonLiveStatus[]>,
+    partBindings: Record<string, string[]> | null | undefined,
+    cardStates: unknown,
+  ) => Map<string, string>;
 }
 interface HealthModelApi {
   resolveDaemonDisplayMeta: (daemon: unknown) => DisplayMeta;
@@ -144,14 +144,41 @@ function healthCards(rows: DaemonAggRow[], anchor: Date | null): DaemonStatusCar
 }
 
 // What each screen actually renders per daemon — the comparable both sides reduce to.
+//
+// The map side is its ring-tone fold (ADR-20 removed the live table this used to read).
+// One daemon per node id keeps the fold's rank-max from folding two verdicts into one,
+// so the row it emits is that daemon's own verdict. Narrowed on purpose: the tone is the
+// whole comparable now — the map's status sentence is drawn inline by the node panel's
+// pill, which has no unit instrument, so this assertion no longer reaches it.
+// architecture.jsx RING_TONE_RANK 의 키 집합 거울 — 그 상수는 렉시컬 선언이라 샌드박스
+// 바깥에서 읽을 수 없음. 링은 등급이 있는 tone 만 칠하고 미수신(info)은 칠하지 않으므로,
+// 그 자리를 두 화면이 같은 빈 값으로 맞춰야 '같은 판정' 비교가 성립함.
+const PAINTED_RING_TONES = new Set(["ok", "warn", "crit"]);
+// 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니라 부품 tone 이 서지 않음.
+const NO_CARD_STATES = {
+  pgState: { status: "loading", data: null, error: null },
+  daemonState: { status: "loading", data: null, error: null },
+  hookState: { status: "loading", data: null, error: null },
+  hookFailState: { status: "loading", data: null, error: null },
+};
+const UNPAINTED = "—";
+
 function getMapVerdicts(daemons: DaemonLiveStatus[]): string[][] {
-  return Array.from(arch.getLiveDaemonRows(daemons), (row) => [row.name, row.tone, row.statusLabel]);
+  return daemons.map((d) => {
+    const scoped = { ...d, node_ids: [d.daemon_name] };
+    const tone = arch.buildRingToneByNodeId(
+      arch.buildLiveDaemonsByNodeId([scoped]),
+      null,
+      NO_CARD_STATES,
+    );
+    return [d.daemon_name, tone.get(d.daemon_name) ?? UNPAINTED];
+  });
 }
 
 function getBoardVerdicts(cards: DaemonStatusCard[]): string[][] {
   return cards.map((card) => {
     const meta = HealthModel.resolveDaemonDisplayMeta(card);
-    return [card.daemon_name, meta.tone, meta.label];
+    return [card.daemon_name, PAINTED_RING_TONES.has(meta.tone) ? meta.tone : UNPAINTED];
   });
 }
 
@@ -230,8 +257,8 @@ test("AC-T4 moving only the server threshold moves both screens, or neither is r
   assert.deepStrictEqual(getMapVerdicts(shipped.live), getBoardVerdicts(shipped.cards));
   assert.deepStrictEqual(getMapVerdicts(wider.live), getBoardVerdicts(wider.cards));
 
-  const shippedRow = [DAEMON, "crit", "Overdue"];
-  const widerRow = [DAEMON, "ok", "Healthy"];
+  const shippedRow = [DAEMON, "crit"];
+  const widerRow = [DAEMON, "ok"];
   assert.deepStrictEqual(
     [
       getMapVerdicts(shipped.live).find(([name]) => name === DAEMON),

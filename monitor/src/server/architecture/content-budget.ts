@@ -36,11 +36,30 @@ function getBracketSpan(line: string, openIdx: number): { text: string; end: num
 	return { text: line.slice(openIdx + 1), end: line.length };
 }
 
-/** 마크업 제거 — shape 구분자(`/`), 감싸는 따옴표, HTML 태그. 공백은 라벨 문자로 셈. */
+// 대칭 구분자 — 여닫이가 같은 문자라 OPENERS 표로는 짝을 찾을 수 없음.
+const SYMMETRIC_DELIMITERS = new Set(["/", "\\"]);
+
+/** 남은 shape 구분자가 라벨 전체를 감싸는 쌍인가 — 라벨 안의 괄호를 구분자로 오인하지 않게 함. */
+function isWrappingShapePair(text: string): boolean {
+	const first = text[0] as string;
+	const last = text[text.length - 1] as string;
+	if (SYMMETRIC_DELIMITERS.has(first)) return first === last;
+
+	const close = OPENERS[first];
+	if (close === undefined || last !== close) return false;
+	// 여는 문자의 짝이 마지막 문자여야 감싸는 쌍임 — `(a) and (b)` 는 여기서 걸러짐.
+	return getBracketSpan(text, 0).end === text.length - 1;
+}
+
+/** 마크업 제거 — shape 구분자, 감싸는 따옴표, HTML 태그. 공백은 라벨 문자로 셈. */
 function getLabelText(raw: string): string {
 	let text = raw.trim();
-	if (text.startsWith("/") && text.endsWith("/")) text = text.slice(1, -1);
-	text = text.trim();
+
+	// 바깥 괄호 한 겹을 떼고도 구분자가 남는 형태가 있음 — 원통 `[( … )]` · 원 `(( … ))` ·
+	// 육각 `{{ … }}` · 평행사변형 `[/ … /]`. 먼저 벗기지 않으면 그 구분자가 라벨 글자로 세어지고,
+	// 따옴표는 첫 글자가 아니게 되어 벗겨지지도 않음.
+	while (text.length >= 2 && isWrappingShapePair(text)) text = text.slice(1, -1).trim();
+
 	if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1);
 	return text.replace(/<[^>]*>/g, "").trim();
 }

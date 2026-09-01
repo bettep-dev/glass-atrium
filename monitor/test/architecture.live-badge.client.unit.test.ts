@@ -39,13 +39,6 @@ interface DaemonLiveStatus {
   expected_cadence_minutes?: number;
   staleness_minutes?: number;
 }
-interface DaemonRow {
-  name: string;
-  tone: string;
-  statusLabel: string;
-  nodeIds: string[];
-  lastRunAt: string | null;
-}
 // 확장 영역 한 줄 — 실행 하나의 날짜와 그 실행이 낸 사유들.
 interface DaemonRunRow {
   runDate: string;
@@ -90,7 +83,12 @@ interface ArchHelpers {
   buildLiveDaemonsByNodeId: (
     daemons: DaemonLiveStatus[] | null | undefined,
   ) => Map<string, DaemonLiveStatus[]>;
-  getLiveDaemonRows: (daemons: DaemonLiveStatus[] | null | undefined) => DaemonRow[];
+  // 링 tone 표 — /live 의 데몬 판정과 health 카드 판정을 한 node id 표로 접는 순수 fold.
+  buildRingToneByNodeId: (
+    daemonsByNodeId: Map<string, DaemonLiveStatus[]>,
+    partBindings: Record<string, string[]> | null | undefined,
+    cardStates: unknown,
+  ) => Map<string, string>;
   // T9c: 선택 데몬의 payload 응답을 날짜 + 사유 줄로 접는 순수 fold.
   getDaemonRunRows: (
     payloadState: FetchState | null | undefined,
@@ -206,9 +204,9 @@ async function loadArch(): Promise<{
     "buildLiveDaemonsByNodeId must be reachable",
   );
   assert.strictEqual(
-    typeof h.getLiveDaemonRows,
+    typeof h.buildRingToneByNodeId,
     "function",
-    "getLiveDaemonRows must be reachable (AC-15(a) instrument)",
+    "buildRingToneByNodeId must be reachable (AC-T2 live-verdict instrument)",
   );
   assert.strictEqual(
     typeof h.getLegibleFitScaleAR,
@@ -305,58 +303,52 @@ test("empty / null daemon input yields an empty map (no throw)", () => {
   assert.strictEqual(arch.buildLiveDaemonsByNodeId(undefined).size, 0);
 });
 
-// --- AC-15(a): 표 행 수 == 소스 상태 행 수 (표 행 빌더 직접 호출) ---
-
-test("AC-15(a) 표 행 수는 daemons 배열 원소 수와 1:1", () => {
-  const daemons = [
-    daemon("autoagent", "ok", { node_ids: ["autoagent_d"] }),
-    daemon("daily-restart-wiki", "error"),
-    daemon("wiki-compile", "missing", { node_ids: [], last_run_at: null }),
-  ];
-  const rows = arch.getLiveDaemonRows(daemons);
-  assert.strictEqual(rows.length, daemons.length);
-  assert.strictEqual(
-    rows.map((r) => r.name).join(","),
-    "autoagent,daily-restart-wiki,wiki-compile",
-  );
-  // 필드 누락 행도 삭제되지 않고 대체값으로 남음.
-  assert.strictEqual(arch.getLiveDaemonRows([{} as DaemonLiveStatus]).length, 1);
-});
-
-test("AC-15(a) 빈/누락 입력은 빈 행 목록 (throw 없음)", () => {
-  assert.strictEqual(arch.getLiveDaemonRows([]).length, 0);
-  assert.strictEqual(arch.getLiveDaemonRows(null).length, 0);
-  assert.strictEqual(arch.getLiveDaemonRows(undefined).length, 0);
-});
-
 // --- AC-T2: 판정은 서버 필드에서만 옴 (화면 재계산 삭제) ---
+//
+// 계기가 바뀌었음(ADR-20): 라이브 상태 표가 걷히며 그 표의 행 빌더도 함께 죽었으므로,
+// 같은 사실을 표가 아니라 링 tone 표에서 잼 — /live 의 데몬 판정을 읽는 화면 경로가 이제
+// 그것임. 축소된 범위를 밝혀 둠: 표가 재던 사실 중 tone 만 여기 남고, 상태 문장(라벨)은
+// 노드 상세 패널의 pill 이 JSX 안에서 직접 그리므로 이 파일에 잴 자리가 없음.
 
-test("AC-T2 초과 판정은 서버 필드에서 tone·라벨로 그대로 나옴", () => {
-  const [row] = arch.getLiveDaemonRows([
-    daemon("autoagent", "ok", { effective_status: "stale" }),
-  ]);
-  assert.strictEqual(row.tone, "crit");
-  assert.strictEqual(row.statusLabel, "Overdue");
+// 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니므로 부품 tone 이 하나도 서지
+// 않음. 데몬 판정만 남은 표를 얻는 자리임(카드가 서면 rank-max 가 두 판정을 하나로 접어 버림).
+const NO_CARD_STATES = {
+  pgState: { status: "loading", data: null, error: null },
+  daemonState: { status: "loading", data: null, error: null },
+  hookState: { status: "loading", data: null, error: null },
+  hookFailState: { status: "loading", data: null, error: null },
+};
+
+// 한 데몬을 제 node id 표로 접어 링 tone 하나를 냄.
+function ringToneOf(daemon: DaemonLiveStatus): string | undefined {
+  return arch
+    .buildRingToneByNodeId(arch.buildLiveDaemonsByNodeId([daemon]), null, NO_CARD_STATES)
+    .get("cron");
+}
+
+test("AC-T2 초과 판정은 서버 필드에서 tone 으로 그대로 나옴", () => {
+  assert.strictEqual(ringToneOf(daemon("autoagent", "ok", { effective_status: "stale" })), "crit");
 });
 
 test("AC-T2 cadence 를 넘긴 staleness 가 있어도 화면은 판정을 올리지 않음", () => {
   // 삭제된 재계산이 되살아나면 tone 이 warn 으로 밀리고 이 단언이 붉어짐.
-  const [row] = arch.getLiveDaemonRows([
-    daemon("autoagent", "ok", {
-      expected_cadence_minutes: 1440,
-      staleness_minutes: 2160,
-    }),
-  ]);
-  assert.strictEqual(row.tone, "ok");
-  assert.strictEqual(row.statusLabel, "Healthy");
+  assert.strictEqual(
+    ringToneOf(
+      daemon("autoagent", "ok", {
+        expected_cadence_minutes: 1440,
+        staleness_minutes: 2160,
+      }),
+    ),
+    "ok",
+  );
 });
 
 test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으로 남김", () => {
-  const [row] = arch.getLiveDaemonRows([
-    { daemon_name: "autoagent", status: "ok", node_ids: [] },
-  ]);
-  assert.strictEqual(row.tone, "info");
-  assert.strictEqual(row.statusLabel, "—");
+  // `info` 는 링 등급표에 없는 tone 임 — 미수신은 링을 칠하지 않음이 정답임.
+  assert.strictEqual(
+    ringToneOf({ daemon_name: "autoagent", status: "ok", node_ids: ["cron"] }),
+    undefined,
+  );
 });
 
 // --- AC-13: 순수 스케일 산식 — 하향 클램프가 되살아나면 붉어짐 ---

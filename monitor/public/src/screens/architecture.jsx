@@ -436,8 +436,9 @@ function ScreenArchitecture(
 				diagramId: CANONICAL_DIAGRAM_ID,
 			});
 			// 이 노드의 첫 데몬 부품으로 드릴다운을 옮김 — 패널이 열리는 순간 실행 목록이 차 있어야
-			// 하고, 응답은 한 번에 한 데몬 것임. 같은 이름이면 세터를 부르지 않음: 다시 부르면
-			// 요청이 한 번 더 나가 방금 읽은 실행 목록이 왕복 동안 로딩으로 비워짐.
+			// 하고, 응답은 한 번에 한 데몬 것임. 세터는 바인딩이 있으면 언제나 부르되 함수형으로
+			// 부름: 같은 이름이 돌아오면 React 가 동일값 bail-out 으로 리렌더를 접어 요청이 다시
+			// 나가지 않음. 함수형을 벗기면 그 bail-out 이 사라져 왕복 동안 실행 목록이 비워짐.
 			const unscoped = unscopedNodeIdAR(nodeId);
 			const bound = healthPartRows.find(
 				(row) => row.daemonName && row.nodeIds.includes(unscoped),
@@ -1956,21 +1957,6 @@ function buildLiveDaemonsByNodeId(daemons) {
 		}
 	}
 	return m;
-}
-
-// 라이브 상태 표의 행 목록 — daemon 1개 = 1행. 표현 계층과 무관한 순수 파생.
-function getLiveDaemonRows(daemons) {
-	return (daemons || []).map((d) => {
-		// 서버가 임계를 적용해 낸 판정만 읽음 — 화면이 다시 재면 같은 입력에 답이 둘이 됨.
-		const verdict = d?.effective_status;
-		return {
-			name: d?.daemon_name || "—",
-			tone: window.UI.daemonStatusTone(verdict),
-			statusLabel: window.UI.daemonStatusLabel(verdict),
-			nodeIds: Array.isArray(d?.node_ids) ? d.node_ids : [],
-			lastRunAt: d?.last_run_at || null,
-		};
-	});
 }
 
 // 표 행 목록 — 부품 명부 한 항목 = 한 행 (ADR-5). 데몬 응답이 행 수를 정하지 않으므로 응답에 없는

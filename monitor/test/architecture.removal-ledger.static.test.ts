@@ -99,6 +99,12 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "getRowExpansionProbe", kind: "identifier", ac: "ADR-20" },
   { name: "waitForDaemonRows", kind: "identifier", ac: "ADR-20" },
   { name: "expandHookRow", kind: "identifier", ac: "ADR-20" },
+
+  // 표가 걷힌 뒤 남아 있던 표 행 빌더 — 표를 지울 때 함께 죽었어야 했으나 시험만이 그것을
+  // 불러 살아 있었음. 스스로를 확인하는 핀은 재는 것이 없음: 계기가 계기 자신의 생존을 증명함.
+  // 그 함수가 재던 사실(판정을 화면이 다시 재지 않음)은 링 tone 표로 옮겨 감 — /live 의
+  // effective_status 를 읽는 화면 경로가 이제 그것임(live-badge AC-T2 · daemon-binding AC-T4).
+  { name: "getLiveDaemonRows", kind: "identifier", ac: "ADR-20" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -129,6 +135,8 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   // 하네스가 재던 사실이 옮겨졌음을 보일 수 있고, 다른 어휘로 바꾸면 이사가 아니라 재작성이 됨.
   { name: "NodePartHealth", kind: "identifier", ac: "ADR-20" },
   { name: "getHealthPartRows", kind: "identifier", ac: "ADR-20" },
+  // 죽은 표 행 빌더가 재던 판정 소비를 이어받은 자리 — 이 이름이 사라지면 그 사실이 갈 곳이 없음.
+  { name: "buildRingToneByNodeId", kind: "identifier", ac: "ADR-20" },
   { name: "HEALTH_ROW_DETAILS", kind: "identifier", ac: "ADR-20" },
   { name: "DaemonRunDetail", kind: "identifier", ac: "ADR-20" },
   { name: "data-node-health", kind: "attribute", ac: "ADR-20" },
