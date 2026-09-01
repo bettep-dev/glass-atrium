@@ -32,27 +32,61 @@ setup() {
 # because daemon_cycle.CLAUDE_BIN and gap_arbiter.get_decision's keyword default both freeze
 # at import, ahead of any per-module hook. The PATH stub therefore both spends no model budget
 # and counts what reached it.
-@test "no python suite in this root escapes its sandbox state dir or the model seam" {
+@test "no python suite in this root escapes its sandbox state dir, reaches the model seam, or fails" {
   local home="${BATS_TEST_TMPDIR}/home" bin="${BATS_TEST_TMPDIR}/bin"
   local calls="${BATS_TEST_TMPDIR}/model-calls"
   mkdir -p "${home}" "${bin}"
   printf '#!/bin/sh\nprintf x >>"%s"\nexit 1\n' "${calls}" >"${bin}/claude"
   chmod +x "${bin}/claude"
 
-  # A failing python suite is the python leg's verdict, not this probe's — the run's exit
-  # code is deliberately dropped. The trailer assertion below is what keeps the drop from
-  # turning a suite that never ran into a silent pass.
+  # The exit code is CAPTURED, not dropped: a dropped code let a red suite read green
+  # here, and this probe is reached by the same runner leg that gates the daemon's apply.
+  # The trailer assertion stays alongside it — a collection error also exits non-zero, and
+  # the trailer is what distinguishes "the suite ran and failed" from "nothing ran". It
+  # carries no count literal deliberately: the suite grows, and a pinned total would be a
+  # second thing to maintain for no added signal.
   local log="${BATS_TEST_TMPDIR}/discover.log"
-  env -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
+  local rc=0
+  # GA_DATA_ROOT is unset deliberately, matching the hooks twin: ga_paths.get_base_root
+  # returns Path(GA_DATA_ROOT) whenever it is set and never consults HOME, so an ambient
+  # value would silently void the redirect below. daemon_cycle and project_key resolve
+  # their roots through that seam at IMPORT time, ahead of any per-test patch — a module
+  # that forgot to sandbox itself would then write outside ${home}, where the find cannot
+  # see it, and this probe would read green on a real escape.
+  env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
     HOME="${home}" PATH="${bin}:${PATH}" \
     python3 -m unittest discover -s "${BATS_TEST_DIRNAME}" -p 'test_*.py' \
-    >"${log}" 2>&1 || true
+    >"${log}" 2>&1 || rc=$?
 
-  grep -qE '^Ran [1-9][0-9]* tests?' "${log}"
+  # Every assertion below gates on its own status. On bash 3.2 a FAILING bare `[[ ]]` in
+  # mid-body does not abort the test (measured: bash 3.2.57 + bats 1.13.0 — the `[ ]`
+  # builtin form does abort, the `[[ ]]` keyword form does not), so a mid-body `[[ ]]`
+  # would be an assertion that can never fail.
+  [[ "${rc}" -eq 0 ]] || {
+    printf 'unittest discover exited %s; tail of the run log:\n' "${rc}" >&2
+    tail -n 20 "${log}" >&2
+    return 1
+  }
 
-  run find "${home}" -type f
-  [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  grep -qE '^Ran [1-9][0-9]* tests?' "${log}" || {
+    printf 'no run trailer in the discover log — nothing ran:\n' >&2
+    tail -n 20 "${log}" >&2
+    return 1
+  }
 
-  [ ! -e "${calls}" ]
+  # Both tail assertions carry their own diagnostic, matching the hooks twin: the bare
+  # `[ ]` form they replace does abort on failure, but it names only a line number, and
+  # what this probe is worth on a red run is the path it left behind.
+  local escaped
+  escaped="$(find "${home}" -type f)"
+  [[ -z "${escaped}" ]] || {
+    printf 'files written under the sandbox state dir:\n%s\n' "${escaped}" >&2
+    return 1
+  }
+
+  [[ ! -e "${calls}" ]] || {
+    printf 'the model seam was reached %s time(s) despite the PATH stub\n' \
+      "$(wc -c <"${calls}" | tr -d ' ')" >&2
+    return 1
+  }
 }

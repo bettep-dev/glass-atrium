@@ -9,7 +9,7 @@ activity, Outcome Records, the learning/self-improvement loop, system health, th
 wiki knowledge store, managed Claude documents, and the system architecture
 diagrams in one place.
 
-## Screens (10)
+## Screens (9)
 
 The `NAV` registry in `public/src/app.jsx` is the single SoT — `id` is the hash
 routing key, `label` the displayed (English UI) name.
@@ -22,10 +22,9 @@ routing key, `label` the displayed (English UI) name.
 | 04 | `agents` | Agents | `core.agent_events`, `agent-registry.json` join |
 | 05 | `outcomes` | Task results | `core.outcomes` (result/metric_pass/confidence) + markdown body explorer |
 | 06 | `improvement` | Learning | `core.learning_log`, `core.correction_signals`, `core.autoagent_*` consolidated join (`/api/improvement`) |
-| 07 | `health` | System health | `monitor.*` + per-component health probes (`/api/health-detail`) |
-| 08 | `wiki` | Wiki | `wiki.notes`, `wiki.dirty_flag`, `core.daemon_runs`, `core.daemon_run_payload` (read-only, `/api/wiki`) |
-| 09 | `architecture` | System map | `src/server/architecture/diagrams-source.ts` (Mermaid SoT) + flow-extractor + live overlay |
-| 10 | `clauded-docs` | Documents | `monitor.documents` (clauded-docs CRUD + doc_status + groups + 4-format viewer) |
+| 07 | `wiki` | Wiki | `wiki.notes`, `wiki.dirty_flag`, `core.daemon_runs`, `core.daemon_run_payload` (read-only, `/api/wiki`) |
+| 08 | `architecture` | System map | `src/server/architecture/diagrams-source.ts` (Mermaid SoT) + flow-extractor + live overlay |
+| 09 | `clauded-docs` | Documents | `monitor.documents` (clauded-docs CRUD + doc_status + groups + 4-format viewer) |
 
 > Learning + self-improvement are consolidated into the single `improvement`
 > screen. The former alerts screen was removed along with the alert subsystem.
@@ -120,7 +119,7 @@ monitor/
         ├── ui.jsx              # shared UI helpers
         ├── tweaks-panel.jsx    # theme/density tweaks panel
         ├── data/               # pricing.js (TOKEN_RATES static catalog)
-        └── screens/            # 10 screens (dashboard/cost/model-config/agents/outcomes/improvement/health/wiki/architecture/clauded-docs)
+        └── screens/            # 9 screens (dashboard/cost/model-config/agents/outcomes/improvement/wiki/architecture/clauded-docs)
 ```
 
 ## Running

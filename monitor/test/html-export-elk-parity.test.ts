@@ -15,6 +15,7 @@
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -45,6 +46,21 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
 const PUBLIC_ROOT = resolve(MONITOR_ROOT, "public");
+const INDEX_PATH = resolve(PUBLIC_ROOT, "index.html");
+
+// 뷰어가 서는 문서 언어 — 배포하는 index.html 에서 읽는다. 손으로 적으면 index.html 이 다른
+// 언어로 바뀐 뒤에도 이 하네스만 옛 언어에 남아, 두 표면이 갈린 트리 위에서 아래 폭 대조가
+// 조용히 초록으로 남는다(후속-5 가 원천에서 붉히는 바로 그 갈림을 이 파일만 못 보는 상태).
+const VIEWER_DOCUMENT_LANG = ((): string => {
+  const lang = parseHtml(readFileSync(INDEX_PATH, "utf8"))
+    .querySelector("html")
+    ?.getAttribute("lang");
+  assert.ok(
+    lang,
+    `${INDEX_PATH} declares no <html lang> — the viewer inherits whatever the browser guesses, so this harness has nothing to follow`,
+  );
+  return lang;
+})();
 
 // 갈래가 있어야 두 레이아웃의 배치 차이가 좌표에 남는다.
 const FLOWCHART_SRC = "flowchart TD\n  A[Start] --> B{Choice}\n  B -->|yes| C[Done]\n  B -->|no| A";
@@ -77,11 +93,15 @@ function getDirectedSource(layout: string, source: string): string {
   return `%%{init: {"layout": "${layout}"}}%%\n${source}`;
 }
 
-/** 저장된 문서 모양 그대로 — `<pre class="mermaid">` 하나, 동작하는 init 스크립트 없음. */
+/**
+ * 저장된 문서 모양 그대로 — `<pre class="mermaid">` 하나, 동작하는 init 스크립트 없음.
+ * 내보내기는 이 본문을 그 자체로 세워(setContent) 그리므로, 여기 `lang` 이 곧 내보내기 쪽
+ * 문서 언어다. 뷰어 쪽과 같은 값을 심어야 아래 폭 대조에 언어가 변수로 끼지 않는다.
+ */
 function getStoredBody(salt: string, source: string): string {
   return (
     "<!doctype html>" +
-    '<html lang="ko">' +
+    `<html lang="${VIEWER_DOCUMENT_LANG}">` +
     `<head><meta charset="utf-8"><title>${salt}</title></head>` +
     `<body><main><pre class="mermaid">${source}</pre></main></body>` +
     "</html>"
@@ -133,6 +153,25 @@ async function openViewerHarness(): Promise<ViewerHarness> {
     runtimeReady,
     true,
     "page-level network prerequisite unmet — the mermaid CDN runtime did not load",
+  );
+
+  // The vendored bundle now arrives on the first window.ensureElkLayout() call, and the viewer's
+  // render paths await that promise before mermaid.render. This harness calls mermaid.render
+  // directly rather than through those components, so it has to reproduce their precondition —
+  // without it the comparison below measures a dagre render against an ELK export and calls the
+  // difference a parity failure. That the components DO await is pinned on their source in
+  // test/mermaid-elk.vendor-pin.unit.test.ts, and that awaiting is what removes the fallback
+  // warning is measured in test/mermaid-elk.loader.test.ts.
+  const prepReady = await page.evaluate(async () => {
+    const w = window as never as { ensureElkLayout?: () => Promise<void> };
+    if (typeof w.ensureElkLayout !== "function") return false;
+    await w.ensureElkLayout();
+    return true;
+  });
+  assert.equal(
+    prepReady,
+    true,
+    "the shipped page assigned no window.ensureElkLayout — index.html must load mermaid-elk-loader.js",
   );
   return { app, browser, page };
 }
@@ -316,15 +355,34 @@ describe("html export loud-fail", () => {
 // ── AC-5 C4 행 기준 ──────────────────────────────────────────────────────────
 // C4 는 행 줄바꿈 한계를 `screen.availWidth` 에서 읽는 유일한 채택 타입이다. 그 값을 아무도
 // 선언하지 않으면 두 경로가 각자 다른 기본값 위에서 같은 소스를 다른 행수로 눕히고, 그 차이는
-// 폭 한 값으로 남는다 — 내보내기 화면폭을 480 으로 두면 2행 551px, 1280 으로 두면 1행 873px.
+// 폭 한 값으로 남는다 — 화면폭 480 이면 2행 551px, 1280 이면 1행 873px(2026-08-28 재측정).
 //
-// 비교 대상이 위 index.html 하네스가 아닌 이유(측정): 엔진 차이는 이제 없다 — index.html 은
-// 내보내기가 주입하는 것과 같은 11.15.0 을 고정한다. 남은 것은 문서의 `lang` 하나다. 그 하네스는
-// `lang="en"`, 저장 본문과 내보내기는 `lang="ko"` 라 같은 화면 기준에서도 C4 가 899px 대 873px 로
-// 갈린다(재서 확인). 서체는 원인이 아니다: 두 문서가 같은 서체 스택을 받고, 이 26px 은 `lang` 하나만
-// 바꿔도 그대로 나타난다. px 대조를 거기에 걸면 재는 것은 행 기준이 아니라 문서 언어가 된다.
-// 그래서 여기 비교 대상은 나머지 입력(고정 드라이버 · 벤더 ELK 로더 · 공유 설정 · 문서 lang)을
-// 내보내기와 똑같이 맞춘 뷰어 렌더 경로다.
+// 문서 `lang` 은 이제 두 표면을 가르지 않는다: d3b90da 가 index.html 을 `lang="ko"` 로 바꿔
+// 뷰어와 내보내기가 한 언어를 선언한다. 예전 이 자리에 있던 899px 대 873px 는 index.html 이
+// `lang="en"` 이던 때의 값이라 지금 트리를 설명하지 못한다. `lang` 이 폭을 움직인다는 사실
+// 자체는 그대로여서(같은 재측정에서 `en` · 1280 은 여전히 899px), 그 선언이 갈리는지는 폭이
+// 아니라 원천에서 지킨다 — mermaid-config.parity.test.ts 의 후속-5 단언.
+//
+// 그 갈림이 닫힌 뒤에도 비교 대상은 index.html 하네스가 아니라 아래 뷰어 렌더 경로다. 그 경로가
+// 맞추는 입력은 넷인데 읽는 자리가 같지 않다 — 고정 드라이버 · 벤더 ELK 로더 · 공유 설정 셋은
+// 내보내기가 주입하는 바로 그 파일에서 읽고(loadDriverAssets), 문서 `lang` 은 그 셋과 달리
+// 내보내기가 주입하는 파일에 없어 배포하는 index.html 의 <html lang> 에서 읽는다
+// (VIEWER_DOCUMENT_LANG). 그 값을 두 껍데기(VIEWER_SHELL · getStoredBody)에 함께 심으므로,
+// 대조에 남는 변수는 선언된 화면 기준 하나뿐이다.
+//
+// 손으로 적던 시절에는 그 자리가 `ko` 리터럴 둘이었다. index.html 이 `en` 으로 바뀌면 후속-5 가
+// 원천에서 붉어지는 동안 이 대조만 옛 언어 위에 서서 조용히 초록이었다 — 후속-5 가 닫으려는
+// 갈림을 정작 폭을 재는 이 파일이 못 보는 상태였다.
+//
+// 범위 밖 하나를 적어 둔다: 두 껍데기에 같은 언어를 심는 것은 화면 기준만 남기기 위한 선택이다.
+// 저장된 HTML 문서가 제 `lang` 을 따로 선언하면 내보내기는 그 문서 안에서, 뷰어는 index.html
+// 안에서 그리므로 실제로는 갈릴 수 있다. 후속-5 는 index.html 과 내보내기 껍데기를 대조하므로
+// 그 경우를 덮지 않고, 여기서도 재지 않는다.
+//
+// 아래 두 단언이 지키는 것: 선언한 화면폭이 페이지에 닿았는지(`availWidth === EXPORT_SCREEN.width`
+// — 하네스가 화면 옵션을 잃으면 뷰포트가 그 자리를 대신해 대조가 조용히 다른 기준 위에 선다),
+// 그리고 같은 소스를 두 경로가 같은 행수로 눕혔는지(폭 차 ±1px). 절대 폭도 문서 언어도 여기서
+// 고정하지 않는다.
 
 /** 내보내기가 주입하는 것과 같은 세 자산 — 같은 파일에서 읽어야 대조에 화면 기준만 남는다. */
 async function loadDriverAssets(): Promise<{ mermaid: string; elk: string; config: string }> {
@@ -341,7 +399,7 @@ async function loadDriverAssets(): Promise<{ mermaid: string; elk: string; confi
 
 /** 저장 본문과 같은 문서 껍데기 — lang 이 갈리면 서체 대체가 갈려 C4 텍스트 폭이 움직인다. */
 const VIEWER_SHELL =
-  '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>c4</title></head>' +
+  `<!doctype html><html lang="${VIEWER_DOCUMENT_LANG}"><head><meta charset="utf-8"><title>c4</title></head>` +
   "<body><main></main></body></html>";
 
 /** 산출물의 <svg> 폭 속성. useMaxWidth 가 꺼져 있어 이 값이 곧 고유폭이다. */

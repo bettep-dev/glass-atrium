@@ -15,7 +15,7 @@
 #     TCP/password auth — incompatible with the host=/tmp peer-auth contract).
 #     The test-monitor + test-e2e jobs install Postgres natively for exactly this.
 #
-# What DOES run: monitor typecheck + node:test (live DB + real chromium),
+# What DOES run: monitor typecheck + node:test (test-only DB + real chromium),
 # autoagent unittest suites, the bats hook/script/installer suites, the
 # read-only glass-atrium doctor preflight, and the sandboxed E2E bootstrap.
 #
@@ -177,6 +177,31 @@ jobs:
         run: |
           GA_TARGET_HOME="$(mktemp -d)" ./glass-atrium doctor
 
+      # Registry `tools` mirror vs. agent frontmatter, REPORTED not enforced. The frontmatter is the
+      # SoT and both remedies (write the mirror, or correct the frontmatter) are the PR author's
+      # call, so a mismatch annotates and this job stays green — the same kind-B posture doctor §23
+      # takes. `--check` writes nothing by construction, and `--root` aims it at the checkout rather
+      # than at a live install this runner does not have. rc 3 is drift; any other non-zero is the
+      # check failing to answer (a runner without PyYAML, say) and must NOT be reported as drift.
+      #
+      # ACCEPTANCE (one-off, deliberately not a local recipe — a GitHub annotation has no local
+      # surface to assert against): open a throwaway PR whose head drifts one agent's registry
+      # `tools` entry, confirm this job is GREEN and the run carries the warning annotation, then
+      # close the PR without merging. Run once before the delivery PRs; nothing re-runs it.
+      - name: Report agent-registry tools mirror drift (warning only)
+        run: |
+          if out="$(bash scripts/sync-registry-tools.sh --check --root "${GITHUB_WORKSPACE}" 2>&1)"; then
+            rc=0
+          else
+            rc=$?
+          fi
+          printf '%s\n' "${out}"
+          case "${rc}" in
+            0) ;;
+            3) echo "::warning title=agent-registry tools mirror drift::the registry tools array differs from agent frontmatter — run scripts/sync-registry-tools.sh to write the mirror (reported, not enforced)" ;;
+            *) echo "::warning title=agent-registry mirror check unavailable::the mirror check exited ${rc}; drift was NOT evaluated on this run" ;;
+          esac
+
   # ===========================================================================
   # STAGE 2 — language jobs. Gated on the fast-gate passing AND on a per-stack
   # `detect-changes` path filter so an unrelated diff skips the irrelevant
@@ -237,6 +262,11 @@ jobs:
               - 'requirements.txt'
               - 'requirements-dev.txt'
               - 'config.toml.example'
+              # Root-level file: no glob above reaches it, and scripts/test reads
+              # it as a policy input (the tools mirror the Capability Probe pairs
+              # with agent frontmatter), so a registry-only PR must still run the
+              # bash leg. Pinned by scripts/test/ci-change-filter-coverage.bats.
+              - 'agent-registry.json'
               - '.github/workflows/ci.yml'
             python:
               - 'autoagent/**'
@@ -671,7 +701,7 @@ jobs:
   # (the fast-gate typecheck job runs only the offline generate).
   # ---------------------------------------------------------------------------
   test-monitor:
-    name: "test: monitor typecheck + tests (live DB)"
+    name: "test: monitor typecheck + tests (test-only DB)"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -718,11 +748,43 @@ jobs:
         working-directory: monitor
         run: npx playwright install --with-deps chromium
 
-      - name: Typecheck
+      # The suite gets its OWN database. oss-db-setup.sh above rendered .env at the
+      # main DB, so that one stays the "live" store here — which is what gives the
+      # AC-B0-2 isolation probe something real to check the absence of its rows in.
+      # Not a second oss-db-setup.sh run: that script's GA_DB_NAME override refuses
+      # to proceed when the preserved .env names a different DB (by design — it is
+      # the guard against migrating the wrong database).
+      - name: Create + migrate the test-only database
+        working-directory: monitor
+        env:
+          TEST_DB: glass_atrium_test
+        run: |
+          set -Eeuo pipefail
+          if ! psql -h /tmp -lqtA | cut -d'|' -f1 | grep -qx "$TEST_DB"; then
+            createdb -h /tmp "$TEST_DB"
+          fi
+          psql -h /tmp -d "$TEST_DB" -v ON_ERROR_STOP=1 -q \
+            -c "GRANT CREATE ON SCHEMA public TO \"$(id -un)\""
+          TEST_DB_URL="postgresql://$(id -un)@localhost/${TEST_DB}?host=/tmp"
+          DATABASE_URL="$TEST_DB_URL" npx prisma migrate deploy
+          # Published from here rather than written as a step-level `env:` literal so
+          # the peer-auth role always matches the runner's actual OS user.
+          echo "MONITOR_TEST_DATABASE_URL=$TEST_DB_URL" >>"$GITHUB_ENV"
+
+      - name: Typecheck (src)
         working-directory: monitor
         run: npm run typecheck
 
-      - name: Test (node:test via tsx, live DB + chromium)
+      # Separate program (tsconfig.test.json) — tsconfig.json includes src/**/* only,
+      # so the step above never reads a single test file.
+      - name: Typecheck (tests)
+        working-directory: monitor
+        run: npm run typecheck:test
+
+      # MONITOR_TEST_DATABASE_URL (published into GITHUB_ENV by the create step) is the
+      # only sanctioned way to point the suite at a database; test/lib/select-test-db.ts
+      # fails the run loudly when it is absent rather than falling through to .env.
+      - name: Test (node:test via tsx, test-only DB + chromium)
         working-directory: monitor
         run: npm test
 

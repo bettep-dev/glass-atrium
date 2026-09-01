@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -56,15 +56,13 @@
 <link rel="stylesheet" href="styles/base.css?v=9" />
 <!-- Mermaid 11.15.0 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. 버전은 package.json 의존성과 정확히 같은 값으로 고정 — 뜬 태그(`mermaid@11`)는 CDN 이 패치를 낼 때마다 뷰어 엔진을 말없이 바꿔, 내보내기가 주입하는 번들과 같은 소스를 다른 폭으로 눕힌다(대조: test/mermaid-config.parity.test.ts). -->
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js" integrity="sha384-yQ4mmBBT+vhTAwjFH0toJXNYJ6O4usWnt6EPIdWwrRvx2V/n5lXuDZQwQFeSFydF" crossorigin="anonymous"></script>
-<!-- ELK 레이아웃 로더 0.2.3 — 벤더 IIFE. 플러그인은 ESM 전용이고 라이브 갱신은 npm install 을 돌리지 않으므로 저장소 파일을 그대로 배포(출처·해시는 provenance 사이드카). -->
-<script src="assets/vendor/mermaid-layout-elk-0.2.3.min.js"></script>
+<!-- ELK 레이아웃 준비 함수 — 벤더 IIFE(0.2.3)를 첫 다이어그램 직전에 한 번만 들여온다. 플러그인은 ESM 전용이고 라이브 갱신은 npm install 을 돌리지 않으므로 저장소 파일을 그대로 배포(출처·해시는 provenance 사이드카). 5 MB 를 모든 라우트에서 동기로 받던 <script src> 를 대체 — 벤더 경로와 registerLayoutLoaders 호출은 이제 mermaid-elk-loader.js 안에 있고, 렌더 경로가 window.ensureElkLayout() 을 await 한다. -->
+<script src="mermaid-elk-loader.js"></script>
 <!-- Mermaid 런타임 설정 — 뷰어와 HTML 내보내기가 함께 읽는 단일 소스. 값은 mermaid-config.js 에만 둔다. -->
 <script src="mermaid-config.js"></script>
 <!-- svg-pan-zoom 3.6.2 — Mermaid 가 생성한 SVG 에 휠 zoom + 드래그 pan + 더블클릭 zoom-in + 컨트롤 아이콘 부여. window.svgPanZoom 으로 노출. -->
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js" integrity="sha384-GGX4llYprEPGp9w5caepn95YWAEflHnsA5ewt+Y+cBEb95og5cXKllnWKSELlzbx" crossorigin="anonymous"></script>
 <script>
-  // 클래식 스크립트가 문서 순서로 실행되므로 준비 플래그 없이 동기 등록 — 등록 전에는 layout:'elk' 요청이 조용히 dagre 로 떨어짐.
-  window.mermaid?.registerLayoutLoaders(window.mermaidLayoutElk?.default ?? []);
   // 설정 전역이 없으면 initialize 는 인자 없이 호출된 것처럼 라이브러리 기본값(dagre · light)으로 조용히 성공한다 —
   // 404 난 설정 파일이 "화면은 뜨는데 배치와 색만 다른" 모양으로 남지 않도록 여기서 크게 끊는다.
   if (!window.MERMAID_CONFIG) {
@@ -102,7 +100,7 @@
 <script src="dist/ui.js"></script>
 <!-- Static token unit-price catalog (TOKEN_RATES) — plan §B ADR-4 G5. MUST load before cost.jsx; exposes window.TOKEN_RATES / TOKEN_CATEGORY_RATES. Plain JS, no Babel. -->
 <script src="src/data/pricing.js"></script>
-<!-- 헬스 카드/KPI 순수 모델 (window.HealthModel) — dashboard/health 데몬 카드 + F02 KPI 불변식 공용. ui.js 이후·screens 이전 로드. Plain JS, no Babel. -->
+<!-- 헬스 카드 판정 순수 모델 (window.HealthModel) — architecture 화면의 부품 표와 노드 링이 같은 명부·판정을 읽는 자리 (유일한 화면 소비자: dashboard.jsx 는 참조 0건). 화면과 무관하게 로드됨(T13b 가 health 화면을 지운 뒤에도 맵이 소비). ui.js 이후·screens 이전 로드. Plain JS, no Babel. -->
 <script src="src/data/health-model.js"></script>
 <script src="dist/screens/dashboard.js"></script>
 <script src="dist/screens/cost.js"></script>
@@ -110,7 +108,6 @@
 <script src="dist/screens/outcomes.js"></script>
 <!-- Wave 42 — legacy learning/autoagent 제거 (Wave 32 ADR-11 R1 채택 후 Wave 35 안정). #improvement single source of truth. -->
 <script src="dist/screens/improvement.js"></script>
-<script src="dist/screens/health.js"></script>
 <script src="dist/screens/wiki.js"></script>
 <!-- 2026-05-19 alert subsystem 제거 — screens/alerts.jsx 폐기. -->
 <script src="dist/screens/architecture.js"></script>

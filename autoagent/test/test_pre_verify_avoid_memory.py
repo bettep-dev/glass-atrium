@@ -312,7 +312,7 @@ class TestSupersedePermissionPrompt(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestLoopEventRemovedLines(unittest.TestCase):
-    """T6 — changes_removed measured from the FULL pre-truncation diff."""
+    """T6 — changes_removed measured from the FULL diff, never the stored one."""
 
     def _proposal_from_raw(self, diff: str) -> "dc.PatchProposal":
         raw = f"RATIONALE: fixture\nTOUCHES_FRONTMATTER: false\nADDED_LINES: 1\nDIFF:\n{diff}"
@@ -343,12 +343,20 @@ class TestLoopEventRemovedLines(unittest.TestCase):
         )
         return dc._aggregate_loop_events(report)
 
-    def test_when_diff_exceeds_stored_cap_then_removed_count_is_from_full_diff(
+    def test_when_diff_exceeds_stored_bound_then_removed_count_is_from_full_diff(
         self,
     ) -> None:
-        # 4200 characters of context before the removed line → the removal sits
-        # past the 4000-char stored-diff cut.
-        padding = "".join(f" context line {i:04d}\n" for i in range(240))
+        # Context past STORED_DIFF_CHAR_LIMIT, with the removed line behind it.
+        # The intent here is unchanged — changes_removed must come from the FULL
+        # diff — but the way a stored diff can differ from the full one is now
+        # REFUSAL rather than a cut: past the bound nothing is stored at all.
+        #
+        # This fixture is also the witness for why the cut had to go. Under the
+        # former truncating cap the removal sat PAST the cut, so the stored diff
+        # read as a pure add — indistinguishable from one, to every reader
+        # downstream including classify_prose_only_add. Re-deriving the count
+        # from the stored diff still yields 0; carrying it is still the fix.
+        padding = "".join(f" context line {i:04d}\n" for i in range(700))
         diff = (
             "--- a/dev-python.md\n"
             "+++ b/dev-python.md\n"
@@ -357,9 +365,9 @@ class TestLoopEventRemovedLines(unittest.TestCase):
             "-superseded rule line\n"
             "+replacement rule line\n"
         )
-        self.assertGreater(len(diff), 4000)
+        self.assertGreater(len(diff), dc.STORED_DIFF_CHAR_LIMIT)
         proposal = self._proposal_from_raw(diff)
-        self.assertEqual(len(proposal.proposed_diff), 4000)
+        self.assertEqual(proposal.proposed_diff, "")
         self.assertEqual(dc._count_removed_lines(proposal.proposed_diff), 0)
         events = self._events(proposal)
         self.assertEqual(len(events), 1)

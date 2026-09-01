@@ -18,7 +18,9 @@
 //   - R1 error mapping: 404 not_found (no reason) · 503 read · 500 path-escape.
 //
 // Test infrastructure:
-//   - DB: real Postgres via DATABASE_URL from .env.
+//   - DB: real Postgres, but the TEST-ONLY database selected by
+//     MONITOR_TEST_DATABASE_URL (test/lib/select-test-db.ts swaps it into
+//     DATABASE_URL before any test file loads). The live store is never written.
 //   - FS: per-suite tempdir (CLAUDED_DOCS_HTML_ROOT), resetDocsRootCache after
 //     env mutation, removed in after().
 //   - App: stripped Fastify, only clauded-docs routes, app.inject().
@@ -48,9 +50,12 @@ import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 const SUITE_MARKER = `html-export-test-${randomUUID()}`;
 
 // 중복 판정 키는 제목이 아니라 저장 본문의 해시다(routes/clauded-docs.ts checkDuplicateContent).
-// 픽스처 본문이 실행마다 같으면 어느 작업 트리의 지난 실행이 남긴 행 하나가 공용 DB 에서
-// 이 파일의 모든 POST 를 409 duplicate_content 로 떨어뜨린다 — 실측된 실패 방식이다.
-// 그래서 표식을 제목뿐 아니라 본문에도 박는다.
+// 픽스처 본문이 실행마다 같으면 지난 실행이 남긴 행 하나가 이 파일의 모든 POST 를
+// 409 duplicate_content 로 떨어뜨린다 — 실측된 실패 방식이다. 그래서 표식을 제목뿐
+// 아니라 본문에도 박는다.
+// 테스트 DB 분리(B0-2) 이후에도 이 nonce 는 남는다: 분리가 없앤 것은 라이브 저장소와의
+// 충돌이고, 같은 테스트 DB 를 쓰는 두 실행(같은 기계의 다른 워크트리, 정리 전에 끊긴
+// 지난 실행) 사이의 충돌은 그대로 남기 때문이다.
 const RUN_NONCE = randomUUID();
 
 // 이 실행이 만든 문서 id — after() 가 문서화된 DELETE 라우트로 전부 되돌린다.

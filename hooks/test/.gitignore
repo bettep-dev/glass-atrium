@@ -1,0 +1,12 @@
+# Bytecode the python suites in this corpus produce.
+#
+# This file is for the LIVE install, where this directory is its OWN git repository
+# (scripts/init-test-repos.sh) and the monorepo root .gitignore does not reach it. The
+# recovery snapshot screens `git status --porcelain --untracked-files=all` per repo and
+# refuses the whole run on an untracked __pycache__, so without this file a single
+# interpreter run outside the test runner blocks every later deploy.
+#
+# Monorepo-wide rules stay in the root .gitignore — this is a shipped per-repo artifact,
+# not a second place to add them.
+__pycache__/
+*.pyc

@@ -624,6 +624,9 @@ const NODE_TYPE_RULES: ReadonlyArray<NodeTypeRule> = [
   // Store keywords — "git pr" matches "Git PR" while "vault" catches Obsidian.
   // "repository" (not bare "repo") — "repo" 는 "glass-atrium-intel-reporter" 의 substring.
   { keywords: ["store", "vault", "obsidian", "DB", "저장소", "repository", "git pr", "queue"], type: "store" },
+  // 헤드리스 브라우저는 playwright 가 띄우는 별도 프로세스임 — 노드 type 은 드로어에 사람이 읽는 Pill 로
+  // 렌더되므로(ADR-17), 규칙이 없으면 shape 폴백으로 `agent` 가 되어 화면에 보이는 거짓말이 됨.
+  { keywords: ["chromium", "headless", "browser"], type: "external" },
   { keywords: ["external", "외부", "프로젝트"], type: "external" },
   // "blocked" (not bare "block") — "COMPLETION block output" 류 라벨이 gateway 로 재분류되지 않게.
   { keywords: ["gate", "게이트", "차단", "blocked"], type: "gateway" },

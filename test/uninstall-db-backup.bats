@@ -164,3 +164,114 @@ STUB
   grep -q -- 'claude_oss_e2e_shadow$' "${SANDBOX}/dropdb-args"
   [[ "$(wc -l <"${SANDBOX}/dropdb-args" | tr -d ' ')" -eq 1 ]]
 }
+
+# --- creation mask (CWE-732) --------------------------------------------------
+
+# mode_of — SHARED, because that `||` chain between the two stat SPELLINGS was never a
+# platform branch: on GNU it read a statfs block as a mode and reddened this assertion
+# and its two siblings together. See test/lib/stat-mode.bash.
+load 'lib/stat-mode'
+
+@test "AC-C7 pre-drop dumps and the dir created for them are owner-only (0700 / 0600)" {
+  local dump dir_mode dump_mode
+  # These dumps are the ONLY copy of a database this function then drops, so a
+  # world-readable dump is the whole database readable by every local account.
+  # ${BACKUPS} is not pre-created by setup(), so drop_databases' own mkdir makes it.
+  run_drop
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  dir_mode="$(mode_of "${BACKUPS}")"
+  [[ "${dir_mode}" == "700" ]] || {
+    echo "created backup dir mode = ${dir_mode}, expected 700" >&2
+    return 1
+  }
+  dump="$(find "${BACKUPS}" -maxdepth 1 -type f -name '*-pre-uninstall-*.dump' | head -n 1)"
+  [[ -n "${dump}" ]] || {
+    echo "no pre-uninstall dump landed; out=${output}" >&2
+    return 1
+  }
+  dump_mode="$(mode_of "${dump}")"
+  [[ "${dump_mode}" == "600" ]] || {
+    echo "dump mode = ${dump_mode}, expected 600" >&2
+    return 1
+  }
+}
+
+@test "AC-C7 the creation mask is RESTORED when drop_databases returns" {
+  local probe="${SANDBOX}/post-drop-probe" mode
+  # The 077 scope is process-global, and drop_databases is called from the uninstall
+  # engine mid-run: a leaked mask silently makes every file the REST of the uninstall
+  # creates owner-only. Deleting the restore line keeps every other assertion green, so
+  # the probe is a file created after the call in the SAME shell — the only thing that
+  # can tell the two states apart.
+  run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
+    GA_DB_BACKUP_DIR="${BACKUPS}" PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c '
+      set -Eeuo pipefail
+      umask 022
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      DRY_RUN=false
+      drop_databases
+      : >"$2"
+    ' _ "${GA}" "${probe}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  [[ -f "${probe}" ]] || {
+    echo "the post-call probe was never created; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${probe}")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-call creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+}
+
+@test "AC-C7b the creation mask is RESTORED when the backup dir cannot be created" {
+  local blocker="${SANDBOX}/not-a-dir" probe="${SANDBOX}/mkdir-fail-probe" mode
+  # The mkdir-failure arm returns EARLY, ahead of the restore that closes the function,
+  # so it carries a restore of its own — and AC-C7 cannot speak for it: that probe only
+  # ever walks the success path, so deleting this arm's restore leaves every other
+  # assertion in this file green. A regular file standing in for the parent makes
+  # `mkdir -p` fail on both platforms (ENOTDIR), which is the one way to reach the early
+  # return with the 077 mask already set.
+  : >"${blocker}"
+  run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
+    GA_DB_BACKUP_DIR="${blocker}/backups" PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c '
+      set -Eeuo pipefail
+      umask 022
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      DRY_RUN=false
+      drop_databases
+      : >"$2"
+    ' _ "${GA}" "${probe}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "drop_databases exit ${status}: ${output}" >&2
+    return 1
+  }
+  # the arm under test is the one that fired, and it preserved the data
+  [[ "${output}" == *"cannot create backup dir"* ]] || {
+    echo "the mkdir-failure arm never fired; out=${output}" >&2
+    return 1
+  }
+  [[ ! -f "${SANDBOX}/dropdb-args" ]] || {
+    echo "a database was dropped with no backup dir: $(cat "${SANDBOX}/dropdb-args")" >&2
+    return 1
+  }
+  [[ -f "${probe}" ]] || {
+    echo "the post-call probe was never created; out=${output}" >&2
+    return 1
+  }
+  mode="$(mode_of "${probe}")"
+  [[ "${mode}" == "644" ]] || {
+    echo "post-call creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+}

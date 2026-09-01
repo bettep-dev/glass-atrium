@@ -241,8 +241,7 @@
         "Glob",
         "Grep",
         "Edit",
-        "Write",
-        "Bash"
+        "Write"
       ],
       "phase": "analysis",
       "dual_phase": false,
@@ -339,7 +338,6 @@
         "Grep",
         "Edit",
         "Write",
-        "Bash",
         "WebSearch",
         "WebFetch"
       ],

@@ -38,6 +38,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - No API keys in handoff payloads
 - Sensitive info in logs MUST be masked
 - **Output Contract**: Pre-define deliverable format and conditions for complex tasks
+- **Monitor address (never discover it by scanning)**: the Atrium Monitor API — including the `clauded-docs` documents agents read and write — is at `http://127.0.0.1:16145` on this machine: loopback always, port `16145` by default. Discovering the port by probing listening processes (`lsof` / `ps` / port sweep) is FORBIDDEN — a neighbouring project's dev server answers on a nearby port and returns an unrelated page. A non-default install resolves via `ATRIUM_MONITOR_PORT` → `monitor/.env` → `config.toml [ports].monitor` (shell SoT: `scripts/lib/atrium-config.sh` → `atrium_monitor_port`), never by discovery. What to POST and when → `scoped/scope-report.md` Emission contract.
 
 ## Position Bias Mitigation [ALL]
 

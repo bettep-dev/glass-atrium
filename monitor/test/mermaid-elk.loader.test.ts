@@ -1,10 +1,18 @@
 // P0-1 — vendored ELK layout loader proof.
 // Runner: npx tsx --test test/mermaid-elk.loader.test.ts
 //
-// Two claims, neither of which the other covers: a `layout: elk` directive actually
+// Three claims, none of which the others cover: a `layout: elk` directive actually
 // reaches ELK (proved by a dagre control, since an unregistered layout renders fine
-// on the dagre fallback), and the console watch that certifies "no fallback warning"
-// is itself capable of catching one.
+// on the dagre fallback), the console watch that certifies "no fallback warning" is
+// itself capable of catching one, and the awaited prep call is what removes that
+// warning rather than the page having been quiet all along.
+//
+// The vendored bundle is no longer fetched by a tag in index.html; it arrives when
+// window.ensureElkLayout() is first called, and the two viewer render paths await that
+// promise before mermaid.render (asserted on their source in the vendor-pin harness).
+// This file therefore awaits it too — a probe that renders without awaiting is measuring
+// a page in a state the viewer never renders in, which is exactly what the control below
+// renders on purpose.
 //
 // The supply-chain pins that used to live here — bundle sha256/bytes vs the sidecar,
 // and the index.html load order — moved to mermaid-elk.vendor-pin.unit.test.ts. They
@@ -105,6 +113,7 @@ describe("vendored ELK layout loader", () => {
 	let ctx: PageContext;
 	let elk: RenderProbe;
 	let dagre: RenderProbe;
+	let beforePrepWarnings: string[];
 
 	before(async () => {
 		ctx = await openPageContext();
@@ -116,6 +125,26 @@ describe("vendored ELK layout loader", () => {
 		);
 		// 전제 먼저 — logLevel 이 3 을 넘으면 아래 경고 단언 전부가 공허해짐.
 		await assertFallbackWarningVisible(ctx.page);
+
+		// 대조군 — 준비를 기다리지 않고 그린다. 번들은 아직 도착 전이므로 등록도 전이고, mermaid 는
+		// 폴백 경고를 낸다. 이 한 건이 있어야 아래 "경고 0건" 이 "await 덕분" 이라는 뜻이 된다.
+		await getRenderProbe(ctx.page, "smoke-before-prep", getSmokeSource("elk"));
+		beforePrepWarnings = [...ctx.watch.messages];
+		ctx.watch.clear();
+
+		// 렌더 경로가 하는 그대로 — 그리기 전에 준비를 기다린다.
+		const prepReady = await ctx.page.evaluate(async () => {
+			const w = window as never as { ensureElkLayout?: () => Promise<void> };
+			if (typeof w.ensureElkLayout !== "function") return false;
+			await w.ensureElkLayout();
+			return true;
+		});
+		assert.equal(
+			prepReady,
+			true,
+			"the shipped page assigned no window.ensureElkLayout — index.html must load mermaid-elk-loader.js",
+		);
+
 		elk = await getRenderProbe(ctx.page, "smoke-elk", getSmokeSource("elk"));
 		dagre = await getRenderProbe(ctx.page, "smoke-dagre", getSmokeSource("dagre"));
 	});
@@ -132,6 +161,15 @@ describe("vendored ELK layout loader", () => {
 			"mermaid logged a layout fallback — the ELK loaders were not registered",
 		);
 		assert.ok(Object.keys(elk.nodes).length === 3, `rendered nodes: ${Object.keys(elk.nodes).join(", ")}`);
+	});
+
+	// 위 단언의 대조군. 같은 페이지·같은 소스인데 준비를 기다렸는지만 다르다 — 그래서 이 둘이
+	// 함께 통과할 때에만 "0건" 이 등록이 일어났다는 증거가 된다.
+	test("AC-2 the same render without awaiting the prep does warn", () => {
+		assert.ok(
+			beforePrepWarnings.length > 0,
+			"a render issued before window.ensureElkLayout() resolved produced no fallback warning — then the zero count above is not evidence that awaiting it registered anything",
+		);
 	});
 
 	test("AC-3 the same source under dagre yields different node coordinates", () => {
