@@ -439,6 +439,14 @@ const NON_PROMPTABLE_LABELS = [
   "repeated failure by same agent",
   "\uB3D9\uC77C \uC5D0\uC774\uC804\uD2B8 \uBC18\uBCF5 \uC2E4\uD328", // 동일 에이전트 반복 실패
 ] as const;
+// A label is interpolated into a LIKE pattern below. `%` and `_` are LIKE
+// metacharacters, so a label carrying either would silently widen an exact
+// prefix match into a fuzzy one. Escaping is a NO-OP for the three labels above
+// (none contains %, _ or a backslash), so the emitted pattern is byte-identical
+// today — it exists so a future label stays the exact match the daemon's
+// equality predicate is.
+const escapeLikeLiteral = (value: string): string =>
+  value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 interface SuppressionBucketDbRow {
   cause: string;
@@ -1249,7 +1257,8 @@ async function handleLearningLog(
     // "<label>|<agent>" signature.
     const unpromptablePredicate = Prisma.sql`(${Prisma.join(
       NON_PROMPTABLE_LABELS.map(
-        (label) => Prisma.sql`pattern_signature LIKE ${`${label}|%`}`,
+        (label) =>
+          Prisma.sql`pattern_signature LIKE ${`${escapeLikeLiteral(label)}|%`} ESCAPE '\\'`,
       ),
       " OR ",
     )})`;
