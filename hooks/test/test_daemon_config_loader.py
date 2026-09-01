@@ -192,13 +192,10 @@ class ConsumerBindingTest(unittest.TestCase):
 class WorkerModelFallbackTest(unittest.TestCase):
     """The absent-config worker-model fallback.
 
-    SUPERSEDES the former T13 alias-de-scope assertions, which required the
-    fallback to be an UNPINNED family alias with no digit in it. That policy was
-    retired together with haiku: the monitor rejects bare aliases on this very
-    domain (REJECTED_ALIAS_VALUES), and a bare alias has no hooks/pricing.json row,
-    so an alias fallback could never be costed. The requirement it is replaced by
-    is strictly stronger than "contains no digit" — the fallback must be an id the
-    pricing SoT can actually price, which a family alias never was.
+    SUPERSEDES the former T13 alias-de-scope assertions, which required an
+    UNPINNED family alias with no digit in it. The replacement requirement — an
+    id the pricing SoT can actually price — is strictly stronger; the rationale
+    for retiring the alias policy is at ``daemon_config._FALLBACK``.
     """
 
     def test_absent_config_falls_back_to_a_concrete_priceable_id(self) -> None:

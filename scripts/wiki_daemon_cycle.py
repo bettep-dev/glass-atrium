@@ -60,8 +60,6 @@ CLAUDE_BIN = os.environ.get("WIKI_DAEMON_CLAUDE_BIN", "claude")
 DEFAULT_RAW_LIMIT = int(os.environ.get("WIKI_DAEMON_RAW_LIMIT", "0") or "0")
 HAIKU_TIMEOUT_SEC = 90
 # Cost guard — per-CALL `--max-budget-usd` ceiling (not a daily token estimate).
-# <0.10 → `claude -p --max-budget-usd` exits 1 immediately ("Exceeded USD budget").
-# Anthropic minimum call cost ~$0.02-0.10 — 0.50 is the verified safe ceiling (measured ~$0.02-0.05/call).
 # Budget ceiling + model id are read from the daemon-config.json SoT (shared loader
 # hooks/daemon_config.py — the single fallback-policy SoT, degrades to verified literals if the file is
 # absent/corrupt). wiki has no pre-verify budget, so it uses only worker_max_budget_usd + worker_model.

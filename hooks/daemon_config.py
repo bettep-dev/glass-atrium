@@ -20,8 +20,8 @@ WHY a loader (not a bare json.load at each site):
 
 WHY string values (not float):
   - the values are passed verbatim to `claude -p --max-budget-usd <value>`; the
-    CLI expects the decimal string as-is. '0.50' is the empirically validated
-    ceiling (a float 0.5 would re-serialize without the trailing zero and drift).
+    CLI expects the decimal string as-is, in 2-decimal form (a float 10.0 would
+    re-serialize without the trailing zero and drift).
 
 This module is placed under ~/.claude/hooks/ — already on sys.path for
 daemon_cycle.py (it inserts the hooks dir) and the native home of
@@ -68,24 +68,21 @@ CONFIG_PATH = Path(
 # could hit budget-exhaustion exits before its first Save. Raised on that basis.
 #   Lower bound that still applies: below ~0.05 the CLI exits 1 immediately, so a
 #   floor must clear that regardless of model.
-#   These are STRINGS in 2-decimal form (see the module docstring) — passed verbatim
-#   to `claude -p --max-budget-usd`, and the monitor validates the same shape
-#   (BUDGET_VALUE_PATTERN /^\d+\.\d{2}$/). '10.00', never '10' or a float 10.0.
+#   Shape: 2-decimal STRINGS (see the module docstring), the same form the monitor
+#   validates on the write side (BUDGET_VALUE_PATTERN /^\d+\.\d{2}$/).
 # Single declaration site per value — inlined into the dict (single-SoT intent).
 _FALLBACK: dict[str, str] = {
     "worker_max_budget_usd": "10.00",
     "pre_verify_max_budget_usd": "10.00",
     # CONCRETE ID, deliberately — this REPLACES the former T13 unpinned-alias
-    # policy ('haiku'), which is retired here rather than carried over. Three
-    # reasons the alias form cannot be kept for this key:
-    #   (1) the monitor REJECTS bare aliases on this very domain
-    #       (model-config-consts.ts REJECTED_ALIAS_VALUES = {sonnet,haiku,opus}),
-    #       so no alias the user could type would ever reach the config file —
-    #       an alias fallback was only ever reachable in the absent-file case,
-    #       i.e. it disagreed with every value the supported path can produce;
-    #   (2) the shell seam (atrium_resolve_worker_model) has ALWAYS defaulted to
-    #       a concrete id, so "unpinned everywhere" was never true across seams;
-    #   (3) `claude-sonnet-5` must resolve in hooks/pricing.json for the loop's
+    # policy ('haiku'), retired here rather than carried over. Two reasons the
+    # alias form cannot be kept for this key:
+    #   (1) it was never reachable through a supported path anyway — the monitor
+    #       REJECTS bare aliases on this very domain (model-config-consts.ts
+    #       REJECTED_ALIAS_VALUES = {sonnet,haiku,opus}) so no alias the user
+    #       could type would reach the config file, and the shell seam
+    #       (atrium_resolve_worker_model) has ALWAYS defaulted to a concrete id;
+    #   (2) `claude-sonnet-5` must resolve in hooks/pricing.json for the loop's
     #       spend to be costed — a bare alias has no pricing row.
     # Consequence, stated plainly: a fresh install now PINS to this id instead of
     # inheriting the session default. Bumping the daemon to a newer Sonnet is a
@@ -118,21 +115,17 @@ def load_daemon_config(
     Per-key resolution order: current key → pre-retirement legacy key
     (_LEGACY_KEY_ALIASES) → in-code literal.
 
-    Args (beyond ``path``):
-        warn: emit the deprecated-key stderr WARN. Default True for an explicit
-            call; the module-level resolution below passes False deliberately —
-            this module is imported transitively by tools with a byte-silent
-            clean-path stderr contract (the sensitive-patterns guard CLI), and a
-            security guard that chatters on its clean path teaches operators to
-            ignore its stderr. The loud channel for this condition is the shell
-            seam (atrium_resolve_worker_model), which runs on the daemon
-            bootstrap path — an actual unattended execution, which is the scope
-            Precondition Loud-Fail governs — rather than on arbitrary import.
-            ``LEGACY_KEYS_IN_USE`` below exposes the same fact to any caller that
-            wants to surface it.
-
     Args:
         path: override config path (test injection); None → CONFIG_PATH.
+        warn: emit the deprecated-key stderr WARN. Default True; the module-level
+            resolution below passes False deliberately — this module is imported
+            transitively by tools with a byte-silent clean-path stderr contract
+            (the sensitive-patterns guard CLI), and a security guard that chatters
+            on its clean path teaches operators to ignore its stderr. The loud
+            channel for this condition is the shell seam
+            (atrium_resolve_worker_model), which runs on the daemon bootstrap —
+            an actual unattended execution, the scope Precondition Loud-Fail
+            governs. ``LEGACY_KEYS_IN_USE`` exposes the same fact to callers.
 
     Returns:
         dict with exactly the 3 keys worker_max_budget_usd /
@@ -169,8 +162,8 @@ def load_daemon_config(
             # literal, so an un-resaved config file keeps its operator values.
             legacy_key = _LEGACY_KEY_ALIASES.get(key)
             legacy_value = raw.get(legacy_key) if legacy_key else None
-            if isinstance(legacy_value, str) and legacy_value:
-                legacy_used.append(legacy_key)  # type: ignore[arg-type]
+            if legacy_key and isinstance(legacy_value, str) and legacy_value:
+                legacy_used.append(legacy_key)
                 if warn:
                     sys.stderr.write(
                         f"[daemon-config] WARN: reading deprecated key "
@@ -184,15 +177,15 @@ def load_daemon_config(
     return out
 
 
-# Module-level cache — resolved once at import. Stage-2 owners read these three
-# names (NOT the function) to replace their literals, e.g.:
-#   from daemon_config import WORKER_MAX_BUDGET_USD, PRE_VERIFY_MAX_BUDGET_USD, WORKER_MODEL
 # Pre-retirement config keys this process actually read, populated by the most
 # recent load_daemon_config() call. Non-empty => the on-disk daemon-config.json
 # still carries the old names and one monitor Save will migrate it.
 LEGACY_KEYS_IN_USE: tuple[str, ...] = ()
 
-# warn=False: see the load_daemon_config `warn` arg note — import must stay silent.
+# Module-level cache — resolved once at import. Stage-2 owners read these three
+# names (NOT the function) to replace their literals, e.g.:
+#   from daemon_config import WORKER_MAX_BUDGET_USD, PRE_VERIFY_MAX_BUDGET_USD, WORKER_MODEL
+# warn=False: see the load_daemon_config `warn` arg — import must stay silent.
 _CONFIG = load_daemon_config(warn=False)
 WORKER_MAX_BUDGET_USD: str = _CONFIG["worker_max_budget_usd"]
 PRE_VERIFY_MAX_BUDGET_USD: str = _CONFIG["pre_verify_max_budget_usd"]

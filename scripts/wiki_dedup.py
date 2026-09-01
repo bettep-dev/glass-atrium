@@ -49,8 +49,6 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the insert above
 # Cost guard: max 5 Haiku calls per cycle.
 MAX_LLM_CALLS = 5
 HAIKU_TIMEOUT_SEC = 90
-# WORKER_MAX_BUDGET_USD is read from the daemon_config SoT (SoT default '0.50').
-# WORKER_MODEL is also from SoT.
 
 # Heuristic thresholds.
 JACCARD_TITLE_THRESHOLD = 0.5     # token overlap on slug titles

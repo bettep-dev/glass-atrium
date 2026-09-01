@@ -220,11 +220,10 @@ if HAIKU_ESCALATED_TIMEOUT_SEC < HAIKU_TIMEOUT_SEC:
     )
     HAIKU_ESCALATED_TIMEOUT_SEC = HAIKU_TIMEOUT_SEC
 # Budget ceiling + model id read from the daemon-config.json SoT via the shared
-# loader (hooks/daemon_config.py), which degrades to validated literals
-# ('0.50' / the unpinned 'haiku' alias) on missing/corrupt file — NEVER raises (test
-# modules import at collection time). Live-verified: 0.10 is too low (immediate
-# EXIT 1); 0.50 passes (Anthropic minimum call cost ~$0.02-0.10). Cost ceiling:
-# agents-per-cycle × 0.50.
+# loader (hooks/daemon_config.py), which degrades to its own fallback literals on
+# a missing/corrupt file — NEVER raises (test modules import at collection time).
+# The literals and their sizing rationale live at that loader's _FALLBACK, not
+# restated here. Cycle cost ceiling: agents-per-cycle × the per-call cap.
 from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-relative + $HOME)
     WORKER_MAX_BUDGET_USD,
     WORKER_MODEL,
@@ -3107,8 +3106,9 @@ def generate_patch_proposal(
     the cost guard or preflight has tripped.
 
     On first-attempt parse failure (parse_mode='failed'), retry ONCE with a
-    strict header-emphasis suffix appended. Retry budget: 1 attempt — cost
-    ceiling stays at 5 patterns × 2 calls × $0.50 = $5.00/cycle worst case.
+    strict header-emphasis suffix appended. Retry budget: 1 attempt — so the
+    worst case is 5 patterns × 2 calls, each bounded by the per-call cap (the
+    cap's value lives in the daemon-config SoT, not restated here).
     Idempotency: retry prompt body is identical except for the strict suffix
     (same PATTERN / OUTCOMES / AGENT FILE inputs → same expectations).
     """
