@@ -111,6 +111,13 @@ const SYNC_META_MC = {
 		tone: "warn",
 		desc: "daemon-config.json was not found — press Save to recreate it",
 	},
+	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
+	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
+	"pending-migration": {
+		label: "Pending migration",
+		tone: "warn",
+		desc: "these values are being read from the pre-rename config rows — run `glass-atrium db-setup` to complete the rename",
+	},
 };
 
 // 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
@@ -877,6 +884,8 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 function DriftBannerMC({ sync, domains }) {
 	const { Icon } = window.UI;
 	const driftedDomains = (domains || []).filter((d) => d.drift);
+	// 처방이 다르다 — drift/file-missing 은 Save 가, pending-migration 은 db-setup 이 고친다.
+	const pendingMigration = sync === "pending-migration";
 	return (
 		<div
 			role="alert"
@@ -889,11 +898,24 @@ function DriftBannerMC({ sync, domains }) {
 			<Icon name="git" size={16} className="text-warn mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">
-					Saved config not yet fully live
+					{pendingMigration
+						? "Config rows still carry their pre-rename names"
+						: "Saved config not yet fully live"}
 				</div>
 				<div className="fs-meta text-dim mt-1">
-					Run <span className="font-mono">/glass-atrium-ops-model-config</span>{" "}
-					to apply.
+					{pendingMigration ? (
+						<>
+							Values below are read from the old rows. Run{" "}
+							<span className="font-mono">glass-atrium db-setup</span> to
+							complete the rename.
+						</>
+					) : (
+						<>
+							Run{" "}
+							<span className="font-mono">/glass-atrium-ops-model-config</span>{" "}
+							to apply.
+						</>
+					)}
 				</div>
 				{driftedDomains.length > 0 && (
 					<div className="fs-meta text-dim mt-2">
