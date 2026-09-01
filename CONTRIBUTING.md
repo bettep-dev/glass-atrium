@@ -55,13 +55,24 @@ AutoAgent Python suites (pure stdlib, no third-party deps):
 python3 -m unittest discover -s autoagent/test -p 'test_*.py' -v
 ```
 
-Monitor typecheck + tests (live DB + Playwright chromium; run
-`oss-db-setup.sh` first, see above):
+Monitor typecheck + tests (Playwright chromium; run `oss-db-setup.sh` first,
+see above). The suite refuses to run against the live database, so point
+`MONITOR_TEST_DATABASE_URL` at a test-only one — create it once, migrate it,
+then reuse it:
 
 ```sh
+createdb -h /tmp glass_atrium_test
+DATABASE_URL="postgresql://$(id -un)@localhost/glass_atrium_test?host=/tmp" \
+  npm --prefix monitor exec prisma migrate deploy
+
 npm --prefix monitor run typecheck
-npm --prefix monitor test
+MONITOR_TEST_DATABASE_URL="postgresql://$(id -un)@localhost/glass_atrium_test?host=/tmp" \
+  npm --prefix monitor test
 ```
+
+The refusal compares the two connection strings by resolved identity, not by
+text, so re-spelling the live URL (`127.0.0.1` for `localhost`, a different
+socket path for the same socket, an extra query parameter) does not get past it.
 
 Typecheck without a database is possible: `prisma generate` never connects,
 but Prisma's config resolves `env()` eagerly, so export dummy `DATABASE_URL`

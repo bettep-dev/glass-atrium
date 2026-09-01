@@ -418,10 +418,36 @@ install_tree() {
 # converge. A manifest without a modes map (pre-modes release) skips fail-open
 # with one notice — an old release must keep installing.
 
-# Echo the octal permission mode of a single file — BSD stat (macOS) first,
-# GNU coreutils fallback (Linux CI parity).
+# Echo the octal permission mode of a single file, settling the stat(1) FLAVOUR
+# before either spelling is attempted.
+#
+# A `stat -f … || stat -c …` chain between the two SPELLINGS is NOT a platform
+# branch, which is the trap this closes: `-f` is a FORMAT flag on BSD but
+# --file-system on GNU, so `stat -f '%Lp' -- <path>` on GNU prints the STATFS
+# block of that path to STDOUT and exits non-zero only because '%Lp' is not a
+# file field. The chain then appends the GNU mode and the caller receives a
+# six-line value. What that costs is worse than a crash and was MEASURED, not
+# assumed: `[[ -n … ]]` below accepts the block, `$((8#…))` raises "invalid
+# integer constant" on stderr — and because that arithmetic sits inside an `if`
+# CONDITION, `set -e` is suppressed, so nothing aborts. The comparison simply
+# reads FALSE, every row is taken for already-correct, and the whole apply-then-
+# verify step degrades to a no-op that ships the tree inert: exactly the class
+# this enforcement exists to catch. `stat --version` succeeds on GNU and fails
+# on BSD, so it settles the flavour first — the same discriminator
+# test/lib/stat-mode.bash and scripts/lib/atrium-config.sh use.
+#
+# INLINED, not sourced: install.sh is a standalone bootstrap that must run
+# before any bundle member exists on disk, so it cannot depend on either.
+#
+# GNU `%a` prepends the setuid/setgid/sticky nibble only when it is non-zero and
+# BSD `%Lp` carries the low bits alone, so the two agree on every mode the
+# manifest maps (plain 3-digit file modes).
 file_mode_octal() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  if stat --version >/dev/null 2>&1; then
+    stat -c '%a' -- "$1" # GNU coreutils
+  else
+    stat -f '%Lp' -- "$1" # BSD / macOS
+  fi
 }
 
 enforce_manifest_modes() {
@@ -442,9 +468,14 @@ enforce_manifest_modes() {
       || die "${EXIT_MODE_FAILED}" "manifest.modes[${rel}] is not a valid octal mode: '${mode}'"
     # A SYMLINK row has nothing of its own to reconcile, and reconciling it is
     # not merely useless but impossible: the `-f` gate below and `chmod` both
-    # FOLLOW the link, while file_mode_octal's `stat -f '%Lp'` is BSD LSTAT and
-    # reads the LINK's own mode — so the re-read can never move and the verify
-    # aborts every fresh install. The manifest entry describes the TARGET
+    # FOLLOW the link, while file_mode_octal reads the LINK's own mode — so the
+    # re-read can never move and the verify aborts every fresh install. That
+    # asymmetry is stat(1)'s DEFAULT on BOTH platforms, not a BSD property: with
+    # no `-L`, BSD `stat -f '%Lp'` and GNU `stat -c '%a'` alike lstat the path
+    # (measured against a 644 target — the link itself reads 755 on macOS, 777
+    # on Linux). In `%Lp` the `L` selects the LOW permission bits of the datum;
+    # it is not a dereference modifier. So the skip is correct on every
+    # platform, for the same reason. The manifest entry describes the TARGET
     # (generate-manifest.sh probes with `stat -L`, i.e. FOLLOW), and that target
     # is itself a files[] member reconciled on its own row, so skipping loses no
     # coverage. Regular files keep the loud verify untouched.

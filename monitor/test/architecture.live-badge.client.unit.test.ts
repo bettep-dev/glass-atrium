@@ -19,10 +19,14 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import esbuild from "esbuild";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
+// KPI 분모의 SoT — index.html:106 이 architecture.js(:116) 보다 먼저 싣는 순수 모델.
+// 샌드박스에도 같은 순서로 실어 맵이 실제로 읽는 window.HealthModel 을 진짜 모듈로 둠.
+const HEALTH_MODEL_SRC = resolve(__dirname, "../public/src/data/health-model.js");
 
 interface DaemonLiveStatus {
   daemon_name: string;
@@ -42,11 +46,58 @@ interface DaemonRow {
   nodeIds: string[];
   lastRunAt: string | null;
 }
+// 확장 영역 한 줄 — 실행 하나의 날짜와 그 실행이 낸 사유들.
+interface DaemonRunRow {
+  runDate: string;
+  verdict: string;
+  reasons: { message: string; count: number }[];
+}
+// 맵이 흡수한 health 응답 5종의 상태 묶음 — health.jsx 의 fetch 상태와 같은 모양.
+interface FetchState {
+  status: string;
+  data: unknown;
+  error: string | null;
+}
+interface MapHealthStates {
+  daemonState: FetchState;
+  pgState: FetchState;
+  hookState: FetchState;
+  hookFailState: FetchState;
+}
+interface HealthCardDef {
+  id: string;
+  kind: string;
+}
+// T11: 훅 구성 한 줄 — 이벤트 하나와 그 이벤트에 걸린 matcher 들.
+interface HookChainRow {
+  event: string;
+  hookCount: number;
+  groups: { matcher: string; hooks: { command: string; type: string | null; timeout: number | null }[] }[];
+}
+// 표 행 확장의 본문 렌더러 — kind 별로 하나씩. hook 행은 구성과 실패 이력을 함께 냄 (AC-B2-5a).
+interface RowDetailRenderers {
+  hook: (row: unknown, states: MapHealthStates) => unknown;
+}
+interface HealthModelGlobal {
+  HEALTH_CARD_DEFS: HealthCardDef[];
+}
+
 interface ArchHelpers {
+  // 맵이 흡수한 health 엔드포인트 표(ADR-B1 R2) — health.jsx:42-47 의 5종.
+  getMapHealthEndpoints: (payloadDaemon: string) => string[];
+  // T11: hook-chain 응답을 이벤트 → matcher → 훅 줄로 접는 순수 fold.
+  getHookChainRows: (state: FetchState | null | undefined) => HookChainRow[] | null;
   buildLiveDaemonsByNodeId: (
     daemons: DaemonLiveStatus[] | null | undefined,
   ) => Map<string, DaemonLiveStatus[]>;
   getLiveDaemonRows: (daemons: DaemonLiveStatus[] | null | undefined) => DaemonRow[];
+  // T8: 확장 영역의 DOM id — 행 컨트롤의 aria-controls 가 이 값을 가리킴.
+  getRowDetailId: (rowKey: string) => string;
+  // T9c: 선택 데몬의 payload 응답을 날짜 + 사유 줄로 접는 순수 fold.
+  getDaemonRunRows: (
+    payloadState: FetchState | null | undefined,
+    daemonName: string,
+  ) => DaemonRunRow[] | null;
   getLegibleFitScaleAR: (
     paneW: number,
     paneH: number,
@@ -65,29 +116,19 @@ const DAEMON_STATUS_TONE: Record<string, { tone: string; label: string }> = {
   quota_exceeded: { tone: "warn", label: "Usage limit" },
 };
 
-// Build once, evaluate in a sandbox — the real top-level helper declarations.
-// 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
-// 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
-async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
-  const built = await esbuild.build({
-    entryPoints: [ARCH_SRC],
-    bundle: false,
-    write: false,
-    loader: { ".jsx": "jsx" },
-    jsx: "transform",
-    jsxFactory: "React.createElement",
-    jsxFragment: "React.Fragment",
-    target: "es2022",
-    // No import/export → top-level fn decls become vm-context-global properties.
-    format: "esm",
-  });
-  const code = built.outputFiles[0].text;
-
+// 샌드박스 전역 — React/window.UI 스텁만 둔 빈 문맥. 무엇을 실을지는 부르는 쪽이 정함:
+// health-model.js 의 부재가 이 파일이 재는 사실 중 하나라 적재 순서를 고정하면 안 됨.
+function createArchContext(): Record<string, unknown> {
   // React stub — every hook returns a benign default; the (uninvoked) component
   // bodies touch React, so the stubs never actually drive a render.
   const reactStub = new Proxy(
     {
-      createElement: () => ({}),
+      // 요소를 실제로 지음 — 렌더러가 낸 트리를 읽어야 '무엇이 그려졌는가' 를 잴 수 있음.
+      createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => ({
+        type,
+        props: { ...(props || {}), children },
+        children,
+      }),
       Fragment: "frag",
       useState: () => [undefined, () => {}],
       useEffect: () => {},
@@ -98,6 +139,10 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
     { get: (t: Record<string, unknown>, p: string) => (p in t ? t[p] : () => ({})) },
   );
   const uiStub = {
+    // 표시 문장은 이 테스트의 대상이 아님 — 값이 렌더러를 통과했는지만 보이면 됨.
+    formatRelativeTime: (v: string) => `rel:${v}`,
+    formatKstFull: (v: string) => `kst:${v}`,
+    resolveBadge: (tone: string) => ({ label: tone }),
     daemonStatusTone: (s: string) =>
       (DAEMON_STATUS_TONE[s] || { tone: "info" }).tone,
     daemonStatusLabel: (s: string) =>
@@ -112,6 +157,48 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
+  return ctx;
+}
+
+// health-model.js 를 싣지 않은 문맥 — index.html:103 의 <script> 하나가 빠진 상태.
+// 화면 스크립트는 이미 빌드된 같은 원문을 씀: 두 문맥의 유일한 차이가 그 부재여야 함.
+function loadArchWithoutHealthModel(code: string): Record<string, unknown> {
+  const ctx = createArchContext();
+  vm.runInContext(code, ctx);
+  assert.strictEqual(
+    (ctx.window as { HealthModel?: unknown }).HealthModel,
+    undefined,
+    "fixture precondition: the health model must be absent from this context",
+  );
+  return ctx;
+}
+
+// Build once, evaluate in a sandbox — the real top-level helper declarations.
+// 반환하는 code 가 AC-12 단언 대상(컴파일 산출물 원문) — 부재 단언은 sandbox 전역이 아니라
+// 이 텍스트를 봄(제거된 축약기/목적 맵은 호출되지 않아도 선언만으로 되살아날 수 있음).
+async function loadArch(): Promise<{
+  helpers: ArchHelpers;
+  code: string;
+  rowDetails: RowDetailRenderers;
+}> {
+  const built = await esbuild.build({
+    entryPoints: [ARCH_SRC],
+    bundle: false,
+    write: false,
+    loader: { ".jsx": "jsx" },
+    jsx: "transform",
+    jsxFactory: "React.createElement",
+    jsxFragment: "React.Fragment",
+    target: "es2022",
+    // No import/export → top-level fn decls become vm-context-global properties.
+    format: "esm",
+  });
+  const code = built.outputFiles[0].text;
+
+  const ctx = createArchContext();
+  // index.html 의 적재 순서를 그대로 재현 — 모델 먼저, 화면 나중.
+  // 사본이 아니라 출하되는 원본을 실어야 정의 목록이 진짜 참조로 공유됨.
+  vm.runInContext(readFileSync(HEALTH_MODEL_SRC, "utf8"), ctx);
   vm.runInContext(code, ctx);
 
   const h = ctx as unknown as ArchHelpers;
@@ -130,10 +217,43 @@ async function loadArch(): Promise<{ helpers: ArchHelpers; code: string }> {
     "function",
     "getLegibleFitScaleAR must be reachable (AC-13 instrument)",
   );
-  return { helpers: h, code };
+  assert.strictEqual(
+    typeof h.getMapHealthEndpoints,
+    "function",
+    "getMapHealthEndpoints must be reachable (T7 fetch-table instrument)",
+  );
+  assert.strictEqual(
+    typeof h.getRowDetailId,
+    "function",
+    "getRowDetailId must be reachable (T8 aria-controls instrument)",
+  );
+  assert.strictEqual(
+    typeof h.getDaemonRunRows,
+    "function",
+    "getDaemonRunRows must be reachable (T9c date+reason fold instrument)",
+  );
+  assert.strictEqual(
+    typeof h.getHookChainRows,
+    "function",
+    "getHookChainRows must be reachable (T11 hook-configuration fold instrument)",
+  );
+
+  const rowDetails = vm.runInContext("HEALTH_ROW_DETAILS", ctx) as RowDetailRenderers;
+  assert.strictEqual(
+    typeof rowDetails.hook,
+    "function",
+    "HEALTH_ROW_DETAILS.hook must be reachable (AC-B2-5e hook row renderer instrument)",
+  );
+
+  const healthModel = (ctx.window as { HealthModel?: HealthModelGlobal }).HealthModel;
+  assert.ok(
+    healthModel && Array.isArray(healthModel.HEALTH_CARD_DEFS),
+    "window.HealthModel must carry the card definitions the map's KPI denominator reads",
+  );
+  return { helpers: h, code, rowDetails };
 }
 
-const { helpers: arch, code: archCode } = await loadArch();
+const { helpers: arch, code: archCode, rowDetails } = await loadArch();
 
 // 기본값은 서버가 임계 미만에서 내는 모양 — 판정이 마지막 상태와 같음.
 // 초과 구간은 `effective_status` 를 명시해 덮어씀.
@@ -300,4 +420,405 @@ test("AC-12(a) 설명 축약 경로가 컴파일 산출물에 없음", () => {
 
 test("AC-12(b) 하드코드 목적 문자열 맵이 컴파일 산출물에 없음", () => {
   assert.doesNotMatch(archCode, /\bTAB_PURPOSE\b/);
+});
+
+// --- T7: the map absorbs the five health responses -------------------------
+
+// health.jsx:42-47 이 들고 있던 fetch 표. 맵이 흡수한 뒤에도 같은 5종이어야 함
+// (ADR-B1 R2 — 서버 무변경, 요청을 옮기기만 함).
+const EXPECTED_HEALTH_ENDPOINTS = [
+  "/api/health/daemons",
+  "/api/health/hook-chain",
+  "/api/health",
+  "/api/health/daemon-payload?daemon=autoagent&limit=10",
+  "/api/health/hook-failures?days=30&limit=50",
+];
+
+test("T7 the map's health fetch table names the same five endpoints health.jsx read", () => {
+  assert.strictEqual(
+    arch.getMapHealthEndpoints("autoagent").join("\n"),
+    EXPECTED_HEALTH_ENDPOINTS.join("\n"),
+  );
+});
+
+test("T7 the payload endpoint carries the selected daemon, not a frozen literal", () => {
+  const urls = arch.getMapHealthEndpoints("wiki");
+  assert.ok(
+    urls.some((u) => u.includes("daemon=wiki")),
+    "daemon-payload must follow the selected daemon (T9c drills down through it)",
+  );
+});
+
+// 화면은 이 표를 두 몫으로 갈라 요청함 — 드릴다운을 따라 다시 나가는 것은 페이로드 하나뿐이고,
+// 나머지 넷은 머리글(스트립·KPI)이 서 있는 값이라 행을 펼칠 때 다시 나가면 안 됨.
+// 그 가름이 성립하려면 데몬 이름을 싣는 URL 이 정확히 하나여야 함 — 그 전제를 여기서 못 박음.
+test("T7 exactly one endpoint follows the daemon, which is what lets the other four stay put", () => {
+  const urls = arch.getMapHealthEndpoints("wiki");
+  // 파일 관례대로 이어붙여 비교함 — 화면 소스는 별도 realm 에서 평가되므로 그쪽 Array 는
+  // 내용이 같아도 prototype 이 달라 deepEqual 이 붙지 않음.
+  assert.strictEqual(
+    urls.filter((u) => u.includes("wiki")).join("\n"),
+    "/api/health/daemon-payload?daemon=wiki&limit=10",
+    "a second daemon-bearing URL would silently rejoin the strip's responses to the drilldown",
+  );
+});
+
+// 이름 안의 `&` 는 인코딩하지 않으면 질의를 한 칸 더 만듦 — 서버가 허용목록으로 거르지만
+// 그건 서버의 방어이고, 이 자리는 URL 을 조립하는 쪽이 제 값을 감쌌는지를 잼.
+// 조립된 원문 그대로 냄: `new URL` 은 파싱하면서 공백 같은 문자를 스스로 인코딩하므로,
+// 파싱한 값만 보면 감싸지 않은 구현도 초록이 됨(감싸는 쪽과 구별되지 않음).
+function getPayloadUrl(daemon: string): string {
+  const raw = arch
+    .getMapHealthEndpoints(daemon)
+    .find((u) => u.startsWith("/api/health/daemon-payload"));
+  assert.ok(raw, "the fetch table must carry a daemon-payload URL");
+  return raw;
+}
+
+test("T7 a daemon name that would otherwise change the query is encoded into it", () => {
+  const hostile = "auto&limit=1";
+  const url = new URL(getPayloadUrl(hostile), "http://monitor.invalid");
+
+  assert.strictEqual(
+    url.searchParams.get("daemon"),
+    hostile,
+    "the daemon parameter must round-trip to the selected name, not to a truncated prefix",
+  );
+  assert.deepStrictEqual(
+    [...url.searchParams.keys()].sort(),
+    ["daemon", "limit"],
+    "an unencoded name splits its own `&` into an extra parameter — the query must keep exactly two",
+  );
+  assert.strictEqual(
+    url.searchParams.get("limit"),
+    "10",
+    "the row limit must survive a name carrying its own limit= text",
+  );
+});
+
+test("T7 a daemon name carrying a space is encoded before the URL leaves the screen", () => {
+  // 원문을 잼 — fetch 에 넘기는 문자열이 이것이고, 파싱을 거치면 두 구현이 같아 보임.
+  const raw = getPayloadUrl("daily restart");
+  assert.ok(
+    !raw.includes(" "),
+    `a raw space must never reach the request URL, but it read: ${raw}`,
+  );
+  assert.strictEqual(
+    new URL(raw, "http://monitor.invalid").searchParams.get("daemon"),
+    "daily restart",
+    "encoding must be reversible — the server still receives the name that was selected",
+  );
+});
+
+// T7 의 KPI 세 절은 맵이 분모를 HEALTH_CARD_DEFS 에 위임하는지를 쟀음. 그 위임층(맵의
+// KPI 대리 함수와 모델의 집계 fold)이 함께 접히면서 분모는 표의 행 수가 됐고, 그 사실은
+// AC-B2-4b(merged-surface e2e)가 화면에서 직접 잼. 죽은 이름은 제거 원장이 따로 지킴.
+// 픽스처도 그 셋만 쓰던 것이라 함께 걷음.
+
+// --- T11: the hook chain fold and the row renderer that consumes it -------
+
+// 함수 컴포넌트를 실제로 불러 그 결과까지 펼침 — 렌더러가 낸 글을 재려면 트리를 끝까지 풀어야 함.
+function renderToText(node: unknown): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(renderToText).join(" ");
+
+  const el = node as { type?: unknown; props?: { children?: unknown }; children?: unknown };
+  if (typeof el.type === "function")
+    return renderToText((el.type as (props: unknown) => unknown)(el.props));
+
+  return renderToText(el.children ?? null);
+}
+
+// 렌더된 트리의 모든 요소 부분트리 글 — 함수 컴포넌트는 불러서 그 결과까지 폄.
+// 포함 여부만 보는 단언은 matcher 를 한 목록에, 명령을 다른 목록에 평평히 늘어놓은 렌더러도
+// 통과함(둘 다 어딘가에는 있음). '어느 자리 안에서' 를 재려면 자리마다의 글이 필요함.
+function collectSubtreeTexts(node: unknown, out: string[] = []): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return out;
+  if (typeof node === "string" || typeof node === "number") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectSubtreeTexts(child, out);
+    return out;
+  }
+
+  const el = node as { type?: unknown; props?: { children?: unknown }; children?: unknown };
+  if (typeof el.type === "function")
+    return collectSubtreeTexts((el.type as (props: unknown) => unknown)(el.props), out);
+
+  out.push(renderToText(el));
+  return collectSubtreeTexts(el.children ?? null, out);
+}
+
+// 렌더러에 먹일 훅 구성 — matcher 둘 · 훅 둘. 폴드 케이스와 같은 모양을 쓰되 값은 따로 둠:
+// 한 픽스처를 둘이 나눠 쓰면 어느 쪽이 그 값을 통과시킨 것인지 메시지에서 갈리지 않음.
+const HOOK_RENDER_EVENTS = [
+  {
+    event: "PreToolUse",
+    groups: [
+      { matcher: "Write|Edit", hooks: [{ command: "render-a.sh", type: "command", timeout: 5 }] },
+      { matcher: "Bash", hooks: [{ command: "render-b.sh", type: "command", timeout: null }] },
+    ],
+  },
+];
+
+test("T11 the hook chain fold names every hook under the matcher it fires on", () => {
+  const rows = arch.getHookChainRows({
+    status: "ready",
+    error: null,
+    data: {
+      events: [
+        {
+          event: "PreToolUse",
+          groups: [
+            { matcher: "Write|Edit", hooks: [{ command: "a.sh", type: "command", timeout: 5 }] },
+            { matcher: "Bash", hooks: [{ command: "b.sh", type: "command", timeout: null }] },
+          ],
+        },
+        { event: "SubagentStop", groups: [] },
+      ],
+    },
+  });
+  assert.ok(rows, "a ready response must fold into rows");
+  assert.strictEqual(rows.length, 2, "one row per event, empty events included — a missing event is a fact");
+  assert.strictEqual(rows[0].event, "PreToolUse");
+  assert.strictEqual(rows[0].hookCount, 2, "the count must span every matcher of the event");
+  assert.strictEqual(rows[0].groups.map((g) => g.matcher).join(","), "Write|Edit,Bash");
+  assert.strictEqual(rows[1].hookCount, 0, "an event with no hooks reads zero, not absent");
+
+  // AC-B2-5e — 같은 사실을 렌더러가 이사한 자리에서 다시 잼. 접기 명부를 거치지 않고 hook 행의
+  // 본문 렌더러를 직접 부름: 폴드가 옳아도 렌더러가 matcher 를 안 부르면 화면에는 관계가 없음.
+  const rendered = rowDetails.hook(null, {
+    hookState: { status: "ready", error: null, data: { events: HOOK_RENDER_EVENTS, source_path: "/fixture/settings.json" } },
+    hookFailState: { status: "ready", error: null, data: { days: 30, failures: [], last_failure_ts: null } },
+  } as unknown as MapHealthStates);
+  const text = renderToText(rendered);
+  for (const group of HOOK_RENDER_EVENTS[0].groups) {
+    assert.ok(text.includes(group.matcher), `the row renderer must name the ${group.matcher} matcher, but it read: ${text}`);
+    for (const hook of group.hooks) {
+      assert.ok(
+        text.includes(hook.command),
+        `the row renderer must name ${hook.command}, but it read: ${text}`,
+      );
+    }
+  }
+
+  // 여기까지는 '둘 다 어딘가에 있음' 뿐임 — 이 테스트의 이름이 부르는 사실은 관계임.
+  // 그래서 자리로 잼: 제 matcher 와 제 훅을 함께 담고 남의 matcher·훅은 담지 않는 부분트리가
+  // 하나는 있어야 함. matcher 를 한 목록에, 명령을 다른 목록에 늘어놓은 렌더러에서는 둘을
+  // 함께 담는 자리가 트리 전체뿐이고 그 자리는 남의 것도 담으므로 여기서 붉어짐.
+  const subtrees = collectSubtreeTexts(rendered);
+  for (const group of HOOK_RENDER_EVENTS[0].groups) {
+    const own = [group.matcher, ...group.hooks.map((h) => h.command)];
+    const foreign = HOOK_RENDER_EVENTS[0].groups
+      .filter((other) => other.matcher !== group.matcher)
+      .flatMap((other) => [other.matcher, ...other.hooks.map((h) => h.command)]);
+
+    assert.ok(
+      subtrees.some(
+        (subtree) => own.every((s) => subtree.includes(s)) && foreign.every((s) => !subtree.includes(s)),
+      ),
+      `no place in the tree holds ${group.matcher} together with its own hooks and nothing of the other matcher — the renderer lists them flat, so the fold's grouping does not survive to the screen. It read: ${text}`,
+    );
+  }
+});
+
+test("T11 a response that has not arrived folds to null, never to an empty configuration", () => {
+  assert.strictEqual(arch.getHookChainRows({ status: "loading", data: null, error: null }), null);
+  assert.strictEqual(arch.getHookChainRows({ status: "error", data: null, error: "boom" }), null);
+  assert.strictEqual(arch.getHookChainRows(null), null);
+  // 응답은 왔고 이벤트가 0개인 경우는 [] — '못 읽음' 과 '설정이 비었음' 은 다른 문장임.
+  assert.deepStrictEqual(
+    [...(arch.getHookChainRows({ status: "ready", data: { events: [] }, error: null }) || [])],
+    [],
+  );
+});
+
+// --- T8: the expansion region's DOM id --------------------------------------
+
+test("T8 the detail id is derived from the row key it is handed and stays a legal DOM id", () => {
+  const id = arch.getRowDetailId("autoagent");
+  assert.match(id, /autoagent$/, "the id must name the row it belongs to");
+  assert.strictEqual(
+    id,
+    arch.getRowDetailId("autoagent"),
+    "the id must be stable — aria-controls and the region are wired by the same call",
+  );
+  assert.notStrictEqual(
+    id,
+    arch.getRowDetailId("wiki"),
+    "two rows must not share one region id",
+  );
+  // 행 키(데몬 이름 · 부품 id)는 하이픈을 포함함 — id 문법을 벗어나는 문자만 접히고 나머지는 남아야 함.
+  assert.match(
+    arch.getRowDetailId("daily-restart-autoagent"),
+    /^[A-Za-z][A-Za-z0-9_-]*$/,
+    "the id must remain a legal getElementById target for every roster name",
+  );
+});
+
+// --- T9c: the date + reason fold -------------------------------------------
+
+const RUN_FAIL_DATE = "2026-08-22";
+const RUN_OK_DATE = "2026-08-19";
+const RUN_QUOTA_MESSAGE = "haiku classify failed: quota exceeded";
+const RUN_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
+
+function getPayloadState(daemon: string): FetchState {
+  return {
+    status: "ready",
+    data: {
+      daemon,
+      entries: [
+        {
+          run_date: RUN_FAIL_DATE,
+          daemon_name: daemon,
+          payload: {},
+          payload_size_bytes: 512,
+          summary: {
+            verdict: "fail",
+            error_signatures: [
+              { message: RUN_QUOTA_MESSAGE, count: 4 },
+              { message: RUN_DOCTOR_MESSAGE, count: 1 },
+            ],
+          },
+        },
+        {
+          run_date: RUN_OK_DATE,
+          daemon_name: daemon,
+          payload: {},
+          payload_size_bytes: 256,
+          summary: { verdict: "ok", error_signatures: [] },
+        },
+      ],
+    },
+    error: null,
+  };
+}
+
+test("T9c the fold carries each run's date and every signature behind it", () => {
+  const rows = arch.getDaemonRunRows(getPayloadState("autoagent"), "autoagent");
+  assert.ok(rows, "a ready response for the named daemon must fold into rows");
+  assert.deepStrictEqual(
+    rows.map((r) => r.runDate),
+    [RUN_FAIL_DATE, RUN_OK_DATE],
+    "run dates must come through in response order",
+  );
+  assert.deepStrictEqual(
+    rows[0].reasons.map((r) => `${r.message}#${r.count}`),
+    [`${RUN_QUOTA_MESSAGE}#4`, `${RUN_DOCTOR_MESSAGE}#1`],
+    "both signatures must survive with their counts — a first-only fold hides the doctor verdict",
+  );
+  assert.strictEqual(rows[0].verdict, "fail");
+  assert.deepStrictEqual(rows[1].reasons, [], "a clean run must fold to zero reasons, not to null");
+});
+
+// 드릴다운 재요청이 도는 동안의 반증 케이스 — 응답의 daemon 을 대조하지 않는 fold 는 여기서
+// 다른 작업의 실패를 이 행 아래 그리게 되므로 붉어짐.
+test("T9c a response that names a different daemon folds to null, not to that daemon's failures", () => {
+  assert.strictEqual(
+    arch.getDaemonRunRows(getPayloadState("autoagent"), "wiki"),
+    null,
+    "the fold must refuse a response belonging to another daemon",
+  );
+});
+
+test("T9c a response still in flight folds to null and an empty roster folds to an empty list", () => {
+  assert.strictEqual(
+    arch.getDaemonRunRows({ status: "loading", data: null, error: null }, "autoagent"),
+    null,
+    "loading is not 'no runs' — the two must stay distinguishable in the region",
+  );
+  assert.strictEqual(
+    arch.getDaemonRunRows({ status: "error", data: null, error: "boom" }, "autoagent"),
+    null,
+  );
+  const empty = arch.getDaemonRunRows(
+    { status: "ready", data: { daemon: "autoagent", entries: [] }, error: null },
+    "autoagent",
+  );
+  assert.deepStrictEqual(empty, [], "a ready response with no entries must fold to an empty list");
+});
+
+// --- AC-B2-6a: '못 읽음' 을 부르는 유일한 표면은 표에 딸리면 안 됨 ------------------
+// 표의 행 명부는 window.HealthModel 에서 옴 — index.html:103 이 architecture.js 와 따로 싣는
+// <script> 라 그 태그 하나만 빠져도 rows 가 통째로 빔. 경보가 그 명부 가드 아래 있으면
+// 다섯 저장소가 전부 안 읽히는 화면이 '아무 일 없음' 과 같은 그림이 됨.
+
+// role="alert" 요소만 모음 — 트리 어딘가에 저장소 이름이 있는지가 아니라
+// '경보로 불렸는가' 를 재야 함 (표 셀에 적힌 이름은 경보가 아님).
+function collectAlertTexts(node: unknown, out: string[] = []): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return out;
+  if (typeof node === "string" || typeof node === "number") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectAlertTexts(child, out);
+    return out;
+  }
+
+  const el = node as {
+    type?: unknown;
+    props?: Record<string, unknown>;
+    children?: unknown;
+  };
+  if (typeof el.type === "function")
+    return collectAlertTexts((el.type as (props: unknown) => unknown)(el.props), out);
+
+  if (el.props && el.props.role === "alert") out.push(renderToText(el));
+  return collectAlertTexts(el.children ?? null, out);
+}
+
+// 화면이 흡수한 health 응답 5종 — PG 만 끊고 나머지는 답하게 둠.
+// 넷을 함께 끊으면 경보가 떴다는 사실만 보이고 '누가 끊겼는지' 를 못 가림.
+function healthPartProps(overrides: Record<string, unknown> = {}) {
+  return {
+    daemonState: { status: "ready", data: { daemons: [] }, error: null },
+    pgState: { status: "error", data: null, error: "ECONNREFUSED" },
+    hookState: { status: "ready", data: { events: [] }, error: null },
+    hookFailState: {
+      status: "ready",
+      data: { count_24h: 0, unretried_count_24h: 0 },
+      error: null,
+    },
+    payloadState: { status: "ready", data: null, error: null },
+    partBindings: undefined,
+    onSelectDaemon: () => {},
+    onRetry: () => {},
+    ...overrides,
+  };
+}
+
+function renderHealthPartTable(
+  ctx: Record<string, unknown>,
+  props: Record<string, unknown>,
+): unknown {
+  const component = vm.runInContext("HealthPartTable", ctx) as (p: unknown) => unknown;
+  return component(props);
+}
+
+test("AC-B2-6a a store that failed is still named when the health model never loaded", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const alerts = collectAlertTexts(renderHealthPartTable(ctx, healthPartProps()));
+
+  assert.strictEqual(
+    alerts.length,
+    1,
+    "the model is gone so no row can stand — the alert is then the only thing that can say the stores were unreadable",
+  );
+  assert.ok(
+    alerts[0].includes("PostgreSQL"),
+    `the alert must still name the store that failed — read: "${alerts[0]}"`,
+  );
+});
+
+test("AC-B2-6a no model and no failure renders nothing — the alert is not a permanent fixture", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const quiet = renderHealthPartTable(
+    ctx,
+    healthPartProps({ pgState: { status: "ready", data: { status: "ok" }, error: null } }),
+  );
+
+  assert.strictEqual(
+    quiet,
+    null,
+    "every store answered, so an alert here would call five live stores dead",
+  );
 });

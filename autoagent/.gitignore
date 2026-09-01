@@ -1,0 +1,18 @@
+# Bytecode the daemon's python modules produce.
+#
+# This file is for the LIVE install, where this directory is its OWN git repository and
+# the monorepo root .gitignore does not reach it. The fourth corpus is here for a reason
+# the other three do not share: the daemon cycle runs its python modules DIRECTLY
+# (autoagent/daemon-cycle.sh), never through the bats runner, so the runner's
+# bytecode-suppression export never covers this path.
+#
+# The recovery snapshot screens `git status --porcelain --untracked-files=all` per repo
+# and refuses the whole run on an untracked __pycache__. A live install happens to hold
+# these two rules already — committed to its own recovery repo, but absent from the
+# source repo and from the manifest, so it has no shipped origin and a NEW install would
+# reproduce the refusal. Shipping the file is what closes that.
+#
+# Monorepo-wide rules stay in the root .gitignore — this is a shipped per-repo artifact,
+# not a second place to add them.
+__pycache__/
+*.pyc

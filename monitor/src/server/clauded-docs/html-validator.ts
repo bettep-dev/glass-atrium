@@ -16,6 +16,7 @@ import { dirname, resolve } from "node:path";
 import { parse } from "node-html-parser";
 
 import { normalizeMermaidSource } from "./mermaid-normalize.js";
+import { MERMAID_NODE_SELECTOR } from "./mermaid-selector.js";
 import type { DiagramTypeNotice } from "../types/clauded-docs.js";
 
 // 5 MB ceiling for the validator's input. Above this, return a synthetic
@@ -634,8 +635,8 @@ const DIAGRAM_DIRECTION_SCOPE: ReadonlyMap<string, "body" | "subgraph"> = new Ma
  * blocks: a document holding one left→right and one top→down diagram is silent,
  * because both directions are declared allowed.
  *
- * Node selection mirrors the render contract (`pre.mermaid, .mermaid`) used by
- * both render surfaces, so a block the reader sees is a block this scans.
+ * Node selection reads MERMAID_NODE_SELECTOR — the same contract both render
+ * surfaces read, so a block the reader sees is a block this scans.
  *
  * @param types - declaration SoT; excluded and forbidden membership are read
  *                from it alone.
@@ -649,7 +650,7 @@ function findDiagramNotices(root: QueryableNode, types: DiagramTypes): DiagramNo
   const forbiddenDirections = new Set(types.flowDirection.forbidden.map((d) => d.toUpperCase()));
 
   const notices: DiagramNotice[] = [];
-  const blocks = root.querySelectorAll("pre.mermaid, .mermaid");
+  const blocks = root.querySelectorAll(MERMAID_NODE_SELECTOR);
   for (let i = 0; i < blocks.length; i += 1) {
     const source = readDiagramSource(blocks[i].text);
     if (source === null) continue;

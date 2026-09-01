@@ -122,7 +122,7 @@ async function fetchSeedCrossAnalysis(): Promise<OutcomeCrossAnalysisResponse> {
   return res.json() as OutcomeCrossAnalysisResponse;
 }
 
-async function close(id: number | string): ReturnType<FastifyInstance["inject"]> {
+async function close(id: number | string): Promise<Awaited<ReturnType<FastifyInstance["inject"]>>> {
   return app.inject({ method: "PATCH", url: `/api/outcomes/${id}/close` });
 }
 

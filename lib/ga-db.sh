@@ -202,14 +202,49 @@ setup_database() {
   run_db_setup
 }
 
+# ga_resolve_backup_dir — the pg_dump backup directory, resolved through the ONE resolver that
+# decides whether [paths].backup_dir is adopted (atrium_backup_dir, ADR-6) instead of re-derived
+# here. The library is sourced LAZILY: ga-core.sh loads this file before ga_init_env runs, so
+# GA_ROOT does not exist yet at file scope, and a resolve is only ever needed inside a call.
+#
+# LIBRARY-ABSENT FALLBACK. Uninstall is a data-preserving path, so an unreachable library must not
+# abort the teardown: the default location is spelled here as the last-resort constant (honouring
+# GA_DB_BACKUP_DIR, which the resolver would otherwise honour first) and the run continues after ONE
+# warn. That literal is pinned byte-equal to the resolver's own default by
+# test/db-backup-path-consistency.bats — the duplication is deliberate (the SoT is unreachable in
+# exactly the branch that needs it) and mechanically held equal.
+#
+# SEAM: ATRIUM_CONFIG_LIB is a TEST-ONLY override of the library PATH — the sandbox
+# seam the bats suites pin, never an operator knob. Production always resolves the
+# sibling path spelled below, the same way ATRIUM_CONFIG_TOML and GA_DB_BACKUP_DIR
+# are labelled test/sandbox overrides in atrium-config.sh.
+ga_resolve_backup_dir() {
+  local lib="${ATRIUM_CONFIG_LIB:-${GA_ROOT:-}/scripts/lib/atrium-config.sh}"
+  # Already sourced (a sibling call, or a consumer that loaded the library itself) — reuse it.
+  if declare -F atrium_backup_dir >/dev/null; then
+    atrium_backup_dir
+    return 0
+  fi
+  # An && chain, not `|| true`: every step's failure lands on the one fallback arm below, so no
+  # status is discarded and the caller's set -e stays armed.
+  # shellcheck source-path=SCRIPTDIR source=../scripts/lib/atrium-config.sh
+  if [[ -r "${lib}" ]] && . "${lib}" && declare -F atrium_backup_dir >/dev/null; then
+    atrium_backup_dir
+    return 0
+  fi
+  log "warn: backup-dir resolver unavailable (${lib}) — using the default location"
+  printf '%s\n' "${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
+}
+
 # drop_databases — uninstall teardown: pre-drop BACKUP, then DROP, of the GA PostgreSQL databases
 # (primary ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a reinstall recreates a fresh, consistent
 # DB while the dropped data stays RECOVERABLE. The fresh-DB intent stands (dev-agent roster +
 # schema drift across installs → no auto-restore), but the drop is gated on a verified backup:
 # BACKUP-BEFORE-DROP, FAIL-CLOSED per database. Each EXISTING database is pg_dump'ed (custom -F c,
-# pg_restore-compatible) to ${HOME}/.glass-atrium/backups/postgres/<db>-pre-uninstall-<ts>.dump
-# (pg-backup.sh's dir + timestamp convention; GA_DB_BACKUP_DIR sandbox override, mirroring
-# oss-db-setup.sh). A dump that FAILS or is EMPTY (non-empty gate = oss-db-setup.sh
+# pg_restore-compatible) to <ga_resolve_backup_dir>/<db>-pre-uninstall-<ts>.dump
+# (pg-backup.sh's timestamp convention; the directory comes from the shared ADR-6 resolver, which
+# honours the GA_DB_BACKUP_DIR sandbox override ahead of the config, mirroring oss-db-setup.sh).
+# A dump that FAILS or is EMPTY (non-empty gate = oss-db-setup.sh
 # backup_db_to_file precedent) SKIPS the drop for THAT database — loud log, data preserved,
 # uninstall continues; applied uniformly (the shadow may dump near-empty, same gate governs).
 # Pre-uninstall dumps are KEEP-FOREVER: no rotation here, and pg-backup.sh's 14-dump keep-window
@@ -238,10 +273,22 @@ drop_databases() {
     log "uninstall: pg_dump not found — SKIPPING DB drop entirely (backup-before-drop is mandatory; data preserved)"
     return 0
   fi
-  local backup_dir="${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
+  local backup_dir
+  # shellcheck disable=SC2311  # the resolver returns 0 on every arm (resolved or fallback), so the masked status carries no signal
+  backup_dir="$(ga_resolve_backup_dir)"
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
+  # CREATION MASK (CWE-732). These pre-drop dumps are the ONLY copy of a database this
+  # function is about to drop, so they must not land 0644: 077 makes a directory this
+  # step creates 0700 and every dump below 0600. The same user runs pg_restore, so
+  # owner-only loses nothing. SCOPED — restored after the loop so the rest of the
+  # uninstall keeps the caller's mask. HONEST LIMIT: umask governs CREATION only; an
+  # existing backup directory keeps the mode it has.
+  local prior_umask
+  prior_umask="$(umask)"
+  umask 077
   if ! mkdir -p -- "${backup_dir}"; then
+    umask "${prior_umask}"
     log "uninstall: cannot create backup dir ${backup_dir} — SKIPPING DB drop entirely (data preserved)"
     return 0
   fi
@@ -275,6 +322,8 @@ drop_databases() {
       log "  warn: dropdb '${db}' failed (server unreachable?) — skipped (advisory)"
     fi
   done
+  # Creation-mask scope ends with the last dump.
+  umask "${prior_umask}"
   log "uninstall: DB drop done (${dropped}/2 dropped — skipped DBs preserved)"
   return 0
 }
@@ -299,6 +348,7 @@ bootstrap_health_gate() {
   # [ports].monitor → terminal default 16145. A CONFIGURED invalid value loud-fails in the resolver
   # (stderr + rc 1); surface it as a die (CLI-fallback contract: loud, never a silent wrong-port default).
   local port
+  # shellcheck disable=SC2310,SC2311  # the `|| die` below IS the handler for the masked status; visible only since ga_resolve_backup_dir made shellcheck follow the library
   port="$(atrium_monitor_port)" \
     || die "monitor port resolution failed — check config.toml [ports].monitor / monitor/.env ATRIUM_MONITOR_PORT"
 

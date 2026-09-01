@@ -27,12 +27,26 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
 const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 
+// public/src/screens/outcomes.jsx → OPTIONAL_FILTER_AXES.
+type OptionalFilterAxis =
+  | "agent"
+  | "task_type"
+  | "result"
+  | "confidence"
+  | "metric_pass"
+  | "review_flag"
+  | "attribution_source"
+  | "q";
+
 interface OutcomesHelpers {
   buildAgentFacetOptionsO: (canonicalKeys: unknown) => string[];
   extractCanonicalAgentIdsO: (summaryData: unknown) => string[];
   setIncludeAllParamO: (params: URLSearchParams, includeAll: boolean) => URLSearchParams;
   buildSearchUrlO: (
-    filter: { days: number | string },
+    // Mirrors the real signature: `days` plus the eight OPTIONAL_FILTER_AXES that
+    // setOptionalAxesO forwards (outcomes.jsx). The declaration listed `days` alone,
+    // which made the pinned attribution_source contract below un-typeable.
+    filter: { days: number | string } & Partial<Record<OptionalFilterAxis, string>>,
     sort: string,
     page: number,
     limit: number,
