@@ -117,7 +117,7 @@ STUB
   local lib="${GA}/scripts/lib/atrium-config.sh"
   [[ -r "${lib}" ]] || skip "atrium-config.sh not found: ${lib}"
 
-  printf '%s\n' '{"haiku_model":"probe-model-id"}' >"${WORK}/daemon-config.json"
+  printf '%s\n' '{"worker_model":"probe-model-id"}' >"${WORK}/daemon-config.json"
   run --separate-stderr -0 env ATRIUM_CONFIG_LIB="${lib}" GA_DATA_ROOT="${WORK}/nonexistent-root" \
     bash -c 'set -Eeuo pipefail; . "$1"; get_model_id' _ "${SNIPPET}"
   # Non-empty is the contract the helper guarantees (configured id or alias fallback).

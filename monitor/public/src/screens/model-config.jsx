@@ -68,7 +68,7 @@ const DOMAIN_META_MC = {
 		editable: true,
 		inherit: true,
 	},
-	"model.daemon_cycle_haiku": {
+	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
 		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
 		enforcement: "applied",
@@ -83,7 +83,7 @@ const DOMAIN_ORDER_MC = [
 	"model.research",
 	"model.meta",
 	"model.wiki",
-	"model.daemon_cycle_haiku",
+	"model.daemon_cycle_worker",
 ];
 
 // enforcement class 칩 — 정직 공시: applied=저장이 실제 소비 지점에 반영.
@@ -116,7 +116,7 @@ const SYNC_META_MC = {
 // 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
 // 미지의 key(서버 먼저 확장)는 fallback 메타로 그대로 렌더 (silent drop 금지).
 const BUDGET_META_MC = {
-	"budget.haiku_max_usd": {
+	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
 		desc: "Aborts a single runaway model call in the self-improve generation step and the wiki compile step (both share this cap)",
 	},
@@ -127,7 +127,7 @@ const BUDGET_META_MC = {
 };
 
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
-const BUDGET_ORDER_MC = ["budget.haiku_max_usd", "budget.pre_verify_max_usd"];
+const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 // 추천 preset — form 채움만 수행, 저장은 명시 Save 버튼 (spec P3).
 const PRESET_MODELS_MC = {

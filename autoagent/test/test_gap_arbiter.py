@@ -186,9 +186,9 @@ class ConfigSourceTest(unittest.TestCase):
                     claude_bin=_write_stub(tmpdir),
                 )
             recorded = argv.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(recorded[recorded.index("--model") + 1], ga.HAIKU_MODEL)
+        self.assertEqual(recorded[recorded.index("--model") + 1], ga.WORKER_MODEL)
         self.assertEqual(
-            recorded[recorded.index("--max-budget-usd") + 1], ga.HAIKU_MAX_BUDGET_USD
+            recorded[recorded.index("--max-budget-usd") + 1], ga.WORKER_MAX_BUDGET_USD
         )
 
     def test_a_config_override_in_a_fresh_subprocess_changes_the_invoked_model(self):
@@ -198,7 +198,7 @@ class ConfigSourceTest(unittest.TestCase):
             config = tmpdir / "daemon-config.json"
             config.write_text(
                 json.dumps(
-                    {"haiku_model": "fixture-model-id", "haiku_max_budget_usd": "1.25"}
+                    {"worker_model": "fixture-model-id", "worker_max_budget_usd": "1.25"}
                 ),
                 encoding="utf-8",
             )
@@ -252,7 +252,7 @@ class ConfigSourceTest(unittest.TestCase):
             config = Path(tmp) / "daemon-config.json"
             config.write_text(json.dumps({ga.RUN_CEILING_KEY: 7}), encoding="utf-8")
             self.assertEqual(ga.get_run_ceiling(config), 7)
-            config.write_text(json.dumps({"haiku_model": "x"}), encoding="utf-8")
+            config.write_text(json.dumps({"worker_model": "x"}), encoding="utf-8")
             absent_key = ga.get_run_ceiling(config)
             config.write_text("{not json", encoding="utf-8")
             self.assertEqual(ga.get_run_ceiling(config), absent_key)

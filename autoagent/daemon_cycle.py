@@ -220,14 +220,13 @@ if HAIKU_ESCALATED_TIMEOUT_SEC < HAIKU_TIMEOUT_SEC:
     )
     HAIKU_ESCALATED_TIMEOUT_SEC = HAIKU_TIMEOUT_SEC
 # Budget ceiling + model id read from the daemon-config.json SoT via the shared
-# loader (hooks/daemon_config.py), which degrades to validated literals
-# ('0.50' / the unpinned 'haiku' alias) on missing/corrupt file — NEVER raises (test
-# modules import at collection time). Live-verified: 0.10 is too low (immediate
-# EXIT 1); 0.50 passes (Anthropic minimum call cost ~$0.02-0.10). Cost ceiling:
-# agents-per-cycle × 0.50.
+# loader (hooks/daemon_config.py), which degrades to its own fallback literals on
+# a missing/corrupt file — NEVER raises (test modules import at collection time).
+# The literals and their sizing rationale live at that loader's _FALLBACK, not
+# restated here. Cycle cost ceiling: agents-per-cycle × the per-call cap.
 from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-relative + $HOME)
-    HAIKU_MAX_BUDGET_USD,
-    HAIKU_MODEL,
+    WORKER_MAX_BUDGET_USD,
+    WORKER_MODEL,
     PRE_VERIFY_MAX_BUDGET_USD,
 )
 
@@ -843,20 +842,27 @@ def match_sensitive_diff(diff: str) -> str | None:
 # -- pre-verify config ------------------------------------------------------
 
 # Verification budget per patch — the verifier prompt is small (≤4KB) and the
-# rule excerpts are also bounded, so $0.02 is a generous cap (Haiku 4.5 input
-# at ~$1/MTok + output ~$5/MTok → typical call ≈ $0.005).
-# PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT (unified
-# at 0.50, same as HAIKU — lower caps cause systematic 5/5 reject).
+# rule excerpts are also bounded, so a typical call is cents: at Sonnet 5 rates
+# (~$3/MTok input, ~$15/MTok output) it lands around $0.015. The figures here were
+# previously computed at Haiku 4.5 rates (~$1/$5 per MTok, ~$0.005/call); they are
+# restated for the model the loop actually runs on now.
+# PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT. It and the
+# generation cap SHARE A DEFAULT, not a coupling: they are two independent
+# BUDGET_DOMAINS keys (budget.pre_verify_max_usd / budget.worker_max_usd), each
+# settable on its own from the monitor, and validateBudgetValue validates each one
+# in isolation with no cross-field invariant. Editing one leaves the other where it
+# was. Both default generously relative to a typical call because a cap set close
+# to it causes systematic 5/5 reject.
 PRE_VERIFY_TIMEOUT_SEC = 90
 
 # AD-9 evaluator independence (GOAL precedent from CALM self-preference; the CALM
 # mapping is inferred, not code-verified — mechanism independently designed here): the
-# patch generator runs on HAIKU_MODEL; an evaluator systematically favors output from
+# patch generator runs on WORKER_MODEL; an evaluator systematically favors output from
 # its own model class, so the verifier SHOULD run on a different class where
 # feasible. AUTOAGENT_PRE_VERIFY_MODEL overrides the verifier model id; when
-# absent it defaults to HAIKU_MODEL (same class as the author) and the run
+# absent it defaults to WORKER_MODEL (same class as the author) and the run
 # proceeds under a loud advisory — never blocking (ADVISORY-FIRST rollout).
-PRE_VERIFY_MODEL = os.environ.get("AUTOAGENT_PRE_VERIFY_MODEL", "").strip() or HAIKU_MODEL
+PRE_VERIFY_MODEL = os.environ.get("AUTOAGENT_PRE_VERIFY_MODEL", "").strip() or WORKER_MODEL
 
 # Compliance source files — the verifier reads excerpts and must check
 # the patch against all 4 axes independently.
@@ -3123,8 +3129,8 @@ def _invoke_haiku_cli(
                 claude_bin,
                 "-p", prompt,
                 "--output-format", "text",
-                "--max-budget-usd", HAIKU_MAX_BUDGET_USD,
-                "--model", HAIKU_MODEL,
+                "--max-budget-usd", WORKER_MAX_BUDGET_USD,
+                "--model", WORKER_MODEL,
             ],
             capture_output=True,
             text=True,
@@ -3173,8 +3179,9 @@ def generate_patch_proposal(
     the cost guard or preflight has tripped.
 
     On first-attempt parse failure (parse_mode='failed'), retry ONCE with a
-    strict header-emphasis suffix appended. Retry budget: 1 attempt — cost
-    ceiling stays at 5 patterns × 2 calls × $0.50 = $5.00/cycle worst case.
+    strict header-emphasis suffix appended. Retry budget: 1 attempt — so the
+    worst case is 5 patterns × 2 calls, each bounded by the per-call cap (the
+    cap's value lives in the daemon-config SoT, not restated here).
     Idempotency: retry prompt body is identical except for the strict suffix
     (same PATTERN / OUTCOMES / AGENT FILE inputs → same expectations).
     """
@@ -3538,7 +3545,7 @@ def _run_haiku_with_retry(
                 target_file=target_file,
                 rationale=(
                     f"local --max-budget-usd ceiling too low "
-                    f"(HAIKU_MAX_BUDGET_USD={HAIKU_MAX_BUDGET_USD}, "
+                    f"(WORKER_MAX_BUDGET_USD={WORKER_MAX_BUDGET_USD}, "
                     f"returncode={completed.returncode}); NOT an external quota cap"
                 ),
                 raw_response=(completed.stderr or completed.stdout or "")[:400],
@@ -6172,7 +6179,7 @@ def _model_class(model_id: str) -> str:
 
 
 def resolve_verifier_model(
-    author_model: str = HAIKU_MODEL,
+    author_model: str = WORKER_MODEL,
     verifier_model: str = PRE_VERIFY_MODEL,
 ) -> str:
     """Return the verifier model, warning when it shares the author's class.
@@ -10160,7 +10167,7 @@ def run_cycle(
             # Informational only (not a gate).
             "max_haiku_calls": agent_cap,
             "agent_cap": agent_cap,
-            "haiku_max_budget_usd_per_call": HAIKU_MAX_BUDGET_USD,
+            "worker_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
             "pre_verify_max_budget_usd_per_call": PRE_VERIFY_MAX_BUDGET_USD,
             "skip_haiku": str(skip_haiku),
             "skip_pre_verify": str(skip_pre_verify),

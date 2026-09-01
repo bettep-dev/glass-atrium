@@ -43,14 +43,12 @@ CLAUDE_BIN = os.environ.get("WIKI_DAEMON_CLAUDE_BIN", "claude")
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
-from daemon_config import HAIKU_MAX_BUDGET_USD, HAIKU_MODEL  # noqa: E402
+from daemon_config import WORKER_MAX_BUDGET_USD, WORKER_MODEL  # noqa: E402
 import ga_paths  # noqa: E402 — hooks dir pinned by the insert above
 
 # Cost guard: max 5 Haiku calls per cycle.
 MAX_LLM_CALLS = 5
 HAIKU_TIMEOUT_SEC = 90
-# HAIKU_MAX_BUDGET_USD is read from the daemon_config SoT (SoT default '0.50').
-# HAIKU_MODEL is also from SoT.
 
 # Heuristic thresholds.
 JACCARD_TITLE_THRESHOLD = 0.5     # token overlap on slug titles
@@ -79,7 +77,7 @@ class DedupProposal:
     source_slugs: list[str]     # slugs to merge IN (will become redirects)
     similarity_score: float     # heuristic score [0.0, 1.0]
     llm_verdict: str            # 'duplicate' | 'not-duplicate' | 'skipped' | 'error:<msg>'
-    llm_rationale: str          # Haiku's one-sentence rationale
+    llm_rationale: str          # verifier's one-sentence rationale
     suggested_action: str       # human-readable merge instruction
     cluster_hash: str           # deterministic ID for idempotency
 
@@ -420,8 +418,8 @@ def _call_haiku_dedup(
                 claude_bin,
                 "-p", prompt,
                 "--output-format", "text",
-                "--max-budget-usd", HAIKU_MAX_BUDGET_USD,
-                "--model", HAIKU_MODEL,
+                "--max-budget-usd", WORKER_MAX_BUDGET_USD,
+                "--model", WORKER_MODEL,
             ],
             capture_output=True,
             text=True,
@@ -430,7 +428,7 @@ def _call_haiku_dedup(
             env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
         )
     except subprocess.TimeoutExpired:
-        return "error:haiku-timeout", "Haiku call timed out", "either"
+        return "error:haiku-timeout", "dedup verifier call timed out", "either"
     except FileNotFoundError:
         return f"error:claude-cli-missing:{claude_bin}", "claude CLI not found", "either"
 
@@ -595,7 +593,7 @@ def dedup_result_to_dict(result: DedupResult) -> dict:
         # dedup --max-budget-usd. Always the daemon_config SoT value (field
         # had no per-result variability).
         "cost_guard": {
-            "dedup_max_budget_usd_per_call": HAIKU_MAX_BUDGET_USD,
+            "dedup_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
             "max_llm_calls": result.llm_calls_used,
         },
         "proposals": [asdict(p) for p in result.proposals],
@@ -614,7 +612,7 @@ def _main(argv: list[str]) -> int:
     parser.add_argument("--notes-dir", type=Path, default=None,
                         help="Override wiki/notes/ path (for testing)")
     parser.add_argument("--skip-llm", action="store_true",
-                        help="Skip Haiku calls (dry-run / test mode)")
+                        help="Skip LLM verifier calls (dry-run / test mode)")
     parser.add_argument("--max-llm-calls", type=int, default=MAX_LLM_CALLS)
     parser.add_argument("--out-json", type=Path, default=None,
                         help="Append dedup_proposals key to this JSON file")
@@ -833,12 +831,12 @@ def _self_test() -> int:
     # dedup_result_to_dict surfaces the stage budget from the SoT.
     d11 = dedup_result_to_dict(DedupResult(scanned_notes=0, candidate_clusters=0, llm_calls_used=0))
     cg = d11.get("cost_guard", {})
-    if cg.get("dedup_max_budget_usd_per_call") != HAIKU_MAX_BUDGET_USD:
+    if cg.get("dedup_max_budget_usd_per_call") != WORKER_MAX_BUDGET_USD:
         failures.append(
-            f"T11 FAIL: cost_guard budget {cg.get('dedup_max_budget_usd_per_call')!r} != SoT {HAIKU_MAX_BUDGET_USD!r}"
+            f"T11 FAIL: cost_guard budget {cg.get('dedup_max_budget_usd_per_call')!r} != SoT {WORKER_MAX_BUDGET_USD!r}"
         )
     else:
-        print(f"T11 PASS: cost_guard surfaces dedup budget {HAIKU_MAX_BUDGET_USD} (I12)")
+        print(f"T11 PASS: cost_guard surfaces dedup budget {WORKER_MAX_BUDGET_USD} (I12)")
 
     if failures:
         for f in failures:

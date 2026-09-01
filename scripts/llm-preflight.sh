@@ -15,15 +15,15 @@
 
 PREFLIGHT_CLAUDE="${AUTOAGENT_CLAUDE_BIN:-claude}"
 
-# Shared config accessors (atrium_resolve_haiku_model) — resolved relative to this
+# Shared config accessors (atrium_resolve_worker_model) — resolved relative to this
 # script so both standalone (`bash llm-preflight.sh`) and legacy-sourced modes find the lib.
 LLM_PREFLIGHT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/atrium-config.sh
 . "${LLM_PREFLIGHT_SELF_DIR}/lib/atrium-config.sh"
 
-# Haiku cheap-model id from the daemon-config.json SoT, via atrium_resolve_haiku_model.
+# Background-worker model id from the daemon-config.json SoT, via atrium_resolve_worker_model.
 # PREFLIGHT_DAEMON_CONFIG override hook → canonical default when empty (ping happens only in Check B).
-PREFLIGHT_HAIKU_MODEL="$(atrium_resolve_haiku_model "${PREFLIGHT_DAEMON_CONFIG:-}")"
+PREFLIGHT_WORKER_MODEL="$(atrium_resolve_worker_model "${PREFLIGHT_DAEMON_CONFIG:-}")"
 
 # Compute today's accumulated cost from PG core.cost_events (live single sink):
 # SUM(cost_usd) WHERE event_date = current_date, echoed as "%.2f" USD on stdout.
@@ -94,7 +94,7 @@ llm_preflight() {
   OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none CLAUDE_CODE_ENABLE_TELEMETRY=0 \
     "${PREFLIGHT_CLAUDE}" -p "respond OK" \
     --max-budget-usd 1.00 \
-    --model "${PREFLIGHT_HAIKU_MODEL}" \
+    --model "${PREFLIGHT_WORKER_MODEL}" \
     --output-format text >"${ping_tmp}" 2>/dev/null &
   ping_pid=$!
 
