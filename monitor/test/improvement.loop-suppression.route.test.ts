@@ -28,7 +28,9 @@
 // against a pre-seed snapshot. A delta is the honest assertion for them: the counts
 // are over a live shared table, and pinning an absolute would pin production state.
 //
-// DB: real Postgres. Skips gracefully when unreachable.
+// DB: real Postgres. The skip gate covers ONLY an unreachable/unprovisioned
+// database — a route that answers non-200 reds this suite, because it is the
+// sole guard on the route SQL and a self-skipping guard guards nothing.
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.route.test.ts
 
@@ -145,15 +147,28 @@ before(async () => {
   await registerImprovementRoutes(app);
   await app.ready();
 
+  // The skip gate covers exactly ONE condition: no database available. Everything
+  // past this probe — the seed and both route calls — propagates as a FAILURE.
+  // This suite is the only guard on the new route SQL, so a gate wide enough to
+  // catch a 500 would let a broken route report green by skipping itself.
   try {
-    baseline = await fetchState();
-    await seed();
+    const prisma = getPrisma();
+    await prisma.$queryRaw`SELECT 1 FROM core.learning_log LIMIT 1`;
+    await prisma.$queryRaw`SELECT 1 FROM core.autoagent_loop_events LIMIT 1`;
     dbReady = true;
-    body = await fetchState();
   } catch (error) {
-    dbReady = false;
-    console.error("[impr-suppress] DB seed failed — tests will skip:", error);
+    console.error(
+      "[impr-suppress] Postgres unreachable or unprovisioned — tests will skip:",
+      error,
+    );
+    return;
   }
+
+  // Deliberately UNGUARDED. fetchState asserts 200, so a route regression reds
+  // here rather than flipping the suite to skipped.
+  baseline = await fetchState();
+  await seed();
+  body = await fetchState();
 });
 
 after(async () => {
