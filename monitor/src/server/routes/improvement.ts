@@ -320,14 +320,8 @@ interface ApplyCapDbRow {
 // 1 cap — and only the cap was visible anywhere. The banner that reported it said
 // "Loop parked", which reads as a statement about the loop.
 //
-// Two populations, deliberately NOT summed:
-//   parked    — terminal core.learning_log rows, bucketed by transition-reason
-//               marker. A row here is out of intake permanently.
-//   per_cycle — core.autoagent_loop_events over a window. These mechanisms write
-//               no transition, so their rows stay at status='identified' and are
-//               re-suppressed every single cycle; a window count is the only count
-//               available, and it counts RECURRENCES, not distinct rows.
-// Adding them would produce a number that is neither.
+// Reported over two populations that are never summed — contract and the reason
+// on ImprovementLoopSuppressionState (types/improvement.ts).
 
 // Opening literals of the daemon's last_transition_reason stamps
 // (daemon_cycle.py APPLY_CAP_REASON_TEMPLATE / REJECT_STREAK_REASON_TEMPLATE /
@@ -365,6 +359,13 @@ const SUPPRESSION_EVAL_RESULTS = [
 // Operator-facing name + remedy per cause. Shared by both populations: the same
 // mechanism can park a row AND recur per cycle (the cap does both), and a reader
 // comparing the two lists must not meet two different descriptions of one thing.
+const NON_AUTO_FIXABLE_COPY = {
+  label: "Non-auto-fixable",
+  hint:
+    "The proposal removes a line outside every editable region, which add-only " +
+    "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE region.",
+};
+
 const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = {
   "repeat-apply-cap": {
     label: "Repeat-apply cap",
@@ -418,20 +419,10 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
       "A covering applied proposal was backed out by a human. Terminal; " +
       "re-proposing would re-land what was just reverted.",
   },
-  "non-auto-fixable": {
-    label: "Non-auto-fixable",
-    hint:
-      "The proposal removes a line outside every editable region, which add-only " +
-      "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE " +
-      "region.",
-  },
-  "non-auto-fixable-skip": {
-    label: "Non-auto-fixable",
-    hint:
-      "The proposal removes a line outside every editable region, which add-only " +
-      "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE " +
-      "region.",
-  },
+  "non-auto-fixable": NON_AUTO_FIXABLE_COPY,
+  // Same gate, two keys: the transition-reason marker above, the eval_result token
+  // here. One copy object so a reworded remedy cannot land on only one of them.
+  "non-auto-fixable-skip": NON_AUTO_FIXABLE_COPY,
 };
 
 // Loop-event window. 7d = one week of daily cycles — long enough that a

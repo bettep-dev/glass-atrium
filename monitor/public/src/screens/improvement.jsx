@@ -1976,11 +1976,10 @@ function ConfidenceLaneTableI({ buckets }) {
 //   - per-agent verified rate (Gaming-the-Judge cross-verify pass rate)
 //   - 전체 rollup → MANDATORY 격상 조건 충족 indicator
 //
-// 헤드라인은 "Loop parked" 가 아니라 메커니즘 이름이다. repeat-apply cap 은 선택을 억제하는
-// 다섯 경로 중 하나이고, 측정치로는 가장 드물다(사이클 하루 기준 cap 1 : non-promptable 25 :
-// stale 10 : roster-mismatch 5). 그 하나를 "루프가 멈췄다"로 읽히게 쓰면, 나머지 넷이 조용히
-// 억제되는 동안 배너는 이미 경고를 띄운 상태라 아무도 다시 보지 않는다. 전체 억제 분해는
-// LoopSuppressionCardI 가 담당한다 — 다섯 원인을 한 숫자로 합치면 지금보다 나쁜 거짓말이다.
+// 헤드라인은 "Loop parked" 가 아니라 메커니즘 이름이다. cap 은 억제 다섯 경로 중 하나이고
+// 측정상 가장 드물다(비율은 routes/improvement.ts 헤더). 그 하나를 "루프가 멈췄다"로 쓰면
+// 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
+// 분해는 LoopSuppressionCardI 담당.
 //
 // 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없고, learning_log status 를
 // 되돌리는 방식으로도 풀리지 않는다(다음 사이클에 재정지 + park 이력 유실). apply evidence 를
@@ -2018,11 +2017,8 @@ function ParkedLoopBannerI({ applyCap }) {
 // 루프 억제 분해 카드. 존재 이유는 배너가 답하지 못하는 질문 하나다: "루프의 얼마가, 왜
 // 억제되어 있나".
 //
-// 두 population 은 의도적으로 분리해 렌더하고 절대 더하지 않는다.
-//   parked    — core.learning_log 종결 row. 한 번 park 되면 intake 에서 영구히 빠진다.
-//   per-cycle — core.autoagent_loop_events 창(window) 집계. 이쪽 메커니즘들은 transition 을
-//               쓰지 않아 row 가 status='identified' 로 남고 매 사이클 다시 억제된다. 즉
-//               "재발 횟수"이지 "row 수"가 아니다. 합계는 둘 중 어느 것도 아니게 된다.
+// 두 population(parked / per-cycle) 은 분리해 렌더하고 절대 더하지 않는다 — 종결 row 와
+// 재발 횟수라 합계는 둘 중 어느 것도 아니다(계약은 ImprovementLoopSuppressionState).
 //
 // pending split 이 먼저 오는 이유: status_distribution 의 identified 수는 처리 대기 backlog 로
 // 읽히는데, 그중 상당수는 intake 에서 매번 버려지는 라벨이라 제안이 나올 수 없다. 억제된

@@ -8356,11 +8356,10 @@ def drop_non_auto_fixable_patterns(
 def _stale_family_known(pattern_label: str) -> bool:
     """Whether _stale_reason can recompute this label's family from live stats.
 
-    The two families are the ONLY ones the live-rate recompute implements, and the
-    aggregator emits more than two (budget-overage / size-est-under-estimate
-    concentrations, the per-task_type low-success-rate rows). Naming the predicate
-    lets the caller BRANCH on ignorance instead of silently swallowing it inside a
-    "" return that is indistinguishable from "recomputed, still live".
+    These two families are the ONLY ones it implements, and the aggregator emits
+    more (budget-overage / size-est concentrations, per-task_type low-success-rate
+    rows). Named so the caller can BRANCH on ignorance rather than swallow it in a
+    "" return indistinguishable from "recomputed, still live".
     """
     label = (pattern_label or "").strip()
     return label.startswith(_FAIL_COUNT_LABEL_PREFIXES) or label.startswith(
@@ -8414,16 +8413,9 @@ def drop_stale_patterns(agent: str, patterns: list[Pattern]) -> list[Pattern]:
 
     core.learning_log frequency accumulates forever, so a pattern can outlive its
     evidence (the '62%' fossil regenerated proposals weeks after the live rate
-    normalized). Two branches, by whether the label family is recomputable:
-
-    - KNOWN family (_stale_family_known) → recompute the rate/count from the
-      rolling outcome window and skip below-threshold rows
-      (eval_result='stale-pattern-skip'). Unchanged.
-    - UNKNOWN family → the live-rate stats cannot speak for it, so fall back to
-      the family-independent re-observation check: no aggregator re-emit within
-      STALE_WINDOW_DAYS → skip (eval_result=STALE_UNOBSERVED_EVAL). Re-observed
-      recently → KEEP, but emit STALE_UNKNOWN_FAMILY_EVAL so the fail-open is
-      VISIBLE rather than silent (Precondition Loud-Fail).
+    normalized). Branches on whether the label family is recomputable
+    (_stale_family_known); an unrecomputable one falls back to _reobservation_reason,
+    which is family-independent.
 
     No lifecycle transition on either branch — every skip here is a one-cycle
     snooze that re-arms by itself (live rate back over the floor, or the next
@@ -8983,10 +8975,8 @@ def _stale_reason(pattern_label: str, stats: tuple[int, int]) -> str:
       - fail-count family (aggregator pattern 1) → live iff triggers >= 3;
       - fail-rate family (aggregator pattern 5)  → live iff total >= 3 AND
         triggers/total >= 0.5.
-    Unknown family → '' — but the CALLER no longer reads that as "still live":
-    drop_stale_patterns branches on _stale_family_known BEFORE calling this, so an
-    unknown family reaches the re-observation fallback instead. The '' return is
-    kept as a defensive floor for any direct caller.
+    Unknown family → '', which no longer reads as "still live": the sole caller
+    guards on _stale_family_known first, so an unknown family never arrives here.
     """
     triggers, total = stats
     label = (pattern_label or "").strip()
@@ -9065,12 +9055,10 @@ def _warn_gate_fail_open(
 ) -> None:
     """Gate could not adjudicate a pattern → stderr WARN + loop event, pattern KEPT.
 
-    The counterpart to _warn_pattern_skip, deliberately NOT the same function: that
-    one reports a pattern the gate DROPPED, this one reports one it let through
-    because it could not judge it. Folding them would make the eval_result
-    distribution unreadable — an operator could no longer tell suppression from
-    ignorance. Precondition Loud-Fail: an unadjudicated pattern is a precondition
-    the gate did not meet, so it gets a named channel rather than a silent keep.
+    Separate from _warn_pattern_skip because the stderr line must say which
+    happened: that one dropped the pattern, this one kept one it could not judge.
+    Precondition Loud-Fail — an unadjudicated pattern gets a named channel rather
+    than a silent keep.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: gate fail-open {eval_result} — agent={agent} "

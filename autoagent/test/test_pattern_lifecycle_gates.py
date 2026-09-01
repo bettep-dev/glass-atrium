@@ -80,9 +80,8 @@ _PROBE_AGENT = "ap4-snooze-probe-agent"
 def _today_iso() -> str:
     """Today as the intake carries it (core.learning_log.discovered_date).
 
-    Computed, never a literal: the re-observation branch compares against
-    ``date.today()``, so a hardcoded date would silently cross the window as the
-    suite ages and flip a fail-open test into a snooze test.
+    Computed, never a literal: a hardcoded date crosses the window as the suite
+    ages and silently flips a fail-open test into a snooze test.
     """
     return date.today().isoformat()
 
@@ -91,9 +90,10 @@ def _pattern(
     label: str = _LEGACY_LABEL,
     agent: str = "wiki-curator",
     row_id: int = 15,
+    date: str = "2026-06-01",
 ) -> "dc.Pattern":
     return dc.Pattern(
-        date="2026-06-01",
+        date=date,
         label=label,
         frequency="64",
         agent=agent,
@@ -449,28 +449,14 @@ class TestDropStalePatterns(_GateFixture):
         self.assertEqual(kept, [])
         self.assertIn("live sample 1 < 3", stderr_text)
 
-    def test_when_label_family_unknown_but_recently_observed_then_fail_open(
-        self,
-    ) -> None:
-        # Fail-open is PRESERVED on the branch where it is still the right answer:
-        # the family is unrecomputable but the row was re-observed today, so
-        # nothing has gone quiet and suppressing it would be suppression on
-        # ignorance. The date is what moves this row off the re-observation
-        # branch — _pattern's default (2026-06-01) is deliberately ancient.
-        pattern = _pattern(label="some future pattern family")
-        pattern = dc.Pattern(**{**vars(pattern), "date": _today_iso()})
-        kept, _ = self._drop([], [pattern])
-
-        self.assertEqual(kept, [pattern])
-
     def test_when_label_family_unknown_then_fail_open_is_loud(self) -> None:
-        # The defect: the fail-open above was SILENT, so a family the gate cannot
-        # recompute produced no signal anywhere — and covering_apply_count counts
+        # Fail-open is PRESERVED where it is still the right answer — the family is
+        # unrecomputable but the row was re-observed today, so nothing has gone
+        # quiet. What was wrong was the SILENCE: covering_apply_count counts
         # applies, never re-observations, so the repeat-apply cap could not tell a
-        # dead pattern from a live one. Keeping is still correct; keeping quietly
-        # is not.
-        pattern = _pattern(label="some future pattern family")
-        pattern = dc.Pattern(**{**vars(pattern), "date": _today_iso()})
+        # dead pattern from a live one. Keeping is correct; keeping quietly is not.
+        # The date is what moves this row off the re-observation branch.
+        pattern = _pattern(label="some future pattern family", date=_today_iso())
         kept, stderr_text = self._drop([], [pattern])
 
         self.assertEqual(kept, [pattern])
@@ -503,8 +489,7 @@ class TestDropStalePatterns(_GateFixture):
     def test_when_unknown_family_date_unreadable_then_fail_open(self) -> None:
         # A date we cannot parse is not evidence of silence. Fail OPEN, loudly —
         # never snooze a pattern on an unreadable timestamp.
-        pattern = _pattern(label="some future pattern family")
-        pattern = dc.Pattern(**{**vars(pattern), "date": "not-a-date"})
+        pattern = _pattern(label="some future pattern family", date="not-a-date")
         kept, _ = self._drop([], [pattern])
 
         self.assertEqual(kept, [pattern])
