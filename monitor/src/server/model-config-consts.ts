@@ -156,9 +156,10 @@ export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
 
 // Retired daemon-config.json keys, split by WHY the monitor stopped writing them. The split is
 // load-bearing, not cosmetic: these two categories cannot share a removal rule, and the former
-// single DEPRECATED_DAEMON_CONFIG_KEYS roster conflated them. Deleting a RENAMED key without
-// writing its successor destroys the operator's value, because the successor is written only when
-// the DB carries a row under the new name — and on an un-migrated DB it does not.
+// single roster (DEPRECATED_DAEMON_CONFIG_KEYS, since split into the two below and no longer
+// defined anywhere) conflated them. Deleting a RENAMED key without writing its successor destroys
+// the operator's value, because the successor is written only when the DB carries a row under the
+// new name — and on an un-migrated DB it does not.
 // Merge preserves unknown keys (_comment), so explicit rosters stay the only clean removal path.
 
 // DROPPED — retired outright, no successor key exists anywhere, so nothing can be carried and the

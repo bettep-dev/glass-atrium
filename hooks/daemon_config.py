@@ -95,7 +95,7 @@ _FALLBACK: dict[str, str] = {
 # key names; without this map the loader would find no current key and silently
 # fall back to the literals above, discarding an operator's saved model/budget.
 # Read-side compatibility only: the monitor's next Save rewrites the file with the
-# current names and drops the legacy ones (DEPRECATED_DAEMON_CONFIG_KEYS).
+# current names and drops the legacy ones (RENAMED_DAEMON_CONFIG_KEYS).
 _LEGACY_KEY_ALIASES: dict[str, str] = {
     "worker_max_budget_usd": "haiku_max_budget_usd",
     "worker_model": "haiku_model",
