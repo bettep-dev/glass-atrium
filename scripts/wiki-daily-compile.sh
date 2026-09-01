@@ -529,7 +529,20 @@ TOTAL=${#UNPROCESSED[@]}
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile started pid=$$ total=${TOTAL}" >>"$LOG_FILE"
 printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 
-# 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00]
+# 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00] — the --max-budget-usd ceiling
+# for the single batch `claude -p` call below (all TOTAL files in one call).
+#
+# KNOWN INCONSISTENCY, left deliberately. The per-call fallback floor in
+# hooks/daemon_config.py was raised to 10.00 on the argument that a cap sized at
+# Haiku 4.5 rates starves Sonnet 5 (~3x the token rates); this ceiling is a fifth
+# of that and the same argument applies to it. It was NOT raised alongside the
+# floor because a spending ceiling is an operator's decision, not a side effect of
+# a model-retirement edit.
+# What makes leaving it acceptable is that exhaustion here is LOUD and correctly
+# attributed rather than silent: the '5.4 Local budget-config detection' branch
+# below matches 'Exceeded USD budget', records status='error' carrying this budget
+# value, and keeps it distinct from quota_exceeded — so a too-low ceiling names
+# itself on the first cycle it bites instead of degrading quietly.
 BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; printf "%.2f", b}')
 
 # The two `stat` dialects COLLIDE on -f rather than merely differing: BSD -f introduces the format
