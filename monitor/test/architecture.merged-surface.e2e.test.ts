@@ -95,14 +95,10 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 		daemons: [
 			{
 				daemon_name: BOUND_DAEMON,
-				status: "critical",
-				// Required on DaemonLiveStatus and the field the screen actually reads; the
-				// fixture omitted it. Mirroring `status` keeps the TONE where it already was —
-				// "critical" is not a DAEMON_STATUS_TONE key, so it resolves through the same
-				// `info` fallback that `undefined` did. The LABEL is not preserved: that fallback
-				// is `{ tone: 'info', label: status || '—' }` (ui.jsx `daemonStatusLabel`), so the
-				// pill text moves from `—` to `critical`. A later T7/T8 assertion on LiveStrip
-				// text inherits `critical`, not the em dash this fixture used to render.
+				// "critical" is not a DAEMON_STATUS_TONE key, so the tone resolves through the
+				// `info` fallback and the pill text reads "critical" — ui.jsx `daemonStatusLabel`
+				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on LiveStrip
+				// text inherits `critical`, not an em dash.
 				effective_status: "critical",
 				last_run_at: null,
 				staleness_minutes: 999,
@@ -801,7 +797,6 @@ function getDaemon(name: string, effectiveStatus: string): DaemonLiveStatus {
 	);
 	return {
 		daemon_name: name,
-		status: effectiveStatus,
 		effective_status: effectiveStatus,
 		last_run_at: null,
 		staleness_minutes: null,

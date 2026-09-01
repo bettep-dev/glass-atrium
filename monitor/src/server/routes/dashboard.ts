@@ -290,7 +290,7 @@ export function buildDaemonStatusItems(
       last_run_at: resolved?.last_run_at ?? null,
       // resolveDaemonStatuses already synthesized missing/stale; narrow the string union
       // (unknown enum values defensively coerce to null rather than leaking raw text).
-      last_status: narrowDaemonStatus(resolved?.status ?? null),
+      last_status: narrowDaemonStatus(resolved?.effective_status ?? null),
       expected_next_at: nextOccurrenceUtc(DAEMON_CRON_SCHEDULE[name], DAY_BUCKET_TIMEZONE, now),
     };
   });

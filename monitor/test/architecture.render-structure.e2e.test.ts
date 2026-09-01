@@ -79,9 +79,6 @@ function getLiveFixture(
 		daemons: [
 			{
 				daemon_name: BOUND_DAEMON,
-				// status 는 effective_status 의 과도기 사본이고 판정의 기준 필드는
-				// effective_status 임(types/architecture.ts) — 화면의 링도 그 필드만 읽음.
-				status: verdict,
 				effective_status: verdict,
 				last_run_at: null,
 				staleness_minutes: stalenessMinutes,
