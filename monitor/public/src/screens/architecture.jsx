@@ -46,6 +46,10 @@ const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
 // 캔버스·탭 컨트롤 셀렉터 SoT — 구조 하네스가 window.ARCH_SELECTORS 로 같은 문자열을 읽음.
 const ARCH_DESC_ID = "arch-svg-desc";
+// 캔버스 element id — 링 규칙의 특이도를 mermaid 의 classDef 규칙 위로 올리는 유일한 용도.
+// mermaid 가 `#<renderId> .security>*{…!important}` 꼴로 찍으므로(특이도 1,1,0) 클래스만으로는
+// 무엇을 적어도 못 이김 — 여기 id 하나가 그 한 칸을 벌어 줌. 하네스 셀렉터는 클래스 그대로임.
+const ARCH_CANVAS_ID = "arch-map-canvas";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -61,6 +65,26 @@ const LIVE_RING_CLASS = {
 	crit: "arch-node-live-crit",
 };
 const LIVE_RING_CLASSES = Object.values(LIVE_RING_CLASS);
+
+// 판정 tone → 존 상자 링 클래스. 노드 쪽과 접두사를 가른 이유는 계수임 — `arch-node-live-` 를
+// 세는 다리가 여럿이라(render-structure 의 접두사 다리) 존 링이 그 총계에 섞이면 노드 계약이 흐려짐.
+const ZONE_RING_CLASS = {
+	ok: "arch-zone-live-ok",
+	warn: "arch-zone-live-warn",
+	crit: "arch-zone-live-crit",
+};
+const ZONE_RING_CLASSES = Object.values(ZONE_RING_CLASS);
+
+// 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
+const RING_STATE_CLASS = "arch-ring-state";
+const RING_FOCUS_CLASS = "arch-ring-focus";
+
+// 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
+// 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
+// 않도록 그쪽 선택자에서 이 클래스를 뺐고, 그래서 반경의 SoT 가 여기 하나임.
+const NODE_CORNER_RADIUS = 8;
+const RING_GAP = 3;
+const RING_RADIUS = NODE_CORNER_RADIUS + RING_GAP;
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
 // cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
@@ -405,6 +429,17 @@ function ScreenArchitecture(
 		],
 	);
 
+	// 존 대표 계획 — 헬스 노드를 하나만 담은 존의 목록. 소스의 subgraph 멤버십과 part_bindings 로만 짜임.
+	// 판정 자체는 안 들어옴(폴링마다 바뀌는 값) — 여기 들어오면 존과 노드 사이에서 링이 깜빡임.
+	const zoneRingPlan = useMemoAR(
+		() =>
+			buildZoneRingPlanAR(
+				activeDiagram?.mermaid_source,
+				liveState.data?.part_bindings,
+			),
+		[activeDiagram, liveState.data],
+	);
+
 	// 부품 행 — 표를 걷어낸 뒤로 상세 패널과 노드 클릭이 함께 읽으므로 화면 높이에서 한 번만 셈.
 	// 판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 (ADR-5).
 	const healthPartRows = useMemoAR(
@@ -478,7 +513,10 @@ function ScreenArchitecture(
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
-					".arch-col-card .card-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; } " +
+					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
+					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
+					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
+					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
 					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
 					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
 					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
@@ -501,7 +539,9 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
 					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
 					// (소스 shape 를 바꾸는 대안은 content-budget 계수와 존 rect 를 동시에 흔들어 기각).
-					".arch-mermaid-canvas svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; } " +
+					// 심은 링 사각형은 제 반경(RING_RADIUS)을 표현 속성으로 가지므로 여기서 뺌 — CSS 기하
+					// 속성이 표현 속성을 이기니, 안 빼면 링이 8 로 되눌려 도형과 동심이 아니게 됨.
+					".arch-mermaid-canvas svg :is(.node, .cluster) rect:not(.arch-ring) { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
@@ -510,20 +550,35 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
 					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
-					// 상태 링 — 판정을 받은 노드의 테두리. no-data 는 규칙 자체가 없음.
-					// 채널은 stroke 가 아니라 outline 임. stroke 로는 낼 수 없음이 두 번 측정됨:
+					// 상태 링 — 판정을 받은 노드·존의 테두리. no-data 는 규칙 자체가 없음.
+					// 채널은 mermaid 의 도형도 outline 도 아니고, 우리가 g 안에 심은 사각형임. 세 번 재서 여기까지 옴:
 					//  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임
 					//     (`style="fill:… !important;stroke:… !important"`). 인라인 !important 는 스타일시트의
-					//     !important 보다 세므로 여기서 무엇을 적어도 지지 못함 — focal(main_session) ·
-					//     security(hook_pipeline) · external(user) 세 노드가 그 자리임.
-					//  ② 선택자가 rect/polygon 만 짚어 원통으로 그려지는 pg_db(path)를 통째로 놓쳤음.
-					// 그래서 판정을 받은 노드 여섯 중 둘(pg_db · hook_pipeline)에 링이 아예 안 떴음 —
-					// "지도가 이미 상태를 보여 주므로 표가 중복" 이라는 전제가 그 둘에서는 거짓이었음.
-					// outline 은 mermaid 가 쓰지 않는 채널이고 g 하나에 걸리므로 도형 종류와 무관함.
-					// focus-visible 규칙보다 앞에 둠 — 특이도가 같아 나중 규칙이 이기고, 포커스 표식이 링을 덮어야 함.
-					".arch-mermaid-canvas .node.arch-node-live-ok { outline: 2.5px solid rgb(var(--ok)); outline-offset: 1px; } " +
-					".arch-mermaid-canvas .node.arch-node-live-warn { outline: 2.5px solid rgb(var(--warn)); outline-offset: 1px; } " +
-					".arch-mermaid-canvas .node.arch-node-live-crit { outline: 2.5px solid rgb(var(--crit)); outline-offset: 1px; } " +
+					//     !important 보다 세므로 도형의 stroke 로는 못 냄 — focal(main_session) · security(hook_pipeline) ·
+					//     external(user) 세 노드가 그 자리임.
+					//  ② 선택자가 rect/polygon 만 짚으면 원통(path)으로 그려지는 pg_db 를 통째로 놓침.
+					//  ③ 그래서 g 하나에 outline 을 걸었는데, outline 은 SVG 에서 bbox 를 네모로 두를 뿐이라
+					//     모서리를 못 굴림 — 굴린 도형 위에 각진 테두리가 서는 어긋남이 남았음.
+					// 심은 사각형은 mermaid 가 만들지 않은 element 라 인라인 !important 와 겹치지 않고(①),
+					// 도형 bbox 로 재므로 종류를 안 가리며(②), 제 rx 를 가져 굴림(③).
+					// id 선택자와 !important 가 둘 다 필요한 이유 — mermaid 가 SVG 안에 스타일시트를 심고,
+					// 거기에 (a) `#<renderId> .node rect { fill:…; stroke:…; stroke-width:1px }` 와
+					// (b) classDef 마다 `#<renderId> .security>*{ stroke:…!important; stroke-dasharray:4,4!important }`
+					// 가 있음. 심은 사각형은 `.node rect` 이면서 classDef 를 단 g 의 직계 자식이라 둘 다에 걸림 —
+					// !important 만으로는 (b) 를 못 이기고(특이도 1,1,0), id 하나를 벌어야 넘어섬(실측: 안 붙이면
+					// 링이 fill=#332e2a 를 물려 안 보이고, security 노드에서는 점선이 됨).
+					// 도형 쪽 인라인 !important 와는 다른 자리임 — 심은 사각형에는 인라인 style 이 없음.
+					// stroke-dasharray 를 명시로 되돌리는 것도 (b) 때문임: 우리가 안 적은 속성은 그쪽이 그대로 이김.
+					// 선택자에 `rect` 를 붙여 두는 것도 같은 이유임 — (b) 는 (1,1,0) 이라 클래스 하나짜리
+					// `#… .arch-ring` 과 동점이 되고, 동점이면 나중에 선언된 쪽이 이기는데 mermaid 의 스타일시트는
+					// SVG 안에 있어 항상 나중임(실측: focal 노드 두께 2px · security 노드 점선).
+					// display 에는 !important 를 안 붙임: 아래 tone 규칙이 같은 속성을 특이도로 이겨야 링이 켜짐.
+					`#${ARCH_CANVAS_ID} rect.arch-ring { display: none; fill: none !important; ` +
+					"stroke-width: 2.5 !important; stroke-dasharray: none !important; " +
+					"vector-effect: non-scaling-stroke; pointer-events: none; } " +
+					`#${ARCH_CANVAS_ID} .arch-node-live-ok > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-ok > rect.arch-ring-state { display: inline; stroke: rgb(var(--ok)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
@@ -532,14 +587,16 @@ function ScreenArchitecture(
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
-					// 링과 같은 채널·같은 특이도이고 뒤에 서므로 포커스가 판정을 덮음. 키보드가 헬스
-					// 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
-					// 종전 stroke 규칙은 위 ①②와 같은 이유로 네 노드에서 걸리지 않았음. 다만 그 자리가
-					// 비어 있지는 않았음 — Chromium 이 UA 기본 포커스 링(`auto 5px rgb(0,95,204)`)을
-					// 대신 그렸고 픽셀로 확인함. 그러니 종전 상태는 '포커스가 안 보임' 이 아니라 '우리가
-					// 정한 표식 대신 브라우저 것이 서 있었음' 이고, 아홉이 두 색으로 갈려 있었음.
-					// 상태 링 쪽은 그런 대타가 없어 그냥 사라졌던 것과 대비됨.
-					".arch-mermaid-canvas .node:focus-visible { outline: 2.5px solid rgb(var(--accent)); outline-offset: 1px; } " +
+					// 상태 링과 같은 사각형 채널·같은 반경 가족이라 두 표식이 한 모양으로 읽힘.
+					// 포커스가 상태 링을 끔 — 같은 자리에 두 겹이 겹치면 어느 쪽도 제 색으로 안 읽힘.
+					// (종전 outline 규칙에서 포커스가 뒤에 서서 링을 덮던 것과 같은 결과를 명시적으로 씀.)
+					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
+					// UA 기본 포커스 링은 여기서 끔 — 안 끄면 Chromium 이 `auto 5px rgb(0,95,204)` 를 네모로
+					// 덧그려, 굴린 표식 옆에 각진 표식이 하나 더 섬. 종전 stroke 규칙이 네 노드에서 안 걸렸을 때
+					// 그 자리를 대신 채우고 있던 것이 이 UA 링이었음(실측).
+					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
+					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--accent)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-state { display: none; } ` +
 					// 헬스 저장소 경보의 자리 — 표를 걷어내며 페이지로 올라온 유일한 조각.
 					// 지도가 pane 을 다 쓰므로 flex-shrink:0 으로 제 높이를 지킴(경보가 눌리면 사유가 잘림).
 					".arch-health-alert-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); " +
@@ -624,6 +681,7 @@ function ScreenArchitecture(
 								activeDiagram={activeDiagram}
 								nodeByLabel={nodeByLabel}
 								ringToneByNodeId={ringToneByNodeId}
+								zoneRingPlan={zoneRingPlan}
 								onSelectNode={handleSelectNode}
 								onRetry={triggerRefresh}
 							/>
@@ -664,6 +722,7 @@ function DiagramBody({
 	activeDiagram,
 	nodeByLabel,
 	ringToneByNodeId,
+	zoneRingPlan,
 	onSelectNode,
 	onRetry,
 }) {
@@ -715,6 +774,7 @@ function DiagramBody({
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
+			zoneRingPlan={zoneRingPlan}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -729,6 +789,7 @@ function MermaidCanvas({
 	diagramTitle,
 	nodeByLabel,
 	ringToneByNodeId,
+	zoneRingPlan,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -818,10 +879,12 @@ function MermaidCanvas({
 		});
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
-	// 상태 링 — 노드에 걸린 판정(데몬 ∪ 부품) 하나를 테두리로 냄.
+	// 상태 링 — 판정(데몬 ∪ 부품) 하나를 테두리로 냄. 클래스만 켜고, 그리는 것은 심어 둔 사각형임.
 	//   위 효과가 심은 data-arch-node-id 를 되읽으므로 선언 순서가 곧 실행 순서임 — 앞으로 옮기면 첫 렌더에서 빈다.
 	//   폴링 tick 마다 다시 도는 유일한 캔버스 효과 — 재렌더 없이 판정만 바뀌는 경로가 여기임.
 	//   그래서 ringToneByNodeId 가 deps 에 있어야 함: 빼면 health 폴링이 와도 다시 칠하지 않음.
+	//   헬스 노드를 하나만 담은 존은 그 존 상자가 판정을 대신 냄 — 존이 낸 판정을 노드가 또 내면
+	//   같은 사실이 두 겹으로 읽히므로, 그 노드는 여기서 건너뜀.
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
@@ -832,10 +895,29 @@ function MermaidCanvas({
 			const nodeId = el.getAttribute("data-arch-node-id");
 			if (!nodeId) return;
 
-			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscopedNodeIdAR(nodeId))];
+			const unscoped = unscopedNodeIdAR(nodeId);
+			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
+
+			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscoped)];
 			if (ringClass) el.classList.add(ringClass);
 		});
-	}, [renderState.status, renderState.svgHtml, nodeByLabel, ringToneByNodeId]);
+
+		root.querySelectorAll("g.cluster").forEach((el) => {
+			el.classList.remove(...ZONE_RING_CLASSES);
+			const zoneId = matchZoneIdAR(el.id || "", zoneRingPlan.zoneIds);
+			if (!zoneId) return;
+
+			const nodeId = zoneRingPlan.nodeIdByZoneId.get(zoneId);
+			const ringClass = nodeId && ZONE_RING_CLASS[ringToneByNodeId.get(nodeId)];
+			if (ringClass) el.classList.add(ringClass);
+		});
+	}, [
+		renderState.status,
+		renderState.svgHtml,
+		nodeByLabel,
+		ringToneByNodeId,
+		zoneRingPlan,
+	]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -879,6 +961,27 @@ function MermaidCanvas({
 			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
 			rect.dataset.archTitleBand = "1";
 		});
+	}, [renderState.status, renderState.svgHtml]);
+
+	/**
+	 * 링 사각형 심기 — 노드와 존마다 자리를 하나씩 만들어 둠. 켜고 끄는 것은 위 tone 효과의 클래스이고
+	 * 여기서는 기하만 정함, 그래서 폴링 tick 에는 다시 돌지 않음(deps 가 렌더에만 매임).
+	 * 존 제목 띠 효과 뒤에 서야 함 — 띠가 존 rect 를 위로 늘리므로, 먼저 재면 링이 옛 높이를 두름.
+	 * 판정을 못 받는 노드에도 심음: 심는 값은 기하뿐이고 display:none 이라 bbox 에 들어가지 않으므로
+	 * 맞춤 계산이 흔들리지 않고, "어느 노드든 판정을 그릴 수 있다" 는 성질이 클래스 하나로 성립함.
+	 */
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const root = containerRef.current;
+		if (!root) return;
+
+		root.querySelectorAll("svg g.node").forEach((el) => {
+			ensureRingRectAR(el, RING_STATE_CLASS);
+			ensureRingRectAR(el, RING_FOCUS_CLASS);
+		});
+		root
+			.querySelectorAll("svg g.cluster")
+			.forEach((el) => ensureRingRectAR(el, RING_STATE_CLASS));
 	}, [renderState.status, renderState.svgHtml]);
 
 	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
@@ -1037,6 +1140,7 @@ function MermaidCanvas({
 	return (
 		<>
 			<div
+				id={ARCH_CANVAS_ID}
 				className="arch-mermaid-canvas"
 				role="group"
 				aria-label={`${diagramTitle} — pan and zoom diagram`}
@@ -2025,6 +2129,96 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 	}
 
 	return byNodeId;
+}
+
+// 존 하나가 헬스 노드를 정확히 하나만 담을 때, 그 판정은 노드가 아니라 존 상자가 냄.
+//   근거는 이미 있는 자료 둘뿐임 — 그려지는 mermaid 소스의 subgraph 블록(어느 노드가 어느 존인가)과
+//   /live 의 part_bindings(어느 노드가 판정을 받을 수 있는가). 존 이름을 여기 적어 두면 존이 늘거나
+//   갈릴 때 지도만 조용히 어긋나므로, 이름은 한 줄도 적지 않음.
+//   기준이 '판정이 지금 와 있는가' 가 아니라 '판정을 받을 수 있는가' 인 이유: 앞의 것으로 재면
+//   폴링이 한 번 늦을 때마다 같은 사실이 존과 노드 사이를 오가며 깜빡임.
+//   subgraph 중첩은 다루지 않음 — content-budget 의 subgraphDepth 상한이 1 이라 중첩이 오면
+//   그쪽이 먼저 붉어짐.
+function buildZoneRingPlanAR(source, partBindings) {
+	const healthNodeIds = new Set();
+	for (const nodeIds of Object.values(partBindings || {}))
+		for (const nodeId of nodeIds || []) healthNodeIds.add(nodeId);
+
+	const nodeIdByZoneId = new Map();
+	const zoneByNodeId = new Map();
+
+	let zoneId = "";
+	let inZone = [];
+	for (const raw of String(source || "").split("\n")) {
+		const line = raw.trim();
+
+		const opened = /^subgraph\s+([A-Za-z_][\w-]*)/.exec(line);
+		if (opened) {
+			zoneId = opened[1];
+			inZone = [];
+			continue;
+		}
+		if (line === "end") {
+			if (zoneId && inZone.length === 1) {
+				nodeIdByZoneId.set(zoneId, inZone[0]);
+				zoneByNodeId.set(inZone[0], zoneId);
+			}
+			zoneId = "";
+			continue;
+		}
+		if (!zoneId) continue;
+
+		// 선언 줄만 셈 — 여는 괄호가 붙은 첫 토큰. 엣지 줄과 `end` 는 여기서 걸러짐.
+		const declared = /^([A-Za-z_][\w-]*)\s*[[({]/.exec(line);
+		if (declared && healthNodeIds.has(declared[1])) inZone.push(declared[1]);
+	}
+
+	return { zoneIds: [...nodeIdByZoneId.keys()], nodeIdByZoneId, zoneByNodeId };
+}
+
+// mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —
+// 앞부분을 화면이 모르므로 뒤에서 맞춤. 하이픈 경계를 함께 봐서 `data` 가 `metadata` 를 물지 않게 하고,
+// 가장 긴 일치를 골라 한 존 id 가 다른 존 id 의 꼬리인 경우까지 가름.
+function matchZoneIdAR(elementId, zoneIds) {
+	let matched = "";
+	for (const zoneId of zoneIds) {
+		if (elementId !== zoneId && !elementId.endsWith(`-${zoneId}`)) continue;
+		if (zoneId.length > matched.length) matched = zoneId;
+	}
+	return matched;
+}
+
+// 도형 bbox 를 따 링 사각형 하나를 그 g 안에 심음 (없으면 만들고, 있으면 좌표만 갱신).
+//   g 안에 두므로 그룹 transform 을 그대로 물려받아 도형과 같은 좌표계에서 잼.
+//   mermaid 가 만들지 않은 element 라 classDef 인라인 !important 와 겹칠 자리가 없음.
+//   이미 심은 링은 셈에서 뺌 — 안 빼면 두 번째 호출이 링의 bbox 를 재서 매번 한 겹씩 커짐.
+function ensureRingRectAR(groupEl, ringClass) {
+	const shape = groupEl.querySelector(
+		":scope > :is(rect, path, polygon, circle, ellipse):not(.arch-ring)",
+	);
+	if (!shape) return null;
+
+	let box = null;
+	try {
+		box = shape.getBBox();
+	} catch {
+		return null;
+	}
+	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+
+	let ring = groupEl.querySelector(`:scope > rect.${ringClass}`);
+	if (!ring) {
+		ring = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		ring.setAttribute("class", `arch-ring ${ringClass}`);
+		groupEl.appendChild(ring);
+	}
+	ring.setAttribute("x", String(box.x - RING_GAP));
+	ring.setAttribute("y", String(box.y - RING_GAP));
+	ring.setAttribute("width", String(box.width + RING_GAP * 2));
+	ring.setAttribute("height", String(box.height + RING_GAP * 2));
+	ring.setAttribute("rx", String(RING_RADIUS));
+	ring.setAttribute("ry", String(RING_RADIUS));
+	return ring;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).

@@ -755,8 +755,19 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
-// 데몬 넷 밖의 부품 — 이 셋은 부품 경로가 없으면 어떤 링도 받지 못함.
-const VERDICT_PART_IDS = ["pg", "browser", "hook-chain"] as const;
+// 데몬 넷 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
+// 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
+// "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
+// 집합 동등(그 셋이 전부인가)은 AC-B2-3f 가 따로 잼.
+const ZONE_REPRESENTED_PART_ZONE: Readonly<Record<string, string>> = {
+	pg: "data",
+	browser: "export",
+	"hook-chain": "hooks",
+};
+
+// 존 링 클래스 — 노드 쪽 `arch-node-live-` 와 접두사를 가름(계수 다리가 섞이지 않게).
+const ZONE_RING_OK_CLASS = "arch-zone-live-ok";
+const ZONE_RING_CRIT_CLASS = "arch-zone-live-crit";
 
 // 폴링 재도착을 재는 경로 — PG·Chromium 판정이 같은 응답에서 옴.
 const PG_HEALTH_PATH = "/api/health";
@@ -780,21 +791,6 @@ async function waitForHealthPoll(path: string, target: number): Promise<boolean>
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
 	return false;
-}
-
-// 부품 노드가 기대 클래스를 들 때까지 대기 — 응답 도착과 DOM 반영 사이의 틈만 흡수함.
-// 시간이 다하면 마지막 판독을 그대로 돌려줌: 단언은 호출부가 하고, 여기서 초록을 만들지 않음.
-async function waitForPartRing(partId: string, expected: string): Promise<RingProbe> {
-	const deadline = Date.now() + 10_000;
-	let probe = await getRingProbe();
-	while (Date.now() < deadline) {
-		const nodes = getRenderedPart(probe.rendered, partId);
-		if (nodes.length > 0 && nodes.every((id) => (probe.classByNode[id] || []).includes(expected)))
-			return probe;
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		probe = await getRingProbe();
-	}
-	return probe;
 }
 
 function getDaemon(name: string, effectiveStatus: string): DaemonLiveStatus {
@@ -859,6 +855,89 @@ async function getRingProbe(): Promise<RingProbe> {
 function getRenderedPart(rendered: string[], partId: string): string[] {
 	const bound = new Set(PART_NODE_BINDINGS[partId] ?? []);
 	return rendered.filter((id) => bound.has(id.slice(id.lastIndexOf(".") + 1)));
+}
+
+interface ZoneRingProbe {
+	// 존 id → 그 존 g 가 든 존 링 클래스 목록. 모든 존을 실음(안 켜진 존은 빈 배열) —
+	// 켜져야 할 존만 담으면 "엉뚱한 존이 켜졌다" 를 못 잼.
+	zoneClasses: Record<string, string[]>;
+	// 존 링 사각형의 계산된 stroke — 클래스가 붙었는지가 아니라 실제로 그 색으로 그려지는지를 잼.
+	zoneStroke: Record<string, string>;
+}
+
+// 존 id 는 cluster element id 의 마지막 '-' 뒤 segment 에서 뽑음. 화면 쪽은 아는 존 id 목록에
+// 접미사를 맞대는 다른 방법을 쓰므로, 두 파생이 갈라지면 여기가 먼저 붉어짐.
+async function getZoneRingProbe(): Promise<ZoneRingProbe> {
+	return await page.evaluate((canvas) => {
+		const zoneClasses: Record<string, string[]> = {};
+		const zoneStroke: Record<string, string> = {};
+
+		for (const el of Array.from(document.querySelectorAll(`${canvas} g.cluster`))) {
+			const zoneId = (el.id || "").slice((el.id || "").lastIndexOf("-") + 1);
+			if (!zoneId) continue;
+
+			zoneClasses[zoneId] = (el.getAttribute("class") || "")
+				.split(/\s+/)
+				.filter((c) => c.startsWith("arch-zone-live-"));
+			const ring = el.querySelector(":scope > rect.arch-ring-state");
+			zoneStroke[zoneId] = ring ? getComputedStyle(ring).stroke : "(no ring rect)";
+		}
+		return { zoneClasses, zoneStroke };
+	}, selectors.canvas);
+}
+
+// 존 하나가 정확히 이 클래스 하나만 들었는지 + 그 색으로 실제로 그려지는지.
+// 색은 토큰에서 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 화면과 갈라짐.
+async function assertZoneRing(
+	probe: ZoneRingProbe,
+	zoneId: string,
+	expectedClass: string,
+	token: string,
+): Promise<void> {
+	assert.ok(
+		Object.hasOwn(probe.zoneClasses, zoneId),
+		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.deepEqual(
+		probe.zoneClasses[zoneId],
+		[expectedClass],
+		`zone '${zoneId}' must carry exactly ${expectedClass}`,
+	);
+
+	const colour = await getTokenColour(token);
+	assert.equal(
+		probe.zoneStroke[zoneId],
+		colour,
+		`zone '${zoneId}' must draw its ring in the ${token} the screen declares (${colour}) — a class with no paint is not a visible verdict`,
+	);
+}
+
+// 존이 대표하는 노드에는 링이 남으면 안 됨 — 같은 판정이 두 겹으로 읽힘.
+function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): void {
+	const nodes = getRenderedPart(probe.rendered, partId);
+	assert.ok(
+		nodes.length > 0,
+		`fixture precondition: none of part '${partId}' bound ids is drawn — the assertion below would be vacuous`,
+	);
+	for (const nodeId of nodes) {
+		assert.deepEqual(
+			probe.classByNode[nodeId],
+			[],
+			`${nodeId} is represented by zone '${zoneId}' — the same verdict must not also ring the node`,
+		);
+	}
+}
+
+// 존 링이 기대 클래스를 들 때까지 대기 — 응답 도착과 DOM 반영 사이의 틈만 흡수함 (부품 링 대기의 존 판).
+async function waitForZoneRing(zoneId: string, expected: string): Promise<ZoneRingProbe> {
+	const deadline = Date.now() + 10_000;
+	let probe = await getZoneRingProbe();
+	while (Date.now() < deadline) {
+		if ((probe.zoneClasses[zoneId] || []).includes(expected)) return probe;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		probe = await getZoneRingProbe();
+	}
+	return probe;
 }
 
 // 부품 하나의 그려진 노드 전원이 정확히 이 클래스 하나만 들었는지 — 전제(그려짐)까지 함께 잼.
@@ -951,36 +1030,77 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 });
 
 /**
- * AC-B2-3d — 부품 판정이 자기 바인딩 노드를 켬.
- * 데몬 넷 밖의 세 부품(PG · Chromium export · hook chain)은 이 경로가 없으면 영영 판정 없이 남음.
+ * AC-B2-3d — 부품 판정이 자기 자리를 켬. 데몬 넷 밖의 세 부품(PG · Chromium export · hook chain)은
+ * 이 경로가 없으면 영영 판정 없이 남음.
+ * 그 셋은 저마다 헬스 노드를 하나만 담은 존에 있어, 판정이 노드가 아니라 존 상자에 걸림 —
+ * 그래서 존이 켜졌는지와 노드가 안 켜졌는지를 함께 잼. 앞만 재면 판정이 두 겹으로 읽히는 회귀가 지나감.
  */
-test("AC-B2-3d healthy part verdicts light their bound nodes", async () => {
+test("AC-B2-3d healthy part verdicts light the zone that represents them", async () => {
 	await openMapWithHealth(getHealthFixture());
-	const probe = await getRingProbe();
+	const nodeProbe = await getRingProbe();
+	const zoneProbe = await getZoneRingProbe();
 
-	for (const partId of VERDICT_PART_IDS) assertPartRing(probe, partId, RING_OK_CLASS);
+	for (const [partId, zoneId] of Object.entries(ZONE_REPRESENTED_PART_ZONE)) {
+		await assertZoneRing(zoneProbe, zoneId, ZONE_RING_OK_CLASS, "--ok");
+		assertNodeUnringed(nodeProbe, partId, zoneId);
+	}
 });
 
-test("AC-B2-3d an unreachable PG and a failed export probe light theirs crit", async () => {
+test("AC-B2-3d an unreachable PG and a failed export probe light their zones crit", async () => {
 	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "failed" } }),
 	);
-	const probe = await getRingProbe();
+	const zoneProbe = await getZoneRingProbe();
 
-	assertPartRing(probe, "pg", RING_CRIT_CLASS);
-	assertPartRing(probe, "browser", RING_CRIT_CLASS);
+	await assertZoneRing(zoneProbe, ZONE_REPRESENTED_PART_ZONE.pg, ZONE_RING_CRIT_CLASS, "--crit");
+	await assertZoneRing(
+		zoneProbe,
+		ZONE_REPRESENTED_PART_ZONE.browser,
+		ZONE_RING_CRIT_CLASS,
+		"--crit",
+	);
 });
 
 /**
- * AC-B2-3e — health 폴링만 도착하고 캔버스 재렌더가 없는 상황에서 부품 링이 갱신됨.
+ * AC-B2-3f — 존이 판정을 대신 내는 자리는 오늘 정확히 셋임.
+ * 화면은 이름 셋을 갖고 있지 않고 소스의 subgraph 멤버십 × part_bindings 로 파생하므로, 존이 갈리거나
+ * 부품 바인딩이 옮겨 가면 파생 결과가 조용히 움직임 — 그 움직임을 여기서 붙잡음.
+ * 데몬 존이 빠져 있는 것이 이 단언의 반쪽임: 헬스 노드 셋을 담은 존은 노드마다 다른 판정을 내야 하므로
+ * 존 하나로 접으면 그 세 판정이 하나로 뭉개짐.
+ */
+test("AC-B2-3f exactly the zones with a single health node carry the verdict", async () => {
+	await openMapWithHealth(getHealthFixture());
+	const zoneProbe = await getZoneRingProbe();
+
+	const lit = Object.entries(zoneProbe.zoneClasses)
+		.filter(([, classes]) => classes.length > 0)
+		.map(([zoneId]) => zoneId)
+		.sort();
+	assert.deepEqual(
+		lit,
+		[...new Set(Object.values(ZONE_REPRESENTED_PART_ZONE))].sort(),
+		"the screen derives zone representation from subgraph membership x part_bindings — the derived set moved",
+	);
+
+	// 데몬 존은 노드 셋이 저마다 판정을 내는 자리 — 존이 켜지면 그 셋이 하나로 접힌 것임.
+	const daemonNodes = getRenderedBound((await getRingProbe()).rendered, BOUND_DAEMON);
+	assert.ok(
+		daemonNodes.length > 0,
+		`fixture precondition: the map must draw ${BOUND_DAEMON} nodes — the daemon-zone leg is vacuous without them`,
+	);
+});
+
+/**
+ * AC-B2-3e — health 폴링만 도착하고 캔버스 재렌더가 없는 상황에서 링이 갱신됨.
  * 폴링 한 틱을 실제로 기다림(HEALTH_POLL_MS).
  * 수동 Refresh 로 대신하면 live 응답까지 다시 와 데몬 원천의 참조가 바뀜.
  * 그러면 부품 tone 이 효과 deps 에 없어도 초록이 되어 재는 것이 사라짐.
  * SVG 노드 동일성을 함께 잼 — 재렌더가 끼면 '재렌더 없이' 라는 전제 자체가 무너짐.
  */
-test("AC-B2-3e a health poll with no canvas re-render repaints the part ring", async () => {
+test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
+	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	assertPartRing(await getRingProbe(), "pg", RING_OK_CLASS);
+	await assertZoneRing(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS, "--ok");
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
@@ -993,13 +1113,13 @@ test("AC-B2-3e a health poll with no canvas re-render repaints the part ring", a
 		`the 60s health poll must re-request ${PG_HEALTH_PATH} — without a second arrival the repaint is untested`,
 	);
 
-	const probe = await waitForPartRing("pg", RING_CRIT_CLASS);
+	const probe = await waitForZoneRing(pgZone, ZONE_RING_CRIT_CLASS);
 	assert.equal(
 		await getCanvasSvgId(),
 		svgIdBefore,
 		"the canvas must not have re-rendered — a re-render repaints the ring for the wrong reason",
 	);
-	assertPartRing(probe, "pg", RING_CRIT_CLASS);
+	await assertZoneRing(probe, pgZone, ZONE_RING_CRIT_CLASS, "--crit");
 });
 
 // 링이 기존 경보를 밀어내지 않았음을 잠금 — 셋이 동시에 뜨는 픽스처로 잼.
@@ -2192,9 +2312,11 @@ interface RingProbeStyle {
 	id: string;
 	shapeTag: string;
 	inlineImportant: boolean;
-	outlineStyle: string;
-	outlineWidth: number;
-	outlineColor: string;
+	// 심은 링 사각형의 계산값 — 클래스가 붙었는지가 아니라 그 사각형이 실제로 그려지는지를 잼.
+	ringDisplay: string;
+	ringStroke: string;
+	// 모서리 반경(표현 속성). 0 이면 각진 링 — outline 시절의 회귀가 되돌아온 것임.
+	ringRadius: number;
 }
 
 // 디자인 토큰(`--accent` 등, `r g b` 3원소)을 computed 색 문자열로 — 기대색을 하네스가 다시
@@ -2210,26 +2332,34 @@ async function getTokenColour(token: string): Promise<string> {
 	}, token);
 }
 
-async function readNodeOutlines(applyState: "focus" | "crit"): Promise<RingProbeStyle[]> {
+// 노드 하나하나에 상태/포커스를 걸어 두고 그때의 링 사각형을 읽음.
+// 값은 클래스를 떼기 전에 객체로 옮김 — getComputedStyle 은 살아 있는 선언이라, 떼고 나서 읽으면
+// 원상태를 다시 재게 됨(실측으로 한 번 속았음).
+async function readNodeRings(applyState: "focus" | "crit"): Promise<RingProbeStyle[]> {
 	return await page.evaluate((mode) => {
 		const out = [];
 		for (const g of document.querySelectorAll("svg g.node[data-arch-node-id]")) {
 			const el = g as SVGGElement;
-			const shape = el.querySelector("rect, polygon, path, circle, ellipse") as SVGElement | null;
+			const shape = el.querySelector(
+				":scope > :is(rect, polygon, path, circle, ellipse):not(.arch-ring)",
+			) as SVGElement | null;
 			for (const c of ["arch-node-live-ok", "arch-node-live-warn", "arch-node-live-crit"])
 				el.classList.remove(c);
 			if (mode === "focus") el.focus();
 			else el.classList.add("arch-node-live-crit");
 
-			const cs = getComputedStyle(el);
+			const ring = el.querySelector(
+				mode === "focus" ? ":scope > rect.arch-ring-focus" : ":scope > rect.arch-ring-state",
+			) as SVGElement | null;
+			const cs = ring ? getComputedStyle(ring) : null;
 			out.push({
 				id: el.getAttribute("data-arch-node-id") || "",
 				shapeTag: shape ? shape.tagName : "(none)",
 				// classDef 가 인라인으로 찍은 !important — 스타일시트가 이길 수 없는 채널의 표식.
 				inlineImportant: /!important/i.test(shape?.getAttribute("style") || ""),
-				outlineStyle: cs.outlineStyle,
-				outlineWidth: Number.parseFloat(cs.outlineWidth) || 0,
-				outlineColor: cs.outlineColor,
+				ringDisplay: cs ? cs.display : "(no ring rect)",
+				ringStroke: cs ? cs.stroke : "(no ring rect)",
+				ringRadius: ring ? Number.parseFloat(ring.getAttribute("rx") || "0") : 0,
 			});
 
 			if (mode === "focus") el.blur();
@@ -2243,7 +2373,11 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 	await openMap(getLiveFixture());
 	await waitForFittedCanvas();
 
-	const focused = await readNodeOutlines("focus");
+	// 키보드 모달리티를 먼저 세움 — 프로그램 focus() 만으로는 Chromium 이 :focus-visible 을 안 물릴 수 있고,
+	// 그러면 앞선 시험이 눌러 둔 키에 이 시험이 얹혀 도는 순서 의존이 됨.
+	await page.keyboard.press("Tab");
+
+	const focused = await readNodeRings("focus");
 	assert.ok(focused.length > 0, "fixture precondition: the map must have imprinted nodes");
 	assert.ok(
 		focused.some((n) => n.inlineImportant),
@@ -2254,7 +2388,7 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 		"fixture precondition: at least one node must be drawn with a non-rect shape, or the shape half measures nothing",
 	);
 
-	const invisible = focused.filter((n) => n.outlineStyle === "none" || n.outlineWidth <= 0);
+	const invisible = focused.filter((n) => n.ringDisplay !== "inline");
 	assert.deepEqual(
 		invisible.map((n) => `${n.id} (${n.shapeTag}${n.inlineImportant ? ", classDef !important" : ""})`),
 		[],
@@ -2263,15 +2397,23 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 
 	// 색까지, 그것도 '우리가 정한 색' 인지 잼. 존재만 재면 이 절은 아무것도 못 잡음: 노드가
 	// 포커스를 받는 순간 Chromium 이 UA 기본 포커스 링(`auto 5px rgb(0,95,204)`)을 그리므로,
-	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '외곽선 있음' 으로 균일하게 통과함(실측 — 종전의
+	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '표식 있음' 으로 균일하게 통과함(실측 — 종전의
 	// stroke 규칙은 classDef 인라인 !important 에 막혀 네 노드에서 안 걸렸는데, 그 자리를 UA 링이
 	// 덮고 있었음). 그래서 토큰에서 기대색을 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 갈라짐.
 	const accent = await getTokenColour("--accent");
-	const wrongColour = focused.filter((n) => n.outlineColor !== accent);
+	const wrongColour = focused.filter((n) => n.ringStroke !== accent);
 	assert.deepEqual(
-		wrongColour.map((n) => `${n.id}: ${n.outlineColor}`),
+		wrongColour.map((n) => `${n.id}: ${n.ringStroke}`),
 		[],
 		`every node must mark focus in the accent the screen declares (${accent}) — another colour is the browser's own ring standing in for a rule that did not apply`,
+	);
+
+	// 상태 링과 같은 반경 가족이어야 함 — 한 화면에서 굴린 표식과 각진 표식이 섞이면 둘이 다른 뜻으로 읽힘.
+	const square = focused.filter((n) => !(n.ringRadius > 0));
+	assert.deepEqual(
+		square.map((n) => `${n.id}: rx=${n.ringRadius}`),
+		[],
+		"a focus marker with square corners is the outline-era regression — outline could not round, which is why the marker moved to an injected rect",
 	);
 });
 
@@ -2279,20 +2421,21 @@ test("ADR-20 every node can carry a state ring, whatever classDef or shape it ha
 	await openMap(getLiveFixture());
 	await waitForFittedCanvas();
 
-	const unlit = await readNodeOutlines("focus").then(() => readNodeOutlines("crit"));
-	const missing = unlit.filter((n) => n.outlineStyle === "none" || n.outlineWidth <= 0);
+	const unlit = await readNodeRings("crit");
+	const missing = unlit.filter((n) => n.ringDisplay !== "inline");
 	assert.deepEqual(
 		missing.map((n) => `${n.id} (${n.shapeTag}${n.inlineImportant ? ", classDef !important" : ""})`),
 		[],
 		"a node whose verdict cannot be drawn breaks the reason the health table was removed — the map does not show its state",
 	);
 
-	// 판정도 '우리가 정한 색' 이어야 함 — 존재만 재면 UA 포커스 링이나 남은 포커스 자국이
-	// 대신 서 있어도 통과함. 그리고 판정 색과 포커스 색은 달라야 함: 같으면 둘을 구별할 수 없음.
+	// 판정도 '우리가 정한 색' 이어야 함 — 존재만 재면 mermaid 의 classDef 색(`.security>*` 는
+	// !important 로 stroke 와 점선까지 찍음)이 대신 서 있어도 통과함. 그리고 판정 색과 포커스 색은
+	// 달라야 함: 같으면 둘을 구별할 수 없음.
 	const crit = await getTokenColour("--crit");
-	const wrongColour = unlit.filter((n) => n.outlineColor !== crit);
+	const wrongColour = unlit.filter((n) => n.ringStroke !== crit);
 	assert.deepEqual(
-		wrongColour.map((n) => `${n.id}: ${n.outlineColor}`),
+		wrongColour.map((n) => `${n.id}: ${n.ringStroke}`),
 		[],
 		`every verdict must read in the crit token the screen declares (${crit}) — another colour is not this verdict`,
 	);
@@ -2300,6 +2443,13 @@ test("ADR-20 every node can carry a state ring, whatever classDef or shape it ha
 		crit,
 		await getTokenColour("--accent"),
 		"the verdict and the focus position must not read as the same colour",
+	);
+
+	const square = unlit.filter((n) => !(n.ringRadius > 0));
+	assert.deepEqual(
+		square.map((n) => `${n.id}: rx=${n.ringRadius}`),
+		[],
+		"a square state ring is the outline-era regression — outline squares the corners of every shape it wraps",
 	);
 });
 

@@ -17,8 +17,13 @@
 //
 // Viewport table: 1396 is the width the user actually runs (their screenshot); 1512 and
 // 1920 are the two the fit was previously reasoned about. Heights are the window heights
-// those widths plausibly come with — the pane takes ~0.68 of the viewport height, and the
-// map is width-bound at all three, so the exact height is not load-bearing.
+// those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
+// chrome (measured identical at all three: 800→642, 850→692, 1080→922), and the map is
+// width-bound at all three, so the exact height is not load-bearing. The height is a constant
+// subtraction rather than a fraction because the chrome above it is pixel-fixed; the earlier
+// ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by the
+// screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
+// raises — without that strip the same viewports give 687 / 737 / 967.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
