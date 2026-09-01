@@ -213,7 +213,7 @@ _write_daemon_config() {
   [[ "${out}" != *"provisioning did not deliver a token"* ]] || return 1
 }
 
-# === (6) MODEL PIN — the probe passes the daemon-config'd haiku model to --model ====================
+# === (6) MODEL PIN — the probe passes the daemon-config'd worker model to --model ====================
 
 @test "selftest: the probe pins --model to the daemon-config worker_model value" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH (model resolution needs it)"
@@ -228,11 +228,11 @@ _write_daemon_config() {
   headless_auth_selftest || rc=$?
   [[ "${rc}" -eq 0 ]] || return 1
   [[ -f "${CLAUDE_STUB_ARGS_OUT}" ]] || return 1
-  # the probe carried --model with the config'd cheap model, not the default.
+  # the probe carried --model with the config'd worker model, not the default.
   grep -qF -- '--model claude-haiku-cfg-9-9' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (7) MODEL PIN fallback — absent config -> the alias-literal claude-sonnet-5 =====================
+# === (7) MODEL PIN fallback — absent config -> the concrete-id literal claude-sonnet-5 ===============
 
 @test "selftest: absent daemon-config falls back to --model claude-sonnet-5" {
   extract_fn run_with_timeout || return 1
@@ -250,7 +250,7 @@ _write_daemon_config() {
   grep -qF -- '--model claude-sonnet-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (9) STATIC — the centralized jq idiom + alias literal now live in atrium_resolve_worker_model =====
+# === (9) STATIC — the centralized jq idiom + fallback literal now live in atrium_resolve_worker_model =
 
 @test "resolver(static): atrium_resolve_worker_model owns the jq idiom + the claude-sonnet-5 fallback literal (lockstep with daemon_config._FALLBACK)" {
   local body
