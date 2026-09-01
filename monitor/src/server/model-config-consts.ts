@@ -154,22 +154,132 @@ export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
   },
 ];
 
-// daemon-config.json keys the monitor no longer manages (aggregate-limit pair dropped for per-call BUDGET_DOMAINS caps).
-// renderDaemonConfig deletes these so a single PUT self-heals a live file still carrying them.
-// Merge preserves unknown keys (_comment), so an explicit deprecation list is the only clean removal path — append future deprecations here.
-export const DEPRECATED_DAEMON_CONFIG_KEYS: ReadonlyArray<string> = [
+// Retired daemon-config.json keys, split by WHY the monitor stopped writing them. The split is
+// load-bearing, not cosmetic: these two categories cannot share a removal rule, and the former
+// single DEPRECATED_DAEMON_CONFIG_KEYS roster conflated them. Deleting a RENAMED key without
+// writing its successor destroys the operator's value, because the successor is written only when
+// the DB carries a row under the new name — and on an un-migrated DB it does not.
+// Merge preserves unknown keys (_comment), so explicit rosters stay the only clean removal path.
+
+// DROPPED — retired outright, no successor key exists anywhere, so nothing can be carried and the
+// delete is unconditional (the aggregate-limit pair, replaced by the per-call BUDGET_DOMAINS caps).
+export const DROPPED_DAEMON_CONFIG_KEYS: ReadonlyArray<string> = [
   "cost_daily_limit_usd",
   "cost_monthly_limit_usd",
-  // Pre-retirement worker-model/budget names. The daemon read paths
-  // (hooks/daemon_config.py _LEGACY_KEY_ALIASES, atrium_resolve_worker_model)
-  // still READ these so an un-resaved install keeps its operator values; listing
-  // them here is what makes a single monitor Save the migration — the renderer
-  // writes the current names and deletes these, after which the legacy read paths
-  // go quiet. Removing them from this list would strand the old keys in the file
-  // forever, permanently warning on every daemon start.
-  "haiku_model",
-  "haiku_max_budget_usd",
 ];
+
+/** One pre-rename key pair. `currentConfigKey` is DERIVED from the domain, never restated here. */
+export interface RenamedDaemonConfigKey {
+  // Pre-rename monitor.model_config row key. Present in the DB until the rename migration runs
+  // (20260901000000_rename_haiku_model_config_keys_to_worker), which `scripts/update.sh` does not run.
+  legacyDomainKey: string;
+  // Pre-rename daemon-config.json key — write-side twin of hooks/daemon_config.py _LEGACY_KEY_ALIASES.
+  legacyConfigKey: string;
+  // Post-rename monitor.model_config row key; its MODEL_DOMAINS/BUDGET_DOMAINS entry supplies the
+  // daemon-config.json key the carried value lands under.
+  currentDomainKey: ModelDomainKey | BudgetDomainKey;
+}
+
+// RENAMED — the same operator decision under a new name. The renderer carries the value forward
+// FIRST and only then drops the legacy key, so one Save is a lossless migration of the file even
+// while the DB rename is still pending. The daemon read paths (daemon_config.py
+// _LEGACY_KEY_ALIASES, atrium_resolve_worker_model) still READ the legacy names, and go quiet once
+// that Save lands. Dropping an entry from this list would strand the old key in the file forever,
+// warning on every daemon start.
+export const RENAMED_DAEMON_CONFIG_KEYS: ReadonlyArray<RenamedDaemonConfigKey> = [
+  {
+    legacyDomainKey: "model.daemon_cycle_haiku",
+    legacyConfigKey: "haiku_model",
+    currentDomainKey: "model.daemon_cycle_worker",
+  },
+  {
+    legacyDomainKey: "budget.haiku_max_usd",
+    legacyConfigKey: "haiku_max_budget_usd",
+    currentDomainKey: "budget.worker_max_usd",
+  },
+];
+
+// Substring, deliberately: the API-style ids ('claude-3-5-haiku-20241022', 'claude-3-5-haiku-latest')
+// carry the family name in the MIDDLE and FREE_TEXT_MODEL_PATTERN accepts them, so a prefix test would
+// rename the key and leave the loop on the retired model. Twin of the migration's LIKE '%haiku%'.
+const RETIRED_WORKER_MODEL_MARKER = "haiku";
+
+// Replacement for a retired worker-model id, on both carry paths. Parity with the SQL migration's
+// rewrite target and hooks/daemon_config.py _FALLBACK['worker_model'].
+export const RETIRED_WORKER_MODEL_REPLACEMENT = "claude-sonnet-5";
+
+/** True when the id names the retired worker-model family, under any vendor id shape. */
+export function isRetiredWorkerModelId(value: string): boolean {
+  return normalizeModelId(value).toLowerCase().includes(RETIRED_WORKER_MODEL_MARKER);
+}
+
+/** What the renderer should do with one legacy key on this render. */
+export type RenamedKeyCarry =
+  | { action: "carry"; configKey: string; value: string }
+  | { action: "drop" }
+  | { action: "keep"; reason: string };
+
+/** daemon-config.json key a domain renders to, or null when no domain owns it. */
+function currentConfigKeyOf(domainKey: string): string | null {
+  const model = MODEL_DOMAINS.find((d) => d.key === domainKey);
+  if (model !== undefined) {
+    return model.daemonConfigKey;
+  }
+  return BUDGET_DOMAINS.find((d) => d.key === domainKey)?.daemonConfigKey ?? null;
+}
+
+/**
+ * Decide one legacy key's fate against the desired state and the partially-rendered file object.
+ * Pure — returns an instruction, never mutates.
+ *
+ * `drop`  the successor's value is already settled (a DB row exists under the new name, or the file
+ *         already carries it), so the legacy key is pure residue.
+ * `carry` the successor is unset and a legacy value exists — write it under the new name, then drop
+ *         the legacy key. Source precedence is DB row over file value: monitor.model_config is the
+ *         UI SoT, so a legacy row outranks a file that may have drifted from it.
+ * `keep`  a legacy value exists but fails the same validator the write path applies. Carrying it
+ *         would launder an unusable value into the current key name and deleting it would destroy
+ *         the evidence, so it stays put and the caller reports it (Precondition Loud-Fail).
+ *
+ * MODEL values follow the SQL migration's VALUE POLICY: a retired-family id is REWRITTEN (carrying
+ * it forward would rename the key while leaving the loop on the retired model — the one outcome the
+ * rename exists to prevent), anything else moves verbatim. BUDGET values always move verbatim: a
+ * per-call cap is a spending decision that belongs to the operator, and a rename must not move it.
+ */
+export function resolveRenamedKeyCarry(
+  def: RenamedDaemonConfigKey,
+  desired: ReadonlyMap<string, string>,
+  rendered: Readonly<Record<string, unknown>>,
+): RenamedKeyCarry {
+  const currentConfigKey = currentConfigKeyOf(def.currentDomainKey);
+  if (currentConfigKey === null) {
+    return { action: "keep", reason: `no daemon-config.json key renders '${def.currentDomainKey}'` };
+  }
+  // desired.has() and not a value read: a row set to 'inherit' means the operator asked for the key
+  // to be ABSENT, and carrying the legacy value would resurrect what they just removed.
+  if (desired.has(def.currentDomainKey) || rendered[currentConfigKey] !== undefined) {
+    return { action: "drop" };
+  }
+  const fileValue = rendered[def.legacyConfigKey];
+  const source =
+    desired.get(def.legacyDomainKey) ?? (typeof fileValue === "string" ? fileValue : undefined);
+  if (source === undefined) {
+    return { action: "drop" };
+  }
+
+  const modelDef = MODEL_DOMAINS.find((d) => d.key === def.currentDomainKey);
+  if (modelDef !== undefined) {
+    const carried = isRetiredWorkerModelId(source) ? RETIRED_WORKER_MODEL_REPLACEMENT : source;
+    const reason = validateModelValue(modelDef, carried);
+    return reason === null
+      ? { action: "carry", configKey: currentConfigKey, value: carried }
+      : { action: "keep", reason: `legacy model value is not writable (${reason})` };
+  }
+  const reason = validateBudgetValue(source);
+  return reason === null
+    ? { action: "carry", configKey: currentConfigKey, value: source }
+    : { action: "keep", reason: `legacy budget value is not writable (${reason})` };
+}
 
 /**
  * Strip the trailing variant suffix for drift comparison only —

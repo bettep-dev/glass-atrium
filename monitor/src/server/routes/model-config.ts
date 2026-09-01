@@ -15,12 +15,14 @@ import { respondDbFailure } from "../db-failure.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import {
   BUDGET_DOMAINS,
-  DEPRECATED_DAEMON_CONFIG_KEYS,
+  DROPPED_DAEMON_CONFIG_KEYS,
   INHERIT_VALUE,
   MODEL_DOMAINS,
+  RENAMED_DAEMON_CONFIG_KEYS,
   isPricingKnown,
   loadKnownModelIds,
   normalizeModelId,
+  resolveRenamedKeyCarry,
   validateBudgetValue,
   validateModelValue,
   type BudgetDomainDef,
@@ -612,8 +614,11 @@ function extractModelLine(block: string): string | null {
  * (incl. _comment) preserved; per-call budget caps stay STRINGS (trailing zeros survive);
  * 'inherit' removes the per-daemon REPL key. Missing file → created; unparseable
  * file → failed (never clobbered).
+ *
+ * Exported for model-config.render.unit.test.ts, which drives the un-migrated-DB state the
+ * DB-backed route suite cannot reach (its fixture seeds the post-rename keys directly).
  */
-async function renderDaemonConfig(desired: Map<string, string>): Promise<SurfaceResult> {
+export async function renderDaemonConfig(desired: Map<string, string>): Promise<SurfaceResult> {
   const cfgPath = getDaemonConfigPath();
   let target = cfgPath;
   let obj: Record<string, unknown>;
@@ -655,9 +660,34 @@ async function renderDaemonConfig(desired: Map<string, string>): Promise<Surface
       obj[def.daemonConfigKey] = want;
     }
   }
-  // Scoped to the explicit deprecation list — unknown external keys (_comment, conditional
-  // REPL keys) stay preserved by the merge; only keys the monitor once owned are removed.
-  for (const key of DEPRECATED_DAEMON_CONFIG_KEYS) {
+  // Renamed keys are carried forward BEFORE anything is deleted, so a rename is never a delete
+  // without a replacement. This is what keeps an operator's tuned value alive across the window
+  // `scripts/update.sh` opens: it ships new server code without running `prisma migrate deploy`,
+  // so every existing install runs this renderer against a DB that still holds the pre-rename
+  // rows. Without the carry, the loops above write no successor (no row under the new name) while
+  // the delete below removes the legacy key, and the daemon silently falls back to its literal.
+  for (const def of RENAMED_DAEMON_CONFIG_KEYS) {
+    const carry = resolveRenamedKeyCarry(def, desired, obj);
+    if (carry.action === "keep") {
+      // Loud, per shared-self-improve-hygiene.md Precondition Loud-Fail: the value is neither
+      // carried nor destroyed, and the operator is told which key needs a hand.
+      process.stderr.write(
+        `[model-config] daemon-config.json: legacy key '${def.legacyConfigKey}' KEPT — ${carry.reason}; fix or remove it by hand\n`,
+      );
+      continue;
+    }
+    if (carry.action === "carry") {
+      obj[carry.configKey] = carry.value;
+      process.stderr.write(
+        `[model-config] daemon-config.json: carried '${def.legacyConfigKey}' → '${carry.configKey}' (${carry.value}) — the model_config rename migration has not run on this DB; 'npm run db:deploy' completes it\n`,
+      );
+    }
+    delete obj[def.legacyConfigKey];
+  }
+  // Dropped keys have no successor, so the delete is unconditional. Scoped to the explicit roster —
+  // unknown external keys (_comment, conditional REPL keys) stay preserved by the merge; only keys
+  // the monitor once owned are removed.
+  for (const key of DROPPED_DAEMON_CONFIG_KEYS) {
     delete obj[key];
   }
 
