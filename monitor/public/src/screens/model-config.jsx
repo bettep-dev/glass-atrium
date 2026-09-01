@@ -24,6 +24,10 @@ const FREE_TEXT_MODEL_RE_MC = /^[a-z0-9.\-[\]]{1,128}$/;
 const BUDGET_RE_MC = /^\d+\.\d{2}$/;
 const BUDGET_MIN_USD_MC = 0.05;
 const BUDGET_MAX_USD_MC = 50.0;
+// 배포 기본 per-call 상한 미러 — 서버 BUDGET_SEED_DEFAULT_USD (DB seed 행 + daemon_config.py
+// _FALLBACK 과 동일 값). 필드를 한 번도 건드리지 않은 운영자가 실제로 돌리고 있는 값이라
+// 빈 입력의 placeholder 는 이 값을 광고해야 한다.
+const BUDGET_SEED_DEFAULT_MC = "10.00";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -761,6 +765,13 @@ function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
 	);
 }
 
+// per-call 상한 입력의 placeholder — 미입력 상태에서 실제로 적용 중인 배포 기본값을 광고.
+// top-level `const` 는 vm 샌드박스 테스트에서 도달 불가(모듈 렉시컬 스코프)지만 top-level
+// function 은 도달 가능 — 미러가 서버 SoT 와 어긋나면 client unit test 가 잡는다.
+function budgetPlaceholderMC() {
+	return BUDGET_SEED_DEFAULT_MC;
+}
+
 // 예산 1행 — $ 입력(2-decimal 문자열) + 단위/범위 힌트 + validate-on-blur + field-adjacent role=alert
 // (T-MDL-4) + actual/drift + ghost default/reset (T-MDL-6).
 function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
@@ -788,7 +799,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 								inputMode="decimal"
 								className="field field--mono text-right"
 								value={value}
-								placeholder="0.50"
+								placeholder={budgetPlaceholderMC()}
 								onChange={(e) => onChange(e.target.value)}
 								onBlur={() => setTouched(true)}
 								aria-label={`${meta.label} per-call cap in USD`}

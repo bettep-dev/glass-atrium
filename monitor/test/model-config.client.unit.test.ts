@@ -30,6 +30,7 @@ import {
   BUDGET_VALUE_PATTERN,
   BUDGET_MIN_USD,
   BUDGET_MAX_USD,
+  BUDGET_SEED_DEFAULT_USD,
 } from "../src/server/model-config-consts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +47,7 @@ interface McHelpers {
   buildFormMC: (data: unknown) => McForm;
   sortDomainsMC: (domains: { domain: string }[]) => { domain: string }[];
   sortBudgetsMC: (budgets: { domain: string }[]) => { domain: string }[];
+  budgetPlaceholderMC: () => string;
 }
 
 // Module-level `const` declarations (the client constant mirror) stay lexically
@@ -101,6 +103,7 @@ async function loadMc(): Promise<McHelpers> {
   assert.strictEqual(typeof h.validateFormMC, "function", "validateFormMC must be reachable");
   assert.strictEqual(typeof h.diffFormMC, "function");
   assert.strictEqual(typeof h.modelOptionsMC, "function");
+  assert.strictEqual(typeof h.budgetPlaceholderMC, "function");
   return h;
 }
 
@@ -159,6 +162,20 @@ test("client budget regex + bound mirrors match server SoT (via validateFormMC)"
   assert.ok(!errAt(ceilStr), `client ceiling ${ceilStr} accepted (matches BUDGET_MAX_USD)`);
   assert.ok(errAt(belowFloor), `client rejects below floor ${belowFloor}`);
   assert.ok(errAt(aboveCeil), `client rejects above ceiling ${aboveCeil}`);
+});
+
+test("budget input placeholder advertises the shipped default cap, not a stale literal", () => {
+  // The placeholder is what an operator who never touched the field reads as the value in force.
+  // It shipped as '0.50' while both seeds (the DB rows and hooks/daemon_config.py _FALLBACK) put
+  // the real cap at BUDGET_SEED_DEFAULT_USD — a 20x understatement of the authorized spend.
+  // budgetPlaceholderMC is the reachable seam over the client mirror const (module-level `const`
+  // declarations stay lexically scoped in the sandbox, `function` declarations do not).
+  assert.strictEqual(mc.budgetPlaceholderMC(), BUDGET_SEED_DEFAULT_USD);
+  // And the advertised default must itself be a value the validators accept, or the placeholder
+  // would name a cap that cannot be typed in.
+  assert.ok(BUDGET_VALUE_PATTERN.test(BUDGET_SEED_DEFAULT_USD), "2-decimal string form");
+  const parsed = Number.parseFloat(BUDGET_SEED_DEFAULT_USD);
+  assert.ok(parsed >= BUDGET_MIN_USD && parsed <= BUDGET_MAX_USD, "inside the accepted band");
 });
 
 // --- modelOptionsMC: API-driven option assembly per domain (P7 AC: exactly the GET
