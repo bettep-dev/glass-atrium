@@ -32,8 +32,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
     - These are examples of the class, not the class itself; if unsure, treat the claim as a relation.
     - Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first.
+    - Without shell access, report both texts and mark the relation **unverified** — never assert it.
   - **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it.
-  - Without shell access, report both texts and mark the relation **unverified** — never assert it.
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission)
 - No API keys in handoff payloads
 - Sensitive info in logs MUST be masked
@@ -113,7 +113,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ### Session-Start Continuity Header
 
-- `[CONTINUITY]` header activation contract (main session — `inject-session-context.sh` SessionStart hook inject): on turn-0 of every new session, if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action
+- `[CONTINUITY]` header activation contract (main session — `inject-session-context.sh` SessionStart hook inject) — on turn-0 of every new session:
+  - if context begins with line matching `^\[CONTINUITY\] open progress files: <paths>` → Read each listed path BEFORE first user-request action
   - cross-match listed slugs against current user request
   - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
   - no match → treat as informational (do NOT auto-Read all — context budget)
@@ -127,26 +128,27 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`).
   - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
   - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
-- On approach: finish current write to valid state (no partial files)
+- On approach:
+  - finish current write to valid state (no partial files)
   - log done/remaining to `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
   - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
   - **splitting > truncation** (next /loop tick resumes cleanly)
-- **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+- **Exempt** (section-wide — this entire `### Turn Budget & Graceful Exit` section, including every `####` subsection below): `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 #### Work-unit checkpoint dimension
 
-- Work-unit checkpoint dimension (token/tool_use blowout, not only turn boundary): the turn-based ceiling (80% maxTurns) misses a single-turn token/tool_use blowout — a delegation can run out of budget mid-turn before any turn boundary fires.
+- Token/tool_use blowout, not only turn boundary: the turn-based ceiling (80% maxTurns) misses a single-turn token/tool_use blowout — a delegation can run out of budget mid-turn before any turn boundary fires.
   - Checkpoint after each completed work-unit (each file / each fix), NOT only at the turn boundary, recording the resume point into `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the Cross-Session Continuity durable anchor above).
   - This makes a mid-turn truncation resumable.
 
 #### Truncation recovery
 
-- Truncation recovery (orchestrator step — Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues (the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern, `orchestrator-role.md` Orchestrator Identity).
+- Orchestrator step (Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues (the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern, `orchestrator-role.md` Orchestrator Identity).
   - For cross-session durability instead, resume from `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the canonical durable anchor).
 
 #### Emit-before-cap
 
-- Emit-before-cap (schema/workflow agents): the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with NONE left to emit loses ALL the work.
+- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with NONE left to emit loses ALL the work.
   - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage (unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block).
   - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
   - Never end a schema-mode turn on prose.
