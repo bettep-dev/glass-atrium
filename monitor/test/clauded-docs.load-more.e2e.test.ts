@@ -589,17 +589,24 @@ test("group-create: 격리 3 doc multi-select → 'Group' 클릭 → POST /group
       const toolbar = page.getByRole("toolbar", { name: "Bulk group actions" });
       await toolbar.getByText("3 selected", { exact: true }).waitFor({ state: "visible" });
 
-      // POST /group 트리거 + 후행 /groups list reload 대기 (triggerRefresh).
-      await clickGroupCreateButton(page);
-
-      // 응답 후 list refresh — /groups endpoint 재호출 + group representative row 갱신.
-      // member_count_badge 가시 — root row (server: created_at DESC 기준 최신 = C) 에 "+2" 표시 (3-1=2 members 추가).
-      await page.waitForResponse(
+      // list reload 는 POST 응답의 뒤를 이어 브라우저가 스스로 냄(performGroupCreate → triggerRefresh).
+      // 그래서 이 대기를 누르기 '뒤' 에 걸면 이미 도착한 응답을 놓침 — Playwright 는 리스너가 붙기
+      // 전에 지나간 이벤트를 되돌려주지 않으므로, 그 창을 지면 제품이 멀쩡한데도 10초를 기다리다
+      // 붉어짐. 되풀이로는 못 고침: POST /group 은 상태를 바꾸는 호출이라 다시 누르면 두 번 묶음.
+      // 먼저 걸고 · 누르고 · 그 뒤에 기다림 — architecture 쪽 refreshMap 이 쓰는 순서와 같음.
+      const listReloaded = page.waitForResponse(
         (res) => res.url().includes("/api/clauded-docs/groups") &&
                 res.request().method() === "GET" &&
                 !res.url().includes("offset="),
         { timeout: 10_000 },
       );
+
+      // POST /group 트리거.
+      await clickGroupCreateButton(page);
+
+      // 응답 후 list refresh — /groups endpoint 재호출 + group representative row 갱신.
+      // member_count_badge 가시 — root row (server: created_at DESC 기준 최신 = C) 에 "+2" 표시 (3-1=2 members 추가).
+      await listReloaded;
 
       // C (created_at DESC 기준 최신) 가 group representative — member_count_badge 노출 확인.
       const cRow = page.locator("tr.doc-row.is-group-root", { hasText: titles[2] });
