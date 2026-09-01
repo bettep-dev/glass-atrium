@@ -132,6 +132,10 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
 class TestSustainReadsFirstObservation(unittest.TestCase):
     """(2) The sustain gate no longer reads a last-observed column."""
 
+    # create=True on every _pg_read_outcomes_since patch: daemon_cycle binds that
+    # name inside a conditional import, so it is ABSENT when psycopg is missing —
+    # patching without create=True passes under one interpreter and raises
+    # AttributeError under another.
     @staticmethod
     def _row(days_ago: float) -> dict:
         return {
@@ -155,7 +159,7 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
         # returned False for exactly the patterns with the most live evidence.
         # The evidence here spans 30 days; the row's date is today.
         with mock.patch.object(
-            dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(30)]
+            dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(30)], create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertTrue(dc._is_sustained(dc._first_observation_ts("agent-x")))
         # And the reader that DOES own the column agrees it means last-observed:
@@ -167,7 +171,7 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
         # The other half of the inversion. An old discovered_date used to READ as
         # sustained; the evidence behind it is 2 days old, so it is not.
         with mock.patch.object(
-            dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(2)]
+            dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(2)], create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertFalse(dc._is_sustained(dc._first_observation_ts("agent-x")))
         # Same row, the other gate: dated well outside the window ⇒ snoozed.
@@ -187,7 +191,7 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
 
     def test_when_the_window_is_empty_then_the_gate_fails_closed(self) -> None:
         with mock.patch.object(
-            dc, "_pg_read_outcomes_since", lambda *a, **k: []
+            dc, "_pg_read_outcomes_since", lambda *a, **k: [], create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertIsNone(dc._first_observation_ts("agent-x"))
 
@@ -196,7 +200,7 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
             raise RuntimeError("pg down")
 
         with mock.patch.object(
-            dc, "_pg_read_outcomes_since", _boom
+            dc, "_pg_read_outcomes_since", _boom, create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertIsNone(dc._first_observation_ts("agent-x"))
 
@@ -210,7 +214,7 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
             return [self._row(30)]
 
         with mock.patch.object(
-            dc, "_pg_read_outcomes_since", _capture
+            dc, "_pg_read_outcomes_since", _capture, create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             dc._first_observation_ts("agent-x")
         self.assertEqual(seen.get("order"), "ASC")
