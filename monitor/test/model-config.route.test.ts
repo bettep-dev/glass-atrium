@@ -678,3 +678,104 @@ test("daemon_config_sync: rendered-view mismatch → 'drift', missing file → '
   assert.strictEqual(res3.statusCode, 200);
   assert.strictEqual((res3.json() as ModelConfigPutResponse).daemon_config_sync, "ok");
 });
+
+// ----- un-migrated DB (the post-update window) ---------------------------------------
+//
+// End-to-end version of model-config.legacy-read.unit.test.ts: `scripts/update.sh` ships server
+// code keyed on the post-rename names without running `prisma migrate deploy`, so the GET queries
+// rows that do not exist yet while the pre-rename rows sit right beside them.
+
+/** Put the DB into the pre-rename shape: legacy rows present, post-rename rows absent. */
+async function seedUnMigratedRows(legacyModel: string, legacyBudget: string): Promise<void> {
+  const prisma = getPrisma();
+  await prisma.modelConfig.deleteMany({
+    where: { configKey: { in: ["model.daemon_cycle_worker", "budget.worker_max_usd"] } },
+  });
+  for (const [key, value] of [
+    ["model.daemon_cycle_haiku", legacyModel],
+    ["budget.haiku_max_usd", legacyBudget],
+  ] as const) {
+    await prisma.modelConfig.upsert({
+      where: { configKey: key },
+      update: { configValue: value, updatedBy: "test-unmigrated" },
+      create: { configKey: key, configValue: value, updatedBy: "test-unmigrated" },
+    });
+  }
+}
+
+async function clearLegacyRows(): Promise<void> {
+  await getPrisma().modelConfig.deleteMany({
+    where: { configKey: { in: ["model.daemon_cycle_haiku", "budget.haiku_max_usd"] } },
+  });
+}
+
+test("un-migrated DB: GET resolves both renamed domains and reports 'pending-migration'", async () => {
+  await seedUnMigratedRows("claude-haiku-4-5", "0.75");
+  // The file an un-migrated install actually carries — written by pre-rename server code.
+  writeFileSync(
+    daemonConfigPath,
+    `${JSON.stringify(
+      { _comment: "keep me", haiku_model: "claude-haiku-4-5", haiku_max_budget_usd: "0.75", pre_verify_max_budget_usd: "10.00" },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  try {
+    const body = (await app.inject({ method: "GET", url: "/api/model-config" })).json() as ModelConfigGetResponse;
+
+    // Before the read these were null — an empty 'custom…' model input and a '—' cap.
+    const model = domainOf(body, "model.daemon_cycle_worker");
+    assert.strictEqual(model.desired, "claude-sonnet-5", "a retired id is rewritten, not surfaced");
+    const budget = budgetOf(body, "budget.worker_max_usd");
+    assert.strictEqual(budget.desired, "0.75", "the operator's tuned cap moves verbatim");
+    // The badge that used to go green over two missing rows.
+    assert.strictEqual(body.daemon_config_sync, "pending-migration");
+  } finally {
+    await clearLegacyRows();
+    await resetDbBaseline();
+    writeDaemonConfigFixture();
+  }
+});
+
+test("un-migrated DB: a models-only Save preserves the cap and ends that domain's legacy read", async () => {
+  await seedUnMigratedRows("claude-haiku-4-5", "0.75");
+  writeFileSync(
+    daemonConfigPath,
+    `${JSON.stringify({ haiku_model: "claude-haiku-4-5", haiku_max_budget_usd: "0.75" }, null, 2)}\n`,
+    "utf8",
+  );
+
+  try {
+    // The reported sequence: the operator changes only the model, so the PUT carries no budget.
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/model-config",
+      payload: { models: { "model.daemon_cycle_worker": "claude-opus-5" } },
+    });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as ModelConfigPutResponse;
+
+    // DB: the cap's only row is still the legacy one, and it is untouched.
+    assert.strictEqual(await getDbValue("budget.haiku_max_usd"), "0.75", "the cap row survives");
+    assert.strictEqual(await getDbValue("model.daemon_cycle_worker"), "claude-opus-5", "new row written");
+    // File: the write-side carry landed the cap under its new name rather than dropping it.
+    const rendered = JSON.parse(readFileSync(daemonConfigPath, "utf8")) as Record<string, unknown>;
+    assert.strictEqual(rendered.worker_max_budget_usd, "0.75", "the tuned cap survives the Save");
+    assert.strictEqual(rendered.worker_model, "claude-opus-5");
+    // The un-Saved domain is still legacy-sourced, so the state stays honest after a partial Save.
+    assert.strictEqual(body.daemon_config_sync, "pending-migration");
+    assert.strictEqual(budgetOf(body, "budget.worker_max_usd").desired, "0.75");
+
+    // The Saved domain no longer needs the legacy read at all: delete the legacy MODEL row and the
+    // value must be unchanged — which it can only be if it came from the post-rename row.
+    await getPrisma().modelConfig.deleteMany({ where: { configKey: "model.daemon_cycle_haiku" } });
+    const after = (await app.inject({ method: "GET", url: "/api/model-config" })).json() as ModelConfigGetResponse;
+    assert.strictEqual(domainOf(after, "model.daemon_cycle_worker").desired, "claude-opus-5");
+  } finally {
+    await clearLegacyRows();
+    await resetDbBaseline();
+    writeDaemonConfigFixture();
+  }
+});
