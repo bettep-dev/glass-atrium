@@ -254,17 +254,33 @@ atrium_load_timezone() {
   printf '%s\n' "${ATRIUM_TIMEZONE:-$(atrium_resolve_timezone "$(atrium_config_get '[meta]' 'timezone' 'auto')")}"
 }
 
-# Resolve the daemon "haiku" cheap-model id from the daemon-config.json SoT.
-# Echoes the configured .haiku_model when jq + the file + a non-empty key are all
-# present; else the alias-literal fallback. ALWAYS echoes a non-empty id and
-# returns 0 (safe under set -e / command substitution / an ERR trap).
+# Resolve the background-worker model id from the daemon-config.json SoT — the
+# model the unattended loops run their own `claude -p` calls on (autoagent patch
+# generation, wiki compile/dedup). Named for the ROLE; the former "haiku" name
+# named a model the loops no longer use.
+# Echoes the configured .worker_model when jq + the file + a non-empty key are all
+# present; else the pre-retirement .haiku_model key (read-side legacy compat, so an
+# install whose config file has not been re-saved keeps its operator value); else
+# the literal fallback, which MUST stay in lockstep with the hooks/daemon_config.py
+# _FALLBACK["worker_model"] literal (Python SoT — the two seams read the same file
+# and a divergence means the shell and Python halves of one cycle run on different
+# models, which is exactly the drift this pair had before the retirement).
+# ALWAYS echoes a non-empty id and returns 0 (safe under set -e / command
+# substitution / an ERR trap).
 # Arg $1 = config path — each caller passes its OWN seam var; empty/absent → the
-# canonical default. daemon-config.json mirrors hooks/daemon_config.py (Python SoT).
-atrium_resolve_haiku_model() {
+# canonical default.
+atrium_resolve_worker_model() {
   local config_path="${1:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-config.json}"
-  local model="claude-haiku-4-5" cfg_model
+  local model="claude-sonnet-5" cfg_model
   if command -v jq >/dev/null 2>&1 && [[ -f "${config_path}" ]]; then
-    cfg_model="$(jq -r '.haiku_model // empty' "${config_path}" 2>/dev/null || true)"
+    # GA-ABSORB[benign]: jq exits non-zero on a corrupt/unreadable config; an
+    # unresolvable key is a normal outcome here and falls through to the literal.
+    cfg_model="$(jq -r '.worker_model // empty' "${config_path}" 2>/dev/null || true)"
+    if [[ -z "${cfg_model}" ]]; then
+      # GA-ABSORB[benign]: same jq contract as above, on the legacy key.
+      cfg_model="$(jq -r '.haiku_model // empty' "${config_path}" 2>/dev/null || true)"
+      [[ -n "${cfg_model}" ]] && printf '[atrium-config] WARN: reading deprecated key '"'"'haiku_model'"'"' — re-save from the monitor Model Config screen to migrate (path=%s)\n' "${config_path}" >&2
+    fi
     [[ -n "${cfg_model}" ]] && model="${cfg_model}"
   fi
   printf '%s\n' "${model}"

@@ -461,6 +461,14 @@ function ScreenImprovement({ onNav }) {
 		return learningLogState.data.apply_cap_state || null;
 	}, [learningLogState]);
 
+	// 루프 억제 분해 — 배너와 같은 payload 에서 뽑되 별도 상태다. 배너는 cap 하나를 경고하고,
+	// 이 값은 다섯 경로 전체를 분해한다.
+	const loopSuppression = useMI(() => {
+		if (learningLogState.status !== "ready" || !learningLogState.data)
+			return null;
+		return learningLogState.data.loop_suppression_state || null;
+	}, [learningLogState]);
+
 	// prose-only-add per-agent rolling count — null-safe (verdict 없는 구간에선 빈 배열).
 	const proseOnlyAdd = useMI(() => {
 		if (listState.status !== "ready" || !listState.data) return null;
@@ -617,6 +625,10 @@ function ScreenImprovement({ onNav }) {
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
 				<ParkedLoopBannerI applyCap={applyCapState} />
+				<LoopSuppressionCardI
+					state={learningLogState}
+					suppression={loopSuppression}
+				/>
 				<div className="flex-1 min-h-0">
 					<KanbanCardI
 						state={listState}
@@ -1964,6 +1976,11 @@ function ConfidenceLaneTableI({ buckets }) {
 //   - per-agent verified rate (Gaming-the-Judge cross-verify pass rate)
 //   - 전체 rollup → MANDATORY 격상 조건 충족 indicator
 //
+// 헤드라인은 "Loop parked" 가 아니라 메커니즘 이름이다. cap 은 억제 다섯 경로 중 하나이고
+// 측정상 가장 드물다(비율은 routes/improvement.ts 헤더). 그 하나를 "루프가 멈췄다"로 쓰면
+// 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
+// 분해는 LoopSuppressionCardI 담당.
+//
 // 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없고, learning_log status 를
 // 되돌리는 방식으로도 풀리지 않는다(다음 사이클에 재정지 + park 이력 유실). apply evidence 를
 // 정리하는 실제 re-arm 이 들어오기 전까지 루프는 멈춘 채로 남는다. K=0 이면 렌더 자체를 하지
@@ -1981,7 +1998,7 @@ function ParkedLoopBannerI({ applyCap }) {
 				<SymI s="⚠" className="text-warn" size={14} />
 				<div className="min-w-0">
 					<div className="fs-meta font-mono text-warn">
-						Loop parked — {formatIntI(capped)} capped{" "}
+						Repeat-apply cap — {formatIntI(capped)} parked{" "}
 						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
 						{agents === 1 ? "agent" : "agents"}
 					</div>
@@ -1992,6 +2009,120 @@ function ParkedLoopBannerI({ applyCap }) {
 						{applyCap.rearm_hint}
 					</div>
 				</div>
+			</div>
+		</div>
+	);
+}
+
+// 루프 억제 분해 카드. 존재 이유는 배너가 답하지 못하는 질문 하나다: "루프의 얼마가, 왜
+// 억제되어 있나".
+//
+// 두 population(parked / per-cycle) 은 분리해 렌더하고 절대 더하지 않는다 — 종결 row 와
+// 재발 횟수라 합계는 둘 중 어느 것도 아니다(계약은 ImprovementLoopSuppressionState).
+//
+// pending split 이 먼저 오는 이유: status_distribution 의 identified 수는 처리 대기 backlog 로
+// 읽히는데, 그중 상당수는 intake 에서 매번 버려지는 라벨이라 제안이 나올 수 없다. 억제된
+// 패턴이 건강한 pending 처럼 보이는 지점이 정확히 여기다.
+//
+// K=0(전 항목 0) 이어도 카드는 남는다 — 0 은 "억제가 없다"는 판독이고, 카드 부재는
+// "측정하지 않는다"이다(ProseOnlyAddCardI 와 같은 규칙).
+function SuppressionBucketRowsI({ buckets, unitLabel }) {
+	if (!Array.isArray(buckets) || buckets.length === 0) {
+		return (
+			<div className="placeholder">No {unitLabel} in this population</div>
+		);
+	}
+	return (
+		<table className="w-full fs-meta font-mono">
+			<thead>
+				<tr className="text-faint uppercase tracking-wider">
+					<th className="text-left py-1.5 pl-1.5">Cause</th>
+					<th className="text-right py-1.5">{unitLabel}</th>
+					<th className="text-right py-1.5 pr-1.5">Agents</th>
+				</tr>
+			</thead>
+			<tbody>
+				{buckets.map((b) => (
+					<tr key={b.cause} className="border-t border-line/50 align-top">
+						<td className="text-left py-1.5 pl-1.5">
+							<div className="text-ink">{b.label}</div>
+							{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. 원인별 hint 가 잘리면
+							    "무엇이 이걸 푸는가"가 사라지고 숫자만 남는다. */}
+							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
+						</td>
+						<td className="text-right py-1.5 text-ink">
+							{formatIntI(Number(b.count ?? 0))}
+						</td>
+						<td className="text-right py-1.5 pr-1.5 text-dim">
+							{formatIntI(Number(b.agents ?? 0))}
+						</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
+	);
+}
+
+function LoopSuppressionCardI({ state, suppression }) {
+	const { CardHead } = window.UI;
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !suppression) return null;
+	const pendingTotal = Number(suppression.pending_total ?? 0);
+	const pendingUnpromptable = Number(suppression.pending_unpromptable ?? 0);
+	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
+	const offRegistry = Number(suppression.off_registry_parked ?? 0);
+	return (
+		<div className="card" data-testid="loop-suppression-card">
+			<CardHead title="Loop suppression" />
+			<div className="px-3 pb-3 space-y-3">
+				<div>
+					<div className="fs-meta font-mono text-ink">
+						Pending patterns that can never propose —{" "}
+						<span className={pendingUnpromptable > 0 ? "text-warn" : ""}>
+							{formatIntI(pendingUnpromptable)}
+						</span>{" "}
+						of {formatIntI(pendingTotal)}
+					</div>
+					<div className="card-sub is-wrap fs-micro mt-1">
+						These rows sit at status='identified' and are counted as pending
+						backlog, but their label is one the daemon skips at intake every
+						cycle, so no proposal can be generated from them. Counted across
+						every agent — the intake skip reads the label, not
+						agent-registry.json, so unlike the parked buckets below this pair
+						is not registry-scoped.
+					</div>
+				</div>
+				<div>
+					<div className="fs-meta font-mono text-dim mb-1">
+						Parked patterns (terminal rows)
+					</div>
+					<SuppressionBucketRowsI
+						buckets={suppression.parked}
+						unitLabel="Patterns"
+					/>
+				</div>
+				<div>
+					<div className="fs-meta font-mono text-dim mb-1">
+						Per-cycle suppressions (last {formatIntI(windowDays)} days)
+					</div>
+					<SuppressionBucketRowsI
+						buckets={suppression.per_cycle}
+						unitLabel="Events"
+					/>
+					<div className="card-sub is-wrap fs-micro mt-1">
+						Recurrences, not distinct patterns — these mechanisms write no
+						lifecycle transition, so the same row is re-suppressed on every
+						cycle.
+					</div>
+				</div>
+				{offRegistry > 0 ? (
+					<div className="card-sub is-wrap fs-micro text-warn">
+						{formatIntI(offRegistry)} parked{" "}
+						{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from
+						every count on this card: the agent is not in agent-registry.json.
+						Still parked, still not proposing.
+					</div>
+				) : null}
 			</div>
 		</div>
 	);

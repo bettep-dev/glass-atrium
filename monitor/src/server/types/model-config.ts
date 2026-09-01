@@ -12,9 +12,9 @@ export type ModelDomainKey =
   | "model.research"
   | "model.meta"
   | "model.wiki"
-  | "model.daemon_cycle_haiku";
+  | "model.daemon_cycle_worker";
 
-export type BudgetDomainKey = "budget.haiku_max_usd" | "budget.pre_verify_max_usd";
+export type BudgetDomainKey = "budget.worker_max_usd" | "budget.pre_verify_max_usd";
 
 // DB desired-state vs rendered daemon-config.json consumer view (D2 write-through).
 export type DaemonConfigSyncState = "ok" | "drift" | "file-missing";

@@ -3,7 +3,7 @@
 #
 # The monitor records DESIRED model/budget config in its DB and write-throughs the
 # surfaces it is allowed to touch (dev/research frontmatter = next-spawn, daemon-config
-# budgets + haiku_model = next-cycle). It CANNOT touch two surfaces:
+# budgets + worker_model = next-cycle). It CANNOT touch two surfaces:
 #   (a) model.orchestrator → ~/.claude/settings.json  (Harness Path Protection: monitor never writes it)
 #   (b) model.autoagent_daemon / model.wiki_daemon → long-lived tmux REPL (needs restart)
 # This script applies ONLY those two, idempotently, and reports the rest.

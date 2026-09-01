@@ -181,9 +181,9 @@ LOG_FILE="$LOG_DIR/wiki-compile-$(date -u +%Y-%m-%d).log"
 LOCK_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-lock.sh"
 SYNC_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-sync.sh"
 
-# Haiku cheap-model id from the daemon-config.json SoT, via atrium_resolve_haiku_model
+# Background-worker model id from the daemon-config.json SoT, via atrium_resolve_worker_model
 # (lib/atrium-config.sh). DAEMON_CONFIG override hook → canonical default when empty.
-HAIKU_MODEL="$(atrium_resolve_haiku_model "${DAEMON_CONFIG:-}")"
+WORKER_MODEL="$(atrium_resolve_worker_model "${DAEMON_CONFIG:-}")"
 
 # WIKI_STARTED_AT for the PG aggregate row.
 WIKI_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -529,7 +529,20 @@ TOTAL=${#UNPROCESSED[@]}
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile started pid=$$ total=${TOTAL}" >>"$LOG_FILE"
 printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 
-# 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00]
+# 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00] — the --max-budget-usd ceiling
+# for the single batch `claude -p` call below (all TOTAL files in one call).
+#
+# KNOWN INCONSISTENCY, left deliberately. The per-call fallback floor in
+# hooks/daemon_config.py was raised to 10.00 on the argument that a cap sized at
+# Haiku 4.5 rates starves Sonnet 5 (~3x the token rates); this ceiling is a fifth
+# of that and the same argument applies to it. It was NOT raised alongside the
+# floor because a spending ceiling is an operator's decision, not a side effect of
+# a model-retirement edit.
+# What makes leaving it acceptable is that exhaustion here is LOUD and correctly
+# attributed rather than silent: the '5.4 Local budget-config detection' branch
+# below matches 'Exceeded USD budget', records status='error' carrying this budget
+# value, and keeps it distinct from quota_exceeded — so a too-low ceiling names
+# itself on the first cycle it bites instead of degrading quietly.
 BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; printf "%.2f", b}')
 
 # The two `stat` dialects COLLIDE on -f rather than merely differing: BSD -f introduces the format
@@ -741,7 +754,7 @@ compile it — never summarize a file from its path alone:
 ${FILE_LIST}"
 
 # 4.5 Cost ceiling: the per-call --max-budget-usd (Step 5, clamped [0.50, 5.00]) bounds
-# this cron's own spend — the per-CALL ceiling the wiki daemon (HAIKU_MAX_BUDGET_USD)
+# this cron's own spend — the per-CALL ceiling the wiki daemon (WORKER_MAX_BUDGET_USD)
 # relies on. A daily-total gate on core.cost_events is unusable: no component/workload tag,
 # so a wiki-scoped daily sum isn't queryable and the GLOBAL total would block this cron
 # once non-wiki spend crosses the threshold. Failure modes: 5.4/5.5 + CLAUDE_EXIT below.
@@ -750,12 +763,12 @@ ${FILE_LIST}"
 CLAUDE_EXIT=0
 SYSTEM_PROMPT_CONTENT="$(cat "$HOME/.claude/agents/glass-atrium-wiki-curator.md")"
 # Derive the log label from the actual model var (no hardcoded-model drift).
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] claude -p batch call (budget=\$${BUDGET}, model=${HAIKU_MODEL})" >>"$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] claude -p batch call (budget=\$${BUDGET}, model=${WORKER_MODEL})" >>"$LOG_FILE"
 cd -- "$RUN_DIR"
 # stdout is the envelope (the model's only return channel) so it is captured for the parser;
 # stderr still appends to LOG_FILE, keeping the CLI's own diagnostics where they always were.
 "$CLAUDE" -p \
-  --model "$HAIKU_MODEL" \
+  --model "$WORKER_MODEL" \
   --system-prompt "$SYSTEM_PROMPT_CONTENT" \
   --setting-sources project,local \
   --strict-mcp-config \

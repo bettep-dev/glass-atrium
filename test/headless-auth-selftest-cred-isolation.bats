@@ -36,7 +36,7 @@ setup() {
   command -v perl >/dev/null 2>&1 || skip "perl not on PATH (run_with_timeout needs it)"
   # the libs are strict-mode when sourced whole; suspend any inherited ERR trap before eval.
   trap - ERR
-  # atrium_resolve_haiku_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
+  # atrium_resolve_worker_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
   # it so the eval'd headless_auth_selftest can call it (ga-env.sh's E5 loop does this at runtime).
   # shellcheck source=../scripts/lib/atrium-config.sh
   source "${GA}/scripts/lib/atrium-config.sh"
@@ -130,9 +130,9 @@ STUB
   printf '%s' "${path}"
 }
 
-# _write_daemon_config — write a daemon-config.json at the seam path with $1 as the haiku_model value.
+# _write_daemon_config — write a daemon-config.json at the seam path with $1 as the worker_model value.
 _write_daemon_config() {
-  printf '{"haiku_model":"%s"}\n' "$1" >"${GA_AUTH_DAEMON_CONFIG}"
+  printf '{"worker_model":"%s"}\n' "$1" >"${GA_AUTH_DAEMON_CONFIG}"
 }
 
 # === (1) THE PRIMARY REPRO — a competing ANTHROPIC_API_KEY is isolated, so a valid token passes =====
@@ -213,9 +213,9 @@ _write_daemon_config() {
   [[ "${out}" != *"provisioning did not deliver a token"* ]] || return 1
 }
 
-# === (6) MODEL PIN — the probe passes the daemon-config'd haiku model to --model ====================
+# === (6) MODEL PIN — the probe passes the daemon-config'd worker model to --model ====================
 
-@test "selftest: the probe pins --model to the daemon-config haiku_model value" {
+@test "selftest: the probe pins --model to the daemon-config worker_model value" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH (model resolution needs it)"
   extract_fn run_with_timeout || return 1
   extract_fn headless_auth_selftest || return 1
@@ -228,13 +228,13 @@ _write_daemon_config() {
   headless_auth_selftest || rc=$?
   [[ "${rc}" -eq 0 ]] || return 1
   [[ -f "${CLAUDE_STUB_ARGS_OUT}" ]] || return 1
-  # the probe carried --model with the config'd cheap model, not the default.
+  # the probe carried --model with the config'd worker model, not the default.
   grep -qF -- '--model claude-haiku-cfg-9-9' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (7) MODEL PIN fallback — absent config -> the alias-literal claude-haiku-4-5 =====================
+# === (7) MODEL PIN fallback — absent config -> the concrete-id literal claude-sonnet-5 ===============
 
-@test "selftest: absent daemon-config falls back to --model claude-haiku-4-5" {
+@test "selftest: absent daemon-config falls back to --model claude-sonnet-5" {
   extract_fn run_with_timeout || return 1
   extract_fn headless_auth_selftest || return 1
   # GA_AUTH_DAEMON_CONFIG points at a NON-existent sandbox path (setup default) -> fallback literal.
@@ -247,18 +247,18 @@ _write_daemon_config() {
   headless_auth_selftest || rc=$?
   [[ "${rc}" -eq 0 ]] || return 1
   [[ -f "${CLAUDE_STUB_ARGS_OUT}" ]] || return 1
-  grep -qF -- '--model claude-haiku-4-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
+  grep -qF -- '--model claude-sonnet-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (9) STATIC — the centralized jq idiom + alias literal now live in atrium_resolve_haiku_model =====
+# === (9) STATIC — the centralized jq idiom + fallback literal now live in atrium_resolve_worker_model =
 
-@test "resolver(static): atrium_resolve_haiku_model owns the jq idiom + the claude-haiku-4-5 fallback literal" {
+@test "resolver(static): atrium_resolve_worker_model owns the jq idiom + the claude-sonnet-5 fallback literal (lockstep with daemon_config._FALLBACK)" {
   local body
-  body="$(awk '/^atrium_resolve_haiku_model\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/scripts/lib/atrium-config.sh")" || return 1
+  body="$(awk '/^atrium_resolve_worker_model\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/scripts/lib/atrium-config.sh")" || return 1
   [[ -n "${body}" ]] || return 1
   # the jq key read + alias-literal fallback moved OUT of the 4 call sites INTO this single resolver.
-  [[ "${body}" == *"jq -r '.haiku_model // empty'"* ]] || return 1
-  [[ "${body}" == *'model="claude-haiku-4-5"'* ]] || return 1
+  [[ "${body}" == *"jq -r '.worker_model // empty'"* ]] || return 1
+  [[ "${body}" == *'model="claude-sonnet-5"'* ]] || return 1
   # the config path is a parameter (each caller passes its own seam), defaulting to the canonical path.
   [[ "${body}" == *'local config_path="${1:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-config.json}"'* ]] || return 1
 }

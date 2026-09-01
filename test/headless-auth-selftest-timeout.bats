@@ -30,7 +30,7 @@ setup() {
   command -v perl >/dev/null 2>&1 || skip "perl not on PATH (run_with_timeout needs it)"
   # the libs are strict-mode when sourced whole; suspend any inherited ERR trap before eval.
   trap - ERR
-  # atrium_resolve_haiku_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
+  # atrium_resolve_worker_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
   # it so the eval'd headless_auth_selftest can call it (ga-env.sh's E5 loop does this at runtime).
   # shellcheck source=../scripts/lib/atrium-config.sh
   source "${GA}/scripts/lib/atrium-config.sh"
@@ -145,7 +145,7 @@ _write_stub_claude() {
   body="$(awk '/^headless_auth_selftest\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-tui-preflight.sh")" || return 1
   [[ -n "${body}" ]] || return 1
   # the bounded, stdin-pinned, credential-isolated, cheap-model-pinned probe.
-  [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${haiku_model}" "reply with OK" </dev/null 2>&1'* ]] || return 1
+  [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${worker_model}" "reply with OK" </dev/null 2>&1'* ]] || return 1
   # the OLD unbounded probe (no run_with_timeout, no stdin pin) is GONE.
   [[ "${body}" != *'"${claude_bin}" -p --output-format text "reply with OK" 2>&1'* ]] || return 1
   # the AUTH_FAIL_RE body scan is UNCHANGED (still gates the rc-0-masking 401).

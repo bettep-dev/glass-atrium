@@ -52,16 +52,16 @@ const BASELINE: ReadonlyArray<[string, string]> = [
   ["model.research", "claude-sonnet-5"],
   ["model.meta", "claude-sonnet-5"],
   ["model.wiki", "claude-sonnet-5"],
-  ["model.daemon_cycle_haiku", "claude-haiku-4-5"],
-  ["budget.haiku_max_usd", "10.00"],
+  ["model.daemon_cycle_worker", "claude-haiku-4-5"],
+  ["budget.worker_max_usd", "10.00"],
   ["budget.pre_verify_max_usd", "10.00"],
 ];
 
 const DAEMON_CONFIG_FIXTURE = {
   _comment: "fixture comment — must survive every render",
-  haiku_max_budget_usd: "10.00",
+  worker_max_budget_usd: "10.00",
   pre_verify_max_budget_usd: "10.00",
-  haiku_model: "claude-haiku-4-5",
+  worker_model: "claude-haiku-4-5",
   // Deprecated aggregate-limit keys the monitor no longer manages — renderDaemonConfig
   // must strip these so a live file still carrying them self-heals on the next PUT.
   cost_daily_limit_usd: "10.00",
@@ -295,14 +295,14 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(wiki.actual, "claude-sonnet-5");
   assert.strictEqual(wiki.drift, false);
 
-  const haiku = domainOf(body, "model.daemon_cycle_haiku");
+  const haiku = domainOf(body, "model.daemon_cycle_worker");
   assert.strictEqual(haiku.apply_mode, "next-cycle");
   assert.strictEqual(haiku.actual, "claude-haiku-4-5");
   assert.strictEqual(haiku.drift, false);
 
   // Per-call hard-cap budgets mirror the daemon-config.json fixture (no drift on baseline).
   assert.strictEqual(body.budgets.length, 2);
-  const haikuBudget = budgetOf(body, "budget.haiku_max_usd");
+  const haikuBudget = budgetOf(body, "budget.worker_max_usd");
   assert.strictEqual(haikuBudget.desired, "10.00");
   assert.strictEqual(haikuBudget.actual, "10.00");
   assert.strictEqual(haikuBudget.drift, false);
@@ -435,7 +435,7 @@ test("D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/r
     ["model.dev", "opus"],
     ["model.research", "haiku"],
     ["model.research", "sonnet"],
-    ["model.daemon_cycle_haiku", "sonnet"],
+    ["model.daemon_cycle_worker", "sonnet"],
   ] as const) {
     const res = await app.inject({
       method: "PUT",
@@ -475,12 +475,12 @@ test("AC-3: per-call budget format → 400 atomic (no cross-field invariant)", a
     const res = await app.inject({
       method: "PUT",
       url: "/api/model-config",
-      payload: { budgets: { "budget.haiku_max_usd": value } },
+      payload: { budgets: { "budget.worker_max_usd": value } },
     });
-    assert.strictEqual(res.statusCode, 400, `budget.haiku_max_usd=${value} (${label}) must 400`);
-    assert.strictEqual((res.json() as { field: string }).field, "budgets.budget.haiku_max_usd");
+    assert.strictEqual(res.statusCode, 400, `budget.worker_max_usd=${value} (${label}) must 400`);
+    assert.strictEqual((res.json() as { field: string }).field, "budgets.budget.worker_max_usd");
   }
-  assert.strictEqual(await getDbValue("budget.haiku_max_usd"), "10.00", "DB unchanged after rejects");
+  assert.strictEqual(await getDbValue("budget.worker_max_usd"), "10.00", "DB unchanged after rejects");
 });
 
 // ----- PUT render: daemon-config.json (AC-4) ----------------------------------------
@@ -490,29 +490,29 @@ test("AC-4: daemon-key change rewrites daemon-config.json — unknown keys + bud
     method: "PUT",
     url: "/api/model-config",
     payload: {
-      models: { "model.daemon_cycle_haiku": "claude-sonnet-4-6" },
-      budgets: { "budget.haiku_max_usd": "1.50" },
+      models: { "model.daemon_cycle_worker": "claude-sonnet-4-6" },
+      budgets: { "budget.worker_max_usd": "1.50" },
     },
   });
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigPutResponse;
   assert.strictEqual(surfaceOf(body, "daemon-config.json").status, "ok");
   assert.strictEqual(body.daemon_config_sync, "ok");
-  assert.strictEqual(domainOf(body, "model.daemon_cycle_haiku").actual, "claude-sonnet-4-6");
-  assert.strictEqual(budgetOf(body, "budget.haiku_max_usd").actual, "1.50");
+  assert.strictEqual(domainOf(body, "model.daemon_cycle_worker").actual, "claude-sonnet-4-6");
+  assert.strictEqual(budgetOf(body, "budget.worker_max_usd").actual, "1.50");
 
   const raw = readFileSync(daemonConfigPath, "utf8");
   const rendered = JSON.parse(raw) as Record<string, unknown>;
-  assert.strictEqual(rendered.haiku_model, "claude-sonnet-4-6");
+  assert.strictEqual(rendered.worker_model, "claude-sonnet-4-6");
   // The per-call cap renders verbatim under the real key daemon_config.py reads.
-  assert.strictEqual(rendered.haiku_max_budget_usd, "1.50");
+  assert.strictEqual(rendered.worker_max_budget_usd, "1.50");
   assert.strictEqual(rendered.pre_verify_max_budget_usd, "10.00", "untouched budget key preserved");
   assert.strictEqual(rendered._comment, DAEMON_CONFIG_FIXTURE._comment, "_comment preserved");
   // Deprecated aggregate-limit keys the monitor dropped are stripped on render → live file self-heals.
   assert.ok(!("cost_daily_limit_usd" in rendered), "deprecated cost_daily_limit_usd stripped");
   assert.ok(!("cost_monthly_limit_usd" in rendered), "deprecated cost_monthly_limit_usd stripped");
   // Trailing-zero STRING survives — a JSON number 1.5 would break the --max-budget-usd cap.
-  assert.ok(raw.includes('"haiku_max_budget_usd": "1.50"'), "'1.50' trailing zero byte-exact");
+  assert.ok(raw.includes('"worker_max_budget_usd": "1.50"'), "'1.50' trailing zero byte-exact");
   // Removed domains no longer write into daemon-config.json.
   assert.ok(!("autoagent_repl_model" in rendered), "removed domain key absent from render");
   assert.ok(!("wiki_repl_model" in rendered), "removed domain key absent from render");
@@ -590,7 +590,7 @@ test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT 
     const res2 = await app.inject({
       method: "PUT",
       url: "/api/model-config",
-      payload: { budgets: { "budget.haiku_max_usd": "0.75" } },
+      payload: { budgets: { "budget.worker_max_usd": "0.75" } },
     });
     assert.strictEqual(res2.statusCode, 200);
   } finally {
@@ -658,7 +658,7 @@ test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old
 test("daemon_config_sync: rendered-view mismatch → 'drift', missing file → 'file-missing'", async () => {
   writeFileSync(
     daemonConfigPath,
-    `${JSON.stringify({ ...DAEMON_CONFIG_FIXTURE, haiku_model: "claude-haiku-4-5" }, null, 2)}\n`,
+    `${JSON.stringify({ ...DAEMON_CONFIG_FIXTURE, worker_model: "claude-haiku-4-5" }, null, 2)}\n`,
     "utf8",
   );
   // DB still says claude-sonnet-4-6 (set in the AC-4 test) → rendered view out of sync.
@@ -673,7 +673,7 @@ test("daemon_config_sync: rendered-view mismatch → 'drift', missing file → '
   const res3 = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.daemon_cycle_haiku": "claude-haiku-4-5" } },
+    payload: { models: { "model.daemon_cycle_worker": "claude-haiku-4-5" } },
   });
   assert.strictEqual(res3.statusCode, 200);
   assert.strictEqual((res3.json() as ModelConfigPutResponse).daemon_config_sync, "ok");
