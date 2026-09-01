@@ -22,10 +22,12 @@ import {
   isPricingKnown,
   loadKnownModelIds,
   normalizeModelId,
+  resolveDesiredWithLegacy,
   resolveRenamedKeyCarry,
   validateBudgetValue,
   validateModelValue,
   type BudgetDomainDef,
+  type LegacyDesiredResolution,
   type ModelDomainDef,
 } from "../model-config-consts.js";
 import type {
@@ -110,7 +112,13 @@ async function handleGet(
 async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   const prisma = getPrisma();
   const rows = await prisma.modelConfig.findMany();
-  const desired = new Map<string, string>(rows.map((r) => [r.configKey, r.configValue]));
+  // Pre-rename rows are folded in under their successors' names FIRST, so every reader below --
+  // the domain rows, the budget rows and the sync state -- sees one desired state and cannot
+  // disagree about it. On a migrated DB the resolution is the row map unchanged.
+  const resolution = resolveDesiredWithLegacy(
+    new Map<string, string>(rows.map((r) => [r.configKey, r.configValue])),
+  );
+  const desired = resolution.desired;
 
   const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, knownModelIds] =
     await Promise.all([
@@ -143,7 +151,7 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
     known_models: [...knownModelIds],
     domains,
     budgets,
-    daemon_config_sync: computeDaemonConfigSync(desired, daemonConfig),
+    daemon_config_sync: computeDaemonConfigSync(resolution, daemonConfig),
   };
 }
 
@@ -238,14 +246,26 @@ function computeDrift(desired: string | null, actual: string | null): boolean {
 /**
  * DB desired-state vs rendered daemon-config.json view (D2). A budget key set in the DB
  * but absent from (or differing in) the rendered file is drift — pressing Save re-renders it.
+ *
+ * Exported for the DB-free unit suite: the state is decidable from a desired-state resolution and
+ * a parsed file object, and the integration suite that would otherwise own it needs a live Postgres.
  */
-function computeDaemonConfigSync(
-  desired: Map<string, string>,
+export function computeDaemonConfigSync(
+  resolution: LegacyDesiredResolution,
   daemonConfig: Record<string, unknown> | null,
 ): DaemonConfigSyncState {
   if (daemonConfig === null) {
     return "file-missing";
   }
+  // Reported ahead of any drift comparison, deliberately. On an un-migrated DB the file still
+  // carries the pre-rename keys, so every renamed domain reads as drift and the operator is sent
+  // to Save when the un-run rename is the root cause. Per-domain drift is not hidden by this —
+  // each table row keeps its own chip. Without the branch, the `want === undefined → continue`
+  // below returns a vacuous 'ok' over a domain that has no row under the name it just queried.
+  if (resolution.legacySourced.size > 0) {
+    return "pending-migration";
+  }
+  const desired = resolution.desired;
   for (const def of MODEL_DOMAINS) {
     if (def.daemonConfigKey === null) {
       continue;

@@ -71,6 +71,13 @@ export const BUDGET_MAX_INTEGER_DIGITS = 2;
 export const BUDGET_MIN_USD = 0.05;
 export const BUDGET_MAX_USD = 50.0;
 
+// The shipped per-call cap default, in the same 2-decimal string form the caps are stored in.
+// Parity with the two places that already carry the literal: the DB seed rows (the init_squashed
+// appendix and the rename migration's floor INSERT) and hooks/daemon_config.py _FALLBACK. An
+// operator who never touched the field is running THIS value, so it is what an empty input must
+// advertise — the placeholder it replaces named a cap 20x below the one actually in force.
+export const BUDGET_SEED_DEFAULT_USD = "10.00";
+
 export interface ModelDomainDef {
   key: ModelDomainKey;
   applyMode: ApplyMode;
@@ -212,6 +219,61 @@ export const RETIRED_WORKER_MODEL_REPLACEMENT = "claude-sonnet-5";
 /** True when the id names the retired worker-model family, under any vendor id shape. */
 export function isRetiredWorkerModelId(value: string): boolean {
   return normalizeModelId(value).toLowerCase().includes(RETIRED_WORKER_MODEL_MARKER);
+}
+
+/** Desired state after any pre-rename row has been read under its current key name. */
+export interface LegacyDesiredResolution {
+  /** Row values keyed by CURRENT domain key — a legacy row folded in under its successor's name. */
+  desired: ReadonlyMap<string, string>;
+  /** Current domain keys whose value came from a pre-rename row. Empty on a migrated DB. */
+  legacySourced: ReadonlySet<string>;
+}
+
+/**
+ * Read-side twin of resolveRenamedKeyCarry, and the DB analogue of the daemon's own file-side
+ * legacy read (hooks/daemon_config.py _LEGACY_KEY_ALIASES). `scripts/update.sh` ships server code
+ * keyed on the post-rename names without running `prisma migrate deploy`, so an updated install
+ * queries monitor.model_config for rows that do not exist there yet. Without this read the renamed
+ * domains render as UNSET — an empty model input reading 'Enter a model id', and a cap showing
+ * '—' — over a DB that holds both values under their old names, while the daemon meanwhile runs
+ * correctly off its own legacy read. The key map is not restated here: RENAMED_DAEMON_CONFIG_KEYS
+ * is the one monitor-side copy, and the SQL migration is its only twin.
+ *
+ * Precedence: a row under the CURRENT name always wins, so a migrated DB — and any domain already
+ * re-Saved through the PUT path, which writes the new name — never consults the legacy name.
+ *
+ * VALUE POLICY is the migration's, applied identically on all three doors (the SQL migration, the
+ * daemon-config.json carry, this read): a retired-family MODEL id is REWRITTEN, because surfacing
+ * the old id invites a Save that pins the loop back onto the retired model; a BUDGET moves
+ * VERBATIM, because a per-call cap is the operator's own spending decision.
+ *
+ * Folded in UNVALIDATED, deliberately: model_config rows are written only by the validated PUT path
+ * or by a seed, so an unusable value means a hand-edited DB — and showing what the DB actually
+ * holds beats hiding it behind an empty field, since the client validator flags it before a Save
+ * can leave. The write path's stricter `keep` policy answers a different question: it guards against
+ * LAUNDERING a bad value into a new key name, which a read never does.
+ */
+export function resolveDesiredWithLegacy(
+  rows: ReadonlyMap<string, string>,
+): LegacyDesiredResolution {
+  const desired = new Map(rows);
+  const legacySourced = new Set<string>();
+  for (const def of RENAMED_DAEMON_CONFIG_KEYS) {
+    if (desired.has(def.currentDomainKey)) {
+      continue;
+    }
+    const legacy = rows.get(def.legacyDomainKey);
+    if (legacy === undefined) {
+      continue;
+    }
+    const isModelDomain = MODEL_DOMAINS.some((d) => d.key === def.currentDomainKey);
+    desired.set(
+      def.currentDomainKey,
+      isModelDomain && isRetiredWorkerModelId(legacy) ? RETIRED_WORKER_MODEL_REPLACEMENT : legacy,
+    );
+    legacySourced.add(def.currentDomainKey);
+  }
+  return { desired, legacySourced };
 }
 
 /** What the renderer should do with one legacy key on this render. */

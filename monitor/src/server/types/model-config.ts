@@ -17,7 +17,10 @@ export type ModelDomainKey =
 export type BudgetDomainKey = "budget.worker_max_usd" | "budget.pre_verify_max_usd";
 
 // DB desired-state vs rendered daemon-config.json consumer view (D2 write-through).
-export type DaemonConfigSyncState = "ok" | "drift" | "file-missing";
+// 'pending-migration': a renamed domain's value was read from its PRE-rename row because the
+// rename migration has not run on this DB, so no comparison against the file can be called
+// in-sync yet — the rename is the root cause and `glass-atrium db-setup` is its remedy.
+export type DaemonConfigSyncState = "ok" | "drift" | "file-missing" | "pending-migration";
 
 export interface DomainFileModel {
   file: string;
