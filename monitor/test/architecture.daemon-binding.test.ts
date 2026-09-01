@@ -222,7 +222,7 @@ function getLiveAt(rows: DaemonAggRow[], multiplier: number): DaemonLiveStatus[]
     if (daemon.staleness_minutes === null) return daemon;
     const lastStatus = rows.find((row) => row.daemon_name === daemon.daemon_name)?.last_status;
     const verdict = getVerdictAt(daemon.staleness_minutes, lastStatus ?? null, multiplier);
-    return { ...daemon, status: verdict, effective_status: verdict };
+    return { ...daemon, effective_status: verdict };
   });
 }
 

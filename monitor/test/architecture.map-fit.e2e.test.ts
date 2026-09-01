@@ -93,7 +93,6 @@ function getLiveFixture(): ArchitectureLiveResponse {
 		daemons: [
 			{
 				daemon_name: BOUND_DAEMON,
-				status: "ok",
 				effective_status: "ok",
 				last_run_at: null,
 				staleness_minutes: 0,

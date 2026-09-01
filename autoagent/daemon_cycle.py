@@ -572,6 +572,22 @@ _FAIL_RATE_LABEL_PREFIXES = (
     "agent instruction-improvement candidate",
     "에이전트 지침 개선 후보",
 )
+# Loop-event token for the staleness gate's REMAINING fail-open — a pattern whose
+# label family the live-rate recompute does not understand AND whose row WAS
+# re-observed inside the window, so neither branch can speak for it. Still KEPT
+# (fail-open stays the safe direction: never suppress a pattern on ignorance), but
+# no longer SILENT. Silence is what made the gap load-bearing: covering_apply_count
+# counts applied proposals and never a re-observation, so with the staleness gate
+# mute on a family it does not know, a persisted NON-firing pattern and a
+# persistently-firing one are indistinguishable to the repeat-apply cap.
+# Its own token rather than a fold into 'stale-pattern-skip' because the two
+# populations are OPPOSITE: that one was dropped, this one was kept.
+STALE_UNKNOWN_FAMILY_EVAL = "stale-gate-unknown-family"
+# Loop-event token for the family-INDEPENDENT re-observation snooze
+# (_reobservation_reason). Separate from 'stale-pattern-skip' for the same reason
+# the sibling gates keep distinct tokens: the eval_result distribution is the only
+# place an operator can tell WHICH gate suppressed a cycle's selection.
+STALE_UNOBSERVED_EVAL = "stale-unobserved-skip"
 
 # Intake exclusion set. These families report an OPERATIONAL COUNTER — turns spent
 # past a budget, outcomes recorded as negative — not an instruction defect, so no
@@ -1482,26 +1498,80 @@ def _fetch_promotion_stats(agent: str) -> tuple[list[OutcomeSignal], int]:
     return signals, true_count
 
 
-def _is_sustained(pattern_date: str, *, sustain_days: int = PROMOTION_SUSTAIN_DAYS) -> bool:
-    """7-day rolling sustain check against the pattern's first-observed date.
+def _first_observation_ts(agent: str) -> datetime | None:
+    """Oldest qualifying core.outcomes record_ts for `agent` — the sustain signal.
 
-    - core.learning_log discovered_date (YYYY-MM-DD) = first-observed date.
-    - today - date >= sustain_days → sustained.
-    - date parse failure → False (conservative — blocks proposal promotion).
+    core.learning_log.discovered_date CANNOT answer this question, which is why
+    this read exists. That column is a LAST-observed date (its writers, in full,
+    are enumerated on _reobservation_reason), so reading it as first-observed
+    INVERTS the sustain gate: a pattern re-observed every cycle is restamped to
+    today and never sustains, while one whose evidence stopped arriving sustains
+    purely by ageing. The two gates now read two columns with one meaning each,
+    instead of one column with two.
+
+    ASC/limit-1 twin of _fetch_promotion_stats' read — same 90-day lookback, same
+    agent scope, same learning-signal exclusions — so the span is measured over
+    exactly the evidence the posterior scores. Uncapped by OUTCOME_SAMPLE_LIMIT
+    on purpose: the capped sample holds the 5 most RECENT rows, whose span
+    collapses toward zero precisely for the high-volume agents the ladder targets.
+
+    Returns:
+        datetime (tz-aware) of the oldest qualifying outcome · None on PG-off,
+        read failure, or an empty window → caller fails CLOSED (not sustained).
+    """
+    if not HAS_PG_OUTCOME_READ or not agent:
+        return None
+
+    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
+    try:
+        rows = _pg_read_outcomes_since(
+            since_epoch,
+            agent=agent,
+            task_type=None,
+            limit=1,
+            order="ASC",
+        )
+    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: PG first-observation read failed "
+            f"(sustain gate fails closed): {type(exc).__name__}: {exc}\n"
+        )
+        return None
+    if not rows:
+        return None
+    record_ts = rows[0].get("record_ts")
+    return record_ts if isinstance(record_ts, datetime) else None
+
+
+def _is_sustained(
+    first_observed: datetime | None,
+    *,
+    sustain_days: int = PROMOTION_SUSTAIN_DAYS,
+) -> bool:
+    """7-day rolling sustain check — has this agent's evidence spanned the window?
+
+    - `first_observed` = oldest qualifying core.outcomes record_ts
+      (_first_observation_ts), NOT core.learning_log.discovered_date. The column
+      name reads first-observed; the value is last-observed. See
+      _first_observation_ts for why substituting it inverts this gate.
+    - now - first_observed >= sustain_days → sustained.
+    - None (PG off, read failure, empty window) → False (conservative — blocks
+      proposal promotion, same fail-closed posture as the observation_count floor).
 
     Args:
-        pattern_date: Pattern.date (discovered_date as YYYY-MM-DD).
+        first_observed: tz-aware datetime of the oldest qualifying outcome.
         sustain_days: sustain threshold in days (default 7).
 
     Returns:
         bool — whether sustain is met.
     """
-    try:
-        observed = datetime.strptime(pattern_date.strip(), "%Y-%m-%d").replace(
-            tzinfo=timezone.utc
-        )
-    except (ValueError, AttributeError):
+    if not isinstance(first_observed, datetime):
         return False
+    observed = (
+        first_observed.replace(tzinfo=timezone.utc)
+        if first_observed.tzinfo is None
+        else first_observed
+    )
     elapsed_days = (datetime.now(timezone.utc) - observed).days
     return elapsed_days >= sustain_days
 
@@ -8197,10 +8267,27 @@ def drop_apply_capped_patterns(
     refutes. Pinned by TestApplyCapNamingBoundary.
 
     Evidence caveat: selection-implies-emission holds only while the staleness
-    gate can actually run (drop_stale_patterns fails OPEN on unreadable live
-    stats and on an unknown label family), so a high apply count is strong
-    evidence of non-abatement, NOT proof of it. The cap is deliberately sized so
-    a false positive costs one manual status reset.
+    gate can actually run. drop_stale_patterns recomputes the live rate for the
+    label families it knows, and for a family it does NOT know it falls back to
+    the family-independent re-observation check (no aggregator re-emit within
+    STALE_WINDOW_DAYS → snoozed). What still fails OPEN is narrow — an unreadable
+    live-stats read, or an unknown family whose row WAS re-observed recently —
+    and that residue is no longer silent (STALE_UNKNOWN_FAMILY_EVAL loop event +
+    stderr WARN). So a high apply count is strong evidence of non-abatement, NOT
+    proof of it.
+
+    False-positive cost — NOT one manual status reset, and the threshold is not
+    sized on a claim that it is. A parked row has no re-arm at all: setting its
+    core.learning_log status back to 'identified' is inert AND lossy, because the
+    cap is recomputed every cycle from this agent's applied-proposal history in
+    core.autoagent_proposals and reads nothing off the learning_log row — so the
+    row re-parks on the next run and overwrites its original park timestamp and
+    reason (the identical claim APPLY_CAP_REASON_TEMPLATE and the monitor's
+    APPLY_CAP_REARM_HINT make; this docstring previously contradicted both).
+    Clearing a false positive means clearing or SCOPING that apply evidence, and
+    no code path here offers it. What sizes APPLY_CAP_THRESHOLD is the pair of
+    arguments at its definition — the sibling-threshold mirror and the
+    _fetch_proposal_history LIMIT 50 window bound — never a cheap recovery.
 
     Fail-open: proposal-history read failure / synthetic row_id → pattern kept.
     A failed transition (PG write error) still drops for this cycle — the apply
@@ -8320,17 +8407,92 @@ def drop_non_auto_fixable_patterns(
     return kept
 
 
+def _stale_family_known(pattern_label: str) -> bool:
+    """Whether _stale_reason can recompute this label's family from live stats.
+
+    These two families are the ONLY ones it implements, and the aggregator emits
+    more (budget-overage / size-est concentrations, per-task_type low-success-rate
+    rows). Named so the caller can BRANCH on ignorance rather than swallow it in a
+    "" return indistinguishable from "recomputed, still live".
+    """
+    label = (pattern_label or "").strip()
+    return label.startswith(_FAIL_COUNT_LABEL_PREFIXES) or label.startswith(
+        _FAIL_RATE_LABEL_PREFIXES
+    )
+
+
+def _reobservation_reason(pattern_date: str, today: date) -> str:
+    """'' when the row was re-observed inside the window, else the snooze reason.
+
+    Family-INDEPENDENT, which is the whole point: every label family the live-rate
+    recompute does not know used to fail open FOREVER, so a pattern whose evidence
+    had gone quiet stayed selectable indefinitely. The observed fossil is a
+    "size-est under-estimate concentration (...)" row whose six backing
+    observations all predated every patch applied against it — no patch could have
+    abated evidence that stopped arriving before the first one landed, and no gate
+    in the loop had a channel to notice.
+
+    Signal = core.learning_log.discovered_date, carried on Pattern.date and already
+    in hand at intake (no extra read, no projection widening). Despite the column
+    NAME it is a LAST-OBSERVED date. Every writer of the column, in full — the
+    enumeration is the claim, so an incomplete one is worth nothing:
+
+      1. _pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL — the live aggregator
+         path (learning-aggregator.py passes discovered_date=today). Sets
+         ``discovered_date = EXCLUDED.discovered_date`` on conflict, so every
+         re-emit restamps the row to today; a pattern that is not re-emitted is
+         not UPSERTed at all.
+      2. _pg_outcome_dualwrite._LEARNING_LOG_UPSERT_SQL — same refresh on
+         conflict. DORMANT today: its only producer (track-outcome.sh) emits
+         ``learning_hint: null``, so it writes nothing until that is wired. It
+         omitted the refresh until the fix that added this enumeration, which is
+         exactly the divergence this list exists to make visible.
+      3. _LEARNING_LOG_REJECT_SQL and 4. _LEARNING_LOG_DISCHARGE_SQL — the
+         TERMINAL transitions. Neither touches discovered_date, and both remove
+         the row from intake.
+
+    So a row reaching this gate at status='identified' carries the date of its
+    last aggregator re-observation, from writer 1 or (once wired) writer 2.
+
+    Unparseable / empty date → '' (fail-OPEN — never snooze on a date we cannot
+    read). SNOOZE, never a terminal transition: a future change that stopped
+    refreshing discovered_date would make every unknown-family row look unobserved,
+    which is the fail-CLOSED direction, and a snoozed row re-arms by itself on the
+    next re-observation exactly like the live-rate branch.
+    """
+    try:
+        observed = date.fromisoformat((pattern_date or "").strip()[:10])
+    except ValueError:
+        return ""
+    age = (today - observed).days
+    if age <= STALE_WINDOW_DAYS:
+        return ""
+    return (
+        f"no aggregator re-observation in {age}d (last observed "
+        f"{observed.isoformat()}, window {STALE_WINDOW_DAYS}d); the live-rate "
+        f"recompute does not know this label family"
+    )
+
+
 def drop_stale_patterns(agent: str, patterns: list[Pattern]) -> list[Pattern]:
-    """Staleness gate — skip patterns the LIVE outcome window no longer supports.
+    """Staleness gate — skip patterns the LIVE evidence no longer supports.
 
-    core.learning_log frequency accumulates forever, so a pattern can outlive
-    its evidence (the '62%' fossil regenerated proposals weeks after the live
-    rate normalized). Recompute the rate from the rolling window and skip
-    below-threshold patterns with a logged reason. No lifecycle transition —
-    the pattern re-arms by itself once the live rate crosses the floor again.
+    core.learning_log frequency accumulates forever, so a pattern can outlive its
+    evidence (the '62%' fossil regenerated proposals weeks after the live rate
+    normalized). Branches on whether the label family is recomputable
+    (_stale_family_known); an unrecomputable one falls back to _reobservation_reason,
+    which is family-independent.
 
-    Fail-open: stats unavailable (PG off / read error) or unknown label family
-    → pattern kept.
+    No lifecycle transition on either branch — every skip here is a one-cycle
+    snooze that re-arms by itself (live rate back over the floor, or the next
+    re-observation).
+
+    Fail-open, and what it now costs: stats unavailable (PG off / read error) →
+    every pattern kept, silently, as before — the read failure is already reported
+    by _live_failure_stats. An unknown family with a fresh or unreadable date →
+    kept, LOUDLY. That residue is the honest remaining hole: a pattern whose family
+    we cannot recompute and whose row keeps being re-observed is never dropped
+    here, and the operator learns it from the loop-event stream instead of nowhere.
 
     Args:
         agent: pattern target agent (group key).
@@ -8343,20 +8505,46 @@ def drop_stale_patterns(agent: str, patterns: list[Pattern]) -> list[Pattern]:
     if stats is None:
         return patterns
 
-    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    now = datetime.now(timezone.utc)
+    event_ts = now.strftime("%Y-%m-%dT00:00:00.000Z")
+    today = now.date()
     kept: list[Pattern] = []
     for pattern in patterns:
-        reason = _stale_reason(pattern.label, stats)
-        if not reason:
-            kept.append(pattern)
+        if _stale_family_known(pattern.label):
+            reason = _stale_reason(pattern.label, stats)
+            if not reason:
+                kept.append(pattern)
+                continue
+            _warn_pattern_skip(
+                agent,
+                pattern.raw_line,
+                event_ts,
+                eval_result="stale-pattern-skip",
+                reason=reason,
+            )
             continue
-        _warn_pattern_skip(
+        unobserved = _reobservation_reason(pattern.date, today)
+        if unobserved:
+            _warn_pattern_skip(
+                agent,
+                pattern.raw_line,
+                event_ts,
+                eval_result=STALE_UNOBSERVED_EVAL,
+                reason=unobserved,
+            )
+            continue
+        _warn_gate_fail_open(
             agent,
             pattern.raw_line,
             event_ts,
-            eval_result="stale-pattern-skip",
-            reason=reason,
+            eval_result=STALE_UNKNOWN_FAMILY_EVAL,
+            reason=(
+                f"label family not recomputable by the live-rate gate and the row "
+                f"was re-observed within {STALE_WINDOW_DAYS}d (last "
+                f"{pattern.date or 'unknown'}) — kept unchecked this cycle"
+            ),
         )
+        kept.append(pattern)
     return kept
 
 
@@ -8853,7 +9041,8 @@ def _stale_reason(pattern_label: str, stats: tuple[int, int]) -> str:
       - fail-count family (aggregator pattern 1) → live iff triggers >= 3;
       - fail-rate family (aggregator pattern 5)  → live iff total >= 3 AND
         triggers/total >= 0.5.
-    Unknown family → '' (fail-open — never skip what we cannot recompute).
+    Unknown family → '', which no longer reads as "still live": the sole caller
+    guards on _stale_family_known first, so an unknown family never arrives here.
     """
     triggers, total = stats
     label = (pattern_label or "").strip()
@@ -8919,6 +9108,37 @@ def _warn_pattern_skip(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
+    _emit_gate_loop_event(agent, event_ts, eval_result)
+
+
+def _warn_gate_fail_open(
+    agent: str,
+    signature: str,
+    event_ts: str,
+    *,
+    eval_result: str,
+    reason: str,
+) -> None:
+    """Gate could not adjudicate a pattern → stderr WARN + loop event, pattern KEPT.
+
+    Separate from _warn_pattern_skip because the stderr line must say which
+    happened: that one dropped the pattern, this one kept one it could not judge.
+    Precondition Loud-Fail — an unadjudicated pattern gets a named channel rather
+    than a silent keep.
+    """
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: gate fail-open {eval_result} — agent={agent} "
+        f"({signature[:80]!r}): {reason}\n"
+    )
+    _emit_gate_loop_event(agent, event_ts, eval_result)
+
+
+def _emit_gate_loop_event(agent: str, event_ts: str, eval_result: str) -> None:
+    """Shared loop-event envelope for the pattern-gate observability helpers.
+
+    Lives once so a schema change to core.autoagent_loop_events cannot land on the
+    skip path and miss the fail-open path.
+    """
     _invoke_pg_helper(
         {
             "op": "write_autoagent_loop_event",
@@ -10322,7 +10542,7 @@ def run_cycle(
             promotion_tier = classify_promotion_tier(
                 confidence_observed=confidence_observed,
                 observation_count=observation_count,
-                sustained=_is_sustained(lead_pattern.date),
+                sustained=_is_sustained(_first_observation_ts(agent)),
                 touches_frontmatter=proposal.touched_frontmatter,
             )
         elif promotion_state == "floor":
