@@ -23,7 +23,10 @@ live ~/.glass-atrium tree):
     short-circuit covers "no inserts AND no removes", remove-rollback restores
     byte-identical, and the round-trip rejects a write keeping a removed name (AC7/AC8).
   - delete-side stanza prune: run_delete drops the DEV name from the scope-dev.md
-    roster (AC11) so the bidirectional sync then prunes all 3 arrays (AC12).
+    roster (AC11) so the bidirectional sync then prunes all 3 arrays (AC12). Both
+    real-`run_delete` tests redirect ~/.Trash into their tmp dir and assert the
+    .md landed there, so the shipped mv-to-Trash step is exercised and asserted
+    without depositing a file in the operator's Trash on every suite run.
   - orphan-scan stays lint-only: detection without the sync verb writes nothing.
 
 Run with:
@@ -210,6 +213,34 @@ def _write_gate_sites(paths: StorePaths, names: list[str]) -> None:
         f"read -r -d '' SUMMARY_SQL <<SQL || true\n{block}\nSQL\n",
         encoding="utf-8",
     )
+
+
+def _redirect_trash(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point ~/.Trash into this test's tmp dir and return the redirected dir.
+
+    run_delete moves the real .md to ~/.Trash by design (GLOBAL_RULES forbids `rm`
+    on source files), and `delete._trash_path` composes that target from
+    `Path.home()`, which reads $HOME. Redirecting the VARIABLE rather than patching
+    the composer keeps the shipped composition — the `.al-deleted-<ts>` tag included
+    — under test, while stopping every run of this suite from depositing a file in
+    the operator's real Trash. Blast radius is one path: the only other
+    `Path.home()` in the package (`subproc.target_home`) is reached solely when
+    ga_root IS the default root, and these tests run against a tmp root.
+    """
+    home = tmp_path / "trash-home"
+    trash = home / ".Trash"
+    trash.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    return trash
+
+
+def _assert_trashed(trash: Path, paths: StorePaths, name: str) -> None:
+    """The .md left agents/ and landed in the redirected Trash under its delete tag."""
+    landed = sorted(trash.glob(f"{name}.md.al-deleted-*"))
+    assert len(landed) == 1, (
+        f"expected exactly one trashed {name}.md, found {[p.name for p in landed]}"
+    )
+    assert not paths.agent_md(name).exists()
 
 
 def test_insert_when_missing_dev_lands_in_all_tracked_arrays(tmp_path: Path) -> None:
@@ -700,8 +731,14 @@ def test_run_delete_prunes_scope_dev_roster_stanza(
     monkeypatch.setattr(delete_mod, "swap_symlinks", lambda *_a, **_k: None)
     monkeypatch.setattr(delete_mod, "prune_farm_symlink", lambda *_a, **_k: None)
     monkeypatch.setattr(delete_mod, "restore_farm_symlink", lambda *_a, **_k: None)
+    trash = _redirect_trash(monkeypatch, tmp_path)
 
     run_delete(paths, DeleteRequest(name=target, confirm=target, dry_run=False))
+
+    # Step 1 of the delete is a real mv-to-Trash, asserted against the redirected
+    # target — the move is now proven rather than merely landing in the operator's
+    # Trash unobserved.
+    _assert_trashed(trash, paths, target)
 
     # AC11 — the name left the scope-dev.md roster.
     roster_after = inject_sync.parse_scope_dev_roster(paths)
@@ -791,8 +828,11 @@ def test_run_delete_auto_wires_gate_roster_sync(
     monkeypatch.setattr(delete_mod, "swap_symlinks", lambda *_a, **_k: None)
     monkeypatch.setattr(delete_mod, "prune_farm_symlink", lambda *_a, **_k: None)
     monkeypatch.setattr(delete_mod, "restore_farm_symlink", lambda *_a, **_k: None)
+    trash = _redirect_trash(monkeypatch, tmp_path)
 
     run_delete(paths, DeleteRequest(name=target, confirm=target, dry_run=False))
+
+    _assert_trashed(trash, paths, target)
 
     # Both DEV_SET bash strings must no longer carry the deleted name.
     vg_names = parse_dev_set_text(

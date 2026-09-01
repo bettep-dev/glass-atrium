@@ -152,8 +152,12 @@ main() {
   # exit branches to 2 (measured 2026-09-01: 205 passed with the real HOME, 202 passed
   # + 3 skipped with a sandbox one; the scrub alone changes nothing either way). Trading
   # a real assertion for a silent skip is the wrong side of that bargain. RESIDUAL, so
-  # nobody reads the omission as "stage 3 is hermetic": it is not — one agent_lifecycle
-  # test moves a fixture to $HOME/.Trash on every run.
+  # nobody reads the omission as "stage 3 is hermetic": it is not. The one escape this
+  # left — an agent_lifecycle delete moving its fixture into $HOME/.Trash — is closed
+  # test-side (scripts/test/test_inject_sync.py redirects HOME for those two tests and
+  # asserts the move landed), and a whole-suite probe under a sandbox HOME now writes
+  # nothing. What is still absent is the STRUCTURAL guarantee: nothing stops a module
+  # added later from writing under HOME, which is exactly what the sandbox would buy.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 3/3 ${SCRIPTS_TEST_ROOT} pytest" \
       env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
