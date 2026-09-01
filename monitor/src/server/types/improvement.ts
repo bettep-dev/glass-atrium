@@ -448,11 +448,71 @@ export interface ImprovementApplyCapState {
   rearm_hint: string | null;
 }
 
+// One suppression cause, counted on its own. The buckets exist BECAUSE a single
+// number cannot carry this: the loop suppresses selections through five separate
+// mechanisms with different meanings and different remedies, and a total that adds
+// them together tells an operator something is wrong while hiding what — a worse
+// signal than the single-mechanism count it replaced, not a better one.
+export interface ImprovementSuppressionBucket {
+  // Stable machine key (matches the daemon's transition-reason marker or its
+  // eval_result token). The client keys copy off this, never off `label`.
+  cause: string;
+  // Short operator-facing name.
+  label: string;
+  // Parked buckets: learning_log rows. Per-cycle buckets: loop events in the
+  // window — a RECURRENCE count, not a row count, because these mechanisms write
+  // no transition and re-suppress the same row every cycle.
+  count: number;
+  // Distinct agents contributing to this bucket.
+  agents: number;
+  // Why this cause suppresses, and what (if anything) clears it.
+  hint: string;
+}
+
+// How much of the improvement loop is suppressed, and by which mechanism.
+//
+// Only ONE of the five mechanisms writes a lifecycle transition (the repeat-apply
+// cap). The other four — intake non-promptable skip, staleness skip, the new
+// unknown-family fallback, and roster mismatch — leave the row at
+// status='identified' and drop it again on every cycle, so the row presents as a
+// healthy pending pattern in status_distribution while never being able to produce
+// a proposal. That asymmetry is the reason this state is reported over two
+// deliberately separate populations rather than one sum.
+export interface ImprovementLoopSuppressionState {
+  // Terminal core.learning_log rows, bucketed by transition-reason marker.
+  // Window-independent for the same reason apply_cap_state is: a row parked weeks
+  // ago is still parked today.
+  parked: ImprovementSuppressionBucket[];
+  // Recurring per-cycle suppressions from core.autoagent_loop_events over
+  // `per_cycle_window_days`. These write no transition, so a window is the only
+  // way to count them at all.
+  per_cycle: ImprovementSuppressionBucket[];
+  per_cycle_window_days: number;
+  // status='identified' rows whose pattern label is one the daemon skips at intake
+  // (NON_PROMPTABLE_LABELS). These are the rows that look like pending backlog and
+  // are not: no proposal can ever be generated from them.
+  pending_unpromptable: number;
+  // status='identified' rows in total, so the ratio above is readable without a
+  // second request.
+  pending_total: number;
+  // F5 — parked rows whose agent is NOT in the registry, and which every other
+  // count on this payload (all registry-gated) therefore omits. Reported rather
+  // than gated away: a capped pattern on a de-registered agent is still parking
+  // that agent's loop, and silently dropping it is the failure mode this whole
+  // field exists to fix. Registry fail-open (empty registry → no predicate) makes
+  // this 0.
+  off_registry_parked: number;
+}
+
 export interface ImprovementLearningLogResponse {
   fetched_at: string; // ISO8601 UTC
   total_patterns: number; // unfiltered table-wide count
   // Parked-loop state across the registry-scoped table (window-independent).
   apply_cap_state: ImprovementApplyCapState;
+  // Per-mechanism suppression breakdown. apply_cap_state above is ONE of its
+  // buckets, kept as its own field for the banner's headline and for callers that
+  // predate this one.
+  loop_suppression_state: ImprovementLoopSuppressionState;
   returned: number; // recent rows returned (≤ limit)
   // Status × approval_tier distribution across the whole table (skim card).
   status_distribution: ImprovementLearningLogStatusBucket[];

@@ -39,6 +39,7 @@ import type {
   ImprovementFilterEcho,
   ImprovementJoinMeta,
   ImprovementApplyCapState,
+  ImprovementLoopSuppressionState,
   ImprovementLearningLogResponse,
   ImprovementLearningLogRow,
   ImprovementLearningLogStatusBucket,
@@ -308,6 +309,168 @@ export const APPLY_CAP_REARM_HINT =
 interface ApplyCapDbRow {
   capped_patterns: bigint;
   capped_agents: bigint;
+}
+
+// -- Loop suppression surface ------------------------------------------------
+//
+// The repeat-apply cap is ONE of five mechanisms that stop a pattern from reaching
+// a proposal, and it is the only one that writes a lifecycle transition. Measured
+// per cycle day over 2026-08-24..08-31, the loop suppressed roughly 25
+// non-promptable selections, 10 staleness skips and 5 roster mismatches for every
+// 1 cap — and only the cap was visible anywhere. The banner that reported it said
+// "Loop parked", which reads as a statement about the loop.
+//
+// Two populations, deliberately NOT summed:
+//   parked    — terminal core.learning_log rows, bucketed by transition-reason
+//               marker. A row here is out of intake permanently.
+//   per_cycle — core.autoagent_loop_events over a window. These mechanisms write
+//               no transition, so their rows stay at status='identified' and are
+//               re-suppressed every single cycle; a window count is the only count
+//               available, and it counts RECURRENCES, not distinct rows.
+// Adding them would produce a number that is neither.
+
+// Opening literals of the daemon's last_transition_reason stamps
+// (daemon_cycle.py APPLY_CAP_REASON_TEMPLATE / REJECT_STREAK_REASON_TEMPLATE /
+// NON_AUTO_FIXABLE_REASON / REVERTED_SNOOZE_REASON / NON_PROMPTABLE_REASON).
+// Hardcoded rather than derived: a daemon rewording must surface as a bucket
+// dropping to zero, not as a silently tracked rename.
+//
+// 'non-promptable' matches the bare prefix on purpose — live rows carry an older
+// operator-decision wording alongside the current NON_PROMPTABLE_REASON literal,
+// and both begin here.
+const SUPPRESSION_REASON_PREFIXES = {
+  "repeat-apply-cap": APPLY_CAP_REASON_PREFIX,
+  "non-promptable": "non-promptable",
+  "reject-streak-snooze": "reject-streak snooze:",
+  "non-auto-fixable": "non-auto-fixable:",
+  "reverted-snooze": "reverted snooze:",
+} as const;
+
+// eval_result tokens the daemon emits when a gate DROPS or fails open on a
+// selection. 'stale-gate-unknown-family' is the loud fail-open: the pattern was
+// KEPT because no gate could judge it, which is a different fact from a drop and
+// is labelled as one.
+const SUPPRESSION_EVAL_RESULTS = [
+  "non-promptable",
+  "stale-pattern-skip",
+  "stale-unobserved-skip",
+  "stale-gate-unknown-family",
+  "roster-mismatch",
+  "repeat-apply-cap",
+  "reject-streak-snooze",
+  "reverted-snooze",
+  "non-auto-fixable-skip",
+] as const;
+
+// Operator-facing name + remedy per cause. Shared by both populations: the same
+// mechanism can park a row AND recur per cycle (the cap does both), and a reader
+// comparing the two lists must not meet two different descriptions of one thing.
+const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = {
+  "repeat-apply-cap": {
+    label: "Repeat-apply cap",
+    hint:
+      "N applied patches did not abate the signal, so the loop stopped stacking " +
+      "another. Terminal, and no status reset clears it — see the parked-pattern " +
+      "warning below. Open design decision.",
+  },
+  "non-promptable": {
+    label: "Non-promptable signal",
+    hint:
+      "An operational counter no agent-body sentence can decrement. Skipped at " +
+      "intake every cycle; abating it is a human design decision, not a patch.",
+  },
+  "stale-pattern-skip": {
+    label: "Staleness skip",
+    hint:
+      "The live outcome window no longer supports the pattern. Self re-arming — " +
+      "it returns on its own once the live rate crosses the floor again.",
+  },
+  "stale-unobserved-skip": {
+    label: "Not re-observed",
+    hint:
+      "The label family has no live-rate recompute, and the row has not been " +
+      "re-observed by the aggregator inside the window. Self re-arming on the " +
+      "next re-observation.",
+  },
+  "stale-gate-unknown-family": {
+    label: "Unchecked (unknown family)",
+    hint:
+      "NOT a suppression — the staleness gate could not judge this label family " +
+      "and let the pattern through. Listed because an unjudged pattern is what " +
+      "let a dead one sit in intake unnoticed; teaching the gate its family is " +
+      "the fix.",
+  },
+  "roster-mismatch": {
+    label: "Roster mismatch",
+    hint:
+      "The pattern's agent is not an agents/*.md stem, so no patch could land. " +
+      "Fix the agent column or retire the row.",
+  },
+  "reject-streak-snooze": {
+    label: "Reject-streak snooze",
+    hint:
+      "Consecutive proposals were refused by review. Terminal; re-arming needs " +
+      "the reject evidence cleared or scoped.",
+  },
+  "reverted-snooze": {
+    label: "Reverted snooze",
+    hint:
+      "A covering applied proposal was backed out by a human. Terminal; " +
+      "re-proposing would re-land what was just reverted.",
+  },
+  "non-auto-fixable": {
+    label: "Non-auto-fixable",
+    hint:
+      "The proposal removes a line outside every editable region, which add-only " +
+      "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE " +
+      "region.",
+  },
+  "non-auto-fixable-skip": {
+    label: "Non-auto-fixable",
+    hint:
+      "The proposal removes a line outside every editable region, which add-only " +
+      "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE " +
+      "region.",
+  },
+};
+
+// Loop-event window. 7d = one week of daily cycles — long enough that a
+// weekday-only gap does not read as the mechanism stopping, short enough that a
+// mechanism retired last month does not keep reporting.
+const SUPPRESSION_WINDOW_DAYS = 7;
+
+// pattern_signature is "<label>|<agent>", and the daemon's intake skip matches the
+// LABEL by exact equality against NON_PROMPTABLE_LABELS — so a "<label>|" prefix
+// match here is that same predicate, not a looser one. Kept verbatim in step with
+// daemon_cycle.py NON_PROMPTABLE_LABELS.
+const NON_PROMPTABLE_LABELS = [
+  "budget-overage concentration",
+  "repeated failure by same agent",
+  "\uB3D9\uC77C \uC5D0\uC774\uC804\uD2B8 \uBC18\uBCF5 \uC2E4\uD328", // 동일 에이전트 반복 실패
+] as const;
+
+interface SuppressionBucketDbRow {
+  cause: string;
+  count: bigint;
+  agents: bigint;
+}
+
+interface PendingSplitDbRow {
+  unpromptable: bigint;
+  total: bigint;
+}
+
+// A cause with no copy entry still surfaces — an unlabelled bucket is a bug report,
+// an omitted one is a silent hole of exactly the kind this field exists to close.
+function suppressionBucket(cause: string, count: number, agents: number) {
+  const copy = SUPPRESSION_CAUSE_COPY[cause];
+  return {
+    cause,
+    label: copy?.label ?? cause,
+    count,
+    agents,
+    hint: copy?.hint ?? "Unrecognized suppression cause — no operator copy exists for it yet.",
+  };
 }
 
 // Per-target-agent prose-only-add count row.
@@ -1082,7 +1245,34 @@ async function handleLearningLog(
     // AND-prefixed form to it.
     const agentAndFilter = buildAgentMembershipFilter(canonicalKeys);
 
-    const [totalRows, statusRows, patternRows, applyCapRows] = await Promise.all([
+    // Bucketed suppression CASE, built from the daemon's reason stamps. Each arm
+    // binds its prefix as a parameter — no literal is concatenated into SQL.
+    const suppressionCase = Prisma.sql`CASE ${Prisma.join(
+      Object.entries(SUPPRESSION_REASON_PREFIXES).map(
+        ([cause, prefix]) =>
+          Prisma.sql`WHEN last_transition_reason LIKE ${`${prefix}%`} THEN ${cause}`,
+      ),
+      " ",
+    )} ELSE 'other' END`;
+    // Same predicate the daemon's intake skip applies, expressed over the
+    // "<label>|<agent>" signature.
+    const unpromptablePredicate = Prisma.sql`(${Prisma.join(
+      NON_PROMPTABLE_LABELS.map(
+        (label) => Prisma.sql`pattern_signature LIKE ${`${label}|%`}`,
+      ),
+      " OR ",
+    )})`;
+
+    const [
+      totalRows,
+      statusRows,
+      patternRows,
+      applyCapRows,
+      parkedBucketRows,
+      parkedUngatedRows,
+      cycleBucketRows,
+      pendingSplitRows,
+    ] = await Promise.all([
       prisma.$queryRaw<BigintRow[]>`
         SELECT COUNT(*)::bigint AS total FROM core.learning_log ${agentWhere}
       `,
@@ -1115,7 +1305,79 @@ async function handleLearningLog(
           AND last_transition_reason LIKE ${`${APPLY_CAP_REASON_PREFIX}%`}
           ${agentAndFilter}
       `,
+      // Parked buckets — terminal rows by cause. Registry-gated like every other
+      // count on this payload so the numbers agree with each other.
+      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+        SELECT ${suppressionCase} AS cause,
+               COUNT(*)::bigint AS count,
+               COUNT(DISTINCT agent)::bigint AS agents
+        FROM core.learning_log
+        WHERE status = 'rejected'::core."LearningStatus"
+          AND last_transition_reason IS NOT NULL
+          ${agentAndFilter}
+        GROUP BY 1
+        ORDER BY 2 DESC
+      `,
+      // F5 — the same population WITHOUT the registry gate. The delta is the set
+      // the gate hides: a parked pattern whose agent left the registry still parks
+      // that agent's loop, and reporting zero for it is the same class of lie the
+      // rest of this field fixes. A scalar, so the hidden rows are counted without
+      // being surfaced past the gate that (deliberately) scopes the lists.
+      prisma.$queryRaw<BigintRow[]>`
+        SELECT COUNT(*)::bigint AS total
+        FROM core.learning_log
+        WHERE status = 'rejected'::core."LearningStatus"
+          AND last_transition_reason IS NOT NULL
+      `,
+      // Per-cycle buckets. Deliberately NOT registry-gated: roster-mismatch events
+      // are emitted precisely BECAUSE the agent is not a real roster stem, so the
+      // gate would zero out the one bucket that reports them and the count would
+      // silently exclude its own subject.
+      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+        SELECT eval_result AS cause,
+               COUNT(*)::bigint AS count,
+               COUNT(DISTINCT agent)::bigint AS agents
+        FROM core.autoagent_loop_events
+        WHERE event_ts >= now() - make_interval(days => ${SUPPRESSION_WINDOW_DAYS})
+          AND eval_result IN (${Prisma.join([...SUPPRESSION_EVAL_RESULTS])})
+        GROUP BY 1
+        ORDER BY 2 DESC
+      `,
+      // The "healthy pending backlog" split. status_distribution reports these rows
+      // as 'identified' with nothing to distinguish them, so a majority that can
+      // never produce a proposal reads as capacity.
+      prisma.$queryRaw<PendingSplitDbRow[]>`
+        SELECT COUNT(*) FILTER (WHERE ${unpromptablePredicate})::bigint AS unpromptable,
+               COUNT(*)::bigint AS total
+        FROM core.learning_log
+        WHERE status = 'identified'::core."LearningStatus"
+          ${agentAndFilter}
+      `,
     ]);
+
+    const parked = parkedBucketRows.map((row) =>
+      suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+    );
+    const parkedGatedTotal = parked.reduce((sum, bucket) => sum + bucket.count, 0);
+    const parkedUngatedRow = parkedUngatedRows[0];
+    const parkedUngatedTotal =
+      parkedUngatedRow === undefined ? 0 : bigintToNumber(parkedUngatedRow.total);
+    const pendingSplitRow = pendingSplitRows[0];
+    const loopSuppressionState: ImprovementLoopSuppressionState = {
+      parked,
+      per_cycle: cycleBucketRows.map((row) =>
+        suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+      ),
+      per_cycle_window_days: SUPPRESSION_WINDOW_DAYS,
+      pending_unpromptable:
+        pendingSplitRow === undefined ? 0 : bigintToNumber(pendingSplitRow.unpromptable),
+      pending_total:
+        pendingSplitRow === undefined ? 0 : bigintToNumber(pendingSplitRow.total),
+      // Clamped at 0: the registry gate can only ever REMOVE rows, so a negative
+      // delta would mean the two queries disagreed about the population and a
+      // negative count on the card would be the least useful way to say so.
+      off_registry_parked: Math.max(0, parkedUngatedTotal - parkedGatedTotal),
+    };
 
     const applyCapRow = applyCapRows[0];
     const cappedPatterns =
@@ -1133,6 +1395,7 @@ async function handleLearningLog(
       fetched_at: new Date().toISOString(),
       total_patterns: totalRow === undefined ? 0 : bigintToNumber(totalRow.total),
       apply_cap_state: applyCapState,
+      loop_suppression_state: loopSuppressionState,
       returned: patterns.length,
       status_distribution: statusRows.map(rowToLearningLogStatusBucket),
       patterns,
