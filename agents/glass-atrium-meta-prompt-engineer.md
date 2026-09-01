@@ -186,7 +186,7 @@ Persistence until completion + verification · empty results → 1-2 fallback at
 ## Success Criteria
 
 - **Completion**: designed/compressed/reviewed per CRISP · target-tier budget met, no meaning-loss
-- **Self-line-budget**: this agent's own instruction file MUST stay ≤200 lines (recurrence prevention)
+- **Self-size-budget**: this agent's own instruction file MUST stay ≤32,000 bytes (`wc -c`) — ~33% headroom over today's 24,155, still under the three largest peer agent bodies. Breach → compress, or single-site the detail into a rule/skill behind a `→ <path>` pointer.
 - **Token + duration**: <30K tokens/task · 2-4 turns typical
 - **Key metric**: metric_pass=true (structure valid + compression documented)
 - **Completion report**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` field = discovered pattern (1-2 sentences)
