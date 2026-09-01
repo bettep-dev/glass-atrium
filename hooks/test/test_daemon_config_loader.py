@@ -1,12 +1,12 @@
 """Loader test for the daemon per-call budget-cap SoT (hooks/daemon_config.py).
 
 The consumer end was previously untested: the autoagent loop and the wiki loop
-both read the per-call ``--max-budget-usd`` ceiling + Haiku model id via
+both read the per-call ``--max-budget-usd`` ceiling + worker model id via
 ``load_daemon_config`` and pass the values VERBATIM to ``claude -p
 --max-budget-usd <value>``. A regression in the fallback policy (raising on a
 missing/corrupt file, dropping a key, or float-coercing the decimal string)
 would either break import for the ~7 test modules that import daemon_cycle.py
-at collection time, or silently mis-budget every Haiku call. Protected
+at collection time, or silently mis-budget every worker call. Protected
 invariants:
 
 (1) the live config read yields exactly the 3 contract keys, all non-empty str;
@@ -279,6 +279,13 @@ class BudgetFloorTest(unittest.TestCase):
         for key in self._BUDGET_KEYS:
             self.assertGreaterEqual(float(dc._FALLBACK[key]), 0.05, key)
 
+    # The monitor.model_config domains this floor actually pins — the rows whose
+    # values daemon-config.json renders into _BUDGET_KEYS. Scoped deliberately: a
+    # future migration seeding some OTHER budget domain at its own legitimate value
+    # is none of this test's business, and asserting over every budget.* literal in
+    # every migration would red this test for that unrelated change.
+    _PINNED_SEED_DOMAINS = ("budget.worker_max_usd", "budget.pre_verify_max_usd")
+
     def test_floor_matches_the_shipped_db_seed(self) -> None:
         # The floor's stated rationale is PARITY WITH THE DB SEED, so check it
         # against the seed rather than restating the number in prose. Raising one
@@ -286,20 +293,22 @@ class BudgetFloorTest(unittest.TestCase):
         migrations = (
             Path(dc.__file__).resolve().parents[1] / "monitor" / "prisma" / "migrations"
         )
-        seeded = {
-            value
-            for sql in migrations.glob("*/migration.sql")
+        seeded: dict[str, set[str]] = {}
+        for sql in migrations.glob("*/migration.sql"):
             for key, value in re.findall(
                 r"\('(budget\.[a-z_]+)',\s*'([0-9]+\.[0-9]{2})'", sql.read_text(encoding="utf-8")
+            ):
+                seeded.setdefault(key, set()).add(value)
+        for domain in self._PINNED_SEED_DOMAINS:
+            # Absence FAILS rather than passing vacuously: a renamed or dropped seed
+            # would otherwise silently retire the parity check it is meant to hold.
+            self.assertIn(domain, seeded, f"no migration seeds {domain}")
+            self.assertEqual(
+                seeded[domain],
+                {self._EXPECTED_FLOOR},
+                f"DB seed for {domain} is {sorted(seeded[domain])}, in-code floor is "
+                f"{self._EXPECTED_FLOOR} — the two must move together",
             )
-        }
-        self.assertTrue(seeded, "no budget seed literal found in any migration")
-        self.assertEqual(
-            seeded,
-            {self._EXPECTED_FLOOR},
-            f"DB budget seeds {sorted(seeded)} disagree with the in-code floor "
-            f"{self._EXPECTED_FLOOR} — the two must move together",
-        )
 
 
 class LegacyKeyCompatTest(unittest.TestCase):
