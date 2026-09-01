@@ -8,7 +8,8 @@
 # runtime (macOS sysctl first, GNU nproc fallback for Linux).
 # Stage 2 runs the hooks/test unittest suites in a sandbox HOME with the data-root
 # env scrubbed alongside it (see the stage itself); stage 3 runs the scripts/test
-# pytest suites, but only when pytest is importable.
+# pytest suites under the SAME scrub but WITHOUT a sandbox HOME (measured reason at
+# the stage), and only when pytest is importable.
 #
 # The hooks/test unittest corpus therefore runs TWICE per invocation, deliberately:
 # stage 1's hooks/test/suite-hermeticity.bats drives the same `unittest discover` to
@@ -143,8 +144,19 @@ main() {
   # there is a LOUD skip (one stderr line naming the interpreter) rather than a silent
   # pass. The probe's own stderr is suppressed because the skip line below is the
   # message the operator should read — the ModuleNotFoundError traceback is noise.
+  #
+  # The data-root scrub is the SAME as stage 2's and for the same reason. The sandbox
+  # HOME deliberately is NOT: psycopg is reachable only through the user site-packages
+  # dir, which lives UNDER $HOME, so a redirect drops it from the probed interpreter's
+  # sys.path and test_pg_dual_write_exit_contract.py silently degrades from 5 pinned
+  # exit branches to 2 (measured 2026-09-01: 205 passed with the real HOME, 202 passed
+  # + 3 skipped with a sandbox one; the scrub alone changes nothing either way). Trading
+  # a real assertion for a silent skip is the wrong side of that bargain. RESIDUAL, so
+  # nobody reads the omission as "stage 3 is hermetic": it is not — one agent_lifecycle
+  # test moves a fixture to $HOME/.Trash on every run.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 3/3 ${SCRIPTS_TEST_ROOT} pytest" \
+      env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
   else
     local python3_path

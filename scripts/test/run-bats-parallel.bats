@@ -30,10 +30,14 @@
 # env misses, and the two legs are pinned together because neither is sufficient alone.
 # The eighth then pins those ignore files as manifest-eligible, so they actually ship.
 #
-# The ninth pins stage 2's environment. Redirecting HOME does not sandbox a python suite
-# on its own — ga_paths.get_base_root PREFERS GA_DATA_ROOT — so the stage scrubs that
-# variable and its update-side twin alongside the redirect, and the stub records what it
-# actually inherited. Dropping any one of the three from the runner reds this test.
+# The ninth pins BOTH python stages' environment. Redirecting HOME does not sandbox a
+# python suite on its own — ga_paths.get_base_root PREFERS GA_DATA_ROOT — so each stage
+# scrubs that variable and its update-side twin, and the stub records what it actually
+# inherited. The sandbox HOME is asserted for stage 2 ONLY: stage 3 deliberately keeps the
+# caller's, because psycopg lives in the user site-packages dir under $HOME and a redirect
+# there silently turns pinned exit-contract branches into skips. That asymmetry is left
+# UNPINNED rather than frozen — pinning the caller's HOME would red the day someone fixes
+# it. Dropping any asserted leg from the runner reds this test.
 
 bats_require_minimum_version 1.5.0
 
@@ -67,6 +71,34 @@ run_runner_expecting() {
   run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
   [[ "${status}" -eq "${want}" ]] || {
     printf 'runner rc=%s (want %s) stderr:\n%s\n' "${status}" "${want}" "${stderr}" >&2
+    return 1
+  }
+}
+
+# Asserts one stage inherited NEITHER data-root variable, identifying the stage by a
+# substring of its argv. Call it as `assert_stage_scrubbed … || return 1`, matching the
+# gating discipline of every other assertion here.
+# $1 = argv substring identifying the stage · $2 = human label for the failure message
+assert_stage_scrubbed() {
+  local pattern="${1}" label="${2}" row seen_data_root seen_update_dir
+  row="$(grep -m1 -- "${pattern}" "${STUB_LOG_DIR}/python3-env.log" || true)"
+  [[ -n "${row}" ]] || {
+    printf 'no %s row in the python3 env log:\n%s\n' "${label}" \
+      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
+    return 1
+  }
+
+  seen_data_root="$(printf '%s\n' "${row}" | cut -f2)"
+  [[ "${seen_data_root}" == "__UNSET__" ]] || {
+    printf '%s inherited GA_DATA_ROOT=%s; the scrub is missing\n' \
+      "${label}" "${seen_data_root}" >&2
+    return 1
+  }
+
+  seen_update_dir="$(printf '%s\n' "${row}" | cut -f3)"
+  [[ "${seen_update_dir}" == "__UNSET__" ]] || {
+    printf '%s inherited ATRIUM_UPDATE_STATE_DIR=%s; the scrub is missing\n' \
+      "${label}" "${seen_update_dir}" >&2
     return 1
   }
 }
@@ -365,34 +397,27 @@ teardown() {
 # pins the runner to the same environment, so the probe cannot pass under conditions the
 # stage it stands for does not share. The ambient values below are set deliberately: with
 # them unset, a runner that scrubbed nothing would look identical.
-@test "(9) stage 2 scrubs GA_DATA_ROOT and ATRIUM_UPDATE_STATE_DIR alongside the sandbox HOME" {
+#
+# Stage 3 carries the same scrub and is asserted the same way. What it does NOT carry is
+# the sandbox HOME, deliberately: psycopg is reachable only through the user site-packages
+# dir under $HOME, so a redirect drops it from the interpreter
+# test_pg_dual_write_exit_contract.py probes for and three pinned exit branches become
+# skips (measured 2026-09-01). Its HOME is therefore left unasserted rather than pinned to
+# the caller's — pinning the status quo would red the day that dependency is solved, which
+# is the opposite of what this test is for.
+@test "(9) both python stages run with the data-root env scrubbed, stage 2 also sandboxed" {
   export GA_DATA_ROOT="${TMPROOT}/ambient-data-root"
   export ATRIUM_UPDATE_STATE_DIR="${TMPROOT}/ambient-update-state"
   run_runner_expecting 0 || return 1
 
-  local row seen_data_root seen_update_dir seen_home
-  row="$(grep -m1 -- '-m unittest discover' "${STUB_LOG_DIR}/python3-env.log" || true)"
-  [[ -n "${row}" ]] || {
-    printf 'no stage-2 row in the python3 env log:\n%s\n' \
-      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
-    return 1
-  }
+  # `-m pytest` identifies stage 3 alone: the import probe's argv is `-c import pytest`.
+  assert_stage_scrubbed '-m unittest discover' 'stage 2' || return 1
+  assert_stage_scrubbed '-m pytest' 'stage 3' || return 1
 
-  seen_data_root="$(printf '%s\n' "${row}" | cut -f2)"
-  [[ "${seen_data_root}" == "__UNSET__" ]] || {
-    printf 'stage 2 inherited GA_DATA_ROOT=%s; the scrub is missing\n' "${seen_data_root}" >&2
-    return 1
-  }
-
-  seen_update_dir="$(printf '%s\n' "${row}" | cut -f3)"
-  [[ "${seen_update_dir}" == "__UNSET__" ]] || {
-    printf 'stage 2 inherited ATRIUM_UPDATE_STATE_DIR=%s; the scrub is missing\n' \
-      "${seen_update_dir}" >&2
-    return 1
-  }
-
-  # The redirect is the third leg of the same claim: scrubbing the two variables while
+  # The redirect is the third leg of stage 2's claim: scrubbing the two variables while
   # leaving HOME at the operator's own would put the fallback root back on the live install.
+  local row seen_home
+  row="$(grep -m1 -- '-m unittest discover' "${STUB_LOG_DIR}/python3-env.log" || true)"
   seen_home="$(printf '%s\n' "${row}" | cut -f4)"
   [[ "${seen_home}" != "__UNSET__" && "${seen_home}" != "${HOME}" ]] || {
     printf 'stage 2 ran under HOME=%s (want a sandbox, not the caller HOME and not unset)\n' \
