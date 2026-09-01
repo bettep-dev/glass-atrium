@@ -830,10 +830,13 @@ def match_sensitive_diff(diff: str) -> str | None:
 # (~$3/MTok input, ~$15/MTok output) it lands around $0.015. The figures here were
 # previously computed at Haiku 4.5 rates (~$1/$5 per MTok, ~$0.005/call); they are
 # restated for the model the loop actually runs on now.
-# PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT (unified
-# with the generation cap — the two move together; lower caps cause systematic
-# 5/5 reject, which is why the cap is generous relative to a typical call rather
-# than tuned close to it).
+# PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT. It and the
+# generation cap SHARE A DEFAULT, not a coupling: they are two independent
+# BUDGET_DOMAINS keys (budget.pre_verify_max_usd / budget.worker_max_usd), each
+# settable on its own from the monitor, and validateBudgetValue validates each one
+# in isolation with no cross-field invariant. Editing one leaves the other where it
+# was. Both default generously relative to a typical call because a cap set close
+# to it causes systematic 5/5 reject.
 PRE_VERIFY_TIMEOUT_SEC = 90
 
 # AD-9 evaluator independence (GOAL precedent from CALM self-preference; the CALM
