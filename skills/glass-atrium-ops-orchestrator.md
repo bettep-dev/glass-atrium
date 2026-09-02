@@ -112,22 +112,27 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 
 - **Sub-agent**: Focused tasks where only results are needed (cost-efficient)
 - **Agent team**: When discussion/collaboration/cross-file modification required (higher cost)
-- Team size bounded by the Workflow engine's runtime self-cap (core-derived, per-machine) — no fixed-number default, no "exceeding → user approval" trigger (canonical: orchestrator-role.md `### Team Size`) · 5-6 self-contained tasks per agent `[default, adjustable]`
-- **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix. For concurrent INDEX MUTATORS this is necessary but NOT sufficient — the shared index and whole-tree regeneration both defeat file disjointness, so the worktree is the isolation unit (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)). An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
+- Team size bounded by the Workflow engine's runtime self-cap (core-derived, per-machine) — no fixed-number default, no "exceeding → user approval" trigger (canonical: orchestrator-role.md `### Team Size`)
+- 5-6 self-contained tasks per agent `[default, adjustable]`
+- **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix.
+  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient — the shared index and whole-tree regeneration both defeat file disjointness, so the worktree is the isolation unit (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
+  - An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
 
 #### Worktree Isolation [ORCHESTRATOR]
 
 - `isolation: worktree` → Provides independent git worktree to sub-agent (physically prevents file conflicts)
 - Context isolation is already guaranteed by Agent tool default behavior — worktree adds **filesystem isolation**
-- `background: true` + `isolation: worktree` combination **FORBIDDEN** (Issue #33045 unresolved bug) — **scope: the manual Agent-tool path**. The workflow-runtime native isolation path is `opts.isolation:'worktree'` on an `agent()`/`parallel()` call; whether the runtime path is subject to the same #33045 background interaction is NOT yet verified — do NOT assume parity either way (verify before relying on background + worktree under ultracode).
+- `background: true` + `isolation: worktree` combination **FORBIDDEN** (Issue #33045 unresolved bug) — **scope: the manual Agent-tool path**.
+  - The workflow-runtime native isolation path is `opts.isolation:'worktree'` on an `agent()`/`parallel()` call; whether the runtime path is subject to the same #33045 background interaction is NOT yet verified — do NOT assume parity either way (verify before relying on background + worktree under ultracode).
 - Sub-agents cannot create sub-agents (nesting forbidden)
 - Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation
 
 #### Declarative Team Definition
 
-Same input = same team composition (reproducibility guaranteed). YAML structure: `team.name` · `agents[].{role, scope, tasks}` · `constraints.{file_ownership, parallel}`
-
-**Fan-out**: agents array + `parallel: true` · **Pipeline**: `pattern: pipeline` + `sequence` array + `parallel: false`
+- Same input = same team composition (reproducibility guaranteed).
+- YAML structure: `team.name` · `agents[].{role, scope, tasks}` · `constraints.{file_ownership, parallel}`
+- **Fan-out**: agents array + `parallel: true`
+- **Pipeline**: `pattern: pipeline` + `sequence` array + `parallel: false`
 
 ### Delegation/Communication Rules [ORCHESTRATOR]
 
