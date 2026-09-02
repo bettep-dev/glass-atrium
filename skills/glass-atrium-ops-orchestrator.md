@@ -22,25 +22,25 @@ when_to_use: Use when composing multi-agent teams, deciding execution patterns (
 
 ### Capability-Based Agent Selection [ORCHESTRATOR]
 
-**Model**: LLM-led routing — the orchestrator session Claude judges directly. Keywords are **hints** only, not short-circuit forced branches. The registry's `domains` array and each agent's description are Claude's primary basis for judgment.
-
-**Default output (team-first)**: Every routing decision returns the same team schema whether **single agent (array size 1)** or **compound team (array size ≥ 2)** — the single case is treated as the special form of array size 1, with no separate branch path.
-
-**Task Decomposition**: Decompose the request into sub-tasks. When verb/conjunction structure has 2+ elements (e.g., "do A and also B" / "find the cause and fix it" / "research and turn it into a report"), treat as compound and do not short-circuit to a single agent.
-
-**Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
-
-**Capability Consultation** (hints only, no forced match):
-- **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
-- **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment
-- **Phase numbers**: `research(1) → analysis(2) → planning(3) → implementation(4) → review(5) → report(6)` — used only for ordering, not for matching
-- **Task-type hints** (reference only, not enforced): analysis ≈ phase 2 · planning ≈ phase 3 · implementation ≈ phase 4 · document ≈ phase 6
-
-**Team Composition Decision**: Sort selected agent(s) by phase number ascending. Independent tasks within the same phase MAY run in parallel (Fan-out).
-
-**Execution**: Execute sequentially in sorted order (or in parallel within the same phase). For DEV agents with `dual_phase: true`, the phase 2 vs 4 assignment is determined by the decomposition result (diagnosis-only vs includes implementation).
-
-**Ordering caveat (ultracode verify-gate — reconciles pre-verify phase-2 DEV analysis with the declaration contract)**: a `dual_phase` DEV assigned to phase-2 analysis is spawned as a `dev-*` token BEFORE any verify reviewer; under ultracode `enforce-workflow-verify-stage.sh` checks the script against its `[AGENT-COMPOSITION]` declaration (contract stated ONCE at `### Pipeline Acceptance Criteria` → "In-script verify-stage"), and a declared impl `dev-*` spawn that textually precedes every reviewer fires `BLOCK_ORDER`. The phase-2 DEV-analysis permission itself is UNCHANGED; to keep it lawful under the gate, either route the pre-verify analysis to a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) or front-load a reviewer-first `{qa,dev}` Contract verify before it. Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; worked skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
+- **Model**: LLM-led routing — the orchestrator session Claude judges directly.
+  - Keywords are **hints** only, not short-circuit forced branches.
+  - The registry's `domains` array and each agent's description are Claude's primary basis for judgment.
+- **Default output (team-first)**: Every routing decision returns the same team schema whether **single agent (array size 1)** or **compound team (array size ≥ 2)** — the single case is treated as the special form of array size 1, with no separate branch path.
+- **Task Decomposition**: Decompose the request into sub-tasks.
+  - When verb/conjunction structure has 2+ elements (e.g., "do A and also B" / "find the cause and fix it" / "research and turn it into a report"), treat as compound and do not short-circuit to a single agent.
+- **Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
+- **Capability Consultation** (hints only, no forced match):
+  - **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
+  - **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment
+  - **Phase numbers**: `research(1) → analysis(2) → planning(3) → implementation(4) → review(5) → report(6)` — used only for ordering, not for matching
+  - **Task-type hints** (reference only, not enforced): analysis ≈ phase 2 · planning ≈ phase 3 · implementation ≈ phase 4 · document ≈ phase 6
+- **Team Composition Decision**: Sort selected agent(s) by phase number ascending.
+  - Independent tasks within the same phase MAY run in parallel (Fan-out).
+- **Execution**: Execute sequentially in sorted order (or in parallel within the same phase).
+  - For DEV agents with `dual_phase: true`, the phase 2 vs 4 assignment is determined by the decomposition result (diagnosis-only vs includes implementation).
+- **Ordering caveat (ultracode verify-gate — reconciles pre-verify phase-2 DEV analysis with the declaration contract)**: a `dual_phase` DEV assigned to phase-2 analysis is spawned as a `dev-*` token BEFORE any verify reviewer; under ultracode `enforce-workflow-verify-stage.sh` checks the script against its `[AGENT-COMPOSITION]` declaration (contract stated ONCE at `### Pipeline Acceptance Criteria` → "In-script verify-stage"), and a declared impl `dev-*` spawn that textually precedes every reviewer fires `BLOCK_ORDER`.
+  - The phase-2 DEV-analysis permission itself is UNCHANGED; to keep it lawful under the gate, either route the pre-verify analysis to a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) or front-load a reviewer-first `{qa,dev}` Contract verify before it.
+  - Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; worked skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
 
 #### Routing Return Schema
 
