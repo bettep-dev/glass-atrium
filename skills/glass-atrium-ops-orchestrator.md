@@ -398,13 +398,15 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 #### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]
 
-The `robustAgent` resilience layer above hardens the OUTPUT side (a non-emit no longer crashes the run). This section prevents the INPUT-side cause: a single schema-mode NON-DEV analysis/research/audit spawn with a BROAD read + `effort:high` + a 3-4-field schema exhausts the turn budget before the terminal StructuredOutput (the 6 non-emit incidents shared ALL FOUR). Rule SoT: `orchestrator-role.md` → `### Spawn Budget` (`[SIZE-EST]` analysis mode + decompose-by-domain). Every schema-mode analysis delegation MUST carry PER-TRACK bounds by construction:
-
-- **Bounded read-scope** — an explicit file/dir READ allowlist, NEVER a repo sweep.
-- **Effort matched to depth** — default `medium` for broad reads; `high` ONLY for narrow-scope deep reasoning.
-- **Output-field cap** — ≤2-3 required schema fields; a 4-field schema is itself a SPLIT signal (prefer a single free-text `analysis` field per the Shape-tolerant schema bullet above).
-- **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
-- **Decompose-by-domain up front** — past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), fan an N-domain audit to N scoped agents at Decision time + one reduce phase; NEVER one broad agent then a reactive split.
+- The `robustAgent` resilience layer above hardens the OUTPUT side (a non-emit no longer crashes the run).
+- This section prevents the INPUT-side cause: a single schema-mode NON-DEV analysis/research/audit spawn with a BROAD read + `effort:high` + a 3-4-field schema exhausts the turn budget before the terminal StructuredOutput (the 6 non-emit incidents shared ALL FOUR).
+- Rule SoT: `orchestrator-role.md` → `### Spawn Budget` (`[SIZE-EST]` analysis mode + decompose-by-domain).
+- Every schema-mode analysis delegation MUST carry PER-TRACK bounds by construction:
+  - **Bounded read-scope** — an explicit file/dir READ allowlist, NEVER a repo sweep.
+  - **Effort matched to depth** — default `medium` for broad reads; `high` ONLY for narrow-scope deep reasoning.
+  - **Output-field cap** — ≤2-3 required schema fields; a 4-field schema is itself a SPLIT signal (prefer a single free-text `analysis` field per the Shape-tolerant schema bullet above).
+  - **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
+  - **Decompose-by-domain up front** — past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), fan an N-domain audit to N scoped agents at Decision time + one reduce phase; NEVER one broad agent then a reactive split.
 
 ```js
 // [SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist — bounded per-track analysis spawn
