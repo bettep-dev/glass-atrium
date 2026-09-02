@@ -6,7 +6,9 @@ when_to_use: Use when composing multi-agent teams, deciding execution patterns (
 
 ## Overview
 
-Governs how the orchestrator agent delegates tasks, composes agent teams, manages execution patterns, and ensures quality. The orchestrator never implements directly — it routes, coordinates, and verifies. Incorrect orchestration causes wasted tokens, missed deadlines, and quality degradation across the entire agent system.
+- Governs how the orchestrator agent delegates tasks, composes agent teams, manages execution patterns, and ensures quality.
+- The orchestrator never implements directly — it routes, coordinates, and verifies.
+- Incorrect orchestration causes wasted tokens, missed deadlines, and quality degradation across the entire agent system.
 
 ## When to Use
 
