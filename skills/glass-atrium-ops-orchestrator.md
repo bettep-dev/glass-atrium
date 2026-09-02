@@ -75,25 +75,31 @@ Due to LLM judgment characteristics, the same input may return different teams. 
 
 #### Routing-Decision Record (observability convention)
 
-The three safeguards above are entirely LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact. To make the decision auditable, the orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
-
-`route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>` — and when confidence < 0.7, append the action taken (`halt+clarify` with the 2-3 candidates presented).
-
-This is a **RECOMMENDED self-logged audit trail, not a runtime-enforced gate**: the orchestrator is the main-loop LLM, so no hook can force or verify this emission (honor-system). It does NOT make routing "verified" or "enforced" — it only leaves a human-readable trace so a questionable route is reviewable post-hoc.
+- The three safeguards above are entirely LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact.
+- To make the decision auditable, the orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
+  - `route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>` — and when confidence < 0.7, append the action taken (`halt+clarify` with the 2-3 candidates presented).
+- This is a **RECOMMENDED self-logged audit trail, not a runtime-enforced gate**: the orchestrator is the main-loop LLM, so no hook can force or verify this emission (honor-system).
+  - It does NOT make routing "verified" or "enforced" — it only leaves a human-readable trace so a questionable route is reviewable post-hoc.
 
 #### Routing Verification (LLM-as-Judge)
 
 Before emitting a delegation, self-check:
 - Is `agents[].domains` semantically matched to the sub-task? (semantic, not keyword)
 - Does `reason` field cite specific `domains` entries or description passages?
-- Is confidence ≥ 0.7? If not → clarification fallback (present 2-3 candidates to user)
-- Does the candidate agent declare a `compatibility` field? If yes, does the stated runtime precondition hold for the current sub-task? If not → halt delegation per Compatibility Probe (see `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe). Agents without a `compatibility` field pass through (backwards-compatible default — registry schema v1.1).
+- Is confidence ≥ 0.7?
+  - If not → clarification fallback (present 2-3 candidates to user)
+- Does the candidate agent declare a `compatibility` field?
+  - If yes, does the stated runtime precondition hold for the current sub-task?
+  - If not → halt delegation per Compatibility Probe (see `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe).
+  - Agents without a `compatibility` field pass through (backwards-compatible default — registry schema v1.1).
 
 Reuses the 0.7 threshold from "3-Layer Non-Determinism Mitigation"; this verification gate operationalises that threshold for routing specifically.
 
 #### Team Size
 
-Routine fan-out needs no special justification — the Workflow engine's runtime self-cap (core-derived, per-machine) bounds concurrency, so no fixed-number gate applies and there is NO fixed-number user-confirmation trigger. A VERY large fan-out (well beyond a normal team) should still be reasoned about in the `reason` field (synthesis value · total-session token cost). Canonical: orchestrator-role.md `### Team Size`.
+- Routine fan-out needs no special justification — the Workflow engine's runtime self-cap (core-derived, per-machine) bounds concurrency, so no fixed-number gate applies and there is NO fixed-number user-confirmation trigger.
+- A VERY large fan-out (well beyond a normal team) should still be reasoned about in the `reason` field (synthesis value · total-session token cost).
+- Canonical: orchestrator-role.md `### Team Size`.
 
 ### Team Composition Rules [ORCHESTRATOR]
 
