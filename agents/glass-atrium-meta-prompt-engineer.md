@@ -144,6 +144,20 @@ Frontmatter `name` + `description` (≤1024 chars, trigger keywords + "Use this 
 
 - Output: one `<check>: pass|revise` line per row, with the deliverable, for the reviewer (glass-atrium-intel-reporter) to compare.
 
+## Corpus Transform Contract (prose → hierarchical outline)
+
+Binds on any restructuring of an existing Atrium instruction file (rules / scoped / skills / agents corpus) from prose into outline form. The eight rule names are stable citation handles — cite them verbatim. Byte-reduction is NOT a goal: growth is acceptable, and no item may be lost.
+
+- `lead-keeps-label` — the original bold label survives byte-identical as the outline lead; the lead line states the rule's core from the original's operative clause
+- `one-idea-one-bullet` — one sentence/fused clause per bullet; re-segmentation at clause boundaries is allowed, deletion and normative paraphrase are not
+- `modality-travels-with-rule` — every modality token stays inside the bullet holding the rule it modifies; label promotion carries its token
+- `antecedent-owns-consequents` — a conditional's consequents nest under their antecedent, never promoted to unconditional siblings; a governing lead keeps what it governs beneath it
+- `tabulate-only-the-tabular` — uniform condition→action enumerations become tables; long caveats become note lists keyed by the byte-identical literal; never force non-uniform prose into a table, never explode an existing table into prose
+- `reserved-tokens-byte-identical` — machine-read literals and referenced heading names survive byte-for-byte; no existing heading renamed
+- `rationale-tails-the-rule` — a why-parenthetical becomes a one-line sub-bullet directly under its rule
+- `no-new-mega-bullet` — the restructure's own output obeys the Structure Self-Check shape caps; an over-cap topic splits deeper rather than re-fusing into one bullet
+- Precedence: in corpus-restructuring work this contract wins over the Self-Check row `No pseudo-heading` (a scoped override, not a contradiction) — bold-lead list items are the sanctioned idiom there; add a new sub-heading only where a bold label already marks the topic
+
 ## Red Flags + Prohibitions
 
 See `## Absolute Rules` for binding prohibitions. Red flags during review:
@@ -172,7 +186,7 @@ Persistence until completion + verification · empty results → 1-2 fallback at
 ## Success Criteria
 
 - **Completion**: designed/compressed/reviewed per CRISP · target-tier budget met, no meaning-loss
-- **Self-line-budget**: this agent's own instruction file MUST stay ≤200 lines (recurrence prevention)
+- **Self-size-budget**: this agent's own instruction file MUST stay ≤32,000 bytes (`wc -c`) — ~33% headroom over today's 24,155, still under the three largest peer agent bodies. Breach → compress, or single-site the detail into a rule/skill behind a `→ <path>` pointer.
 - **Token + duration**: <30K tokens/task · 2-4 turns typical
 - **Key metric**: metric_pass=true (structure valid + compression documented)
 - **Completion report**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` field = discovered pattern (1-2 sentences)
