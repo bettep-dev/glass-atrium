@@ -439,19 +439,26 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 When a delegation copies files INTO a live install, three failure modes observed this session are a NAMED ANTI-PATTERN — design them out with the sanctioned idiom below (advisory reference for shell-authoring delegations; NOT a gate).
 
-**WHEN in the cycle this deploy runs — pointer, not a restatement**: by DEFAULT it is PRE-MERGE — the cycle's combined unmerged tree is deployed and empirically verified on the live install BEFORE the PR is opened, and post-merge deploy is narrowly retained (release flow · no pre-merge deploy possible). Order SoT: `orchestrator-role.md` → `## Document-Driven Workflow` step 6, which also names the live-suite verification instrument and its exit-0 threshold — read them there, not here. This section covers only HOW the copy reaches its destination safely.
+- **WHEN in the cycle this deploy runs — pointer, not a restatement**: by DEFAULT it is PRE-MERGE — the cycle's combined unmerged tree is deployed and empirically verified on the live install BEFORE the PR is opened, and post-merge deploy is narrowly retained (release flow · no pre-merge deploy possible).
+  - Order SoT: `orchestrator-role.md` → `## Document-Driven Workflow` step 6, which also names the live-suite verification instrument and its exit-0 threshold — read them there, not here.
+  - This section covers only HOW the copy reaches its destination safely.
 
-**Reach the destination through a sanctioned flow FIRST.** A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files — is BLOCKED agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review. Pick one:
+- **Reach the destination through a sanctioned flow FIRST.**
+  - A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files — is BLOCKED agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review.
+  - Pick one:
+    - **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`).
+      - The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run, and the apply is unattended — no prompt stands between the staged tree and the live install.
+    - **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was LAUNCHED with.
+      - An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment, not the session shell's children), so this is a session-start decision, not something a delegation can arrange for itself.
+    - **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
 
-- **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`). The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run, and the apply is unattended — no prompt stands between the staged tree and the live install.
-- **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was LAUNCHED with. An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment, not the session shell's children), so this is a session-start decision, not something a delegation can arrange for itself.
-- **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
-
-The idiom below is deploy-mechanism-agnostic — it applies to the copy step of whichever flow is chosen, with `DST` a staging tree rather than the live surface:
-
-- **cp-silent-fail** — a bare `cp` can partially or silently fail to update a target, so trusting its exit code alone hides drift. → Verify EACH copied file with `cmp -s` (byte-equality) AFTER the copy; a `cmp` mismatch is the deploy-failure signal (loud-fail, do not `|| true` it).
-- **IFS-word-split** — `for f in ${LIST}` mis-splits the file list under a strict `IFS=$'\n\t'` (the newline/tab split, or a path with an IFS char, breaks iteration). → Iterate with `while IFS= read -r f; do … done <<<"${LIST}"` so each line is exactly one path, unsplit.
-- **lookbehind blind-spot** — a grep negative-lookbehind authored to exclude one shape ALSO silently excluded the `/path/` form (a coverage hole that skips real matches). → Use a blind-spot-free POSITIVE match (or an explicit allowlist); avoid a negative-lookbehind exclusion that can swallow a legitimate `/path/` form.
+- The idiom below is deploy-mechanism-agnostic — it applies to the copy step of whichever flow is chosen, with `DST` a staging tree rather than the live surface:
+  - **cp-silent-fail** — a bare `cp` can partially or silently fail to update a target, so trusting its exit code alone hides drift.
+    - → Verify EACH copied file with `cmp -s` (byte-equality) AFTER the copy; a `cmp` mismatch is the deploy-failure signal (loud-fail, do not `|| true` it).
+  - **IFS-word-split** — `for f in ${LIST}` mis-splits the file list under a strict `IFS=$'\n\t'` (the newline/tab split, or a path with an IFS char, breaks iteration).
+    - → Iterate with `while IFS= read -r f; do … done <<<"${LIST}"` so each line is exactly one path, unsplit.
+  - **lookbehind blind-spot** — a grep negative-lookbehind authored to exclude one shape ALSO silently excluded the `/path/` form (a coverage hole that skips real matches).
+    - → Use a blind-spot-free POSITIVE match (or an explicit allowlist); avoid a negative-lookbehind exclusion that can swallow a legitimate `/path/` form.
 
 Sanctioned idiom (bash 3.2-safe):
 
@@ -468,18 +475,23 @@ done <<<"${FILE_LIST}"
 
 #### Parallel Execution (Wave Execution) [ORCHESTRATOR]
 
-**Automatic Parallelization (standing default)**: file/resource NON-overlapping AND independent sub-tasks fan out in parallel BY DEFAULT — no per-task user request needed; skeleton `parallel()` blocks carry a per-track `// [OWNERSHIP]` attestation line. Guardrails + `[SIZE-EST]`/effort-scaling sizing + the over-fragmentation caveat: SoT `orchestrator-role.md` → `### Spawn Budget` Automatic Parallelization.
+- **Automatic Parallelization (standing default)**: file/resource NON-overlapping AND independent sub-tasks fan out in parallel BY DEFAULT — no per-task user request needed; skeleton `parallel()` blocks carry a per-track `// [OWNERSHIP]` attestation line.
+  - Guardrails + `[SIZE-EST]`/effort-scaling sizing + the over-fragmentation caveat: SoT `orchestrator-role.md` → `### Spawn Budget` Automatic Parallelization.
 
-**Rollout stages**:
-- **Immediate**: Research agents in parallel (independent domains investigate separately → aggregate results)
-- **Pilot**: DEV agents front+back worktree-isolated parallel (5 successful runs required)
-- **Full rollout**: After pilot track record + formal pattern registration in GLASS_ATRIUM_GLOBAL_RULES
+- **Rollout stages**:
+  - **Immediate**: Research agents in parallel (independent domains investigate separately → aggregate results)
+  - **Pilot**: DEV agents front+back worktree-isolated parallel (5 successful runs required)
+  - **Full rollout**: After pilot track record + formal pattern registration in GLASS_ATRIUM_GLOBAL_RULES
 
-**Fan-out prohibition scope clarification**: Applies to `glass-atrium-intel-researcher·glass-atrium-intel-planner·domain agents·glass-atrium-intel-reporter` Pipeline sequence — each stage must complete before the next. However, multiple domain agents within the domain agents stage MAY run in parallel (Fan-out) if they work on independent sections.
+- **Fan-out prohibition scope clarification**: Applies to `glass-atrium-intel-researcher·glass-atrium-intel-planner·domain agents·glass-atrium-intel-reporter` Pipeline sequence — each stage must complete before the next.
+  - However, multiple domain agents within the domain agents stage MAY run in parallel (Fan-out) if they work on independent sections.
 
-**Commit strategy**: Agents within a Wave commit normally to their own branches via `isolation: worktree` (including hook passing) → orchestrator merges after Wave completion. `--no-verify` usage forbidden (core-git-workflow.md compliance)
+- **Commit strategy**: Agents within a Wave commit normally to their own branches via `isolation: worktree` (including hook passing) → orchestrator merges after Wave completion.
+  - `--no-verify` usage forbidden (core-git-workflow.md compliance)
 
-**Workflow-mode mapping**: under ultracode, a Wave = a `parallel()` block (engine owns the fan-out + join). The rollout stages, Fan-out prohibition scope, and commit strategy above are POLICY and apply on both paths — the engine does not relax them. The orchestrator still decides which agents fan out vs stay sequential; it authors that decision into the script rather than hand-driving the Agent tool per stage.
+- **Workflow-mode mapping**: under ultracode, a Wave = a `parallel()` block (engine owns the fan-out + join).
+  - The rollout stages, Fan-out prohibition scope, and commit strategy above are POLICY and apply on both paths — the engine does not relax them.
+  - The orchestrator still decides which agents fan out vs stay sequential; it authors that decision into the script rather than hand-driving the Agent tool per stage.
 
 #### Explicit Pipeline Combinations [ORCHESTRATOR]
 
