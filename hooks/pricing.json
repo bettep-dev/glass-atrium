@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "_comment": "F3 self-refresh: the loader atomically replaces this WHOLE file with the own-repo copy when that copy's last_verified is strictly newer (bounded to today+1d). Manual local edits MUST bump last_verified — a newer repo copy overwrites uncommitted local edits by design.",
-  "last_verified": "2026-07-25",
+  "_comment": "F3 self-refresh: the loader atomically replaces this WHOLE file with the own-repo copy when that copy's last_verified is strictly newer (bounded to today+1d). Manual local edits MUST bump last_verified — a newer repo copy overwrites uncommitted local edits by design. claude-fable-5-1 carries the litellm-fetched rate (overlay fetched 2026-09-01, cache_read 0.25), NOT a vendor quote and NOT the claude-fable-5 family rate whose cache_read is 1.0 — a SoT row wins over the overlay, so this row pins the fetched value and only an operator edit can move it. Two consequences of adding the row: (a) the id flips unknown->is_known, so backfill-cost-events.py --reprice now rewrites stored core.cost_events rows for it at this rate retroactively (calc_cost keys on each row's event_date and this row declares no tiers); (b) the last_verified bump re-stamps the WHOLE file, suppressing cost-tracker.sh's stale advisory for every other row until 2026-12-01 (stale_after_days 90) though only this row was touched.",
+  "last_verified": "2026-09-02",
   "stale_after_days": 90,
   "currency": "USD",
   "unit": "per_mtok",
@@ -28,6 +28,7 @@
     "claude-opus-4-7":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
     "claude-opus-4-6":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
     "claude-opus-4-5":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "claude-fable-5-1":  {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5},
     "claude-fable-5":    {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5},
     "claude-sonnet-5":   {
       "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75,
