@@ -1957,16 +1957,14 @@ async function openPartHealth(partId: string): Promise<void> {
 	const [nodeId] = PART_NODE_BINDINGS[partId] ?? [];
 	assert.ok(nodeId, `fixture precondition: part '${partId}' binds no node, so no panel can carry it`);
 
-	// 드로어는 모달이라 열린 채로는 오버레이가 지도의 클릭을 가로챔 — 조작자도 닫고 다시 눌러야
-	// 함(표는 일곱을 한 화면에 폈으므로 그 왕복이 없었음). 하네스가 그 순서를 그대로 밟음.
-	await closePanelIfOpen();
-
 	const selector = `svg g.node[data-arch-node-id$=".${nodeId}"]`;
 	await page.waitForSelector(selector, { timeout: 30_000 });
-	await waitForFittedCanvas();
 
-	await clickNodeAt(selector, `${nodeId}' for part '${partId}`);
-	await page.waitForSelector(`[data-health-row="${partId}"]`, { timeout: 30_000 });
+	// 닫기 · 맞춤 · 누르기 · 항목 대기는 openNodePanel 안에 있음 — 항목까지 한 시도로 묶어야
+	// 빗나간 누르기가 되풀이에 닿음.
+	await openNodePanel(selector, `${nodeId}' for part '${partId}`, {
+		confirm: `[data-health-row="${partId}"]`,
+	});
 }
 
 // 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
@@ -2097,6 +2095,92 @@ async function waitForFittedCanvas(): Promise<void> {
 async function closePanelIfOpen(): Promise<void> {
 	if ((await page.locator(".detail-overlay").count()) === 0) return;
 	await closePanel();
+}
+
+// 노드를 눌러 패널을 세우는 단 하나의 문. 자리마다 기한을 늘리던 것을 걷어내고 여는 행위 자체를
+// 되풀이함 — 기한이 다했다는 것은 누르기가 빗나갔다는 뜻이고(패널은 누르는 즉시 섬, 왕복이 없음),
+// 빗나간 누르기는 아무리 오래 기다려도 패널을 세우지 못하므로 기한을 늘리는 고침은 원리상 듣지 않음.
+// 여는 것은 멱등임 — 열려 있으면 닫고, 맞춤을 다시 세우고, 자리를 다시 재어 누름.
+// 기한 총합은 늘리지 않음: 5 + 10 + 15 = 30초로, 이 파일이 한 번에 기다리던 30초와 같음.
+// 뒤 시도일수록 길게 잡는 이유 — 앞선 빗나감은 빨리 잡고, 정말 느린 기계에는 마지막 한 번을 길게 줌.
+const OPEN_PANEL_ATTEMPT_MS = [5_000, 10_000, 15_000];
+
+interface OpenPanelOptions {
+	// 패널이 선 것만으로는 부족한 자리 — 읽을 요소가 서기까지 같은 시도 안에서 함께 기다림.
+	// 이것을 다음 줄의 별도 대기로 두면 되풀이가 그 요소에 닿지 못해, 되살릴 수 있는 빗나감이
+	// 그 대기에서 기한 초과로 굳음.
+	confirm?: string;
+}
+
+// 마지막으로 본 상태 한 줄 — 되풀이가 실패를 삼키지 않게 하는 값임. 이 글이 없으면 붉은 자리가
+// '세 번 다 안 섰다' 까지만 말하고 무엇을 보고 그랬는지는 잃음.
+async function readOpenPanelState(selector: string, confirm?: string): Promise<string> {
+	const box = await readNodeBox(selector);
+	const seen = await page.evaluate((sel) => {
+		return {
+			overlays: document.querySelectorAll(".detail-overlay").length,
+			confirmFound: sel ? Boolean(document.querySelector(sel)) : null,
+		};
+	}, confirm || "");
+
+	const place = box
+		? `node ${box.node} · pane ${box.pane} · scale ${box.scale} · inside ${box.inside}`
+		: "node or canvas absent from the tree";
+	const target = confirm ? ` · '${confirm}' ${seen.confirmFound ? "found" : "absent"}` : "";
+	return `${place} · ${seen.overlays} overlay(s) standing${target}`;
+}
+
+async function openNodePanel(
+	selector: string,
+	describe: string,
+	options: OpenPanelOptions = {},
+): Promise<number> {
+	const { confirm } = options;
+
+	// 노드가 트리에 들어오기를 여기서 한 번만 기다림 — 시도 안에 두면 없는 노드 하나에 이 기한이
+	// 배로 늚. 기한과 삼킴은 clickNodeAt 이 이미 쓰던 것과 같음(15초, 초과해도 아래 단언이 말함).
+	await page.waitForSelector(selector, { timeout: 15_000, state: "attached" }).catch(() => null);
+
+	let lastError = "";
+	for (let attempt = 1; attempt <= OPEN_PANEL_ATTEMPT_MS.length; attempt += 1) {
+		const deadline = Date.now() + OPEN_PANEL_ATTEMPT_MS[attempt - 1];
+
+		try {
+			// 드로어는 모달이라 열린 채로는 오버레이가 지도의 클릭을 가로챔 — 조작자도 닫고 다시
+			// 눌러야 함. 하네스가 그 순서를 그대로 밟고, 되풀이할 때마다 다시 밟음.
+			await closePanelIfOpen();
+			await waitForFittedCanvas();
+			await clickNodeAt(selector, describe);
+
+			// 드로어는 어느 노드를 눌러도 서므로 그것이 '열렸다' 의 앵커임 — 헬스를 실은 노드만
+			// 구획을 내므로 구획의 등장은 앵커가 될 수 없음.
+			await page.waitForSelector(".detail-overlay", {
+				timeout: Math.max(250, deadline - Date.now()),
+			});
+			if (confirm) {
+				await page.waitForSelector(confirm, { timeout: Math.max(250, deadline - Date.now()) });
+			}
+		} catch (err) {
+			lastError = err instanceof Error ? err.message.split("\n")[0] : String(err);
+			continue;
+		}
+
+		// 한 번에 서지 않았다는 것은 그 자체로 신호임 — 초록 안에 묻히면 되풀이가 결함을 가린 것이
+		// 되므로, 몇 번째에 섰는지와 그때의 상태를 남김.
+		if (attempt > 1) {
+			process.stderr.write(
+				`[open-retry] panel for '${describe}' opened only on attempt ${attempt}/` +
+					`${OPEN_PANEL_ATTEMPT_MS.length} — ${await readOpenPanelState(selector, confirm)}\n`,
+			);
+		}
+		return attempt;
+	}
+
+	const budgets = OPEN_PANEL_ATTEMPT_MS.map((ms) => `${ms / 1000}s`).join(" + ");
+	assert.fail(
+		`panel for '${describe}' did not stand after ${OPEN_PANEL_ATTEMPT_MS.length} attempts (${budgets}) — ` +
+			`last state ${await readOpenPanelState(selector, confirm)} · last failure: ${lastError}`,
+	);
 }
 
 // 데몬 부품의 노드를 엶 — 걷어낸 표에서 행 등장을 기다리던 자리. 드릴다운은 패널이 열릴 때
@@ -2695,13 +2779,10 @@ async function sweepPartIdsAcrossNodes(): Promise<string[]> {
 
 	const seen: string[] = [];
 	for (const nodeId of nodeIds) {
-		await closePanelIfOpen();
-		await waitForFittedCanvas();
-		await clickNodeAt(`svg g.node[data-arch-node-id="${nodeId}"]`, nodeId);
-		// 드로어가 선 것을 기다림 — 헬스를 실은 노드만 구획을 내므로(빈 제목을 그리지 않는 것이
-		// 계약임) 구획의 등장을 기다릴 수는 없고, 드로어는 어느 노드를 눌러도 서므로 그것이 앵커임.
+		// 드로어가 선 것이 앵커임 — 헬스를 실은 노드만 구획을 내므로(빈 제목을 그리지 않는 것이
+		// 계약임) 구획의 등장을 기다릴 수는 없고, 드로어는 어느 노드를 눌러도 섬.
 		// 고정 sleep 을 쓰면 느린 기계에서 아직 안 선 패널을 '부품 없음' 으로 읽어 조용히 통과함.
-		await page.waitForSelector(".detail-overlay", { timeout: 30_000 });
+		await openNodePanel(`svg g.node[data-arch-node-id="${nodeId}"]`, nodeId);
 		for (const id of await getPartRowIds()) if (!seen.includes(id)) seen.push(id);
 		await closePanel();
 	}
@@ -2914,9 +2995,9 @@ test("AC-B2-4b the entries follow the roster, and an empty roster leaves none", 
 	await spliceRoster(1);
 	await refreshMap();
 	const [pgNode] = PART_NODE_BINDINGS.pg;
-	await closePanelIfOpen();
-	await waitForFittedCanvas();
-	await clickNodeAt(`svg g.node[data-arch-node-id$=".${pgNode}"]`, pgNode);
+	// 이 절이 기다리는 것은 '항목 0개' 라, 빗나간 누르기도 0 을 내어 조용히 통과함 — openNodePanel
+	// 이 드로어가 선 것을 먼저 못박아 '안 열림' 과 '열렸는데 비었음' 을 가름.
+	await openNodePanel(`svg g.node[data-arch-node-id$=".${pgNode}"]`, pgNode);
 	assert.equal(
 		await waitForRowCount(0),
 		0,
@@ -3091,9 +3172,9 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	// 반대 방향 — 응답이 노드를 하나도 안 실으면 부품이 아예 닿지 않아야 함(빈 글이 아니라 부재).
 	await openMap(getLiveFixture({ part_bindings: { ...PART_NODE_BINDINGS, browser: [] } }));
 	const [browserNode] = PART_NODE_BINDINGS.browser;
-	await closePanelIfOpen();
-	await waitForFittedCanvas();
-	await clickNodeAt(`svg g.node[data-arch-node-id$=".${browserNode}"]`, browserNode);
+	// 위와 같은 이유로 드로어를 먼저 못박음 — 여기서 재는 것도 '부재' 라 빗나간 누르기가 정답과
+	// 같은 글을 냄. 아래 300ms 는 늦게 그려지는 항목을 놓치지 않으려는 것으로 그대로 둠.
+	await openNodePanel(`svg g.node[data-arch-node-id$=".${browserNode}"]`, browserNode);
 	await page.waitForTimeout(300);
 	assert.equal(
 		(await getPartFacts("browser")).found,
