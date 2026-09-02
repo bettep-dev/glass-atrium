@@ -905,9 +905,12 @@ run_doctor() {
   fi
 
   # 21. pending Prisma migrations. Registration kind A (counted warning): the counter below joins
-  #     the warning total AND the PASS breakdown. `glass-atrium update` rebuilds the monitor and
-  #     restarts it without applying migrations, so new server code can run over an unmigrated
-  #     database with no surface saying so — this section is that surface, and it only READS.
+  #     the warning total AND the PASS breakdown. `glass-atrium update` now APPLIES pending
+  #     migrations between the file apply and the monitor restart (scripts/update.sh
+  #     update_migrate_deploy_post_apply, named exit 15), so a migration still pending here means
+  #     that step failed, was opted out of (GA_SKIP_DB_SETUP), or the install never ran an update
+  #     that carried it — new server code over an unmigrated database, with no other surface
+  #     saying so. This section is that surface, and it only READS.
   #     Four branch states are notes with no counter, kept apart on purpose: the documented opt-out,
   #     the documented psql-less mode, a database that does not exist YET, and a server this run
   #     could not reach. An ABSENT history table is NOT one of them — that is a database which has
@@ -972,7 +975,7 @@ run_doctor() {
       mig_pending=$((mig_pending + 1))
     done <<<"${mig_expected}"
     if [[ "${mig_pending}" -gt 0 ]]; then
-      log "  warn : ${mig_pending} migration(s) pending against '${DB_NAME}' (history: ${mig_table}) — the updater rebuilds the monitor but applies nothing; run 'glass-atrium db-setup'"
+      log "  warn : ${mig_pending} migration(s) pending against '${DB_NAME}' (history: ${mig_table}) — the updater applies pending migrations, so this means that step failed or was skipped; run 'glass-atrium db-setup'"
       log "         pending: ${mig_missing}"
     else
       log "  ok   : all ${mig_total} migration(s) applied (history: ${mig_table})"

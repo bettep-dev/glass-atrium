@@ -24,6 +24,10 @@ const FREE_TEXT_MODEL_RE_MC = /^[a-z0-9.\-[\]]{1,128}$/;
 const BUDGET_RE_MC = /^\d+\.\d{2}$/;
 const BUDGET_MIN_USD_MC = 0.05;
 const BUDGET_MAX_USD_MC = 50.0;
+// 배포 기본 per-call 상한 미러 — 서버 BUDGET_SEED_DEFAULT_USD (DB seed 행 + daemon_config.py
+// _FALLBACK 과 동일 값). 필드를 한 번도 건드리지 않은 운영자가 실제로 돌리고 있는 값이라
+// 빈 입력의 placeholder 는 이 값을 광고해야 한다.
+const BUDGET_SEED_DEFAULT_MC = "10.00";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -110,6 +114,13 @@ const SYNC_META_MC = {
 		label: "File missing",
 		tone: "warn",
 		desc: "daemon-config.json was not found — press Save to recreate it",
+	},
+	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
+	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
+	"pending-migration": {
+		label: "Pending migration",
+		tone: "warn",
+		desc: "these values are being read from the pre-rename config rows — run `glass-atrium db-setup` to complete the rename",
 	},
 };
 
@@ -754,6 +765,13 @@ function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
 	);
 }
 
+// per-call 상한 입력의 placeholder — 미입력 상태에서 실제로 적용 중인 배포 기본값을 광고.
+// top-level `const` 는 vm 샌드박스 테스트에서 도달 불가(모듈 렉시컬 스코프)지만 top-level
+// function 은 도달 가능 — 미러가 서버 SoT 와 어긋나면 client unit test 가 잡는다.
+function budgetPlaceholderMC() {
+	return BUDGET_SEED_DEFAULT_MC;
+}
+
 // 예산 1행 — $ 입력(2-decimal 문자열) + 단위/범위 힌트 + validate-on-blur + field-adjacent role=alert
 // (T-MDL-4) + actual/drift + ghost default/reset (T-MDL-6).
 function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
@@ -781,7 +799,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 								inputMode="decimal"
 								className="field field--mono text-right"
 								value={value}
-								placeholder="0.50"
+								placeholder={budgetPlaceholderMC()}
 								onChange={(e) => onChange(e.target.value)}
 								onBlur={() => setTouched(true)}
 								aria-label={`${meta.label} per-call cap in USD`}
@@ -877,6 +895,8 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 function DriftBannerMC({ sync, domains }) {
 	const { Icon } = window.UI;
 	const driftedDomains = (domains || []).filter((d) => d.drift);
+	// 처방이 다르다 — drift/file-missing 은 Save 가, pending-migration 은 db-setup 이 고친다.
+	const pendingMigration = sync === "pending-migration";
 	return (
 		<div
 			role="alert"
@@ -889,11 +909,24 @@ function DriftBannerMC({ sync, domains }) {
 			<Icon name="git" size={16} className="text-warn mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">
-					Saved config not yet fully live
+					{pendingMigration
+						? "Config rows still carry their pre-rename names"
+						: "Saved config not yet fully live"}
 				</div>
 				<div className="fs-meta text-dim mt-1">
-					Run <span className="font-mono">/glass-atrium-ops-model-config</span>{" "}
-					to apply.
+					{pendingMigration ? (
+						<>
+							Values below are read from the old rows. Run{" "}
+							<span className="font-mono">glass-atrium db-setup</span> to
+							complete the rename.
+						</>
+					) : (
+						<>
+							Run{" "}
+							<span className="font-mono">/glass-atrium-ops-model-config</span>{" "}
+							to apply.
+						</>
+					)}
 				</div>
 				{driftedDomains.length > 0 && (
 					<div className="fs-meta text-dim mt-2">
