@@ -501,9 +501,12 @@ done <<<"${FILE_LIST}"
 |------|------|------|
 | glass-atrium-intel-researcher·glass-atrium-intel-planner·domain agents·glass-atrium-intel-reporter | glass-atrium-intel-researcher→glass-atrium-intel-planner→domain agents→glass-atrium-intel-reporter | Research results → plan design → domain expert section authoring → report synthesis. Domain agents (DEV, glass-atrium-design-designer, etc.) selected by content relevance |
 
-Above combinations: **Stage-level Fan-out (parallel independent) forbidden**. Successor created only after predecessor completes.
+- Above combinations: **Stage-level Fan-out (parallel independent) forbidden**.
+  - Successor created only after predecessor completes.
 
-**Workflow-mode mapping**: under ultracode this combination = a `pipeline()` sequence (engine enforces stage ordering + passes each stage output → next input). The linear-dependency criterion and the stage-Fan-out prohibition are POLICY (preserved on both paths); the engine enforces the ordering mechanically once authored. Pipeline Acceptance Criteria (below) remain orchestrator-authored verify-stages — the engine does not infer them.
+- **Workflow-mode mapping**: under ultracode this combination = a `pipeline()` sequence (engine enforces stage ordering + passes each stage output → next input).
+  - The linear-dependency criterion and the stage-Fan-out prohibition are POLICY (preserved on both paths); the engine enforces the ordering mechanically once authored.
+  - Pipeline Acceptance Criteria (below) remain orchestrator-authored verify-stages — the engine does not infer them.
 
 #### Pipeline Acceptance Criteria [ORCHESTRATOR]
 
