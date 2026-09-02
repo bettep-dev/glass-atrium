@@ -136,11 +136,14 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 
 ### Delegation/Communication Rules [ORCHESTRATOR]
 
-**Delegation** = top-down distribution · **Handoff** = horizontal transfer between agents
+- **Delegation** = top-down distribution
+- **Handoff** = horizontal transfer between agents
 
-Delegation required elements: **Goal · Target files/paths · Constraints · Completion criteria · Resource Budget · Ripple radius** (one-line estimate of the downstream files/APIs/tests/integration points this change touches — scoping by surface alone is forbidden). TASK_TYPE is **recommended** when ambiguous, not enforced — prompt-level rules in glass-atrium-intel-planner/glass-atrium-intel-reporter/DEV descriptions suffice.
+- Delegation required elements: **Goal · Target files/paths · Constraints · Completion criteria · Resource Budget · Ripple radius** (one-line estimate of the downstream files/APIs/tests/integration points this change touches — scoping by surface alone is forbidden).
+  - TASK_TYPE is **recommended** when ambiguous, not enforced — prompt-level rules in glass-atrium-intel-planner/glass-atrium-intel-reporter/DEV descriptions suffice.
 
-> Persist-intent research stage: a research delegation on a persist-worthy (reusable web) topic MUST grant the wiki-write role + instruct raw-save — never strip to "read/query only". SoT: `### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms) Delegation-prompt content (persist-intent research bullet).
+> Persist-intent research stage: a research delegation on a persist-worthy (reusable web) topic MUST grant the wiki-write role + instruct raw-save — never strip to "read/query only".
+> - SoT: `### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms) Delegation-prompt content (persist-intent research bullet).
 
 **Resource Budget** — prevents sub-agent tool-chain saturation (synthesis never emitted after long tool chain). Every delegation prompt MUST declare these fields:
 
@@ -157,17 +160,17 @@ Delegation required elements: **Goal · Target files/paths · Constraints · Com
 
 Hitting `tool_budget` without completion → emit `result: blocked` + partial findings, never silent exit.
 
-These defaults are a **FLOOR to size against, not advisory-only prose** — encode them into the analysis delegation skeleton (`#### Analysis-Track Right-Sizing (input-side)`) so a pasted schema-mode analysis workflow carries the read allowlist + effort ceiling + field cap + budget-guard idiom by construction, plus the analysis-mode `[SIZE-EST]` token. Observed non-emit incidents exceeded these advisory budgets ~2×, so an exploration-heavy analysis read rounds the budget UP (under-estimate = DANGEROUS error, per `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` honesty framing) and, past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), SPLITS by domain up front rather than sizing one broad agent.
+- These defaults are a **FLOOR to size against, not advisory-only prose** — encode them into the analysis delegation skeleton (`#### Analysis-Track Right-Sizing (input-side)`) so a pasted schema-mode analysis workflow carries the read allowlist + effort ceiling + field cap + budget-guard idiom by construction, plus the analysis-mode `[SIZE-EST]` token.
+  - Observed non-emit incidents exceeded these advisory budgets ~2×, so an exploration-heavy analysis read rounds the budget UP (under-estimate = DANGEROUS error, per `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` honesty framing) and, past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), SPLITS by domain up front rather than sizing one broad agent.
 
 - Free-text handoff forbidden → structured instructions only
 - 3+ step chains: propagate original requirements as immutable context through all stages
 - **Handoff payload**: Including API keys/secrets strictly forbidden → pass only environment variable references
 
-**TASK_TYPE delegation hint (optional)**: When task_type is ambiguous, the orchestrator MAY include a single line in the delegation prompt:
-
-`TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
-
-This is a **routing aid** that helps the sub-agent self-anchor, not hook-enforced. Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review) for consistency.
+- **TASK_TYPE delegation hint (optional)**: When task_type is ambiguous, the orchestrator MAY include a single line in the delegation prompt:
+  - `TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
+  - This is a **routing aid** that helps the sub-agent self-anchor, not hook-enforced.
+  - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review) for consistency.
 
 **English keywords recommended in prompts**: Agent invocation prompts SHOULD include the target agent's core English technical keywords (improves model self-routing accuracy).
 
