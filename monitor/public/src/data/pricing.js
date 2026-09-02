@@ -4,6 +4,8 @@
 
 window.TOKEN_RATES = {
   // claude-fable-5 family — 검증된 DB cost vector 와 일치 (F28)
+  // 5-1 은 litellm overlay 가 물어온 값 · 벤더 견적 아님 — cache_read 가 fable-5 가족가(1.00)와 다른 유일한 필드
+  'claude-fable-5-1':   { input: 10.00, output: 50.00, cache_read: 0.25,  cache_creation: 12.50 },
   'claude-fable-5':     { input: 10.00, output: 50.00, cache_read: 1.00,  cache_creation: 12.50 },
 
   // claude-opus-5 — opus-4-x 세대와 별개 단가라 family prefix 매칭에 기대지 않고 독립 행 유지

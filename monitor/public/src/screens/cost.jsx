@@ -2043,12 +2043,13 @@ function computeSparkDeltaC(series) {
   return ((last - first) / Math.abs(first)) * 100;
 }
 
-// claude-opus-4-7 → opus-4.7 · claude-haiku-4-5-20251001 → haiku-4.5 (X축 공간 압축).
-// family-major-minor 추출 + 후행 날짜 세그먼트(-YYYYMMDD…) 옵션 허용 (날짜형 ID 축약 실패 해소).
+// claude-opus-4-7 → opus-4.7 · claude-opus-5 → opus-5 · claude-haiku-4-5-20251001 → haiku-4.5 (X축 공간 압축).
+// family-major 필수 + minor 옵션 → 2세그먼트 ID도 동일 형식으로 축약.
+// minor 는 1-2자리, 후행 날짜 세그먼트는 3자리 이상 → claude-opus-5-20260101 의 날짜가 minor 로 오독되지 않음.
 function shortenModelName(name) {
   if (typeof name !== 'string' || name.length === 0) return '—';
-  const m = name.match(/^claude-([a-z]+)-(\d+)-(\d+)(?:-\d+)?$/i);
-  if (m) return `${m[1]}-${m[2]}.${m[3]}`;
+  const m = name.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{3,})?$/i);
+  if (m) return m[3] ? `${m[1]}-${m[2]}.${m[3]}` : `${m[1]}-${m[2]}`;
   return name;
 }
 
