@@ -677,14 +677,30 @@ Verify prior output acceptance criteria before stage entry.
   - Both hatches keep the DEV hard-gate + honor-system-primary verify-stage discipline intact — they change only WHICH agent does pre-verify analysis, never the verify requirement itself.
 
 **DEV-spawn 4-requirement pre-flight checklist (consolidated SoT — the SINGLE list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at, so no hand-maintained digest silently drops a requirement again)**: every DEV-spawning Workflow script MUST carry ALL FOUR co-equal requirements before submission —
-  - **① entry token** — a plan-ref (sizable) OR `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`). Backstop: entry-miss BLOCK (exit 2). Detail: "Entry-class token placement" below.
-  - **② `[SIZE-EST]` token** — `[SIZE-EST] bundles=N tool_uses~=N — <reason>` at EVERY `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`). Backstop: size-est-miss BLOCK (exit 2), PRESENCE-only. Detail: "[SIZE-EST] token placement" below; format + honesty framing = `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet.
-  - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`. Backstop: the declaration contract's ordering + consistency checks (`block-order` et al., exit 2). Detail: "In-script verify-stage" above + the Pre-submit self-check in `## Red Flags`.
-  - **④ `[AGENT-COMPOSITION]` declaration block** — exactly ONE comment-resident `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block declaring the verify team + implementation spawns (team form OR upstream form). Backstop: absence → `block-nodecl` · malformed → `block-grammar` · declaration↔code mismatch → `block-declspawn`/`block-undecl`/`block-computed`/`block-order`/`block-upstream` (all exit 2). Detail: "In-script verify-stage" above (grammar + worked declaration blocks in the skeletons).
+  - **① entry token** — a plan-ref (sizable) OR `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`).
+    - Backstop: entry-miss BLOCK (exit 2).
+    - Detail: "Entry-class token placement" below.
+  - **② `[SIZE-EST]` token** — `[SIZE-EST] bundles=N tool_uses~=N — <reason>` at EVERY `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
+    - Backstop: size-est-miss BLOCK (exit 2), PRESENCE-only.
+    - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet.
+  - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`.
+    - Backstop: the declaration contract's ordering + consistency checks (`block-order` et al., exit 2).
+    - Detail: "In-script verify-stage" above + the Pre-submit self-check in `## Red Flags`.
+  - **④ `[AGENT-COMPOSITION]` declaration block** — exactly ONE comment-resident `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block declaring the verify team + implementation spawns (team form OR upstream form).
+    - Backstop: absence → `block-nodecl` · malformed → `block-grammar` · declaration↔code mismatch → `block-declspawn`/`block-undecl`/`block-computed`/`block-order`/`block-upstream` (all exit 2).
+    - Detail: "In-script verify-stage" above (grammar + worked declaration blocks in the skeletons).
 
-  These four are CO-EQUAL — dropping ANY one from a downstream digest is exactly the drift this consolidated list exists to prevent. Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 gate checks presence/grammar/code-consistency only — declaration truthfulness and estimate correctness are NEVER verified.
+  These four are CO-EQUAL — dropping ANY one from a downstream digest is exactly the drift this consolidated list exists to prevent.
 
-**Entry-class token placement (ultracode — DEV workflow)** — a DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (and any plan-ref) in its recommended canonical home: a top-of-script `log()` string or `meta.description` field. This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes. **ENTRY-CLASS NEGATIVE**: `simple-task` is the ONLY recognized `[ENTRY-CLASS]` literal — SIZABLE work has NO `[ENTRY-CLASS]` form; its entry signal is the **plan-ref token** (path 1). Any other `[ENTRY-CLASS]` variant (`[ENTRY-CLASS] sizable` / `complex` / `feature` …) is UNRECOGNIZED and does NOT clear the entry-miss gate. CONTRAST: spawn tokens (`glass-atrium-qa-code-reviewer` / `dev-*` agentType literals) are the OPPOSITE — comment-stripped by the gate, so they genuinely need non-comment placement; and the `[AGENT-COMPOSITION]` declaration block is a THIRD convention — comment-RESIDENT (canonical `/* */` home) and inert inside string literals. Do not conflate the three. **Independent gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` workflow STILL independently requires `[SIZE-EST]`, the verify-stage, and the declaration block (requirements ②-④ of the 4-requirement checklist above; a `dev-*` workflow missing the declaration is BLOCKED `block-nodecl`):
+  Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 gate checks presence/grammar/code-consistency only — declaration truthfulness and estimate correctness are NEVER verified.
+
+**Entry-class token placement (ultracode — DEV workflow)** — a DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (and any plan-ref) in its recommended canonical home: a top-of-script `log()` string or `meta.description` field.
+  - This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes.
+  - **ENTRY-CLASS NEGATIVE**: `simple-task` is the ONLY recognized `[ENTRY-CLASS]` literal — SIZABLE work has NO `[ENTRY-CLASS]` form; its entry signal is the **plan-ref token** (path 1).
+    - Any other `[ENTRY-CLASS]` variant (`[ENTRY-CLASS] sizable` / `complex` / `feature` …) is UNRECOGNIZED and does NOT clear the entry-miss gate.
+  - CONTRAST: spawn tokens (`glass-atrium-qa-code-reviewer` / `dev-*` agentType literals) are the OPPOSITE — comment-stripped by the gate, so they genuinely need non-comment placement; and the `[AGENT-COMPOSITION]` declaration block is a THIRD convention — comment-RESIDENT (canonical `/* */` home) and inert inside string literals.
+    - Do not conflate the three.
+  - **Independent gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` workflow STILL independently requires `[SIZE-EST]`, the verify-stage, and the declaration block (requirements ②-④ of the 4-requirement checklist above; a `dev-*` workflow missing the declaration is BLOCKED `block-nodecl`):
 
   ```js
   // entry token in canonical home (raw-scanned — placement is convention). dev-* STILL needs the
@@ -707,7 +723,8 @@ Verify prior output acceptance criteria before stage entry.
   );
   ```
 
-**[SIZE-EST] token placement (ultracode — DEV workflow)** — sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an INDEPENDENT presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token. Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
+**[SIZE-EST] token placement (ultracode — DEV workflow)** — sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an INDEPENDENT presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
+  - Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
 
 **[DOC-ROUTE] token placement (ultracode — user-requested local destination)** — when the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria). Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate). NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
 
