@@ -296,7 +296,7 @@ The authoring idioms that implement those rules:
 
 - **Retry on null (tightened re-prompt — NEVER verbatim)**: wrap every schema-mode `agent()` in a retry helper — on null, re-spawn ONCE with a tightened re-prompt (optionally a higher-turn `agentType`).
   - The re-prompt MUST carry BOTH (a) reserve-budget + force-the-emit AND (b) the **validator contract** for the invalid-emission mode: *emit ONLY these keys `<list them>` and put ANY extra observation inside the declared free-text field (never invent a key); respect every `maxLength`/`maxItems` cap; on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates) — do NOT merely shorten (a verbatim shorten reproduces the identical failure)*.
-    - A verbatim retry reproduces the identical failure (the summary-collapse loop above); the tightened re-prompt is what breaks it.
+  - A verbatim retry reproduces the identical failure (the summary-collapse loop above); the tightened re-prompt is what breaks it.
   - **The retry MUST CHANGE STRATEGY, not merely re-prompt the same tight schema** — re-sending the IDENTICAL tight schema reproduces the identical cap-exceeded failure (5+5 internal retries wasted, observed).
     - On the retry, do ONE of: (a) **LOOSEN the caps** (or drop to a SINGLE permissive free-text field); (b) **switch to FILE-HANDOFF** (return a path + compact summary, per Compact-schema (a) below); or (c) **fall through to the text-mode (schema-less) fallback** below.
     - Never re-send the identical tight schema.
