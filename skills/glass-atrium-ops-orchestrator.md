@@ -746,7 +746,7 @@ done <<<"${FILE_LIST}"
 **Revision request protocol**:
 - Agents may request revisions on their own judgment without orchestrator intervention
 - Max re-invocation count: 1 (default).
-- 2+ → escalate to orchestrator judgment
+  - 2+ → escalate to orchestrator judgment
 - Revision requests MUST specify concrete unmet items
 
 #### Agent Teams Hybrid [ORCHESTRATOR]
