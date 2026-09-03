@@ -1037,18 +1037,34 @@ AFTER — same facts, contract shape:
 
 #### Completion-channel non-emission — the measurement behind pre-flight item 8 (MEASUREMENT SoT)
 
-**This sub-section is the MEASUREMENT SoT for the completion-channel non-emission range.** The same range also ships inline in `hooks/enforce-workflow-verify-stage.sh`, so an author reading stderr gets the justification without a lookup — the quoting sites, named as members rather than counted, because a later one must join this list rather than fork the figure: the header's fifth-advisory-pass block, `print_completion_channel_advisory` (property-absent) and `print_completion_schema_absent_advisory` (schema-absent). Each of those names this sub-section as the SoT and quotes the range from it. The reason the SoT sits here rather than in one of them is that the derivation lives here: a hook message is a fixed nudge an author reads once, whereas the dated measurement and its re-derivation recipe need a home that can be re-read and re-run. Change the range HERE, then propagate; never the reverse.
+**This sub-section is the MEASUREMENT SoT for the completion-channel non-emission range.**
+
+- The same range also ships inline in `hooks/enforce-workflow-verify-stage.sh`, so an author reading stderr gets the justification without a lookup — the quoting sites, named as members rather than counted, because a later one must join this list rather than fork the figure: the header's fifth-advisory-pass block, `print_completion_channel_advisory` (property-absent) and `print_completion_schema_absent_advisory` (schema-absent).
+  - Each of those names this sub-section as the SoT and quotes the range from it.
+- The reason the SoT sits here rather than in one of them is that the derivation lives here: a hook message is a fixed nudge an author reads once, whereas the dated measurement and its re-derivation recipe need a home that can be re-read and re-run.
+- Change the range HERE, then propagate; never the reverse.
 
 **The figure ships as a RANGE with its definitions inline, never as a bare percentage and never as a bare fraction**: measured text-channel non-emission runs **16-25% depending on the window**.
 
-**Population and non-emission are named by attribution-token membership** (`core.outcomes.attribution_source`), never by prose. Prose has already failed here: a token the earlier prose never anticipated (`subagent-stop-missing`) exists in the store, and a prose definition silently absorbs or silently drops it. Membership is explicit, and a token on neither list is outside the measurement until it is added to one:
+**Population and non-emission are named by attribution-token membership** (`core.outcomes.attribution_source`), never by prose.
 
-- **Population** = `hook-input` ∪ `completion-synthesized` ∪ `budget-truncation`.
-- **Non-emission** = `completion-synthesized` ∪ `budget-truncation` — the two synthesis arms.
-- **Excluded, and stated rather than left to inference: `structuredoutput-derived`.** This exclusion is the measurement's own subject, so an unexplained omission of it would read as selection. It is excluded because it is a **schema-mode recording gap** — the reserved property absent, or present and unfilled — and not a text-channel non-emission; folding it in measures two different failures as one number. The figure it moves is given below rather than asserted.
-- **Excluded: `structuredoutput-completion`** (writer-emitted through the schema channel — a healthy row) and **`subagent-stop-missing`**.
+- Prose has already failed here: a token the earlier prose never anticipated (`subagent-stop-missing`) exists in the store, and a prose definition silently absorbs or silently drops it.
+- Membership is explicit, and a token on neither list is outside the measurement until it is added to one:
+  - **Population** = `hook-input` ∪ `completion-synthesized` ∪ `budget-truncation`.
+  - **Non-emission** = `completion-synthesized` ∪ `budget-truncation` — the two synthesis arms.
+  - **Excluded, and stated rather than left to inference: `structuredoutput-derived`.**
+    - This exclusion is the measurement's own subject, so an unexplained omission of it would read as selection.
+    - It is excluded because it is a **schema-mode recording gap** — the reserved property absent, or present and unfilled — and not a text-channel non-emission; folding it in measures two different failures as one number.
+    - The figure it moves is given below rather than asserted.
+  - **Excluded: `structuredoutput-completion`** (writer-emitted through the schema channel — a healthy row) and **`subagent-stop-missing`**.
 
-**Dated measurement — 2026-08-17, read-only against `core.outcomes`.** This is a measurement, not a maintained figure: it is dated because it was true then, and it is not updated in place. Lifetime **24.2% (660 of 2,730)** · trailing seven days **15.3% (90 of 587)**. Folding the excluded `structuredoutput-derived` arm back in gives **30.1% (890 of 2,960)** lifetime — that gap is what the exclusion is worth. On this date the trailing window sits below the range's 16% floor; a single window dipping under a floor is how a range behaves and is not a correction to it.
+**Dated measurement — 2026-08-17, read-only against `core.outcomes`.**
+
+- This is a measurement, not a maintained figure: it is dated because it was true then, and it is not updated in place.
+- Lifetime **24.2% (660 of 2,730)**
+- trailing seven days **15.3% (90 of 587)**.
+- Folding the excluded `structuredoutput-derived` arm back in gives **30.1% (890 of 2,960)** lifetime — that gap is what the exclusion is worth.
+- On this date the trailing window sits below the range's 16% floor; a single window dipping under a floor is how a range behaves and is not a correction to it.
 
 **Re-derivation recipe — run this rather than trusting the figures above** (read-only, `psql -d glass_atrium -X`):
 
@@ -1073,11 +1089,20 @@ FROM pop
 WHERE record_ts >= now() - interval '7 days';
 ```
 
-Both windows come out of ONE query over ONE membership list, so the two figures cannot disagree about who is in the population — that disagreement was the original reproduction failure. Re-derive before quoting the range into a promotion decision, a review, or any new copy; `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` first, to see whether a token outside both lists has appeared since.
+- Both windows come out of ONE query over ONE membership list, so the two figures cannot disagree about who is in the population — that disagreement was the original reproduction failure.
+- Re-derive before quoting the range into a promotion decision, a review, or any new copy; `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` first, to see whether a token outside both lists has appeared since.
 
-**Where the check's claim stops — transcribed from the SHIPPED `print_completion_channel_advisory` message, not from a plan paragraph.** The gate raises the floor from *channel structurally absent* to *channel structurally present*, and no further. It does not reach: whether the property is filled (unfilled → empty string → the same lost signal, and that half is prompt-side and unchecked); whether a filled block parses; a second bare site behind a compliant one; or a spawn passing no schema at all — that last shape is out of blocking reach by decision, because forcing a schema everywhere trades the non-emit failure class for the crash-on-non-emit class. Above that floor the requirement is honor-system.
+**Where the check's claim stops — transcribed from the SHIPPED `print_completion_channel_advisory` message, not from a plan paragraph.**
 
-**Documented false positive — a cross-module schema.** A schema bound in another module is invisible to the raw scan, so the site is visible and the property absent and the check fires. This is a known false positive, not a fail-open, and the label matters because the inverted reading once shipped. Remediation: declare the property inline, or set the rollback marker.
+- The gate raises the floor from *channel structurally absent* to *channel structurally present*, and no further.
+- It does not reach: whether the property is filled (unfilled → empty string → the same lost signal, and that half is prompt-side and unchecked); whether a filled block parses; a second bare site behind a compliant one; or a spawn passing no schema at all — that last shape is out of blocking reach by decision, because forcing a schema everywhere trades the non-emit failure class for the crash-on-non-emit class.
+- Above that floor the requirement is honor-system.
+
+**Documented false positive — a cross-module schema.**
+
+- A schema bound in another module is invisible to the raw scan, so the site is visible and the property absent and the check fires.
+- This is a known false positive, not a fail-open, and the label matters because the inverted reading once shipped.
+- Remediation: declare the property inline, or set the rollback marker.
 
 **What silences the schema-absent nudge — transcribed from the shipped `print_completion_schema_absent_advisory` message, whose text is authoritative over this transcription** (re-read it rather than trusting this list): (a) any schema-mode site anywhere in the comment-stripped, string-masked script — a key-position ABSENT value (`schema: undefined`, `schema: null`, `schema: void <anything>`) is not a site; (b) any DEV agent literal in the script, because a DEV workflow carries a reviewer verify-stage that is deliberately text-mode; (c) a spawn whose agent name reaches the call through a **wrapper** rather than a spawn position — the roster half reads `agent('<name>')` and `agentType: '<name>'` only, so `robustAgent('<name>', …)` is never seen and the nudge stays quiet. Silencer (c) is INHERITED from the shared roster predicate rather than being a property of this check, and it is the one the schema-absent acceptance criterion does not cover — that criterion decides direct-spawn firing only. **Consequence an author of item 8 should hold explicitly**: the wrapper shape item 8 recommends is the shape that silences the nudge, so on the recommended path nothing warns you — reserve the property because the measurement says to, not because a gate will catch you.
 
