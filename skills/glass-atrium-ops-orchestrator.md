@@ -510,15 +510,24 @@ done <<<"${FILE_LIST}"
 
 #### Pipeline Acceptance Criteria [ORCHESTRATOR]
 
-Verify prior output acceptance criteria before stage entry. If unmet, request revision from prior stage agent.
+Verify prior output acceptance criteria before stage entry.
+- If unmet, request revision from prior stage agent.
 
 **Before glass-atrium-intel-planner entry (glass-atrium-intel-researcher output)**:
-- Research scope specified · 3+ key findings · Uncertain items marked
+- Research scope specified
+- 3+ key findings
+- Uncertain items marked
 - If unmet, re-invoke glass-atrium-intel-researcher (max 1 time)
 
 **Before domain agents entry (glass-atrium-intel-planner output)** — 2-stage gate:
-- **Stage 1 — format/completeness (existing)**: Executive Summary · Tasks + assigned agents · Dependency DAG included. If unmet, request glass-atrium-intel-planner revision (max 1 time).
-- **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it). Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2). DEV specialist selection + team composition: see `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`. DEV-side participation duty canonical: `scope-dev.md` "Plan Direction Verification Gate".
+- **Stage 1 — format/completeness (existing)**: Executive Summary
+  - Tasks + assigned agents
+  - Dependency DAG included.
+  - If unmet, request glass-atrium-intel-planner revision (max 1 time).
+- **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it).
+  - Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2).
+  - DEV specialist selection + team composition: see `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
+  - DEV-side participation duty canonical: `scope-dev.md` "Plan Direction Verification Gate".
 - **Stage-2 revision/escalation**: on a revise/infeasible verdict, request glass-atrium-intel-planner revision at most 1 time (count basis = this section's "max 1"); a 2nd mismatch escalates to orchestrator judgment via the `orchestrator-role.md` Failure Recovery Loop path (path only — its Retry max-2 count is a separate mechanism, not cited here).
 - **In-script verify-stage (ultracode — MANDATORY authoring obligation, honor-system PRIMARY, mechanically backstopped by the declaration contract)** — *canonical declaration-contract statement + skeletons; `orchestrator-role.md` cross-links here*: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook does NOT fire for engine `agent()` spawns (`### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms)), but `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`, wired in `settings.json`) checks the workflow `script` against the **`[AGENT-COMPOSITION]` declaration contract** — the author DECLARES the composition; the gate checks presence + grammar + declaration↔code consistency. This REPLACED the former layout inference (co-location window / parallel-group pairing / stage-adjacency): role information does not exist in code, so nothing is guessed from layout any more. What a DEV-spawning script MUST carry: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment — a sentinel inside a string literal is INERT (the worked examples below and in the gate's stderr can be quoted into delegation prompts without binding); absence on a DEV script → `block-nodecl` (exit 2). Strict line grammar (a malformed block — unknown/duplicate key · unknown name · unterminated · 2+ blocks · 2+ verify dev types — is `block-grammar`, a decidable author error, NOT fail-open): keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster + the reviewer literal, free text only after a spaced dash —
   - `verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>` (**team form** — reviewer + exactly ONE dev-* type; the Stage-2 DEV hard-gate lives in this validator: a verify clause naming no dev-* → `block-noverifydev`) **OR** `verify: upstream clauded-docs/<N>` (**upstream form** — this workflow EXECUTES an already-verified persisted plan; `<N>` must also be cited by a plan-ref token in the script body → else `block-upstream`; waives the in-script pair-mapping + ordering ONLY — the zero-reviewer `block-norev` hard guarantee SURVIVES upstream).
