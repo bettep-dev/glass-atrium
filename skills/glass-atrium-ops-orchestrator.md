@@ -191,13 +191,15 @@ Hitting `tool_budget` without completion → emit `result: blocked` + partial fi
 
 - A DEV (or any implementation) sub-agent receives the VERIFIED PLAN — the decomposed task + its acceptance criteria + scoped files + binding constraints — NOT the raw user-request transcript.
   - The orchestrator is the architect that translates intent into a plan; the DEV is the editor that executes it (Aider architect/editor split).
-- Rules:
-  - **Constraints MUST be preserved into the plan** — every constraint carried by the original request (behavior-changing → advisory-first, minimal diff, SQL parameterization, file-ownership bounds, etc.) is forwarded into the delegation; a DEV cannot honor a constraint it never received.
-    - Dropping a constraint in translation is the defect this rule prevents.
-  - **Hide the ambiguity, not the requirements** — a raw user request carries off-task detail + unresolved ambiguity the DEV would have to re-interpret (and may re-interpret wrongly); the plan is the disambiguated, constraint-complete contract.
-    - This is the WHAT-to-build + the binding constraints, not the unstructured conversation.
-  - Complements Context Handoff Size (summary only, no raw history) — that rule caps SIZE; this rule fixes the SHAPE (plan, not request).
-    - Precedent: Aider architect/editor.
+
+Rules:
+
+- **Constraints MUST be preserved into the plan** — every constraint carried by the original request (behavior-changing → advisory-first, minimal diff, SQL parameterization, file-ownership bounds, etc.) is forwarded into the delegation; a DEV cannot honor a constraint it never received.
+  - Dropping a constraint in translation is the defect this rule prevents.
+- **Hide the ambiguity, not the requirements** — a raw user request carries off-task detail + unresolved ambiguity the DEV would have to re-interpret (and may re-interpret wrongly); the plan is the disambiguated, constraint-complete contract.
+  - This is the WHAT-to-build + the binding constraints, not the unstructured conversation.
+- Complements Context Handoff Size (summary only, no raw history) — that rule caps SIZE; this rule fixes the SHAPE (plan, not request).
+  - Precedent: Aider architect/editor.
 
 #### Forward-Relay Discipline [ORCHESTRATOR]
 
