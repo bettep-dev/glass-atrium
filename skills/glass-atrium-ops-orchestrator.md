@@ -788,8 +788,10 @@ Verify prior output acceptance criteria before stage entry.
 - Edit/Write tools are not directly invoked in the orchestrator session
 - All write operations are delegated to appropriate sub-agents
 - "Simple task" or "token savings" are not valid reasons to skip delegation
-- Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state). Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write. The `enforce-delegation.sh` hook enforces this split (allows `memory/*`, keeps blocking `agents/*.md`).
-- This exception does not bypass Harness Path Protection: writes under `~/.claude/` still require the user-approval + foreground obligation (see `orchestrator-role.md` Harness Path Protection Rule 1-2).
+- Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
+  - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
+  - The `enforce-delegation.sh` hook enforces this split (allows `memory/*`, keeps blocking `agents/*.md`).
+  - This exception does not bypass Harness Path Protection: writes under `~/.claude/` still require the user-approval + foreground obligation (see `orchestrator-role.md` Harness Path Protection Rule 1-2).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
 
@@ -808,7 +810,8 @@ Verify prior output acceptance criteria before stage entry.
 
 ### Numeric Threshold Adjustment Policy [ORCHESTRATOR]
 
-`[default, adjustable]` values → adjustment within 0.5-2x with rationale stated · history recorded in Outcome Record
+- `[default, adjustable]` values → adjustment within 0.5-2x with rationale stated
+- history recorded in Outcome Record
 
 ### feature-dev Plugin Usage Scope [ORCHESTRATOR]
 
@@ -820,7 +823,9 @@ Verify prior output acceptance criteria before stage entry.
 ### Agent Performance Metrics [ORCHESTRATOR]
 
 - Aggregation targets based on agent-tracker logs:
-  - Per-agent invocation frequency · average duration · success/failure rate
+  - Per-agent invocation frequency
+  - average duration
+  - success/failure rate
   - Cross-analysis with cost-tracker logs: per-agent cost efficiency
 - Include metric summary in Heartbeat weekly review
 
@@ -850,7 +855,9 @@ Verify prior output acceptance criteria before stage entry.
 
 - Review standardization of common agent instruction sections (Guardrails, prohibitions, error recovery)
 - Mandatory reference to existing agent instruction patterns when adding new agents
-- **New DEV agent gate (formalized)**: this proto-gate is subsumed by `scope-dev.md` → `## DEV Agent Fleet Governance` → `### New-Agent Creation Gate`. Adding a new DEV agent is the EXCEPTION (default = extend the closest-concern existing agent); creation requires an affirmative answer to all three gate questions — Q1 concern novelty (all three Separation-Axis disjoint criteria), Q2 extend test (can the closest agent absorb the knowledge instead?), Q3 fleet-size cost (do `domains` arrays stay semantically distinct?). "Reference existing patterns" alone does not authorize creation — pass the gate first.
+- **New DEV agent gate (formalized)**: this proto-gate is subsumed by `scope-dev.md` → `## DEV Agent Fleet Governance` → `### New-Agent Creation Gate`.
+  - Adding a new DEV agent is the EXCEPTION (default = extend the closest-concern existing agent); creation requires an affirmative answer to all three gate questions — Q1 concern novelty (all three Separation-Axis disjoint criteria), Q2 extend test (can the closest agent absorb the knowledge instead?), Q3 fleet-size cost (do `domains` arrays stay semantically distinct?).
+  - "Reference existing patterns" alone does not authorize creation — pass the gate first.
 
 #### Bilevel Meta-Optimization Loop
 
