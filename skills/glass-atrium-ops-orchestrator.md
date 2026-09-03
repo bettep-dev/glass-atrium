@@ -268,14 +268,15 @@ No dependency → Fan-out / Linear dependency → Pipeline / Single → Router
   - Either rejection surfaces as **null** via `.catch` (a bare null also arises from user-skip / terminal-API-death).
   - So the `.catch(() => null)` is the load-bearing element that makes the run survivable — it converts BOTH the non-emit throw and the cap-exceeded validation reject into a null the retry path handles.
 - **Signature of the invalid-emission mode**: told only "emit StructuredOutput", the model SHRINKS its prose on each internal retry instead of ADDING the validator-named keys it is missing — a summary-collapse loop that reproduces the identical validation error (a verbatim retry reproduced the identical failure 5+5).
-  - The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap — BOTH reproduce the IDENTICAL collapse loop (a SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema — but the cap-violation complaints themselves track cap AUTHORING alone, the uncapped-schema session logging zero of them).
-    - SHAPE: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output — the model must either invent an UNDECLARED key (rejected by `additionalProperties: false`) or NEST an object where a string is declared (type violation), so it keeps shrinking prose into the too-rigid fields and never resolves the error.
-    - LENGTH: a `maxLength`/`maxItems` cap set TOO TIGHT for the field's realistic content forces the SAME prose-shrink — the true output does not fit under the cap, so the model collapses it toward an ever-smaller string that still violates nothing else yet never satisfies the impossible size (observed THIS session, LENGTH-cap violations that drove the retry-cap-exceeded loop: `maxLength` `260`×82 · `300`×30 · `160`×26 · `400`×22 · `500`×18 · `900`×16).
+- The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap — BOTH reproduce the IDENTICAL collapse loop (a SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema — but the cap-violation complaints themselves track cap AUTHORING alone, the uncapped-schema session logging zero of them).
+  - SHAPE: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output — the model must either invent an UNDECLARED key (rejected by `additionalProperties: false`) or NEST an object where a string is declared (type violation), so it keeps shrinking prose into the too-rigid fields and never resolves the error.
+  - LENGTH: a `maxLength`/`maxItems` cap set TOO TIGHT for the field's realistic content forces the SAME prose-shrink — the true output does not fit under the cap, so the model collapses it toward an ever-smaller string that still violates nothing else yet never satisfies the impossible size (observed THIS session, LENGTH-cap violations that drove the retry-cap-exceeded loop: `maxLength` `260`×82 · `300`×30 · `160`×26 · `400`×22 · `500`×18 · `900`×16).
 - (A permissive single-free-text schema re-run SUCCEEDS where the flat one failed 5x.) The engine's nudge-then-fail is Claude-Code-internal (not editable), and — unlike the manual Agent-tool path, which is salvaged by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — a schema-mode workflow agent has **NO engine-layer salvage**.
-  - Therefore the SCRIPT is the resilience layer (the script both PREVENTS the mismatch by construction — shape-tolerant schema, below — and REGAINS the manual-path salvage as a last resort — text-mode fallback, below).
+- Therefore the SCRIPT is the resilience layer (the script both PREVENTS the mismatch by construction — shape-tolerant schema, below — and REGAINS the manual-path salvage as a last resort — text-mode fallback, below).
 - MANDATORY when authoring any workflow:
 
-**Absolute schema-cap rules — these bind EVERY workflow output schema you author.** They are stated first because the failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation:
+**Absolute schema-cap rules — these bind EVERY workflow output schema you author.**
+They are stated first because the failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation:
 
 - **No caps** — no `maxLength` anywhere on a workflow output schema, and no per-element `maxItems`.
   - The failure tracks the AUTHOR, not the engine: on the same days, same engine, same models, the one session authoring UNCAPPED schemas logged ZERO cap-violation complaints while its capped siblings logged 1890 / 1950 / 956 / 1740.
@@ -288,9 +289,8 @@ No dependency → Fan-out / Linear dependency → Pipeline / Single → Router
 - **A retry must CHANGE STRATEGY** — loosen (or drop the caps outright), switch to file-handoff, or fall through to the text-mode fallback.
   - Re-sending the identical tight schema reproduces the identical cap-exceeded failure.
 
-A non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` backstops these rules (stderr-only — it never alters a verdict or an exit code).
-
-Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there; it is deliberately NOT restated here.
+- A non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` backstops these rules (stderr-only — it never alters a verdict or an exit code).
+  - Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there; it is deliberately NOT restated here.
 
 The authoring idioms that implement those rules:
 
