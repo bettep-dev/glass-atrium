@@ -749,7 +749,8 @@ Verify prior output acceptance criteria before stage entry.
 
 #### Agent Teams Hybrid [ORCHESTRATOR]
 
-Apply Agent Teams only to parallelizable independent tasks. Sequential dependent tasks remain as sub-agents.
+- Apply Agent Teams only to parallelizable independent tasks.
+- Sequential dependent tasks remain as sub-agents.
 
 **Application criteria**:
 
@@ -764,11 +765,13 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 | Concurrent modification of same file, or two index mutators in one worktree | Sub-agent (sequential) |
 
 **Operational rules**:
-- Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size rule (no fixed-number gate — the Workflow engine's runtime self-cap, core-derived per-machine, bounds concurrency; a VERY large fan-out just needs reasoning in `reason` about synthesis value + total-session token cost) defined in orchestrator-role.md `### Team Size`. The 2-3 member cap is specific to the pure Agent Teams pattern, not a global limit.
+- Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size rule (no fixed-number gate — the Workflow engine's runtime self-cap, core-derived per-machine, bounds concurrency; a VERY large fan-out just needs reasoning in `reason` about synthesis value + total-session token cost) defined in orchestrator-role.md `### Team Size`.
+  - The 2-3 member cap is specific to the pure Agent Teams pattern, not a global limit.
 - Model tiering: Lead + Teammate tiers assigned per `rules/orchestrator-role.md` → `### Cost-Tier Selection` (no hardcoded tier/version here) — natural language instructions
 - Manually include agent instructions (.claude/agents/*.md content) in spawn prompt
 - Control Wave execution (parallel → sequential) via blockedBy field
-- Immediately cleanup idle Teammates · deactivate unused MCP servers
+- Immediately cleanup idle Teammates
+- deactivate unused MCP servers
 
 **Anti-patterns**:
 - Deploying teams for sequentially dependent tasks
