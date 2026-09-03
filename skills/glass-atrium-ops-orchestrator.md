@@ -885,17 +885,31 @@ Verify prior output acceptance criteria before stage entry.
 
 ### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)
 
-When Decision-phase routing finds NO matching DEV agent at `confidence < 0.7` (routing-miss trigger; cross-ref `scope-orchestrator.md` 3-Layer Safety auto-halt), the orchestrator MAY run the in-context lifecycle flow. EXTEND is default — CREATE is the gated exception (decision tree + gate authority: `scope-dev.md` → DEV Agent Fleet Governance). Invocation is a **DIRECT Bash CLI call** (`python -m agent_lifecycle …`), NO HTTP route. The CLI owns a crash-safe `fcntl.flock` mutation lock (single owner of `run_add`/`run_delete`) + all authored-body safety (`> Rules:` anchor assert/inject with wrong-scope HALT · fail-closed secret-scan · frontmatter-injection rejection), all fail-closed to `EXIT_HALT`. The orchestrator NEVER self-authors a body — glass-atrium-meta-prompt-engineer is the body author. Two human-in-the-loop pauses are MANDATORY (⏸ below). The 7 steps each build on the previous:
+- When Decision-phase routing finds NO matching DEV agent at `confidence < 0.7` (routing-miss trigger; cross-ref `scope-orchestrator.md` 3-Layer Safety auto-halt), the orchestrator MAY run the in-context lifecycle flow.
+  - EXTEND is default — CREATE is the gated exception (decision tree + gate authority: `scope-dev.md` → DEV Agent Fleet Governance).
+- Invocation is a **DIRECT Bash CLI call** (`python -m agent_lifecycle …`), NO HTTP route.
+  - The CLI owns a crash-safe `fcntl.flock` mutation lock (single owner of `run_add`/`run_delete`) + all authored-body safety (`> Rules:` anchor assert/inject with wrong-scope HALT · fail-closed secret-scan · frontmatter-injection rejection), all fail-closed to `EXIT_HALT`.
+- The orchestrator NEVER self-authors a body — glass-atrium-meta-prompt-engineer is the body author.
+- Two human-in-the-loop pauses are MANDATORY (⏸ below).
 
-1. **Gate dry-run (write-free, before any authoring spend)** — `python -m agent_lifecycle add --dry-run --scope DEV --domains "a,b" --description "…" --gate-q1 <pass|fail> --gate-q2 <pass|fail>` runs `evaluate_add_gate` (incl. the Q3 domain-overlap `>= 50%` hard-block via `overlap.py`) + target-absence pre-flight, printing JSON `{allowed, preflight_clear, reasons, q3_conflicts}`. `allowed:false` → STOP (EXTEND or report gap), no spend. The orchestrator supplies Q1/Q2 verdicts but NEVER computes `allowed` — the gate is sole authority.
+The 7 steps each build on the previous:
+
+1. **Gate dry-run (write-free, before any authoring spend)** — `python -m agent_lifecycle add --dry-run --scope DEV --domains "a,b" --description "…" --gate-q1 <pass|fail> --gate-q2 <pass|fail>` runs `evaluate_add_gate` (incl. the Q3 domain-overlap `>= 50%` hard-block via `overlap.py`) + target-absence pre-flight, printing JSON `{allowed, preflight_clear, reasons, q3_conflicts}`.
+   - `allowed:false` → STOP (EXTEND or report gap), no spend.
+   - The orchestrator supplies Q1/Q2 verdicts but NEVER computes `allowed` — the gate is sole authority.
 2. **⏸ Create-vs-extend approval (HUMAN PAUSE)** — present the dry-run verdict + create-vs-extend recommendation; author ONLY on explicit approval to create (a "no" routes to EXTEND, step 3-alt).
-3. **Author body** — delegate: glass-atrium-intel-researcher (domain/capability research) + glass-atrium-meta-prompt-engineer (system-prompt per CRISP) → authored body file. The orchestrator does NOT author.
-4. **Commit via DIRECT Bash CLI** — `python -m agent_lifecycle add --scope DEV --domains "…" --gate-q1 <v> --gate-q2 <v> --body-file <path>`. Writes the agent file + `agent-registry.json` entry under `~/.glass-atrium/` (`agent_lifecycle/paths.py` `ga_root=~/.glass-atrium`: registry → `~/.glass-atrium/agent-registry.json`, body → `~/.glass-atrium/agents/<name>.md`) and symlinks the agent `*.md` into the `~/.claude/agents/` farm → **Harness Path Protection applies to that `~/.claude/agents/` symlink-farm write** (the `~/.glass-atrium/` registry + body writes themselves are OUTSIDE the `~/.claude/` protection scope): `run_in_background: false` is MANDATORY (Foreground Probe) AND the user must OK the specific path/change (⏸ next step).
-5. **⏸ Foreground-commit approval (HUMAN PAUSE)** — Harness Path Protection Rule 1: user explicitly OKs the path + change before the commit runs. Rule 2: the Bash invocation runs foreground (`run_in_background: false`), so the user sees the diff in real time.
-6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject` — the write path that fills the arrays; `orphan-scan --mode reconcile` writes NOTHING, it only LISTS failed-rollback recovery markers) to fill the 5 tracked `inject-scope-rules.sh` arrays (INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV; NAMING roster is narrower — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger; BUDGET_DEV = DEV minus the four daemon-carrier agents holding in-body budget bullets. The 6th array `BUDGET_ANALYSIS_AGENTS` is manual-curated — reconcile leaves it untouched) — until reconciled the new agent silently loads NO scope-injection blocks.
+3. **Author body** — delegate: glass-atrium-intel-researcher (domain/capability research) + glass-atrium-meta-prompt-engineer (system-prompt per CRISP) → authored body file.
+   - The orchestrator does NOT author.
+4. **Commit via DIRECT Bash CLI** — `python -m agent_lifecycle add --scope DEV --domains "…" --gate-q1 <v> --gate-q2 <v> --body-file <path>`.
+   - Writes the agent file + `agent-registry.json` entry under `~/.glass-atrium/` (`agent_lifecycle/paths.py` `ga_root=~/.glass-atrium`: registry → `~/.glass-atrium/agent-registry.json`, body → `~/.glass-atrium/agents/<name>.md`) and symlinks the agent `*.md` into the `~/.claude/agents/` farm → **Harness Path Protection applies to that `~/.claude/agents/` symlink-farm write** (the `~/.glass-atrium/` registry + body writes themselves are OUTSIDE the `~/.claude/` protection scope): `run_in_background: false` is MANDATORY (Foreground Probe) AND the user must OK the specific path/change (⏸ next step).
+5. **⏸ Foreground-commit approval (HUMAN PAUSE)** — Harness Path Protection Rule 1: user explicitly OKs the path + change before the commit runs.
+   - Rule 2: the Bash invocation runs foreground (`run_in_background: false`), so the user sees the diff in real time.
+6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject` — the write path that fills the arrays; `orphan-scan --mode reconcile` writes NOTHING, it only LISTS failed-rollback recovery markers) to fill the 5 tracked `inject-scope-rules.sh` arrays (INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV; NAMING roster is narrower — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger; BUDGET_DEV = DEV minus the four daemon-carrier agents holding in-body budget bullets.
+   - The 6th array `BUDGET_ANALYSIS_AGENTS` is manual-curated — reconcile leaves it untouched) — until reconciled the new agent silently loads NO scope-injection blocks.
 7. **Verify-arch (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-verify-arch` to update arch-invariants + team diagrams after reconcile.
 
-**EXTEND path (step 3-alt, the DEFAULT)**: `python -m agent_lifecycle extend --add-domain <token>` / `--append-section <file>` (additive, append-only; HALTs on any value mutation). EXTEND still ends with the reconcile + verify-arch gates (steps 6-7) when it alters the roster.
+- **EXTEND path (step 3-alt, the DEFAULT)**: `python -m agent_lifecycle extend --add-domain <token>` / `--append-section <file>` (additive, append-only; HALTs on any value mutation).
+  - EXTEND still ends with the reconcile + verify-arch gates (steps 6-7) when it alters the roster.
 
 **Failure-recovery (exit-code → action) — exit code is now the PRIMARY interface**:
 
@@ -908,7 +922,8 @@ When Decision-phase routing finds NO matching DEV agent at `confidence < 0.7` (r
 | `5` EXIT_TX_FAILED | a forward step failed, rolled back CLEANLY (no residue) | inspect `reasons`, re-run from step 4 |
 | `6` EXIT_ROLLBACK_FAILED | rollback itself failed — recovery marker written | run `orphan-scan --mode reconcile` to LIST the recovery marker, then complete the described reconciliation manually — the marker is NOT auto-cleared (do NOT assume a clean tree) |
 
-The reconcile-inject + verify-arch gates (steps 6-7) are MANDATORY whenever a commit succeeded — skipping them leaves a registered agent that loads no scope rules + stale arch diagrams. Detailed agent selection → Capability-Based Agent Selection (this file).
+- The reconcile-inject + verify-arch gates (steps 6-7) are MANDATORY whenever a commit succeeded — skipping them leaves a registered agent that loads no scope rules + stale arch diagrams.
+- Detailed agent selection → Capability-Based Agent Selection (this file).
 
 #### Completion signals
 
