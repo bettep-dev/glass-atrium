@@ -726,10 +726,14 @@ Verify prior output acceptance criteria before stage entry.
 **[SIZE-EST] token placement (ultracode — DEV workflow)** — sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an INDEPENDENT presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
   - Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
 
-**[DOC-ROUTE] token placement (ultracode — user-requested local destination)** — when the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria). Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate). NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
+**[DOC-ROUTE] token placement (ultracode — user-requested local destination)** — when the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria).
+- Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate).
+- NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
 
 **Before glass-atrium-intel-reporter entry (domain agents output)**:
-- Assigned sections completed · Domain-specific accuracy verified · No placeholder/TODO in content
+- Assigned sections completed
+- Domain-specific accuracy verified
+- No placeholder/TODO in content
 - If unmet, request domain agent revision (max 1 time)
 
 **After implementation, before document completion — plan↔implementation coverage reconciliation (MANDATORY)**:
@@ -739,7 +743,8 @@ Verify prior output acceptance criteria before stage entry.
 
 **Revision request protocol**:
 - Agents may request revisions on their own judgment without orchestrator intervention
-- Max re-invocation count: 1 (default). 2+ → escalate to orchestrator judgment
+- Max re-invocation count: 1 (default).
+- 2+ → escalate to orchestrator judgment
 - Revision requests MUST specify concrete unmet items
 
 #### Agent Teams Hybrid [ORCHESTRATOR]
