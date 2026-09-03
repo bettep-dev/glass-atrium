@@ -957,7 +957,8 @@ The 7 steps each build on the previous:
 - an `idle` entry in an agent or session listing (it does not distinguish finished from waiting and may be listing peer sessions rather than this orchestrator's own children)
 - the newest `.jsonl` by mtime
 - the appearance of a commit (an agent may finish without committing, and a commit may belong to another track).
-- A proxy licenses the two irreversible moves that cannot be taken back: **committing an agent's work** and **spawning an index-mutating agent into its worktree** (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)).
+
+A proxy licenses the two irreversible moves that cannot be taken back: **committing an agent's work** and **spawning an index-mutating agent into its worktree** (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)).
 
 **When no signal is obtainable, the sanctioned move is reversible action, not indefinite waiting**: do not commit into that worktree and do not spawn an index-mutator there; do create a new worktree or branch and continue, probe with `SendMessage(agentId)`, or surface to the user.
 
