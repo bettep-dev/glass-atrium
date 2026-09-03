@@ -879,7 +879,9 @@ Verify prior output acceptance criteria before stage entry.
 
 ## Orchestrator On-Demand Mechanisms
 
-Orchestrator mechanisms read ON DEMAND (not at turn-0): each is single-sited HERE, and `rules/glass-atrium/orchestrator-role.md` carries a one-line pointer at the former site. The group runs from this heading through the two `## Managed Document …` sections below (up to `## Common Rationalizations`); those two keep their H2 headings verbatim. Policy references such as `### Spawn Budget`, `### Phase Notes`, `### Plan Direction Verification (Stage-2 gate)`, `### Context Handoff Size` and `## Harness Path Protection` resolve to `orchestrator-role.md` unless marked "this file".
+- Orchestrator mechanisms read ON DEMAND (not at turn-0): each is single-sited HERE, and `rules/glass-atrium/orchestrator-role.md` carries a one-line pointer at the former site.
+- The group runs from this heading through the two `## Managed Document …` sections below (up to `## Common Rationalizations`); those two keep their H2 headings verbatim.
+- Policy references such as `### Spawn Budget`, `### Phase Notes`, `### Plan Direction Verification (Stage-2 gate)`, `### Context Handoff Size` and `## Harness Path Protection` resolve to `orchestrator-role.md` unless marked "this file".
 
 ### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)
 
