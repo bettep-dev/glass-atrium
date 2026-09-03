@@ -258,7 +258,7 @@ No dependency → Fan-out / Linear dependency → Pipeline / Single → Router
 
 - **Pattern selection = policy (orchestrator-owned, mechanism-agnostic)**: the WHEN-to-use decision above stays the orchestrator's regardless of execution path.
   - Under **ultracode / Workflow-tool mode** these three patterns map directly to engine primitives — Router → `agent()` · Fan-out → `parallel()` · Pipeline → `pipeline()` — and the engine owns the control flow (topology / concurrency / retry / checkpoint).
-    - The orchestrator picks the pattern + authors it into the workflow script; it does NOT hand-drive the sequencing.
+  - The orchestrator picks the pattern + authors it into the workflow script; it does NOT hand-drive the sequencing.
   - On the manual Agent-tool path (non-workflow turns), the same pattern choice is executed by sequential/parallel Agent-tool invocations per `### Parallel Tool Invocation` (GLASS_ATRIUM_GLOBAL_RULES).
   - Cross-ref: `### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms).
 
