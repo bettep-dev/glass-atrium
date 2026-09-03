@@ -929,15 +929,36 @@ The 7 steps each build on the previous:
 
 **Completion signals — finished means a terminal record, never an inference.** Three signals establish the state of a delegated agent; the third is the only one that answers absence.
 
-- **(i) The spawning call RETURNED its result payload** — the manual Agent tool's returned result, or the Workflow engine returning from an `agent()`/`parallel()`/`pipeline()` stage. (That the engine returns only once its agents have terminated is *observed, not contractual* — engine-internal.) A **null or empty return proves termination, not completion**: schema-mode agents can return null, which is why `robustAgent` retries on it. Resolve a null via (ii).
-- **(ii) The agent's TERMINAL ON-DISK RECORD was read.** The host writes a per-subagent transcript, currently at `<projects-root>/<project-slug>/<session-uuid>/subagents/agent-<id>.jsonl`, with an `agent-<id>.meta.json` sidecar beside it. That path is host-internal and may churn: the contract is the ARTIFACT'S ROLE, so confirm the current location before relying on a literal path. **Identification works on the manual path and does NOT work on the ultracode path — do not assume it does.** There are two sidecar forms with different key sets: the manual form sits directly under `subagents/` and carries `agentType` and `description`, which together identify a manually-spawned child; the workflow form sits under `subagents/workflows/wf_<id>/` and carries as little as `agentType` and `spawnDepth`, with no `description` at all. Note also that in the manual form `agentType` is often the TASK name, with the real agent type in `customAgentType` — read both. **Where identification is unavailable — a workflow-spawned child, or two same-type siblings in one fan-out — signal (ii) does not apply: fall through to (iii), which answers whether a child is live without needing to say which one, and take the reversible-action escape below.** Do not substitute a proxy for the missing identifier; that is the move this rule exists to forbid. **Terminality is structural**: the last record is an `assistant` entry with `stop_reason: end_turn` and no unmatched `tool_use` → terminated; `stop_reason: tool_use` with no matching result → not terminated. There is no sentinel record — do not look for one. **Read the tail**, not the file: sampled transcripts run 0.5-0.8 MB and a naive full read is itself a budget event.
-- **(iii) The liveness ledger answers ABSENCE.** `core.agent_events`, written by `hooks/agent-tracker.sh` on SubagentStart and SubagentStop, records a Stop row per terminated agent; a Start with no Stop is a live agent. Signals (i) and (ii) enumerate terminations you observed — only (iii) supports the claim "no other writer is live", which is what the shared-worktree question in `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization guardrail (a) actually asks. It carries no cwd or worktree column, so it answers *whether* a child is live, never *where*.
+- **(i) The spawning call RETURNED its result payload** — the manual Agent tool's returned result, or the Workflow engine returning from an `agent()`/`parallel()`/`pipeline()` stage.
+  - (That the engine returns only once its agents have terminated is *observed, not contractual* — engine-internal.)
+  - A **null or empty return proves termination, not completion**: schema-mode agents can return null, which is why `robustAgent` retries on it.
+    - Resolve a null via (ii).
+- **(ii) The agent's TERMINAL ON-DISK RECORD was read.**
+  - The host writes a per-subagent transcript, currently at `<projects-root>/<project-slug>/<session-uuid>/subagents/agent-<id>.jsonl`, with an `agent-<id>.meta.json` sidecar beside it.
+    - That path is host-internal and may churn: the contract is the ARTIFACT'S ROLE, so confirm the current location before relying on a literal path.
+  - **Identification works on the manual path and does NOT work on the ultracode path — do not assume it does.**
+    - There are two sidecar forms with different key sets: the manual form sits directly under `subagents/` and carries `agentType` and `description`, which together identify a manually-spawned child; the workflow form sits under `subagents/workflows/wf_<id>/` and carries as little as `agentType` and `spawnDepth`, with no `description` at all.
+    - Note also that in the manual form `agentType` is often the TASK name, with the real agent type in `customAgentType` — read both.
+  - **Where identification is unavailable — a workflow-spawned child, or two same-type siblings in one fan-out — signal (ii) does not apply: fall through to (iii), which answers whether a child is live without needing to say which one, and take the reversible-action escape below.**
+    - Do not substitute a proxy for the missing identifier; that is the move this rule exists to forbid.
+  - **Terminality is structural**: the last record is an `assistant` entry with `stop_reason: end_turn` and no unmatched `tool_use` → terminated; `stop_reason: tool_use` with no matching result → not terminated.
+    - There is no sentinel record — do not look for one.
+  - **Read the tail**, not the file: sampled transcripts run 0.5-0.8 MB and a naive full read is itself a budget event.
+- **(iii) The liveness ledger answers ABSENCE.**
+  - `core.agent_events`, written by `hooks/agent-tracker.sh` on SubagentStart and SubagentStop, records a Stop row per terminated agent; a Start with no Stop is a live agent.
+  - Signals (i) and (ii) enumerate terminations you observed — only (iii) supports the claim "no other writer is live", which is what the shared-worktree question in `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization guardrail (a) actually asks.
+  - It carries no cwd or worktree column, so it answers *whether* a child is live, never *where*.
 
-**NOT completion signals — substituting any of these is FORBIDDEN**: file-mtime quiet (a reading or reasoning agent writes nothing for many minutes) · an `idle` entry in an agent or session listing (it does not distinguish finished from waiting and may be listing peer sessions rather than this orchestrator's own children) · the newest `.jsonl` by mtime · the appearance of a commit (an agent may finish without committing, and a commit may belong to another track). A proxy licenses the two irreversible moves that cannot be taken back: **committing an agent's work** and **spawning an index-mutating agent into its worktree** (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)).
+**NOT completion signals — substituting any of these is FORBIDDEN**: file-mtime quiet (a reading or reasoning agent writes nothing for many minutes)
+- an `idle` entry in an agent or session listing (it does not distinguish finished from waiting and may be listing peer sessions rather than this orchestrator's own children)
+- the newest `.jsonl` by mtime
+- the appearance of a commit (an agent may finish without committing, and a commit may belong to another track).
+- A proxy licenses the two irreversible moves that cannot be taken back: **committing an agent's work** and **spawning an index-mutating agent into its worktree** (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)).
 
 **When no signal is obtainable, the sanctioned move is reversible action, not indefinite waiting**: do not commit into that worktree and do not spawn an index-mutator there; do create a new worktree or branch and continue, probe with `SendMessage(agentId)`, or surface to the user.
 
-**HONEST BACKING**: honor-system orchestrator discipline. The ledger in (iii) exists and is wired in all four profiles, but no hook consults it at commit or spawn time today.
+**HONEST BACKING**: honor-system orchestrator discipline.
+- The ledger in (iii) exists and is wired in all four profiles, but no hook consults it at commit or spawn time today.
 
 ### Reply Form Contract (main-session user-facing replies)
 
