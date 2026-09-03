@@ -536,8 +536,10 @@ done <<<"${FILE_LIST}"
   - What a DEV-spawning script MUST carry: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment — a sentinel inside a string literal is INERT (the worked examples below and in the gate's stderr can be quoted into delegation prompts without binding); absence on a DEV script → `block-nodecl` (exit 2).
   - Strict line grammar (a malformed block — unknown/duplicate key · unknown name · unterminated · 2+ blocks · 2+ verify dev types — is `block-grammar`, a decidable author error, NOT fail-open): keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster + the reviewer literal, free text only after a spaced dash —
     - `verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>` (**team form** — reviewer + exactly ONE dev-* type; the Stage-2 DEV hard-gate lives in this validator: a verify clause naming no dev-* → `block-noverifydev`) **OR** `verify: upstream clauded-docs/<N>` (**upstream form** — this workflow EXECUTES an already-verified persisted plan; `<N>` must also be cited by a plan-ref token in the script body → else `block-upstream`; waives the in-script pair-mapping + ordering ONLY — the zero-reviewer `block-norev` hard guarantee SURVIVES upstream).
-    - `impl: <literal dev spawn type(s)>` | `impl: none` · `impl-computed: <dev type(s)>` — indirectly-spawned types (config array / ternary / wrapper indirection), checked via data-literal presence.
-    - **impl-computed NEGATIVE**: OMIT the `impl-computed` line entirely when there are NO computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is MALFORMED and blocks as `block-grammar` (unknown-name).
+    - `impl: <literal dev spawn type(s)>` | `impl: none`
+    - `impl-computed: <dev type(s)>` — indirectly-spawned types (config array / ternary / wrapper indirection), checked via data-literal presence.
+      - **impl-computed NEGATIVE**: OMIT the `impl-computed` line entirely when there are NO computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is MALFORMED and blocks as `block-grammar` (unknown-name).
+
   - Consistency checks (the declaration is falsified against code): a declared role with no spawn-position token (`agent('<type>', …)` first-arg or `agentType: '<type>'` field value) → `block-declspawn` (a phantom verify team blocks — the one place this attestation is STRONGER than its siblings)
     - an undeclared dev type — a real spawn, a config-array literal, or an exact-quoted dev-* prose mention — → `block-undecl` (one-edit fix: declare the type, or de-quote the mention)
     - a declared computed type absent from the data → `block-computed`
@@ -547,8 +549,7 @@ done <<<"${FILE_LIST}"
   - AUTHORING NOTE (why the skeletons below carry an explicit `agentType:` literal): verify-team members and declared impl spawns must be STATICALLY VISIBLE — a type literal that exists only as a wrapper argument (e.g. `robustAgent('glass-atrium-dev-*', …)`) is NOT a spawn-position token, so a team-form declaration over wrapper-only literals trips `block-declspawn`; put the literal in the opts `agentType:` field (keep both literals identical), or — for a genuinely computed-heavy execution workflow — use the upstream form + `impl-computed:`.
   - HONEST SCOPE: the gate verifies presence + grammar + consistency; it does NOT verify a `feasible` verdict was emitted or that a gating expression consumes it (the `feasible` value does not exist at static-scan time), and role TRUTHFULNESS is honor-system — a lying declaration passes (the documented, test-pinned accepted floor; identical trust model to `[ENTRY-CLASS]`/`[SIZE-EST]`).
   - "MANDATORY" binds the AUTHOR: encode an explicit in-script verify-stage that PRECEDES the first DEV implementation stage, gate it on a combined `pass`+`feasible` verdict, and declare it honestly; the authoring obligation + the Missing-verify-stage Red Flag self-check (`## Red Flags`) remain the PRIMARY discipline.
-
-  Copyable shape (engine-agnostic vocabulary — `agent()`/`parallel()`/`pipeline()` are the Workflow primitives; do NOT hardcode preview-specific field names per the Non-brittleness caveat):
+  - Copyable shape (engine-agnostic vocabulary — `agent()`/`parallel()`/`pipeline()` are the Workflow primitives; do NOT hardcode preview-specific field names per the Non-brittleness caveat):
 
   ```js
   // HOOK-PASSING SHAPE — copy verbatim, do not paraphrase. Carries (1) the AGENT-COMPOSITION
