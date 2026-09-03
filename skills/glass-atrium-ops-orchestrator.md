@@ -1136,27 +1136,44 @@ Under ultracode (the deterministic Workflow-tool execution path), mechanism and 
 
 ### Scope-Expansion Approval Protocol
 
-Approval is required for the DELTA ONLY. Work inside the declared `[SCOPE]` keeps its existing autonomy — Automatic Parallelization defaults, reversible in-scope actions and the ordinary delegation flow are UNCHANGED, and nothing here adds a step to a delegation that stays in scope. Over-blocking is an explicit ANTI-GOAL: this protocol fires on scope EXPANSION, never on ordinary in-scope work.
+Approval is required for the DELTA ONLY.
+
+- Work inside the declared `[SCOPE]` keeps its existing autonomy — Automatic Parallelization defaults, reversible in-scope actions and the ordinary delegation flow are UNCHANGED, and nothing here adds a step to a delegation that stays in scope.
+- Over-blocking is an explicit ANTI-GOAL: this protocol fires on scope EXPANSION, never on ordinary in-scope work.
 
 - **When it fires**: at Decision phase, when the orchestrator wants to delegate work the user's instruction does not cover; at Monitoring phase, when work already built turns out to sit outside the plan or the delegation's `[SCOPE]`.
-- **Ask shape (user-facing prose, three parts)**: the original instruction in one line → the DELTA ONLY, never a re-listing of the in-scope work → a two-way choice (proceed with the expansion, or proceed with the excess excluded). Offering 3+ alternatives instead pulls in the Position Bias Mitigation rules (R-code shuffle, equal-volume pros/cons).
-- **Granularity is the DELEGATION-UNIT delta — per-`tool_use` approval is FORBIDDEN.** Approval fatigue is what turns a gate ceremonial: a user asked to approve every step approves everything. Batch the delta to the delegation unit and ask once.
-- **On approval, record it**: stamp `[SCOPE-EXPANSION-APPROVED] <delta in one line> — user-approved <YYYY-MM-DD>` into the FOLLOW-UP delegation, at the same placement as `[SCOPE]` (manual: inside the Agent tool `prompt` · ultracode: `log()`/`meta.description`). Same family and one-line grammar style as `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / `[PLAN-SUBSET]`. This token covers SCOPE expansion only; a harness-path write approval is a different surface with its own rule (`orchestrator-role.md` → `## Harness Path Protection`) and neither token substitutes for the other.
+- **Ask shape (user-facing prose, three parts)**: the original instruction in one line → the DELTA ONLY, never a re-listing of the in-scope work → a two-way choice (proceed with the expansion, or proceed with the excess excluded).
+  - Offering 3+ alternatives instead pulls in the Position Bias Mitigation rules (R-code shuffle, equal-volume pros/cons).
+- **Granularity is the DELEGATION-UNIT delta — per-`tool_use` approval is FORBIDDEN.**
+  - Approval fatigue is what turns a gate ceremonial: a user asked to approve every step approves everything.
+  - Batch the delta to the delegation unit and ask once.
+- **On approval, record it**: stamp `[SCOPE-EXPANSION-APPROVED] <delta in one line> — user-approved <YYYY-MM-DD>` into the FOLLOW-UP delegation, at the same placement as `[SCOPE]` (manual: inside the Agent tool `prompt` · ultracode: `log()`/`meta.description`).
+  - Same family and one-line grammar style as `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / `[PLAN-SUBSET]`.
+  - This token covers SCOPE expansion only; a harness-path write approval is a different surface with its own rule (`orchestrator-role.md` → `## Harness Path Protection`) and neither token substitutes for the other.
 - **Without approval**: delegating the excess is FORBIDDEN, and excess ALREADY built is reported to the user and left awaiting disposition — automatic revert is FORBIDDEN (File Deletion Policy: undoing the work is itself an unapproved act).
-- **Honest backing — PRESENCE-CHECKED ONLY, and hard-block promotion is recorded as structurally BLOCKED, not deferred**: a hook can check the token EXISTS; whether an approval actually happened is the orchestrator's own compliance claim, which is honor-system. Note who is speaking — the token is emitted by the same actor whose over-interpretation this protocol exists to check, so it is NOT an independent check and MUST NOT be counted as one (the independent axes are the reviewer's Stage-2 scope-fidelity verdict and the recorder's out-of-process scan). Promotion to an exit-2 block is unreachable by construction: a prompt scan cannot distinguish an expansion INTENT from a mere MENTION of one, the ceiling every sibling attestation token inherits. Re-opening it needs a NEW pre-tool intent signal, not more coverage data.
-- **Token-family dilution guard**: `[SCOPE]` and `[SCOPE-EXPANSION-APPROVED]` are the last additions to the attestation family under this design. A token that clarifies is worth its cost; a token that dilutes the family is not — any further one needs a governance decision before its grammar is fixed.
+- **Honest backing — PRESENCE-CHECKED ONLY, and hard-block promotion is recorded as structurally BLOCKED, not deferred**: a hook can check the token EXISTS; whether an approval actually happened is the orchestrator's own compliance claim, which is honor-system.
+  - Note who is speaking — the token is emitted by the same actor whose over-interpretation this protocol exists to check, so it is NOT an independent check and MUST NOT be counted as one (the independent axes are the reviewer's Stage-2 scope-fidelity verdict and the recorder's out-of-process scan).
+  - Promotion to an exit-2 block is unreachable by construction: a prompt scan cannot distinguish an expansion INTENT from a mere MENTION of one, the ceiling every sibling attestation token inherits.
+  - Re-opening it needs a NEW pre-tool intent signal, not more coverage data.
+- **Token-family dilution guard**: `[SCOPE]` and `[SCOPE-EXPANSION-APPROVED]` are the last additions to the attestation family under this design.
+  - A token that clarifies is worth its cost; a token that dilutes the family is not — any further one needs a governance decision before its grammar is fixed.
 
 ### Self-Improvement User-Approval Trigger
 
-> Approval-rule canonical (SoT): `core-learning-log.md` "Instruction Improvement Approval Tier" — the safety-only-queue policy, the full safety-trigger list (reuses `core-security.md` "High-impact actions"), and the 2-tier (Auto + Safety) definition live there. This section carries only the **orchestrator-side operational delta**; do NOT restate the policy or the trigger list here (drift risk).
+> Approval-rule canonical (SoT): `core-learning-log.md` "Instruction Improvement Approval Tier" — the safety-only-queue policy, the full safety-trigger list (reuses `core-security.md` "High-impact actions"), and the 2-tier (Auto + Safety) definition live there.
+>
+> This section carries only the **orchestrator-side operational delta**; do NOT restate the policy or the trigger list here (drift risk).
 
 **Orchestrator operational delta**:
-- The safety-only queue and Haiku-retry routing are not orchestrator decisions — they execute in daemon_cycle.py / daemon-apply.sh per the canonical. The orchestrator's role is downstream surfacing only.
+- The safety-only queue and Haiku-retry routing are not orchestrator decisions — they execute in daemon_cycle.py / daemon-apply.sh per the canonical.
+  - The orchestrator's role is downstream surfacing only.
 - After 7+ days of accumulated rejects, a hint auto-surfaces in the "long-term accumulation" card of the monitor `#improvement` consolidated dashboard — for after-the-fact user review only, not a pre-approval queue.
 
 > Cross-ref: `core-learning-log.md` Instruction Improvement Approval Tier (approval rule canonical) · `core-security.md` Agent Tool Authorization (aligns with LLM06) · monitor `#improvement` consolidated dashboard
 
-- **Automation Boundary**: PreToolUse hooks (`validate-secret-scan.sh`, `validate-prompt.sh`, `enforce-delegation.sh`) handle real-time tool validation — `validate-prompt.sh` is a `PreToolUse(Write|Edit)` file-content screen for prompt-injection patterns, NOT a raw user-prompt guard · `track-outcome.sh` auto-generates Outcome Records — Monitoring does NOT duplicate these mechanical checks; it focuses on **semantic verification** (intent-result alignment). (`llm-preflight.sh` is NOT wired into any PreToolUse / SessionStart hook — so NO per-session or per-tool cost-threshold preflight runs on the interactive path; do not assume it gates interactive cost. It is NOT dead code, though: `autoagent/autoagents-eval.sh` (line ~107) sources it and calls the legacy gating mode `llm_preflight 10.00` — so it IS a dependency of the autoagent eval path, just not of the interactive hook layer; that eval path is manually invoked, NOT exercised in CI (`.github/workflows/ci.yml` states autoagents-eval.sh is not run there).)
+- **Automation Boundary**: PreToolUse hooks (`validate-secret-scan.sh`, `validate-prompt.sh`, `enforce-delegation.sh`) handle real-time tool validation — `validate-prompt.sh` is a `PreToolUse(Write|Edit)` file-content screen for prompt-injection patterns, NOT a raw user-prompt guard
+  - `track-outcome.sh` auto-generates Outcome Records — Monitoring does NOT duplicate these mechanical checks; it focuses on **semantic verification** (intent-result alignment).
+  - (`llm-preflight.sh` is NOT wired into any PreToolUse / SessionStart hook — so NO per-session or per-tool cost-threshold preflight runs on the interactive path; do not assume it gates interactive cost. It is NOT dead code, though: `autoagent/autoagents-eval.sh` (line ~107) sources it and calls the legacy gating mode `llm_preflight 10.00` — so it IS a dependency of the autoagent eval path, just not of the interactive hook layer; that eval path is manually invoked, NOT exercised in CI (`.github/workflows/ci.yml` states autoagents-eval.sh is not run there).)
 
 ## Managed Document Deletion (Direct Handling)
 
