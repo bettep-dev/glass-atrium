@@ -962,22 +962,33 @@ The 7 steps each build on the previous:
 
 ### Reply Form Contract (main-session user-facing replies)
 
-Governs the FORM of the orchestrator's user-facing reply text — the terminal output of the `orchestrator-role.md` Delegation Workflow Monitoring row. It EXTENDS the prose-summary duty in that row: the Monitoring rule fixes WHAT must not be printed (the raw `[COMPLETION]` block, a machine-facing artifact); this fixes the SHAPE of the prose that replaces it. **Canonical here, single-sited** — `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition carries one named shape + one pointer, nothing more.
+Governs the FORM of the orchestrator's user-facing reply text — the terminal output of the `orchestrator-role.md` Delegation Workflow Monitoring row.
+- It EXTENDS the prose-summary duty in that row: the Monitoring rule fixes WHAT must not be printed (the raw `[COMPLETION]` block, a machine-facing artifact); this fixes the SHAPE of the prose that replaces it.
+- **Canonical here, single-sited** — `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition carries one named shape + one pointer, nothing more.
 
-**Composes with, never replaces**: the response-language rule — every slot below is written in the USER's language (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules) · the clarification flow (Re-ground → Simplify → Recommend → Options) · Position Bias Mitigation when 3+ options are presented. Subagent finals are OUT of scope — they travel the machine-facing recorded channel, not this register.
+**Composes with, never replaces**: the response-language rule — every slot below is written in the USER's language (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules)
+- the clarification flow (Re-ground → Simplify → Recommend → Options)
+- Position Bias Mitigation when 3+ options are presented.
+
+Subagent finals are OUT of scope — they travel the machine-facing recorded channel, not this register.
 
 **The four slots, in order.** Slots 1-3 are unconditional — an absent next step or an absent blocker is STATED, never silently dropped; slot 4 is conditional on divergence.
 
-1. **BLUF** — outcome + the decision or ask, on the FIRST line, before any process narration. A reader who stops after line one still holds the decision-relevant fact. "Nothing needed from you" is a valid BLUF.
-2. **Delta** — what changed since the previous report, or since the ask on the first report. This is the context anchor: a reply that does not self-locate against what was asked is the defect this slot exists to remove.
+1. **BLUF** — outcome + the decision or ask, on the FIRST line, before any process narration.
+   - A reader who stops after line one still holds the decision-relevant fact.
+   - "Nothing needed from you" is a valid BLUF.
+2. **Delta** — what changed since the previous report, or since the ask on the first report.
+   - This is the context anchor: a reply that does not self-locate against what was asked is the defect this slot exists to remove.
 3. **Next/blocked** — one line for what runs next, one line for what blocks.
-4. **Divergence detail** — expanded detail ONLY where the outcome diverged from plan (blocked · failed · scope change). Nominal progress compresses to a single line whatever the work volume behind it.
+4. **Divergence detail** — expanded detail ONLY where the outcome diverged from plan (blocked · failed · scope change).
+   - Nominal progress compresses to a single line whatever the work volume behind it.
 
 **Shape constraints (bind every slot)**:
 
 - 3+ parallel facts (agents · files · verdicts · task ids) → a list or table, NEVER one connected prose sentence.
 - Reply length tracks DECISION-RELEVANCE, not work volume — hours of fan-out with nothing to decide is still a four-line reply.
-- **Chained-arrow run-on narration is FORBIDDEN** — a single sentence joining 4+ stages with `→` / `·` connectors. The charter's paragraph-count trigger structurally cannot fire on a one-sentence shape, which is why it is named separately there.
+- **Chained-arrow run-on narration is FORBIDDEN** — a single sentence joining 4+ stages with `→` / `·` connectors.
+  - The charter's paragraph-count trigger structurally cannot fire on a one-sentence shape, which is why it is named separately there.
 
 **Defect → control** (the two operator-named defects, two distinct controls):
 
@@ -986,7 +997,11 @@ Governs the FORM of the orchestrator's user-facing reply text — the terminal o
 | Reply with no context anchor (맥락 없는 답변) | Slot 1 names what is being answered · slot 2 names the delta — every reply self-locates against the ask |
 | Verbose narrative prose (장황한 서술식) | Core in the first line · lists/tables for 3+ parallel facts · length ∝ decision-relevance, detail only on divergence · chained-arrow run-on named and forbidden |
 
-**HONEST BACKING — nothing here is runtime-enforced.** No hook surface reads user-facing reply text (the hook layer reaches tool calls, never reply prose) and the main session has no Stop-channel recorder, so slot adherence and the charter's anti-pattern extension are **honor-system** — the same backing class as the anti-pattern section they extend. Single-siting and the intactness of the response-language rule are **review-time mechanical**: diff inspection at PR review, a review verdict rather than a runtime gate. Adherence is **measurement-only** — periodic transcript sampling, a signal never a gate. Describing any control in this section as enforced is FORBIDDEN.
+**HONEST BACKING — nothing here is runtime-enforced.**
+- No hook surface reads user-facing reply text (the hook layer reaches tool calls, never reply prose) and the main session has no Stop-channel recorder, so slot adherence and the charter's anti-pattern extension are **honor-system** — the same backing class as the anti-pattern section they extend.
+- Single-siting and the intactness of the response-language rule are **review-time mechanical**: diff inspection at PR review, a review verdict rather than a runtime gate.
+- Adherence is **measurement-only** — periodic transcript sampling, a signal never a gate.
+- Describing any control in this section as enforced is FORBIDDEN.
 
 **Worked pair** (sampled register; the Korean is the reply language of that session, not a language rule):
 
