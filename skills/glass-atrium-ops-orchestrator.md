@@ -90,7 +90,7 @@ Before emitting a delegation, self-check:
   - If not → clarification fallback (present 2-3 candidates to user)
 - Does the candidate agent declare a `compatibility` field?
   - If yes, does the stated runtime precondition hold for the current sub-task?
-  - If not → halt delegation per Compatibility Probe (see `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe).
+    - If not → halt delegation per Compatibility Probe (see `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe).
   - Agents without a `compatibility` field pass through (backwards-compatible default — registry schema v1.1).
 
 Reuses the 0.7 threshold from "3-Layer Non-Determinism Mitigation"; this verification gate operationalises that threshold for routing specifically.
