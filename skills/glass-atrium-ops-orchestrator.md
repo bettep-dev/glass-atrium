@@ -672,7 +672,9 @@ Verify prior output acceptance criteria before stage entry.
   )
   ```
 
-  The DEV `agentType` is the plan's primary-domain DEV (`glass-atrium-dev-nestjs` illustrative). Hatch (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment: run a real `{qa,dev}` Contract verify FIRST, then the Discovery `dev-*` follows a reviewer and no longer reads as un-gated. Both hatches keep the DEV hard-gate + honor-system-primary verify-stage discipline intact — they change only WHICH agent does pre-verify analysis, never the verify requirement itself.
+  - The DEV `agentType` is the plan's primary-domain DEV (`glass-atrium-dev-nestjs` illustrative).
+  - Hatch (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment: run a real `{qa,dev}` Contract verify FIRST, then the Discovery `dev-*` follows a reviewer and no longer reads as un-gated.
+  - Both hatches keep the DEV hard-gate + honor-system-primary verify-stage discipline intact — they change only WHICH agent does pre-verify analysis, never the verify requirement itself.
 
 **DEV-spawn 4-requirement pre-flight checklist (consolidated SoT — the SINGLE list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at, so no hand-maintained digest silently drops a requirement again)**: every DEV-spawning Workflow script MUST carry ALL FOUR co-equal requirements before submission —
   - **① entry token** — a plan-ref (sizable) OR `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`). Backstop: entry-miss BLOCK (exit 2). Detail: "Entry-class token placement" below.
