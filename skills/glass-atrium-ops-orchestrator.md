@@ -698,12 +698,13 @@ done <<<"${FILE_LIST}"
   Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 gate checks presence/grammar/code-consistency only — declaration truthfulness and estimate correctness are NEVER verified.
 
 **Entry-class token placement (ultracode — DEV workflow)** — a DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (and any plan-ref) in its recommended canonical home: a top-of-script `log()` string or `meta.description` field.
-  - This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes.
-  - **ENTRY-CLASS NEGATIVE**: `simple-task` is the ONLY recognized `[ENTRY-CLASS]` literal — SIZABLE work has NO `[ENTRY-CLASS]` form; its entry signal is the **plan-ref token** (path 1).
-    - Any other `[ENTRY-CLASS]` variant (`[ENTRY-CLASS] sizable` / `complex` / `feature` …) is UNRECOGNIZED and does NOT clear the entry-miss gate.
-  - CONTRAST: spawn tokens (`glass-atrium-qa-code-reviewer` / `dev-*` agentType literals) are the OPPOSITE — comment-stripped by the gate, so they genuinely need non-comment placement; and the `[AGENT-COMPOSITION]` declaration block is a THIRD convention — comment-RESIDENT (canonical `/* */` home) and inert inside string literals.
-    - Do not conflate the three.
-  - **Independent gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` workflow STILL independently requires `[SIZE-EST]`, the verify-stage, and the declaration block (requirements ②-④ of the 4-requirement checklist above; a `dev-*` workflow missing the declaration is BLOCKED `block-nodecl`):
+
+- This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes.
+- **ENTRY-CLASS NEGATIVE**: `simple-task` is the ONLY recognized `[ENTRY-CLASS]` literal — SIZABLE work has NO `[ENTRY-CLASS]` form; its entry signal is the **plan-ref token** (path 1).
+  - Any other `[ENTRY-CLASS]` variant (`[ENTRY-CLASS] sizable` / `complex` / `feature` …) is UNRECOGNIZED and does NOT clear the entry-miss gate.
+- CONTRAST: spawn tokens (`glass-atrium-qa-code-reviewer` / `dev-*` agentType literals) are the OPPOSITE — comment-stripped by the gate, so they genuinely need non-comment placement; and the `[AGENT-COMPOSITION]` declaration block is a THIRD convention — comment-RESIDENT (canonical `/* */` home) and inert inside string literals.
+  - Do not conflate the three.
+- **Independent gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` workflow STILL independently requires `[SIZE-EST]`, the verify-stage, and the declaration block (requirements ②-④ of the 4-requirement checklist above; a `dev-*` workflow missing the declaration is BLOCKED `block-nodecl`):
 
   ```js
   // entry token in canonical home (raw-scanned — placement is convention). dev-* STILL needs the
@@ -727,7 +728,8 @@ done <<<"${FILE_LIST}"
   ```
 
 **[SIZE-EST] token placement (ultracode — DEV workflow)** — sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an INDEPENDENT presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
-  - Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
+
+- Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
 
 **[DOC-ROUTE] token placement (ultracode — user-requested local destination)** — when the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria).
 - Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate).
