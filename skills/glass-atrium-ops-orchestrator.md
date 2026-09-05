@@ -522,9 +522,7 @@ done <<<"${FILE_LIST}"
   - If unmet, re-invoke glass-atrium-intel-researcher (max 1 time)
 
 - **Before domain agents entry (glass-atrium-intel-planner output)** — 2-stage gate:
-  - **Stage 1 — format/completeness (existing)**: Executive Summary
-    - Tasks + assigned agents
-    - Dependency DAG included.
+  - **Stage 1 — format/completeness (existing)**: Executive Summary · Tasks + assigned agents · Dependency DAG included.
     - If unmet, request glass-atrium-intel-planner revision (max 1 time).
   - **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it).
     - Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2).
