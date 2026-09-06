@@ -208,3 +208,5 @@ background self-improvement loop patches them from accumulated outcome
 records. PRs touching these files are welcome, but please explain the intent
 in the PR body so the maintainer can reconcile your change with the live
 evolution stream.
+
+<!-- ci full-run trigger 1 (plan clauded-docs/39631 §4.2.1 T2) -->
