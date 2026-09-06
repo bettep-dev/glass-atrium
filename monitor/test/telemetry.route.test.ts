@@ -104,21 +104,6 @@ test("POST /api/telemetry/activation: happy path — 201 + id + occurred_at", as
   assert.ok(/\d{4}-\d{2}-\d{2}T/.test(body.occurred_at), "occurred_at is ISO");
 });
 
-test("POST /api/telemetry/activation: selected=false 도 정상 적재 (false-positive baseline)", async () => {
-  const cid = makeCid("post-falsepos");
-  const res = await app.inject({
-    method: "POST",
-    url: "/api/telemetry/activation",
-    payload: {
-      source: "subagent",
-      agent_name: "react-dev",
-      selected: false,
-      cid,
-    },
-  });
-  assert.strictEqual(res.statusCode, 201);
-});
-
 test("POST /api/telemetry/activation: invalid source → 400 invalid_body field=source", async () => {
   const res = await app.inject({
     method: "POST",
@@ -286,7 +271,8 @@ test("GET /api/telemetry/activations: selected=false 필터 → 미선택 행만
   await app.inject({
     method: "POST",
     url: "/api/telemetry/activation",
-    payload: { source: "manual", agent_name: agentName, selected: false, cid: `${cid}-F` },
+    // `subagent` here so the accepted path is exercised for all four ALLOWED_SOURCES members.
+    payload: { source: "subagent", agent_name: agentName, selected: false, cid: `${cid}-F` },
   });
 
   // selected=false 만 가져오기.

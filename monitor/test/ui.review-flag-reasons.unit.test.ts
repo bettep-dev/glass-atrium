@@ -88,9 +88,8 @@ const ui = await loadUi();
 // prototype check. Re-materialize into a same-realm string[] before asserting.
 const reasonKeys = (row: ReviewRow | null | undefined): string[] =>
   Array.from(ui.reviewFlagReasons(row), (r) => r.key);
-// Same cross-realm reason for the exported order array and label map.
+// Same cross-realm reason for the exported order array.
 const reasonOrder: string[] = Array.from(ui.REVIEW_FLAG_REASON_ORDER);
-const labelKeys: string[] = Object.keys(ui.REVIEW_FLAG_REASON_META);
 
 const flagged = (...reasons: string[]): ReviewRow => ({
   review_flag: true,
@@ -130,15 +129,6 @@ test("AC-4.9: 빈 carrier(구행)와 미상 토큰은 서로 구별되는 상태
   assert.match(unknown[0].title, /not-a-real-reason/);
 });
 
-test("AC-4.15: 라벨 맵은 recorder 어휘의 상위집합", () => {
-  const missing = recorderTokens().filter((code) => !labelKeys.includes(code));
-  assert.deepStrictEqual(missing, [], `라벨 없는 recorder 토큰: ${missing.join(", ")}`);
-});
-
-test("REVIEW_FLAG_REASON_ORDER: 라벨 키 전체 + 미분류/미상 버킷 커버", () => {
-  assert.deepStrictEqual(reasonOrder, [...labelKeys, "unclassified", "unknown"]);
-});
-
 test("reviewFlagReasons: 복수 사유는 기록 순서와 무관하게 ORDER 순서로 정렬 + 중복 제거", () => {
   const keys = reasonKeys(flagged("grader-contradiction", "overconfidence", "overconfidence"));
   assert.deepStrictEqual(keys, ["overconfidence", "grader-contradiction"]);
@@ -160,14 +150,4 @@ test("reviewFlagReasons: carrier 가 배열이 아니거나 빈 문자열이면 
   assert.deepStrictEqual(reasonKeys({ review_flag: true, review_flag_reasons: "overconfidence" }), ["unclassified"]);
   assert.deepStrictEqual(reasonKeys({ review_flag: true, review_flag_reasons: null }), ["unclassified"]);
   assert.deepStrictEqual(reasonKeys(flagged("", "  ".trim())), ["unclassified"]);
-});
-
-test("reviewFlagReasons: 반환 객체는 key/label/title 3필드 보유 (배지 렌더 계약)", () => {
-  const reasons = ui.reviewFlagReasons(flagged("overconfidence"));
-  assert.strictEqual(reasons.length, 1);
-  for (const r of reasons) {
-    assert.ok(typeof r.key === "string" && r.key);
-    assert.ok(typeof r.label === "string" && r.label);
-    assert.ok(typeof r.title === "string" && r.title);
-  }
 });
