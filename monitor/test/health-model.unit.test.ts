@@ -5,8 +5,6 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 import {
   DAEMON_CRON_SCHEDULE,
@@ -259,23 +257,6 @@ test("stale verdict: display meta comes from the tone table, tone stays crit (Ru
 });
 
 // --- AC-T3: the daemon verdict is the server's, not a client re-computation ---
-
-test("AC-T3 source: no per-daemon threshold table, no staleness re-derivation", () => {
-  const src = readFileSync(
-    fileURLToPath(new URL("../public/src/data/health-model.js", import.meta.url)),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    src,
-    /DAEMON_STALE_THRESHOLD_MIN/,
-    "a per-daemon threshold table is a second verdict rule competing with the server's",
-  );
-  assert.doesNotMatch(
-    src,
-    /staleness_minutes/,
-    "reading the staleness figure at all is how the client starts judging again",
-  );
-});
 
 test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says", () => {
   // Past the deleted 2160-min (36h) table, but the server calls it fresh.

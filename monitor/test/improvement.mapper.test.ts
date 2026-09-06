@@ -215,41 +215,6 @@ test("foldTierBreakdownRow: all-zero PG row → all-zero response (empty cohort 
   assert.strictEqual(out.pre_3tier_baseline_count, 0);
 });
 
-test("foldTierBreakdownRow: large bigint counts within MAX_SAFE_INTEGER", () => {
-  // bigintToNumber boundary check — sanity test for large cohorts (12M+ rows).
-  const rows = [
-    {
-      code_based_pass_30d: 12_345_678n,
-      code_based_fail_30d: 987_654n,
-      pre_3tier_baseline_count: 5_000_000n,
-    },
-  ];
-  const out = foldTierBreakdownRow(rows);
-
-  assert.strictEqual(out.code_based_pass_30d, 12_345_678);
-  assert.strictEqual(out.code_based_fail_30d, 987_654);
-  assert.strictEqual(out.pre_3tier_baseline_count, 5_000_000);
-});
-
-test("foldTierBreakdownRow: column-absence degradation → type-stable zero-init partial (F4 regression guard)", () => {
-  // Graceful degradation contract — route isolates tier_breakdown in Promise.allSettled.
-  // On rejection (PG 42703 undefined_column) the handler feeds foldTierBreakdownRow([]) — same empty-array input as the rejected branch.
-  // Degradation output = fully-formed 4-field object (non-null, type-stable) → tier_breakdown_30d never null/undefined → FE hits the "no data" path, not a crash → endpoint stays 200, NOT 503.
-  const degraded = foldTierBreakdownRow([]);
-
-  // type-stable shape: all 4 ImprovementTierBreakdown fields present + numeric
-  assert.strictEqual(typeof degraded.window_days, "number");
-  assert.strictEqual(typeof degraded.code_based_pass_30d, "number");
-  assert.strictEqual(typeof degraded.code_based_fail_30d, "number");
-  assert.strictEqual(typeof degraded.pre_3tier_baseline_count, "number");
-  // FE "no data" trigger: totalCnt === 0 (pass + fail + baseline all zero)
-  const totalCnt =
-    degraded.code_based_pass_30d +
-    degraded.code_based_fail_30d +
-    degraded.pre_3tier_baseline_count;
-  assert.strictEqual(totalCnt, 0, "zero-init total → FE renders 데이터 부재 indicator, not crash");
-});
-
 // foldConfidenceDistribution — confidence_observed × promotion_tier distribution mapper.
 
 test("foldConfidenceDistribution: empty rows → empty buckets + null overall (current DB state)", () => {

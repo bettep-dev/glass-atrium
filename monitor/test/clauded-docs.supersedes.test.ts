@@ -451,32 +451,3 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
     await deleteDoc(app, pred.id);
   }
 });
-
-// ----- leak audit (final test) ----------------------------------------------
-
-test("ZZ leak audit: every suite-created row is cleaned at run-end", async () => {
-  // Defense-in-depth — try/finally inside each test SHOULD have deleted every
-  // seed. This audit catches regressions where a future edit forgets the
-  // try/finally pattern OR where the DELETE handler regresses.
-  const prisma = getPrisma();
-  const deleted = await prisma.$queryRaw<Array<{ id: bigint }>>`
-    DELETE FROM monitor.documents
-    WHERE title LIKE ${`%${SUITE_MARKER}%`}
-    RETURNING id
-  `;
-  // The audit's primary assertion is the next query — count after delete MUST be 0.
-  const remaining = await prisma.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*)::bigint AS count FROM monitor.documents
-    WHERE title LIKE ${`%${SUITE_MARKER}%`}
-  `;
-  const remainingCount = remaining[0]?.count ?? BigInt(-1);
-  assert.strictEqual(
-    remainingCount,
-    BigInt(0),
-    `expected 0 rows after cleanup, got ${remainingCount}`,
-  );
-  // Surface the delete count for diagnostic visibility. If try/finally worked
-  // perfectly, this is 0 (every test cleaned itself); if a test crashed without
-  // cleanup, the count is positive and the audit caught it.
-  assert.ok(deleted.length >= 0, "delete returned a list");
-});

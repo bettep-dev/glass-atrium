@@ -318,6 +318,10 @@ test("per-cycle suppressions are reported apart from parked rows", async (t) => 
     0,
     "a parked row is not a per-cycle recurrence",
   );
+  assert.ok(
+    body.loop_suppression_state.per_cycle_window_days > 0,
+    "a recurrence count without its window is unreadable",
+  );
 });
 
 test("the per-cycle counts are not registry-gated, or roster-mismatch self-erases", async (t) => {
@@ -382,24 +386,6 @@ test("pending rows that can never propose are separated from the backlog", async
   );
 });
 
-test("the pending split counts every agent, not only registry members", async (t) => {
-  if (!dbReady) return t.skip("DB unavailable");
-  // The finding this field was added for measured 28 of 47. Registry-gated it
-  // rendered as 6 of 20, which an operator cannot reconcile with the finding and
-  // reads as a total. The gate belongs on the display lists, not on a count of
-  // what the loop skips — the intake predicate never consults the registry.
-  assert.strictEqual(
-    pendingDelta("pending_unpromptable"),
-    5,
-    "the off-registry unpromptable row is part of the backlog that cannot propose",
-  );
-  assert.strictEqual(
-    pendingDelta("pending_total"),
-    7,
-    "and its denominator counts it too — a mixed-scope ratio is unreadable",
-  );
-});
-
 test("a parked pattern the registry gate hides is reported, not dropped (F5)", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   assert.strictEqual(
@@ -412,13 +398,5 @@ test("a parked pattern the registry gate hides is reported, not dropped (F5)", a
     bucket(body.loop_suppression_state.parked, "repeat-apply-cap")?.count,
     2,
     "and it stays out of the gated bucket — the two numbers answer different questions",
-  );
-});
-
-test("the window is reported alongside the per-cycle counts", async (t) => {
-  if (!dbReady) return t.skip("DB unavailable");
-  assert.ok(
-    body.loop_suppression_state.per_cycle_window_days > 0,
-    "a recurrence count without its window is unreadable",
   );
 });

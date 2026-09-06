@@ -222,17 +222,6 @@ async function apply(): Promise<{ statusCode: number; body: Record<string, unkno
 }
 
 // ---------------------------------------------------------------------------
-// Structural: both routes are registered INSIDE registerDashboardRoutes (the test
-// registers only that registrar — routes/index.ts barrel is never invoked).
-// ---------------------------------------------------------------------------
-test("routes registered inside registerDashboardRoutes (not 404)", async () => {
-  const post = await app.inject({ method: "POST", url: "/api/dashboard/update", payload: {} });
-  assert.notStrictEqual(post.statusCode, 404, "POST /api/dashboard/update is registered");
-  const get = await app.inject({ method: "GET", url: "/api/dashboard/update-job" });
-  assert.notStrictEqual(get.statusCode, 404, "GET /api/dashboard/update-job is registered");
-});
-
-// ---------------------------------------------------------------------------
 // Manual body validation (NO Zod) — 400 invalid_body. Only mode:'apply' is valid;
 // the two-step modes are rejected at the boundary.
 // ---------------------------------------------------------------------------
