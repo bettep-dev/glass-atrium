@@ -171,7 +171,7 @@ test("B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원�
   );
 });
 
-test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", async () => {
+test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source, and only canonical carries its own title/description in place of the source's", async () => {
   assert.ok(canonicalSource !== undefined);
   const sourceCensus = getMermaidCensus(canonicalSource.mermaid_source);
   const drawnCensus = getMermaidCensus(drawn);
@@ -196,8 +196,8 @@ test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source"
   assert.equal(built.title, CANONICAL_MAP.title, "the payload does not carry canonical's own title");
   assert.equal(built.description, CANONICAL_MAP.description, "the payload does not carry canonical's own description");
   // 비어 있지 않은 비교라는 근거 — 두 문자열이 source 와 같으면 위 두 줄은 자기 자신과의 대조가 됨.
-  assert.notEqual(built.title, canonicalSource.title, "the payload still carries the source title");
-  assert.notEqual(built.description, canonicalSource.description, "the payload still carries the source description");
+  assert.notEqual(built.title, canonicalSource.title, "CANONICAL_MAP.title equals the source title — the equality above is vacuous");
+  assert.notEqual(built.description, canonicalSource.description, "CANONICAL_MAP.description equals the source description — the equality above is vacuous");
 
   // 3항 연산이 전편에 새지 않음 — 비-canonical 은 자기 source 제목·서술을 그대로 유지함.
   const other = doc.diagrams.diagrams.find((d) => d.id === "v2-overview-data");
