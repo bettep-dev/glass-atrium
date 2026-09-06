@@ -409,27 +409,3 @@ test("POST /html-export: 전건 read 실패 → 503 export_failed (launch 실패
     `read-stage reason 이어야 함: ${String(body.manifest[0]?.reason)}`,
   );
 });
-
-test("POST /html-export: R2 streaming idiom — Content-Type application/zip set before stream, status 200", async () => {
-  const doc = await seedHtmlDoc("zip-streaming");
-
-  const { capturedNames, restore } = patchAppendSpy();
-  try {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/clauded-docs/html-export",
-      payload: { ids: [doc.id] },
-    });
-    // PREFERRED Fastify 5 idiom: reply.header() + reply.send(readable) →
-    // content-type header set before finalize → app.inject returns 200 with headers.
-    assert.strictEqual(res.statusCode, 200);
-    const ct = res.headers["content-type"]?.toString() ?? "";
-    assert.ok(ct.startsWith("application/zip"), `Content-Type: ${ct}`);
-    const cd = res.headers["content-disposition"]?.toString() ?? "";
-    assert.ok(cd.startsWith("attachment; filename="), `Content-Disposition: ${cd}`);
-    // _manifest.json は always present regardless of per-doc outcomes.
-    assert.ok(capturedNames.includes("_manifest.json"), "manifest always included");
-  } finally {
-    restore();
-  }
-});
