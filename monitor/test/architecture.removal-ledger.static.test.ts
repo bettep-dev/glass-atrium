@@ -169,10 +169,11 @@ function getRootFiles(): string[] {
     .filter((path) => path.length > 0 && path !== LEDGER_PATH);
 }
 
-// 토큰 하나가 살아 있는 자리 — 파일과 줄까지 냄. 개수만 내면 어디를 고칠지가 메시지에 없음.
-function getTokenHits(token: NamedToken, files: string[]): string[] {
-  const pattern = getTokenPattern(token);
-  const hits: string[] = [];
+// 토큰 전부의 자리를 트리 한 번 순회로 냄 — 파일과 줄까지 냄. 개수만 내면 어디를 고칠지가
+// 메시지에 없음. 토큰마다 트리를 다시 읽으면 스캔이 토큰 수만큼 늘어나므로 순회가 바깥임.
+function getHitsByToken(tokens: NamedToken[], files: string[]): Map<NamedToken, string[]> {
+  const hitsByToken = new Map<NamedToken, string[]>(tokens.map((token) => [token, []]));
+  const patterns = tokens.map((token) => ({ token, pattern: getTokenPattern(token) }));
 
   for (const file of files) {
     let text: string;
@@ -182,15 +183,22 @@ function getTokenHits(token: NamedToken, files: string[]): string[] {
       // 심볼릭 링크 · 서브모듈 자리처럼 읽을 본문이 없는 항목 — 텍스트가 없으므로 셀 것도 없음.
       continue;
     }
-    if (!text.includes(token.name)) continue;
 
-    text.split("\n").forEach((line, index) => {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) hits.push(`${file}:${index + 1}`);
-    });
+    const present = patterns.filter(({ token }) => text.includes(token.name));
+    if (present.length === 0) continue;
+
+    const lines = text.split("\n");
+    for (const { token, pattern } of present) {
+      const hits = hitsByToken.get(token);
+      if (!hits) continue;
+      lines.forEach((line, index) => {
+        pattern.lastIndex = 0;
+        if (pattern.test(line)) hits.push(`${file}:${index + 1}`);
+      });
+    }
   }
 
-  return hits;
+  return hitsByToken;
 }
 
 const ROOT_FILES = getRootFiles();
@@ -240,39 +248,54 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
   assert.equal(getTokenPattern(idToken).test("<HealthStrip state={s} />"), true, "the real use must still be caught");
 });
 
-for (const token of LEDGER_TOKENS) {
-  test(`${token.ac} the removed ${token.name} is gone from the whole tracked tree`, () => {
-    const hits = getTokenHits(token, ROOT_FILES);
-    assert.deepEqual(
-      hits,
-      [],
-      `${token.name} was removed, but it still reads at: ${hits.join(", ")}`,
-    );
-  });
-}
+// 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외 목록은 판별성의 근거를, 생존 목록은
+// 넘치게 지워지지 않았음을 잼. 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽으므로
+// 순회는 하나이고 실패 메시지가 어느 토큰에서 깨졌는지를 담음.
+test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tracked-tree scan", () => {
+  // 비공허 통제 — 목록 하나가 비면 그 절은 아무것도 재지 않은 채 초록임.
+  assert.ok(LEDGER_TOKENS.length > 0, "the ledger must name at least one removed token, or the scan proves nothing");
+  assert.ok(
+    DISCRIMINABILITY_EXCLUSIONS.length > 0,
+    "the exclusion list must name at least one token, or the discriminability clause proves nothing",
+  );
+  assert.ok(
+    SURVIVING_TOKENS.length > 0,
+    "the survivor list must name at least one token, or the over-deletion clause proves nothing",
+  );
 
-for (const excluded of DISCRIMINABILITY_EXCLUSIONS) {
-  test(`AC-B2-6d ${excluded.name} stays off the ledger — a live declaration outside the removal unit holds it`, () => {
-    assert.equal(
-      LEDGER_TOKENS.some((token) => token.name === excluded.name),
-      false,
-      `${excluded.name} is on the ledger, but ADR-13 discriminability forbids it — its count can never reach zero`,
-    );
+  const hitsByToken = getHitsByToken([...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS], ROOT_FILES);
+  const getHits = (token: NamedToken): string[] => hitsByToken.get(token) ?? [];
 
-    // 이유가 실재하는지 잼 — 밖의 선언이 사라지면 이 절이 붉어지고, 그때 비로소 원장 후보가 됨.
-    const hits = getTokenHits(excluded, ROOT_FILES);
-    assert.ok(
-      hits.some((hit) => hit.startsWith(`${excluded.declaredIn}:`)),
-      `${excluded.name} must still read in ${excluded.declaredIn} — without that declaration the exclusion has no ground, and the token belongs on the ledger`,
-    );
-  });
-}
+  const resurrected = LEDGER_TOKENS.filter((token) => getHits(token).length > 0).map(
+    (token) => `${token.ac} ${token.name} still reads at: ${getHits(token).join(", ")}`,
+  );
+  assert.deepEqual(resurrected, [], `removed names must be gone from the whole tracked tree:\n${resurrected.join("\n")}`);
 
-for (const token of SURVIVING_TOKENS) {
-  test(`${token.ac} the surviving ${token.name} still reads somewhere in the tracked tree`, () => {
-    assert.ok(
-      getTokenHits(token, ROOT_FILES).length > 0,
-      `${token.name} survives this removal — it reads nowhere, so the deletion went one name too far`,
-    );
-  });
-}
+  const listed = DISCRIMINABILITY_EXCLUSIONS.filter((excluded) =>
+    LEDGER_TOKENS.some((token) => token.name === excluded.name),
+  ).map((excluded) => excluded.name);
+  assert.deepEqual(
+    listed,
+    [],
+    `these names are on the ledger, but ADR-13 discriminability forbids it — their count can never reach zero: ${listed.join(", ")}`,
+  );
+
+  // 제외의 이유가 실재하는지 잼 — 밖의 선언이 사라지면 이 절이 붉어지고, 그때 비로소 원장 후보가 됨.
+  const ungrounded = DISCRIMINABILITY_EXCLUSIONS.filter(
+    (excluded) => !getHits(excluded).some((hit) => hit.startsWith(`${excluded.declaredIn}:`)),
+  ).map((excluded) => `${excluded.name} no longer reads in ${excluded.declaredIn}`);
+  assert.deepEqual(
+    ungrounded,
+    [],
+    `an exclusion without its outside declaration has no ground, and the token belongs on the ledger:\n${ungrounded.join("\n")}`,
+  );
+
+  const overDeleted = SURVIVING_TOKENS.filter((token) => getHits(token).length === 0).map(
+    (token) => `${token.ac} ${token.name} reads nowhere`,
+  );
+  assert.deepEqual(
+    overDeleted,
+    [],
+    `these names survive this removal — the deletion went one name too far:\n${overDeleted.join("\n")}`,
+  );
+});
