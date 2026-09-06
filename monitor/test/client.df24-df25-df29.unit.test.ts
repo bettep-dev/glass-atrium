@@ -90,14 +90,20 @@ async function loadScreen(src: string): Promise<Record<string, unknown>> {
   return ctx;
 }
 
+// TOKEN_RATES rides along so a test can distinguish an exact-key hit from a prefix hit.
+interface PricingMirror {
+  getTokenRate: (m: string) => Rates | null;
+  TOKEN_RATES: Record<string, Rates>;
+}
+
 // pricing.js is a plain script that assigns window.* — run it verbatim in a vm.
-function loadPricing(): { getTokenRate: (m: string) => Rates | null } {
+function loadPricing(): PricingMirror {
   const code = readFileSync(PRICING_SRC, "utf8");
   const ctx: Record<string, unknown> = { window: {} };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
-  return (ctx.window as { getTokenRate: (m: string) => Rates | null });
+  return (ctx.window as PricingMirror);
 }
 
 const agents = (await loadScreen(AGENTS_SRC)) as unknown as AgentsHelpers;
@@ -143,6 +149,16 @@ test("getTokenRate: every SoT model resolves to its base-row rate (mirror drift 
       getBaseRow(r), getBaseRow(sotRate), `${model}: mirror drifted from the SoT base row`,
     );
   }
+});
+
+test("getTokenRate: claude-fable-5-1 resolves from its own mirror row, not the family prefix", () => {
+  // Losing the row falls through to the claude-fable-5 prefix, which prices
+  // cache_read at 1.00 — 4x the litellm-fetched 0.25 this id is priced at.
+  const explicit = pricing.TOKEN_RATES["claude-fable-5-1"];
+  assert.ok(explicit, "mirror lost its explicit claude-fable-5-1 row");
+  assert.strictEqual(pricing.getTokenRate("claude-fable-5-1"), explicit);
+  assert.strictEqual(explicit.cache_read, 0.25);
+  assert.strictEqual(pricing.TOKEN_RATES["claude-fable-5"].cache_read, 1.0);
 });
 
 // --- DF-24: matrix consumes reconstructed_count (writer-emitted basis) ---

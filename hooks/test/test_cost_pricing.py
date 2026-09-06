@@ -106,6 +106,8 @@ _BACKFILL_IMPORT_REMOTE_DISABLE = os.environ.get("PRICING_REMOTE_DISABLE")
 
 _OPUS_RATE = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25}
 _FABLE_RATE = {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5}
+# 5.1 differs from the family rate in cache_read only (litellm-fetched, not a vendor quote).
+_FABLE_5_1_RATE = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5}
 _SONNET_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
 _SONNET5_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _HAIKU_RATE = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25}
@@ -559,6 +561,19 @@ class RateForSotTest(_LoaderCase):
         self.assertEqual(record["resolution"], "sot")
         self.assertEqual(record["rate"], _FABLE_RATE)
         self.assertAlmostEqual(_cost(record["rate"]), 0.035, places=10)
+
+    def test_fable_5_1_resolves_from_its_own_sot_row(self):
+        # A SoT row shadows the overlay permanently, so the row must carry the
+        # litellm-fetched cache_read (0.25), not the fable-5 family 1.0 — a
+        # silent re-inheritance would 4x this id's recorded cache cost.
+        record = self._rate_for("claude-fable-5-1")
+        self.assertEqual(record["resolution"], "sot")
+        self.assertEqual(record["matched_model"], "claude-fable-5-1")
+        self.assertEqual(record["rate"], _FABLE_5_1_RATE)
+        self.assertNotEqual(record["rate"], _FABLE_RATE)
+        self.assertTrue(
+            pricing_loader.is_known("claude-fable-5-1", sot_path=str(_SOT_PATH))
+        )
 
     def test_bracket_variant_resolves_to_base_row(self):
         record = self._rate_for("claude-fable-5[1m]")
