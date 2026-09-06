@@ -212,7 +212,6 @@ test("modelOptionsMC: the inherit roster decides the inherit option, domain by d
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
   // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
-  // So the shipped roster is asserted equal to the literal table first, and the loop runs off it.
   const roster = await getInheritRosterMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
