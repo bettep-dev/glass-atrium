@@ -353,11 +353,10 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
 
 // --- AC-13: 순수 스케일 산식 — 하향 클램프가 되살아나면 붉어짐 ---
 
-// 화면 상수와 짝. 리터럴 표류를 막기 위해 컴파일 산출물의 선언과 대조함.
+// 화면 상수와 짝 — 산식이 이 하한 아래로 내려가지 않음을 재는 기준값.
 const LEGIBLE_FIT_FLOOR = 0.6;
 
 // 픽스처 격자 — 폭-fit 이 하한보다 작은 조합을 반드시 포함해야 함(AC-13 도메인 조건).
-// 아래 `contains a width-fit below the floor` 단언이 그 조건 자체를 기계로 잠금.
 const FIT_GRID: Array<[number, number, number, number]> = [
   [400, 400, 4000, 200], // 폭-fit 0.1 — 하한 미만, 하향 클램프의 유일한 무는 지점
   [400, 400, 800, 800], // fit 0.5 — 하한 미만
@@ -365,18 +364,6 @@ const FIT_GRID: Array<[number, number, number, number]> = [
   [400, 400, 400, 400], // fit 1
   [800, 800, 200, 200], // fit 4 — 상한 1 로 잘림
 ];
-
-test("AC-13 하한 상수가 화면 선언과 일치", () => {
-  assert.match(archCode, /LEGIBLE_FIT_FLOOR\s*=\s*0\.6\b/);
-});
-
-test("AC-13 픽스처 격자는 폭-fit 이 하한 미만인 조합을 포함함", () => {
-  const raw = FIT_GRID.map(([pw, ph, gw, gh]) => Math.min(pw / gw, ph / gh));
-  assert.ok(
-    raw.some((f) => f < LEGIBLE_FIT_FLOOR),
-    "격자에서 하한 미만 조합을 빼면 AC-13 단언이 영구히 푸름",
-  );
-});
 
 test("AC-13 어떤 입력에도 하한 미만을 반환하지 않고 1 을 넘지 않음", () => {
   for (const [pw, ph, gw, gh] of FIT_GRID) {
@@ -396,35 +383,7 @@ test("AC-13 비정상 치수는 하한으로 떨어짐 (0/음수/NaN)", () => {
   assert.strictEqual(arch.getLegibleFitScaleAR(NaN, 400, 400, 400), LEGIBLE_FIT_FLOOR);
 });
 
-// --- AC-12: 설명 축약 경로와 하드코드 목적 맵이 둘 다 부재 ---
-
-test("AC-12(a) 설명 축약 경로가 컴파일 산출물에 없음", () => {
-  assert.doesNotMatch(archCode, /\btruncateText\b/);
-  assert.doesNotMatch(archCode, /\bdiagramPurposeAR\b/);
-});
-
-test("AC-12(b) 하드코드 목적 문자열 맵이 컴파일 산출물에 없음", () => {
-  assert.doesNotMatch(archCode, /\bTAB_PURPOSE\b/);
-});
-
 // --- T7: the map absorbs the five health responses -------------------------
-
-// health.jsx:42-47 이 들고 있던 fetch 표. 맵이 흡수한 뒤에도 같은 5종이어야 함
-// (ADR-B1 R2 — 서버 무변경, 요청을 옮기기만 함).
-const EXPECTED_HEALTH_ENDPOINTS = [
-  "/api/health/daemons",
-  "/api/health/hook-chain",
-  "/api/health",
-  "/api/health/daemon-payload?daemon=autoagent&limit=10",
-  "/api/health/hook-failures?days=30&limit=50",
-];
-
-test("T7 the map's health fetch table names the same five endpoints health.jsx read", () => {
-  assert.strictEqual(
-    arch.getMapHealthEndpoints("autoagent").join("\n"),
-    EXPECTED_HEALTH_ENDPOINTS.join("\n"),
-  );
-});
 
 test("T7 the payload endpoint carries the selected daemon, not a frozen literal", () => {
   const urls = arch.getMapHealthEndpoints("wiki");

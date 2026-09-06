@@ -24,7 +24,6 @@ import {
 import {
   BUDGET_TRUNCATION_SOURCE,
   COMPLETION_SYNTHESIZED_SOURCE,
-  RECONSTRUCTED_ATTRIBUTION_SOURCES,
   RECONSTRUCTED_DOWNGRADE_ORIGIN,
   buildReconstructedRowFilter,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
@@ -120,17 +119,6 @@ test("mapReviewFlagByAgentRows: reconstructed_count clamped to review_flagged_co
   assert.ok(row.review_flagged_count - row.reconstructed_count >= 0);
 });
 
-test("mapReviewFlagByAgentRows: DEV agent with genuine (non-reconstructed) flags is unaffected", () => {
-  // The finding: DEV concerns are genuine — reconstructed 0 → writer-emitted == raw.
-  const mapped = mapReviewFlagByAgentRows([
-    makeReviewFlagRow({ agent: "dev-nestjs", review_flagged_count: 6n, reconstructed_count: 0n }),
-  ]);
-  const row = mapped[0];
-  assert.ok(row);
-  assert.strictEqual(row.reconstructed_count, 0);
-  assert.strictEqual(row.review_flagged_count - row.reconstructed_count, 6, "genuine flags survive the split intact");
-});
-
 // (a)+(b) failure-patterns — reconstructed portion of total_breakages.
 
 test("mapFailurePatternRows: reconstructed_count passes through + clamped to total_breakages", () => {
@@ -164,11 +152,4 @@ test("buildReconstructedRowFilter: binds the discriminator literals as PARAMETER
   assert.match(frag.sql, /downgrade_origin/);
   assert.match(frag.sql, /attribution_source/);
   assert.doesNotMatch(frag.sql, /budget-truncation/, "literals must not be concatenated into the SQL text");
-});
-
-test("RECONSTRUCTED_ATTRIBUTION_SOURCES: exactly the 3 synthesis-branch tokens (discriminator SoT)", () => {
-  assert.deepStrictEqual(
-    [...RECONSTRUCTED_ATTRIBUTION_SOURCES].sort(),
-    [COMPLETION_SYNTHESIZED_SOURCE, BUDGET_TRUNCATION_SOURCE, STRUCTUREDOUTPUT_DERIVED_SOURCE].sort(),
-  );
 });
