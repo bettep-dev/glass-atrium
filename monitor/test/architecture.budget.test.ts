@@ -69,7 +69,7 @@ test("AC-2 drawn subgraph nesting depth <= cap", () => {
   assert.equal(getBudgetReport(NESTED_FIXTURE, ASSIGNED_GRADE).state, "fail");
 });
 
-test("AC-3 drawn node count <= its grade cap", () => {
+test("AC-3 drawn node count <= its grade cap, and the faithful/balanced cap rows stay pinned to their four literals", () => {
   // 상한 행을 배정 등급으로 동적으로 읽으므로, 값 자체를 손으로 옮겨 적은 리터럴에 걸어 두지 않으면
   // 상한을 넓히는 변경이 이 비교와 전 스위트를 초록으로 지나감. 배정이 떠나온 `balanced` 행도 함께 잠금.
   assert.deepEqual(BUDGET_CAPS.faithful, { nodes: 14, edges: 18, labelChars: 50, subgraphDepth: 1 });
