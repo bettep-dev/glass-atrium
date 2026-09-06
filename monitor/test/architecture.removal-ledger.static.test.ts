@@ -252,15 +252,23 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 // 넘치게 지워지지 않았음을 잼. 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽으므로
 // 순회는 하나이고 실패 메시지가 어느 토큰에서 깨졌는지를 담음.
 test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tracked-tree scan", () => {
-  // 비공허 통제 — 목록 하나가 비면 그 절은 아무것도 재지 않은 채 초록임.
-  assert.ok(LEDGER_TOKENS.length > 0, "the ledger must name at least one removed token, or the scan proves nothing");
-  assert.ok(
-    DISCRIMINABILITY_EXCLUSIONS.length > 0,
-    "the exclusion list must name at least one token, or the discriminability clause proves nothing",
+  // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
+  const ledgerCountByAc: Record<string, number> = {};
+  for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
+  assert.deepEqual(
+    ledgerCountByAc,
+    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16 },
+    "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
-  assert.ok(
-    SURVIVING_TOKENS.length > 0,
-    "the survivor list must name at least one token, or the over-deletion clause proves nothing",
+  assert.equal(LEDGER_TOKENS.length, 41, "ledger total changed");
+  assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
+  assert.equal(SURVIVING_TOKENS.length, 20, "survivor list membership changed");
+
+  const allNames = [...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS].map((t) => t.name);
+  assert.equal(
+    new Set(allNames).size,
+    allNames.length,
+    "a name is listed twice — a duplicate restores a count without restoring the check",
   );
 
   const hitsByToken = getHitsByToken([...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS], ROOT_FILES);
