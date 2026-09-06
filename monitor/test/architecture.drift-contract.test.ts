@@ -27,30 +27,37 @@ const SKILL_SRC = readFileSync(
 const SKILL_TOP_KEYS = ["stale", "diffs"];
 const SKILL_DIFF_KEYS = ["key", "actual"];
 
-test("AC-10 (i) both keys exist on the live response and come from the drift result", () => {
-  assert.match(ROUTE_SRC, /stale: drift\.stale/);
-  assert.match(ROUTE_SRC, /diffs: drift\.diffs/);
-});
+// Each row names the artifact it reads so a failure identifies the broken side without a per-row test().
+const CONTRACT_ROWS: ReadonlyArray<{ artifact: string; src: string; pattern: RegExp }> = [
+  { artifact: "routes/architecture.ts", src: ROUTE_SRC, pattern: /stale: drift\.stale/ },
+  { artifact: "routes/architecture.ts", src: ROUTE_SRC, pattern: /diffs: drift\.diffs/ },
+  // The budget health surface is additive: the live drift consumer must still be mounted.
+  { artifact: "routes/architecture.ts", src: ROUTE_SRC, pattern: /app\.get\("\/api\/architecture\/live", handleLive\)/ },
+  { artifact: "compute-arch-drift.ts", src: DRIFT_SRC, pattern: /stale: boolean;/ },
+  { artifact: "compute-arch-drift.ts", src: DRIFT_SRC, pattern: /diffs: ArchDiff\[\];/ },
+  // COUNT spec drives the fix from (key, actual); losing that sentence unpins the contract.
+  { artifact: "verify-arch SKILL.md", src: SKILL_SRC, pattern: /ARCH_INVARIANTS\[<key>\] = <actual>/ },
+];
 
-test("AC-10 (ii) stale is boolean and diffs is an array of ArchDiff", () => {
-  assert.match(DRIFT_SRC, /stale: boolean;/);
-  assert.match(DRIFT_SRC, /diffs: ArchDiff\[\];/);
-});
+test("AC-10 the live drift consumption contract holds across route, ArchDiff and the verify-arch skill", () => {
+  // Anti-vacuity: an empty source or an empty row table would satisfy every loop below.
+  assert.ok(CONTRACT_ROWS.length > 0, "contract row table must not be empty");
+  for (const artifact of [ROUTE_SRC, DRIFT_SRC, SKILL_SRC]) {
+    assert.ok(artifact.length > 0, "contract artifact must be readable and non-empty");
+  }
 
-test("AC-10 (iii) every key the skill reads exists on the diff element", () => {
+  for (const { artifact, src, pattern } of CONTRACT_ROWS) {
+    assert.match(src, pattern, `${artifact} must still carry ${pattern}`);
+  }
+
   // Field presence counts only INSIDE the ArchDiff block — another top-level declaration must not stand in.
   const archDiffBody = DRIFT_SRC.match(/export interface ArchDiff \{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.notEqual(archDiffBody, "", "ArchDiff interface block must be locatable");
+  assert.ok(SKILL_DIFF_KEYS.length > 0 && SKILL_TOP_KEYS.length > 0, "skill key sets must not be empty");
   for (const key of SKILL_DIFF_KEYS) {
     assert.match(archDiffBody, new RegExp(`^\\s*${key}: `, "m"), `ArchDiff must declare '${key}'`);
   }
   for (const key of SKILL_TOP_KEYS) {
     assert.ok(SKILL_SRC.includes(`'${key}'`), `skill Stage-1 must still consume '${key}'`);
   }
-  // COUNT spec drives the fix from (key, actual); losing that sentence unpins the contract.
-  assert.match(SKILL_SRC, /ARCH_INVARIANTS\[<key>\] = <actual>/);
-});
-
-test("the new budget health surface is additive — it does not replace the live drift consumer", () => {
-  assert.match(ROUTE_SRC, /app\.get\("\/api\/architecture\/live", handleLive\)/);
 });
