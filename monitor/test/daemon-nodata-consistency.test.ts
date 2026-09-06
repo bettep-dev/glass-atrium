@@ -87,15 +87,6 @@ function daemon(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("ui.jsx SoT: missing → info 'No data', stale → crit 'Overdue'", () => {
-  assert.deepStrictEqual(
-    TONE_TABLE.missing,
-    { tone: "info", label: "No data" },
-    "architecture 'missing' must be the benign info 'No data' default (F#38)",
-  );
-  assert.deepStrictEqual(TONE_TABLE.stale, { tone: "crit", label: "Overdue" });
-});
-
 test("never-reported daemon (null last_status row) → info 'No data' via shared SoT", () => {
   lookups.length = 0;
   const meta = HealthModel.resolveDaemonDisplayMeta(

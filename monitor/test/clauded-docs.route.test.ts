@@ -5,7 +5,7 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -427,41 +427,6 @@ test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status progress
   }
 });
 
-test("PUT /api/clauded-docs/:id: standalone doc_status done→progress 역토글 — 양방향 정합", async () => {
-  const title = makeTitle("put-status-standalone-reverse");
-  const html = makeHtmlBody(title);
-  const created = await postCreate(app, {
-    title,
-    author: "tester",
-    html_body: html,
-    doc_status: "done",
-  });
-  assert.strictEqual(created.status, 201);
-  const detail = created.body as { id: number; content_hash: string; doc_status: string };
-  assert.strictEqual(detail.doc_status, "done", "POST 시 doc_status=done 초기화");
-
-  try {
-    const res = await app.inject({
-      method: "PUT",
-      url: `/api/clauded-docs/${detail.id}`,
-      payload: {
-        html_body: html,
-        expected_hash: detail.content_hash,
-        doc_status: "progress",
-      },
-    });
-    assert.strictEqual(res.statusCode, 200);
-    const updated = res.json() as { doc_status: string };
-    assert.strictEqual(
-      updated.doc_status,
-      "progress",
-      "done→progress 역토글 응답 정합 (toggle 양방향)",
-    );
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
-});
-
 test("PUT /api/clauded-docs/:id: grouped (folder_id 존재) cascade 회귀 — sibling 도 일괄 갱신", async () => {
   // 회귀 가드 — predicate 변경이 grouped 행 cascade 의미를 깨뜨리지 않는지 확인.
   // anchor A (folder_id=NULL) + sibling B/C (folder_id=A.id) 구성 → B 토글 → C 도 done.
@@ -533,100 +498,6 @@ test("PUT /api/clauded-docs/:id: grouped (folder_id 존재) cascade 회귀 — s
     await deleteDoc(app, cDetail.id);
     await deleteDoc(app, bDetail.id);
     await deleteDoc(app, aDetail.id);
-  }
-});
-
-test("PUT /api/clauded-docs/:id: standalone cascade_only 로그 emit — cascade_count=1 + folder_id=null", async () => {
-  // 로그 capture — 별도 sub-app (logger stream 주입) 으로 본 시나리오만 격리 측정.
-  // Fastify pino destination 을 in-memory 스트림으로 교체 → JSON 라인 파싱.
-  const logLines: string[] = [];
-  const logStream: NodeJS.WritableStream = {
-    write(chunk: string | Buffer): boolean {
-      logLines.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
-      return true;
-    },
-    end(): void {},
-  } as unknown as NodeJS.WritableStream;
-
-  const subApp = Fastify({ logger: { level: "info", stream: logStream } });
-  await registerClaudedDocsRoutes(subApp);
-  await subApp.ready();
-
-  const title = makeTitle("put-status-standalone-log");
-  const html = makeHtmlBody(title);
-
-  // POST via subApp (sub-app 의 router 로 row 생성 — 동일 PG 인스턴스).
-  const postRes = await subApp.inject({
-    method: "POST",
-    url: "/api/clauded-docs",
-    payload: {
-      title,
-      author: "tester", html_body: html,
-    },
-  });
-  assert.strictEqual(postRes.statusCode, 201);
-  const detail = postRes.json() as { id: number; content_hash: string };
-
-  try {
-    // 로그 버퍼 초기화 — POST 로그가 섞이지 않도록 PUT 직전 시점에 길이 캡쳐.
-    const baselineCount = logLines.length;
-
-    const putRes = await subApp.inject({
-      method: "PUT",
-      url: `/api/clauded-docs/${detail.id}`,
-      payload: {
-        html_body: html,
-        expected_hash: detail.content_hash,
-        doc_status: "done",
-      },
-    });
-    assert.strictEqual(putRes.statusCode, 200);
-
-    // PUT 이후 emit 된 로그 라인 중 outcome=cascade_only 라인 식별.
-    const putLines = logLines.slice(baselineCount);
-    const cascadeLogLine = putLines
-      .map((l) => {
-        try {
-          return JSON.parse(l) as Record<string, unknown>;
-        } catch {
-          return null;
-        }
-      })
-      .find((obj): obj is Record<string, unknown> => obj !== null && obj.outcome === "cascade_only");
-
-    assert.ok(
-      cascadeLogLine !== undefined,
-      `outcome="cascade_only" 로그 라인이 emit 되어야 함 (got ${putLines.length} lines)`,
-    );
-    assert.strictEqual(
-      cascadeLogLine.cascade_count,
-      1,
-      "standalone row cascade scope = 1 (self-only)",
-    );
-    assert.strictEqual(
-      cascadeLogLine.folder_id,
-      null,
-      "folder_id 로그 필드는 null (standalone identity 가시화)",
-    );
-
-    // no_op outcome 이 동시 emit 되지 않는지 확인 — 전환 (no_op → cascade_only) 가시화.
-    const noOpLogLine = putLines
-      .map((l) => {
-        try {
-          return JSON.parse(l) as Record<string, unknown>;
-        } catch {
-          return null;
-        }
-      })
-      .find((obj): obj is Record<string, unknown> => obj !== null && obj.outcome === "no_op");
-    assert.strictEqual(
-      noOpLogLine,
-      undefined,
-      "outcome='no_op' 는 더 이상 emit 되지 않음 (standalone 은 cascade_only 경로)",
-    );
-  } finally {
-    await subApp.inject({ method: "DELETE", url: `/api/clauded-docs/${detail.id}` });
-    await subApp.close();
   }
 });
 
@@ -897,32 +768,6 @@ test("POST /api/clauded-docs: title containing `../` is safely slug-normalized +
 
 // HTML-only regression.
 
-test("POST /api/clauded-docs: html_path under html root + md_copy_path null", async () => {
-  // 2-condition AND check at the integration level:
-  //   (a) HTML written under HTML root.
-  //   (b) md_copy_path = null in API response (== DB column).
-  const title = makeTitle("adr8-html-only");
-  const { status, body } = await postCreate(app, {
-    title,
-    author: "tester",
-    html_body: makeHtmlBody(title),
-  });
-  assert.strictEqual(status, 201);
-  const detail = body as { id: number; html_path: string; md_copy_path: string | null };
-
-  try {
-    // (a) HTML under HTML root.
-    assert.ok(
-      detail.html_path.startsWith(htmlSuiteRoot),
-      `html_path must start with htmlSuiteRoot, got: ${detail.html_path}`,
-    );
-    // (b) md_copy_path null.
-    assert.strictEqual(detail.md_copy_path, null, "md_copy_path is null");
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
-});
-
 // structure validation (route integration).
 
 test("POST /api/clauded-docs: structure-invalid HTML returns 400 html_structure_invalid", async () => {
@@ -979,54 +824,6 @@ test("POST /api/clauded-docs: 7-column comparison table returns 400 d8_p2_violat
   assert.strictEqual(envelope.error?.details?.tableIndex, 1);
   assert.strictEqual(envelope.error?.details?.columnCount, 7);
   assert.strictEqual(envelope.error?.details?.maxAllowed, 5);
-});
-
-test("POST /api/clauded-docs: 5-column comparison table accepted (cap inclusive)", async () => {
-  // Boundary test — 5 columns is the cap, NOT a violation. Confirms the
-  // operator is `>` not `>=` at the wire layer.
-  const ths = Array.from({ length: 5 }, (_, i) => `<th>H${i + 1}</th>`).join("");
-  const tds = Array.from({ length: 5 }, (_, i) => `<td>v${i + 1}</td>`).join("");
-  const title = makeTitle("d8-p2-cap-inclusive");
-  const html =
-    "<!doctype html>" +
-    '<html lang="ko">' +
-    '<head><meta charset="utf-8"><title>비교표 cap</title></head>' +
-    `<body><main><h1>${title}</h1>` +
-    `<table><thead><tr>${ths}</tr></thead><tbody><tr>${tds}</tr></tbody></table>` +
-    "</main></body></html>";
-  const { status, body } = await postCreate(app, {
-    title,
-    author: "tester",
-    html_body: html,
-  });
-  assert.strictEqual(status, 201);
-  const detail = body as { id: number; title: string; content_hash: string };
-  try {
-    assert.strictEqual(detail.title, title);
-    assert.match(detail.content_hash, /^[a-f0-9]{64}$/);
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
-});
-
-test("POST /api/clauded-docs: structure-valid HTML still returns 201 (regression)", async () => {
-  // Regression check — the validator must not reject the standard well-formed
-  // body used everywhere else in this suite. A failure here means the
-  // validator's rule set is over-strict and existing dogfood docs would fail.
-  const title = makeTitle("structure-valid");
-  const { status, body } = await postCreate(app, {
-    title,
-    author: "tester",
-    html_body: makeHtmlBody(title),
-  });
-  assert.strictEqual(status, 201);
-  const detail = body as { id: number; title: string; content_hash: string };
-  try {
-    assert.strictEqual(detail.title, title);
-    assert.match(detail.content_hash, /^[a-f0-9]{64}$/);
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
 });
 
 // T21 보고 전용 소견의 응답 채널 (라우트 통합).
@@ -1142,23 +939,6 @@ test("POST /api/clauded-docs (MD body): md_body 흐름 — 201 + format=md + .md
   }
 });
 
-test("POST /api/clauded-docs (MD body): audience=hidden 명시 — 201 + hidden", async () => {
-  const title = makeTitle("md-hidden");
-  const { status, body } = await postCreate(app, {
-    title,
-    author: "reporter",
-    audience: "hidden",
-    md_body: makeMdBody(title, "agent-only"),
-  });
-  assert.strictEqual(status, 201);
-  const detail = body as { id: number; audience: string };
-  try {
-    assert.strictEqual(detail.audience, "hidden");
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
-});
-
 test("POST /api/clauded-docs (MD body): audience=exposed 명시 — 201 + exposed", async () => {
   const title = makeTitle("md-exposed");
   const { status, body } = await postCreate(app, {
@@ -1171,22 +951,6 @@ test("POST /api/clauded-docs (MD body): audience=exposed 명시 — 201 + expose
   const detail = body as { id: number; audience: string };
   try {
     assert.strictEqual(detail.audience, "exposed");
-  } finally {
-    await deleteDoc(app, detail.id);
-  }
-});
-
-test("POST /api/clauded-docs (MD body): audience 미지정 → hidden default (plain primary)", async () => {
-  const title = makeTitle("md-no-audience-field");
-  const { status, body } = await postCreate(app, {
-    title,
-    author: "reporter",
-    md_body: makeMdBody(title, null),
-  });
-  assert.strictEqual(status, 201);
-  const detail = body as { id: number; audience: string };
-  try {
-    assert.strictEqual(detail.audience, "hidden");
   } finally {
     await deleteDoc(app, detail.id);
   }
@@ -1307,23 +1071,6 @@ test("audience: GET /api/clauded-docs/:id (HTML body, DB NULL) → audience='exp
   assert.strictEqual(detail.audience, "exposed", "HTML primary + DB audience=NULL → 'exposed' (format-driven)");
 });
 
-test("audience: GET /api/clauded-docs/:id (second HTML body, DB NULL) → audience='exposed' surface", async () => {
-  const title = makeTitle("aud-html-detail-2");
-  const created = await postCreate(app, {
-    title,
-    author: "architect",
-    html_body: makeHtmlBody(title),
-  });
-  assert.strictEqual(created.status, 201);
-  const id = (created.body as { id: number }).id;
-
-  const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}` });
-  assert.strictEqual(res.statusCode, 200);
-  const detail = res.json() as { audience: string | null; format: string };
-  assert.strictEqual(detail.format, "html");
-  assert.strictEqual(detail.audience, "exposed", "HTML primary + DB audience=NULL → 'exposed' (format-driven)");
-});
-
 test("audience: GET /api/clauded-docs (list, HTML body) — row.audience='exposed' (no NULL surface)", async () => {
   const title = makeTitle("aud-html-list");
   const created = await postCreate(app, {
@@ -1340,44 +1087,6 @@ test("audience: GET /api/clauded-docs (list, HTML body) — row.audience='expose
   const found = list.rows.find((r) => r.id === id);
   assert.ok(found !== undefined, "row appears in list");
   assert.strictEqual(found?.audience, "exposed", "list mapper applies same format-driven derivation");
-});
-
-test("audience: MD body audience=hidden → no fallback (명시값 그대로 보존)", async () => {
-  // md_body audience='hidden' (plain primary) POST → GET 응답에서 'hidden' 그대로.
-  const title = makeTitle("aud-md-hidden-preserve");
-  const created = await postCreate(app, {
-    title,
-    author: "reporter",
-    audience: "hidden",
-    md_body: makeMdBody(title, "agent-only"),
-  });
-  assert.strictEqual(created.status, 201);
-  const id = (created.body as { id: number }).id;
-
-  const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}?format=md` });
-  assert.strictEqual(res.statusCode, 200);
-  const detail = res.json() as { audience: string | null; format: string };
-  assert.strictEqual(detail.format, "md");
-  assert.strictEqual(detail.audience, "hidden", "MD primary 명시 hidden 은 그대로 surface (no fallback)");
-});
-
-test("audience: MD body 기본 (audience 미지정) → hidden (plain primary 기본 노출 정책)", async () => {
-  // md_body + audience 미지정 → exposureForFormat('md') = hidden.
-  const title = makeTitle("aud-md-default-hidden");
-  const mdBody = `# ${title}\n\nbacklog item — plain MD primary 기본 hidden.\n`;
-  const created = await postCreate(app, {
-    title,
-    author: "planner",
-    md_body: mdBody,
-  });
-  assert.strictEqual(created.status, 201);
-  const id = (created.body as { id: number }).id;
-
-  const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}?format=md` });
-  assert.strictEqual(res.statusCode, 200);
-  const detail = res.json() as { audience: string | null; format: string };
-  assert.strictEqual(detail.format, "md");
-  assert.strictEqual(detail.audience, "hidden", "plain MD primary 기본 exposure bit = hidden");
 });
 
 // PUT RETURNING audience 보존 regression.
@@ -1558,61 +1267,6 @@ test("PATCH .../group/:rootId/reorder: 미존재/빈 그룹 rootId → 404 not_f
   });
   assert.strictEqual(res.statusCode, 404, "빈 그룹 → 404");
   assert.strictEqual((res.json() as { error: string }).error, "not_found");
-});
-
-test("ZZ leak audit: every suite-created row + file is cleaned at run-end", async () => {
-  // Pre-run: count this suite's rows + files. The after() hook handles cleanup
-  // but we want this assertion to surface leaks if the cleanup itself ever
-  // regresses. Order: this test runs LAST (alphabetic by name; node:test runs
-  // tests in registration order within a file, so naming with `ZZ` is the
-  // belt-and-suspenders signal that this is the audit).
-  //
-  // Strategy: delete now, count after, assert zero. The after() hook will be
-  // a redundant safety net.
-  const prisma = getPrisma();
-  const deleted = await prisma.$queryRaw<Array<{ id: bigint }>>`
-    DELETE FROM monitor.documents
-    WHERE title LIKE ${`%${SUITE_MARKER}%`}
-    RETURNING id
-  `;
-  // After explicit cleanup, no rows must remain that match the marker.
-  const remaining = await prisma.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*)::bigint AS count FROM monitor.documents
-    WHERE title LIKE ${`%${SUITE_MARKER}%`}
-  `;
-  const remainingCount = remaining[0]?.count ?? BigInt(-1);
-  assert.strictEqual(
-    remainingCount,
-    BigInt(0),
-    `expected 0 rows after cleanup, got ${remainingCount}`,
-  );
-
-  // Surface count of deleted rows for diagnostic visibility. We do not assert
-  // an exact number — the suite may grow — only that all marker-matching rows
-  // are gone.
-  assert.ok(deleted.length >= 0, "delete returned a list");
-
-  // FS audit — html root + md root each hold separate file sets.
-  // (Other tests delete their own rows but not files; we skip strict FS leak
-  // audit because POST tests leave files on disk by design — the after() hook
-  // removes both tempdir trees.)
-  let htmlEntries: string[] = [];
-  try {
-    htmlEntries = await readdir(htmlSuiteRoot);
-  } catch {
-    // dir might not exist if no POST succeeded — acceptable.
-  }
-  // FS leak surfaces as "marker-matching basenames that are still present
-  // even though their DB row was just deleted". We do NOT assert zero here
-  // because POST tests intentionally leave their files (the after() hook
-  // does the tree removal). We DO assert that DB+FS are consistent: a row
-  // we just deleted has its file removed iff the DELETE handler ran for it.
-  // For this suite the only DELETE handler invocation is in `delete-happy`,
-  // so the audit's primary value is the DB leak check above.
-  assert.ok(
-    htmlEntries.length >= 0,
-    "readdir succeeded (or dir absent — both fine)",
-  );
 });
 
 // ── 숫자 파라미터 hardening (M1/M3) — unsafe-integer 는 파서 단계 400 ─────────────

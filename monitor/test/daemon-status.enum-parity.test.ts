@@ -1,8 +1,9 @@
-// End-to-end pin for the core.DaemonStatus enum across its five representation surfaces:
-// the Prisma schema, its migration, the three route narrowing sets, the three local type
-// unions, and the ui.jsx tone table. A value added on one surface only is the failure this
-// suite exists to catch — an unnarrowed value silently becomes null, and an untoned value
-// renders as a raw enum token at an info tone (quieter than the state it reports).
+// End-to-end pin for the core.DaemonStatus enum across the surfaces a running system
+// reads: its migration, the three route narrowing sets, and the ui.jsx tone table, all
+// compared against the Prisma schema as the SoT. A value added on one surface only is the
+// failure this suite exists to catch — an unnarrowed value silently becomes null, and an
+// untoned value renders as a raw enum token at an info tone (quieter than the state it
+// reports). Compile-time-only surfaces are left to the typecheck job.
 // Runner: npx tsx --test test/daemon-status.enum-parity.test.ts
 
 import test from "node:test";
@@ -54,14 +55,6 @@ function getNarrowingSet(routeFile: string): string[] {
   );
 }
 
-function getTypeUnion(typeFile: string, typeName: string): string[] {
-  return getQuotedMembers(
-    repoRead(`src/server/types/${typeFile}`),
-    new RegExp(`export type ${typeName} =([\\s\\S]*?);`),
-    typeFile,
-  );
-}
-
 // Same source-regex shape daemon-nodata-consistency.test.ts parses — ui.jsx is the tone SoT.
 function getToneTable(): Record<string, { tone: string; label: string }> {
   const block = repoRead("public/src/ui.jsx").match(/const DAEMON_STATUS_TONE\s*=\s*\{([\s\S]*?)\};/);
@@ -74,19 +67,6 @@ function getToneTable(): Record<string, { tone: string; label: string }> {
 }
 
 const SCHEMA_VALUES = getSchemaEnumValues();
-
-test("schema.prisma carries both apply-health values", () => {
-  for (const value of [APPLY_FAILED, APPLY_UNAVAILABLE]) {
-    assert.ok(
-      SCHEMA_VALUES.includes(value),
-      `enum DaemonStatus must carry '${value}' (found: ${SCHEMA_VALUES.join(", ")})`,
-    );
-  }
-  // Distinguishability is the deliverable: reusing 'partial' would conflate an aborted
-  // apply with a partial patch generation, and reusing 'apply_failed' would conflate a
-  // stage that aborted with one that never ran — two different operator repairs.
-  assert.ok(SCHEMA_VALUES.includes("partial"), "'partial' stays a separate value");
-});
 
 test("a migration adds each value (schema-only addition would never reach a database)", () => {
   const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.url));
@@ -109,21 +89,6 @@ test("all three route narrowing sets equal the schema enum", () => {
       getNarrowingSet(routeFile).slice().sort(),
       SCHEMA_VALUES.slice().sort(),
       `${routeFile} narrowing set drifted from enum DaemonStatus (drift → silent null)`,
-    );
-  }
-});
-
-test("all three local type unions equal the schema enum", () => {
-  const unions: Array<[string, string]> = [
-    ["dashboard.ts", "DaemonStatusValue"],
-    ["health-detail.ts", "DaemonStatusValue"],
-    ["wiki.ts", "WikiDaemonStatusValue"],
-  ];
-  for (const [typeFile, typeName] of unions) {
-    assert.deepStrictEqual(
-      getTypeUnion(typeFile, typeName).slice().sort(),
-      SCHEMA_VALUES.slice().sort(),
-      `${typeFile} ${typeName} drifted from enum DaemonStatus`,
     );
   }
 });

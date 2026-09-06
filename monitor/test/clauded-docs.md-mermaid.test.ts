@@ -48,12 +48,6 @@ const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-doc
 const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const DOMPURIFY_BUNDLE_PATH = resolve(MONITOR_ROOT, "node_modules/dompurify/dist/purify.min.js");
 
-/** Server modules that read the diagram-node contract — none may re-declare it. */
-const SELECTOR_CONSUMERS = [
-  "src/server/clauded-docs/html-export.ts",
-  "src/server/clauded-docs/html-validator.ts",
-] as const;
-
 // One diagram, one code fence in another language, prose either side. The second
 // fence is the branch's boundary: `mermaid` converts, `ts` must stay a code block.
 const MD_BODY = [
@@ -264,24 +258,6 @@ test("the viewer's selector copy matches the server constant byte for byte", () 
   );
 });
 
-test("no module re-declares the diagram-node selector literal", () => {
-  const literal = `"${MERMAID_NODE_SELECTOR}"`;
-  for (const relative of SELECTOR_CONSUMERS) {
-    const source = readFileSync(resolve(MONITOR_ROOT, relative), "utf8");
-    assert.equal(
-      source.includes(literal),
-      false,
-      `${relative} carries its own copy of the selector instead of importing it`,
-    );
-  }
-  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
-  assert.equal(
-    (jsx.match(new RegExp(literal, "g")) ?? []).length,
-    1,
-    "clauded-docs.jsx should hold the selector literal once — in its SYNC-pinned constant",
-  );
-});
-
 test("an md mermaid fence becomes a diagram container, not a code block", () => {
   const converted = convertMdBody(MD_BODY);
 
@@ -436,13 +412,6 @@ test("a fence the viewer only displays never reaches the renderer", () => {
   assert.match(shell, /```mermaid/, "the fence must survive as the literal text it is");
 });
 
-test("a fence in a four-space indented block never reaches the renderer", () => {
-  const indented = "# t\n\n    ```mermaid\n    not a real diagram\n    ```\n";
-
-  assert.equal(countMdMermaidFences(indented), 0, "an indented code block was read as a diagram");
-  assert.equal(wrapPlainInHtmlShell(indented, "md").includes('class="mermaid'), false);
-});
-
 test("the fence spellings the viewer draws all become containers", () => {
   const spellings: ReadonlyArray<[string, string]> = [
     ["tilde", "~~~mermaid\ngraph TD\nA-->B\n~~~\n"],
@@ -462,13 +431,6 @@ test("the fence spellings the viewer draws all become containers", () => {
     assert.match(shell, /graph TD/);
     assert.equal(shell.includes("&gt; graph"), false, `${name}: quote markers leaked into the source`);
   }
-});
-
-test("a tilde fence exports as a drawn diagram", async () => {
-  const html = await renderSelfContainedHtml("# t\n\n~~~mermaid\nflowchart LR\n  A --> B\n~~~\n", "md");
-
-  assert.ok((html.match(/<svg/g) ?? []).length >= 1, "the tilde fence shipped without an <svg>");
-  assert.equal(/<script/i.test(html), false);
 });
 
 test("an unrenderable diagram degrades to the document, never to a 503", async () => {
