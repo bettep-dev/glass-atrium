@@ -179,8 +179,8 @@ test("budget input placeholder advertises the shipped default cap, not a stale l
   assert.ok(parsed >= BUDGET_MIN_USD && parsed <= BUDGET_MAX_USD, "inside the accepted band");
 });
 
-// Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx. The
-// literal table is the independent oracle the scraped roster is compared against.
+// Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx.
+// The literal table is the independent oracle the scraped roster is compared against.
 const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.dev": true,
   "model.research": true,
@@ -189,8 +189,6 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-// DOMAIN_META_MC is a module-level `const` — lexically scoped inside the evaluated script and
-// therefore unreachable as a vm-context global, so the roster is read from the shipped source.
 async function getInheritRosterMc(): Promise<Record<string, boolean>> {
   const src = await fs.readFile(MC_SRC, "utf8");
   const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
@@ -211,12 +209,10 @@ test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected 
 });
 
 test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", async () => {
-  // One data-driven pass over the whole roster replaces the former per-domain enumeration
-  // (dev / research / daemon_cycle_worker): a domain added to DOMAIN_META_MC is covered the
-  // moment it ships instead of waiting for another hand-written case.
-  // Self-reference guard (a scraped expectation would shrink with the roster and pass
-  // vacuously): the shipped roster is asserted equal to the literal table above first, and
-  // the behavioral loop then runs off that literal table.
+  // Data-driven over the whole roster, not a hand-written case per domain.
+  // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
+  // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
+  // So the shipped roster is asserted equal to the literal table first, and the loop runs off it.
   const roster = await getInheritRosterMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
