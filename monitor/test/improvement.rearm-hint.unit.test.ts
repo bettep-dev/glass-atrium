@@ -25,6 +25,14 @@ import assert from "node:assert/strict";
 
 import { APPLY_CAP_REARM_HINT } from "../src/server/routes/improvement.js";
 
+test("the banner denies that resetting status re-arms the cap", () => {
+  assert.match(
+    APPLY_CAP_REARM_HINT,
+    /does NOT re-arm/,
+    "the reset is inert; the text must say so rather than recommend it",
+  );
+});
+
 test("the banner no longer carries the superseded imperative", () => {
   assert.doesNotMatch(
     APPLY_CAP_REARM_HINT,
