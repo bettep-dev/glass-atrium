@@ -40,8 +40,20 @@ const CONTRACT_ROWS: ReadonlyArray<{ artifact: string; src: string; pattern: Reg
 ];
 
 test("AC-10 the live drift consumption contract holds across route, ArchDiff and the verify-arch skill", () => {
-  // Anti-vacuity: an empty source or an empty row table would satisfy every loop below.
-  assert.ok(CONTRACT_ROWS.length > 0, "contract row table must not be empty");
+  // Row identity is the (artifact, pattern) pair — three rows share an artifact name, so a name set cannot see a swap.
+  assert.deepEqual(
+    CONTRACT_ROWS.map(({ artifact, pattern }) => `${artifact} :: ${pattern.source}`),
+    [
+      "routes/architecture.ts :: stale: drift\\.stale",
+      "routes/architecture.ts :: diffs: drift\\.diffs",
+      'routes/architecture.ts :: app\\.get\\("\\/api\\/architecture\\/live", handleLive\\)',
+      "compute-arch-drift.ts :: stale: boolean;",
+      "compute-arch-drift.ts :: diffs: ArchDiff\\[\\];",
+      "verify-arch SKILL.md :: ARCH_INVARIANTS\\[<key>\\] = <actual>",
+    ],
+    "contract row membership changed — a dropped or swapped row silently unpins the live drift contract",
+  );
+  // Anti-vacuity: an empty source would satisfy every loop below.
   for (const artifact of [ROUTE_SRC, DRIFT_SRC, SKILL_SRC]) {
     assert.ok(artifact.length > 0, "contract artifact must be readable and non-empty");
   }
@@ -53,7 +65,8 @@ test("AC-10 the live drift consumption contract holds across route, ArchDiff and
   // Field presence counts only INSIDE the ArchDiff block — another top-level declaration must not stand in.
   const archDiffBody = DRIFT_SRC.match(/export interface ArchDiff \{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.notEqual(archDiffBody, "", "ArchDiff interface block must be locatable");
-  assert.ok(SKILL_DIFF_KEYS.length > 0 && SKILL_TOP_KEYS.length > 0, "skill key sets must not be empty");
+  assert.deepEqual(SKILL_DIFF_KEYS, ["key", "actual"], "ArchDiff key set changed");
+  assert.deepEqual(SKILL_TOP_KEYS, ["stale", "diffs"], "skill Stage-1 top-level key set changed");
   for (const key of SKILL_DIFF_KEYS) {
     assert.match(archDiffBody, new RegExp(`^\\s*${key}: `, "m"), `ArchDiff must declare '${key}'`);
   }
