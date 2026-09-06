@@ -18,7 +18,11 @@ import {
   getMermaidCensus,
   isSupportedDiagramForm,
 } from "../src/server/architecture/content-budget.js";
-import { buildSingleDiagram } from "../src/server/architecture/parser.js";
+import {
+  buildSingleDiagram,
+  getArchitecture,
+  resetArchitectureCache,
+} from "../src/server/architecture/parser.js";
 import { extractFlows } from "../src/server/architecture/flow-extractor.js";
 
 // T3 grade assignment for the canonical map — every cap below is read from this row.
@@ -167,7 +171,7 @@ test("B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원�
   );
 });
 
-test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", () => {
+test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source", async () => {
   assert.ok(canonicalSource !== undefined);
   const sourceCensus = getMermaidCensus(canonicalSource.mermaid_source);
   const drawnCensus = getMermaidCensus(drawn);
@@ -180,6 +184,27 @@ test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source"
     assert.ok(sourceIds.has(id), `omitted id '${id}' does not exist in the source`);
     assert.ok(!drawnIds.has(id), `omitted id '${id}' is still drawn`);
   }
+
+  // 원장이 세는 누락 때문에 canonical 은 제목·서술도 source 와 갈라짐 (ADR-9 · ADR-16) — 같은 갈림의 세 자리라
+  // 원장만 재고 두 문자열을 놓으면 갈림의 3분의 1만 잠김. 갈림은 payload 필드로만 관측되므로 파서를 거쳐 잼 —
+  // e2e 형제들은 payload 를 자기 자신의 서술과 비교하므로 source 문자열이 실려 나가도 초록이고,
+  // `?? src.title` 낙하(선언 삭제)도 그 비교를 그대로 지나감.
+  resetArchitectureCache();
+  const { doc } = await getArchitecture({ warn() {}, info() {} });
+  const built = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_MAP.slug);
+  assert.ok(built !== undefined, "canonical diagram missing from the payload");
+  assert.equal(built.title, CANONICAL_MAP.title, "the payload does not carry canonical's own title");
+  assert.equal(built.description, CANONICAL_MAP.description, "the payload does not carry canonical's own description");
+  // 비어 있지 않은 비교라는 근거 — 두 문자열이 source 와 같으면 위 두 줄은 자기 자신과의 대조가 됨.
+  assert.notEqual(built.title, canonicalSource.title, "the payload still carries the source title");
+  assert.notEqual(built.description, canonicalSource.description, "the payload still carries the source description");
+
+  // 3항 연산이 전편에 새지 않음 — 비-canonical 은 자기 source 제목·서술을 그대로 유지함.
+  const other = doc.diagrams.diagrams.find((d) => d.id === "v2-overview-data");
+  const otherSource = DIAGRAMS.find((d) => d.slug === "v2-overview-data");
+  assert.ok(other !== undefined && otherSource !== undefined);
+  assert.equal(other.title, otherSource.title);
+  assert.equal(other.description, otherSource.description);
 });
 
 test("AC-9 three states come from the ratio band and violations name (metric, measured, cap)", () => {
