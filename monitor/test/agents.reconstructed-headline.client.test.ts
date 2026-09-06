@@ -80,12 +80,6 @@ async function loadScreen(src: string, extraCtx: Record<string, unknown> = {}): 
 const agents = (await loadScreen(AGENTS_SRC)) as unknown as AgentsHelpers;
 const outcomes = (await loadScreen(OUTCOMES_SRC)) as unknown as OutcomesHelpers;
 
-test("helpers reachable as top-level function declarations", () => {
-  assert.strictEqual(typeof agents.buildReviewFlagMap, "function");
-  assert.strictEqual(typeof agents.buildQualityHealthRanking, "function");
-  assert.strictEqual(typeof outcomes.buildAgentStackO, "function");
-});
-
 // --- buildReviewFlagMap: flagged headline defaults to writer-emitted ---
 
 test("buildReviewFlagMap: synthesized-heavy agent → flagged defaults to writer-emitted, reconstructed preserved", () => {

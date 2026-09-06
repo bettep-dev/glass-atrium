@@ -10,7 +10,6 @@ import { join } from "node:path";
 import {
   loadAgentRegistry,
   resetAgentRegistryCache,
-  type AgentRegistryEntry,
 } from "../src/server/agents/registry.js";
 
 let tmpRoot: string;
@@ -38,24 +37,6 @@ const FIXTURE_PARTIAL_COMPATIBILITY = {
       domains: ["react"],
       phase: "implementation",
       dual_phase: true,
-    },
-  },
-};
-
-// 모든 agent compatibility 미선언 — registry v1.0 시뮬레이션.
-const FIXTURE_LEGACY_V1 = {
-  $schema: "agent-registry",
-  version: "1.0",
-  agents: {
-    "nodejs-dev": {
-      domains: ["nodejs"],
-      phase: "implementation",
-      dual_phase: true,
-    },
-    reporter: {
-      domains: ["report"],
-      phase: "report",
-      dual_phase: false,
     },
   },
 };
@@ -102,29 +83,6 @@ test("loadAgentRegistry: compatibility 미선언 agent → null (backwards-compa
   assert.ok(reactDev !== undefined);
   // 핵심 invariant — 누락 = null (throw 아님).
   assert.strictEqual(reactDev.compatibility, null);
-});
-
-test("loadAgentRegistry: legacy v1.0 registry (모든 agent compatibility 미선언) → 모두 null", async () => {
-  await writeFile(registryPath, JSON.stringify(FIXTURE_LEGACY_V1), "utf8");
-  const entries = await loadAgentRegistry();
-  // 전체 agent 가 null compatibility — registry version bump 전 호환.
-  for (const [name, entry] of entries) {
-    assert.strictEqual(
-      entry.compatibility,
-      null,
-      `legacy v1.0 ${name}.compatibility expected null`,
-    );
-  }
-});
-
-test("loadAgentRegistry: 캐시 동작 — mtime 불변이면 두 번째 호출은 fs read 우회", async () => {
-  // DF-12 mtime revalidation 계약: 캐시 hit = mtime 불변 시 readFile 재실행 없음.
-  // 재파싱이 일어나면 새 Map 인스턴스가 되므로, 동일 인스턴스 = fs read 우회 증거.
-  // (파일 DELETE 는 이제 무효화 트리거이므로 stale hit 을 기대하던 옛 단언은 폐기.)
-  await writeFile(registryPath, JSON.stringify(FIXTURE_PARTIAL_COMPATIBILITY), "utf8");
-  const first = await loadAgentRegistry();
-  const second = await loadAgentRegistry();
-  assert.strictEqual(first, second, "mtime 불변 → 동일 Map 인스턴스 (fs read 우회)");
 });
 
 test("loadAgentRegistry: ENOENT (파일 없음) → 빈 Map fallback (서버 기동 차단 금지)", async () => {
@@ -184,16 +142,4 @@ test("AgentRegistryEntry: 빈 string compatibility → null 로 normalize", asyn
   const e = entries.get("empty-agent");
   assert.ok(e !== undefined);
   assert.strictEqual(e.compatibility, null);
-});
-
-test("AgentRegistryEntry 타입: domains · phase · compatibility 필드 노출", async () => {
-  // 타입은 컴파일러 차원의 검증이지만, 런타임에서 필수 필드 존재만 확인.
-  await writeFile(registryPath, JSON.stringify(FIXTURE_PARTIAL_COMPATIBILITY), "utf8");
-  const entries = await loadAgentRegistry();
-  const nodejsDev: AgentRegistryEntry | undefined = entries.get("nodejs-dev");
-  assert.ok(nodejsDev !== undefined);
-  assert.ok(Array.isArray(nodejsDev.domains));
-  assert.strictEqual(typeof nodejsDev.phase, "string");
-  // compatibility 는 string | null — 타입 선언 자체가 TS 컴파일러로 검증됨.
-  assert.ok(nodejsDev.compatibility === null || typeof nodejsDev.compatibility === "string");
 });

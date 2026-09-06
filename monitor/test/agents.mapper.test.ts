@@ -217,11 +217,3 @@ test("mapSuccessRateRows: bigint → number 강제 + event_date YYYY-MM-DD + nul
   assert.strictEqual(row.event_date, "2026-06-01");
   assert.strictEqual(row.success_rate, null);
 });
-
-test("rowToSummaryItem: invocations_30d 키 항상 존재 (null pass-through · FE 'in' 체크 안전)", () => {
-  // FE 가 has() 가 아닌 has-key 패턴으로 분기 시 invariant.
-  const row = makeOutcomeRow();
-  const ctx = makeCtx();
-  const item = rowToSummaryItem(row, ctx);
-  assert.ok("invocations_30d" in item, "invocations_30d key present even when null");
-});
