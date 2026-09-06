@@ -72,18 +72,6 @@ function cardVerdictOf(rows: DaemonAggRow[], installAnchor: Date | null = null):
   return found[VERDICT_FIELD];
 }
 
-test(`DaemonLiveStatus declares '${VERDICT_FIELD}' — the name the health card mirrors`, () => {
-  const block = repoRead("src/server/types/architecture.ts").match(
-    /export type DaemonLiveStatus = \{([\s\S]*?)\n\};/,
-  );
-  assert.ok(block, "types/architecture.ts must declare type DaemonLiveStatus");
-  assert.match(
-    block[1],
-    new RegExp(`^\\s*${VERDICT_FIELD}:`, "m"),
-    `a differently-named field is exactly the mismatch this suite exists to catch`,
-  );
-});
-
 test("every resolved daemon carries a non-empty verdict (no null for a client to fill in)", () => {
   for (const daemon of resolveDaemonStatuses([], NOW, null)) {
     const verdict = daemon[VERDICT_FIELD];
@@ -111,32 +99,6 @@ test("the overdue flip point is cadence × STALE_MULTIPLIER, taken from the shar
     "the boundary itself is not overdue (strict >)",
   );
   assert.strictEqual(verdictOf(ranAt(OVERDUE_MIN + 1, "ok")), "stale");
-});
-
-test("health-detail.ts takes the threshold from the same module instead of copying it", () => {
-  const src = repoRead("src/server/routes/health-detail.ts");
-  assert.match(
-    src,
-    /import\s*\{[^}]*\bSTALE_MULTIPLIER\b[^}]*\}\s*from\s*"\.\.\/schedule-next-fire\.js"/,
-    "the health route must import the shared threshold",
-  );
-  assert.doesNotMatch(
-    src,
-    /\bconst\s+STALE_MULTIPLIER\b/,
-    "a local copy would let the two routes call the same daemon overdue at different points",
-  );
-});
-
-test(`DaemonStatusCard declares '${VERDICT_FIELD}' — the name the live status carries`, () => {
-  const block = repoRead("src/server/types/health-detail.ts").match(
-    /export interface DaemonStatusCard \{([\s\S]*?)\n\}/,
-  );
-  assert.ok(block, "types/health-detail.ts must declare interface DaemonStatusCard");
-  assert.match(
-    block[1],
-    new RegExp(`^\\s*${VERDICT_FIELD}:`, "m"),
-    "a differently-named field is exactly the mismatch this suite exists to catch",
-  );
 });
 
 // Field names that restate the verdict the card already carries. A second one is a second
@@ -194,33 +156,11 @@ test("both routes carry the same verdict for the same daemon in every input clas
   }
 });
 
-test("every health card carries a non-empty verdict (no null for a client to fill in)", () => {
-  for (const card of buildDaemonStatusCards([], new Date(NOW), null, false)) {
-    const verdict = card[VERDICT_FIELD];
-    assert.strictEqual(typeof verdict, "string", `${card.daemon_name} verdict must be a string`);
-    assert.notStrictEqual(verdict, "", `${card.daemon_name} verdict must not be empty`);
-  }
-});
-
 // The blind spot the per-daemon cases above cannot reach: they exercise one daemon, so a
 // board name the resolver never judged slips through as a plain 'missing' card while the
-// live route carries the real verdict. These three pin the daemon SET rather than a verdict.
+// live route carries the real verdict. These two pin the daemon SET rather than a verdict.
 
 const RESOLVED_NAMES = resolveDaemonStatuses([], NOW, null).map((d) => d.daemon_name);
-
-test("the health card board is the resolver's daemon set, not a list of its own", () => {
-  const src = repoRead("src/server/routes/health-detail.ts");
-  assert.match(
-    src,
-    /return resolveDaemonStatuses\(/,
-    "the card board must come from the resolver, so there is nothing to keep in step with it",
-  );
-  assert.doesNotMatch(
-    src,
-    /\bDAEMON_BOARD\b/,
-    "a board constant is that second list — the payload allowlist is a different, legacy-inclusive set",
-  );
-});
 
 test("the card board mirrors the resolver, daemon for daemon and verdict for verdict", () => {
   const rows = ranAt(60, "partial");

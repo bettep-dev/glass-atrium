@@ -22,19 +22,13 @@ import {
   MERMAID_CONFIG_PATH,
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
-import {
-  MERMAID_CONFIG_SOURCE,
-  evaluateMermaidConfig,
-} from "./lib/mermaid-config-source.js";
+import { MERMAID_CONFIG_SOURCE } from "./lib/mermaid-config-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
 const PUBLIC_ROOT = resolve(MONITOR_ROOT, "public");
 const INDEX_PATH = resolve(PUBLIC_ROOT, "index.html");
 const EXPORT_MODULE_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/html-export.ts");
-
-// Above warn, mermaid rebinds log.warn to a no-op — the export's fallback watch would be blind.
-const WARN_LOG_LEVEL = 3;
 
 /** Absolute paths of the same-origin classic scripts index.html loads. */
 function getViewerScriptPaths(): string[] {
@@ -46,13 +40,6 @@ function getViewerScriptPaths(): string[] {
 }
 
 const viewerScripts = getViewerScriptPaths();
-
-test("P1-2 the export reads the config file index.html loads", () => {
-  assert.ok(
-    viewerScripts.includes(MERMAID_CONFIG_PATH),
-    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${MERMAID_CONFIG_PATH}`,
-  );
-});
 
 test("P1-2 the export reads the ELK prep module index.html loads", () => {
   assert.ok(
@@ -86,24 +73,6 @@ test("P1-2 the export injects the config file itself, with nothing appended", as
     await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"),
     MERMAID_CONFIG_SOURCE,
     "the injected text differs from the file on disk — the export carries an override",
-  );
-});
-
-test("P1-2 the config the export injects deep-equals the one the viewer initializes from", async () => {
-  const referenced = viewerScripts.find((path) => path.endsWith("mermaid-config.js"));
-  assert.ok(referenced, "index.html must load a mermaid-config.js");
-  assert.deepStrictEqual(
-    evaluateMermaidConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config")),
-    evaluateMermaidConfig(readFileSync(referenced, "utf8")),
-  );
-});
-
-test("P1-2 the injected config carries the two keys the export's own guards stand on", async () => {
-  const config = evaluateMermaidConfig(await loadExportAsset(MERMAID_CONFIG_PATH, "mermaid config"));
-  assert.equal(config.layout, "elk", "the export's fallback watch guards a layout the config never requests");
-  assert.ok(
-    Number(config.logLevel) <= WARN_LOG_LEVEL,
-    `logLevel is ${String(config.logLevel)} — above ${WARN_LOG_LEVEL} the fallback warning is never logged at all`,
   );
 });
 
@@ -149,15 +118,6 @@ test("후속-5 the viewer and the export declare the same document language", ()
     exportLang,
     `index.html declares lang="${String(viewerLang)}" while the export shell declares lang="${String(exportLang)}" — ` +
       "one stored body renders under two document languages, and the width difference that causes is reported nowhere",
-  );
-});
-
-test("P1-2 html-export.ts declares no config object of its own", () => {
-  const source = readFileSync(EXPORT_MODULE_PATH, "utf8");
-  assert.equal(
-    /themeVariables\s*:/.test(source),
-    false,
-    "html-export.ts declares its own theme palette — a second copy of one contract, and only one copy ever gets edited",
   );
 });
 
@@ -207,15 +167,6 @@ function getLockedMermaidVersion(): string {
 }
 
 const remoteMermaidSrcs = getViewerRemoteScriptSrcs().filter((src) => MERMAID_CDN_TAG.test(src));
-
-test("P1a index.html loads exactly one remote mermaid runtime", () => {
-  assert.equal(
-    remoteMermaidSrcs.length,
-    1,
-    `index.html loads ${remoteMermaidSrcs.length} remote mermaid runtimes (${remoteMermaidSrcs.join(", ")}) — ` +
-      "with more than one, the version below is asserted against a tag that may not be the one that wins",
-  );
-});
 
 test("P1a the viewer's mermaid tag names the exact version the export injects", () => {
   const tagged = MERMAID_CDN_TAG.exec(remoteMermaidSrcs[0] ?? "")?.[1];

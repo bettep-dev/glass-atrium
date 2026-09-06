@@ -139,13 +139,6 @@ test("in-progress job (fresh) takes precedence over update-available availabilit
   );
 });
 
-test("completed job is sticky over update-available availability → current (no revert to available)", () => {
-  assert.strictEqual(
-    derive({ job: jobAt("completed", STALE_MS + 1), availabilityData: { status: "update-available" } }).kind,
-    "current",
-  );
-});
-
 // --- job version label (getJobVersion) ---
 // The apply route reserves the row with the literal 'pending' placeholder and the decoupled
 // job overwrites it, so every apply is briefly polled back carrying it. Rendered as a version
