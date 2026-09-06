@@ -28,13 +28,14 @@ setup() {
   SANDBOX="${TMPROOT}/scripts"
   STUB_BIN="${TMPROOT}/bin"
   LOCK_DIR="${TMPROOT}/locks"
+  QUOTA_DIR="${TMPROOT}/quota"
   SESSION_MARKER="${TMPROOT}/session-exists"
   SESSION_TRANSIENT="${TMPROOT}/session-transient"
   TMUX_CALLS="${TMPROOT}/tmux-calls.log"
   INJECT_CALLS="${TMPROOT}/inject-calls.log"
   CREATE_WINNER="${TMPROOT}/create-winner"
   BOOT_PIDS="${TMPROOT}/boot-pids"
-  mkdir -p "${SANDBOX}" "${STUB_BIN}" "${LOCK_DIR}"
+  mkdir -p "${SANDBOX}" "${STUB_BIN}" "${LOCK_DIR}" "${QUOTA_DIR}"
   : >"${BOOT_PIDS}"
 
   cat >"${STUB_BIN}/tmux" <<STUB
@@ -122,6 +123,7 @@ launch_bootstrap() {
     DAEMON_LOCK_DIR="${LOCK_DIR}" \
     ATRIUM_CONFIG_TOML="${TMPROOT}/config.toml" \
     DAEMON_CONFIG="${TMPROOT}/daemon-config.json" \
+    DAEMON_QUOTA_MARKER_DIR="${QUOTA_DIR}" \
     GA_ROOT="${TMPROOT}" \
     COLD_START_WAIT_SEC=0 \
     HTTP_READY_INTERVAL_SEC=0 \
