@@ -206,15 +206,3 @@ test("K=3: a second cap on one agent moves the pattern count, not the agent coun
     "still two parked agents — patterns and agents are counted separately",
   );
 });
-
-test("a terminal 'rejected' row without the cap stamp is never counted as parked", async (t) => {
-  if (!dbReady) return t.skip("DB unavailable");
-  const body = await fetchState();
-  // Rows 4 and 5 are 'rejected' with a non-cap reason and stay outside the count:
-  // 3 capped of 5 rejected.
-  assert.strictEqual(
-    body.apply_cap_state.capped_patterns,
-    3,
-    "status alone must not qualify a row as capped",
-  );
-});

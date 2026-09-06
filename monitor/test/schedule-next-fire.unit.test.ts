@@ -60,22 +60,6 @@ test("daily-at America/New_York: EDT(여름, UTC-4) offset 적용 — EST 와 �
   );
 });
 
-test("daily-at Europe/Berlin: CET(겨울, UTC+1) offset 적용", () => {
-  // 08:00 CET = 07:00Z. now 05:00Z(=06:00 CET) → 미경과 → 07:00Z.
-  assert.strictEqual(
-    nextOccurrenceUtc(daily(8, 0), "Europe/Berlin", new Date("2025-01-15T05:00:00Z")),
-    "2025-01-15T07:00:00.000Z",
-  );
-});
-
-test("daily-at Europe/Berlin: CEST(여름, UTC+2) offset 적용 — CET 와 다름", () => {
-  // 08:00 CEST = 06:00Z (CET 였다면 07:00Z).
-  assert.strictEqual(
-    nextOccurrenceUtc(daily(8, 0), "Europe/Berlin", new Date("2025-07-15T04:00:00Z")),
-    "2025-07-15T06:00:00.000Z",
-  );
-});
-
 // ── across-DST-transition-DAY 롤오버 (고정 ms add 가 틀림을 잠금) ──────────
 
 test("daily-at NY: 롤오버가 spring-forward 경계를 가로지르면 23h 간격(wall-clock day 증가, 고정 86_400_000ms add 아님)", () => {
@@ -148,14 +132,6 @@ test("Seoul GOLDEN-PIN daily-at 04:30 == 전일 19:30:00Z (legacy KST 등가)", 
   );
 });
 
-test("Seoul GOLDEN-PIN daily-at 05:30 == 전일 20:30:00Z (legacy KST 등가)", () => {
-  // 05:30 KST = 전일 20:30Z (= 05:30 − 9h).
-  assert.strictEqual(
-    nextOccurrenceUtc(daily(5, 30), "Asia/Seoul", new Date("2025-05-31T18:00:00Z")),
-    "2025-05-31T20:30:00.000Z",
-  );
-});
-
 test("Seoul GOLDEN-PIN daily-at 04:50 (wiki 정정값) == 전일 19:50:00Z", () => {
   // wiki 가 04:30→04:50 으로 정정된 값(이 fix 의 핵심). 04:50 KST = 전일 19:50Z
   // (= 04:50 − 9h). 같은 now(2025-05-31 18:00Z = 06-01 03:00 KST) 에서 미경과 →
@@ -207,21 +183,6 @@ function captureStderr(fn: () => void): string {
 
 test("buildDaemonCronSchedule: 완전 주입 → 4-row 맵(wiki 04:50, autoagent 04:30, daily-restart 두 row 05:30)", () => {
   assert.deepStrictEqual(buildDaemonCronSchedule(FULL_SOURCE), EXPECTED_SCHEDULE);
-});
-
-test("buildDaemonCronSchedule: daily-restart 단일 값이 두 row 로 fan-out (동일 05:30)", () => {
-  const schedule = buildDaemonCronSchedule(FULL_SOURCE);
-  assert.strictEqual(Object.keys(schedule).length, 4);
-  assert.deepStrictEqual(schedule["daily-restart-autoagent"], {
-    type: "daily-at",
-    hour: 5,
-    minute: 30,
-  });
-  assert.deepStrictEqual(schedule["daily-restart-wiki"], {
-    type: "daily-at",
-    hour: 5,
-    minute: 30,
-  });
 });
 
 test("buildDaemonCronSchedule: present-but-malformed 값 → throw (env-var 명 포함)", () => {

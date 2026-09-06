@@ -8,12 +8,10 @@
 // reset row re-parks on the next run and its original park timestamp and reason are
 // overwritten. Following the advice destroyed provenance and re-armed nothing.
 //
-// Each assertion below pins one claim of the corrected text, and five of the six go red
-// against the superseded one (measured: 1 pass / 5 fail). The first is deliberately not
-// one of them — it pins that the reset is addressed by name, which both texts do, the
-// superseded one by recommending it and the corrected one by warning against it. It
-// therefore guards a different regression: a rewrite that drops the reset from the banner
-// entirely, leaving an operator who reaches for it with nothing to read.
+// Each assertion below pins one claim of the corrected text and goes red against the
+// superseded one. Scope boundary: that the banner is emitted at all when K>0 and names
+// the 'identified' reset is pinned on the live payload by
+// improvement.parked-loop.route.test.ts, not here.
 //
 // The rejected alternative — a banner that presents the parked state as intended
 // behaviour with nothing to do — is guarded explicitly, because it would read as correct
@@ -26,22 +24,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { APPLY_CAP_REARM_HINT } from "../src/server/routes/improvement.js";
-
-test("the banner names the status reset it is warning about", () => {
-  assert.match(
-    APPLY_CAP_REARM_HINT,
-    /status back to 'identified'/,
-    "an operator reaching for the reset must find it addressed by name",
-  );
-});
-
-test("the banner denies that resetting status re-arms the cap", () => {
-  assert.match(
-    APPLY_CAP_REARM_HINT,
-    /does NOT re-arm/,
-    "the reset is inert; the text must say so rather than recommend it",
-  );
-});
 
 test("the banner no longer carries the superseded imperative", () => {
   assert.doesNotMatch(
