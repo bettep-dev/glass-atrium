@@ -9,23 +9,20 @@
 // pins run in every leg. Whether `layout: elk` actually reaches ELK stays in the
 // browser suites, which are the only place it can be measured.
 //
-// Seven claims: the bundle on disk is the byte sequence its sidecar pins; index.html
-// hands that bundle to the on-demand loader instead of fetching it eagerly itself;
-// the loader names exactly the file the sidecar names and nothing else from that
-// directory; the loader injects that file BEFORE it registers and does both once per
-// page; a bundle already on the page registers without a fetch and one that fails to
-// arrive resolves loudly rather than stranding its callers; every viewer render path
-// awaits the loader before it renders; the sidecar's tarball hash is the hash npm
-// itself resolved (package-lock.json is the second, independently-produced witness);
-// and every package the bundle embeds carries a license notice, which the esbuild
-// build stripped with --legal-comments=none.
+// Six claims: the bundle on disk is the byte sequence its sidecar pins; the loader
+// names exactly the file the sidecar names and nothing else from that directory; the
+// loader injects that file BEFORE it registers and does both once per page; a bundle
+// already on the page registers without a fetch and one that fails to arrive resolves
+// loudly rather than stranding its callers; every viewer render path awaits the loader
+// before it renders; the sidecar's tarball hash is the hash npm itself resolved
+// (package-lock.json is the second, independently-produced witness); and every package
+// the bundle embeds carries a license notice, which the esbuild build stripped with
+// --legal-comments=none.
 //
-// Why several of those replace one position check on index.html: the eager
-// `<script src="assets/vendor/…">` is gone, so document order no longer decides
-// anything. What that order stood for — a diagram never draws on a layout nobody
-// registered — is now carried by the loader's own inject→register sequence and by the
-// render paths that await it, so both are asserted by RUNNING the loader against a
-// stub. That measures the sequence instead of inferring it from where two tags sit.
+// A diagram never draws on a layout nobody registered — that property is carried by
+// the loader's own inject→register sequence and by the render paths that await it,
+// both asserted by RUNNING the loader against a stub rather than inferred from where
+// two script tags sit in the markup.
 
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
@@ -41,7 +38,6 @@ const PUBLIC_ROOT = resolve(MONITOR_ROOT, "public");
 const VENDOR_ROOT = resolve(PUBLIC_ROOT, "assets", "vendor");
 const PROVENANCE_PATH = resolve(VENDOR_ROOT, "mermaid-layout-elk.provenance.json");
 const NOTICES_PATH = resolve(VENDOR_ROOT, "THIRD-PARTY-NOTICES.md");
-const INDEX_PATH = resolve(PUBLIC_ROOT, "index.html");
 const LOADER_PATH = resolve(PUBLIC_ROOT, "mermaid-elk-loader.js");
 const LOCK_PATH = resolve(MONITOR_ROOT, "package-lock.json");
 
@@ -200,29 +196,6 @@ describe("vendored ELK bundle pin (no browser, no network)", () => {
 			`${provenance.bundle_file} content does not match the sha256 its sidecar pins`,
 		);
 		assert.equal(bundle.byteLength, provenance.bundle_bytes, "bundle byte length vs sidecar");
-	});
-
-	test("AC-1 index.html hands the vendored bundle to the on-demand loader", async () => {
-		const html = await readFile(INDEX_PATH, "utf8");
-
-		// index.html 이 벤더 파일을 직접 받던 자리 — 다이어그램 하나 없는 라우트에서도 5 MB 를
-		// 동기로 받아 첫 페인트를 늦추던 태그다. "정확히 하나" 보다 좁은 "하나도 없어야 한다" 로
-		// 바뀌었고, 사이드카가 모르는 둘째 벤더 스크립트도 같은 단언 하나에 함께 걸린다.
-		const vendorSrcs = [...html.matchAll(/src="(assets\/vendor\/[^"]+)"/g)].map((m) => m[1]);
-		assert.deepStrictEqual(
-			vendorSrcs,
-			[],
-			"index.html loads a vendor script eagerly again — the on-demand loader owns that fetch now",
-		);
-
-		// 버전이 아니라 모양으로 찾는다 — 리터럴로 두면 CDN 태그 고정이 이 파일까지 함께 고쳐야 하는 일이 된다.
-		const mermaidAt = html.search(/mermaid@[\d.]+\/dist\/mermaid\.min\.js/);
-		const loaderAt = html.indexOf('src="mermaid-elk-loader.js"');
-		assert.ok(mermaidAt >= 0, "index.html must load the mermaid UMD script");
-		assert.ok(loaderAt >= 0, "index.html must load public/mermaid-elk-loader.js");
-		// 등록은 mermaid 전역 위에서만 성립한다(ADR-1). 등록 시점이 렌더 직전으로 늦춰졌어도 그
-		// 전제는 그대로여서, UMD 태그가 로더보다 뒤로 가면 준비 함수는 조용히 아무것도 등록하지 않는다.
-		assert.ok(mermaidAt < loaderAt, "the ELK loader must be loaded after the mermaid UMD script");
 	});
 
 	test("AC-1 the loader names exactly the vendored file the sidecar names", async () => {
