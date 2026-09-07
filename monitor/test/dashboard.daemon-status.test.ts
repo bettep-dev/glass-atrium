@@ -4,16 +4,17 @@
 // the architecture overlay + health board, instead of leaking raw last_status. Pre-fix
 // this dormant sibling returned the raw last_status with no missing/stale synthesis (the
 // same bug class F#38 fixed in live-overlay).
-// Threshold source: schedule-next-fire.ts, never a copied literal.
-// A copy would keep asserting the old flip point after the server moved it.
 // Runner: npx tsx --test test/dashboard.daemon-status.test.ts
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildDaemonStatusItems } from "../src/server/routes/dashboard.js";
-import type { DaemonAggRow } from "../src/server/architecture/live-overlay.js";
-import { STALE_MULTIPLIER } from "../src/server/schedule-next-fire.js";
+import {
+  DAEMON_CRON_SCHEDULE,
+  STALE_MULTIPLIER,
+  expectedIntervalMinutes,
+} from "../src/server/schedule-next-fire.js";
 
 const DAEMON_BOARD = [
   "autoagent",
@@ -22,20 +23,12 @@ const DAEMON_BOARD = [
   "daily-restart-wiki",
 ] as const;
 
-const CADENCE_MIN = 1440; // all four daemons are daily jobs
+// One derivation covers the board: every DAEMON_BOARD entry is built as a daily-at rule.
+const CADENCE_MIN = expectedIntervalMinutes(DAEMON_CRON_SCHEDULE.autoagent);
 const NOW = new Date("2026-07-12T12:00:00Z");
 
 function minutesAgo(min: number): Date {
   return new Date(NOW.getTime() - min * 60_000);
-}
-
-function row(name: string, overrides: Partial<DaemonAggRow> = {}): DaemonAggRow {
-  return {
-    daemon_name: name,
-    last_run_at: minutesAgo(60),
-    last_status: "ok",
-    ...overrides,
-  };
 }
 
 function itemOf(items: ReturnType<typeof buildDaemonStatusItems>, name: string) {
@@ -43,14 +36,6 @@ function itemOf(items: ReturnType<typeof buildDaemonStatusItems>, name: string) 
   assert.ok(found, `daemon '${name}' must be present on the board`);
   return found;
 }
-
-test("board carries all four daemons in fixed order (route shape preserved)", () => {
-  const items = buildDaemonStatusItems([], NOW, null);
-  assert.deepStrictEqual(
-    items.map((i) => i.daemon_name),
-    [...DAEMON_BOARD],
-  );
-});
 
 test("never-reported daemon (zero rows) + null anchor → synthesized 'missing' (was raw null pre-fix)", () => {
   const items = buildDaemonStatusItems([], NOW, null);
@@ -73,36 +58,54 @@ test("never-fired daemon + old install anchor → board escalates to 'stale' (sh
   }
 });
 
-test("NULL last_run_at row + null anchor → 'missing' (no fabricated staleness)", () => {
-  const items = buildDaemonStatusItems(
-    [row("autoagent", { last_run_at: null, last_status: "ok" })],
-    NOW,
-    null,
-  );
-  assert.strictEqual(itemOf(items, "autoagent").last_status, "missing");
-});
+// The cases above feed rows=[], where the raw row value and the synthesized verdict cannot
+// disagree. A PRESENT row is the only shape that separates them, so the delegation to
+// resolveDaemonStatuses is pinned here — on both synthesis branches at once, plus a fresh row
+// proving the board still publishes a real status rather than blanket-overwriting one, and a
+// daemon no row mentions proving membership comes from DAEMON_BOARD rather than from the rows.
+test("a present row publishes the synthesized status, never its own last_status — and a daemon with no row stays on the board (F#38 delegation)", () => {
+  const rows = [
+    // Overdue: the run itself ended 'ok' — the silence since is what makes the board stale.
+    {
+      daemon_name: "autoagent",
+      last_run_at: minutesAgo(CADENCE_MIN * STALE_MULTIPLIER + 1),
+      last_status: "ok",
+    },
+    // Row present, no run recorded: 'missing' comes from the anchor, not from the row.
+    { daemon_name: "wiki", last_run_at: null, last_status: "ok" },
+    // Inside the cadence window the row's own status IS the verdict.
+    {
+      daemon_name: "daily-restart-autoagent",
+      last_run_at: minutesAgo(1),
+      last_status: "quota_exceeded",
+    },
+  ];
 
-test("overdue daemon (staleness past the threshold) → synthesized 'stale' (was stale 'ok' pre-fix)", () => {
-  const overdueMin = CADENCE_MIN * STALE_MULTIPLIER + 1;
-  const items = buildDaemonStatusItems(
-    [row("wiki", { last_run_at: minutesAgo(overdueMin), last_status: "ok" })],
-    NOW,
-    null,
+  const items = buildDaemonStatusItems(rows, NOW, null);
+
+  assert.strictEqual(
+    itemOf(items, "autoagent").last_status,
+    "stale",
+    "an overdue row surfaced its raw last_status — the board leaks past the staleness synthesis " +
+      "the architecture overlay + health board apply (the F#38 bug class this seam fixed)",
   );
   assert.strictEqual(
     itemOf(items, "wiki").last_status,
-    "stale",
-    "an overdue daemon must surface 'stale' regardless of its real last_status",
+    "missing",
+    "a row with no last_run_at surfaced its raw last_status — a daemon that never ran reads as " +
+      "healthy on the dashboard while the other two boards call it missing",
   );
-});
-
-test("within-cadence daemon → real last_status passes through (no 'stale' synthesis)", () => {
-  const items = buildDaemonStatusItems(
-    [row("autoagent", { last_run_at: minutesAgo(CADENCE_MIN), last_status: "partial" })],
-    NOW,
-    null,
+  assert.strictEqual(
+    itemOf(items, "daily-restart-autoagent").last_status,
+    "quota_exceeded",
+    "an in-cadence row lost its real status — synthesis must replace a stale/missing verdict only, " +
+      "never overwrite a fresh run's outcome",
   );
-  assert.strictEqual(itemOf(items, "autoagent").last_status, "partial");
+  assert.strictEqual(
+    itemOf(items, "daily-restart-wiki").last_status,
+    "missing",
+    "a daemon with no row dropped off the board — the board is DAEMON_BOARD-driven, not rows-driven",
+  );
 });
 
 test("every board item carries a next-fire schedule (dashboard-only field attached)", () => {

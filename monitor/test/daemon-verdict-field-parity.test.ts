@@ -33,6 +33,11 @@ const NOW = Date.parse("2026-07-12T12:00:00Z");
 const CADENCE_MIN = expectedIntervalMinutes(DAEMON_CRON_SCHEDULE[DAEMON]);
 const OVERDUE_MIN = CADENCE_MIN * STALE_MULTIPLIER;
 
+// The same boundary as a TEST-SIDE literal — wiki fires daily, so 1440 min × 1.5.
+// The offsets below are written against this rather than against the import above.
+// A drift in the shared constant, or in a consumer's private copy of it, then lands here.
+const OVERDUE_MIN_LITERAL = 2160;
+
 function repoRead(relative: string): string {
   return readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), "utf8");
 }
@@ -72,17 +77,19 @@ function cardVerdictOf(rows: DaemonAggRow[], installAnchor: Date | null = null):
   return found[VERDICT_FIELD];
 }
 
-test(`DaemonLiveStatus declares '${VERDICT_FIELD}' — the name the health card mirrors`, () => {
-  const block = repoRead("src/server/types/architecture.ts").match(
-    /export type DaemonLiveStatus = \{([\s\S]*?)\n\};/,
-  );
-  assert.ok(block, "types/architecture.ts must declare type DaemonLiveStatus");
-  assert.match(
-    block[1],
-    new RegExp(`^\\s*${VERDICT_FIELD}:`, "m"),
-    `a differently-named field is exactly the mismatch this suite exists to catch`,
-  );
-});
+// The card's OTHER consumer of the overdue threshold.
+// needs_auth fires only while the daemon is still firing, so the threshold gates the prompt too.
+// Secrets are absent here: the arm below is about the threshold, not about the secrets stat.
+function needsAuthOf(minutesBack: number, lastStatus: string): boolean {
+  const found = buildDaemonStatusCards(
+    healthRows(ranAt(minutesBack, lastStatus)),
+    new Date(NOW),
+    null,
+    true,
+  ).find((card) => card.daemon_name === DAEMON);
+  assert.ok(found, `daemon '${DAEMON}' must be present on the health board`);
+  return found.needs_auth;
+}
 
 test("every resolved daemon carries a non-empty verdict (no null for a client to fill in)", () => {
   for (const daemon of resolveDaemonStatuses([], NOW, null)) {
@@ -104,38 +111,35 @@ test("never-fired past a full cadence window ⇒ 'stale'; inside it ⇒ 'missing
   assert.strictEqual(verdictOf([], minutesAgo(CADENCE_MIN - 1)), "missing");
 });
 
-test("the overdue flip point is cadence × STALE_MULTIPLIER, taken from the shared module", () => {
+test("the overdue flip point is cadence × STALE_MULTIPLIER — the verdict flips there, and so does the health card's needs_auth", () => {
   assert.strictEqual(
     verdictOf(ranAt(OVERDUE_MIN, "ok")),
     "ok",
     "the boundary itself is not overdue (strict >)",
   );
   assert.strictEqual(verdictOf(ranAt(OVERDUE_MIN + 1, "ok")), "stale");
-});
 
-test("health-detail.ts takes the threshold from the same module instead of copying it", () => {
-  const src = repoRead("src/server/routes/health-detail.ts");
-  assert.match(
-    src,
-    /import\s*\{[^}]*\bSTALE_MULTIPLIER\b[^}]*\}\s*from\s*"\.\.\/schedule-next-fire\.js"/,
-    "the health route must import the shared threshold",
+  assert.equal(
+    OVERDUE_MIN,
+    OVERDUE_MIN_LITERAL,
+    `the shared cadence × multiplier now lands at ${OVERDUE_MIN} minutes, not ${OVERDUE_MIN_LITERAL} — ` +
+      "a deliberate threshold change reaches this file first, and the two offsets below have to move with it",
   );
-  assert.doesNotMatch(
-    src,
-    /\bconst\s+STALE_MULTIPLIER\b/,
-    "a local copy would let the two routes call the same daemon overdue at different points",
-  );
-});
 
-test(`DaemonStatusCard declares '${VERDICT_FIELD}' — the name the live status carries`, () => {
-  const block = repoRead("src/server/types/health-detail.ts").match(
-    /export interface DaemonStatusCard \{([\s\S]*?)\n\}/,
+  // Read through the card rather than deriveNeedsAuth: the seam is the route's own arithmetic.
+  // A local copy of the multiplier there is invisible to a typecheck.
+  assert.equal(
+    needsAuthOf(OVERDUE_MIN_LITERAL - 1, "error"),
+    true,
+    "a failing daemon one minute inside the overdue boundary offers no re-auth prompt while its " +
+      "secrets file is absent — the health route judges it already dead, so the operator sees no " +
+      "repair path for the credential that is actually stopping it",
   );
-  assert.ok(block, "types/health-detail.ts must declare interface DaemonStatusCard");
-  assert.match(
-    block[1],
-    new RegExp(`^\\s*${VERDICT_FIELD}:`, "m"),
-    "a differently-named field is exactly the mismatch this suite exists to catch",
+  assert.equal(
+    needsAuthOf(OVERDUE_MIN_LITERAL + 1, "error"),
+    false,
+    "a daemon past the overdue boundary still offers a re-auth prompt — silence that long is not " +
+      "something a credential repair fixes, and the prompt sends the operator to the wrong remedy",
   );
 });
 
@@ -194,33 +198,11 @@ test("both routes carry the same verdict for the same daemon in every input clas
   }
 });
 
-test("every health card carries a non-empty verdict (no null for a client to fill in)", () => {
-  for (const card of buildDaemonStatusCards([], new Date(NOW), null, false)) {
-    const verdict = card[VERDICT_FIELD];
-    assert.strictEqual(typeof verdict, "string", `${card.daemon_name} verdict must be a string`);
-    assert.notStrictEqual(verdict, "", `${card.daemon_name} verdict must not be empty`);
-  }
-});
-
 // The blind spot the per-daemon cases above cannot reach: they exercise one daemon, so a
 // board name the resolver never judged slips through as a plain 'missing' card while the
-// live route carries the real verdict. These three pin the daemon SET rather than a verdict.
+// live route carries the real verdict. These two pin the daemon SET rather than a verdict.
 
 const RESOLVED_NAMES = resolveDaemonStatuses([], NOW, null).map((d) => d.daemon_name);
-
-test("the health card board is the resolver's daemon set, not a list of its own", () => {
-  const src = repoRead("src/server/routes/health-detail.ts");
-  assert.match(
-    src,
-    /return resolveDaemonStatuses\(/,
-    "the card board must come from the resolver, so there is nothing to keep in step with it",
-  );
-  assert.doesNotMatch(
-    src,
-    /\bDAEMON_BOARD\b/,
-    "a board constant is that second list — the payload allowlist is a different, legacy-inclusive set",
-  );
-});
 
 test("the card board mirrors the resolver, daemon for daemon and verdict for verdict", () => {
   const rows = ranAt(60, "partial");
