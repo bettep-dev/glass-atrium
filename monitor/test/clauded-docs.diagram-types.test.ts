@@ -1,8 +1,8 @@
 // clauded-docs 다이어그램 타입 선언(diagram-types.json)의 계약 시험.
 // 실행: npx tsx --test test/clauded-docs.diagram-types.test.ts
 //
-// 오라클은 선언 파일 자신의 불변식과 검증기 거동임 — 채택/제외 목록의 멤버십은
-// 여기서 재선언하지 않고 erDiagram · pie · RL 의 실행 판정으로만 고정됨.
+// 오라클은 선언 파일 자신의 불변식 · 타입 집합 멤버십 · 검증기 거동임.
+// 거동 판정(erDiagram · pie · RL)은 행 제거만 잡음 → 행 추가는 멤버십 목록이 유일한 관문임.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -154,6 +154,42 @@ test("선언 파일 불변식 — 로더가 검사하지 않는 형태·서로�
   // AC-T24 의 판정 대상 — 좌→우 · 위→아래는 허용, 우→좌 · 아래→위는 금지.
   for (const d of ["LR", "TB"]) assert.ok(allowed.includes(d), `허용 방향 누락: ${d}`);
   for (const d of ["RL", "BT"]) assert.ok(forbiddenSet.has(d), `금지 방향 누락: ${d}`);
+});
+
+/** 선언에 있어야 하는 타입명 전부 — 형태·서로소 검사는 잘 만들어진 새 행을 통과시킴. */
+const DECLARED_ADOPTED_TYPES = [
+  "flowchart",
+  "sequenceDiagram",
+  "stateDiagram-v2",
+  "erDiagram",
+  "classDiagram",
+  "gitGraph",
+  "C4",
+];
+const DECLARED_EXCLUDED_TYPES = [
+  "quadrantChart",
+  "radar",
+  "pie",
+  "timeline",
+  "journey",
+  "mindmap",
+  "sankey",
+  "xychart",
+  "gantt",
+  "block",
+];
+
+test("선언된 타입 집합이 정확히 이 목록임 — 행 추가 · 삭제 · 개명이 모두 걸림", () => {
+  assert.deepStrictEqual(
+    typeNames(declaration.adopted).sort(),
+    [...DECLARED_ADOPTED_TYPES].sort(),
+    "채택 타입 집합이 바뀜 — 채택은 렌더·검증 계약이므로 선언과 이 목록을 같이 고쳐야 함",
+  );
+  assert.deepStrictEqual(
+    typeNames(declaration.excluded).sort(),
+    [...DECLARED_EXCLUDED_TYPES].sort(),
+    "제외 타입 집합이 바뀜 — 제외 행 추가는 다른 어떤 시험도 잡지 못하므로 이 목록이 유일한 관문임",
+  );
 });
 
 test("모든 키워드가 실제 mermaid 11 다이어그램 키워드임", () => {
