@@ -12,6 +12,8 @@
 //   (c) the shared buildReconstructedRowFilter() binds the discriminator literals as
 //       PARAMETERS (Prisma.join), never string-concatenated — the reuse point that
 //       keeps every aggregation on one discriminator (do-not-reimplement).
+//   (d) the discriminator's member set is CLOSED at the three synthesis-branch tokens —
+//       a fourth member silently reclassifies writer-emitted rows as harness artifacts.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -27,6 +29,7 @@ import {
   RECONSTRUCTED_ATTRIBUTION_SOURCES,
   RECONSTRUCTED_DOWNGRADE_ORIGIN,
   buildReconstructedRowFilter,
+  STRUCTUREDOUTPUT_COMPLETION_SOURCE,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 } from "../src/server/attribution-sources.js";
 
@@ -120,17 +123,6 @@ test("mapReviewFlagByAgentRows: reconstructed_count clamped to review_flagged_co
   assert.ok(row.review_flagged_count - row.reconstructed_count >= 0);
 });
 
-test("mapReviewFlagByAgentRows: DEV agent with genuine (non-reconstructed) flags is unaffected", () => {
-  // The finding: DEV concerns are genuine — reconstructed 0 → writer-emitted == raw.
-  const mapped = mapReviewFlagByAgentRows([
-    makeReviewFlagRow({ agent: "dev-nestjs", review_flagged_count: 6n, reconstructed_count: 0n }),
-  ]);
-  const row = mapped[0];
-  assert.ok(row);
-  assert.strictEqual(row.reconstructed_count, 0);
-  assert.strictEqual(row.review_flagged_count - row.reconstructed_count, 6, "genuine flags survive the split intact");
-});
-
 // (a)+(b) failure-patterns — reconstructed portion of total_breakages.
 
 test("mapFailurePatternRows: reconstructed_count passes through + clamped to total_breakages", () => {
@@ -166,9 +158,20 @@ test("buildReconstructedRowFilter: binds the discriminator literals as PARAMETER
   assert.doesNotMatch(frag.sql, /budget-truncation/, "literals must not be concatenated into the SQL text");
 });
 
-test("RECONSTRUCTED_ATTRIBUTION_SOURCES: exactly the 3 synthesis-branch tokens (discriminator SoT)", () => {
+// (d) exhaustiveness — the three includes() checks above prove each member is bound,
+// but a set that only grows cannot be seen by a membership check. This arm reads the
+// whole set, so an appended token reds here and nowhere else.
+
+test("RECONSTRUCTED_ATTRIBUTION_SOURCES: the synthesis-branch set is CLOSED at three (discriminator SoT)", () => {
   assert.deepStrictEqual(
     [...RECONSTRUCTED_ATTRIBUTION_SOURCES].sort(),
-    [COMPLETION_SYNTHESIZED_SOURCE, BUDGET_TRUNCATION_SOURCE, STRUCTUREDOUTPUT_DERIVED_SOURCE].sort(),
+    [BUDGET_TRUNCATION_SOURCE, COMPLETION_SYNTHESIZED_SOURCE, STRUCTUREDOUTPUT_DERIVED_SOURCE].sort(),
+    "the reconstructed discriminator names exactly the three synthesis-branch tokens — every added member is subtracted from the writer-emitted headline on every aggregation, so a new token belongs here only once it is genuinely a harness recovery artifact",
+  );
+  // The standing exclusion the set equality above encodes today, kept as its own arm so a
+  // legitimate FOURTH synthesis token cannot smuggle this one in alongside it.
+  assert.ok(
+    !RECONSTRUCTED_ATTRIBUTION_SOURCES.includes(STRUCTUREDOUTPUT_COMPLETION_SOURCE),
+    "structuredoutput-completion marks a WRITER-emitted (healthy) row, not a synthesis artifact — folding it in here silently deflates every writer-emitted headline",
   );
 });

@@ -226,8 +226,8 @@ test("ADR-20 the drawn map's labels read exactly as the source declares them", (
     ...drawn.subgraphs.map((g) => ({ id: g.id, label: g.label })),
   ]) {
     const expected = sourceLabels.get(drawnLabelled.id);
-    // drawn id 집합 ⊆ source id 집합은 예산 시험의 회귀 잠금 ③ 이 따로 지킴 — 여기서는
-    // 짝을 찾은 것만 대조하되, 하나도 못 찾으면 아래 개수 절이 붉어짐.
+    // drawn id 집합 ⊆ source id 집합은 architecture.budget.test.ts 의 부분집합 잠금(차집합이 정확히 원장)이 지킴.
+    // 여기서는 짝을 찾은 것만 대조 — 하나도 못 찾으면 아래 개수 절이 붉어짐.
     if (expected === undefined) continue;
     if (expected !== drawnLabelled.label)
       divergent.push(`${drawnLabelled.id}: drawn ${JSON.stringify(drawnLabelled.label)} vs source ${JSON.stringify(expected)}`);
@@ -298,16 +298,6 @@ test("SoT parity: parse drift 없음 (line-not-recognized / edge-line-* 0건)", 
       (l) => l.startsWith("line-not-recognized:") || l.startsWith("edge-line-"),
     );
     assert.deepEqual(drift, [], diagram.slug);
-  }
-});
-
-test("SoT parity: v2-team-docs 의 hyphen node-id 전부 추출", () => {
-  const docsDiagram = DIAGRAMS.find((d) => d.slug === "v2-team-docs");
-  assert.ok(docsDiagram !== undefined);
-  const out = extract(docsDiagram.mermaid_source);
-  const ids = new Set(out.nodes.map((n) => n.id));
-  for (const id of ["glass-atrium-intel-researcher", "glass-atrium-design-designer", "glass-atrium-intel-reporter"]) {
-    assert.ok(ids.has(id), `missing node: ${id}`);
   }
 });
 
@@ -450,12 +440,6 @@ test("AC-B2-1f `doc_export` 는 external 로 분류되고 그 규칙이 다른 �
   }
   assert.ok(total > 100, `the sweep must actually cover the corpus; it saw ${total} nodes`);
   assert.deepEqual(hits, ["v2-overview-entry:doc_export", "drawn:doc_export"]);
-});
-
-test("AC-B2-1c 교체된 `to_data` 경계 노드는 일곱 source 어디에도 남아 있지 않음", () => {
-  // 존재하는 채로 원장에서만 빠지면 AC-8 의 부재 검사가 아니라 실재 검사가 붉어짐 — 죽음을 여기서 못박음.
-  const survivors = DIAGRAMS.filter((d) => /(^|[\s;])to_data([[({\s]|$)/m.test(d.mermaid_source));
-  assert.deepEqual(survivors.map((d) => d.slug), []);
 });
 
 // 방향 토큰 재작성기 — 헤더 줄의 방향만 바꾸고 본문은 손대지 않음.

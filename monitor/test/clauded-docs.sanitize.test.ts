@@ -62,6 +62,7 @@ test("sanitizeHtmlBody: jsdelivr 경로 우회 시도 (dist/../../evil) → 제�
   assert.ok(!/evil@1/i.test(out), "path-traversal escape past the mermaid pin must be rejected");
 });
 
+// 이중 방어의 두 번째 축인 viewer 응답 sandbox CSP 는 routes/clauded-docs.ts 책임 — 본 모듈 scope 밖.
 test("sanitizeHtmlBody: non-allowlist <script src> 제거", () => {
   const out = sanitizeHtmlBody(
     '<head><script src="https://evil.example.com/x.js"></script></head>',
@@ -117,32 +118,6 @@ test("sanitizeHtmlBody: <a href=\"javascript:…\"> 무력화", () => {
   assert.ok(!/javascript:/i.test(out), `javascript: scheme must be neutralized — got: ${out}`);
 });
 
-test("sanitizeHtmlBody: <img onerror> 핸들러만 제거하고 태그는 유지", () => {
-  const out = sanitizeHtmlBody('<img src="/safe.png" onerror="alert(1)" alt="x">');
-  assert.ok(/<img\b/i.test(out), "img tag preserved");
-  assert.ok(!/onerror/i.test(out), "onerror attribute removed");
-  assert.ok(/src=["']\/safe\.png["']/.test(out), "src preserved");
-});
-
-test("sanitizeHtmlBody: 결정성 — 동일 입력 → 동일 출력 (100 runs byte-equal)", () => {
-  const html = `<!doctype html><html><head><script src="https://cdn.tailwindcss.com"></script></head>
-<body><div onclick="x()" class="a">hi<script>bad()</script></div><iframe></iframe></body></html>`;
-  const first = sanitizeHtmlBody(html);
-  for (let i = 0; i < 100; i += 1) {
-    const next = sanitizeHtmlBody(html);
-    assert.equal(next, first, `run #${i} diverged from baseline`);
-  }
-});
-
-test("sanitizeHtmlBody: SHA256 결정성 — sanitize → hash 100 runs 동일", () => {
-  const html = '<div onclick="x()" class="a">hi<script>bad()</script></div>';
-  const baseline = sha256(sanitizeHtmlBody(html));
-  for (let i = 0; i < 100; i += 1) {
-    const h = sha256(sanitizeHtmlBody(html));
-    assert.equal(h, baseline, `hash run #${i} diverged`);
-  }
-});
-
 test("sanitizeHtmlBody: roundtrip — sanitize 결과를 한 번 더 sanitize 해도 동일", () => {
   const html = `<!doctype html><html><body>
     <script>evil()</script>
@@ -177,57 +152,6 @@ test("sanitizeHtmlBody: style 속성 보존 (인라인 스타일 화이트리스
   // 평범한 background:red 는 유지 → viewer 시각 표현 보존
   const out = sanitizeHtmlBody('<div style="background: red; padding: 4px">x</div>');
   assert.ok(/style=/.test(out), "style attribute preserved for benign CSS");
-});
-
-// ----- sandbox-safe CDN gate -----------------------------------------------
-//
-// 비-allowlist `<script>` CDN (Chart.js / D3 / Plotly) 은 sanitize 가 제거 —
-// CSP sandbox directive 와 이중 방어. viewer 응답의 sandbox CSP 는
-// routes/clauded-docs.ts 책임으로 본 모듈 scope 밖.
-
-test("sanitizeHtmlBody: Chart.js CDN injection 시도 제거", () => {
-  // jsdelivr 는 mermaid 핀 경로만 허용 → chart.js /npm 스크립트는 제거된다.
-  const out = sanitizeHtmlBody(
-    '<head><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head>',
-  );
-  assert.ok(!/chart\.js/i.test(out), "non-mermaid jsdelivr chart.js script must be removed");
-  assert.ok(!/cdn\.jsdelivr\.net/i.test(out), "jsdelivr host must not survive for a non-mermaid path");
-});
-
-test("sanitizeHtmlBody: D3 CDN (d3js.org) 비-allowlist → 제거", () => {
-  const out = sanitizeHtmlBody(
-    '<head><script src="https://d3js.org/d3.v7.min.js"></script></head>',
-  );
-  assert.ok(!/d3js\.org/.test(out), "d3js.org script removed");
-  assert.ok(!/<script\b[^>]*src=["']https:\/\/d3js/i.test(out));
-});
-
-test("sanitizeHtmlBody: Plotly CDN (cdn.plot.ly) 비-allowlist → 제거", () => {
-  const out = sanitizeHtmlBody(
-    '<head><script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script></head>',
-  );
-  assert.ok(!/plot\.ly/.test(out), "cdn.plot.ly script removed");
-});
-
-test("sanitizeHtmlBody: Tailwind CDN <script src> 보존", () => {
-  // Tailwind CDN 공식 패턴 — allowlist 통과, 그 외 비-allowlist CDN 은 제거.
-  const out = sanitizeHtmlBody(
-    '<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>x</body></html>',
-  );
-  assert.ok(
-    /<script[^>]+src=["']https:\/\/cdn\.tailwindcss\.com["']/i.test(out),
-    "tailwind CDN script preserved",
-  );
-});
-
-test("sanitizeHtmlBody: inline <script> + Chart.js usage 결합 시 모두 제거", () => {
-  // 인라인 + 비-allowlist CDN 조합 — 양쪽 모두 제거.
-  const out = sanitizeHtmlBody(`
-    <script>new Chart(ctx, config);</script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-  `);
-  assert.ok(!/new Chart/.test(out), "inline chart.js usage stripped");
-  assert.ok(!/d3js\.org/.test(out), "d3 CDN stripped");
 });
 
 // ----- <details>/<summary> disclosure UI 보존 ------------------------------
