@@ -234,7 +234,8 @@ Rules:
 - **Output verification**: Build success + existing tests passing required before accepting team deliverables
   - Unit tests recommended alongside DEV implementations
 - **Writer/Reviewer separation**: Fresh session review recommended after complex implementations (reduces same-session self-bias — NeurIPS 2024)
-- **Confidence-based routing**: confidence=low → automatic glass-atrium-qa-code-reviewer deployment
+- **Confidence-based routing**:
+  - confidence=low → automatic glass-atrium-qa-code-reviewer deployment
   - confidence=medium + security code → glass-atrium-qa-code-reviewer deployment
   - TDD absolute rules always apply regardless of confidence
 - **Orchestrator-forced Deep-review override (deterministic, independent of writer confidence — threshold + prefix list live ONCE here, the SoT)**: When a delegation's `[SCOPE] files=` lists ≥ 10 paths, or any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/` — the orchestrator shall compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review regardless of the writer's self-reported confidence.
@@ -273,7 +274,8 @@ No dependency → Fan-out / Linear dependency → Pipeline / Single → Router
   - LENGTH: a `maxLength`/`maxItems` cap set TOO TIGHT for the field's realistic content forces the SAME prose-shrink — the true output does not fit under the cap, so the model collapses it toward an ever-smaller string that still violates nothing else yet never satisfies the impossible size (observed THIS session, LENGTH-cap violations that drove the retry-cap-exceeded loop: `maxLength` `260`×82 · `300`×30 · `160`×26 · `400`×22 · `500`×18 · `900`×16).
 - (A permissive single-free-text schema re-run SUCCEEDS where the flat one failed 5x.) The engine's nudge-then-fail is Claude-Code-internal (not editable), and — unlike the manual Agent-tool path, which is salvaged by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — a schema-mode workflow agent has **NO engine-layer salvage**.
 - Therefore the SCRIPT is the resilience layer (the script both PREVENTS the mismatch by construction — shape-tolerant schema, below — and REGAINS the manual-path salvage as a last resort — text-mode fallback, below).
-- MANDATORY when authoring any workflow:
+
+MANDATORY when authoring any workflow:
 
 **Absolute schema-cap rules — these bind EVERY workflow output schema you author.**
 They are stated first because the failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation:
@@ -311,8 +313,8 @@ The authoring idioms that implement those rules:
   - **(b) Do NOT cap the fields at all — cap-SIZING is the trap, not the remedy**: there is no statically-knowable right number, and a cap set too tight forces the summary-collapse loop outright (the LENGTH root cause above).
     - Leave every property uncapped and move bulk to a file per (a).
     - **WITHDRAWN — recorded as a failure mode, NOT as sizing guidance**: an earlier revision of this bullet told you to cap every field and size each cap generously, naming a per-row / per-item evidence-string floor of a few hundred characters and an array `maxItems` sized to the true expected item count.
-      - That advice is withdrawn and must not be reinstated: a per-element cap is exactly the multiplying shape that burns all five internal retries, and "generous enough" is unknowable before the content exists.
-      - Read that sentence as a description of what went wrong, never as a floor to size against.
+    - That advice is withdrawn and must not be reinstated: a per-element cap is exactly the multiplying shape that burns all five internal retries, and "generous enough" is unknowable before the content exists.
+    - Read that sentence as a description of what went wrong, never as a floor to size against.
   - **(c)** enumerate ALL required keys explicitly in the delegation prompt so the model emits them up front rather than discovering them through validation errors.
   - Proven by the v2 rewrite of the schema-failure workflow — AND by THIS session's over-tight-cap collapse loop, where too-small `maxLength` caps (`260`/`160`/`900`/`400`) reproduced the exact retry-cap-exceeded failure on fields that were capped AT ALL — the caps themselves, not their stinginess, were the defect.
 - **Shape-tolerant schema authoring (fixes the SHAPE mismatch — distinct from the SIZE caps above)**: for rich / open-ended / multi-faceted output do NOT force a flat, all-string `additionalProperties: false` object.
@@ -538,7 +540,8 @@ done <<<"${FILE_LIST}"
     - `impl-computed: <dev type(s)>` — indirectly-spawned types (config array / ternary / wrapper indirection), checked via data-literal presence.
       - **impl-computed NEGATIVE**: OMIT the `impl-computed` line entirely when there are NO computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is MALFORMED and blocks as `block-grammar` (unknown-name).
 
-  - Consistency checks (the declaration is falsified against code): a declared role with no spawn-position token (`agent('<type>', …)` first-arg or `agentType: '<type>'` field value) → `block-declspawn` (a phantom verify team blocks — the one place this attestation is STRONGER than its siblings)
+  - Consistency checks (the declaration is falsified against code):
+    - a declared role with no spawn-position token (`agent('<type>', …)` first-arg or `agentType: '<type>'` field value) → `block-declspawn` (a phantom verify team blocks — the one place this attestation is STRONGER than its siblings)
     - an undeclared dev type — a real spawn, a config-array literal, or an exact-quoted dev-* prose mention — → `block-undecl` (one-edit fix: declare the type, or de-quote the mention)
     - a declared computed type absent from the data → `block-computed`
     - a declared impl dev preceding every reviewer, on the greedy-earliest same-type dual-role binding (the FIRST spawn token of a declared verify-dev type is the verify slot; remaining declared-impl-type tokens are impl slots; some reviewer must precede the first impl slot; computed spawns have no static position → declared-order honor-system) → `block-order`.
@@ -770,8 +773,7 @@ done <<<"${FILE_LIST}"
 - Model tiering: Lead + Teammate tiers assigned per `rules/orchestrator-role.md` → `### Cost-Tier Selection` (no hardcoded tier/version here) — natural language instructions
 - Manually include agent instructions (.claude/agents/*.md content) in spawn prompt
 - Control Wave execution (parallel → sequential) via blockedBy field
-- Immediately cleanup idle Teammates
-- deactivate unused MCP servers
+- Immediately cleanup idle Teammates · deactivate unused MCP servers
 
 **Anti-patterns**:
 - Deploying teams for sequentially dependent tasks
@@ -810,8 +812,7 @@ done <<<"${FILE_LIST}"
 
 ### Numeric Threshold Adjustment Policy [ORCHESTRATOR]
 
-- `[default, adjustable]` values → adjustment within 0.5-2x with rationale stated
-- history recorded in Outcome Record
+`[default, adjustable]` values → adjustment within 0.5-2x with rationale stated · history recorded in Outcome Record
 
 ### feature-dev Plugin Usage Scope [ORCHESTRATOR]
 
@@ -823,9 +824,7 @@ done <<<"${FILE_LIST}"
 ### Agent Performance Metrics [ORCHESTRATOR]
 
 - Aggregation targets based on agent-tracker logs:
-  - Per-agent invocation frequency
-  - average duration
-  - success/failure rate
+  - Per-agent invocation frequency · average duration · success/failure rate
   - Cross-analysis with cost-tracker logs: per-agent cost efficiency
 - Include metric summary in Heartbeat weekly review
 
@@ -855,9 +854,7 @@ done <<<"${FILE_LIST}"
 
 - Review standardization of common agent instruction sections (Guardrails, prohibitions, error recovery)
 - Mandatory reference to existing agent instruction patterns when adding new agents
-- **New DEV agent gate (formalized)**: this proto-gate is subsumed by `scope-dev.md` → `## DEV Agent Fleet Governance` → `### New-Agent Creation Gate`.
-  - Adding a new DEV agent is the EXCEPTION (default = extend the closest-concern existing agent); creation requires an affirmative answer to all three gate questions — Q1 concern novelty (all three Separation-Axis disjoint criteria), Q2 extend test (can the closest agent absorb the knowledge instead?), Q3 fleet-size cost (do `domains` arrays stay semantically distinct?).
-  - "Reference existing patterns" alone does not authorize creation — pass the gate first.
+- **New DEV agent gate (formalized)**: this proto-gate is subsumed by `scope-dev.md` → `## DEV Agent Fleet Governance` → `### New-Agent Creation Gate`. Adding a new DEV agent is the EXCEPTION (default = extend the closest-concern existing agent); creation requires an affirmative answer to all three gate questions — Q1 concern novelty (all three Separation-Axis disjoint criteria), Q2 extend test (can the closest agent absorb the knowledge instead?), Q3 fleet-size cost (do `domains` arrays stay semantically distinct?). "Reference existing patterns" alone does not authorize creation — pass the gate first.
 
 #### Bilevel Meta-Optimization Loop
 
@@ -949,7 +946,8 @@ The 7 steps each build on the previous:
   - Signals (i) and (ii) enumerate terminations you observed — only (iii) supports the claim "no other writer is live", which is what the shared-worktree question in `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization guardrail (a) actually asks.
   - It carries no cwd or worktree column, so it answers *whether* a child is live, never *where*.
 
-**NOT completion signals — substituting any of these is FORBIDDEN**: file-mtime quiet (a reading or reasoning agent writes nothing for many minutes)
+**NOT completion signals — substituting any of these is FORBIDDEN**:
+- file-mtime quiet (a reading or reasoning agent writes nothing for many minutes)
 - an `idle` entry in an agent or session listing (it does not distinguish finished from waiting and may be listing peer sessions rather than this orchestrator's own children)
 - the newest `.jsonl` by mtime
 - the appearance of a commit (an agent may finish without committing, and a commit may belong to another track).
@@ -967,7 +965,8 @@ Governs the FORM of the orchestrator's user-facing reply text — the terminal o
 - It EXTENDS the prose-summary duty in that row: the Monitoring rule fixes WHAT must not be printed (the raw `[COMPLETION]` block, a machine-facing artifact); this fixes the SHAPE of the prose that replaces it.
 - **Canonical here, single-sited** — `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition carries one named shape + one pointer, nothing more.
 
-**Composes with, never replaces**: the response-language rule — every slot below is written in the USER's language (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules)
+**Composes with, never replaces**:
+- the response-language rule — every slot below is written in the USER's language (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules)
 - the clarification flow (Re-ground → Simplify → Recommend → Options)
 - Position Bias Mitigation when 3+ options are presented.
 
@@ -1170,7 +1169,8 @@ Approval is required for the DELTA ONLY.
 
 > Cross-ref: `core-learning-log.md` Instruction Improvement Approval Tier (approval rule canonical) · `core-security.md` Agent Tool Authorization (aligns with LLM06) · monitor `#improvement` consolidated dashboard
 
-- **Automation Boundary**: PreToolUse hooks (`validate-secret-scan.sh`, `validate-prompt.sh`, `enforce-delegation.sh`) handle real-time tool validation — `validate-prompt.sh` is a `PreToolUse(Write|Edit)` file-content screen for prompt-injection patterns, NOT a raw user-prompt guard
+- **Automation Boundary**:
+  - PreToolUse hooks (`validate-secret-scan.sh`, `validate-prompt.sh`, `enforce-delegation.sh`) handle real-time tool validation — `validate-prompt.sh` is a `PreToolUse(Write|Edit)` file-content screen for prompt-injection patterns, NOT a raw user-prompt guard
   - `track-outcome.sh` auto-generates Outcome Records — Monitoring does NOT duplicate these mechanical checks; it focuses on **semantic verification** (intent-result alignment).
   - (`llm-preflight.sh` is NOT wired into any PreToolUse / SessionStart hook — so NO per-session or per-tool cost-threshold preflight runs on the interactive path; do not assume it gates interactive cost. It is NOT dead code, though: `autoagent/autoagents-eval.sh` (line ~107) sources it and calls the legacy gating mode `llm_preflight 10.00` — so it IS a dependency of the autoagent eval path, just not of the interactive hook layer; that eval path is manually invoked, NOT exercised in CI (`.github/workflows/ci.yml` states autoagents-eval.sh is not run there).)
 
@@ -1183,10 +1183,7 @@ The orchestrator handles monitor-managed clauded-docs deletion requests directly
 
 ### Procedure
 
-- A user-requested HTML primary lives in the monitor-internal root (`$CLAUDED_DOCS_HTML_ROOT`, slug-based filename).
-- Agent-only records carry a token-optimized body (`md`/`yaml`/`json`/`txt`).
-- No MD companion is generated for HTML primaries.
-- The wiki domain is a permanent exception to this policy (the wiki is an Atrium-internal, git-ignored, LLM-only markdown store at `~/.glass-atrium/wiki/` managed by the wiki daemon — see `scope-wiki.md`).
+A user-requested HTML primary lives in the monitor-internal root (`$CLAUDED_DOCS_HTML_ROOT`, slug-based filename). Agent-only records carry a token-optimized body (`md`/`yaml`/`json`/`txt`). No MD companion is generated for HTML primaries. The wiki domain is a permanent exception to this policy (the wiki is an Atrium-internal, git-ignored, LLM-only markdown store at `~/.glass-atrium/wiki/` managed by the wiki daemon — see `scope-wiki.md`).
 
 - **Step 1 — managed docs (in `monitor.ClaudedDoc` table)**: call `DELETE /api/clauded-docs/:id`.
   - Route handler deletes the DB row first (atomic `DELETE … RETURNING`), then removes the HTML primary file as best-effort FS cleanup — an unlink failure is logged but the delete still reports success (the DB row is the SoT for existence; orphan files are recoverable via a sweep), so it is NOT a single joint DB+FS transaction.
@@ -1285,8 +1282,7 @@ The orchestrator oversees document-lifecycle completion (`doc_status` transition
      - PRESENCE-only, never correctness (sibling to item 0).
      - Format + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet.
 
-  - Copyable skeleton: `### Pipeline Acceptance Criteria` → "In-script verify-stage".
-  - Simple-plan workflows are exempt (inherit the Stage-2 simple-task carve-out).
+  Copyable skeleton: `### Pipeline Acceptance Criteria` → "In-script verify-stage". Simple-plan workflows are exempt (inherit the Stage-2 simple-task carve-out).
 - **Pre-verify Discovery `dev-*` order guard (ultracode)**: a `dev-*` used for Discovery/Design analysis positioned BEFORE the `glass-atrium-qa-code-reviewer` verify-spawn is a declared-impl-type token preceding every reviewer under the declaration contract (`### Pipeline Acceptance Criteria` → "In-script verify-stage") → `block-order` (a legitimate Discovery/Design phase, NOT the implement stage).
   - Fix: a NON-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) OR a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
   - Honor-system-primary framing unchanged; the exit-2 `block-order` is the genuine mechanical block.
