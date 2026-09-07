@@ -26,7 +26,6 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 ROSTER_LIB="${GA}/scripts/lib/recovery-repos.sh"
 SNAPSHOT="${GA}/scripts/snapshot-live-repos.sh"
-DOCTOR="${GA}/lib/ga-doctor.sh"
 PROBE='ga-probe-repo'
 
 setup() {
