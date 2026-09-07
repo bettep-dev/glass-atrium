@@ -21,7 +21,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { promises as fs } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -189,8 +189,8 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-async function getInheritRosterMc(): Promise<Record<string, boolean>> {
-  const src = await fs.readFile(MC_SRC, "utf8");
+function getInheritRosterMc(): Record<string, boolean> {
+  const src = readFileSync(MC_SRC, "utf8");
   const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
   assert.ok(block, "DOMAIN_META_MC declaration located in model-config.jsx");
   const roster: Record<string, boolean> = {};
@@ -208,11 +208,11 @@ test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected 
   assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
 });
 
-test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", async () => {
+test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", () => {
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
   // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
-  const roster = await getInheritRosterMc();
+  const roster = getInheritRosterMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
     const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
