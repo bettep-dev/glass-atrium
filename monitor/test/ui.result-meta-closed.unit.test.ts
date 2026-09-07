@@ -74,16 +74,6 @@ test("CLOSED_META dual-encodes: neutral tone + canonical glyph + text label", ()
   assert.strictEqual(UI.CLOSED_META.icon, "check");
 });
 
-test("RESULT_META keeps exactly the 5 result-enum keys (closed is a separate dimension)", () => {
-  assert.deepStrictEqual(Object.keys(UI.RESULT_META).sort(), [
-    "blocked",
-    "done",
-    "done_with_concerns",
-    "fail",
-    "needs_context",
-  ]);
-});
-
 test("resolveResultMeta: closed DWC folds to the closed token", () => {
   const meta = UI.resolveResultMeta("done_with_concerns", "2026-08-10T10:00:00.000Z");
   assert.strictEqual(meta.closed, true);

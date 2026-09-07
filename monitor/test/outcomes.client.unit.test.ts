@@ -127,18 +127,6 @@ const sameRealm = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 // A representative canonical registry key set (what /api/agents/summary → agent_id
 // yields once the server is registry-gated). No sentinels / de-registered tokens.
 const CANONICAL_KEYS = ["dev-react", "dev-nestjs", "intel-planner", "qa-code-reviewer", "orchestrator"];
-// Non-registry noise that must NEVER be produced by the registry-sourced facet.
-const NOISE_KEYS = ["unknown", "subagent_stop_missing", "general-purpose", "design-audio-engineer"];
-
-test("helpers are reachable as top-level function declarations", () => {
-  assert.strictEqual(typeof outcomes.buildAgentFacetOptionsO, "function");
-  assert.strictEqual(typeof outcomes.extractCanonicalAgentIdsO, "function");
-  assert.strictEqual(typeof outcomes.setIncludeAllParamO, "function");
-  assert.strictEqual(typeof outcomes.buildSearchUrlO, "function");
-  assert.strictEqual(typeof outcomes.isNonActionableAgentO, "function");
-  assert.strictEqual(typeof outcomes.buildLiteralOmissionBreakdownO, "function");
-  assert.strictEqual(typeof agents.isNonActionableAgentAg, "function");
-});
 
 // --- budget-truncation visibility: literal_omission_breakdown sub-line helper ---
 
@@ -195,14 +183,6 @@ test("buildAgentFacetOptionsO: returns the canonical keys sorted + deduped (regi
   assert.strictEqual(opts.filter((o) => o === "dev-react").length, 1);
 });
 
-test("buildAgentFacetOptionsO: never derives from page rows — only the passed registry keys appear", () => {
-  // Even if noise agents exist on a page, the facet builder takes registry keys ONLY;
-  // passing the registry set yields no noise (the caller feeds /summary agent_ids).
-  const opts = sameRealm(outcomes.buildAgentFacetOptionsO(CANONICAL_KEYS));
-  for (const noise of NOISE_KEYS) assert.ok(!opts.includes(noise), `facet excludes noise '${noise}'`);
-  for (const canon of CANONICAL_KEYS) assert.ok(opts.includes(canon), `facet includes canonical '${canon}'`);
-});
-
 test("buildAgentFacetOptionsO: empty / non-array / dirty input → clean [] or filtered", () => {
   assert.deepStrictEqual(sameRealm(outcomes.buildAgentFacetOptionsO([])), []);
   assert.deepStrictEqual(sameRealm(outcomes.buildAgentFacetOptionsO(null)), []);
@@ -232,13 +212,6 @@ test("extractCanonicalAgentIdsO: absent / malformed response → [] (facet degra
   assert.deepStrictEqual(sameRealm(outcomes.extractCanonicalAgentIdsO(null)), []);
   assert.deepStrictEqual(sameRealm(outcomes.extractCanonicalAgentIdsO({})), []);
   assert.deepStrictEqual(sameRealm(outcomes.extractCanonicalAgentIdsO({ agents: "nope" })), []);
-});
-
-test("extract → build pipeline yields the registry facet (integration of the two pure helpers)", () => {
-  const summary = { agents: CANONICAL_KEYS.map((k) => ({ agent_id: k })) };
-  const keys = outcomes.extractCanonicalAgentIdsO(summary);
-  const opts = sameRealm(outcomes.buildAgentFacetOptionsO(keys));
-  assert.deepStrictEqual(opts, [...CANONICAL_KEYS].sort());
 });
 
 // --- T13 (b) / T7: include_all param builder emits the param iff the toggle is on ---

@@ -32,7 +32,7 @@ import { chromium, type Browser } from "playwright";
 import { EXPORT_SCREEN, renderSelfContainedHtml } from "../src/server/clauded-docs/html-export.js";
 import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
 // 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
-// index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.tokens.test.ts 소유.
+// index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.contract.test.ts 소유.
 import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
