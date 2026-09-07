@@ -66,6 +66,9 @@ _EXIT_UNSUPPORTED_TOKEN = 6
 _COMPOSED = "composed:"
 _DECLINED = "declined:"
 _PROVENANCE_COLUMN = "apply_status_provenance"
+# The composable set, stated here independently of the helper. The parity check below compares
+# every declaration against THIS literal, never against another declaration.
+_COMPOSABLE_TOKENS = frozenset({"ok", "apply_failed", _UNAVAILABLE})
 
 def _make_env(tmp_path: Path, *, provenance_column: bool) -> dict[str, str]:
     stub.create_psycopg_package(tmp_path)
@@ -100,6 +103,18 @@ def pg_shim_premigration(tmp_path: Path) -> dict[str, str]:
     applied — and the update path applies none, so it is reachable on every machine.
     """
     return _make_env(tmp_path, provenance_column=False)
+
+
+def _fresh(tmp_path: Path, slug: str, *, provenance_column: bool = True) -> dict[str, str]:
+    """A shim env in its own subdir, one per iteration of a folded sweep.
+
+    A folded sweep runs its whole table inside one test, so each row needs the fresh database
+    parametrize used to hand it — a shared one accumulates run rows and the second iteration
+    reads the first one's.
+    """
+    env_dir = tmp_path / slug
+    env_dir.mkdir()
+    return _make_env(env_dir, provenance_column=provenance_column)
 
 
 def _seed(env: dict[str, str], status: str) -> None:
@@ -163,30 +178,28 @@ def _compose(env: dict[str, str], apply_status: str):
 _GENERATION_VERDICTS = ["quota_exceeded", "partial", "error", "missing", "stale"]
 
 
-@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
-def test_when_generation_failed_then_apply_failure_preserves_its_verdict(
-    pg_shim: dict[str, str], generation_verdict: str
-):
+def test_when_generation_failed_then_apply_failure_preserves_its_verdict(tmp_path: Path):
     # The erasure this op exists to prevent: a plain overwrite reports the apply
     # stage's verdict over a generation verdict that is strictly more informative.
-    _seed(pg_shim, generation_verdict)
+    for verdict in _GENERATION_VERDICTS:
+        env = _fresh(tmp_path, "applyfail_%s" % verdict)
+        _seed(env, verdict)
 
-    result = _compose(pg_shim, "apply_failed")
+        result = _compose(env, "apply_failed")
 
-    assert result.returncode == 0
-    assert _get_status(pg_shim) == generation_verdict
+        assert result.returncode == 0, verdict
+        assert _get_status(env) == verdict
 
 
-@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
-def test_when_generation_failed_then_clean_apply_preserves_its_verdict(
-    pg_shim: dict[str, str], generation_verdict: str
-):
-    _seed(pg_shim, generation_verdict)
+def test_when_generation_failed_then_clean_apply_preserves_its_verdict(tmp_path: Path):
+    for verdict in _GENERATION_VERDICTS:
+        env = _fresh(tmp_path, "cleanapply_%s" % verdict)
+        _seed(env, verdict)
 
-    result = _compose(pg_shim, "ok")
+        result = _compose(env, "ok")
 
-    assert result.returncode == 0
-    assert _get_status(pg_shim) == generation_verdict
+        assert result.returncode == 0, verdict
+        assert _get_status(env) == verdict
 
 
 def test_when_row_is_ok_then_apply_failure_composes_in(pg_shim: dict[str, str]):
@@ -229,16 +242,15 @@ def test_when_row_is_ok_then_unavailability_composes_in(pg_shim: dict[str, str])
     assert _get_status(pg_shim) == _UNAVAILABLE
 
 
-@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
-def test_when_generation_failed_then_unavailability_preserves_its_verdict(
-    pg_shim: dict[str, str], generation_verdict: str
-):
-    _seed(pg_shim, generation_verdict)
+def test_when_generation_failed_then_unavailability_preserves_its_verdict(tmp_path: Path):
+    for verdict in _GENERATION_VERDICTS:
+        env = _fresh(tmp_path, "unavail_%s" % verdict)
+        _seed(env, verdict)
 
-    result = _compose(pg_shim, _UNAVAILABLE)
+        result = _compose(env, _UNAVAILABLE)
 
-    assert result.returncode == 0
-    assert _get_status(pg_shim) == generation_verdict
+        assert result.returncode == 0, verdict
+        assert _get_status(env) == verdict
 
 
 @pytest.mark.parametrize(
@@ -279,26 +291,26 @@ def test_when_token_is_unsupported_then_row_unchanged_and_refusal_is_named(
     assert "pg_write=ok" not in result.stderr
 
 
-@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
 def test_when_the_compose_is_declined_then_the_decline_names_itself_on_every_channel(
-    pg_shim: dict[str, str], generation_verdict: str
+    tmp_path: Path,
 ):
-    # The silence this task removes. The row matches on the preserving arm too, so the
-    # matched-nothing guard cannot fire and a driver reading only the exit code sees a clean
-    # compose that recorded nothing. Durable row, driver-read stdout, operator-read stderr.
-    _seed(pg_shim, generation_verdict)
+    # The silence this pins. The row matches on the preserving arm too, so the matched-nothing
+    # guard cannot fire and a driver reading only the exit code sees a clean compose that
+    # recorded nothing. Durable row, driver-read stdout, operator-read stderr.
+    for verdict in _GENERATION_VERDICTS:
+        env = _fresh(tmp_path, "declined_%s" % verdict)
+        _seed(env, verdict)
 
-    result = _compose(pg_shim, "ok")
+        result = _compose(env, "ok")
 
-    assert result.returncode == 0
-    assert _get_provenance(pg_shim) == "%s%s" % (_DECLINED, generation_verdict)
-    assert _stdout_provenance(result) == "%s%s" % (_DECLINED, generation_verdict)
-    assert "declined apply_status=ok" in result.stderr
-    assert generation_verdict in result.stderr
-    assert "apply health NOT recorded" in result.stderr
-    # The other polarity, restated where the decline is asserted: naming the decline must not
-    # start overwriting the verdict it declined.
-    assert _get_status(pg_shim) == generation_verdict
+        assert result.returncode == 0, verdict
+        assert _get_provenance(env) == "%s%s" % (_DECLINED, verdict)
+        assert _stdout_provenance(result) == "%s%s" % (_DECLINED, verdict)
+        assert "declined apply_status=ok" in result.stderr, verdict
+        assert verdict in result.stderr
+        assert "apply health NOT recorded" in result.stderr, verdict
+        # The other polarity: naming the decline must not start overwriting what it declined.
+        assert _get_status(env) == verdict
 
 
 @pytest.mark.parametrize("apply_status", ["ok", "apply_failed", _UNAVAILABLE])
@@ -317,20 +329,22 @@ def test_when_the_compose_lands_then_provenance_names_the_composed_token(
     assert "declined" not in result.stderr
 
 
-@pytest.mark.parametrize("seeded", ["ok", "partial"])
 def test_when_provenance_is_reported_then_the_first_stdout_line_stays_a_bare_integer(
-    pg_shim: dict[str, str], seeded: str
+    tmp_path: Path,
 ):
     # Every caller of every op parses stdout line 1 positionally as elapsed_ms, so provenance
     # is a trailer or it is a breaking change to callers unrelated to this op.
-    _seed(pg_shim, seeded)
+    # Both polarities: a composing seed and a declining one each report a trailer.
+    for seeded in ["ok", "partial"]:
+        env = _fresh(tmp_path, "trailer_%s" % seeded)
+        _seed(env, seeded)
 
-    result = _compose(pg_shim, "ok")
+        result = _compose(env, "ok")
 
-    lines = result.stdout.splitlines()
-    assert result.returncode == 0
-    assert int(lines[0]) >= 0
-    assert lines[1].startswith("provenance=")
+        lines = result.stdout.splitlines()
+        assert result.returncode == 0, seeded
+        assert int(lines[0]) >= 0, seeded
+        assert lines[1].startswith("provenance="), seeded
 
 
 def test_when_no_run_row_exists_then_no_provenance_is_reported(pg_shim: dict[str, str]):
@@ -354,67 +368,29 @@ def test_when_the_token_is_unsupported_then_no_provenance_is_written(pg_shim: di
     assert _stdout_provenance(result) is None
 
 
-def test_when_provenance_is_declared_then_source_column_and_schema_name_the_same_thing():
-    # A prefix or column name that drifts between the SQL, the schema and the migration leaves
-    # the write silently landing nowhere — the same contract-lying-about-itself shape the token
-    # declaration case pins, on the surface this task adds.
-    source = _HELPER.read_text(encoding="utf-8")
-
-    assert 'COMPOSED_PREFIX = "%s"' % _COMPOSED in source
-    assert 'DECLINED_PREFIX = "%s"' % _DECLINED in source
-    assert "'%s' || " % _COMPOSED in source
-    assert "'%s' || " % _DECLINED in source
-
-    # Every CASE arm must read the same composable set — the status arm, the provenance arm and
-    # the degraded statement's status arm. A widened one and a stale one would compose a status
-    # while reporting it declined, or compose different sets on either side of the migration.
-    arms = re.findall(r"WHEN status IN \(([^)]*)\)", source)
-    assert len(arms) == 3
-    assert len({frozenset(re.findall(r"'([^']+)'", arm)) for arm in arms}) == 1
-
-    schema = (_SCRIPTS_ROOT.parent / "monitor" / "prisma" / "schema.prisma").read_text(
-        encoding="utf-8"
-    )
-    migrations = _SCRIPTS_ROOT.parent / "monitor" / "prisma" / "migrations"
-    migration_sql = "\n".join(
-        path.read_text(encoding="utf-8") for path in migrations.rglob("migration.sql")
-    )
-    assert _PROVENANCE_COLUMN in source
-    assert '@map("%s")' % _PROVENANCE_COLUMN in schema
-    assert _PROVENANCE_COLUMN in migration_sql
-
-    # The degradation notice names a migration by directory name; a rename would leave the one
-    # stderr line an operator acts on pointing at nothing.
-    named = re.search(r'PROVENANCE_MIGRATION = "([^"]+)"', source)
-    assert named, "PROVENANCE_MIGRATION declaration not found"
-    assert (migrations / named.group(1)).is_dir()
-    assert _PROVENANCE_COLUMN in (migrations / named.group(1) / "migration.sql").read_text(
-        encoding="utf-8"
-    )
+_PREMIGRATION_COMPOSITIONS = [
+    ("ok", "apply_failed", "apply_failed"),   # the composing arm still composes
+    ("apply_failed", "ok", "ok"),
+    ("partial", "ok", "partial"),             # the preserving arm still preserves
+    ("quota_exceeded", "apply_failed", "quota_exceeded"),
+]
 
 
-@pytest.mark.parametrize(
-    ("seeded", "composed", "expected"),
-    [
-        ("ok", "apply_failed", "apply_failed"),   # the composing arm still composes
-        ("apply_failed", "ok", "ok"),
-        ("partial", "ok", "partial"),             # the preserving arm still preserves
-        ("quota_exceeded", "apply_failed", "quota_exceeded"),
-    ],
-)
 def test_when_the_provenance_column_is_absent_then_the_status_composition_is_unchanged(
-    pg_shim_premigration: dict[str, str], seeded: str, composed: str, expected: str
+    tmp_path: Path,
 ):
     # The inversion this degradation exists to prevent: an unconditional provenance write turns a
     # WORKING compose into a hard failure every cycle on any install whose DB predates the
     # migration — and the update path runs none. Pre-migration is old behaviour plus a notice.
-    _seed(pg_shim_premigration, seeded)
+    for seeded, composed, expected in _PREMIGRATION_COMPOSITIONS:
+        env = _fresh(tmp_path, "premig_%s_%s" % (seeded, composed), provenance_column=False)
+        _seed(env, seeded)
 
-    result = _compose(pg_shim_premigration, composed)
+        result = _compose(env, composed)
 
-    assert result.returncode == 0
-    assert _get_status(pg_shim_premigration) == expected
-    assert "pg_write=ok" in result.stderr
+        assert result.returncode == 0, (seeded, composed)
+        assert _get_status(env) == expected
+        assert "pg_write=ok" in result.stderr, (seeded, composed)
 
 
 def test_when_the_provenance_column_is_absent_then_the_notice_names_the_migration(
@@ -432,19 +408,18 @@ def test_when_the_provenance_column_is_absent_then_the_notice_names_the_migratio
     assert "20260803000001_add_daemon_run_apply_status_provenance" in result.stderr
 
 
-@pytest.mark.parametrize("seeded", ["ok", "partial"])
-def test_when_the_provenance_column_is_absent_then_no_provenance_is_reported(
-    pg_shim_premigration: dict[str, str], seeded: str
-):
+def test_when_the_provenance_column_is_absent_then_no_provenance_is_reported(tmp_path: Path):
     # The degraded statement returns the composed STATUS; reporting it as provenance would hand
     # the driver a value indistinguishable from a stored one. Line 1 stays the bare integer.
-    _seed(pg_shim_premigration, seeded)
+    for seeded in ["ok", "partial"]:
+        env = _fresh(tmp_path, "premigquiet_%s" % seeded, provenance_column=False)
+        _seed(env, seeded)
 
-    result = _compose(pg_shim_premigration, "ok")
+        result = _compose(env, "ok")
 
-    assert result.returncode == 0
-    assert _stdout_provenance(result) is None
-    assert int(result.stdout.splitlines()[0]) >= 0
+        assert result.returncode == 0, seeded
+        assert _stdout_provenance(result) is None, seeded
+        assert int(result.stdout.splitlines()[0]) >= 0, seeded
 
 
 def test_when_the_provenance_column_is_absent_and_no_row_exists_then_silence_is_still_reported(
@@ -476,23 +451,37 @@ def test_when_the_column_is_absent_then_an_unrelated_fault_is_not_degraded_away(
     assert "DEGRADED" not in result.stderr
 
 
-def test_when_tokens_are_declared_then_every_declaration_names_the_same_set():
-    # A third arm landing in one place only leaves the contract lying about itself —
-    # the CLI header and the docstring are what a caller and a reader actually read.
+def test_when_the_contract_is_declared_then_every_surface_names_the_same_set():
+    """One data-driven parity check over the composable set and the provenance vocabulary.
+
+    A token or a name declared in one place only leaves the contract lying about itself. Seven
+    surfaces carry a copy — the refusal gate's constant, three SQL CASE arms, the CLI header,
+    the compose docstring, the prisma column mapping and the migration the degradation notice
+    names — and a copy that drifts sends the write somewhere nobody is looking. Each is
+    compared against _COMPOSABLE_TOKENS, a set this file states independently of the helper,
+    so dropping a member goes red instead of moving every surface at once in silent agreement.
+    """
     source = _HELPER.read_text(encoding="utf-8")
 
     declared = re.search(r"APPLY_STATUS_TOKENS = \(([^)]*)\)", source)
     assert declared, "APPLY_STATUS_TOKENS declaration not found"
-    tokens = set(re.findall(r'"([^"]+)"', declared.group(1)))
-    assert _UNAVAILABLE in tokens
-
-    sql_arm = re.search(r"WHEN status IN \(([^)]*)\)", source)
-    assert sql_arm, "composable-set SQL membership list not found"
-    assert set(re.findall(r"'([^']+)'", sql_arm.group(1))) == tokens
+    tokens = frozenset(re.findall(r'"([^"]+)"', declared.group(1)))
+    # Anti-self-reference anchor: the scraped SoT is pinned to the test-side literal first.
+    assert tokens == _COMPOSABLE_TOKENS, "APPLY_STATUS_TOKENS"
 
     header = re.search(r'"apply_status": "([^"]+)"', source)
     assert header, "CLI-contract header apply_status line not found"
-    assert set(header.group(1).split("|")) == tokens
+    # Three arms, no fewer: the status arm, the provenance arm and the degraded status arm. A
+    # widened one and a stale one would compose a status while reporting it declined, or
+    # compose different sets on either side of the migration.
+    arms = re.findall(r"WHEN status IN \(([^)]*)\)", source)
+    assert len(arms) == 3, "WHEN status IN arm count"
+
+    surfaces = {"cli_header": frozenset(header.group(1).split("|"))}
+    for index, arm in enumerate(arms):
+        surfaces["sql_arm_%d" % index] = frozenset(re.findall(r"'([^']+)'", arm))
+    for name in sorted(surfaces):
+        assert surfaces[name] == _COMPOSABLE_TOKENS, name
 
     docstring = re.search(
         r'def compose_daemon_run_apply_status\([^)]*\):\n    """(.*?)"""',
@@ -500,5 +489,28 @@ def test_when_tokens_are_declared_then_every_declaration_names_the_same_set():
         re.DOTALL,
     )
     assert docstring, "compose docstring not found"
-    for token in tokens:
-        assert "'%s'" % token in docstring.group(1)
+    for token in sorted(_COMPOSABLE_TOKENS):
+        assert "'%s'" % token in docstring.group(1), "docstring: %s" % token
+
+    # Provenance vocabulary: a prefix or column name that drifts between the SQL, the schema
+    # and the migration leaves the write silently landing nowhere.
+    assert 'COMPOSED_PREFIX = "%s"' % _COMPOSED in source
+    assert 'DECLINED_PREFIX = "%s"' % _DECLINED in source
+    assert "'%s' || " % _COMPOSED in source
+    assert "'%s' || " % _DECLINED in source
+    assert _PROVENANCE_COLUMN in source
+
+    schema = (_SCRIPTS_ROOT.parent / "monitor" / "prisma" / "schema.prisma").read_text(
+        encoding="utf-8"
+    )
+    assert '@map("%s")' % _PROVENANCE_COLUMN in schema, "prisma @map"
+
+    # The degradation notice names a migration by directory name; a rename would leave the one
+    # stderr line an operator acts on pointing at nothing.
+    migrations = _SCRIPTS_ROOT.parent / "monitor" / "prisma" / "migrations"
+    named = re.search(r'PROVENANCE_MIGRATION = "([^"]+)"', source)
+    assert named, "PROVENANCE_MIGRATION declaration not found"
+    assert (migrations / named.group(1)).is_dir(), "PROVENANCE_MIGRATION directory"
+    assert _PROVENANCE_COLUMN in (migrations / named.group(1) / "migration.sql").read_text(
+        encoding="utf-8"
+    ), "PROVENANCE_MIGRATION migration.sql"
