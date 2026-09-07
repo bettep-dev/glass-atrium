@@ -108,6 +108,17 @@ function withFixture(body: DiagramTypes, run: (loaded: DiagramTypes) => void): v
   withTempJson(body, (path) => run(loadDiagramTypes(path)));
 }
 
+/** 주입용 최소 선언 — 각 시험은 자기가 재는 축만 덮어써서 그 축이 한눈에 드러남. */
+function buildFixtureTypes(overrides: Partial<DiagramTypes> = {}): DiagramTypes {
+  return {
+    adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
+    excluded: [],
+    exclusionReason: "fixture",
+    flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
+    ...overrides,
+  };
+}
+
 test("선언 파일 불변식 — 로더가 검사하지 않는 형태·서로소·유일성·방향 정책", () => {
   const entries = [...declaration.adopted, ...declaration.excluded];
   // 비공허성 — 빈 선언이면 아래 순회가 전부 조용히 통과함.
@@ -215,12 +226,7 @@ test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에 �
   assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), []);
 
   withFixture(
-    {
-      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
-      excluded: [{ type: "erDiagram", keywords: ["erDiagram"] }],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
-    },
+    buildFixtureTypes({ excluded: [{ type: "erDiagram", keywords: ["erDiagram"] }] }),
     (injected) => {
       assertNoticeTypes(
         validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
@@ -237,12 +243,7 @@ test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에서
   assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), ["pie"]);
 
   withFixture(
-    {
-      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
-    },
+    buildFixtureTypes({ excluded: [] }),
     (injected) => {
       assertNoticeTypes(
         validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
@@ -267,26 +268,15 @@ test("검증기가 금지 방향 목록을 실제로 읽음 — 목록을 옮기
   assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }), ["RL"]);
   assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }), []);
 
-  const adopted = [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }];
   withFixture(
-    {
-      adopted,
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB", "RL"], forbidden: [] },
-    },
+    buildFixtureTypes({ flowDirection: { recommended: "LR", allowed: ["LR", "TB", "RL"], forbidden: [] } }),
     (injected) => {
       assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }, D8_THRESHOLDS, injected), []);
     },
   );
 
   withFixture(
-    {
-      adopted,
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "TB", allowed: ["TB"], forbidden: ["LR", "RL", "BT"] },
-    },
+    buildFixtureTypes({ flowDirection: { recommended: "TB", allowed: ["TB"], forbidden: ["LR", "RL", "BT"] } }),
     (injected) => {
       assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }, D8_THRESHOLDS, injected), ["LR"]);
     },

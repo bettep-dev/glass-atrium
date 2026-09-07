@@ -54,8 +54,8 @@ test("AC-10 the live drift consumption contract holds across route, ArchDiff and
     "contract row membership changed — a dropped or swapped row silently unpins the live drift contract",
   );
   // Anti-vacuity: an empty source would satisfy every loop below.
-  for (const artifact of [ROUTE_SRC, DRIFT_SRC, SKILL_SRC]) {
-    assert.ok(artifact.length > 0, "contract artifact must be readable and non-empty");
+  for (const src of [ROUTE_SRC, DRIFT_SRC, SKILL_SRC]) {
+    assert.ok(src.length > 0, "contract artifact source must be readable and non-empty");
   }
 
   for (const { artifact, src, pattern } of CONTRACT_ROWS) {
