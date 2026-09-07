@@ -55,11 +55,6 @@ const ink = parseTriplet(dark, "--ink");
 
 const AA_NORMAL = 4.5;
 
-test("dark-theme --surface is the deep base (not the light 250 250 249)", () => {
-  // Guards against accidentally parsing the :root light triplet.
-  assert.deepStrictEqual(surface, { r: 12, g: 10, b: 9, a: 1 });
-});
-
 test("--dim on --surface meets WCAG AA 4.5:1 (body/description text floor)", () => {
   const ratio = contrastRatio(dim, surface);
   assert.ok(

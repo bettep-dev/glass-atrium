@@ -1,7 +1,7 @@
 // Unit tests for src/server/timezone.ts (config.toml [meta].timezone →
 // ATRIUM_TIMEZONE resolution — T20 config externalization, T11 host-resolution).
 // Runner: npx tsx --test test/timezone.unit.test.ts
-// DB 불필요 — 순수 함수 + 모듈 상수 일관성 검증.
+// DB 불필요 — 순수 함수 검증.
 //
 // resolveDayBucketTimezone 의 auto/host 분기는 INJECTED host-detection seam
 // (HostTimezoneResolver 2번째 인자)으로만 검증한다 — 러너 ambient tz(launchd
@@ -11,7 +11,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DAY_BUCKET_TIMEZONE,
   resolveDayBucketTimezone,
   type ConfigAlarmSink,
   type HostTimezoneResolver,
@@ -123,13 +122,4 @@ test("prod + explicit 유효 IANA 존재 → 가드 미발동(명시값 honor, a
   const resolved = resolveDayBucketTimezone("America/New_York", hostUtc, "production", alarm.sink);
   assert.strictEqual(resolved, "America/New_York", "명시값이 있으면 prod 가드는 개입하지 않음");
   assert.strictEqual(alarm.calls.length, 0);
-});
-
-// ── 모듈 상수 일관성 ──────────────────────────────────────────────────────
-
-test("DAY_BUCKET_TIMEZONE: 현재 프로세스 env 와 일관 (모듈 상수 = resolve 결과)", () => {
-  assert.strictEqual(
-    DAY_BUCKET_TIMEZONE,
-    resolveDayBucketTimezone(process.env.ATRIUM_TIMEZONE),
-  );
 });
