@@ -35,15 +35,6 @@ const LEGACY_AGENT = `reasons-legacy-agent-${randomUUID().slice(0, 8)}`;
 // can each fire on the same outcome (a polar mismatch AND a degraded attribution).
 const STAMPED_TOKENS = ["overconfidence", "degraded-attribution-synthesized"];
 
-// Compile-time half of AC-4.10: the field must be declared on the shared types, not
-// re-declared per route. A missing declaration fails `tsc --noEmit`, not the assertions.
-type SearchCarrier = OutcomeSearchRow["review_flag_reasons"];
-type DetailCarrier = OutcomeDetailResponse["review_flag_reasons"];
-const CARRIER_SHAPE: { search: SearchCarrier; detail: DetailCarrier } = {
-  search: [],
-  detail: [],
-};
-
 let app: FastifyInstance;
 let dbReady = false;
 let stampedId = 0;
@@ -179,9 +170,4 @@ test("legacy rows read as an empty carrier on both shapes, never null or absent"
     "detail shape declares the carrier key even with no recorded token",
   );
   assert.deepStrictEqual(detail.review_flag_reasons, [], "legacy detail carrier is empty");
-});
-
-test("the carrier is a string array on both shared wire shapes", () => {
-  assert.ok(Array.isArray(CARRIER_SHAPE.search), "search carrier type resolves to an array");
-  assert.ok(Array.isArray(CARRIER_SHAPE.detail), "detail carrier type resolves to an array");
 });

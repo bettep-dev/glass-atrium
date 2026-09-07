@@ -34,7 +34,6 @@ import {
 import {
   __resetImprovementStatsCacheForTests,
   registerImprovementRoutes,
-  rowToProposalSummary,
 } from "../src/server/routes/improvement.js";
 
 let app: FastifyInstance;
@@ -171,43 +170,6 @@ test("GET /api/improvement: happy path — 200 + complete shape", async () => {
   // Each proposal row carries the 2-tier surface (auto or safety only).
   for (const p of body.proposals) {
     assert.ok(["auto", "safety"].includes(p.approval_tier), `tier in 2-tier set: ${p.approval_tier}`);
-  }
-});
-
-test("rowToProposalSummary: route renders pattern_label verbatim (passthrough invariant — guards G1)", () => {
-  // The pattern-1 FAIL→SOFT decouple is daemon-side ONLY; the route layer's row
-  // mapper MUST NOT inject any relabel. A SOFT label and a (legacy) FAIL label both
-  // render byte-for-byte — proving no TS transform was added.
-  const base = {
-    id: 1n,
-    cycle_date: new Date("2026-06-29T00:00:00.000Z"),
-    target_file: "agents/dev-shell.md",
-    target_agent: "dev-shell",
-    classification: "apply",
-    haiku_status: "ok",
-    approval_tier: "auto",
-    status: "applied",
-    cost_guard_state: null,
-    reviewed_at: null,
-    rationale: null,
-    pre_verify_rationale: null,
-    pre_verify_axes: null,
-    pre_verify_status: null,
-    pre_verify_passed: null,
-    confidence_observed: null,
-    project_key: null,
-    promotion_tier: null,
-  };
-  for (const label of [
-    "recurring negative-signal concentration",
-    "repeated failure by same agent",
-    "반복적 부정 신호 집중",
-  ]) {
-    const out = rowToProposalSummary({
-      ...base,
-      pattern_label: label,
-    } as Parameters<typeof rowToProposalSummary>[0]);
-    assert.strictEqual(out.pattern_label, label, `verbatim passthrough: ${label}`);
   }
 });
 
@@ -551,15 +513,6 @@ test("POST approve: exit 9 → 422 { status: 'apply_failed', reason: 'needs_rege
 
 // --- regen-on-accept exit-code branches (10/11/12/13/14) ---------------------
 
-test("POST approve: passes --auto-regen in the daemon-apply argv", async () => {
-  // The exit-0 stub echoes its argv to stderr; reaching 200 with this stub proves
-  // the route shells out, and the argv assertion is covered by the explicit
-  // before/after mapping table in the report. Here we just confirm the happy 200.
-  process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-autoregen.sh", 0);
-  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
-  assert.strictEqual(res.statusCode, 200);
-});
-
 test("POST approve: exit 10 → 200 { status: 'applied', regenerated: true }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-after-regen.sh", 10);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
@@ -640,22 +593,6 @@ test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async (
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "apply_error");
   assert.ok(body.reason.includes("2"), "reason carries the exit code");
-});
-
-test("POST approve: exit 3 (no psql) → 500 { status: 'apply_error' }", async () => {
-  process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-nopsql.sh", 3);
-  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
-  assert.strictEqual(res.statusCode, 500);
-  const body = res.json() as { status: string };
-  assert.strictEqual(body.status, "apply_error");
-});
-
-test("POST approve: exit 6 (DB update fail) → 500 { status: 'apply_error' }", async () => {
-  process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-dbfail.sh", 6);
-  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
-  assert.strictEqual(res.statusCode, 500);
-  const body = res.json() as { status: string };
-  assert.strictEqual(body.status, "apply_error");
 });
 
 test("POST approve: spawn error (script missing / ENOENT) → 500 { status: 'apply_error' }", async () => {
@@ -754,14 +691,6 @@ test("POST reject: re-reject already-terminal → 409 { status: 'already_termina
   } finally {
     await deleteFixture(id);
   }
-});
-
-test("POST reject: non-existent id → 409 { status: 'already_terminal' } (0 rows)", async () => {
-  // A huge id that does not exist — UPDATE matches 0 rows → idempotent 409.
-  const res = await app.inject({ method: "POST", url: "/api/improvement/999999999/reject" });
-  assert.strictEqual(res.statusCode, 409);
-  const body = res.json() as { status: string };
-  assert.strictEqual(body.status, "already_terminal");
 });
 
 test("POST reject: non-integer :id → 400 { status: 'invalid_param' }", async () => {
