@@ -110,9 +110,7 @@ function daemonRow(name: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-// The full roster the daemon cards expect. Named once: a case that overrides one daemon
-// still needs the other three present, and re-listing them per case is what lets a case
-// drift out of step with this list.
+// The full roster the cards expect, named once — a per-case re-listing is what drifts out of step.
 const DAEMON_NAMES = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
 
 function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
@@ -125,9 +123,10 @@ function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
   };
 }
 
-// The healthy roster with one daemon carrying overrides — the shape every single-daemon
-// case needs. A case that deliberately OMITS a row builds its list explicitly instead:
-// there the omission is the subject, so it has to stay visible at the case.
+/**
+ * The healthy roster with one daemon carrying overrides — the shape every single-daemon case needs.
+ * A case that deliberately OMITS a row builds its list explicitly: there the omission is the subject.
+ */
 function statesWithDaemon(name: string, overrides: Record<string, unknown>): HealthStates {
   return allHealthyStates({
     daemonState: ready({
@@ -272,12 +271,9 @@ test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says",
 });
 
 test("AC-T3 count: a row the server calls fresh is never counted stale, however old it looks", () => {
-  // The verdict case above measures the tone path. The KPI stale count is the model's
-  // other consumer of the same verdict, and it reads through isDaemonStale rather than
-  // the tone table — so a threshold table confined to that one function moves this count
-  // while leaving every tone in this file untouched.
-  // Far past any window a daily-cadence daemon could justify holding client-side, and the
-  // server still calls it ok — which is the only word the model may read.
+  // The case above measures the tone path; the KPI stale count is the verdict's other consumer.
+  // The count reads through isDaemonStale, not the tone table — a threshold table confined there moves it alone.
+  // 100_000 minutes is far past any window a client could justify, and the server still calls it ok.
   const tally = tallyCardFacts(statesWithDaemon("autoagent", { staleness_minutes: 100_000 }));
   assert.strictEqual(
     tally.stale,
