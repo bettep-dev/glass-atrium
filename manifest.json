@@ -1436,7 +1436,7 @@
     "scripts/test/audit-cli.bats": "134d263e17884015a7a38d78d4053c7d95e01da132ae94c483907d8b41679eac",
     "scripts/test/audit-test-smells.bats": "cbbf65e28c106ca0b0aa152ca1872397cff23bb35644c92d57b533d22d8be86a",
     "scripts/test/ci-change-filter-coverage.bats": "89939d815f2d2fd7102edd5620662364283e3e36311000705b975f2587ecd552",
-    "scripts/test/config-template-reader-census.bats": "9c3a77e043173708fb41307bba3c535fc4232e831a324527292a11f3d7e4c01e",
+    "scripts/test/config-template-reader-census.bats": "dbd12bcd1bf7c97c3b4569e53b03dde9d2f7f4d03182dedbf229820aaef3ad0d",
     "scripts/test/config-template-reader-census.psv": "8e1352798f887978c2ecdb6e93352a14597dc48ab00cad7a56e7fb171381c2c9",
     "scripts/test/conftest.py": "d67bd6c208c929fb11012e064576a98d23243681b0fa269ff659b1925592f67e",
     "scripts/test/daemon-bootstrap-bind-fail.bats": "fb749abdbf64121b9ef4f7147d8737be89fc61ea1d601652334740fdefd132e9",

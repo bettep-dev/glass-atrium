@@ -3,9 +3,9 @@
 #
 # The template's own header forbids exposing a key with zero consumers, and the template kept
 # violating it because nothing compared the declared key set against the code that reads it. This
-# suite is that comparison: the census file carries one row per key, and a key may be readerless
-# ONLY behind a backlog id naming the item that will wire it — which is what stops the exemption
-# column from becoming a silent pass for dead keys.
+# suite is that comparison: the census file carries one row per key, and every row must name a real
+# reader — the backlog that once justified readerless rows cleared, so a new readerless key must be
+# wired, not parked behind a fresh backlog id.
 #
 # Each row asserts a property the others cannot produce:
 #   AC1  coverage           -> every template key has exactly one census row
