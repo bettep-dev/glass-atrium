@@ -185,7 +185,14 @@ test("POST /html-export: valid ids → 200 application/zip + one .html entry per
       `content-type should be application/zip, got: ${res.headers["content-type"]}`,
     );
     const disposition = res.headers["content-disposition"] as string;
-    assert.ok(typeof disposition === "string" && disposition.startsWith("attachment;"), `attachment disposition: ${String(disposition)}`);
+    // 이 라우트가 스스로 짓는 헤더임 — 단건 라우트의 buildHtmlExportContentDisposition 은 여기를 지나지 않으므로
+    // filename 절을 여기서 재지 않으면 zip 파일 이름은 저장소 어디에서도 잠기지 않는다.
+    // 날짜는 실행일이라 리터럴로 못 박지 않고 이름 짜임새(prefix · YYYY-MM-DD · 확장자)로 잼.
+    assert.match(
+      disposition,
+      /^attachment; filename="clauded-docs-\d{4}-\d{2}-\d{2}\.zip"$/,
+      `zip disposition must name the download file, got: ${String(disposition)}`,
+    );
     // 전건 포함 → X-Included-Count == 요청 수 (클라이언트 부분실패 감지 계약).
     assert.strictEqual(res.headers["x-included-count"], String(ids.length), `X-Included-Count should be ${ids.length}`);
 

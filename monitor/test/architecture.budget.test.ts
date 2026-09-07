@@ -107,6 +107,14 @@ config:
 ---
 ${drawn}`;
 
+/** `class a,b role` 배정에서 role 을 받은 노드 id — classDef 선언이 아니라 실제 배정만 셈. */
+function getClassMembers(mermaid: string, className: string): string[] {
+  return mermaid.split("\n").flatMap((raw) => {
+    const match = raw.trim().match(/^class\s+([A-Za-z0-9_,-]+)\s+(\S+)$/);
+    return match !== null && match[2] === className ? (match[1] as string).split(",") : [];
+  });
+}
+
 test("P1-1 the drawn source carries no %%{init}%% directive — layout and theme come from the shared config", () => {
   const directives = drawn
     .split("\n")
@@ -125,6 +133,29 @@ test("P1-1 the drawn source carries no %%{init}%% directive — layout and theme
   const census = getMermaidCensus(drawn);
   assert.equal(census.nodeCount, 9, "the drawn map counts 9 nodes");
   assert.equal(census.edgeCount, 7, "the drawn map counts 7 edges");
+});
+
+test("P0-2 focal 강조는 희소하고 실재하는 노드에만 붙음 — 배정은 drawn 이 선언한 id 로만 가고 개수는 1~2", () => {
+  // 배정은 콘텐츠지 설정이 아님(위 mermaid_drawn 주석) — 계수 스위트가 노드/엣지만 재므로
+  // 강조가 없는 id 로 미끄러져도, 여럿으로 번져도 예산 판정은 그대로 pass 다.
+  const focal = getClassMembers(drawn, "focal");
+  const drawnIds = new Set(getMermaidCensus(drawn).nodes.map((n) => n.id));
+  assert.ok(focal.length >= 1, "no node carries the focal class — the accent budget is measured on nothing");
+  assert.ok(
+    focal.length <= 2,
+    `focal nodes ${focal.join(", ")} exceed the accent budget of 2 — an accent on many nodes accents nothing`,
+  );
+  for (const id of focal) {
+    assert.ok(
+      drawnIds.has(id),
+      `focal class assigned to '${id}', which the drawn source does not declare — the accent renders on nothing`,
+    );
+  }
+  const lines = drawn.split("\n").map((line) => line.trim());
+  const declaredAt = lines.findIndex((line) => /^classDef\s+focal\s/.test(line));
+  const assignedAt = lines.findIndex((line) => /^class\s+\S+\s+focal$/.test(line));
+  assert.notEqual(declaredAt, -1, "the focal class is assigned but never declared — the assignment styles nothing");
+  assert.ok(declaredAt < assignedAt, "the focal class must be declared before it is assigned");
 });
 
 test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {
@@ -205,6 +236,26 @@ test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source,
   assert.ok(other !== undefined && otherSource !== undefined);
   assert.equal(other.title, otherSource.title);
   assert.equal(other.description, otherSource.description);
+});
+
+test("B2-1 drawn id 집합 ⊆ source id 집합 — 그 차집합이 정확히 omitted_node_ids 원장", () => {
+  // 편집 규칙(source 를 먼저 고치고 drawn 을 그로부터 감축)의 기계적 대응물.
+  // 위 AC-8 은 원장이 이미 이름한 id 만 훑고 AC-9(route) 는 원장을 자기 자신과 대조하므로,
+  // source 를 건너뛴 drawn 전용 노드도 · 원장에서 빠진 누락도 둘 다 그 둘을 그대로 지나감.
+  assert.ok(canonicalSource !== undefined);
+  const sourceIds = new Set(getMermaidCensus(canonicalSource.mermaid_source).nodes.map((n) => n.id));
+  const drawnIds = getMermaidCensus(drawn).nodes.map((n) => n.id);
+  assert.deepEqual(
+    drawnIds.filter((id) => !sourceIds.has(id)),
+    [],
+    "a node is drawn that no source declares — drawn was edited without its source",
+  );
+  const drawnSet = new Set(drawnIds);
+  assert.deepEqual(
+    [...sourceIds].filter((id) => !drawnSet.has(id)),
+    [...CANONICAL_MAP.omitted_node_ids],
+    "the ledger is not source-minus-drawn — an omission goes unrecorded, or a recorded id is not the omitted one",
+  );
 });
 
 test("AC-9 three states come from the ratio band and violations name (metric, measured, cap)", () => {
