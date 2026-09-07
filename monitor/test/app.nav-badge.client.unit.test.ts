@@ -113,7 +113,7 @@ async function loadApp(): Promise<AppSurface> {
 
 const app = await loadApp();
 
-// --- T13a · AC-T13(a): the Health entry point is gone, the map keeps its own ---
+// --- T13a · AC-T13(a): the Health entry point is gone; '#architecture' still resolves ---
 
 test("routing: '#health' gets no alias — the unknown-hash fallback takes it to dashboard", () => {
   app.setHash("#health");

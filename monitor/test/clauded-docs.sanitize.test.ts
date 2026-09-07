@@ -62,6 +62,7 @@ test("sanitizeHtmlBody: jsdelivr 경로 우회 시도 (dist/../../evil) → 제�
   assert.ok(!/evil@1/i.test(out), "path-traversal escape past the mermaid pin must be rejected");
 });
 
+// 이중 방어의 두 번째 축인 viewer 응답 sandbox CSP 는 routes/clauded-docs.ts 책임 — 본 모듈 scope 밖.
 test("sanitizeHtmlBody: non-allowlist <script src> 제거", () => {
   const out = sanitizeHtmlBody(
     '<head><script src="https://evil.example.com/x.js"></script></head>',
@@ -152,12 +153,6 @@ test("sanitizeHtmlBody: style 속성 보존 (인라인 스타일 화이트리스
   const out = sanitizeHtmlBody('<div style="background: red; padding: 4px">x</div>');
   assert.ok(/style=/.test(out), "style attribute preserved for benign CSS");
 });
-
-// ----- sandbox-safe CDN gate -----------------------------------------------
-//
-// 비-allowlist `<script>` CDN (Chart.js / D3 / Plotly) 은 sanitize 가 제거 —
-// CSP sandbox directive 와 이중 방어. viewer 응답의 sandbox CSP 는
-// routes/clauded-docs.ts 책임으로 본 모듈 scope 밖.
 
 // ----- <details>/<summary> disclosure UI 보존 ------------------------------
 //
