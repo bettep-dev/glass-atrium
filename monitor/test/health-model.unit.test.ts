@@ -110,21 +110,30 @@ function daemonRow(name: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+// The full roster the daemon cards expect. Named once: a case that overrides one daemon
+// still needs the other three present, and re-listing them per case is what lets a case
+// drift out of step with this list.
+const DAEMON_NAMES = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+
 function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
   return {
-    daemonState: ready({
-      daemons: [
-        daemonRow("autoagent"),
-        daemonRow("wiki"),
-        daemonRow("daily-restart-autoagent"),
-        daemonRow("daily-restart-wiki"),
-      ],
-    }),
+    daemonState: ready({ daemons: DAEMON_NAMES.map((name) => daemonRow(name)) }),
     pgState: ready({ status: "ok", db: "open", browser: "ok" }),
     hookState: ready({ events: [{ groups: [{ hooks: ["h1"] }] }] }),
     hookFailState: ready({ count_24h: 0, unretried_count_24h: 0 }),
     ...overrides,
   };
+}
+
+// The healthy roster with one daemon carrying overrides — the shape every single-daemon
+// case needs. A case that deliberately OMITS a row builds its list explicitly instead:
+// there the omission is the subject, so it has to stay visible at the case.
+function statesWithDaemon(name: string, overrides: Record<string, unknown>): HealthStates {
+  return allHealthyStates({
+    daemonState: ready({
+      daemons: DAEMON_NAMES.map((n) => daemonRow(n, n === name ? overrides : {})),
+    }),
+  });
 }
 
 // 세 버킷이 아는 tone 어휘 — KPI fold 의 else 가지가 'info = info + neutral' 이라고
@@ -214,18 +223,9 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
 });
 
 test("stale daemon (server verdict): degraded bucket + counted as stale", () => {
+  // The server called it overdue — that verdict outranks last_status='ok'.
   const tally = tallyCardFacts(
-    allHealthyStates({
-      daemonState: ready({
-        daemons: [
-          // The server called it overdue — that verdict outranks last_status='ok'.
-          daemonRow("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
-          daemonRow("wiki"),
-          daemonRow("daily-restart-autoagent"),
-          daemonRow("daily-restart-wiki"),
-        ],
-      }),
-    }),
+    statesWithDaemon("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
   );
   assert.strictEqual(tally.degraded, 1);
   assert.strictEqual(tally.stale, 1);
@@ -276,20 +276,9 @@ test("AC-T3 count: a row the server calls fresh is never counted stale, however 
   // other consumer of the same verdict, and it reads through isDaemonStale rather than
   // the tone table — so a threshold table confined to that one function moves this count
   // while leaving every tone in this file untouched.
-  const tally = tallyCardFacts(
-    allHealthyStates({
-      daemonState: ready({
-        daemons: [
-          // Far past any window a daily-cadence daemon could justify holding client-side,
-          // and the server still calls it ok — which is the only word the model may read.
-          daemonRow("autoagent", { staleness_minutes: 100_000 }),
-          daemonRow("wiki"),
-          daemonRow("daily-restart-autoagent"),
-          daemonRow("daily-restart-wiki"),
-        ],
-      }),
-    }),
-  );
+  // Far past any window a daily-cadence daemon could justify holding client-side, and the
+  // server still calls it ok — which is the only word the model may read.
+  const tally = tallyCardFacts(statesWithDaemon("autoagent", { staleness_minutes: 100_000 }));
   assert.strictEqual(
     tally.stale,
     0,

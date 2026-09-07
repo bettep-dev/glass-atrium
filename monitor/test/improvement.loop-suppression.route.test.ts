@@ -306,7 +306,7 @@ test("every parked bucket carries a distinct operator label and a remedy", async
   }
 });
 
-test("per-cycle suppressions are reported apart from parked rows", async (t) => {
+test("per-cycle suppressions are reported apart from parked rows, with the window they cover", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   assert.strictEqual(cycleDelta("non-promptable"), 3, "3 seeded recurrences");
   assert.strictEqual(cycleDelta("stale-pattern-skip"), 1);
