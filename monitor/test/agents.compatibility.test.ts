@@ -1,5 +1,5 @@
 // agent-registry compatibility 필드 단위 테스트.
-// 핵심 invariant — compatibility 미선언 시 null (throw 금지) · registry v1.0 → v1.1 backwards-compat.
+// 핵심 invariant — compatibility 미선언 시 null (throw 금지) · 손상/부재 registry 는 빈 Map fallback.
 
 import test, { after, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
