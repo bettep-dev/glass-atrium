@@ -140,6 +140,8 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 - **Handoff** = horizontal transfer between agents
 
 - Delegation required elements: **Goal · Target files/paths · Constraints · Completion criteria · Resource Budget · Ripple radius** (one-line estimate of the downstream files/APIs/tests/integration points this change touches — scoping by surface alone is forbidden).
+  - Target files/paths carry their read EXTENT, not only their identity → `#### Read-Extent Discipline` (this file).
+  - Extent is written in the PROSE read instruction or the `READ ALLOWLIST` line — NEVER inside the `[SCOPE] files=` token, whose parser (`hooks/lib/scope-match.sh`) splits that field on commas AND whitespace and would shred an extent phrase into junk entries.
   - TASK_TYPE is **recommended** when ambiguous, not enforced — prompt-level rules in glass-atrium-intel-planner/glass-atrium-intel-reporter/DEV descriptions suffice.
 
 > Persist-intent research stage: a research delegation on a persist-worthy (reusable web) topic MUST grant the wiki-write role + instruct raw-save — never strip to "read/query only".
@@ -186,6 +188,24 @@ Hitting `tool_budget` without completion → emit `result: blocked` + partial fi
 
 - Task description + English technical keywords combination recommended (e.g., "Modify user auth logic — nestjs, jwt, guard")
 - Keywords should match the agent's `domains` field in `agent-registry.json`
+
+#### Read-Extent Discipline [ORCHESTRATOR]
+
+A read allowlist bounds *which* artifacts a delegation may open; it says nothing about *how much* of each. Both halves belong in every delegation prompt — a two-entry allowlist of large artifacts passes a no-sweep rule and still charges the whole document to every member of the fan-out.
+
+- **Scope of this duty**: EVERY delegation that instructs a read — not only the schema-mode analysis spawns `#### Analysis-Track Right-Sizing (input-side)` sizes. The observed failure was a work-loop rewriter and judge, roles that section never reached.
+- **Bounds the CONTEXT consulted, never the ARTIFACT under work** — extent governs the supporting documents a role opens to do its job; the artifact it is reviewing, debugging, or rewriting is read at whatever depth the role's own body mandates.
+  - Where a role body mandates a full read of what it works on (`glass-atrium-qa-code-reviewer` "Read changed files in full" · `glass-atrium-qa-debugger` "Read related code in full"), that body GOVERNS and this duty does not reach it.
+  - Stated rather than implied because skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict — nothing else would resolve it.
+- **Name the extent beside every path** — each entry in a delegation's read scope states the portion the role needs (the section, the heading, the extracted atom), never the bare path alone.
+- **Read the passage, not the document containing it** — where the unit of work is an atom already extracted into a scratch file, that file IS the read scope; its source file is a pointer to consult on a specific question, never a reading assignment.
+- **Bind only the clauses that bind the role** — an authority document read "in full first" charges every role the whole text while most of it governs neither; cite the clauses the role must honor, and let it fetch the rest by name when a question actually arises.
+- **No open-ended latitude clause** — "if you need its surroundings" / "read more if helpful" is always taken, and taken once per member. State the fallback as a condition with a named target (`on an unresolved cross-reference, read <named section>`), or omit it.
+- **Multiply by the fan-out before authoring** — a read that looks prudent in one prompt is paid N members × M roles; that product, not the single prompt, decides whether the extent is affordable.
+
+- **Draft self-check — the tell is that it sounds prudent**: "read the contract in full first" reads as diligence, which is why it survives authoring and why no sweep rule catches it.
+  - Ask of your own draft: is a role being sent to the whole of something when its work is a part of it? A read instruction that would be praised for thoroughness is the one to re-read.
+- **HONEST BACKING**: honor-system authoring discipline. Hooks DO read delegation prose — `enforce-verification-gate.sh` extracts the Agent tool's `prompt` and greps it — but PRESENCE-CHECKED ONLY, against a fixed attestation-token list; no gate sees a read instruction's extent.
 
 #### Delegation Information-Hiding [ORCHESTRATOR]
 
@@ -407,6 +427,8 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 - Rule SoT: `orchestrator-role.md` → `### Spawn Budget` (`[SIZE-EST]` analysis mode + decompose-by-domain).
 - Every schema-mode analysis delegation MUST carry PER-TRACK bounds by construction:
   - **Bounded read-scope** — an explicit file/dir READ allowlist, NEVER a repo sweep.
+    - Membership is half of it: bound how much of each entry per `#### Read-Extent Discipline` (this file), whose duty binds every delegation, not only these analysis spawns.
+    - By construction here = each `READ_TRACKS` allowlist entry is a `{ path, extent }` pair the skeleton renders into the prompt; a bare-path entry is the defect, not the default.
   - **Effort matched to depth** — default `medium` for broad reads; `high` ONLY for narrow-scope deep reasoning.
   - **Output-field cap** — ≤2-3 required schema fields; a 4-field schema is itself a SPLIT signal (prefer a single free-text `analysis` field per the Shape-tolerant schema bullet above).
   - **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
@@ -415,10 +437,17 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 ```js
 // [SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist — bounded per-track analysis spawn
 // [OWNERSHIP] trackA: hooks/** worktree: <path|isolated> · trackB: monitor/src/** worktree: <path|isolated> — disjoint read sets, existence-only
-// per-track read allowlists — explicit + disjoint (one object per [OWNERSHIP] track), NEVER a repo sweep
+// per-track read allowlists — explicit + disjoint (one object per [OWNERSHIP] track), NEVER a repo sweep.
+// Each entry pairs a path with its EXTENT (`#### Read-Extent Discipline`) — a bare path alone is the
+// shape that rule forbids, so the pair, not the path, is the unit of an allowlist entry.
 const READ_TRACKS = [
-  { allowlist: ['hooks/enforce-workflow-verify-stage.sh', 'hooks/test/'], goal: 'trackA: audit the gate hook + its bats coverage' },
-  { allowlist: ['monitor/src/server/routes/'], goal: 'trackB: audit the monitor route surface' },
+  { allowlist: [
+      { path: 'hooks/enforce-workflow-verify-stage.sh', extent: 'the token-grammar block only' },
+      { path: 'hooks/test/', extent: 'the bats cases naming that hook' },
+    ], goal: 'trackA: audit the gate hook + its bats coverage' },
+  { allowlist: [
+      { path: 'monitor/src/server/routes/', extent: 'handler signatures; a body only where a signature flags' },
+    ], goal: 'trackB: audit the monitor route surface' },
 ];
 const budgetGuard =
   'HARD BUDGET ~12 tool uses: reserve the emit tail — the terminal StructuredOutput IS the deliverable. ' +
@@ -433,7 +462,8 @@ const AnalysisSchema = { findings: 'string', completion_block: 'string' };
 const results = await parallel(READ_TRACKS.map((t) =>
   robustAgent('glass-atrium-intel-researcher', {
     agentType: 'glass-atrium-intel-researcher',
-    goal: budgetGuard + '\nREAD ALLOWLIST: ' + t.allowlist.join(', ') + '\nTASK: ' + t.goal,
+    goal: budgetGuard + '\nREAD ALLOWLIST (path — extent; read no more of each): '
+      + t.allowlist.map((a) => a.path + ' — ' + a.extent).join(' · ') + '\nTASK: ' + t.goal,
     effort: 'medium', schema: AnalysisSchema,
   })));
 const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete, re-delegable
