@@ -189,7 +189,7 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-function getInheritRosterMc(): Record<string, boolean> {
+function getInheritRosterOrFailMc(): Record<string, boolean> {
   const src = readFileSync(MC_SRC, "utf8");
   const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
   assert.ok(block, "DOMAIN_META_MC declaration located in model-config.jsx");
@@ -212,7 +212,7 @@ test("modelOptionsMC: the inherit roster decides the inherit option, domain by d
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
   // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
-  const roster = getInheritRosterMc();
+  const roster = getInheritRosterOrFailMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
     const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
