@@ -1,10 +1,9 @@
 """Behavioral + mirror-parity tests for wiki quota-limit detection (T22).
 
-``wiki_daemon_cycle._HAIKU_QUOTA_PATTERNS`` declares itself a mirror of
-``autoagent/daemon_cycle.py`` — the parity test pins that contract
-byte-for-byte (pattern source + flags, in order) so the two detection sets
-cannot drift apart silently. The behavioral cases protect the same two-sided
-tz invariant as the autoagent suite: the reset notice is detected for ANY
+``wiki_daemon_cycle`` declares itself a mirror of ``autoagent/daemon_cycle.py``
+— one data-driven parity check walks every mirrored constant so the two
+detection sets cannot drift apart silently. The behavioral cases protect the
+same two-sided tz invariant as the autoagent suite: the reset notice is detected for ANY
 IANA timezone (non-default ``[meta].timezone`` honored), while generic
 "(word/word)" CLI error text never false-positives into
 ``haiku_status='skipped:quota-limit'``.
@@ -38,15 +37,27 @@ import wiki_daemon_cycle as wdc  # noqa: E402
 _TZ_ONLY_NOTICE = "Your session resets at 7pm ({tz})."
 
 
-class WikiQuotaPatternMirrorParity(unittest.TestCase):
-    def test_quota_pattern_set_matches_autoagent_byte_for_byte(self) -> None:
-        self.assertEqual(
-            [(p.pattern, p.flags) for p in wdc._HAIKU_QUOTA_PATTERNS],
-            [(p.pattern, p.flags) for p in dc._HAIKU_QUOTA_PATTERNS],
-        )
+# Every constant wiki_daemon_cycle mirrors from autoagent/daemon_cycle.py (the
+# SoT), with the reader that makes it comparable — compiled patterns carry no
+# useful equality, so they are read as (source, flags). Both readers preserve
+# declaration order: an alternation reordered is a different match precedence.
+_MIRRORED_CONSTANTS = (
+    (
+        "_HAIKU_QUOTA_PATTERNS",
+        lambda m: [(p.pattern, p.flags) for p in m._HAIKU_QUOTA_PATTERNS],
+    ),
+    ("_IANA_TZ_REGIONS", lambda m: m._IANA_TZ_REGIONS),
+)
 
-    def test_tz_region_allowlist_matches_autoagent(self) -> None:
-        self.assertEqual(wdc._IANA_TZ_REGIONS, dc._IANA_TZ_REGIONS)
+
+class WikiQuotaPatternMirrorParity(unittest.TestCase):
+    def test_every_mirrored_constant_matches_autoagent(self) -> None:
+        for name, read in _MIRRORED_CONSTANTS:
+            with self.subTest(constant=name):
+                source = read(dc)
+                # Two empty copies compare equal, so equality alone pins nothing.
+                self.assertTrue(source, f"{name} is empty in autoagent (SoT)")
+                self.assertEqual(read(wdc), source)
 
 
 class WikiQuotaLimitTzBehavior(unittest.TestCase):
