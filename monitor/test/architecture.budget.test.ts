@@ -202,7 +202,7 @@ test("B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원�
   );
 });
 
-test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source, and only canonical carries its own title/description in place of the source's", async () => {
+test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source, and only canonical carries its own non-empty title/description in place of the source's", async () => {
   assert.ok(canonicalSource !== undefined);
   const sourceCensus = getMermaidCensus(canonicalSource.mermaid_source);
   const drawnCensus = getMermaidCensus(drawn);
@@ -224,6 +224,17 @@ test("AC-8 omitted_node_ids ledger is honest while drawn is smaller than source,
   const { doc } = await getArchitecture({ warn() {}, info() {} });
   const built = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_MAP.slug);
   assert.ok(built !== undefined, "canonical diagram missing from the payload");
+  // 빈 문자열은 아래 등식·비등식을 둘 다 통과함 — 정경 제목이 "" 이면 등식은 두 빈 문자열끼리 성립하고
+  // 비등식은 source 제목과 여전히 다름. 두 문자열은 a11y 표면(aria-label · 내장 <title>)과 상세 패널이
+  // 싣는 값이므로 존재와 비어있지 않음을 값 자체에 대고 잼 — source 값을 읽지 않으므로 자기참조가 아님.
+  assert.ok(
+    built.title.length > 0,
+    "the canonical diagram carries an empty title — the SVG aria-label and embedded <title> would announce nothing to a screen reader, and the equality below still holds between two empty strings",
+  );
+  assert.ok(
+    typeof built.description === "string" && built.description.length > 0,
+    "the canonical diagram carries no description or an empty one — the detail panel would render a blank body under the canonical title",
+  );
   assert.equal(built.title, CANONICAL_MAP.title, "the payload does not carry canonical's own title");
   assert.equal(built.description, CANONICAL_MAP.description, "the payload does not carry canonical's own description");
   // 비어 있지 않은 비교라는 근거 — 두 문자열이 source 와 같으면 위 두 줄은 자기 자신과의 대조가 됨.
