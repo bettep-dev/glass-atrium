@@ -195,7 +195,9 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
 
 - **Scope of this duty**: EVERY delegation that instructs a read — not only the schema-mode analysis spawns `#### Analysis-Track Right-Sizing (input-side)` sizes. The observed failure was a work-loop rewriter and judge, roles that section never reached.
 - **Bounds the CONTEXT consulted, never the ARTIFACT under work** — extent governs the supporting documents a role opens to do its job; the artifact it is reviewing, debugging, or rewriting is read at whatever depth the role's own body mandates.
-  - Where a role body mandates a full read of what it works on (`glass-atrium-qa-code-reviewer` "Read changed files in full" · `glass-atrium-qa-debugger` "Read related code in full"), that body GOVERNS and this duty does not reach it.
+  - **Artifact case** — where a role body mandates a full read of what it works ON (`glass-atrium-qa-code-reviewer` "Read changed files in full"), that body GOVERNS and this duty does not reach it: changed files ARE the artifact under review.
+  - **Context case — a role body can override the extent duty on CONTEXT too, stated rather than implied**: `glass-atrium-qa-debugger` "Read related code in full" reaches supporting context, the half this duty otherwise bounds, and it still governs.
+    - Bounded where it governs: the override reaches only the context class that body itself names, for the work that body describes — every other entry in the same delegation's read scope still carries an extent, and it never widens into the open-ended latitude clause the **No open-ended latitude clause** bullet forbids.
   - Stated rather than implied because skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict — nothing else would resolve it.
 - **Name the extent beside every path** — each entry in a delegation's read scope states the portion the role needs (the section, the heading, the extracted atom), never the bare path alone.
 - **Read the passage, not the document containing it** — where the unit of work is an atom already extracted into a scratch file, that file IS the read scope; its source file is a pointer to consult on a specific question, never a reading assignment.
@@ -205,7 +207,9 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
 
 - **Draft self-check — the tell is that it sounds prudent**: "read the contract in full first" reads as diligence, which is why it survives authoring and why no sweep rule catches it.
   - Ask of your own draft: is a role being sent to the whole of something when its work is a part of it? A read instruction that would be praised for thoroughness is the one to re-read.
-- **HONEST BACKING**: honor-system authoring discipline. Hooks DO read delegation prose — `enforce-verification-gate.sh` extracts the Agent tool's `prompt` and greps it — but PRESENCE-CHECKED ONLY, against a fixed attestation-token list; no gate sees a read instruction's extent.
+- **HONEST BACKING**: honor-system authoring discipline. No gate sees a read instruction's EXTENT — how much of a named path a prose instruction opens is in no gate's input, so every rule above is unbacked.
+  - Not because the gates are blind to prose: `enforce-verification-gate.sh` extracts the Agent tool's `prompt`, matches a plan reference through a five-alternation regex (`references_plan`), and parses the `[SCOPE] files=` CONTENT via `scope_decl_files`.
+  - That content check counts the declared paths against `DEEP_REVIEW_FILE_THRESHOLD` and prefix-matches them against `DEEP_REVIEW_SENSITIVE_PREFIXES` — membership is read and judged; extent is the half none of them sees.
 
 #### Delegation Information-Hiding [ORCHESTRATOR]
 
@@ -439,16 +443,23 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 // [OWNERSHIP] trackA: hooks/** worktree: <path|isolated> · trackB: monitor/src/** worktree: <path|isolated> — disjoint read sets, existence-only
 // per-track read allowlists — explicit + disjoint (one object per [OWNERSHIP] track), NEVER a repo sweep.
 // Each entry pairs a path with its EXTENT (`#### Read-Extent Discipline`) — a bare path alone is the
-// shape that rule forbids, so the pair, not the path, is the unit of an allowlist entry.
+// shape that rule forbids, so the pair, not the path, is the unit of an allowlist entry. The extent is
+// a SUBSTITUTION POINT, marked `<…>` like [OWNERSHIP]'s `<path|isolated>`: the examples inside name
+// sections of THESE paths, so swapping a path and keeping its extent points at a section the new file lacks.
 const READ_TRACKS = [
   { allowlist: [
-      { path: 'hooks/enforce-workflow-verify-stage.sh', extent: 'the token-grammar block only' },
-      { path: 'hooks/test/', extent: 'the bats cases naming that hook' },
+      { path: 'hooks/enforce-workflow-verify-stage.sh', extent: '<extent — e.g. the token-grammar block only>' },
+      { path: 'hooks/test/', extent: '<extent — e.g. the bats cases naming that hook>' },
     ], goal: 'trackA: audit the gate hook + its bats coverage' },
   { allowlist: [
-      { path: 'monitor/src/server/routes/', extent: 'handler signatures; a body only where a signature flags' },
+      { path: 'monitor/src/server/routes/', extent: '<extent — e.g. handler signatures; a body only where a signature flags>' },
     ], goal: 'trackB: audit the monitor route surface' },
 ];
+// Render guard — a legacy bare-string allowlist entry would render `undefined — undefined` silently.
+const renderEntry = (a) => {
+  if (!a || !a.path || !a.extent) throw new Error('READ_TRACKS entry must be { path, extent }: ' + JSON.stringify(a));
+  return a.path + ' — ' + a.extent;
+};
 const budgetGuard =
   'HARD BUDGET ~12 tool uses: reserve the emit tail — the terminal StructuredOutput IS the deliverable. ' +
   'READ ONLY the allowlist below (no repo sweep); effort=medium (raise to high ONLY for narrow deep reasoning); ' +
@@ -463,7 +474,7 @@ const results = await parallel(READ_TRACKS.map((t) =>
   robustAgent('glass-atrium-intel-researcher', {
     agentType: 'glass-atrium-intel-researcher',
     goal: budgetGuard + '\nREAD ALLOWLIST (path — extent; read no more of each): '
-      + t.allowlist.map((a) => a.path + ' — ' + a.extent).join(' · ') + '\nTASK: ' + t.goal,
+      + t.allowlist.map(renderEntry).join(' · ') + '\nTASK: ' + t.goal,
     effort: 'medium', schema: AnalysisSchema,
   })));
 const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete, re-delegable
