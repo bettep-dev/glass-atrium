@@ -17,15 +17,20 @@ CI_YML="${GA}/.github/workflows/ci.yml"
 
 # Hand-maintained list — a new policy input must be added here AND to the filter.
 # The glob evaluation below catches a filter-side regression; a missing entry here is invisible.
-# The two doc entries stand for the markdown/rule surface: the drift-guard suites asserting
-# rules/ content live under hooks/test, and thresholds.yaml is reachable by `skills/**` alone.
+# The three doc entries stand for the markdown/rule surface, each pinning a DIFFERENT covering
+# set: the rule doc is reachable by `rules/**` too, thresholds.yaml by `skills/**` alone, and
+# LICENSES-THIRD-PARTY.md by `**/*.md` and nothing else — so it is the only one of the three
+# whose loss would follow from dropping that glob. It is a real bash-leg policy input:
+# test/licenses-audit-gate.bats reads that document as its sole input, so a licenses-only PR
+# that skipped the bash leg would retire the gate on exactly the change kind it polices.
 POLICY_PATHS='requirements.txt
 requirements-dev.txt
 config.toml.example
 agent-registry.json
 .github/workflows/ci.yml
 rules/glass-atrium/core-security.md
-skills/glass-atrium-ops-token-audit/thresholds.yaml'
+skills/glass-atrium-ops-token-audit/thresholds.yaml
+LICENSES-THIRD-PARTY.md'
 
 # Emits one glob per `- '<glob>'` line of the detect-changes `bash:` filter. The range ends at
 # the next bare key at any indent (`python:`), so a renamed sibling cannot silently widen it.
@@ -34,6 +39,12 @@ _bash_filter_globs() {
     | sed -n "s/^[[:space:]]*-[[:space:]]*'\\(.*\\)'[[:space:]]*\$/\\1/p"
 }
 
+# The filter is evaluated by dorny/paths-filter, i.e. picomatch, where a leading `**/` matches
+# ZERO or more segments — so `**/*.md` covers a root-level `LICENSES-THIRD-PARTY.md`. Bash has
+# no globstar inside `[[ ]]`: `**` collapses to `*` and the literal `/` then demands a slash, so
+# a root-level path would read as uncovered against a filter that in fact covers it. The
+# zero-segment form is therefore tried explicitly — without it this check mis-models the engine
+# for every root-level path, which is the same defect class it exists to catch.
 _matches_any_glob() {
   local path="$1" glob
   shift
@@ -42,6 +53,12 @@ _matches_any_glob() {
     # RHS stays unquoted on purpose — quoting it would force a literal compare, not a glob match.
     if [[ "${path}" == ${glob} ]]; then
       return 0
+    fi
+    if [[ "${glob}" == '**/'* ]]; then
+      # shellcheck disable=SC2053
+      if [[ "${path}" == ${glob#'**/'} ]]; then
+        return 0
+      fi
     fi
   done
   return 1
