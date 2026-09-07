@@ -21,6 +21,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -178,6 +179,27 @@ test("budget input placeholder advertises the shipped default cap, not a stale l
   assert.ok(parsed >= BUDGET_MIN_USD && parsed <= BUDGET_MAX_USD, "inside the accepted band");
 });
 
+// Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx.
+// The literal table is the independent oracle the scraped roster is compared against.
+const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
+  "model.dev": true,
+  "model.research": true,
+  "model.meta": true,
+  "model.wiki": true,
+  "model.daemon_cycle_worker": false,
+};
+
+function getInheritRosterOrFailMc(): Record<string, boolean> {
+  const src = readFileSync(MC_SRC, "utf8");
+  const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
+  assert.ok(block, "DOMAIN_META_MC declaration located in model-config.jsx");
+  const roster: Record<string, boolean> = {};
+  for (const [, domain, body] of block[1].matchAll(/"(model\.[a-z_]+)":\s*\{([^}]*)\}/g)) {
+    roster[domain] = /\binherit:\s*true\b/.test(body);
+  }
+  return roster;
+}
+
 // --- modelOptionsMC: API-driven option assembly per domain (P7 AC: exactly the GET
 // known_models + inherit where the domain allows; no bare alias option) ---
 
@@ -186,26 +208,24 @@ test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected 
   assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
 });
 
-test("modelOptionsMC: dev = inherit + known_models verbatim, no bare alias option", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.dev", KNOWN_MODELS_FIXTURE));
-  assert.deepStrictEqual(opts, ["inherit", ...KNOWN_MODELS_FIXTURE]);
-  for (const alias of ["opus", "sonnet", "haiku"]) {
-    assert.ok(!opts.includes(alias), `dev has no bare alias '${alias}'`);
+test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", () => {
+  // Data-driven over the whole roster, not a hand-written case per domain.
+  // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
+  // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
+  const roster = getInheritRosterOrFailMc();
+  assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
+  for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
+    const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
+    assert.deepStrictEqual(
+      opts,
+      inherits ? ["inherit", ...KNOWN_MODELS_FIXTURE] : KNOWN_MODELS_FIXTURE,
+      `${domain}: ${inherits ? "inherit + " : ""}known_models verbatim`,
+    );
+    assert.strictEqual(opts.includes("inherit"), inherits, `${domain}: inherit option offered?`);
+    for (const alias of ["opus", "sonnet", "haiku"]) {
+      assert.ok(!opts.includes(alias), `${domain} has no bare alias '${alias}'`);
+    }
   }
-});
-
-test("modelOptionsMC: research = inherit + known_models verbatim, no bare alias option", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.research", KNOWN_MODELS_FIXTURE));
-  assert.deepStrictEqual(opts, ["inherit", ...KNOWN_MODELS_FIXTURE]);
-  for (const alias of ["opus", "sonnet", "haiku"]) {
-    assert.ok(!opts.includes(alias), `research has no bare alias '${alias}'`);
-  }
-});
-
-test("modelOptionsMC: daemon_cycle_worker — no inherit (concrete id only)", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", KNOWN_MODELS_FIXTURE));
-  assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
-  assert.ok(!opts.includes("inherit"), "daemon cycle helper does not inherit");
 });
 
 test("modelOptionsMC: options track the injected roster, not a baked-in mirror", () => {
