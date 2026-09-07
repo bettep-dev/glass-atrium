@@ -5,8 +5,9 @@
 # It is the only identity that survives a slug-rename + source_url drop, so a
 # colliding raw (source_url shared by 2+ raws) is matched by source_raw without
 # any collision guard. These tests pin three functions:
-#   * _extract_source_raw  — ASCII-deterministic frontmatter parse (CRLF / lone
-#     CR / trailing-tab / nbsp-preserve / body-line-ignored / first-wins).
+#   * _extract_source_raw  — only the no-opening-delimiter shape; every other
+#     trim / block-scan edge is pinned byte-for-byte against the Python
+#     extractor in test_wiki_source_raw.py, which runs this same awk program.
 #   * _classify_raw         — source_raw primary path is collision-immune; the
 #     basename + non-collision source_url fallbacks still classify (no regress).
 #   * _inject_source_raw    — idempotent, CRLF-preserving, frontmatter-only stamp.
@@ -68,57 +69,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# _extract_source_raw — byte-parity with _extract_source_url
+# _extract_source_raw — the one shape absent from the Python parity battery
 # ---------------------------------------------------------------------------
-
-@test "_extract_source_raw: a CRLF frontmatter block still opens and the value is CR-stripped" {
-  write_raw_bytes "${WORK}/note.md" '---\r\nsource_raw: my-raw.md\r\n---\r\nbody\r\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ "${output}" == "my-raw.md" ]]
-}
-
-@test "_extract_source_raw: a lone CR mid-value is stripped from the result" {
-  write_raw_bytes "${WORK}/note.md" '---\nsource_raw: my-\rraw.md\n---\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ "${output}" == "my-raw.md" ]]
-}
-
-@test "_extract_source_raw: a trailing tab is trimmed (ASCII trailing-trim)" {
-  write_raw_bytes "${WORK}/note.md" '---\nsource_raw: my-raw.md\t\n---\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ "${output}" == "my-raw.md" ]]
-}
-
-@test "_extract_source_raw: an nbsp inside the value is PRESERVED (ASCII-only trim)" {
-  # U+00A0 (0xC2 0xA0 in UTF-8) is not ASCII space/tab, so it stays in the value.
-  printf '%b' '---\nsource_raw: a\xc2\xa0b.md\n---\n' >"${WORK}/note.md"
-  run _extract_source_raw "${WORK}/note.md"
-  [[ "${output}" == "$(printf 'a\xc2\xa0b.md')" ]]
-}
-
-@test "_extract_source_raw: a source_raw line in the BODY (after the block) is ignored" {
-  write_raw_bytes "${WORK}/note.md" '---\ntitle: t\n---\nsource_raw: body-raw.md\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ -z "${output}" ]]
-}
-
-@test "_extract_source_raw: a missing source_raw key yields empty" {
-  write_raw_bytes "${WORK}/note.md" '---\ntitle: t\nsource_url: http://x\n---\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ -z "${output}" ]]
-}
-
-@test "_extract_source_raw: an empty value yields empty" {
-  write_raw_bytes "${WORK}/note.md" '---\nsource_raw:\n---\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ -z "${output}" ]]
-}
-
-@test "_extract_source_raw: with multiple source_raw lines the FIRST wins" {
-  write_raw_bytes "${WORK}/note.md" '---\nsource_raw: first.md\nsource_raw: second.md\n---\n'
-  run _extract_source_raw "${WORK}/note.md"
-  [[ "${output}" == "first.md" ]]
-}
 
 @test "_extract_source_raw: a file with no opening delimiter yields empty" {
   write_raw_bytes "${WORK}/note.md" 'source_raw: no-block.md\ntitle: t\n'

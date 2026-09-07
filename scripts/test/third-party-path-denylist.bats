@@ -40,17 +40,17 @@ scan_denylist() {
   return "${found}"
 }
 
-@test "denylist carries the two required upstream globs" {
-  [[ " ${DENYLIST[*]} " == *" skills/diagram-design/** "* ]] &&
-    [[ " ${DENYLIST[*]} " == *" **/mermaid_extract.py "* ]]
-}
-
 @test "negative control: a planted upstream skill path is reported" {
   # bats `run` would lose the in-file function through a subshell exec, so the
   # scanner is driven in-process and its status captured directly.
+  # `tools/mermaid_extract.py` sits OUTSIDE the skill tree, so it can only be
+  # reported by the `**/mermaid_extract.py` glob — that is what makes each glob
+  # separately discriminating rather than jointly satisfied by one planted path.
   local out status=0
-  out="$(printf '%s\n' 'agents/alpha.md' 'skills/diagram-design/scripts/mermaid_extract.py' | scan_denylist)" || status=$?
-  [[ "${status}" -eq 1 ]] && [[ "${out}" == *'skills/diagram-design/**'* ]] && [[ "${out}" == *'mermaid_extract.py'* ]]
+  out="$(printf '%s\n' 'agents/alpha.md' 'skills/diagram-design/scripts/mermaid_extract.py' 'tools/mermaid_extract.py' | scan_denylist)" || status=$?
+  [[ "${status}" -eq 1 ]] &&
+    [[ "${out}" == *'skills/diagram-design/** :: skills/diagram-design/scripts/mermaid_extract.py'* ]] &&
+    [[ "${out}" == *'**/mermaid_extract.py :: tools/mermaid_extract.py'* ]]
 }
 
 @test "negative control: an emptied denylist fails the check" {
