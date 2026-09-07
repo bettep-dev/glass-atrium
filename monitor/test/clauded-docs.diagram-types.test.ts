@@ -1,9 +1,8 @@
 // clauded-docs 다이어그램 타입 선언(diagram-types.json)의 계약 시험.
 // 실행: npx tsx --test test/clauded-docs.diagram-types.test.ts
 //
-// 이 파일이 계획서 D5 의 채택/제외 목록을 오라클로 들고 있음 — 선언 파일과
-// 계획서가 어긋나면 RED. AC-T20 이 금지하는 "두 곳에 적힌 목록"은 런타임
-// 소비처를 말하며, 드리프트 시험의 오라클은 그 금지의 대상이 아님.
+// 오라클은 선언 파일 자신의 불변식 · 타입 집합 멤버십 · 검증기 거동임.
+// 거동 판정(erDiagram · pie · RL)은 행 제거만 잡음 → 행 추가는 멤버십 목록이 유일한 관문임.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -47,29 +46,6 @@ const MONITOR_ROOT = resolve(HERE, "..");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
 const declaration = JSON.parse(readFileSync(DECLARATION_PATH, "utf8")) as DiagramTypesDeclaration;
-
-// 계획서 clauded-docs/14450 §9 Epic 4 의 D5 목록 원문.
-const D5_ADOPTED = [
-  "flowchart",
-  "sequenceDiagram",
-  "stateDiagram-v2",
-  "erDiagram",
-  "classDiagram",
-  "gitGraph",
-  "C4",
-];
-const D5_EXCLUDED = [
-  "quadrantChart",
-  "radar",
-  "pie",
-  "timeline",
-  "journey",
-  "mindmap",
-  "sankey",
-  "xychart",
-  "gantt",
-  "block",
-];
 
 mermaid.initialize({ startOnLoad: false });
 
@@ -132,59 +108,99 @@ function withFixture(body: DiagramTypes, run: (loaded: DiagramTypes) => void): v
   withTempJson(body, (path) => run(loadDiagramTypes(path)));
 }
 
-test("선언 파일이 D5 채택 타입 전부를 담음", () => {
-  assert.deepStrictEqual(typeNames(declaration.adopted).slice().sort(), D5_ADOPTED.slice().sort());
-});
+/** 주입용 최소 선언 — 각 시험은 자기가 재는 축만 덮어써서 그 축이 한눈에 드러남. */
+function buildFixtureTypes(overrides: Partial<DiagramTypes> = {}): DiagramTypes {
+  return {
+    adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
+    excluded: [],
+    exclusionReason: "fixture",
+    flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
+    ...overrides,
+  };
+}
 
-test("선언 파일이 D5 제외 타입 전부를 담음", () => {
-  assert.deepStrictEqual(typeNames(declaration.excluded).slice().sort(), D5_EXCLUDED.slice().sort());
-});
+test("선언 파일 불변식 — 로더가 검사하지 않는 형태·서로소·유일성·방향 정책", () => {
+  const entries = [...declaration.adopted, ...declaration.excluded];
+  // 비공허성 — 빈 선언이면 아래 순회가 전부 조용히 통과함.
+  assert.ok(declaration.adopted.length > 0, "채택 목록이 비어 있음");
+  assert.ok(declaration.excluded.length > 0, "제외 목록이 비어 있음");
 
-test("모든 항목이 타입명과 비어 있지 않은 키워드 배열을 가짐", () => {
-  for (const entry of [...declaration.adopted, ...declaration.excluded]) {
+  for (const entry of entries) {
     assert.ok(typeof entry.type === "string" && entry.type.length > 0, `타입명 누락: ${JSON.stringify(entry)}`);
     assert.ok(Array.isArray(entry.keywords) && entry.keywords.length > 0, `키워드 누락: ${entry.type}`);
     for (const kw of entry.keywords) {
       assert.ok(typeof kw === "string" && kw.length > 0, `빈 키워드: ${entry.type}`);
     }
   }
-});
 
-test("채택 항목마다 한 줄 용도가 있음", () => {
   for (const entry of declaration.adopted) {
     assert.ok(typeof entry.purpose === "string" && entry.purpose.length > 0, `용도 누락: ${entry.type}`);
     assert.ok(!entry.purpose.includes("\n"), `용도는 한 줄이어야 함: ${entry.type}`);
   }
-});
-
-test("제외 사유가 단일 문장으로 한 번만 적혀 있음", () => {
   assert.ok(typeof declaration.exclusionReason === "string" && declaration.exclusionReason.length > 0);
   for (const entry of declaration.excluded) {
     assert.ok(!("reason" in entry), `제외 사유가 항목마다 복제됨: ${entry.type}`);
   }
-});
 
-test("채택과 제외가 타입명 기준으로 서로소임", () => {
-  const excluded = new Set(typeNames(declaration.excluded));
-  const overlap = typeNames(declaration.adopted).filter((t) => excluded.has(t));
-  assert.deepStrictEqual(overlap, []);
-});
+  const excludedTypes = new Set(typeNames(declaration.excluded));
+  assert.deepStrictEqual(typeNames(declaration.adopted).filter((t) => excludedTypes.has(t)), [], "타입명이 채택·제외에 겹침");
+  const excludedKeywords = new Set(allKeywords(declaration.excluded));
+  assert.deepStrictEqual(allKeywords(declaration.adopted).filter((k) => excludedKeywords.has(k)), [], "키워드가 채택·제외에 겹침");
 
-test("채택과 제외가 키워드 기준으로도 서로소임", () => {
-  const excluded = new Set(allKeywords(declaration.excluded));
-  const overlap = allKeywords(declaration.adopted).filter((k) => excluded.has(k));
-  assert.deepStrictEqual(overlap, []);
-});
-
-test("키워드가 선언 전체에서 한 타입에만 속함", () => {
   const seen = new Map<string, string>();
-  for (const entry of [...declaration.adopted, ...declaration.excluded]) {
+  for (const entry of entries) {
     for (const kw of entry.keywords) {
       const prior = seen.get(kw);
       assert.strictEqual(prior, undefined, `키워드 ${kw} 가 ${prior} 와 ${entry.type} 에 중복됨`);
       seen.set(kw, entry.type);
     }
   }
+
+  const { recommended, allowed, forbidden } = declaration.flowDirection;
+  assert.ok(allowed.includes(recommended), "권장 방향이 허용 목록 안에 없음");
+  // 렌더 pane 은 폭만 제약되고 높이는 자유로움 — 가로 누적은 우측이 잘린다(Pre-drawing Doctrine 기본값).
+  assert.equal(recommended, "TD", "권장 방향은 TD — LR 은 폭 초과를 재측정한 뒤에만 고른다");
+  const forbiddenSet = new Set(forbidden);
+  assert.deepStrictEqual(allowed.filter((d) => forbiddenSet.has(d)), [], "허용과 금지가 겹침");
+  // AC-T24 의 판정 대상 — 좌→우 · 위→아래는 허용, 우→좌 · 아래→위는 금지.
+  for (const d of ["LR", "TB"]) assert.ok(allowed.includes(d), `허용 방향 누락: ${d}`);
+  for (const d of ["RL", "BT"]) assert.ok(forbiddenSet.has(d), `금지 방향 누락: ${d}`);
+});
+
+/** 선언에 있어야 하는 타입명 전부 — 형태·서로소 검사는 잘 만들어진 새 행을 통과시킴. */
+const DECLARED_ADOPTED_TYPES = [
+  "flowchart",
+  "sequenceDiagram",
+  "stateDiagram-v2",
+  "erDiagram",
+  "classDiagram",
+  "gitGraph",
+  "C4",
+];
+const DECLARED_EXCLUDED_TYPES = [
+  "quadrantChart",
+  "radar",
+  "pie",
+  "timeline",
+  "journey",
+  "mindmap",
+  "sankey",
+  "xychart",
+  "gantt",
+  "block",
+];
+
+test("선언된 타입 집합이 정확히 이 목록임 — 행 추가 · 삭제 · 개명이 모두 걸림", () => {
+  assert.deepStrictEqual(
+    typeNames(declaration.adopted).sort(),
+    [...DECLARED_ADOPTED_TYPES].sort(),
+    "채택 타입 집합이 바뀜 — 채택은 렌더·검증 계약이므로 선언과 이 목록을 같이 고쳐야 함",
+  );
+  assert.deepStrictEqual(
+    typeNames(declaration.excluded).sort(),
+    [...DECLARED_EXCLUDED_TYPES].sort(),
+    "제외 타입 집합이 바뀜 — 제외 행 추가는 다른 어떤 시험도 잡지 못하므로 이 목록이 유일한 관문임",
+  );
 });
 
 test("모든 키워드가 실제 mermaid 11 다이어그램 키워드임", () => {
@@ -202,18 +218,6 @@ test("가짜 키워드는 mermaid 가 거부함 — 위 검사가 공허하지 �
   assert.throws(() => mermaid.detectType("notARealDiagramType\n  A --> B"));
 });
 
-test("흐름 방향 정책이 정합적임", () => {
-  const { recommended, allowed, forbidden } = declaration.flowDirection;
-  assert.ok(allowed.includes(recommended), "권장 방향이 허용 목록 안에 없음");
-  // 렌더 pane 은 폭만 제약되고 높이는 자유로움 — 가로 누적은 우측이 잘린다(Pre-drawing Doctrine 기본값).
-  assert.equal(recommended, "TD", "권장 방향은 TD — LR 은 폭 초과를 재측정한 뒤에만 고른다");
-  const forbiddenSet = new Set(forbidden);
-  assert.deepStrictEqual(allowed.filter((d) => forbiddenSet.has(d)), [], "허용과 금지가 겹침");
-  // AC-T24 의 판정 대상 — 좌→우 · 위→아래는 허용, 우→좌 · 아래→위는 금지.
-  for (const d of ["LR", "TB"]) assert.ok(allowed.includes(d), `허용 방향 누락: ${d}`);
-  for (const d of ["RL", "BT"]) assert.ok(forbiddenSet.has(d), `금지 방향 누락: ${d}`);
-});
-
 test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에 넣으면 소견이 생김", () => {
   // AC-T20 의 "한 곳만 읽음" 을 심볼 이름이 아니라 거동으로 잼. erDiagram 은
   // 배포본에서 채택이므로 소견이 없어야 하고, 같은 타입을 제외로 옮긴 선언을
@@ -222,12 +226,7 @@ test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에 �
   assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), []);
 
   withFixture(
-    {
-      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
-      excluded: [{ type: "erDiagram", keywords: ["erDiagram"] }],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
-    },
+    buildFixtureTypes({ excluded: [{ type: "erDiagram", keywords: ["erDiagram"] }] }),
     (injected) => {
       assertNoticeTypes(
         validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
@@ -244,12 +243,7 @@ test("검증기가 이 선언 파일을 실제로 읽음 — 제외 목록에서
   assertNoticeTypes(validateHtmlStructure({ raw: html, sanitized: html }), ["pie"]);
 
   withFixture(
-    {
-      adopted: [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }],
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB"], forbidden: ["RL", "BT"] },
-    },
+    buildFixtureTypes({ excluded: [] }),
     (injected) => {
       assertNoticeTypes(
         validateHtmlStructure({ raw: html, sanitized: html }, D8_THRESHOLDS, injected),
@@ -274,26 +268,15 @@ test("검증기가 금지 방향 목록을 실제로 읽음 — 목록을 옮기
   assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }), ["RL"]);
   assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }), []);
 
-  const adopted = [{ type: "flowchart", keywords: ["flowchart"], purpose: "x" }];
   withFixture(
-    {
-      adopted,
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "LR", allowed: ["LR", "TB", "RL"], forbidden: [] },
-    },
+    buildFixtureTypes({ flowDirection: { recommended: "LR", allowed: ["LR", "TB", "RL"], forbidden: [] } }),
     (injected) => {
       assertNoticeDirections(validateHtmlStructure({ raw: rl, sanitized: rl }, D8_THRESHOLDS, injected), []);
     },
   );
 
   withFixture(
-    {
-      adopted,
-      excluded: [],
-      exclusionReason: "fixture",
-      flowDirection: { recommended: "TB", allowed: ["TB"], forbidden: ["LR", "RL", "BT"] },
-    },
+    buildFixtureTypes({ flowDirection: { recommended: "TB", allowed: ["TB"], forbidden: ["LR", "RL", "BT"] } }),
     (injected) => {
       assertNoticeDirections(validateHtmlStructure({ raw: lr, sanitized: lr }, D8_THRESHOLDS, injected), ["LR"]);
     },
