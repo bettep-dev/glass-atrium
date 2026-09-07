@@ -169,8 +169,8 @@ resolver_call() {
   # default has two homes and they can drift apart silently.
   run bash -c 'grep -v "^[[:space:]]*#" "$1" | sed "s/[[:space:]]#.*//" | grep -cF 16145' \
     _ "${REAL_LIB}"
-  # Asserted on the count, not the status: grep -c exits 1 on a zero count while
-  # still printing "0", so a status check would pass a library with NO literal.
+  # Asserted on the count alone — "1" rejects both zero-match and multi-match.
+  # A status check adds nothing: grep -c exits 1 on zero, which "1" already rejects.
   [[ "${output}" == "1" ]]
 }
 

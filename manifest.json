@@ -1431,7 +1431,7 @@
     "scripts/test/agent-frontmatter-identity.bats": "5e3b73d632d736df04784107309b96cf05cd48227872103664a0f8473cf27b92",
     "scripts/test/apply-lock.bats": "2233f3d1e73b772404ac0fbea141a877c1605c2e24bcff2912481ef1351781a3",
     "scripts/test/apply-spine.bats": "b527a845d38a39b607226127860db776a90b031de83330a9a76bf1445b86dd29",
-    "scripts/test/atrium-config.bats": "3e4097b25add66a0bebc85bbcefefa8adbf26c92a278d66ca5377384f32f70ab",
+    "scripts/test/atrium-config.bats": "f4b59c98b3eed05833faad9e46cbe4f5e1f1cdc45843a46252a87ba5c75e5748",
     "scripts/test/audit-absorption.bats": "8a3248184cef4b89e350a6006b52a479bf009e3e7260973cb7bd2035e7db09e1",
     "scripts/test/audit-cli.bats": "134d263e17884015a7a38d78d4053c7d95e01da132ae94c483907d8b41679eac",
     "scripts/test/audit-test-smells.bats": "cbbf65e28c106ca0b0aa152ca1872397cff23bb35644c92d57b533d22d8be86a",
