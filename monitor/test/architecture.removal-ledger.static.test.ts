@@ -177,8 +177,9 @@ function getRootFiles(): string[] {
 // 토큰 전부의 자리를 트리 한 번 순회로 냄 — 파일과 줄까지 냄. 개수만 내면 어디를 고칠지가
 // 메시지에 없음. 토큰마다 트리를 다시 읽으면 스캔이 토큰 수만큼 늘어나므로 순회가 바깥임.
 function getHitsByToken(tokens: NamedToken[], files: string[]): Map<NamedToken, string[]> {
-  const hitsByToken = new Map<NamedToken, string[]>(tokens.map((token) => [token, []]));
-  const patterns = tokens.map((token) => ({ token, pattern: getTokenPattern(token) }));
+  // 적중 배열을 패턴과 함께 들고 다님 — 순회 안에서 자리를 다시 찾지 않으므로 '못 찾음' 갈래가 없음.
+  const scans = tokens.map((token) => ({ token, pattern: getTokenPattern(token), hits: [] as string[] }));
+  const hitsByToken = new Map<NamedToken, string[]>(scans.map(({ token, hits }) => [token, hits]));
 
   for (const file of files) {
     let text: string;
@@ -189,13 +190,11 @@ function getHitsByToken(tokens: NamedToken[], files: string[]): Map<NamedToken, 
       continue;
     }
 
-    const present = patterns.filter(({ token }) => text.includes(token.name));
+    const present = scans.filter(({ token }) => text.includes(token.name));
     if (present.length === 0) continue;
 
     const lines = text.split("\n");
-    for (const { token, pattern } of present) {
-      const hits = hitsByToken.get(token);
-      if (!hits) continue;
+    for (const { pattern, hits } of present) {
       lines.forEach((line, index) => {
         pattern.lastIndex = 0;
         if (pattern.test(line)) hits.push(`${file}:${index + 1}`);
@@ -256,7 +255,7 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 // 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외 목록은 판별성의 근거를, 생존 목록은
 // 넘치게 지워지지 않았음을 잼. 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽으므로
 // 순회는 하나이고 실패 메시지가 어느 토큰에서 깨졌는지를 담음.
-test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tracked-tree scan", () => {
+test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12)", () => {
   // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
   const ledgerCountByAc: Record<string, number> = {};
   for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
@@ -265,7 +264,6 @@ test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tr
     { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 2 },
     "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
-  assert.equal(LEDGER_TOKENS.length, 43, "ledger total changed");
   assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
   assert.equal(SURVIVING_TOKENS.length, 20, "survivor list membership changed");
 
@@ -277,7 +275,12 @@ test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tr
   );
 
   const hitsByToken = getHitsByToken([...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS], ROOT_FILES);
-  const getHits = (token: NamedToken): string[] => hitsByToken.get(token) ?? [];
+  const getHits = (token: NamedToken): string[] => {
+    const hits = hitsByToken.get(token);
+    // 못 찾음을 0 건으로 읽으면 '재지 않았음' 이 '지워졌음' 과 같은 값이 됨 — 아래 부활 절이 바로 그 값에서 초록임.
+    assert.ok(hits, `${token.name} was not scanned — the hit map does not hold this token`);
+    return hits;
+  };
 
   const resurrected = LEDGER_TOKENS.filter((token) => getHits(token).length > 0).map(
     (token) => `${token.ac} ${token.name} still reads at: ${getHits(token).join(", ")}`,
