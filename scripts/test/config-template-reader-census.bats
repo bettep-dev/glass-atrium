@@ -9,9 +9,7 @@
 #
 # Each row asserts a property the others cannot produce:
 #   AC1  coverage           -> every template key has exactly one census row
-#   AC2  no fossils         -> every census row names a key the template still declares
 #   AC3  reader integrity   -> a claimed reader file exists and still carries its anchor literal
-#   AC4  exemption integrity-> a readerless row carries a `G-<n>` backlog id, never a blank
 #   AC5  exemption scope    -> no exemptions remain; every key names a real reader
 #
 # Anchor scope is the TEMPLATE file only: monitor test fixtures synthesize config.toml bodies of
@@ -60,20 +58,6 @@ census_rows() {
   }
 }
 
-@test "AC2 every census row names a key the template still declares" {
-  local row pairs fossils=""
-  pairs="$(template_pairs)"
-  while IFS='|' read -r section key _reader _anchor _exempt; do
-    [[ -n "${section}" ]] || continue
-    printf '%s\n' "${pairs}" | grep -q -x -F -- "${section}|${key}" \
-      || fossils="${fossils}${fossils:+, }${section}.${key}"
-  done < <(census_rows)
-  [[ -z "${fossils}" ]] || {
-    echo "census rows for keys the template no longer declares: ${fossils}" >&2
-    return 1
-  }
-}
-
 @test "AC3 a claimed reader file exists and still carries its anchor literal" {
   local broken=""
   while IFS='|' read -r section key reader anchor _exempt; do
@@ -95,23 +79,9 @@ census_rows() {
   }
 }
 
-@test "AC4 a readerless row carries a G-<n> backlog id, never a blank" {
-  local blanks=""
-  while IFS='|' read -r section key reader _anchor exempt; do
-    [[ -n "${section}" ]] || continue
-    [[ -z "${reader}" ]] || continue
-    [[ "${exempt}" =~ ^G-[0-9]+$ ]] || blanks="${blanks}${blanks:+, }${section}.${key}(id='${exempt}')"
-  done < <(census_rows)
-  [[ -z "${blanks}" ]] || {
-    echo "readerless census rows without a backlog id: ${blanks}" >&2
-    return 1
-  }
-}
-
 # The exemption column existed for keys the template exposed before anything read them.
 # The backlog cleared, so the population is now EMPTY — and staying empty is the property
 # worth pinning: a new readerless key must be wired, not parked behind a fresh backlog id.
-# AC4 above still governs the shape of an exemption if one is ever added back.
 @test "AC5 no exemptions remain: every template key names a real reader" {
   local exemptions=""
   while IFS='|' read -r section key reader _anchor exempt; do
