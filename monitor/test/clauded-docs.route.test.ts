@@ -1036,7 +1036,7 @@ test("POST /api/clauded-docs (MD body): md_body + html_body 동시 제공 → 40
   assert.match(env.reason, /mutually exclusive/);
 });
 
-test("POST /api/clauded-docs (HTML body): html_body 흐름 — audience='exposed' 응답", async () => {
+test("POST /api/clauded-docs (HTML body): html_body 흐름 — 기본 audience='exposed' · 명시 'hidden' 이 기본값보다 우선", async () => {
   // html_body 제공 → format=html primary → exposure bit 기본 'exposed' (UI 노출).
   const title = makeTitle("html-default-exposed");
   const { status, body } = await postCreate(app, {
@@ -1051,6 +1051,36 @@ test("POST /api/clauded-docs (HTML body): html_body 흐름 — audience='exposed
     assert.strictEqual(detail.format, "html");
   } finally {
     await deleteDoc(app, detail.id);
+  }
+
+  // html 경로만 형식 기본값('exposed')과 명시 'hidden' 이 갈림.
+  // md 경로는 기본값이 이미 hidden 이라 명시값 무시 회귀가 가려짐 — 이 자리에서만 드러남.
+  const hiddenTitle = makeTitle("html-explicit-hidden");
+  const explicit = await postCreate(app, {
+    title: hiddenTitle,
+    author: "tester",
+    audience: "hidden",
+    html_body: makeHtmlBody(hiddenTitle),
+  });
+  assert.strictEqual(
+    explicit.status,
+    201,
+    "명시 audience='hidden' 은 허용 집합의 값이므로 html_body POST 가 201 로 수용해야 함 — 400 이면 허용 audience 집합 검사가 'exposed' 한 값으로 좁혀진 것",
+  );
+  const hiddenDetail = explicit.body as { id: number; audience: string | null; format: string };
+  try {
+    assert.strictEqual(
+      hiddenDetail.audience,
+      "hidden",
+      "명시 audience 가 형식 기본값(html→'exposed')보다 우선 — 'exposed' 가 오면 요청의 명시값을 버리고 기본값으로 떨어진 회귀이며, 노출 의도와 반대로 문서가 UI 에 공개됨",
+    );
+    assert.strictEqual(
+      hiddenDetail.format,
+      "html",
+      "format 은 body-kind(html_body)로만 결정 — 명시 audience 가 format 판정을 흔들면 안 됨",
+    );
+  } finally {
+    await deleteDoc(app, hiddenDetail.id);
   }
 });
 
