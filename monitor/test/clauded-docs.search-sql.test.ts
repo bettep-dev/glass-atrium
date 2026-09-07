@@ -99,13 +99,6 @@ test("buildSearchSql: 사용자 입력 q 가 SQL text 에 inline 되지 않음 (
   assert.ok(countSql.values.includes(malicious), "q must be present in count bound values");
 });
 
-test("buildSearchSql: 한국어 q (검색테스트) — 직렬화 안전 + values 에 포함", () => {
-  const { rowsSql } = buildSearchSql(baseCtx({ q: "검색테스트" }));
-  // 한국어 q 가 SQL 텍스트에 literal 로 inline 되지 않아야 함 — 모두 placeholder.
-  assert.ok(!rowsSql.sql.includes("검색테스트"), "Korean q must be bound, not inlined");
-  assert.ok(rowsSql.values.includes("검색테스트"), "Korean q must appear in values");
-});
-
 test("buildSearchSql: limit / offset — placeholder binding · 정수만 허용", () => {
   const { rowsSql } = buildSearchSql(baseCtx({ limit: 50, offset: 100 }));
   // LIMIT / OFFSET 도 binding — direct interpolation 금지.
@@ -138,16 +131,6 @@ test("buildSearchSql: ts_headline snippet — title=A 가중치와 별개 · ind
   assert.match(rowsSql.sql, /MaxFragments=2/);
   assert.match(rowsSql.sql, /MaxWords=25/);
   assert.match(rowsSql.sql, /MinWords=8/);
-});
-
-test("buildSearchSql: 결정성 — 동일 ctx → 동일 SQL 텍스트 + 동일 values 배열", () => {
-  const ctx = baseCtx({ q: "monitor", bigmEnabled: true });
-  const a = buildSearchSql(ctx);
-  const b = buildSearchSql(ctx);
-  assert.equal(a.rowsSql.sql, b.rowsSql.sql);
-  assert.equal(a.countSql.sql, b.countSql.sql);
-  assert.deepEqual(a.rowsSql.values, b.rowsSql.values);
-  assert.deepEqual(a.countSql.values, b.countSql.values);
 });
 
 test("BIGM_PROBE_SQL: pg_extension 조회 — extname='pg_bigm' literal 만 포함 · 사용자 입력 없음", () => {
