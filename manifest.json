@@ -1465,7 +1465,7 @@
     "scripts/test/prune-job-scratch.bats": "29206d01bc2f55c79b9e11c491267e6cf2e6f9519b2739545fd5e9c4ea39c909",
     "scripts/test/publish-release.bats": "22c780d3efde1f515b188f6c60ac281c25657b6368cc153528f13b38afc2287a",
     "scripts/test/recovery-repos.bats": "6bd52b680f6e71ed44a8fa5f34456b9e48574072e5aefc6f42f6f44863a702fc",
-    "scripts/test/render-monitor-env.bats": "9915cb82bde942859096c59d787f0c7604834c0ae0a0c77c8f1b2bcf05595327",
+    "scripts/test/render-monitor-env.bats": "fcbd5828942f898012876106c956531fadfa82e712d33b81df68d575f5e6c94a",
     "scripts/test/retired-name-sweep.bats": "88f08b46f9d30e3316d7357102ee1b226254739f270a1e477d8909975997952e",
     "scripts/test/run-bats-parallel.bats": "17b4ef449e939d47a73289dfbb960f28d51127873c47a3a96e27c7371365e715",
     "scripts/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",

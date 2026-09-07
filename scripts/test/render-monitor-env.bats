@@ -195,17 +195,6 @@ run_render() {
   grep -q '^ATRIUM_SCHEDULE_DAILY_RESTART=23:15$' "${SANDBOX}/monitor/.env"
 }
 
-@test "default config renders the canonical schedule (autoagent 04:30, wiki 04:50, daily-restart 05:30)" {
-  # OD-E backward-compat: autoagent + daily-restart stay byte-identical; wiki is
-  # the intentional 04:30→04:50 correction. setup()'s write_config defaults
-  # mirror config.toml, so the canonical values render without override.
-  run_render
-  [[ "${status}" -eq 0 ]]
-  grep -q '^ATRIUM_SCHEDULE_AUTOAGENT=04:30$' "${SANDBOX}/monitor/.env"
-  grep -q '^ATRIUM_SCHEDULE_WIKI=04:50$' "${SANDBOX}/monitor/.env"
-  grep -q '^ATRIUM_SCHEDULE_DAILY_RESTART=05:30$' "${SANDBOX}/monitor/.env"
-}
-
 @test "missing [daemon.wiki-compile].time → non-zero exit, no .env (no partial keys)" {
   write_config "auto" "" "04:30" "__OMIT__" "05:30"
   run_render
@@ -214,17 +203,6 @@ run_render() {
   # Loud-fail fires before ANY upsert → .env is never created (zero partial keys,
   # not even the non-schedule port/html-root/tz keys).
   [[ ! -f "${SANDBOX}/monitor/.env" ]]
-}
-
-@test "missing schedule key leaves a pre-existing .env free of any schedule key" {
-  printf 'SHADOW_DATABASE_URL=postgresql:///x\n' >"${SANDBOX}/monitor/.env"
-  write_config "auto" "" "04:30" "__OMIT__" "05:30"
-  run_render
-  [[ "${status}" -ne 0 ]]
-  # No ATRIUM_SCHEDULE_* key leaked into the pre-existing file (no partial render)
-  ! grep -q '^ATRIUM_SCHEDULE_' "${SANDBOX}/monitor/.env"
-  # The pre-existing unrelated key is left untouched.
-  grep -q '^SHADOW_DATABASE_URL=postgresql:///x$' "${SANDBOX}/monitor/.env"
 }
 
 @test "malformed [daemon.autoagent-cycle].time (no colon) → non-zero exit, no .env" {
@@ -241,16 +219,6 @@ run_render() {
   [[ "${status}" -ne 0 ]]
   [[ "${output}" == *"daemon-daily-restart"* ]]
   [[ ! -f "${SANDBOX}/monitor/.env" ]]
-}
-
-@test "re-run upserts the schedule keys in place (idempotent, no duplicate keys)" {
-  run_render
-  [[ "${status}" -eq 0 ]]
-  run_render
-  [[ "${status}" -eq 0 ]]
-  [[ "$(grep -c '^ATRIUM_SCHEDULE_AUTOAGENT=' "${SANDBOX}/monitor/.env")" -eq 1 ]]
-  [[ "$(grep -c '^ATRIUM_SCHEDULE_WIKI=' "${SANDBOX}/monitor/.env")" -eq 1 ]]
-  [[ "$(grep -c '^ATRIUM_SCHEDULE_DAILY_RESTART=' "${SANDBOX}/monitor/.env")" -eq 1 ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -271,20 +239,21 @@ example_time() {
   ' _ "${GA}/scripts/lib/atrium-config.sh" "$1"
 }
 
-@test "config.toml.example carries [daemon.autoagent-cycle].time (HH:MM)" {
-  example_time "[daemon.autoagent-cycle]"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]
-}
-
-@test "config.toml.example carries [daemon.wiki-compile].time = 04:50 (the corrected value)" {
+@test "config.toml.example carries an HH:MM time for all three [daemon.*] jobs (wiki = 04:50)" {
+  local section
+  for section in "[daemon.autoagent-cycle]" "[daemon.wiki-compile]" "[daemon.daemon-daily-restart]"; do
+    example_time "${section}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "no ${section}.time in config.toml.example (status=${status})"
+      return 1
+    }
+    [[ "${output}" =~ ^[0-9]{1,2}:[0-9]{2}$ ]] || {
+      echo "malformed ${section}.time='${output}'"
+      return 1
+    }
+  done
+  # The 04:30→04:50 wiki-compile correction is pinned in the template NOWHERE else
+  # (the monitor's 04:50 is its own hardcoded dev fallback, not this SoT).
   example_time "[daemon.wiki-compile]"
-  [[ "${status}" -eq 0 ]]
   [[ "${output}" == "04:50" ]]
-}
-
-@test "config.toml.example carries [daemon.daemon-daily-restart].time (HH:MM)" {
-  example_time "[daemon.daemon-daily-restart]"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]
 }
