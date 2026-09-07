@@ -10,7 +10,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildDaemonStatusItems } from "../src/server/routes/dashboard.js";
-import { STALE_MULTIPLIER } from "../src/server/schedule-next-fire.js";
+import {
+  DAEMON_CRON_SCHEDULE,
+  STALE_MULTIPLIER,
+  expectedIntervalMinutes,
+} from "../src/server/schedule-next-fire.js";
 
 const DAEMON_BOARD = [
   "autoagent",
@@ -19,7 +23,8 @@ const DAEMON_BOARD = [
   "daily-restart-wiki",
 ] as const;
 
-const CADENCE_MIN = 1440; // all four daemons are daily jobs
+// One derivation covers the board: every DAEMON_BOARD entry is built as a daily-at rule.
+const CADENCE_MIN = expectedIntervalMinutes(DAEMON_CRON_SCHEDULE.autoagent);
 const NOW = new Date("2026-07-12T12:00:00Z");
 
 function minutesAgo(min: number): Date {
@@ -56,8 +61,9 @@ test("never-fired daemon + old install anchor → board escalates to 'stale' (sh
 // The cases above feed rows=[], where the raw row value and the synthesized verdict cannot
 // disagree. A PRESENT row is the only shape that separates them, so the delegation to
 // resolveDaemonStatuses is pinned here — on both synthesis branches at once, plus a fresh row
-// proving the board still publishes a real status rather than blanket-overwriting one.
-test("a present row publishes the synthesized status, never its own last_status (F#38 delegation)", () => {
+// proving the board still publishes a real status rather than blanket-overwriting one, and a
+// daemon no row mentions proving membership comes from DAEMON_BOARD rather than from the rows.
+test("a present row publishes the synthesized status, never its own last_status — and a daemon with no row stays on the board (F#38 delegation)", () => {
   const rows = [
     // Overdue: the run itself ended 'ok' — the silence since is what makes the board stale.
     {

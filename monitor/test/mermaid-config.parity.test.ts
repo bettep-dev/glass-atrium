@@ -183,6 +183,12 @@ function getLockedMermaidVersion(): string {
 const remoteMermaidSrcs = getViewerRemoteScriptSrcs().filter((src) => MERMAID_CDN_TAG.test(src));
 
 test("P1a the viewer's mermaid tag names the exact version the export injects", () => {
+  assert.equal(
+    remoteMermaidSrcs.length,
+    1,
+    `index.html loads ${remoteMermaidSrcs.length} remote mermaid runtimes (${remoteMermaidSrcs.join(", ")}) — ` +
+      "with more than one, the version below is asserted against a tag that may not be the one that wins",
+  );
   const tagged = MERMAID_CDN_TAG.exec(remoteMermaidSrcs[0] ?? "")?.[1];
   const installed = getInstalledMermaidVersion();
   assert.ok(tagged, `no mermaid@<version> segment in ${remoteMermaidSrcs[0] ?? "(no remote mermaid script)"}`);
