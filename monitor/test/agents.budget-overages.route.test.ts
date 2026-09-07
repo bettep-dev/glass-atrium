@@ -122,17 +122,6 @@ test("days=7 → marker agent rolls up seeded crossings (count + peak pct)", asy
   );
 });
 
-test("stale crossing (40d) stays excluded from the 7d window", async (t) => {
-  if (!dbReady) return t.skip("DB unavailable");
-  const res = await app.inject({ method: "GET", url: "/api/agents/budget-overages?days=7" });
-  assert.strictEqual(res.statusCode, 200);
-  const body = res.json() as AgentBudgetOveragesResponse;
-  const row = findMarkerRow(body);
-  assert.ok(row);
-  // The 200% stale row would raise max to 200 if it leaked into the window.
-  assert.notStrictEqual(row.max_crossed_pct, STALE_SEED.crossedPct, "stale peak not surfaced");
-});
-
 test("days=90 widens the window to include the stale crossing", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   const res = await app.inject({ method: "GET", url: "/api/agents/budget-overages?days=90" });

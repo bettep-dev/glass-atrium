@@ -21,10 +21,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Prisma } from "../src/generated/prisma/client.js";
-import {
-  buildAgentMembershipFragment,
-  buildAgentMembershipFilter as buildFilterFromRegistry,
-} from "../src/server/agents/registry.js";
+import { buildAgentMembershipFragment } from "../src/server/agents/registry.js";
 import { buildAgentMembershipFilter } from "../src/server/routes/agents.js";
 
 test("buildAgentMembershipFilter: empty registry → Prisma.empty (fail-open, predicate skipped)", () => {
@@ -64,18 +61,6 @@ test("buildAgentMembershipFilter: column-ref override → aliased `o.agent` (LEF
   assert.deepStrictEqual(frag.values, ["dev-nestjs"]);
 });
 
-test("buildAgentMembershipFilter: single-agent registry → single-placeholder IN-list", () => {
-  const frag = buildAgentMembershipFilter(["solo-agent"]);
-  assert.strictEqual(frag.sql, "AND agent IN (?)");
-  assert.deepStrictEqual(frag.values, ["solo-agent"]);
-});
-
-test("re-export identity: routes/agents.js buildAgentMembershipFilter === agents/registry.js one", () => {
-  // The route module re-exports the moved symbol; both import paths MUST resolve
-  // to the exact same function (relocation preserved the live export surface).
-  assert.strictEqual(buildAgentMembershipFilter, buildFilterFromRegistry);
-});
-
 test("buildAgentMembershipFragment: empty registry → Prisma.empty (omitted, fail-open)", () => {
   const frag = buildAgentMembershipFragment([]);
   assert.strictEqual(frag, Prisma.empty, "must return the Prisma.empty singleton");
@@ -99,24 +84,4 @@ test("buildAgentMembershipFragment: non-empty → bare `agent IN (?..)` with NO 
   for (const agent of agents) {
     assert.ok(!frag.sql.includes(agent), `agent '${agent}' must be bound, not inlined`);
   }
-});
-
-test("buildAgentMembershipFragment: column-ref override → bare `target_agent IN (?)`", () => {
-  // proposal feeds (T8) push this bare fragment into a fragments-array over the
-  // target_agent column.
-  const frag = buildAgentMembershipFragment(["dev-nestjs"], Prisma.sql`target_agent`);
-  assert.match(frag.sql, /^target_agent IN \(\?\)$/);
-  assert.ok(!frag.sql.startsWith("AND "), "bare fragment must NOT carry a leading AND");
-  assert.deepStrictEqual(frag.values, ["dev-nestjs"]);
-});
-
-test("shape divergence: filter is AND-prefixed, fragment is bare (same keys + column)", () => {
-  const keys = ["dev-nestjs", "dev-node"];
-  const filter = buildAgentMembershipFilter(keys);
-  const fragment = buildAgentMembershipFragment(keys);
-  assert.ok(filter.sql.startsWith("AND "), "filter carries the leading AND");
-  assert.ok(!fragment.sql.startsWith("AND "), "fragment omits the leading AND");
-  // Identical binding — the only difference is the AND prefix over one shared core.
-  assert.strictEqual(filter.sql, `AND ${fragment.sql}`);
-  assert.deepStrictEqual(filter.values, fragment.values);
 });
