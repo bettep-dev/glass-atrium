@@ -1,8 +1,8 @@
 """Behavioral + mirror-parity tests for wiki quota-limit detection (T22).
 
 ``wiki_daemon_cycle`` declares itself a mirror of ``autoagent/daemon_cycle.py``
-— one data-driven parity check walks every mirrored constant so the two
-detection sets cannot drift apart silently. The behavioral cases protect the
+— one data-driven parity check walks every mirrored detection constant so the
+two sets cannot drift apart silently. The behavioral cases protect the
 same two-sided tz invariant as the autoagent suite: the reset notice is detected for ANY
 IANA timezone (non-default ``[meta].timezone`` honored), while generic
 "(word/word)" CLI error text never false-positives into
@@ -37,10 +37,12 @@ import wiki_daemon_cycle as wdc  # noqa: E402
 _TZ_ONLY_NOTICE = "Your session resets at 7pm ({tz})."
 
 
-# Every constant wiki_daemon_cycle mirrors from autoagent/daemon_cycle.py (the
-# SoT), with the reader that makes it comparable — compiled patterns carry no
+# Every DETECTION constant wiki_daemon_cycle mirrors from autoagent/daemon_cycle.py
+# (the SoT), with the reader that makes it comparable — compiled patterns carry no
 # useful equality, so they are read as (source, flags). Both readers preserve
 # declaration order: an alternation reordered is a different match precedence.
+# Scoped to detection: DEFAULT_REPORTS_DIR is mirrored too but is path config,
+# outside this module's subject.
 _MIRRORED_CONSTANTS = (
     (
         "_HAIKU_QUOTA_PATTERNS",

@@ -1484,7 +1484,7 @@
     "scripts/test/test_pg_dual_write_proposal_upsert.py": "edb5bbf91263ed80ee6223bdcd2df603137d700f2ea981b9d5ce20c835b8ce3b",
     "scripts/test/test_python_portability.py": "a5e5997d19e68f87fea08587f23e9d138b85b1a449d624d9a44312e6fa2e7f08",
     "scripts/test/test_scaffold_smuggle.py": "8eba118d71c161df70414c40f9e1170bfa5e8f801639a5f815703e595e8e3fa3",
-    "scripts/test/test_wiki_quota_detection.py": "ccac705af792d37735e2557833ad3242c3e5fdd3cb5bc00c216b9142e345f751",
+    "scripts/test/test_wiki_quota_detection.py": "dda01e0d769fedd7092f518596c0069573c829cdad399d4c8c27662fbb5606e0",
     "scripts/test/test_wiki_source_raw.py": "15ca73d16024c27b60e2e4ed91abcd5b87d986597dd645b1f6792070c9db95a1",
     "scripts/test/third-party-path-denylist.bats": "8c663c8f85e86f20fc9e0fbff42e0c2531d2e6d76029f3468817cf4d63e732a0",
     "scripts/test/update-deletion-shape-tripwire.bats": "907914e8846e8b6505697229eeaa98947b401a3ae450222857e8c8e1d118ceb8",
