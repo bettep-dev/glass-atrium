@@ -105,6 +105,11 @@ const LEDGER_TOKENS: LedgerToken[] = [
   // 그 함수가 재던 사실(판정을 화면이 다시 재지 않음)은 링 tone 표로 옮겨 감 — /live 의
   // effective_status 를 읽는 화면 경로가 이제 그것임(live-badge AC-T2 · daemon-binding AC-T4).
   { name: "getLiveDaemonRows", kind: "identifier", ac: "ADR-20" },
+
+  // AC-12 가 지운 설명 축약기와 하드코드 목적 맵 — 둘 다 호출 없이 선언만으로 되살아남.
+  // 화면을 재는 계기는 불리지 않는 선언을 보지 못하므로, 그 부재의 자리는 원장임.
+  { name: "truncateText", kind: "identifier", ac: "AC-12" },
+  { name: "TAB_PURPOSE", kind: "identifier", ac: "AC-12" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -257,10 +262,10 @@ test("ADR-13 the removal ledger, its exclusions and the survivors hold in one tr
   for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
   assert.deepEqual(
     ledgerCountByAc,
-    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16 },
+    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 2 },
     "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
-  assert.equal(LEDGER_TOKENS.length, 41, "ledger total changed");
+  assert.equal(LEDGER_TOKENS.length, 43, "ledger total changed");
   assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
   assert.equal(SURVIVING_TOKENS.length, 20, "survivor list membership changed");
 
