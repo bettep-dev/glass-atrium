@@ -12,6 +12,8 @@
 //   (c) the shared buildReconstructedRowFilter() binds the discriminator literals as
 //       PARAMETERS (Prisma.join), never string-concatenated — the reuse point that
 //       keeps every aggregation on one discriminator (do-not-reimplement).
+//   (d) the discriminator's member set is CLOSED at the three synthesis-branch tokens —
+//       a fourth member silently reclassifies writer-emitted rows as harness artifacts.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,8 +26,10 @@ import {
 import {
   BUDGET_TRUNCATION_SOURCE,
   COMPLETION_SYNTHESIZED_SOURCE,
+  RECONSTRUCTED_ATTRIBUTION_SOURCES,
   RECONSTRUCTED_DOWNGRADE_ORIGIN,
   buildReconstructedRowFilter,
+  STRUCTUREDOUTPUT_COMPLETION_SOURCE,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 } from "../src/server/attribution-sources.js";
 
@@ -152,4 +156,22 @@ test("buildReconstructedRowFilter: binds the discriminator literals as PARAMETER
   assert.match(frag.sql, /downgrade_origin/);
   assert.match(frag.sql, /attribution_source/);
   assert.doesNotMatch(frag.sql, /budget-truncation/, "literals must not be concatenated into the SQL text");
+});
+
+// (d) exhaustiveness — the three includes() checks above prove each member is bound,
+// but a set that only grows cannot be seen by a membership check. This arm reads the
+// whole set, so an appended token reds here and nowhere else.
+
+test("RECONSTRUCTED_ATTRIBUTION_SOURCES: the synthesis-branch set is CLOSED at three (discriminator SoT)", () => {
+  assert.deepStrictEqual(
+    [...RECONSTRUCTED_ATTRIBUTION_SOURCES].sort(),
+    [BUDGET_TRUNCATION_SOURCE, COMPLETION_SYNTHESIZED_SOURCE, STRUCTUREDOUTPUT_DERIVED_SOURCE].sort(),
+    "the reconstructed discriminator names exactly the three synthesis-branch tokens — every added member is subtracted from the writer-emitted headline on every aggregation, so a new token belongs here only once it is genuinely a harness recovery artifact",
+  );
+  // The standing exclusion the set equality above encodes today, kept as its own arm so a
+  // legitimate FIFTH synthesis token cannot smuggle this one in alongside it.
+  assert.ok(
+    !RECONSTRUCTED_ATTRIBUTION_SOURCES.includes(STRUCTUREDOUTPUT_COMPLETION_SOURCE),
+    "structuredoutput-completion marks a WRITER-emitted (healthy) row, not a synthesis artifact — folding it in here silently deflates every writer-emitted headline",
+  );
 });

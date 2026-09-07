@@ -226,8 +226,8 @@ test("ADR-20 the drawn map's labels read exactly as the source declares them", (
     ...drawn.subgraphs.map((g) => ({ id: g.id, label: g.label })),
   ]) {
     const expected = sourceLabels.get(drawnLabelled.id);
-    // drawn id 집합 ⊆ source id 집합은 예산 시험의 회귀 잠금 ③ 이 따로 지킴 — 여기서는
-    // 짝을 찾은 것만 대조하되, 하나도 못 찾으면 아래 개수 절이 붉어짐.
+    // drawn id 집합 ⊆ source id 집합은 architecture.budget.test.ts 의 부분집합 잠금(차집합이 정확히 원장)이 지킴.
+    // 여기서는 짝을 찾은 것만 대조 — 하나도 못 찾으면 아래 개수 절이 붉어짐.
     if (expected === undefined) continue;
     if (expected !== drawnLabelled.label)
       divergent.push(`${drawnLabelled.id}: drawn ${JSON.stringify(drawnLabelled.label)} vs source ${JSON.stringify(expected)}`);
