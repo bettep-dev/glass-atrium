@@ -41,10 +41,24 @@ function getViewerScriptPaths(): string[] {
 
 const viewerScripts = getViewerScriptPaths();
 
-test("P1-2 the export reads the ELK prep module index.html loads", () => {
+// Both arms pin one claim over two files: a same-origin asset the export injects is an asset the
+// viewer's own markup loads. The comparison is on the RESOLVED path, so a rename, a move to
+// another directory, or a second copy served under a different name all leave the export's path
+// absent from the viewer's list and go red — the tag being present is not what is asserted.
+//
+// The config arm is asserted HERE because it is asserted nowhere else: mermaid-config.tokens.test.ts
+// reads the config file directly and no longer opens index.html at all, so this list is the only
+// place in the tree that still connects what the viewer loads to what the export injects.
+test("P1-2 the export reads the same-origin assets index.html loads", () => {
   assert.ok(
     viewerScripts.includes(ELK_PREP_PATH),
     `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${ELK_PREP_PATH}`,
+  );
+  assert.ok(
+    viewerScripts.includes(MERMAID_CONFIG_PATH),
+    `index.html loads ${viewerScripts.join(", ")} — none of them is the export's ${MERMAID_CONFIG_PATH}; ` +
+      "the viewer initializes mermaid from a file the export never injects, so the same stored body " +
+      "renders under two configs and every parity assertion below is made against a file only one surface reads",
   );
 });
 
