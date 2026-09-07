@@ -4,14 +4,17 @@
 # glass-atrium-update.bats): dispatch to the updater (ATRIUM_UPDATE_SCRIPT test
 # override) forwarding args VERBATIM + propagating its exit code; `--help` forwarded
 # to the updater, NOT consumed by ga_parse_args (the installer parser loud-dies on an
-# unknown flag); a missing / non-executable updater loud-fails (die → rc 1).
+# unknown flag); a missing / non-executable updater loud-fails (die → rc 1); the
+# RETIRED skill-dir update.sh path never returns to the shipped manifest maps.
 # Hermetic: dispatch tests run the REAL binary against a per-test mktemp fake updater
-# (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are never touched.
+# (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are never touched; the
+# manifest assertion reads the tracked manifest read-only.
 
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 BIN="${GA}/glass-atrium"
+MANIFEST="${GA}/manifest.json"
 
 setup() {
   [[ -f "${BIN}" ]] || skip "glass-atrium binary not found: ${BIN}"
@@ -68,4 +71,22 @@ EOF
   run env ATRIUM_UPDATE_SCRIPT="${nonexec}" bash "${BIN}" update
   [ "$status" -eq 1 ]
   [[ "$output" == *"not executable"* ]]
+}
+
+# manifest: the retired updater path never returns to the shipped set
+
+@test "the retired skill-dir update.sh path stays out of the shipped manifest maps" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/. That the NEW
+  # path is listed is covered by manifest-check-clean.bats AC-17 (--check's MISSING
+  # direction); this pins the other half, which --check structurally CANNOT decide.
+  # Re-add the retired path as a git-tracked file and it becomes legitimately
+  # tracked: a regeneration puts it back into files[] and, by the generator's
+  # files[]/retired[] disjointness rule, DROPS its retired[] removal row — so the
+  # path silently re-ships and consumers never delete it, while --check stays clean.
+  # All three shipped maps are checked so a hand-edit of any one of them is caught.
+  run jq -e --arg p "skills/glass-atrium-update/update.sh" \
+    '(.files | index($p)) == null and (.hashes | has($p) | not) and (.modes | has($p) | not)' \
+    "${MANIFEST}"
+  [ "$status" -eq 0 ]
 }

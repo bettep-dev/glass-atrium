@@ -159,6 +159,21 @@ resolver_call() {
   [[ "${output}" == *"invalid ATRIUM_MONITOR_PORT=70000"* ]]
 }
 
+@test "resolver default 16145 is the sole shell terminal literal (AC-S1.3a)" {
+  # SOLE-NESS, not the value — the resolver-default case above pins what the
+  # resolver returns; this pins that the library has exactly ONE place to change
+  # it. Counted over CODE only: full-line comments are dropped and a trailing
+  # ` #...` comment is stripped, so the header prose that names 16145 is not
+  # counted while ANY code-line occurrence is, in any quoting form ('16145',
+  # "16145" or bare). A second literal anywhere in the library means the port
+  # default has two homes and they can drift apart silently.
+  run bash -c 'grep -v "^[[:space:]]*#" "$1" | sed "s/[[:space:]]#.*//" | grep -cF 16145' \
+    _ "${REAL_LIB}"
+  # Asserted on the count, not the status: grep -c exits 1 on a zero count while
+  # still printing "0", so a status check would pass a library with NO literal.
+  [[ "${output}" == "1" ]]
+}
+
 # --- atrium_toml_keys(): key enumeration + two-consumer round-trip ---
 
 TEMPLATE="${GA}/config.toml.example"
