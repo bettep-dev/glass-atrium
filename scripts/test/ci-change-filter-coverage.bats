@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# ci-change-filter-coverage.bats — every root-level file this cycle's suites read as a policy
+# ci-change-filter-coverage.bats — every file this cycle's suites read as a policy
 # input MUST trigger the CI bash leg. The check EVALUATES the globs parsed out of the workflow:
 # a literal-presence check would pass a glob that can never match the path it is meant to guard.
 #

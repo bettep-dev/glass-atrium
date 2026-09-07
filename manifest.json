@@ -1434,7 +1434,7 @@
     "scripts/test/audit-absorption.bats": "5ce55555a2b5c5d164f0965a28996bc3aaba268fd98c9ec4e7710e2968f711cc",
     "scripts/test/audit-cli.bats": "134d263e17884015a7a38d78d4053c7d95e01da132ae94c483907d8b41679eac",
     "scripts/test/audit-test-smells.bats": "cbbf65e28c106ca0b0aa152ca1872397cff23bb35644c92d57b533d22d8be86a",
-    "scripts/test/ci-change-filter-coverage.bats": "e09c49654993cb61dfd922062f383303dc53baf565ca2723f30b9564d5c3ca2b",
+    "scripts/test/ci-change-filter-coverage.bats": "4e2805d9536d6ebc4b7f5a752a72f2cc530892c62205f1ed57ebc313058d3bf8",
     "scripts/test/config-template-reader-census.bats": "fa8c9b600930429b62a77f398ea0062a0272182f8e9c8c48223dd65b653b72e4",
     "scripts/test/config-template-reader-census.psv": "8e1352798f887978c2ecdb6e93352a14597dc48ab00cad7a56e7fb171381c2c9",
     "scripts/test/conftest.py": "d67bd6c208c929fb11012e064576a98d23243681b0fa269ff659b1925592f67e",
