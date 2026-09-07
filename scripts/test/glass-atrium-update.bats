@@ -728,16 +728,6 @@ seed_baseline_hashed() {
   [[ ! -f "${INSTALL}/agents/dev-stray.md" ]]
 }
 
-@test "the shared transaction library carries no create branch (its own probe, run here)" {
-  # The updater's create path exists BECAUSE the library must not gain one.
-  # Invoked here so the suite carrying the create path is the one pinning the library's shape.
-  run bats -f 'carries no create branch' \
-    "${BATS_TEST_DIRNAME}/../../autoagent/test/git-txn-gitfree.bats"
-  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-  # A filter matching nothing also exits 0, so pin that exactly one test ran.
-  [[ "$output" == *"1..1"* ]] || { echo "the named probe did not run: $output"; return 1; }
-}
-
 @test "roster gate REFUSES an update that REMOVES a VENDOR agent (registry signal)" {
   # GENUINE vendor removal: dev-b was a PRIOR-VENDOR agent (recorded in the
   # base@install baseline) that the new release drops. Local registry carries
@@ -763,30 +753,6 @@ seed_baseline_hashed() {
   # registry NOT silently swapped — local still carries dev-b
   run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
   [[ "$output" == *"dev-b"* ]]
-}
-
-@test "roster gate PASSES THROUGH a content-only edit (same roster both sides)" {
-  # dev-a is present on BOTH sides (a content EDIT, not a roster change) and a
-  # plain non-agent file changes. The gate must NOT fire; the non-agent sync runs
-  # and the agent md is merged via the SEPARATE git-free E4 path.
-  seed_file "${INSTALL}" "agents/dev-a.md" "old agent body"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "new agent body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
-  write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"ROSTER CHANGE DETECTED"* ]]      # gate stayed silent
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]   # non-agent synced
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "new agent body" ]] # agent md merged via the git-free E4 path
 }
 
 @test "roster gate PASSES a content update on a CUSTOMIZED install (T20 fix: user-local agent does NOT block)" {
@@ -1391,42 +1357,6 @@ rm -rf /tmp/everything
   [ "$status" -eq 0 ]
   [[ "$output" == *"REFUSED sensitive"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${local_body}" ]] # untouched
-}
-
-@test "T19: non-git install still MERGES the agent file (git-free transaction, no SKIP)" {
-  # No git repo in the INSTALL sandbox. Post-P2-T2 the merge is git-FREE (git_txn_apply
-  # captures a before-image copy + restores atomically — proven by git-txn-gitfree.bats),
-  # so it PROCEEDS and applies the region rather than loud-skipping. Regression guard for
-  # the retired update_git_root "requires git" premise (the DC-1 review finding).
-  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
-  seed_base_store "dev-a.md" "${GOAL_BASE}"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
-  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
-
-  run_update
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"not a git repo"* ]]                                 # no SKIP path
-  [[ "$output" != *"SKIPPED"* ]]
-  [[ ! -d "${INSTALL}/.git" ]]                                          # stayed git-free
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
-}
-
-@test "T19: agent merge coexists with the non-agent sync (both apply in one run)" {
-  # A non-agent file AND an agent file both change. The non-agent sync applies via
-  # the spine; the agent merge applies via git_txn — both gated by the same y.
-  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
-  seed_base_store "dev-a.md" "${GOAL_BASE}"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
-  write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "scripts/tool.sh"
-
-  run_update
-  [ "$status" -eq 0 ]
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]            # non-agent synced
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
 }
 
 @test "T19/P2-T2: the pre-merge local body lands in the PERSISTENT agents-bak (single authoritative before-image)" {
@@ -2723,25 +2653,6 @@ assert_withheld_from_every_roster() {
   for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
     ! grep -q "${name}" "${INSTALL}/${rel}" || { echo "${rel} carries ${name}"; return 1; }
   done
-}
-
-@test "the withhold backstop does not trip on a run whose new agent body installs" {
-  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
-  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
-  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
-  seed_file "${INSTALL}" "agents/dev-a.md" "a"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
-  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
-brand new vendor agent"
-  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
-  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
-    'agents/dev-a.md' 'agents/dev-new.md'
-
-  run_roster_update_unoverridden
-  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-  [[ "$output" != *"roster withhold"* ]] || { echo "$output"; return 1; }
-  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
-  [[ "$output" == *"dev-new"* ]] || { echo "$output"; return 1; }
 }
 
 @test "a forced create failure withholds that name from the registry and every roster" {

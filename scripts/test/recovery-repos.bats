@@ -6,10 +6,9 @@
 #
 # The roster was formerly duplicated as two hardcoded literals synced by comment;
 # a drift between them makes the doctor scan blind to a repo the snapshot writes
-# (or the reverse). The literal-absence rows are the drift guard, and the two
-# functional rows prove the consumers READ the lib rather than merely mentioning
-# it: a probe entry injected into a COPY of the lib must change each consumer's
-# observable behaviour.
+# (or the reverse). The drift guard is behavioural, not textual: a probe entry
+# injected into a COPY of the lib must change each consumer's observable output,
+# which a re-introduced local literal cannot satisfy.
 #
 # Self-relative resolution is load-bearing, not stylistic: the CI gate-doctor leg
 # runs doctor against a bare mktemp GA target, where any target-relative path
@@ -72,25 +71,7 @@ expected_roster() {
   [[ "${output}" == "7" ]] || return 1
 }
 
-# === 2. consumer literal absence (drift guard) ===============================
-
-@test "snapshot-live-repos.sh sources the roster lib and carries no local literal" {
-  run grep -c 'lib/recovery-repos.sh' "${SNAPSHOT}"
-  [[ "${status}" -eq 0 ]] || return 1
-
-  run grep -n "^readonly LIVE_REPOS=(" "${SNAPSHOT}"
-  [[ "${status}" -ne 0 ]] || return 1
-}
-
-@test "ga-doctor.sh sources the roster lib and carries no local literal" {
-  run grep -c 'scripts/lib/recovery-repos.sh' "${DOCTOR}"
-  [[ "${status}" -eq 0 ]] || return 1
-
-  run grep -n "local repos=(autoagent" "${DOCTOR}"
-  [[ "${status}" -ne 0 ]] || return 1
-}
-
-# === 3. functional: each consumer READS the lib ==============================
+# === 2. functional: each consumer READS the lib ==============================
 
 @test "snapshot write side resolves the roster from the lib copy beside it" {
   command -v git >/dev/null 2>&1 || skip "git required"
@@ -129,7 +110,7 @@ expected_roster() {
   [[ "${output}" == *"${PROBE} — no such directory (recovery snapshot n/a)"* ]] || return 1
 }
 
-# === 4. missing lib is a loud, named precondition failure ====================
+# === 3. missing lib is a loud, named precondition failure ====================
 
 @test "snapshot loud-fails on a missing roster lib with its own exit code" {
   command -v git >/dev/null 2>&1 || skip "git required"
