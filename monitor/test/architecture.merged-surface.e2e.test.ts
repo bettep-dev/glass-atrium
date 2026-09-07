@@ -360,7 +360,7 @@ async function getDescProbe() {
 		const svgEl = document.querySelector(`${canvas} svg`);
 		const id = svgEl?.getAttribute("aria-describedby") || "";
 		const target = id ? document.getElementById(id) : null;
-		if (!target) return { id, found: false, text: "", width: -1, height: -1, inProse: false };
+		if (!target) return { id, found: false, text: "", width: -1, height: -1 };
 
 		const rect = target.getBoundingClientRect();
 		return {
@@ -369,7 +369,6 @@ async function getDescProbe() {
 			text: target.innerText,
 			width: rect.width,
 			height: rect.height,
-			inProse: target.closest(".arch-prose") !== null,
 		};
 	}, selectors.canvas);
 }
@@ -482,16 +481,6 @@ test("AC-T15 aria-describedby target holds the full description", async () => {
 	);
 });
 
-test("AC-T15 description node survives prose removal — it is not a prose child", async () => {
-	await openMap(getLiveFixture());
-	const probe = await getDescProbe();
-
-	// 산문 섹션 안에 있으면 T17 의 섹션 제거가 aria-describedby 를 끊음.
-	// T17 이 .arch-prose 를 지우고 나면 이 다리는 자명하게 참이 되어 변별력을 잃음 —
-	// 그때부터 이전을 재는 것은 아래 은닉 다리임.
-	assert.equal(probe.inProse, false, `target #${probe.id} must live outside .arch-prose`);
-});
-
 test("AC-T15 description node is visually hidden yet still rendered", async () => {
 	await openMap(getLiveFixture());
 	const probe = await getDescProbe();
@@ -546,33 +535,6 @@ test("AC-T17 the map renders no About this diagram prose section", async () => {
 		expectedDescription,
 		`target #${desc.id} must still expose the payload description verbatim`,
 	);
-});
-
-// 하네스 능력 증명 — 같은 파일 안에서 두 개의 서로 다른 live 픽스처를 심고 화면이
-// 각각 다르게 반응함을 봄. 소재로 드리프트 배너를 고른 이유: AC-T18(c) 가 이 배너의
-// 존속을 잠그므로 뒤 작업이 지우는 표면이 아님.
-test("harness supports per-case live fixtures", async () => {
-	const driftKey = "PROBE_DRIFT_KEY";
-
-	await openMap(getLiveFixture({ stale: true, diffs: [getDriftDiff(driftKey)] }));
-	const withDrift = await page.evaluate(
-		(key) =>
-			Array.from(document.querySelectorAll('[role="alert"]')).filter((el) =>
-				(el.textContent || "").includes(key),
-			).length,
-		driftKey,
-	);
-	assert.equal(withDrift, 1, `drift fixture must render exactly one alert carrying ${driftKey}`);
-
-	await openMap(getLiveFixture({ stale: false, diffs: [] }));
-	const withoutDrift = await page.evaluate(
-		(key) =>
-			Array.from(document.querySelectorAll('[role="alert"]')).filter((el) =>
-				(el.textContent || "").includes(key),
-			).length,
-		driftKey,
-	);
-	assert.equal(withoutDrift, 0, `clean fixture must render no alert carrying ${driftKey}`);
 });
 
 // 범례 표면 셀렉터 — 컴포넌트가 붙이던 클래스 전부. 하나라도 남으면 UI 가 살아 있음.

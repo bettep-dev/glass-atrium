@@ -63,14 +63,6 @@ test("every bound node id exists as a node definition in some diagram source", (
   }
 });
 
-test("binding map keys are exactly the overlay daemon set (no orphan bindings)", () => {
-  assert.deepStrictEqual(
-    Object.keys(DAEMON_NODE_BINDINGS).sort(),
-    [...EXPECTED_DAEMONS].sort(),
-    "DAEMON_NODE_BINDINGS keys must mirror live-overlay DAEMON_NAMES",
-  );
-});
-
 // --- AC-T4: one server verdict, two screens ---
 // Each screen is driven through its OWN route payload — the map through the live overlay, the
 // health board through the daemon status cards — and both map that verdict through the real

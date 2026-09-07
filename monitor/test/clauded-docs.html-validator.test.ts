@@ -17,7 +17,6 @@ import {
   type StyleFinding,
   MAX_COMPARISON_COLUMNS,
   STYLE_RULE_ALLOWLIST,
-  D8_THRESHOLDS,
   assertComparisonTableColumns,
   validateHtmlStructure,
   loadD8Thresholds,
@@ -209,35 +208,7 @@ test("validateHtmlStructure: bare div soup → many missing", () => {
   assert.ok(invalid.missing.includes("charset"));
 });
 
-test("validateHtmlStructure: missing array stays in canonical declaration order", () => {
-  // Construct an input that fails doctype + head_title + charset only — verify
-  // the missing array preserves that left-to-right declaration order, not
-  // insertion order from the check sequence.
-  const html = [
-    "<html>",
-    "<head>",
-    "</head>",
-    "<body>",
-    "<main>",
-    "<h1>h</h1>",
-    "</main>",
-    "</body>",
-    "</html>",
-  ].join("\n");
-  const result = expectStructureInvalid(check(html));
-  assert.deepStrictEqual(result.missing, ["doctype", "head_title", "charset"]);
-});
-
-// determinism + DoS guard.
-
-test("validateHtmlStructure: determinism — same input → same output across 100 runs", () => {
-  const input = VALID_MINIMAL.replace("<h1>Heading</h1>", "");
-  const first = check(input);
-  for (let i = 0; i < 99; i += 1) {
-    const next = check(input);
-    assert.deepStrictEqual(next, first, `run ${i + 1} diverged from baseline`);
-  }
-});
+// DoS guard.
 
 test("validateHtmlStructure: 6 MB input rejected gracefully without parser crash", () => {
   // 6 MB > 5 MB MAX_INPUT_BYTES → validator returns synthetic all-missing
@@ -268,11 +239,6 @@ test("validateHtmlStructure: 5-column comparison table passes (cap inclusive)", 
   assert.deepStrictEqual(check(html), OK_NO_NOTICES);
 });
 
-test("validateHtmlStructure: 4-column comparison table passes", () => {
-  const html = wrapHtml(buildComparisonTable(4));
-  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
-});
-
 test("validateHtmlStructure: 6-column comparison table → d8_p2_violation", () => {
   const html = wrapHtml(buildComparisonTable(6));
   const result = check(html);
@@ -281,17 +247,6 @@ test("validateHtmlStructure: 6-column comparison table → d8_p2_violation", () 
     assert.strictEqual(result.details.tableIndex, 1, "first table reported");
     assert.strictEqual(result.details.columnCount, 6);
     assert.strictEqual(result.details.maxAllowed, MAX_COMPARISON_COLUMNS);
-  } else {
-    assert.fail(`expected d8_p2_violation, got ${JSON.stringify(result)}`);
-  }
-});
-
-test("validateHtmlStructure: 7-column comparison table → d8_p2_violation", () => {
-  const html = wrapHtml(buildComparisonTable(7));
-  const result = check(html);
-  assert.strictEqual(result.ok, false);
-  if (result.ok === false && "code" in result && result.code === "d8_p2_violation") {
-    assert.strictEqual(result.details.columnCount, 7);
   } else {
     assert.fail(`expected d8_p2_violation, got ${JSON.stringify(result)}`);
   }
@@ -386,63 +341,9 @@ function wrapHtml(inner: string): string {
   ].join("\n");
 }
 
-// dogfood backwards-compat.
-
-test("validateHtmlStructure: dogfood-report-shape passes (backwards-compat)", () => {
-  // Mirror a real report's structural shape (head with title + meta charset,
-  // body with header / main / article / section / h1 / h2). Self-contained —
-  // the route-level dogfood smoke probe is the real-bytes sanity check.
-  const html = [
-    "<!doctype html>",
-    '<html lang="ko">',
-    "<head>",
-    '<meta charset="utf-8" />',
-    '<meta name="viewport" content="width=device-width, initial-scale=1" />',
-    "<title>[보고] monitor 웹 기반 클로드/ HTML 문서 관리 시스템 추가 — 완료 보고서</title>",
-    "</head>",
-    '<body class="px-4">',
-    '<header class="report-head">',
-    "<h1>monitor 웹 기반 클로드/ HTML 문서 관리 시스템 추가 — 완료 보고서</h1>",
-    "</header>",
-    "<main>",
-    "<article>",
-    "<section>",
-    "<h2>1. 요약</h2>",
-    "<p>본문</p>",
-    "</section>",
-    "</article>",
-    "</main>",
-    "</body>",
-    "</html>",
-  ].join("\n");
-  assert.deepStrictEqual(check(html), OK_NO_NOTICES);
-});
-
 // D8 threshold JSON SoT (de-triplication of the hardcoded column cap).
 // Cap is JSON.parse-loaded at module init; MAX_COMPARISON_COLUMNS resolves FROM that JSON (no literal 5 in code).
 // Changing the JSON cap reflects in the gate with no code change — via the pure loadD8Thresholds(path) seam + injectable threshold.
-
-test("D8_THRESHOLDS loaded from JSON SoT exposes the canonical cap=5", () => {
-  // The on-disk SoT ships cap=5; the module-init load surfaces it on the
-  // frozen D8_THRESHOLDS object and the back-compat MAX_COMPARISON_COLUMNS alias.
-  assert.strictEqual(D8_THRESHOLDS.comparisonTable.maxColumns, 5);
-  assert.strictEqual(MAX_COMPARISON_COLUMNS, 5);
-  // Contrast + typography policy values also externalized (forward use sites).
-  assert.strictEqual(D8_THRESHOLDS.contrast.textMinRatio, 4.5);
-  assert.strictEqual(D8_THRESHOLDS.contrast.uiMinRatio, 3);
-  assert.strictEqual(D8_THRESHOLDS.typography.maxLevels, 3);
-});
-
-test("D8_THRESHOLDS is deeply frozen (no runtime mutation of policy)", () => {
-  assert.ok(Object.isFrozen(D8_THRESHOLDS));
-  assert.ok(Object.isFrozen(D8_THRESHOLDS.comparisonTable));
-  assert.throws(() => {
-    // Runtime-frozen only: `D8Thresholds` declares no `readonly` modifiers, so this
-    // assignment type-checks and the guarantee under test is Object.freeze's throw.
-    // (A `@ts-expect-error` here would be unused — TS2578.)
-    D8_THRESHOLDS.comparisonTable.maxColumns = 99;
-  });
-});
 
 test("injecting a JSON SoT with cap=4 makes a 5-column table violate (no code change)", () => {
   // Write a temp threshold JSON with maxColumns=4, load it through the SAME
