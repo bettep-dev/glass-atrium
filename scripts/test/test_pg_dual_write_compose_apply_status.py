@@ -105,12 +105,11 @@ def pg_shim_premigration(tmp_path: Path) -> dict[str, str]:
     return _make_env(tmp_path, provenance_column=False)
 
 
-def _fresh(tmp_path: Path, slug: str, *, provenance_column: bool = True) -> dict[str, str]:
+def _make_env_in(tmp_path: Path, slug: str, *, provenance_column: bool = True) -> dict[str, str]:
     """A shim env in its own subdir, one per iteration of a folded sweep.
 
-    A folded sweep runs its whole table inside one test, so each row needs the fresh database
-    parametrize used to hand it — a shared one accumulates run rows and the second iteration
-    reads the first one's.
+    A folded sweep runs its whole table inside one test, so each row needs its own database — a
+    shared one accumulates run rows and the second iteration reads the first one's.
     """
     env_dir = tmp_path / slug
     env_dir.mkdir()
@@ -182,7 +181,7 @@ def test_when_generation_failed_then_apply_failure_preserves_its_verdict(tmp_pat
     # The erasure this op exists to prevent: a plain overwrite reports the apply
     # stage's verdict over a generation verdict that is strictly more informative.
     for verdict in _GENERATION_VERDICTS:
-        env = _fresh(tmp_path, "applyfail_%s" % verdict)
+        env = _make_env_in(tmp_path, "applyfail_%s" % verdict)
         _seed(env, verdict)
 
         result = _compose(env, "apply_failed")
@@ -193,7 +192,7 @@ def test_when_generation_failed_then_apply_failure_preserves_its_verdict(tmp_pat
 
 def test_when_generation_failed_then_clean_apply_preserves_its_verdict(tmp_path: Path):
     for verdict in _GENERATION_VERDICTS:
-        env = _fresh(tmp_path, "cleanapply_%s" % verdict)
+        env = _make_env_in(tmp_path, "cleanapply_%s" % verdict)
         _seed(env, verdict)
 
         result = _compose(env, "ok")
@@ -244,7 +243,7 @@ def test_when_row_is_ok_then_unavailability_composes_in(pg_shim: dict[str, str])
 
 def test_when_generation_failed_then_unavailability_preserves_its_verdict(tmp_path: Path):
     for verdict in _GENERATION_VERDICTS:
-        env = _fresh(tmp_path, "unavail_%s" % verdict)
+        env = _make_env_in(tmp_path, "unavail_%s" % verdict)
         _seed(env, verdict)
 
         result = _compose(env, _UNAVAILABLE)
@@ -298,7 +297,7 @@ def test_when_the_compose_is_declined_then_the_decline_names_itself_on_every_cha
     # guard cannot fire and a driver reading only the exit code sees a clean compose that
     # recorded nothing. Durable row, driver-read stdout, operator-read stderr.
     for verdict in _GENERATION_VERDICTS:
-        env = _fresh(tmp_path, "declined_%s" % verdict)
+        env = _make_env_in(tmp_path, "declined_%s" % verdict)
         _seed(env, verdict)
 
         result = _compose(env, "ok")
@@ -336,7 +335,7 @@ def test_when_provenance_is_reported_then_the_first_stdout_line_stays_a_bare_int
     # is a trailer or it is a breaking change to callers unrelated to this op.
     # Both polarities: a composing seed and a declining one each report a trailer.
     for seeded in ["ok", "partial"]:
-        env = _fresh(tmp_path, "trailer_%s" % seeded)
+        env = _make_env_in(tmp_path, "trailer_%s" % seeded)
         _seed(env, seeded)
 
         result = _compose(env, "ok")
@@ -383,7 +382,7 @@ def test_when_the_provenance_column_is_absent_then_the_status_composition_is_unc
     # WORKING compose into a hard failure every cycle on any install whose DB predates the
     # migration — and the update path runs none. Pre-migration is old behaviour plus a notice.
     for seeded, composed, expected in _PREMIGRATION_COMPOSITIONS:
-        env = _fresh(tmp_path, "premig_%s_%s" % (seeded, composed), provenance_column=False)
+        env = _make_env_in(tmp_path, "premig_%s_%s" % (seeded, composed), provenance_column=False)
         _seed(env, seeded)
 
         result = _compose(env, composed)
@@ -412,7 +411,7 @@ def test_when_the_provenance_column_is_absent_then_no_provenance_is_reported(tmp
     # The degraded statement returns the composed STATUS; reporting it as provenance would hand
     # the driver a value indistinguishable from a stored one. Line 1 stays the bare integer.
     for seeded in ["ok", "partial"]:
-        env = _fresh(tmp_path, "premigquiet_%s" % seeded, provenance_column=False)
+        env = _make_env_in(tmp_path, "premigquiet_%s" % seeded, provenance_column=False)
         _seed(env, seeded)
 
         result = _compose(env, "ok")
@@ -454,12 +453,15 @@ def test_when_the_column_is_absent_then_an_unrelated_fault_is_not_degraded_away(
 def test_when_the_contract_is_declared_then_every_surface_names_the_same_set():
     """One data-driven parity check over the composable set and the provenance vocabulary.
 
-    A token or a name declared in one place only leaves the contract lying about itself. Seven
-    surfaces carry a copy — the refusal gate's constant, three SQL CASE arms, the CLI header,
-    the compose docstring, the prisma column mapping and the migration the degradation notice
-    names — and a copy that drifts sends the write somewhere nobody is looking. Each is
-    compared against _COMPOSABLE_TOKENS, a set this file states independently of the helper,
-    so dropping a member goes red instead of moving every surface at once in silent agreement.
+    A token or a name declared in one place only leaves the contract lying about itself, and a
+    copy that drifts sends the write somewhere nobody is looking. Six surfaces carry the
+    composable set — the refusal gate's APPLY_STATUS_TOKENS, three SQL CASE arms, the CLI
+    header and the compose docstring — and each is compared against _COMPOSABLE_TOKENS, a set
+    this file states independently of the helper, so dropping a member goes red instead of
+    moving every surface at once in silent agreement. The provenance vocabulary is pinned
+    separately and by name, never against that token set: the two prefixes against _COMPOSED
+    and _DECLINED, and the column, the prisma column mapping and the migration the degradation
+    notice names against _PROVENANCE_COLUMN.
     """
     source = _HELPER.read_text(encoding="utf-8")
 
