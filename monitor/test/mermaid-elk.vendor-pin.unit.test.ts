@@ -9,7 +9,7 @@
 // pins run in every leg. Whether `layout: elk` actually reaches ELK stays in the
 // browser suites, which are the only place it can be measured.
 //
-// Six claims: the bundle on disk is the byte sequence its sidecar pins; the loader
+// Seven claims: the bundle on disk is the byte sequence its sidecar pins; the loader
 // names exactly the file the sidecar names and nothing else from that directory; the
 // loader injects that file BEFORE it registers and does both once per page; a bundle
 // already on the page registers without a fetch and one that fails to arrive resolves

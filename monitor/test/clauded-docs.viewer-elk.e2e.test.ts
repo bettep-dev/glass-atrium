@@ -549,7 +549,7 @@ describe("document diagrams under the shared ELK config", () => {
 		);
 	});
 
-	// 폭 계약(cycle A) — 정적 useMaxWidth:false 는 mermaid-config.tokens.test.ts 소유,
+	// 폭 계약(cycle A) — 정적 useMaxWidth:false 는 mermaid-config.contract.test.ts 소유,
 	// 여기서는 그 설정이 실제 산출 SVG 에 남긴 결과만 잰다.
 	test("P1-3 adopted-type blocks keep the cycle-A width contract", () => {
 		for (const doc of DOC_FIXTURES) {

@@ -1,6 +1,6 @@
 // P1-1 — the shared mermaid runtime config (public/mermaid-config.js), read as the
 // one source both viewer surfaces initialize from.
-// Runner: npx tsx --test test/mermaid-config.tokens.test.ts
+// Runner: npx tsx --test test/mermaid-config.contract.test.ts
 //
 // Three claims, none of which the others cover: the two keys the ELK proof and the
 // fallback-warning watch stand on carry the values those harnesses assume, authored
