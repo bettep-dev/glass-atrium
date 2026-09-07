@@ -169,7 +169,7 @@ test("RECONSTRUCTED_ATTRIBUTION_SOURCES: the synthesis-branch set is CLOSED at t
     "the reconstructed discriminator names exactly the three synthesis-branch tokens — every added member is subtracted from the writer-emitted headline on every aggregation, so a new token belongs here only once it is genuinely a harness recovery artifact",
   );
   // The standing exclusion the set equality above encodes today, kept as its own arm so a
-  // legitimate FIFTH synthesis token cannot smuggle this one in alongside it.
+  // legitimate FOURTH synthesis token cannot smuggle this one in alongside it.
   assert.ok(
     !RECONSTRUCTED_ATTRIBUTION_SOURCES.includes(STRUCTUREDOUTPUT_COMPLETION_SOURCE),
     "structuredoutput-completion marks a WRITER-emitted (healthy) row, not a synthesis artifact — folding it in here silently deflates every writer-emitted headline",
