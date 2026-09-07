@@ -366,6 +366,56 @@ test("PUT /api/clauded-docs/:id: plain-format mismatch (md row ← yaml_body) �
   }
 });
 
+// POST doc_status 계약 — 실린 값은 그대로 저장되고, 'progress' 는 미지정일 때만 적용되는 기본값.
+// html/plain 두 primary kind 가 각자 insert 를 호출하므로 양쪽 모두 확인 — 한쪽만 보면 다른 경로가
+// 지정값을 무시해도 통과한다.
+test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progress 는 미지정일 때만 기본값 (html·md 양쪽)", async () => {
+  const createdIds: number[] = [];
+
+  // doc_status 유무만 바꿔 POST → 응답 doc_status 반환. 응답은 INSERT ... RETURNING 행에서
+  // 만들어지므로 요청 값의 메아리가 아니라 저장된 값이다.
+  async function postDocStatus(
+    label: string,
+    bodyKind: "html_body" | "md_body",
+    docStatus: string | undefined,
+  ): Promise<string> {
+    const title = makeTitle(label);
+    const body = bodyKind === "html_body" ? makeHtmlBody(title) : makeMdBody(title, null);
+    const payload: Record<string, unknown> = { title, author: "tester", [bodyKind]: body };
+    if (docStatus !== undefined) payload.doc_status = docStatus;
+    const res = await postCreate(app, payload);
+    assert.strictEqual(res.status, 201, `POST 201 (${label}): ${JSON.stringify(res.body)}`);
+    const detail = res.body as { id: number; doc_status: string };
+    createdIds.push(detail.id);
+    return detail.doc_status;
+  }
+
+  try {
+    assert.strictEqual(
+      await postDocStatus("post-status-html-done", "html_body", "done"),
+      "done",
+      "html primary: 지정한 doc_status=done 이 저장돼야 함 — 기본값이 지정값을 덮으면 클라이언트가 done 으로 만든 문서가 progress 로 생성된다",
+    );
+    assert.strictEqual(
+      await postDocStatus("post-status-md-done", "md_body", "done"),
+      "done",
+      "plain primary: 지정한 doc_status=done 이 저장돼야 함 — html 경로와 별도 insert 호출이라 따로 깨질 수 있다",
+    );
+    assert.strictEqual(
+      await postDocStatus("post-status-html-default", "html_body", undefined),
+      "progress",
+      "html primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+    );
+    assert.strictEqual(
+      await postDocStatus("post-status-md-default", "md_body", undefined),
+      "progress",
+      "plain primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+    );
+  } finally {
+    for (const id of createdIds) await deleteDoc(app, id);
+  }
+});
+
 // PUT doc_status toggle.
 // standalone 행(folder_id IS NULL)도 cascade-only path 진입 → cascadeUpdateDocStatus CTE 가 self-only 집합으로 degradation (단일 행 갱신). 4 시나리오:
 //   (1) standalone progress→done 토글 → 200 + done 영속화
