@@ -88,6 +88,18 @@ test("phase 'working' → updating (optimistic, overrides a completed job poll)"
 
 test("job completed → current (sticky — no age gate, current even past staleMs)", () => {
   assert.strictEqual(derive({ job: jobAt("completed", STALE_MS + 1) }).kind, "current");
+  // Only a DISAGREEING pair separates the two precedence readings.
+  // Every other case here leaves availability at its 'current' default, where both readings agree.
+  assert.strictEqual(
+    derive({
+      job: jobAt("completed", STALE_MS + 1),
+      availabilityData: { status: "update-available" },
+    }).kind,
+    "current",
+    "a completed job lost to an availability verdict still reading 'update-available' — the badge " +
+      "reverts to Update the moment the update it just finished lands, and stays there until the " +
+      "next availability poll catches up",
+  );
 });
 
 test("job failed → failed", () => {

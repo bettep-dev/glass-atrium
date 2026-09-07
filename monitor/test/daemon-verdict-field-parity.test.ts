@@ -33,6 +33,11 @@ const NOW = Date.parse("2026-07-12T12:00:00Z");
 const CADENCE_MIN = expectedIntervalMinutes(DAEMON_CRON_SCHEDULE[DAEMON]);
 const OVERDUE_MIN = CADENCE_MIN * STALE_MULTIPLIER;
 
+// The same boundary as a TEST-SIDE literal — wiki fires daily, so 1440 min × 1.5.
+// The offsets below are written against this rather than against the import above.
+// A drift in the shared constant, or in a consumer's private copy of it, then lands here.
+const OVERDUE_MIN_LITERAL = 2160;
+
 function repoRead(relative: string): string {
   return readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), "utf8");
 }
@@ -72,6 +77,20 @@ function cardVerdictOf(rows: DaemonAggRow[], installAnchor: Date | null = null):
   return found[VERDICT_FIELD];
 }
 
+// The card's OTHER consumer of the overdue threshold.
+// needs_auth fires only while the daemon is still firing, so the threshold gates the prompt too.
+// Secrets are absent here: the arm below is about the threshold, not about the secrets stat.
+function needsAuthOf(minutesBack: number, lastStatus: string): boolean {
+  const found = buildDaemonStatusCards(
+    healthRows(ranAt(minutesBack, lastStatus)),
+    new Date(NOW),
+    null,
+    true,
+  ).find((card) => card.daemon_name === DAEMON);
+  assert.ok(found, `daemon '${DAEMON}' must be present on the health board`);
+  return found.needs_auth;
+}
+
 test("every resolved daemon carries a non-empty verdict (no null for a client to fill in)", () => {
   for (const daemon of resolveDaemonStatuses([], NOW, null)) {
     const verdict = daemon[VERDICT_FIELD];
@@ -92,13 +111,36 @@ test("never-fired past a full cadence window ⇒ 'stale'; inside it ⇒ 'missing
   assert.strictEqual(verdictOf([], minutesAgo(CADENCE_MIN - 1)), "missing");
 });
 
-test("the overdue flip point is cadence × STALE_MULTIPLIER, taken from the shared module", () => {
+test("the overdue flip point is cadence × STALE_MULTIPLIER — the verdict flips there, and so does the health card's needs_auth", () => {
   assert.strictEqual(
     verdictOf(ranAt(OVERDUE_MIN, "ok")),
     "ok",
     "the boundary itself is not overdue (strict >)",
   );
   assert.strictEqual(verdictOf(ranAt(OVERDUE_MIN + 1, "ok")), "stale");
+
+  assert.equal(
+    OVERDUE_MIN,
+    OVERDUE_MIN_LITERAL,
+    `the shared cadence × multiplier now lands at ${OVERDUE_MIN} minutes, not ${OVERDUE_MIN_LITERAL} — ` +
+      "a deliberate threshold change reaches this file first, and the two offsets below have to move with it",
+  );
+
+  // Read through the card rather than deriveNeedsAuth: the seam is the route's own arithmetic.
+  // A local copy of the multiplier there is invisible to a typecheck.
+  assert.equal(
+    needsAuthOf(OVERDUE_MIN_LITERAL - 1, "error"),
+    true,
+    "a failing daemon one minute inside the overdue boundary offers no re-auth prompt while its " +
+      "secrets file is absent — the health route judges it already dead, so the operator sees no " +
+      "repair path for the credential that is actually stopping it",
+  );
+  assert.equal(
+    needsAuthOf(OVERDUE_MIN_LITERAL + 1, "error"),
+    false,
+    "a daemon past the overdue boundary still offers a re-auth prompt — silence that long is not " +
+      "something a credential repair fixes, and the prompt sends the operator to the wrong remedy",
+  );
 });
 
 // Field names that restate the verdict the card already carries. A second one is a second
