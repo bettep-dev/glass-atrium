@@ -174,8 +174,11 @@ function getRootFiles(): string[] {
     .filter((path) => path.length > 0 && path !== LEDGER_PATH);
 }
 
-// 토큰 전부의 자리를 트리 한 번 순회로 냄 — 파일과 줄까지 냄. 개수만 내면 어디를 고칠지가
-// 메시지에 없음. 토큰마다 트리를 다시 읽으면 스캔이 토큰 수만큼 늘어나므로 순회가 바깥임.
+/**
+ * 토큰 전부의 자리를 트리 한 번 순회로 냄 — 파일과 줄까지 남김.
+ * 개수만 내면 어디를 고칠지가 실패 메시지에 없음.
+ * 토큰마다 트리를 다시 읽으면 스캔이 토큰 수만큼 늘어남 → 순회가 바깥임.
+ */
 function getHitsByToken(tokens: NamedToken[], files: string[]): Map<NamedToken, string[]> {
   // 적중 배열을 패턴과 함께 들고 다님 — 순회 안에서 자리를 다시 찾지 않으므로 '못 찾음' 갈래가 없음.
   const scans = tokens.map((token) => ({ token, pattern: getTokenPattern(token), hits: [] as string[] }));
@@ -252,9 +255,8 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
   assert.equal(getTokenPattern(idToken).test("<HealthStrip state={s} />"), true, "the real use must still be caught");
 });
 
-// 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외 목록은 판별성의 근거를, 생존 목록은
-// 넘치게 지워지지 않았음을 잼. 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽으므로
-// 순회는 하나이고 실패 메시지가 어느 토큰에서 깨졌는지를 담음.
+// 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외는 판별성의 근거를, 생존은 넘치게 지워지지 않았음을 잼.
+// 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽음 → 순회는 하나로 두고, 실패 메시지가 깨진 토큰을 담음.
 test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12)", () => {
   // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
   const ledgerCountByAc: Record<string, number> = {};
@@ -275,15 +277,15 @@ test("the removal ledger, its exclusions and the survivors hold in one tracked-t
   );
 
   const hitsByToken = getHitsByToken([...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS], ROOT_FILES);
-  const getHits = (token: NamedToken): string[] => {
+  const getHitsOrFail = (token: NamedToken): string[] => {
     const hits = hitsByToken.get(token);
     // 못 찾음을 0 건으로 읽으면 '재지 않았음' 이 '지워졌음' 과 같은 값이 됨 — 아래 부활 절이 바로 그 값에서 초록임.
     assert.ok(hits, `${token.name} was not scanned — the hit map does not hold this token`);
     return hits;
   };
 
-  const resurrected = LEDGER_TOKENS.filter((token) => getHits(token).length > 0).map(
-    (token) => `${token.ac} ${token.name} still reads at: ${getHits(token).join(", ")}`,
+  const resurrected = LEDGER_TOKENS.filter((token) => getHitsOrFail(token).length > 0).map(
+    (token) => `${token.ac} ${token.name} still reads at: ${getHitsOrFail(token).join(", ")}`,
   );
   assert.deepEqual(resurrected, [], `removed names must be gone from the whole tracked tree:\n${resurrected.join("\n")}`);
 
@@ -298,7 +300,7 @@ test("the removal ledger, its exclusions and the survivors hold in one tracked-t
 
   // 제외의 이유가 실재하는지 잼 — 밖의 선언이 사라지면 이 절이 붉어지고, 그때 비로소 원장 후보가 됨.
   const ungrounded = DISCRIMINABILITY_EXCLUSIONS.filter(
-    (excluded) => !getHits(excluded).some((hit) => hit.startsWith(`${excluded.declaredIn}:`)),
+    (excluded) => !getHitsOrFail(excluded).some((hit) => hit.startsWith(`${excluded.declaredIn}:`)),
   ).map((excluded) => `${excluded.name} no longer reads in ${excluded.declaredIn}`);
   assert.deepEqual(
     ungrounded,
@@ -306,7 +308,7 @@ test("the removal ledger, its exclusions and the survivors hold in one tracked-t
     `an exclusion without its outside declaration has no ground, and the token belongs on the ledger:\n${ungrounded.join("\n")}`,
   );
 
-  const overDeleted = SURVIVING_TOKENS.filter((token) => getHits(token).length === 0).map(
+  const overDeleted = SURVIVING_TOKENS.filter((token) => getHitsOrFail(token).length === 0).map(
     (token) => `${token.ac} ${token.name} reads nowhere`,
   );
   assert.deepEqual(
