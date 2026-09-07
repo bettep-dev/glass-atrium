@@ -271,6 +271,37 @@ test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says",
   assert.strictEqual(stale.tone, "crit", "the server verdict must survive a low staleness");
 });
 
+test("AC-T3 count: a row the server calls fresh is never counted stale, however old it looks", () => {
+  // The verdict case above measures the tone path. The KPI stale count is the model's
+  // other consumer of the same verdict, and it reads through isDaemonStale rather than
+  // the tone table — so a threshold table confined to that one function moves this count
+  // while leaving every tone in this file untouched.
+  const tally = tallyCardFacts(
+    allHealthyStates({
+      daemonState: ready({
+        daemons: [
+          // Far past any window a daily-cadence daemon could justify holding client-side,
+          // and the server still calls it ok — which is the only word the model may read.
+          daemonRow("autoagent", { staleness_minutes: 100_000 }),
+          daemonRow("wiki"),
+          daemonRow("daily-restart-autoagent"),
+          daemonRow("daily-restart-wiki"),
+        ],
+      }),
+    }),
+  );
+  assert.strictEqual(
+    tally.stale,
+    0,
+    "a client-side staleness threshold would count this row stale — only the server verdict may",
+  );
+  assert.strictEqual(
+    tally.ok,
+    7,
+    "and the card stays in the healthy bucket — a re-derived verdict would re-tone it to crit",
+  );
+});
+
 // KPI 가 '—' 로 내던 '아직 안 옴' 은 이제 행이 냄 — 판정이 없는 데몬 행은 tone 없이 '—' 를
 // 실음. 그 사실은 화면 계기가 재야 하므로 AC-B2-6f(merged-surface e2e)로 옮겼고,
 // 여기서는 카드가 애초에 ready 로 서지 않는다는 그 앞단만 남김.
