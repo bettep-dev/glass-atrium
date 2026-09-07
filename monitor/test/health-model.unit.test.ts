@@ -5,8 +5,6 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 import {
   DAEMON_CRON_SCHEDULE,
@@ -112,21 +110,29 @@ function daemonRow(name: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+// The full roster the cards expect, named once — a per-case re-listing is what drifts out of step.
+const DAEMON_NAMES = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+
 function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
   return {
-    daemonState: ready({
-      daemons: [
-        daemonRow("autoagent"),
-        daemonRow("wiki"),
-        daemonRow("daily-restart-autoagent"),
-        daemonRow("daily-restart-wiki"),
-      ],
-    }),
+    daemonState: ready({ daemons: DAEMON_NAMES.map((name) => daemonRow(name)) }),
     pgState: ready({ status: "ok", db: "open", browser: "ok" }),
     hookState: ready({ events: [{ groups: [{ hooks: ["h1"] }] }] }),
     hookFailState: ready({ count_24h: 0, unretried_count_24h: 0 }),
     ...overrides,
   };
+}
+
+/**
+ * The healthy roster with one daemon carrying overrides — the shape every single-daemon case needs.
+ * A case that deliberately OMITS a row builds its list explicitly: there the omission is the subject.
+ */
+function statesWithDaemon(name: string, overrides: Record<string, unknown>): HealthStates {
+  return allHealthyStates({
+    daemonState: ready({
+      daemons: DAEMON_NAMES.map((n) => daemonRow(n, n === name ? overrides : {})),
+    }),
+  });
 }
 
 // 세 버킷이 아는 tone 어휘 — KPI fold 의 else 가지가 'info = info + neutral' 이라고
@@ -216,18 +222,9 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
 });
 
 test("stale daemon (server verdict): degraded bucket + counted as stale", () => {
+  // The server called it overdue — that verdict outranks last_status='ok'.
   const tally = tallyCardFacts(
-    allHealthyStates({
-      daemonState: ready({
-        daemons: [
-          // The server called it overdue — that verdict outranks last_status='ok'.
-          daemonRow("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
-          daemonRow("wiki"),
-          daemonRow("daily-restart-autoagent"),
-          daemonRow("daily-restart-wiki"),
-        ],
-      }),
-    }),
+    statesWithDaemon("autoagent", { effective_status: "stale", staleness_minutes: 3000 }),
   );
   assert.strictEqual(tally.degraded, 1);
   assert.strictEqual(tally.stale, 1);
@@ -260,23 +257,6 @@ test("stale verdict: display meta comes from the tone table, tone stays crit (Ru
 
 // --- AC-T3: the daemon verdict is the server's, not a client re-computation ---
 
-test("AC-T3 source: no per-daemon threshold table, no staleness re-derivation", () => {
-  const src = readFileSync(
-    fileURLToPath(new URL("../public/src/data/health-model.js", import.meta.url)),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    src,
-    /DAEMON_STALE_THRESHOLD_MIN/,
-    "a per-daemon threshold table is a second verdict rule competing with the server's",
-  );
-  assert.doesNotMatch(
-    src,
-    /staleness_minutes/,
-    "reading the staleness figure at all is how the client starts judging again",
-  );
-});
-
 test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says", () => {
   // Past the deleted 2160-min (36h) table, but the server calls it fresh.
   const fresh = HealthModel.resolveDaemonDisplayMeta(
@@ -288,6 +268,23 @@ test("AC-T3 verdict: effective_status decides, whatever staleness_minutes says",
     daemonRow("autoagent", { staleness_minutes: 60, effective_status: "stale" }),
   );
   assert.strictEqual(stale.tone, "crit", "the server verdict must survive a low staleness");
+});
+
+test("AC-T3 count: a row the server calls fresh is never counted stale, however old it looks", () => {
+  // The case above measures the tone path; the KPI stale count is the verdict's other consumer.
+  // The count reads through isDaemonStale, not the tone table — a threshold table confined there moves it alone.
+  // 100_000 minutes is far past any window a client could justify, and the server still calls it ok.
+  const tally = tallyCardFacts(statesWithDaemon("autoagent", { staleness_minutes: 100_000 }));
+  assert.strictEqual(
+    tally.stale,
+    0,
+    "a client-side staleness threshold would count this row stale — only the server verdict may",
+  );
+  assert.strictEqual(
+    tally.ok,
+    7,
+    "and the card stays in the healthy bucket — a re-derived verdict would re-tone it to crit",
+  );
 });
 
 // KPI 가 '—' 로 내던 '아직 안 옴' 은 이제 행이 냄 — 판정이 없는 데몬 행은 tone 없이 '—' 를
