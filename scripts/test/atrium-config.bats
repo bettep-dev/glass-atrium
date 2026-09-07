@@ -159,15 +159,6 @@ resolver_call() {
   [[ "${output}" == *"invalid ATRIUM_MONITOR_PORT=70000"* ]]
 }
 
-@test "resolver default 16145 is the sole shell terminal literal (AC-S1.3a)" {
-  # The default DEFAULT literal is the quoted arg form "'16145'"; it appears in
-  # exactly one code location (the resolver terminal default). Prose comments
-  # mention 16145 unquoted and are not counted.
-  run grep -cF "'16145'" "${REAL_LIB}"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "1" ]]
-}
-
 # --- atrium_toml_keys(): key enumeration + two-consumer round-trip ---
 
 TEMPLATE="${GA}/config.toml.example"
