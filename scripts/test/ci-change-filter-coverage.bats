@@ -15,13 +15,17 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 CI_YML="${GA}/.github/workflows/ci.yml"
 
-# Hand-maintained list — a new root-level policy input must be added here AND to the filter.
+# Hand-maintained list — a new policy input must be added here AND to the filter.
 # The glob evaluation below catches a filter-side regression; a missing entry here is invisible.
+# The two doc entries stand for the markdown/rule surface: the drift-guard suites asserting
+# rules/ content live under hooks/test, and thresholds.yaml is reachable by `skills/**` alone.
 POLICY_PATHS='requirements.txt
 requirements-dev.txt
 config.toml.example
 agent-registry.json
-.github/workflows/ci.yml'
+.github/workflows/ci.yml
+rules/glass-atrium/core-security.md
+skills/glass-atrium-ops-token-audit/thresholds.yaml'
 
 # Emits one glob per `- '<glob>'` line of the detect-changes `bash:` filter. The range ends at
 # the next bare key at any indent (`python:`), so a renamed sibling cannot silently widen it.
@@ -46,6 +50,13 @@ _matches_any_glob() {
 @test "coverage: every policy path matches at least one bash filter glob" {
   git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || skip "Repo-only: .github/workflows/ci.yml is a manifest non-member, absent from a consumer install"
+  # `every` ANDs a filter's positive-only globs so none can match — every leg skips green, and
+  # the `- '<glob>'` parse below cannot see the key that did it.
+  ! grep -qE "^[[:space:]]*predicate-quantifier:" "${CI_YML}" || {
+    printf 'predicate-quantifier key set in %s — `every` ANDs the positive-only globs, skipping every leg green\n' \
+      "${CI_YML}" >&2
+    return 1
+  }
   local -a globs=()
   local g p uncovered=""
   while IFS= read -r g; do
