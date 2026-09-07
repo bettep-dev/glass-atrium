@@ -88,6 +88,12 @@ test("resolveBadge: override key returns the override entry verbatim", () => {
     pill: "Warning",
     label: "Failed in 24 h (retried)",
   });
+  // 로스터 중 유일하게 실사용 소비자가 있는 키 — agents 화면이 예산 초과 배지로 이 항목만 해석한다.
+  assert.deepStrictEqual(
+    badge("budget_near_cap"),
+    { tone: "warn", pill: "NEAR CAP", label: "Hit tool-use budget" },
+    "budget_near_cap 이 축자 그대로 나오지 않음 — agents 화면 예산 초과 배지의 톤·pill·문구가 바뀜",
+  );
 });
 
 test("resolveBadge: bare tone key returns that tier's default pill + label", () => {
