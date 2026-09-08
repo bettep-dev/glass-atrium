@@ -133,8 +133,9 @@ The literals quoted in prose throughout this file are a documented MIRROR synced
 
 ### Agent-only record authoring guide (token-optimized fallback)
 
-The agent-only record mode is the DEFAULT fallback (no user document request). Agent-only documents MUST minimize token cost and use the language system / format easiest for an LLM to parse. **User readability explicitly abandoned** (viewer default-hide) — plain token-optimized output, since the user rarely inspects an LLM-targeted reference document.
+The agent-only record mode is the DEFAULT fallback (no user document request). Agent-only documents MUST minimize token cost and use the notation / format easiest for an LLM to parse. **User readability explicitly abandoned** (viewer default-hide) — plain token-optimized output, since the user rarely inspects an LLM-targeted reference document.
 
+- **Deliverable language**: English, per `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). This holds across all emission modes, not only this one; a non-English deliverable is emitted only when the user explicitly asks for one.
 - **Format selection**: {md, yaml, json, txt} 4 formats are equally adoptable and the author LLM chooses autonomously based on content shape; explicit per-content-shape selection is required and MD MUST NOT be forced as a silent default. The server `/api/clauded-docs` `parseCreateBody` natively accepts all four — the format is determined by the body-field kind supplied (`md_body`/`yaml_body`/`json_body`/`txt_body`), with NO `prefix` field. Format-selection decision matrix + POST API body field mapping canonical: `glass-atrium-intel-reporter.md` Authoring Contract → Format Selection Matrix.
 - **Decoration FORBIDDEN**: HTML · TOC · markdown formatting flourishes (emphasis · decorative tables) · any visual decoration — useless beyond aiding LLM parsing, and token waste → audit fail.
 - **Storage location**: POST API via monitor-internal storage — all clauded-docs document bodies route through `POST /api/clauded-docs` to the monitor-internal root (see the Emission contract below + `orchestrator-role.md` Harness Path Protection). The POST body carries NO `prefix` field.
@@ -336,7 +337,7 @@ When a **user-requested HTML primary** deliverable exceeds the visually-heavy th
 
 Every report MUST be navigable in skim-only mode. The three layers below are format-agnostic — a user-requested HTML primary carries them as `<section>` landmarks; an agent-only record (md/yaml/json/txt) carries them as `## Heading` or another author-chosen structure.
 
-- **Skim layer**: summary table + 3-line conclusion (decision-ready without further reading) — HTML `<section id="summary">` / MD `## Summary` (heading text in the deliverable locale). **Agent-only record exempt** (user readability abandoned → keep only the 1-line Pyramid conclusion).
+- **Skim layer**: summary table + 3-line conclusion (decision-ready without further reading) — HTML `<section id="summary">` / MD `## Summary` (heading text English by default; a user-requested non-English deliverable uses that locale). **Agent-only record exempt** (user readability abandoned → keep only the 1-line Pyramid conclusion).
 - **Scan layer**: per-section digest + recommendation list — HTML `<section>` per topic / MD `##` headings.
 - **Read layer**: full analysis + complete source list — HTML `<article>` body / MD body sections.
 
