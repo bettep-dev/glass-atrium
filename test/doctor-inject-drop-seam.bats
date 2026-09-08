@@ -23,7 +23,6 @@
 #        does NOT feed the warning aggregate — designed shedding of the lowest-priority block.
 #   AC3  a log whose rows all predate the window is OK, and still reports the historical total.
 #   AC4  no log at the seam is OK.
-#   AC5  the fixture rows carry the literals §10 classifies on (producer-grammar pin).
 #
 # Run via: bats test/doctor-inject-drop-seam.bats
 # Requires: bats, jq, bash 3.2+
@@ -240,5 +239,3 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has "no inject-scope-rules drop log"
 }
-
-# ── AC5 — producer-grammar pin ─────────────────────────────────────────────────────────────────

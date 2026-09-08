@@ -255,14 +255,23 @@ drop_group() {
 @test "DX5 mixed run: facet miss AND a truly unbound hook -> BOTH classes reported" {
   # a single-branch reword either mislabels the facet miss or suppresses the remedy the
   # genuine miss needs; both aggregates must fire independently in one run.
+  #
+  # The third drop is a SECOND EVENT on the same run, so it costs no extra doctor invocation and
+  # pins the warn line's ${event} field. Every other warn-line assertion in this file names a
+  # PreToolUse tuple, so hardcoding `PreToolUse` at that log call passes the entire suite while
+  # naming the wrong .hooks.<event> key in the one line that carries the remedy — the
+  # wrong-remedy class DX3/DX4 exist to prevent. The settings-ABSENT row cannot host this pin:
+  # that branch reports the aggregate only and emits no per-tuple line at all.
   write_full_settings
   drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
   drop_group Agent advisory-spawn-budget.sh
+  drop_group '' cost-tracker.sh Stop
   run_doctor_sandbox
   [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
+    && [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh (matcher=<none>) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
-    && [[ "${output}" == *"1 dormant hook binding(s)"* ]] \
+    && [[ "${output}" == *"2 dormant hook binding(s)"* ]] \
     && [[ "${output}" == *"never writes settings.json"* ]]
 }
 
@@ -285,6 +294,11 @@ drop_group() {
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
   # leaf is unwired, so all 49 report dormant.
+  #
+  # This total is a COUNT, not a membership pin: it moves whenever the roster moves for unrelated
+  # reasons, and a simultaneous remove-and-add would hold it at 49. Membership is not this file's
+  # job — test/wire-hooks-merge.bats drives wire_hooks off the same array and asserts each leaf by
+  # NAME, so a remove-and-add reds there. Do not re-add per-hook rows here to cover that.
   [[ "${output}" == *"49 dormant hook binding(s)"* ]]
 }
 

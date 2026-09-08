@@ -14,6 +14,7 @@
 #   AC4b a value declared EMPTY                        -> exactly one row, total unmoved
 #   AC5  the warning total is identical across all three shapes (kind B)
 #   AC6  the row's identifier stem is registered kind B in the summary contract
+#   AC7  a symlinked declaration and a symlinked default    -> ZERO rows (canonical compare)
 #
 # AC4 is the narrowing that keeps this section quiet: a row on every legitimately customized
 # install is the alarm fatigue ADR-10 split doctor from the reconciler to avoid, so widening the
@@ -32,6 +33,7 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+CONTRACT="${GA}/test/doctor-summary-contract.bats"
 
 # Every §24 row carries this stem, so a row census is one grep and a healthy run is provably zero.
 ROW_MARKER='note : backup dir'
@@ -203,6 +205,30 @@ warn_total_of_output() {
   [[ "${healthy}" == "${declined}" && "${healthy}" == "${relocated}" ]] || {
     printf 'kind-B violation: warning total moved healthy=%s declined=%s relocated=%s\n' \
       "${healthy}" "${declined}" "${relocated}" >&2
+    return 1
+  }
+}
+
+# The symmetric twin of doctor-registry-tools-mirror.bats AC6, guarding the shape AC5 cannot see.
+# AC5 catches an actual PROMOTION; this catches DEREGISTRATION — the contract suite's promotion
+# guard binds only to the stems on its own KIND_B_STEMS list, and its length check compares that
+# list against the synthetic-operand list, so dropping `bkpdir` from BOTH together leaves the
+# contract suite green with §24 no longer guarded there. Removing these two stems is the exact
+# follow-on the C6 trim plan proposed and the wave declined, so the hole is reachable, not theoretical.
+# Two greps, no doctor invocation, so the CI-cost argument that retired the duplicate end-to-end
+# rows does not reach this one.
+@test "AC6 the §24 identifier stem is registered kind B in the summary contract" {
+  [[ -f "${CONTRACT}" ]] || {
+    printf 'summary contract suite missing: %s\n' "${CONTRACT}" >&2
+    return 1
+  }
+  # The last stem on the list carries the closing quote, so the anchor tolerates it.
+  grep -qE "^bkpdir'?\$" "${CONTRACT}" || {
+    printf 'stem `bkpdir` is not registered in KIND_B_STEMS of %s\n' "${CONTRACT}" >&2
+    return 1
+  }
+  grep -q 'bkpdir' "${GA}/lib/ga-doctor.sh" || {
+    printf 'stem `bkpdir` names no identifier in lib/ga-doctor.sh\n' >&2
     return 1
   }
 }
