@@ -30,7 +30,7 @@
 #     function tokens with a background+poll+kill hang guard (install-hang fix).
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
-#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label (the G7 marketplace slow-clone hint's carrier).
+#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label; G7 pins the fakechat plugin-install panel framing + the marketplace slow-clone ACTIVE label (the marketplace-add framing itself is NOT pinned).
 #   * G3 python pip --user stays framed; on a PEP-668 failure the --break-system-packages retry
 #     AUTO-runs (no typed consent, no bracket) with a VISIBLE override log, non-fatal on retry-fail.
 #   * G8 sqlite is FTS5-CAPABILITY-gated (brew sqlite added only when system sqlite3 lacks
@@ -842,6 +842,19 @@ extract_launcher_fn() {
   [[ "$(grep -c 'kill "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
   [[ "$(grep -c 'kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
   [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
+}
+
+@test "G7(static): _preflight_fakechat_boxed frames the plugin install as a panel step, marketplace-add carrying the slow-clone label" {
+  # BOTH claims below were TERMINAL (live) assertions in the pre-diet G7 block and went out together
+  # with an inert mid-body sibling. The first is a WIRING claim — the fakechat plugin install is engaged
+  # through preflight_panel_step at all, not a copy snapshot; the second pins the present-progressive
+  # ACTIVE cue flagging the ~30s marketplace clone. They share ONE terminal && chain so neither can be
+  # re-inerted by a later mid-body append.
+  local body
+  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
+  [[ -n "${body}" ]] || return 1
+  [[ "${body}" == *'preflight_panel_step "fakechat: install plugin"'* ]] \
+    && [[ "${body}" == *'adding marketplace (git clone, may take a minute)…'* ]]
 }
 
 # === R1 — PostgreSQL @18 fresh pin + initdb fallback (uninitialized data dir) ============
