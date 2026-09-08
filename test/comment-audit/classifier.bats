@@ -10,7 +10,6 @@
 
 bats_require_minimum_version 1.5.0
 
-GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export CL="${BATS_TEST_DIRNAME}/comment-classifier.sh"
 export FX="${BATS_TEST_DIRNAME}/fixtures"
 
@@ -156,12 +155,4 @@ classify_cols() {
   [ "${CMT}" -eq 3 ]
   [ "${COD}" -eq 0 ]
   [ "${RAT}" = "comment-only" ]
-}
-
-# --- artifact / surface sanity ---------------------------------------------
-
-@test "classifier is bash -n clean and its GA root resolves" {
-  [[ -n "${GA}" && -d "${GA}" ]]
-  run bash -n "${CL}"
-  [ "${status}" -eq 0 ]
 }

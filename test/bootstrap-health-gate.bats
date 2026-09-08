@@ -10,8 +10,9 @@
 # Requires: bats, bash 3.2+
 #
 # Hermetic: STATIC assertions grep/awk the bootstrap_health_gate function text (no node/curl/DB is
-# ever driven — the gate starts a real monitor + polls, out of scope for a unit test), plus DYNAMIC
-# tests of the exact body/code split + db-field matcher idioms in isolation.
+# ever driven — the gate starts a real monitor + polls, out of scope for a unit test). Each assertion
+# must key on a SEMANTIC token of the gate decision, never on a source idiom the function could
+# express another way, and never on a token that also appears in the function's own comments.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 CORE_SH="${GA}/lib/ga-db.sh"
@@ -39,17 +40,7 @@ gate_body() {
   [[ "$(grep -c 'curl -s' <<<"${body}")" -eq 2 ]]
 }
 
-# === STEP 5 — the poll captures the BODY and the gate requires db:"open" =================
-
-@test "STEP5(static): the poll captures the response body (not -o /dev/null) via -w code line" {
-  local body
-  body="$(gate_body)"
-  [[ -n "${body}" ]]
-  # the poll appends the http_code on its own trailing line + splits body/code.
-  [[ "${body}" == *"-w '\\n%{http_code}'"* ]]
-  [[ "${body}" == *'http_code="$(printf '"'"'%s\n'"'"' "${resp}" | tail -n1)"'* ]]
-  [[ "${body}" == *"body=\"\$(printf '%s\\n' \"\${resp}\" | sed '\$d')\""* ]]
-}
+# === STEP 5 — the db-field gate + its distinct loud-fail ================================
 
 @test "STEP5(static): the db-field gate requires db:open and PASS is gated on db_open==yes" {
   local body
@@ -72,36 +63,4 @@ gate_body() {
   # it surfaces the health-gate code on its fail paths via the exit_step force-quit-guard wrapper — `exit` on the
   # CLI passthrough (GA_TUI_STEP unset), `return` under the TUI run_step; the CLI exit-code is unchanged.
   [[ "$(grep -c 'exit_step "${BOOTSTRAP_EXIT_HEALTH}"' <<<"${body}")" -ge 3 ]]
-}
-
-# === STEP 5 — the body/code split + db-field matcher idioms (dynamic, falsifiable) =======
-
-@test "STEP5(parse): last line is the http_code, everything before it is the JSON body" {
-  local resp http_code body
-  resp="$(printf '%s' '{"status":"ok","db":"open"}
-200')"
-  http_code="$(printf '%s\n' "${resp}" | tail -n1)"
-  body="$(printf '%s\n' "${resp}" | sed '$d')"
-  [[ "${http_code}" == "200" ]]
-  [[ "${body}" == '{"status":"ok","db":"open"}' ]]
-}
-
-@test "STEP5(parse): an OPEN db body passes the db-field gate" {
-  local body='{"status":"ok","db":"open","browser":"ok"}'
-  local db_open="no"
-  case "${body}" in
-    *'"db":"open"'* | *'"db": "open"'*) db_open="yes" ;;
-    *) db_open="no" ;;
-  esac
-  [[ "${db_open}" == "yes" ]]
-}
-
-@test "STEP5(parse): a CLOSED (degraded) db body FAILS the db-field gate at http 200" {
-  local body='{"status":"degraded","db":"closed","browser":"ok"}'
-  local db_open="no"
-  case "${body}" in
-    *'"db":"open"'* | *'"db": "open"'*) db_open="yes" ;;
-    *) db_open="no" ;;
-  esac
-  [[ "${db_open}" == "no" ]]
 }
