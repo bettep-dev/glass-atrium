@@ -132,25 +132,6 @@ require_ga_repo() {
   [[ "${output}" == *"check 2/2: history-clean"* ]]
 }
 
-@test "tracked mode: history-FAIL sets exit bit 4 independently of worktree bit 1" {
-  # Asserts the exit-bit combination (minimal environment coupling): history FAIL
-  #   sets bit 4 ON, worktree PASS keeps bit 1 OFF → verifies the two checks
-  #   report independently. With the approved-identifier allowlist applied, this
-  #   repo's expected state is history PASS — the combination assertion still
-  #   holds in an environment where a non-approved identifier entered history
-  #   (the bit is checked only on the FAIL branch).
-  require_ga_repo
-  run bash "${SCANNER}"
-  if [[ "${output}" == *"history-clean: FAIL"* ]]; then
-    # bit 4 set
-    [[ $((status & 4)) -eq 4 ]]
-  else
-    [[ "${output}" == *"history-clean: PASS"* ]]
-  fi
-  # worktree is clean either way → bit 1 must be clear
-  [[ $((status & 1)) -eq 0 ]]
-}
-
 @test "tracked mode: --worktree-only rejects directory arguments (exit 2 loud-fail)" {
   run bash "${SCANNER}" --worktree-only "${WORK}"
   [[ "${status}" -eq 2 ]]

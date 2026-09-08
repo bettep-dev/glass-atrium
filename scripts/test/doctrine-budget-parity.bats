@@ -11,8 +11,9 @@
 # letters-only lowercase, so `labelChars` and `label chars` are one key and the
 # join needs no hardcoded mapping table.
 #
-# The SoT PATH is read out of the doctrine too, so a doctrine that names a file
-# it does not have fails here rather than reading as parity against nothing.
+# The SoT PATH is read out of the doctrine, so a doctrine naming no
+# content-budget.ts fails the cap and band rows rather than reading as parity
+# against nothing.
 #
 # `scope-planning.md` is a pointer mirror: it restates no cap today, so the row
 # asserts the pointer still stands AND that any number it does restate matches.
@@ -142,16 +143,6 @@ require_files() {
 }
 
 setup() { require_files "${REPORT_MD}"; }
-
-@test "the doctrine names a budget SoT that exists in this tree" {
-  local rel
-  rel="$(sot_path_from_doctrine "${REPORT_MD}" "${REPORT_HEAD}" content-budget.ts)"
-  [[ -n "${rel}" ]] || {
-    echo "the Budget step names no content-budget.ts path"
-    return 1
-  }
-  [[ -f "${GA}/${rel}" ]] || skip "named SoT absent in this tree: ${rel}"
-}
 
 @test "every doctrine budget cap equals its BUDGET_CAPS.balanced field" {
   local rel ts doc_caps ts_caps key val name doc_val

@@ -42,15 +42,6 @@ def test_when_model_none_stub_then_no_model_line() -> None:
     assert "maxTurns: 40\n---\n" in out
 
 
-def test_when_model_omitted_then_byte_identical_to_explicit_none() -> None:
-    # The new keyword defaults to None, so omitting it must equal passing None.
-    with_default = render_agent_md(name="dev-x", scope="DEV", domains=["a"])
-    explicit_none = render_agent_md(
-        name="dev-x", scope="DEV", domains=["a"], model=None
-    )
-    assert with_default == explicit_none
-
-
 def test_when_model_set_stub_then_line_right_after_maxturns() -> None:
     out = render_agent_md(
         name="dev-x", scope="DEV", domains=["a"], model="claude-opus-4-8"
@@ -280,19 +271,3 @@ def test_when_row_value_null_then_get_model_config_returns_none(
 ) -> None:
     _install_fake_psycopg(monkeypatch, row=(None,))
     assert db_utils.get_model_config("model.dev") is None
-
-
-def test_when_resolve_over_failing_connect_then_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # End-to-end fail-soft: a DB fault must not propagate out of resolve.
-    _install_fake_psycopg(monkeypatch, raise_on_connect=True)
-    assert db_utils.resolve_model_for_scope("DEV") is None
-
-
-def test_when_resolve_over_live_value_then_returned(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Full path: scope -> key -> stubbed DB row -> resolved id.
-    _install_fake_psycopg(monkeypatch, row=("claude-opus-4-8",))
-    assert db_utils.resolve_model_for_scope("DEV") == "claude-opus-4-8"

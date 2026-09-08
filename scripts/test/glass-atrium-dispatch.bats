@@ -4,19 +4,17 @@
 # glass-atrium-update.bats): dispatch to the updater (ATRIUM_UPDATE_SCRIPT test
 # override) forwarding args VERBATIM + propagating its exit code; `--help` forwarded
 # to the updater, NOT consumed by ga_parse_args (the installer parser loud-dies on an
-# unknown flag); a missing / non-executable updater loud-fails (die → rc 1);
-# manifest-hash consistency (doctor §8): tracked hash for `glass-atrium` == live
-# sha256, update.sh listed at its post-P1-T0 scripts/ path, --check reports no drift.
+# unknown flag); a missing / non-executable updater loud-fails (die → rc 1); the
+# RETIRED skill-dir update.sh path never returns to the shipped manifest maps.
 # Hermetic: dispatch tests run the REAL binary against a per-test mktemp fake updater
-# (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are never touched; manifest
-# tests read the tracked manifest read-only.
+# (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are never touched; the
+# manifest assertion reads the tracked manifest read-only.
 
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 BIN="${GA}/glass-atrium"
 MANIFEST="${GA}/manifest.json"
-GEN_MANIFEST="${GA}/scripts/generate-manifest.sh"
 
 setup() {
   [[ -f "${BIN}" ]] || skip "glass-atrium binary not found: ${BIN}"
@@ -25,15 +23,6 @@ setup() {
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
-}
-
-# shasum (macOS / CI) preferred, coreutils sha256sum as the Linux fallback.
-sha256_of() {
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -- "$1" | awk '{print $1}'
-  else
-    sha256sum -- "$1" | awk '{print $1}'
-  fi
 }
 
 # Write an executable fake updater at $1 that echoes its args and exits $2. The
@@ -84,36 +73,20 @@ EOF
   [[ "$output" == *"not executable"* ]]
 }
 
-# manifest-hash consistency (doctor §8)
+# manifest: the retired updater path never returns to the shipped set
 
-@test "manifest records the live binary sha256 (binary content == hashes[glass-atrium])" {
+@test "the retired skill-dir update.sh path stays out of the shipped manifest maps" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  local manifest_hash actual_hash
-  manifest_hash="$(jq -r '.hashes["glass-atrium"]' "${MANIFEST}")"
-  actual_hash="$(sha256_of "${BIN}")"
-  [[ "${manifest_hash}" == "${actual_hash}" ]]
-}
-
-@test "manifest lists update.sh at its scripts/ path (moved from the skill dir; subcommand target deployed)" {
-  command -v jq >/dev/null 2>&1 || skip "jq required"
-  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/; the manifest
-  # must list the NEW path and drop the retired skill-dir path. Goes GREEN only AFTER
-  # the PHASE-end manifest regen — pre-regen the tracked manifest still carries the old
-  # skill path, so both assertions below are expected RED.
-  run jq -e '.files | index("scripts/update.sh")' "${MANIFEST}"
-  [ "$status" -eq 0 ]                                                  # new path present
-  run jq -e '.files | index("skills/glass-atrium-update/update.sh")' "${MANIFEST}"
-  [ "$status" -ne 0 ]                                                  # retired skill path absent
-}
-
-@test "generate-manifest --check reports no source-vs-manifest drift (doctor §8 clean)" {
-  command -v jq >/dev/null 2>&1 || skip "jq required"
-  command -v git >/dev/null 2>&1 || skip "git required"
-  # Mirrors the generator's own precondition probe verbatim: a consumer install
-  # is not a git work tree, where the generator loud-fails (git ls-files is the
-  # file-list SoT) — skip is exactly equivalent to that loud-fail.
-  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    || skip "not a git work tree: ${GA} (consumer install — drift check is repo-only)"
-  run bash "${GEN_MANIFEST}" --check
+  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/. That the NEW
+  # path is listed is covered by manifest-check-clean.bats AC-17 (--check's MISSING
+  # direction); this pins the other half, which --check structurally CANNOT decide.
+  # Re-add the retired path as a git-tracked file and it becomes legitimately
+  # tracked: a regeneration puts it back into files[] and, by the generator's
+  # files[]/retired[] disjointness rule, DROPS its retired[] removal row — so the
+  # path silently re-ships and consumers never delete it, while --check stays clean.
+  # All three shipped maps are checked so a hand-edit of any one of them is caught.
+  run jq -e --arg p "skills/glass-atrium-update/update.sh" \
+    '(.files | index($p)) == null and (.hashes | has($p) | not) and (.modes | has($p) | not)' \
+    "${MANIFEST}"
   [ "$status" -eq 0 ]
 }

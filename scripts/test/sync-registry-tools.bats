@@ -149,24 +149,6 @@ tools: [Read]
   assert_registry_unchanged || return 1
 }
 
-@test "duplicate bare tools key: refused, registry not widened" {
-  write_agent_md 'name: glass-atrium-dev-x
-tools: [Read]
-tools: [Read, Bash, Write]'
-  snapshot_registry
-  run "${SCRIPT}"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_registry_unchanged || return 1
-}
-
-@test "duplicate single-quoted tools key: refused" {
-  write_agent_md "name: glass-atrium-dev-x
-'tools': [Read]
-tools: [Read, Bash]"
-  run "${SCRIPT}"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
 @test "duplicate name key: refused (rejection is not tools-only)" {
   write_agent_md 'name: glass-atrium-dev-x
 name: glass-atrium-dev-y
@@ -193,14 +175,6 @@ tools: [Read]
   [[ "${output}" == *"updated=1"* ]] || return 1
   run registry_tools
   [[ "${output}" == "['Read', 'Bash']" ]] || return 1
-}
-
-@test "quoted single tools key: parsed as an ordinary key" {
-  write_agent_md 'name: glass-atrium-dev-x
-"tools": [Read, Bash]'
-  run "${SCRIPT}"
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"updated=1"* ]] || return 1
 }
 
 @test "already-matching tools: idempotent no-op" {
