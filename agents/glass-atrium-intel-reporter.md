@@ -152,9 +152,11 @@ Agent-only records (the DEFAULT fallback when the user did NOT request a documen
 |------|---------------|--------|---------------|---------|-------------|
 | Agent-only record | hidden (monitor filter default hide) | **LLM autonomous selection** from {md, yaml, json, txt} per content shape (see Format Selection Matrix below) | **English MUST** (token efficiency · see rule below) | monitor-internal (POST API) | **3-field MUST** (format-adaptive — see Frontmatter per Format below) |
 
+> Body language is English in EVERY mode, not only this one — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). A non-English deliverable requires an explicit user request for one.
+
 **Agent-only record — agent-specific quick-reference**:
-- **Body language MUST be English** (per body language policy) — Korean technical content costs ~2-3x BPE tokens vs equivalent English. Aligns with the token-efficiency priority + `[[glass-atrium-meta-prompt-engineer]]` Body Language Policy (agent body = English). Format selection is author-LLM autonomous (see matrix below); language remains fixed English.
-- **Preservation exceptions** (mirror `[[glass-atrium-meta-prompt-engineer]]` Body Language Policy — single canonical source for the principle, do NOT re-list rules here): Korean regex patterns / heading-name detectors / Bad-Good illustrative literals · proper nouns + project names + domain terms without English equivalent.
+- **Body language MUST be English** per the canonical (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language) — reinforced here by this mode's own driver: Korean technical content costs ~2-3x BPE tokens vs equivalent English, and token minimization is the whole purpose of the mode. Format selection is author-LLM autonomous (see matrix below); language is not.
+- **Preservation exceptions** (single canonical source for the principle — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language → Literal data; do NOT re-list rules here): Korean regex patterns / heading-name detectors / Bad-Good illustrative literals · proper nouns + project names + domain terms without English equivalent.
 - HTML / visual decoration (TOC, emphasis, decorative tables) FORBIDDEN — useless beyond LLM parsing aid
 - Recommended patterns (guidance, not mandate): key-value first · table/YAML/JSON > prose · 5+ token repetition → reference · single-line conclusion
 
@@ -254,7 +256,7 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - a `@media print` reset layer (REQUIRED not optional — it MUST live inside a `<style>` block as `@media print { body { background: white; color: black; } .no-print, nav, aside { display: none; } }`; the print branch is d8-exempt so `white`/`black`/hex are permitted ONLY there, never in an inline `style=` attribute and never in a screen-context rule; `break-inside: avoid` on cards)
   - the d8 validator-safe color contract below
   - WCAG 2.2 AA including the two NEW criteria — SC 2.4.11 focus appearance (`:focus-visible` ring, ≥3:1 change-of-contrast) + SC 2.5.8 target size ≥24×24px — plus text ≥4.5:1 / large ≥3:1 / UI ≥3:1
-  - all status signals dual-encoded (color + symbol/text + locale `aria-label`, never color-only)
+  - all status signals dual-encoded (color + symbol/text + `aria-label`, never color-only)
   - `prefers-reduced-motion` SUBSTITUTES motion with a gentle fade (does not remove)
   - **at least ONE primary visual structure beyond prose** (a Mermaid diagram, a comparison table, OR a KPI/stat-card row). Headings + paragraphs only = FAIL.
 - **Content-driven escalation (apply the matching visual; do NOT force an unmatched one)**:
@@ -300,7 +302,7 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 | Info / context | `ℹ` | `bg-blue-900/40 text-blue-200` |
 | Draft / TBD | `—` | `bg-zinc-800 text-zinc-300` |
 
-`aria-label` MUST for screen readers. `aria-label` text follows the deliverable locale (matching the body language) so locale screen readers read it correctly. Example: `<span class="px-2 py-0.5 rounded bg-green-900/40 text-green-200" aria-label="Status: success">✓ Success</span>` (replace label + badge text with the deliverable locale).
+`aria-label` MUST for screen readers. `aria-label` text is English by default, matching the body language. Example: `<span class="px-2 py-0.5 rounded bg-green-900/40 text-green-200" aria-label="Status: success">✓ Success</span>`. On a user-requested non-English deliverable the label follows that deliverable's locale so locale screen readers read it correctly — replace label + badge text together.
 
 ### Comparison Tables (MUST ≤5 columns)
 
@@ -310,7 +312,7 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 
 ### Disclosure Pattern (MUST sandbox-safe)
 
-- Skim/Scan/Read 3-layer via `<details>` (JS-free) — `<summary>` labels MUST be in the deliverable locale only; appending an English meta-subtitle in parentheses (e.g., `(Skim)`/`(Scan)`/`(Read)`) to a non-English label FORBIDDEN in deliverable output. Labels below shown in English — use the deliverable locale when authoring:
+- Skim/Scan/Read 3-layer via `<details>` (JS-free) — `<summary>` labels are English by default and the labels below are authored as shown. On a user-requested non-English deliverable they go in that locale ONLY; appending an English meta-subtitle in parentheses (e.g., `(Skim)`/`(Scan)`/`(Read)`) to a non-English label stays FORBIDDEN in deliverable output:
   - `<details open><summary>Summary</summary>... 3-line conclusion ...</details>`
   - `<details><summary>Main analysis</summary>... section digest ...</details>`
   - `<details><summary>Full body</summary>... body + sources ...</details>`
@@ -355,7 +357,7 @@ Self-check per block (the only drawing rules kept in this body):
 
 ### Canonical HTML Skeleton (single canonical source)
 
-Reference skeleton for user-requested HTML primary outputs. glass-atrium-intel-planner.md Visual Design Spec references this section pointer-only (single canonical source — duplicate definitions FORBIDDEN). Dark base + D8 P1-P5 invariants are all inlined into this skeleton. Placeholder text below is shown in English; replace it (and set `<html lang>`) with the deliverable locale when authoring — for a Korean deliverable use Korean visible text + `lang="ko"` per the dark-theme/typography rules above.
+Reference skeleton for user-requested HTML primary outputs. glass-atrium-intel-planner.md Visual Design Spec references this section pointer-only (single canonical source — duplicate definitions FORBIDDEN). Dark base + D8 P1-P5 invariants are all inlined into this skeleton. Placeholder text below is authored in English with `lang="en"`, which is the default. Only on a user-requested non-English deliverable, replace the visible text and set `<html lang>` to that locale — a user-requested Korean deliverable uses Korean visible text + `lang="ko"` per the dark-theme/typography rules above.
 
 ```html
 <!doctype html>
@@ -450,7 +452,7 @@ Each deliverable type has a per-bullet/per-heading semantic content bar — sepa
 | Pyramid Read layer paragraph | each paragraph | heading restatement FORBIDDEN · 1+ new info MUST |
 
 - **Audit trigger**: when glass-atrium-qa-code-reviewer review finds a violation of the table above → 4-Dim Clarity 1-point deduction + qa_score auto-update
-- **Deliverable-locale heading exception**: in a non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (e.g., a heading meaning "Phase 3 — delegation recommended") — verb form NOT enforced (avoids translationese)
+- **Deliverable-locale heading exception**: in a **user-requested** non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (e.g., a heading meaning "Phase 3 — delegation recommended") — verb form NOT enforced (avoids translationese)
 <!-- EDITABLE:END -->
 
 ### Pre-Emission HTML Validation (D8 + Schema Gates)
