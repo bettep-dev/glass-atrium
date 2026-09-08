@@ -197,11 +197,19 @@ PSQL
 # DRIVEN, not grep'd: a static text pin passes on a semantically equivalent rewrite and reds on a
 # behaviour-preserving one, which is exactly how the case this replaces went vacuous. This sources the
 # launcher as a library (the main-guard skips main — the deps-preflight-exec-harness.sh idiom), stubs
-# ONLY the scaffolding needed to reach the guard, and asserts the OBSERVED return code plus the
-# absence of any install step past the failure. It asserts NO ordering: swapping the stop past the
-# bail leaves it green, because the ordering claim is genuinely unfalsifiable at this seam.
+# ONLY the scaffolding needed to reach the guard, and asserts the OBSERVED return code, the absence
+# of any install step past the failure, and a BALANCED idle bracket at the moment of return.
+#
+# That last one is the ordering claim, restored in DRIVEN form. The static case this replaces was
+# read as proving the ordering did not matter, because swapping the stop past the bail left it
+# green — but a grep for two adjacent source lines cannot observe execution order, so it was going
+# to stay green under a swap whether the ordering mattered or not. Driven, the swap IS visible: the
+# bail returns first, stop_idle_spinner never runs, and the bracket is left open — an idle child
+# still painting after the preflight has abandoned the install, the same visible-corruption class
+# as the blank-work-box symptom the kept cases above pin. Counting starts against stops states the
+# invariant that actually matters (no orphaned spinner at return) rather than a line order.
 
-@test "pg-guard-bail(behavioral): a FAILED pg_utc_guard aborts the boxed preflight with the guard's own rc" {
+@test "pg-guard-bail(behavioral): a FAILED pg_utc_guard stops the idle spinner and aborts the boxed preflight with the guard's own rc" {
   local driver="${SANDBOX}/guard-bail.sh"
   cat >"${driver}" <<'DRV'
 #!/bin/bash
@@ -225,11 +233,18 @@ preflight_has_auto_work() { printf 'yes\n'; }
 preflight_bracket() { "$@"; }
 preflight_grouped_consent() { return 0; }
 ga_detect_homebrew() { printf 'present\n'; }
+# the post-guard detects are stubbed to a DETERMINISTIC install-needed verdict: the live bail returns
+# before any of them, so they never run in the green direction — but stubbing them keeps the driver
+# hermetic (no real cluster probe) and makes the past_guard_steps signal machine-independent when the
+# bail is lost, which is the only direction that reaches them.
+ga_detect_postgres() { printf 'present-but-down\n'; }
+ga_detect_postgres_role() { printf 'absent\n'; }
+ga_pg_data_dir_initialized() { printf 'yes\n'; }
 ga_cmd_brew_batch() { return 0; } # empty command => the brew batch panel step is skipped
 enter_run_state() { :; }
 build_run_bar() { :; }
-start_idle_spinner() { :; }
-stop_idle_spinner() { :; }
+start_idle_spinner() { _r 'idle_start'; }
+stop_idle_spinner() { _r 'idle_stop'; }
 preflight_keg_path_inject() { :; }
 preflight_keg_path_inject_pg() { :; }
 redraw_frame_inplace() { :; }
@@ -259,15 +274,23 @@ rc=0
 _run_dependency_preflight_boxed </dev/null >/dev/null 2>&1 || rc=$?
 printf 'rc=%s\n' "${rc}"
 printf 'past_guard_steps=%s\n' "$(printf '%s' "${REC}" | tr ' ' '\n' | grep -c '^step:' || true)"
+printf 'idle_starts=%s\n' "$(printf '%s' "${REC}" | tr ' ' '\n' | grep -c '^idle_start$' || true)"
+printf 'idle_stops=%s\n' "$(printf '%s' "${REC}" | tr ' ' '\n' | grep -c '^idle_stop$' || true)"
 DRV
   run bash "${driver}" "${LAUNCHER}"
   [[ "${status}" -eq 0 ]]
-  local rc_observed steps_past
+  local rc_observed steps_past idle_starts idle_stops
   rc_observed="$(awk -F= '/^rc=/{print $2}' <<<"${output}")"
   steps_past="$(awk -F= '/^past_guard_steps=/{print $2}' <<<"${output}")"
-  # surface the observed pair on a red: bats attributes the failing line imprecisely across the
+  idle_starts="$(awk -F= '/^idle_starts=/{print $2}' <<<"${output}")"
+  idle_stops="$(awk -F= '/^idle_stops=/{print $2}' <<<"${output}")"
+  # surface the observed values on a red: bats attributes the failing line imprecisely across the
   # embedded heredoc, so the numbers themselves are what make the failure readable.
-  echo "observed: rc=${rc_observed} past_guard_steps=${steps_past} (want rc=42 steps=0)"
+  echo "observed: rc=${rc_observed} past_guard_steps=${steps_past}" \
+    "idle_starts=${idle_starts} idle_stops=${idle_stops} (want 42 / 0 / >=1 / equal)"
   # the guard's OWN rc reaches the caller, and nothing installed past the failure.
-  [[ "${rc_observed}" -eq 42 ]] && [[ "${steps_past}" -eq 0 ]]
+  [[ "${rc_observed}" -eq 42 ]] \
+    && [[ "${steps_past}" -eq 0 ]] \
+    && [[ "${idle_starts}" -ge 1 ]] \
+    && [[ "${idle_starts}" -eq "${idle_stops}" ]]
 }
