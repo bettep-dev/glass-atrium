@@ -345,7 +345,7 @@ planner-specific summary (full detail in glass-atrium-intel-reporter.md):
   - **A11y cross-cutting** — verify BOTH dark+light themes independently against AA (dark mode grants no SC 1.4.3 exception).
 - Dark base default (`<body class="bg-zinc-950 text-zinc-300 ...">`) + Pretendard for Korean (Inter/Roboto/Arial FORBIDDEN)
 - Body text `text-zinc-400` (long-read eye strain ↓ · WCAG AA contrast preserved · AAA→AA contrast · text-zinc-400 on zinc-950 ≈ 5.3:1)
-- Status badges (MUST dual-encoded — color + symbol) · a meaning label is required alongside each symbol (label text follows the deliverable locale): success/adopted (✓) · warning/trade-off (⚠) · risk/rejected (✕) · info/context (ℹ) · draft/TBD (—)
+- Status badges (MUST dual-encoded — color + symbol) · a meaning label is required alongside each symbol (labels English by default; a user-requested non-English deliverable uses that locale): success/adopted (✓) · warning/trade-off (⚠) · risk/rejected (✕) · info/context (ℹ) · draft/TBD (—)
 - Comparison tables ≤5 columns · R-coded options (R1/R2/R3 — A/B/C FORBIDDEN per GLASS_ATRIUM_GLOBAL_RULES Position Bias Mitigation)
 - Disclosure pattern: `<details>` for Skim/Scan/Read 3-layer · sandbox-safe interactivity (`<script>` FORBIDDEN except the external UMD Mermaid CDN runtime `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js">` — the ONLY permitted non-Tailwind script, required whenever a `<pre class="mermaid">` block is present, auto-renders via `startOnLoad` with NO inline init, per Absolute Rules Pre-Emission validation + Content-driven escalation above · inline event handlers FORBIDDEN · `<iframe>` FORBIDDEN)
 - Semantic HTML5 landmarks (MUST): `<header>` · `<main>` · `<article>` · `<section>` · `<aside>` · `<footer>` · `<figure>` + `<figcaption>` · `<nav>` ToC
@@ -378,5 +378,5 @@ Each PLANNING deliverable has a per-bullet/per-section semantic content bar — 
 | Backlog stub | each entry | 1-line scope + owner candidate + estimated effort |
 
 - **Audit trigger**: when glass-atrium-qa-code-reviewer review finds a violation of the table above → 4-Dim Clarity 1-point deduction
-- **Deliverable-locale heading exception**: in a non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (verb form not enforced — avoids translationese)
+- **Deliverable-locale heading exception**: in a **user-requested** non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (verb form not enforced — avoids translationese)
 <!-- EDITABLE:END -->
