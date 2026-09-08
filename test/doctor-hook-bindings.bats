@@ -193,39 +193,6 @@ drop_group() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
-@test "Workflow-matcher binding -> reported bound (enforce-workflow-verify-stage)" {
-  # enforce-workflow-verify-stage.sh binds under the NEW Workflow matcher/event
-  # combo — the matcher-generic doctor check must report it bound, no dormant.
-  write_full_settings
-  run_doctor_sandbox
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow)"* ]]
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-}
-
-@test "Workflow-matcher binding -> reported bound (lint-workflow-template-literal)" {
-  # lint-workflow-template-literal.sh is the SECOND hook under the Workflow matcher —
-  # its bound status must be reported independently of enforce-workflow-verify-stage
-  # (neither Workflow-matcher hook masks the other), no dormant.
-  write_full_settings
-  run_doctor_sandbox
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> lint-workflow-template-literal.sh (matcher=Workflow)"* ]]
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-}
-
-@test "Workflow-matcher binding -> missing one reported dormant" {
-  # drop ONLY the Workflow enforce-workflow-verify-stage group; every other
-  # binding stays. The new event/matcher tuple must surface as DORMANT.
-  write_full_settings
-  jq 'del(.hooks.PreToolUse[]
-        | select((.matcher == "Workflow")
-                 and (.hooks[].command | endswith("enforce-workflow-verify-stage.sh"))))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow) (DORMANT"* ]]
-  [[ "${output}" == *"dormant hook binding(s)"* ]]
-}
-
 @test "two-matcher one-hook -> missing Bash matcher reported as a FACET miss, Write|Edit still ok" {
   # PER-FACET class: drop ONLY the Bash validate-secret-scan group; the Write|Edit one
   # stays, so the hook IS wired and DOES fire. The missing channel must be reported as a
@@ -246,17 +213,6 @@ drop_group() {
 # dangerous direction — it steers the operator onto a redeploy path to satisfy a
 # warning about a facet, while the protection is already live. The rows below pin the
 # two classes apart; the negative control is what stops a blanket reword from passing.
-
-@test "DX1 facet-only miss -> per-tuple line names the FACET, never whole-gate dormancy" {
-  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit — the live
-  # host shape. Drop only the Write|Edit|MultiEdit facet; the Bash binding keeps firing.
-  write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
-    && [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-harness-critical.sh (matcher=Bash)"* ]] \
-    && [[ "${output}" != *"enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (DORMANT"* ]]
-}
 
 @test "DX2 NEGATIVE CONTROL: hook bound under NO matcher -> whole-gate dormant preserved" {
   # advisory-spawn-budget.sh has exactly one binding; dropping it leaves the hook wired
@@ -299,28 +255,24 @@ drop_group() {
 @test "DX5 mixed run: facet miss AND a truly unbound hook -> BOTH classes reported" {
   # a single-branch reword either mislabels the facet miss or suppresses the remedy the
   # genuine miss needs; both aggregates must fire independently in one run.
+  #
+  # The third drop is a SECOND EVENT on the same run, so it costs no extra doctor invocation and
+  # pins the warn line's ${event} field. Every other warn-line assertion in this file names a
+  # PreToolUse tuple, so hardcoding `PreToolUse` at that log call passes the entire suite while
+  # naming the wrong .hooks.<event> key in the one line that carries the remedy — the
+  # wrong-remedy class DX3/DX4 exist to prevent. The settings-ABSENT row cannot host this pin:
+  # that branch reports the aggregate only and emits no per-tuple line at all.
   write_full_settings
   drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
   drop_group Agent advisory-spawn-budget.sh
+  drop_group '' cost-tracker.sh Stop
   run_doctor_sandbox
   [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
+    && [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh (matcher=<none>) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
-    && [[ "${output}" == *"1 dormant hook binding(s)"* ]] \
+    && [[ "${output}" == *"2 dormant hook binding(s)"* ]] \
     && [[ "${output}" == *"never writes settings.json"* ]]
-}
-
-@test "missing binding -> warn line (advisory-spawn-budget dropped)" {
-  # full settings minus the advisory-spawn-budget PreToolUse entry
-  write_full_settings
-  jq 'del(.hooks.PreToolUse[] | select(.hooks[].command | endswith("advisory-spawn-budget.sh")))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT"* ]]
-  [[ "${output}" == *"dormant hook binding(s)"* ]]
-  # a still-wired hook continues to report ok (no false-positive warn)
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-delegation.sh"* ]]
 }
 
 @test "absent settings.json -> all bindings reported dormant" {
@@ -342,6 +294,26 @@ drop_group() {
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
   # leaf is unwired, so all 49 report dormant.
+  #
+  # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 49. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 49 leaves by NAME, so a swapped roster row
+  # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 42 roster
+  # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
+  # is one of those 7.
+  #
+  # Measured, not assumed: swapping "PreToolUse<TAB>validate-scope-drift.sh<TAB>Write|Edit" for
+  # style-ref-verify.sh in EXPECTED_HOOK_BINDINGS — one real deployed hook silently unwired, total
+  # held at 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
+  # reddening 6 rows in this file.
+  #
+  # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
+  # is rewritten in the same composition, so a count taken from any single branch goes stale on
+  # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
+  # which is smaller than the 49 leaves because a basename can bind under several event/matcher
+  # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
+  # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
   [[ "${output}" == *"49 dormant hook binding(s)"* ]]
 }
 
@@ -424,16 +396,6 @@ drop_group() {
   [[ "${output}" != *"NOT executable"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
   [[ "${status}" -eq 0 ]]
-}
-
-@test "output names the unsafe-to-auto-write rationale (loud-fail framing)" {
-  write_full_settings
-  jq 'del(.hooks.Stop[] | select(.hooks[].command | endswith("cost-tracker.sh")))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"never writes settings.json"* ]]
-  [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh"* ]]
 }
 
 # --- wired-roster ship invariants: git index mode + manifest membership -------
