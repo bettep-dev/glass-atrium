@@ -1624,7 +1624,7 @@
     "test/oss-db-setup.bats": "102c732a6801beb2b0ecb4ff309079d61ebc20c5a832f33c11df094c4f173a82",
     "test/oss-e2e-bootstrap.sh": "fbdfcfb7113ecc5637fb4805a7fc2084a3eb86eaaf140134ebd06cdb169212b8",
     "test/pg-backup-rotation.bats": "59827c3065596d47736cdf9b6401a88b0bd513852031f0c348a1237b21f58dcf",
-    "test/pg-detect-connect-deadline.bats": "2323fb6926bac12cf3255c8241810cd08d5b9f0b56fe68d48e76a4d4990ef964",
+    "test/pg-detect-connect-deadline.bats": "76a5af1b246b232e475a5b3a07ccfed048234a79c742378cf53d3c16d8e778c7",
     "test/poll-wallclock-ceiling.bats": "a56ef874641e983aa909372857a2e53234f4b83ab9dff5cd5fc7080099a53ac3",
     "test/preflight-frame-composition-harness.sh": "6772c4561dec7d56a9bdfe84eebc3874d0805f8a320ca7616483c8ec499e7380",
     "test/progress-bar-continuity-harness.sh": "82974975bb849d32a6219470be6f4aab77452bbe8c207f8e8977bb822f1721cb",

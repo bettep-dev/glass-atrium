@@ -183,3 +183,91 @@ PSQL
   ' <<<"${boxed}"
   [[ "${output}" -eq 0 ]]
 }
+
+# === pg_utc_guard failure bail across the boxed path (behavioral) ==============
+
+# The boxed path CAPTURES the guard rc (`preflight_pg_utc_guard || pg_guard_rc=$?`) and then CONSUMES
+# it (`[[ "${pg_guard_rc}" -eq 0 ]] || return "${pg_guard_rc}"`). Those are two separate contracts and
+# only the first is pinned elsewhere: deps-preflight-noninteractive.bats pins the CAPTURE, and the
+# exec harness D4 block drives preflight_pg_utc_guard DIRECTLY (rc=1), never through the boxed path.
+# So the CONSUMPTION is pinned here and nowhere else. Losing it means a failed guard — the D4
+# unmanaged-orphan loud-fail — is captured into pg_guard_rc and then silently ignored, and the boxed
+# preflight goes on installing against the very cluster the guard just refused to trust.
+#
+# DRIVEN, not grep'd: a static text pin passes on a semantically equivalent rewrite and reds on a
+# behaviour-preserving one, which is exactly how the case this replaces went vacuous. This sources the
+# launcher as a library (the main-guard skips main — the deps-preflight-exec-harness.sh idiom), stubs
+# ONLY the scaffolding needed to reach the guard, and asserts the OBSERVED return code plus the
+# absence of any install step past the failure. It asserts NO ordering: swapping the stop past the
+# bail leaves it green, because the ordering claim is genuinely unfalsifiable at this seam.
+
+@test "pg-guard-bail(behavioral): a FAILED pg_utc_guard aborts the boxed preflight with the guard's own rc" {
+  local driver="${SANDBOX}/guard-bail.sh"
+  cat >"${driver}" <<'DRV'
+#!/bin/bash
+# shellcheck source=/dev/null
+source "$1"
+# match run_gate_quiet's runtime: the real preflight executes with -e off and no ERR trap.
+set +e
+trap - ERR EXIT INT TERM
+
+REC=""
+_r() { REC="${REC} $1"; }
+
+# --- scaffolding ONLY (inert), so the sole LIVE code on the path is the guard bail ---
+preflight_count_and_gate() {
+  STEP_TOTAL=1
+  PREFLIGHT_GROUP1_RUNNABLE=1
+  PREFLIGHT_GROUP2_RUNNABLE=0
+}
+ga_detect_xcode_clt() { printf 'present\n'; }
+preflight_has_auto_work() { printf 'yes\n'; }
+preflight_bracket() { "$@"; }
+preflight_grouped_consent() { return 0; }
+ga_detect_homebrew() { printf 'present\n'; }
+ga_cmd_brew_batch() { return 0; } # empty command => the brew batch panel step is skipped
+enter_run_state() { :; }
+build_run_bar() { :; }
+start_idle_spinner() { :; }
+stop_idle_spinner() { :; }
+preflight_keg_path_inject() { :; }
+preflight_keg_path_inject_pg() { :; }
+redraw_frame_inplace() { :; }
+draw_workbox() { :; }
+c() { printf '%s' "${2:-}"; }
+tp() { :; }
+tty_line() { :; }
+tty_out() { :; }
+preflight_line() { :; }
+preflight_out() { :; }
+TTY="/dev/null"
+PREFLIGHT_TTY_OWNED="false"
+PREFLIGHT_SUMMARY="scripted-auto-work"
+
+# --- the failure under test: a guard that loud-fails with a DISTINCTIVE rc ---
+# 42, not 1: a regression that bails on a FLATTENED code (`return 1`) instead of propagating the
+# guard's own rc is caught here too, which a 1 would silently pass.
+preflight_pg_utc_guard() { return 42; }
+# every framed install step past the guard records itself — on a live bail there are ZERO of them.
+# Recorded from a DIRECT call, never a $(...) substitution, so the write survives to the parent.
+preflight_panel_step_or_bail() {
+  _r "step:$1"
+  return 0
+}
+
+rc=0
+_run_dependency_preflight_boxed </dev/null >/dev/null 2>&1 || rc=$?
+printf 'rc=%s\n' "${rc}"
+printf 'past_guard_steps=%s\n' "$(printf '%s' "${REC}" | tr ' ' '\n' | grep -c '^step:' || true)"
+DRV
+  run bash "${driver}" "${LAUNCHER}"
+  [[ "${status}" -eq 0 ]]
+  local rc_observed steps_past
+  rc_observed="$(awk -F= '/^rc=/{print $2}' <<<"${output}")"
+  steps_past="$(awk -F= '/^past_guard_steps=/{print $2}' <<<"${output}")"
+  # surface the observed pair on a red: bats attributes the failing line imprecisely across the
+  # embedded heredoc, so the numbers themselves are what make the failure readable.
+  echo "observed: rc=${rc_observed} past_guard_steps=${steps_past} (want rc=42 steps=0)"
+  # the guard's OWN rc reaches the caller, and nothing installed past the failure.
+  [[ "${rc_observed}" -eq 42 ]] && [[ "${steps_past}" -eq 0 ]]
+}
