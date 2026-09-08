@@ -202,7 +202,7 @@ Prevents sub-agent tool-chain saturation (synthesis never emitted after long too
 | `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch reserved for structured/API pages < 8KB |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3, glass-atrium-intel-planner ~2, glass-atrium-qa-code-reviewer ~1 — per-wave soft budgets; concurrency itself is bounded by the Workflow engine's runtime self-cap (core-derived, per-machine), not a fixed number (orchestrator-role.md `### Spawn Budget`) |
 
-- Hitting `tool_budget` without completion → emit `result: blocked` + partial findings, never silent exit.
+- Hitting `tool_budget` without completion → emit `result: needs_context` + partial findings + a 1-line resume point, never silent exit (the value and the resume-point shape stated at `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`).
 - These defaults are a **FLOOR to size against, not advisory-only prose** — encode them into the analysis delegation skeleton (`#### Analysis-Track Right-Sizing (input-side)`) so a pasted schema-mode analysis workflow carries the read allowlist + effort ceiling + field cap + budget-guard idiom by construction, plus the analysis-mode `[SIZE-EST]` token.
   - Observed non-emit incidents exceeded these advisory budgets ~2×, so an exploration-heavy analysis read rounds the budget UP (under-estimate = DANGEROUS error, per `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` honesty framing) and, past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), SPLITS by domain up front rather than sizing one broad agent.
 
@@ -389,7 +389,7 @@ Its verbatim promotion-to-blocking condition is recorded in that hook's header �
   - **The retry MUST CHANGE STRATEGY, not merely re-prompt the same tight schema** — a verbatim retry reproduces the identical failure (the summary-collapse loop above; 5+5 internal retries wasted, observed), and the tightened re-prompt is what breaks it.
     - On the retry, do ONE of: (a) **LOOSEN the caps** (or drop to a SINGLE permissive free-text field); (b) **switch to FILE-HANDOFF** (return a path + compact summary, per Compact-schema (a) below); or (c) **fall through to the text-mode (schema-less) fallback** below.
 - **Text-mode fallback (last-resort record salvage — regains the manual-path net schema-mode lacks)**: if the tightened retry ALSO returns null (2nd null), re-spawn the SAME task ONCE MORE WITHOUT a schema (text mode).
-  - A schema-less spawn cannot hit the invalid-emission validator at all; its printed multi-line `[COMPLETION]` block is then captured by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — the exact salvage the schema-mode path lacks.
+  - A schema-less spawn cannot hit the invalid-emission validator at all; its printed multi-line `[COMPLETION]` block is then recorded by the SubagentStop recorder (`track-outcome.sh`) as a WRITER-emitted row (attribution `hook-input`) — the exact salvage the schema-mode path lacks. Synthesis is the fallback for an ABSENT block, not the capture path for a printed one.
   - The workflow join still treats the item as incomplete (no structured object to merge), but the WORK is recorded + re-delegable instead of silently lost.
 - **Compact-schema authoring (prevents the invalid-emission mode by construction)**: keep the StructuredOutput payload small enough to actually validate —
   - **(a) File-handoff is the DEFAULT for rich / multi-item output, not merely an option**: ANY deliverable that is multi-finding, multi-row, or carries long evidence MUST write the BULK to a FILE (a path under the job tmp dir or the worktree) and return ONLY the PATH + a compact summary in the schema.
@@ -468,8 +468,8 @@ async function robustAgent(agentType, opts) {
   }
   if (result == null || result === '') {
     // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
-    // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
-    // but the record + work survive instead of vanishing.
+    // is recorded by the SubagentStop recorder (track-outcome.sh) as a writer-emitted row
+    // (hook-input). Not merged into the join, but the record + work survive instead of vanishing.
     await agent(opts.goal ?? opts.prompt, { ...opts, agentType, schema: undefined }).catch(() => null);
   }
   return result; // structured result may still be null → caller .filter(Boolean)s it out; the text-mode fallback salvages the RECORD, not the join value
@@ -774,8 +774,9 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
   // fill it with the full [COMPLETION] block (### Resilient Workflow Authoring) — the printed text
   // turn does NOT survive schema-mode; the recorder reads completion_block from the SO input.
   // TEXT-MODE BY DESIGN: the stages below declare NO schema — a verify stage returns a prose
-  // verdict (pass|revise, feasible|infeasible), so its printed [COMPLETION] IS captured by
-  // SubagentStop synthesis and the completion_block reservation above does not apply to them.
+  // verdict (pass|revise, feasible|infeasible), so its printed [COMPLETION] IS recorded by the
+  // SubagentStop recorder as a writer-emitted row (hook-input) and the completion_block
+  // reservation above does not apply to them.
   // Reserve it in any stage you convert to schema mode; do not add a schema here just to carry it.
 
   /* [AGENT-COMPOSITION]
@@ -796,15 +797,22 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
     };
     let result = await run();
     if (result == null || result === '') {
-      // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
+      // re-spawn ONCE — CHANGE STRATEGY, never re-send the identical tight schema (a verbatim
+      // same-schema retry reproduces the identical cap-exceeded failure — 5+5 internal retries
+      // wasted, observed). Drop to a PERMISSIVE single-free-text schema (no tight caps) so the
+      // retry cannot hit the same maxLength/shape validator; hand any bulk/multi-item content to
+      // a FILE and return the path in analysis. Keep completion_block for the recorder.
       result = await run({
-        goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; put your full [COMPLETION] block in the completion_block schema string field (the recorder reads it from the StructuredOutput input), then emit partial-but-complete before the working ceiling, never end on prose.\nVALIDATOR CONTRACT (invalid-emission mode) — emit ONLY these keys: <list them> and put ANY extra observation inside the declared free-text field (never invent a key); respect every maxLength/maxItems cap; on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates), do NOT merely shorten (a verbatim shorten reproduces the identical failure).`,
+        schema: { type: 'object', additionalProperties: false,
+          properties: { analysis: { type: 'string' }, completion_block: { type: 'string' } },
+          required: ['analysis'] },
+        goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
       });
     }
     if (result == null || result === '') {
       // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
-      // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
-      // but the record + work survive instead of vanishing.
+      // is recorded by the SubagentStop recorder (track-outcome.sh) as a writer-emitted row
+      // (hook-input). Not merged into the join, but the record + work survive instead of vanishing.
       await agent(opts.goal ?? opts.prompt, { ...opts, agentType, schema: undefined }).catch(() => null);
     }
     return result; // structured result may still be null → caller .filter(Boolean)s it out; the text-mode fallback salvages the RECORD, not the join value
