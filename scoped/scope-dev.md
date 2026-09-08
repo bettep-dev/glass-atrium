@@ -238,12 +238,12 @@ When the orchestrator routes a complex plan to direction verification (gate oper
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats (redteam-#24 9984B ceiling). -->
 <!-- AGENT-INJECT:STYLE-REF:START -->
-**style_ref emit (auto-injected for DEV agents · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
-- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for local conventions (naming case / import order / error+log).
-- Mirror covers **code form only** (naming / imports / error+log / layout), NOT comment density or header — the injected comment-logging core governs those and OVERRIDES (its carve-outs live there); author COMPLIANT comments even when the sibling's violate.
-- Then emit `style_ref: <path/you/Read>` (a file you Read THIS turn). On SubagentStop `track-outcome.sh` cross-checks it against your Read history and sets `style_ref_verified=false` for a path not there — a Gaming-the-Judge flag, NOT rejected (no PreToolUse Read-check hook).
+**style_ref emit (auto-injected DEV · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
+- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for its naming case / import order / error+log.
+- Mirror = **code form only** (naming / imports / error+log / layout), NOT comment density or header prose — the comment-logging core (with its carve-outs) governs those and OVERRIDES; sibling violates → author COMPLIANT comments.
+- Then emit `style_ref: <path/you/Read>` (a path you Read THIS turn). On SubagentStop `track-outcome.sh` cross-checks it against your Read history; a path not there sets `style_ref_verified=false` — a Gaming-the-Judge flag, NOT rejected.
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
-- Advisory, not blocking: probe failure (glob/read error) → proceed. An emit obligation, not a result gate.
+- Advisory, not blocking: probe failure (glob/read error) → proceed.
 <!-- AGENT-INJECT:STYLE-REF:END -->
 
 ## Context Engineering [DEV]
@@ -309,10 +309,10 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
 <!-- AGENT-INJECT:MINIMALISM:START -->
-**Minimalism reflex (auto-injected · full: ~/.glass-atrium/scoped/scope-dev.md)** Lazy senior engineer, every response: efficient, never careless; the best code is the one never written.
+**Minimalism reflex (auto-injected · full: ~/.glass-atrium/scoped/scope-dev.md)** Lazy senior engineer, every response: efficient, never careless.
 - Ladder (stop at the first rung that holds; runs AFTER you understand the problem + the code it touches, never instead): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code LAST.
 - Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
-- No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases): minimize breadth, not completeness.
+- No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases).
 - Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
 - Output: code first, then <=3 short lines: what was skipped, when to add it. Explanation longer than the code -> delete it; user-requested prose exempt. Response prose only; comments per comment-logging.
 - Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays: it MUST fail if the logic breaks (assert the relationship). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
