@@ -24,7 +24,14 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ## Absolute Rules [ALL]
 
 - All responses are answered in the **user's question language**.
-  - Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
+- **Output Language — the canonical rule for what language this system writes in.**
+  - **Default: everything an agent AUTHORS is written in English** — agent bodies and rule files · code comments and log messages · commit and PR text · internal records (`[COMPLETION]` field values, Outcome Records, learning-log entries) · delegation prompts · and the documents and deliverables agents produce.
+    - Why: instruction-following and token efficiency both favour English for machine-facing text, and one stated default removes the per-file guessing it replaces.
+    - Agent-body specifics (refactor pre-existing non-English body text when next touched · mass-rewrite forbidden) → `glass-atrium-meta-prompt-engineer.md` → Body Language Policy.
+  - **Replies**: user-facing replies follow the user's question language, per the response-language rule above. A reply is a conversation turn, not a produced artifact — this default never reaches it.
+  - **Literal data**: text a rule itself operates on keeps its original language — detector patterns, regex literals, heading-name detectors, Bad/Good example strings, request-signal literals. Translating a detector's own pattern silently disables it, so refactoring these is FORBIDDEN, not merely excused. Proper nouns, project names, identifiers, API names, and locale-specific file prefixes such as the report/plan tags likewise keep their original form.
+  - **Scope — this governs text the system AUTHORS, never text it REPRODUCES.** A quoted source, a user's verbatim instruction, and wiki raw and compiled notes — body, title and frontmatter values alike — stay in their original language under the rules that own them; this default does not reach them and never licenses translating them.
+  - **A non-English deliverable is authored only when the user asks for one** — the explicit request is what switches it, never the language the request happened to be written in.
 - Technical terms in original language + parenthetical explanation on first occurrence
 - **No guessing** → Ask when unclear (1 issue = 1 question):
   - Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
