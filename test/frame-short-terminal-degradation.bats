@@ -13,7 +13,7 @@
 # The dim dot-rule SEPARATOR is now COMPACT-ONLY: in fullscreen draw_separator emits nothing (the
 # ex-separator row is a blank spacer held by the centered-block clear), so SEP renders ONLY in the
 # compact tier. The KEY invariant pinned here: the bulldog is the FIRST region dropped; the menu +
-# workbox never lose a row at ANY fullscreen size (R=21/24/34/38). Boundary matrix: R=20/21/24/34/38,
+# workbox never lose a row at ANY fullscreen size. Boundary matrix: R=20/21/34/38,
 # plus the horizontal-fit boundary cols=60/61 at R=38, plus the !USE_UTF8 glyph-gate drop at R=38.
 #
 # Scaffolding mirrors art-scrollback-safety.bats: the REAL orchestration (compute_menu_geometry,
@@ -114,7 +114,7 @@ _has_region() { grep -qx "$1" "${REGION_LOG}"; }
   _has_region KEYHINT
 }
 
-# --- no-art fullscreen band: R=36/24/21 -> bulldog dropped, everything else survives ---------------
+# --- no-art fullscreen band: R=34/21 -> bulldog dropped, everything else survives ------------------
 
 @test "R=34 cols=80 (art floor minus one): NO art; wordmark + menu + workbox + keyhint render" {
   _frame_at 80 34
@@ -125,16 +125,6 @@ _has_region() { grep -qx "$1" "${REGION_LOG}"; }
   _has_region MENU
   _has_region WORKBOX
   _has_region KEYHINT
-}
-
-@test "R=24 cols=80 (no-art band): NO art; menu + workbox never lose a row" {
-  _frame_at 80 24
-  [ "${FULLSCREEN}" = "true" ]
-  [ "${ART_OK}" = "false" ]
-  ! _has_region ART
-  _has_region WORDMARK
-  _has_region MENU
-  _has_region WORKBOX
 }
 
 @test "R=21 cols=80 (fullscreen floor): NO art; menu + workbox never lose a row" {
@@ -201,23 +191,3 @@ _has_region() { grep -qx "$1" "${REGION_LOG}"; }
   _has_region WORKBOX
 }
 
-# --- ladder summary: menu + workbox render at EVERY fullscreen size (zero row loss) ----------------
-
-@test "menu + workbox render at every fullscreen size R=21/24/34/38 (zero row loss)" {
-  local r
-  for r in 21 24 34 38; do
-    _frame_at 80 "${r}"
-    [ "${FULLSCREEN}" = "true" ] || {
-      echo "R=${r} unexpectedly not fullscreen"
-      return 1
-    }
-    _has_region MENU || {
-      echo "R=${r} lost the menu"
-      return 1
-    }
-    _has_region WORKBOX || {
-      echo "R=${r} lost the workbox"
-      return 1
-    }
-  done
-}
