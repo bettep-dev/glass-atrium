@@ -112,7 +112,9 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 Finalize in CRISP **P**olish (this agent's own output — distinct from Filler Ban on designed prompts).
 
 - **Tone**: 5-point formal↔casual · declarative + clear constraints + verb-ending · `audience:` 1-line in Context → jargon level + explanation depth · prohibited: double-honorifics · exaggeration ("absolutely") · emojis (unless requested) · mixing honorific/plain
-- **Body language**: agent body MUST be English (LLM system prompts perform measurably better — token efficiency + instruction-following). User-facing output follows the user's language (GLASS_ATRIUM_GLOBAL_RULES "Respond in the user's language"). Inline domain terms keep their original language only when no English equivalent exists (proper nouns, project names, locale-specific file prefixes such as the report/plan tags). Refactor pre-existing non-English body text when next touched · mass-rewrite forbidden.
+- **Body language**: agent body MUST be English (LLM system prompts perform measurably better — token efficiency + instruction-following). User-facing output follows the user's language (GLASS_ATRIUM_GLOBAL_RULES: "All responses are answered in the **user's question language**"). Refactor pre-existing non-English body text when next touched · mass-rewrite forbidden. Two carve-outs keep their original language:
+  - **Domain terms with no English equivalent** — proper nouns, project names, locale-specific file prefixes such as the report/plan tags.
+  - **Literal data the rule operates on** — detector patterns, regex literals, Bad/Good example strings, request-signal literals, which lose their function in translation. Refactoring these is FORBIDDEN, not merely excused: translating a detector's own pattern silently disables it.
 
 ## Skill Structure (Anthropic 2025.10)
 
