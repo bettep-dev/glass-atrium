@@ -9,21 +9,21 @@ Applies to all DEV and QA agents.
 <!-- AGENT-INJECT:START -->
 **Comment-rule core (auto-injected DEV/QA · full: `~/.glass-atrium/scoped/shared-comment-logging.md`)**
 
-TOP PROHIBITIONS (read first):
+TOP PROHIBITIONS:
 - **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.
 - **Density gate (ceiling, not floor)**: comment ONLY when "why" is non-obvious from names/types/context · self-evident code → NO comment · `— because …` does NOT license it · in doubt → omit.
-- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE concise `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) → `/** */` docblock, NEVER stacked `//` nor a paragraph. `/** */` triggers: public-API/exported OR a declaration's internal "why" >1 line. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Distinct points → separate `//` comments. Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
-- **NO mid-sentence line-wrap** — one clause per `//` line; never split ONE sentence across continuation lines. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
+- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) OR public-API/exported → `/** */` docblock, NEVER stacked `//` nor a paragraph. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
+- **NO mid-sentence line-wrap** — one clause per `//` line. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
 - **NO `console.*` in production** (test files exempt) → framework logger.
 
 REMAINING RULES:
-- Comment language (highest wins): user-specified in task/CLAUDE.md → new = Korean (default) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
-- Explain **"why"**; restating code FORBIDDEN · stale comments worse than none → sync with code.
+- Comment language: English by default (GLOBAL_RULES → Output Language). Overrides only: user's task/CLAUDE.md spec → target-repo contributing policy → editing an existing non-English comment (match it). Identifiers/API names keep original form. COMMENT language only — server logs stay English.
+- Stale comments worse than none → sync with code.
 - Log level: error=action-required/failed · warn=potential issue · info=state change · debug=dev-only (off in prod). Error logs need what+why+context.
 - JSDoc: semantics only, MUST NOT duplicate types (`@param value - desc`, never `@param {type}`).
 - TODO: `// TODO(owner/TICKET): reason` — owner+ticket REQUIRED.
 - **File/module header = 1–3-sentence purpose limit** · prose-dump FORBIDDEN · complexity-proportional (self-evident module → omit).
-- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density or header prose; sibling violates → author COMPLIANT comments. Two carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, `// prettier-ignore`, `// #region`, `//<editor-fold>`, codegen anchors) AND a header passing the Justified-header test (architectural role / scope boundary / rejected alternative / usage contract).
+- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density/header prose; sibling violates → author COMPLIANT comments. Carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, prettier-ignore / region / fold / codegen anchors) AND a header passing the Justified-header test (role / scope boundary / rejected alternative / usage contract).
 <!-- AGENT-INJECT:END -->
 
 ## Comment Principles
@@ -43,10 +43,11 @@ GOOD → /**                                                          ← declar
 
 ## Comment Language & Style
 
-- **Language precedence** (highest wins; `scope-dev.md` "Consistent with existing style" + Project Convention Probe + `shared-search-first.md` Mirror defer here for comment language):
+- **Language precedence** (highest wins; `scope-dev.md` "Consistent with existing style" + Project Convention Probe + `shared-search-first.md` Mirror defer here for comment language). The default is the canonical — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language: **a comment an agent writes is English**. The list below orders the overrides, ending in the default itself:
   1. a comment language specified in the user's task/CLAUDE.md (e.g., English-only)
-  2. new comment → Korean (default)
-  3. editing an existing comment → match its existing language
+  2. the target repository's own contributing policy where that repository states one (this repository's `CONTRIBUTING.md` "Language policy" requires English, so here the override and the default agree)
+  3. editing an existing non-English comment → match its existing language, so a single comment is never left half-translated
+  4. otherwise → English, per the canonical
 - Identifiers/code/API names inside comments stay original form regardless of tier. Governs **comment** language ONLY — server logs stay English (`## Log Message Composition`). Project Convention Probe / Mirror govern code style (naming / import order / error+log), NOT comment language.
 - **Style**: bullet/noun-phrase MUST · narrative sentences FORBIDDEN · compress causality with `→ — , +` · verb-stem ending preferred · JSDoc lines = short noun-phrases · box/ASCII-art decoration (`/* ---- */`, banners, star columns) FORBIDDEN.
 - **No mid-sentence line-wrap**: a single clause MUST terminate on its own line · splitting ONE thought across consecutive `//` lines FORBIDDEN · distinct points → separate complete lines/bullets. Does NOT forbid (a) the 1–3-sentence header, nor (b) multiple SEPARATE one-line comments.

@@ -15,7 +15,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **Correctness > Speed** — Slow but correct over fast but wrong
 - **Measurement > Guessing** — No optimization without profiler/benchmark
 - **Existing patterns > New introduction** — Search before implementing (shared-search-first.md)
-- **Small changes > Big changes** — Achieve goals with minimal modifications; before any design / edit / delegation decision, weigh the change's downstream ripple (which files, APIs, tests, integration points it bends or breaks), not just its immediate surface.
+- **Small changes > Big changes** — Achieve goals with minimal modifications
+  - Before any design / edit / delegation decision, weigh the change's downstream ripple — which files, APIs, tests, integration points it bends or breaks — not just its immediate surface.
 - **Questions > Assumptions** — Ask rather than guess when uncertain
 
 > Priority order when principles conflict: Correctness → Safety → Quality → Speed.
@@ -23,7 +24,14 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ## Absolute Rules [ALL]
 
 - All responses are answered in the **user's question language**.
-  - Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
+- **Output Language — the canonical rule for what language this system writes in.**
+  - **Default: everything an agent AUTHORS is written in English** — agent bodies and rule files · code comments and log messages · commit and PR text · internal records (`[COMPLETION]` field values, Outcome Records, learning-log entries) · delegation prompts · and the documents and deliverables agents produce.
+    - Why: instruction-following and token efficiency both favour English for machine-facing text, and one stated default removes the per-file guessing it replaces.
+    - Agent-body specifics (refactor pre-existing non-English body text when next touched · mass-rewrite forbidden) → `glass-atrium-meta-prompt-engineer.md` → Body Language Policy.
+  - **Replies**: user-facing replies follow the user's question language, per the response-language rule above. A reply is a conversation turn, not a produced artifact — this default never reaches it.
+  - **Literal data**: text a rule itself operates on keeps its original language — detector patterns, regex literals, heading-name detectors, Bad/Good example strings, request-signal literals. Translating a detector's own pattern silently disables it, so refactoring these is FORBIDDEN, not merely excused. Proper nouns, project names, identifiers, API names, and locale-specific file prefixes such as the report/plan tags likewise keep their original form.
+  - **Scope — this governs text the system AUTHORS, never text it REPRODUCES.** A quoted source, a user's verbatim instruction, and wiki raw and compiled notes — body, title and frontmatter values alike — stay in their original language under the rules that own them; this default does not reach them and never licenses translating them.
+  - **A non-English deliverable is authored only when the user asks for one** — the explicit request is what switches it, never the language the request happened to be written in.
 - Technical terms in original language + parenthetical explanation on first occurrence
 - **No guessing** → Ask when unclear (1 issue = 1 question):
   - Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
@@ -38,7 +46,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - No API keys in handoff payloads
 - Sensitive info in logs MUST be masked
 - **Output Contract**: Pre-define deliverable format and conditions for complex tasks
-- **Monitor address (never discover it by scanning)**: the Atrium Monitor API — including the `clauded-docs` documents agents read and write — is at `http://127.0.0.1:16145` on this machine: loopback always, port `16145` by default. Discovering the port by probing listening processes (`lsof` / `ps` / port sweep) is FORBIDDEN — a neighbouring project's dev server answers on a nearby port and returns an unrelated page. A non-default install resolves via `ATRIUM_MONITOR_PORT` → `monitor/.env` → `config.toml [ports].monitor` (shell SoT: `scripts/lib/atrium-config.sh` → `atrium_monitor_port`), never by discovery. What to POST and when → `scoped/scope-report.md` Emission contract.
+- **Monitor address (never discover it by scanning)**: the Atrium Monitor API — including the `clauded-docs` documents agents read and write — is at `http://127.0.0.1:16145` on this machine: loopback always, port `16145` by default.
+  - Discovering the port by probing listening processes (`lsof` / `ps` / port sweep) is FORBIDDEN — a neighbouring project's dev server answers on a nearby port and returns an unrelated page.
+  - A non-default install resolves via `ATRIUM_MONITOR_PORT` → `monitor/.env` → `config.toml [ports].monitor` (shell SoT: `scripts/lib/atrium-config.sh` → `atrium_monitor_port`), never by discovery.
+  - What to POST and when → `scoped/scope-report.md` Emission contract.
 
 ## Position Bias Mitigation [ALL]
 
@@ -77,7 +88,9 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ## Sub-Agent Spawn Policy [ALL]
 
 - Each spawn multiplies token cost: system prompt + tool schemas re-tokenized per child.
-- Spawn only when: (1) tasks are parallelizable AND independent, (2) single-agent capacity confirmed insufficient.
+- Spawn only when:
+  - tasks are parallelizable AND independent
+  - single-agent capacity confirmed insufficient
 - Concurrent children > 3 → verify rate-limit headroom before fan-out.
 - **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06).
   - Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
@@ -87,9 +100,11 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## 3-Tier Boundary [ALL]
 
-- **Always**: Read, search, format, analyze
-- **Confirm**: File modification, external calls, installation
-- **Forbidden**: Deletion, security violations, sensitive files
+| Tier | Actions |
+|------|---------|
+| **Always** | Read, search, format, analyze |
+| **Confirm** | File modification, external calls, installation |
+| **Forbidden** | Deletion, security violations, sensitive files |
 
 ### File Deletion Policy [ALL]
 
@@ -110,7 +125,9 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - On task completion, change status to `completed`
 - Template: See `~/.claude/agents/templates/progress.md`
 - Context bloat → Minimize unnecessary file reads, delegate to sub-agents
-- **Scope**: `progress.md` lives under the tracker directory `~/.claude-personal/projects/<home-encoded>/memory/` — the path `scripts/progress-tracker.sh` actually reads, where `<home-encoded>` is `$HOME` with `/` replaced by `-` (e.g. `/Users/x` → `-Users-x`) — as session-internal state — NOT subject to the monitor clauded-docs HTML routing (scope-report.md / scope-planning.md Output Format Routing); always Markdown.
+- **Scope**: `progress.md` lives under the tracker directory `~/.claude-personal/projects/<home-encoded>/memory/` — the path `scripts/progress-tracker.sh` actually reads.
+  - `<home-encoded>` is `$HOME` with `/` replaced by `-` (e.g. `/Users/x` → `-Users-x`).
+  - It is session-internal state — NOT subject to the monitor clauded-docs HTML routing (scope-report.md / scope-planning.md Output Format Routing); always Markdown.
 
 ### Session-Start Continuity Header
 
@@ -126,7 +143,9 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Frontmatter `maxTurns` = **hard cap** (kills mid-tool-use)
 - body **working ceiling = 80% of maxTurns** (e.g., cap 40 → ceiling 32)
 - approaching ceiling → **STOP**, never push through
-- **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number: (a) a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`); (b) a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`).
+- **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number —
+  - a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`)
+  - a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`)
   - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
   - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
 - On approach:
@@ -144,7 +163,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 #### Truncation recovery
 
-- Orchestrator step (Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues (the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern, `orchestrator-role.md` Orchestrator Identity).
+- Orchestrator step (Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues.
+  - This is the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern (`orchestrator-role.md` Orchestrator Identity).
   - For cross-session durability instead, resume from `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the canonical durable anchor).
 
 #### Emit-before-cap
@@ -153,12 +173,16 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage (unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block).
   - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
   - Never end a schema-mode turn on prose.
-  - **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries; this rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
+  - **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries.
+    - This rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
     - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
     - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
-  - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema; this charter prescribes no cap of its own, so any cap rule restated here is drift.
-  - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call — the StructuredOutput call still terminates the run (this does not violate the never-end-on-prose rule; the block turn precedes the final tool call).
-  - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing); the RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
+  - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema.
+    - **Drift guard** — this charter prescribes no cap of its own, so any cap rule restated here is drift.
+  - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call.
+    - The StructuredOutput call still terminates the run — this does not violate the never-end-on-prose rule, because the block turn precedes the final tool call.
+  - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing).
+    - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
     - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, runs the multi-line field parser over it, and records the run as WRITER-emitted with attribution `structuredoutput-completion` (a healthy row, NOT synthesized).
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
   - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
@@ -193,8 +217,8 @@ Prevent context bloat during long sessions (10+ turns).
 
 - Excessive politeness / parrot repetition · Over-summarization / verbose explanation (3+ paragraphs without code)
 - Out-of-scope modifications · Empty apologies / excessive disclaimers · False confidence / silent acceptance (fix it or flag it)
-- **Chained-arrow run-on narration** — ONE sentence joining 4+ stages with `→` / `·` connectors; the paragraph-count trigger above structurally cannot fire on a one-sentence shape, so it is named separately here
-- Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` — honor-system (no hook reads reply text); the response-language rule above is unaffected
+- Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract`
+  - Honor-system (no hook reads reply text); the response-language rule above is unaffected.
 - ※ Mandatory comments per shared-comment-logging.md are exempt
 
 ## System Prompt Protection [ALL]
@@ -215,7 +239,8 @@ Prevent context bloat during long sessions (10+ turns).
 
 - **Memory persistence** is user-instructed-only [ALL]: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir).
   - A persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language).
-  - Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — and the daemon auto-clustering path is NOT implemented in the current code (no such clustering / user-facing-memory-persistence logic exists in learning-aggregator.py), so the prohibition holds by absence of the code path, not by a runtime gate.
+  - Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN.
+    - The daemon auto-clustering path is NOT implemented in the current code (no such clustering / user-facing-memory-persistence logic exists in learning-aggregator.py), so the prohibition holds by absence of the code path, not by a runtime gate.
   - Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt — only user-facing memory writes require the explicit instruction.
   - Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
 

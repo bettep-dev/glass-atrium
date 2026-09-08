@@ -18,7 +18,8 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - Executing commands, queries, or dynamic code based on user input is **STRICTLY FORBIDDEN** (injection risk)
 - SQL raw queries → **parameterized binding is REQUIRED** · string concatenation is FORBIDDEN
 - User-supplied URLs → validate against an allowlist · prevent open redirects
-- Open-redirect check = parse the URL with the platform URL parser (`new URL()` / `urllib.parse`) and compare its **origin** to the allowlist · string-prefix / `startsWith` comparison is FORBIDDEN — bypass classes it misses: backslash (`https://trusted.com\@evil.com`) and protocol-relative `//evil.com`
+  - Open-redirect check = parse the URL with the platform URL parser (`new URL()` / `urllib.parse`) and compare its **origin** to the allowlist
+  - String-prefix / `startsWith` comparison is FORBIDDEN — bypass classes it misses: backslash (`https://trusted.com\@evil.com`) and protocol-relative `//evil.com`
 
 ## Prompt & Tool Input Security [LLM01:2025]
 
@@ -31,17 +32,29 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - Principle of Least Privilege: each agent receives only the tools required for the current task scope.
 - High-impact actions (file deletion, external network calls, code execution, git push, payment) MUST require explicit user approval before execution.
 - Tool scope is defined at delegation time and frozen at spawn time; mid-task dynamic tool addition is FORBIDDEN without re-authorization.
-- **Enforcement boundary**:
-  - **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness reads each agent's frontmatter `tools:` allowlist and FREEZES it at spawn time. A subagent cannot invoke a tool outside its frozen allowlist — this is the enforced LLM06 boundary, applied per-agent at spawn.
-  - **Mid-task runtime per-agent allowlist check is NOT implemented** — but NOT because the caller is unidentifiable: the inner `tool_use` envelope carries only an opaque `agent_id`, yet the caller's `agent_type` IS recoverable at pre-tool time from the `agent-<agent_id>.meta.json` sidecar, and two PreToolUse hooks recover it today (`block-doc-routing-leak.sh` blocks on it; `advisory-subagent-budget.sh` only advises). The boundary stands on other ground: the recovery **fails open** (missing sidecar / unresolved anchor / absent `jq` → empty type → the call proceeds), so a layer built on that signal is **detective, never preventive**; and the one blocking use is a single hardcoded file-routing rule keyed on two agent types, not a general per-agent tool-grant allowlist. Full runtime per-agent tool-grant enforcement is therefore not available at the current harness surface. A per-agent layer is deferred rather than impossible — the entry gate is a measurement of sidecar-resolution success across real spawns, which does not exist today.
-  - **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit + Bash) blocks writes to harness-critical LIVE surfaces — live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch (a branch's settings file carries that profile's own hook wiring, so it is the same enforcement surface), `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded), NEW `agents/*.md` creation — for EVERY caller, main session and subagents alike, precisely because it needs NO caller identification. This is a per-FILE protection floor, NOT a per-agent tool-grant check, so the preceding "per-agent allowlist check is NOT implemented" claim stays accurate.
+
+### Enforcement boundary
+
+What the harness mechanically enforces around agent tool authorization, where that enforcement stops, and one adjacent control on a different axis (per-FILE, not per-agent). Each bullet below states its own object, and its enforcement verdict covers that object alone.
+
+- **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness reads each agent's frontmatter `tools:` allowlist and FREEZES it at spawn time. A subagent cannot invoke a tool outside its frozen allowlist — this is the enforced LLM06 boundary, applied per-agent at spawn.
+- **Mid-task runtime per-agent allowlist check is NOT implemented** — but NOT because the caller is unidentifiable:
+  - The caller IS identifiable: the inner `tool_use` envelope carries only an opaque `agent_id`, yet the caller's `agent_type` IS recoverable at pre-tool time from the `agent-<agent_id>.meta.json` sidecar, and two PreToolUse hooks recover it today (`block-doc-routing-leak.sh` blocks on it; `advisory-subagent-budget.sh` only advises).
+  - The boundary stands on other ground: the recovery **fails open** (missing sidecar / unresolved anchor / absent `jq` → empty type → the call proceeds), so a layer built on that signal is **detective, never preventive**; and the one blocking use is a single hardcoded file-routing rule keyed on two agent types, not a general per-agent tool-grant allowlist.
+  - Full runtime per-agent tool-grant enforcement is therefore not available at the current harness surface. A per-agent layer is deferred rather than impossible — the entry gate is a measurement of sidecar-resolution success across real spawns, which does not exist today.
+- **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit + Bash) blocks writes to harness-critical LIVE surfaces for EVERY caller, main session and subagents alike, precisely because it needs NO caller identification.
+  - Protected surfaces:
+    - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring, so it is the same enforcement surface
+    - `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded)
+    - NEW `agents/*.md` creation
+  - This is a per-FILE protection floor, NOT a per-agent tool-grant check, so the preceding "per-agent allowlist check is NOT implemented" claim stays accurate.
 
 ## LLM-Specific Security
 
 - **Data poisoning [LLM04:2025]**: wiki / RAG knowledge bases ingest content from allowlisted sources only; integrity validation before indexing is REQUIRED.
 - **Vector / embedding [LLM08:2025]**: vector DB access controls match the strictest data tier the corpus contains; no broader-than-source access.
 - **Misinformation [LLM09:2025]**: agent-generated commits / SQL / shell commands → human review or sandbox validation before merge or execution.
-- **Unbounded consumption [LLM10:2025]**: agents in retry loops MUST honour `maxTurns` ceiling AND token budget; infinite retry / unbounded recursion FORBIDDEN. Rate-limit applies to agent self-invocation, not only public endpoints.
+- **Unbounded consumption [LLM10:2025]**: agent loops (retry loops included) MUST honour the `maxTurns` ceiling AND the per-cycle token budget; infinite retry / unbounded recursion FORBIDDEN. Rate-limit policy applies to agent self-invocation, not only public API endpoints.
 
 ## Output Encoding
 
@@ -66,9 +79,8 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 
 - `npm audit` / `yarn audit` → using packages with known vulnerabilities is FORBIDDEN
 - When adding dependencies → verify license and security history
-- Rate limiting → MUST be applied to all public API endpoints
+- Rate limiting → MUST be applied to all public API endpoints (agent self-invocation is rate-limited as well — that rule lives at `## LLM-Specific Security` → Unbounded consumption)
 - LLM model / adapter / fine-tuning dataset provenance → verify integrity (SBOM-equivalent) before use [LLM03:2025]
-- Agent loop rate limiting: `maxTurns` ceiling + per-cycle token budget MUST be enforced; rate-limit policy applies to agent self-invocation, not only public API endpoints [LLM10:2025]
 
 ## OWASP Top 10
 

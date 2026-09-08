@@ -9,12 +9,14 @@ Applies to all agents.
 - `--no-verify` / `--no-gpg-sign` are **STRICTLY FORBIDDEN** in normal flow
   - Agent execution context without configured signing key → configure SSH/GPG key OR set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
 - Stage only changed files via `git add` — `git add .` / `git add -A` are FORBIDDEN
-- Where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER; where such a delegation states no contract, treat that worktree as SHARED — checkpoint to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` and ask rather than committing (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) defines the index-mutation class and the contract).
+- **Concurrent worktree**: where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER.
+  - Where such a delegation states no contract, treat that worktree as SHARED — checkpoint to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` and ask rather than committing.
+  - `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) defines the index-mutation class and the contract.
 
 ### Subject Line
 
-- **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics). The author's job is to find the most compressed phrasing that conveys the change's purpose — counting characters is the wrong frame.
-- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); bodies are English as well (public OSS repository, no Korean subjects).
+- **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics).
+- **Language & tone (English)**: write subjects in English imperative mood — `Add login button`, not `Added login button` / `Adding login button`. Bodies are English as well (public OSS repository, no Korean subjects).
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional. When used, place after the checkbox: `- [x] feat: <description>`.
 
 ### Subject and Body
@@ -27,16 +29,13 @@ Applies to all agents.
 
 - **Why over what**: the diff already shows what changed; the body explains why the change was needed. Implementation detail (how) belongs in the code, not the message.
 - **Inverted-pyramid ordering**: lead with the most important "why" sentence; supporting context follows.
-- **Meaning-unit wrapping**: break lines at clause / sentence / list-item boundaries. Identifiers (function names, file paths, hooks, tokens) MUST NEVER be split across lines. No fixed character cap — the author chooses break points that preserve readability. Short clauses (≤ ~10 words) stay on one line.
 - **Conciseness**: every sentence MUST add information not already conveyed by the subject or a prior body sentence. No formal greetings, no exaggerated adjectives (`very important`, `really cleanly`).
-- **Bullet form by default**: body content MUST be written as bullets; prose paragraphs are admitted ONLY when the change is a single causal narrative whose steps cannot decompose into 3+ independent bullets without breaking the chain. Meaning-unit wrapping still applies inside each bullet, and Conciseness still requires every bullet (and every prose sentence under the admission) to add new information.
+- **Body shape**: bullets suit a body carrying 3+ independent facts; prose suits one causal chain.
 
 ### Anti-patterns
 
-- **Chained single-line subjects**: stacking unrelated changes onto one subject via `—`, `·`, or `:` connectors.
 - **Diff-restating body**: rephrasing what the diff already shows (`Changed X to Y` when the diff makes that visible).
 - **Subject-body redundancy**: subject and body conveying the same fact in different words.
-- **Non-imperative subjects**: `Added login button`, `Adding login button` — use imperative mood (`Add login button`) instead.
 
 ## AI Commit Attribution
 
@@ -55,20 +54,27 @@ Applies to all agents.
 
 ## Pull Requests
 
-- **Title** MUST be under 70 characters · **body** MUST include Summary + Test Plan
+- **Title** MUST be under 70 characters
+- **Body** MUST include Summary + Test Plan
 - Diffs exceeding 400 lines → split for review
-- **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` / `scope-planning.md` Output Format Routing Emission contract. Git-only PR conclusions:
+- **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` / `scope-planning.md` Output Format Routing Emission contract. Git-only conclusions for PR review:
   - **PR semantic diff target** = the plan MD body + monitor code changes.
   - **Monitor-internal root** (`$CLAUDED_DOCS_HTML_ROOT`) git-excluded via the repo-root `.gitignore` `monitor/data/*` entry (folded from the former `monitor/.gitignore` per its comment) — outside PR review scope.
-- **Merge authorization**: the orchestrator MAY execute `gh pr ready <n>` + `gh pr merge <n> --merge` for a cycle's PRs ONCE the user has EXPLICITLY approved merging that cycle. Approval is per-cycle and per-PR-set — never standing; silence or a past cycle's approval does NOT carry over.
-  - **Preconditions**: ALL CI checks green (a failed check = absolute stop) · no `--admin` / branch-protection bypass of any kind · merge-commit method (`--merge`) unless the user asks otherwise.
+- **Merge authorization**: the orchestrator MAY execute `gh pr ready <n>` + `gh pr merge <n> --merge` for a cycle's PRs ONCE the user has EXPLICITLY approved merging that cycle.
+  - Approval is per-cycle and per-PR-set — never standing; silence or a past cycle's approval does NOT carry over.
+  - **Preconditions** (all of the following):
+    - ALL CI checks green — a failed check = absolute stop.
+    - No `--admin` / branch-protection bypass of any kind.
+    - Merge-commit method (`--merge`) unless the user asks otherwise.
   - Direct push to main stays FORBIDDEN (see Branches) and force-push rules are unchanged.
 
 ## Dangerous Commands
 
-- `reset --hard` / `checkout .` / `clean -f` → permitted **ONLY after user confirmation**
-- `rebase -i` / `add -i` → **interactive mode is FORBIDDEN** (not supported)
-- AI agent `git push --force` without explicit user approval → FORBIDDEN (force-push rule applies even more strictly to autonomous agents)
+| Command | Rule |
+|---------|------|
+| `reset --hard` / `checkout .` / `clean -f` | Permitted **ONLY after user confirmation** |
+| `rebase -i` / `add -i` | **Interactive mode is FORBIDDEN** (not supported) |
+| `git push --force` by an AI agent, without explicit user approval | **FORBIDDEN** — the force-push rule applies even more strictly to autonomous agents |
 
 ## Rationalization Rejection (Git)
 

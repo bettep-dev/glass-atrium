@@ -14,17 +14,17 @@ Single-source SoT for the INJECTED turn-budget discipline TEXT — the two marke
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=300 B hard, <=260 B target (nodrop.bats pins the source-contract); any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-DEV:START -->
 **Budget sizing (auto-injected DEV · full: `~/.glass-atrium/scoped/shared-turn-budget.md`)**
-- Estimate `tool_uses ~= files x 4.5`; >~30 → report for decomposition before accepting.
-- >4-file or >2-module work → stage 1-2 files at a time, verify each.
+- Estimate `tool_uses ~= files x 4.5`; >~30 → report to split before accepting.
+- >4 files or >2 modules → stage 1-2 files at a time, verify each.
 <!-- AGENT-INJECT:BUDGET-DEV:END -->
 
 ## BUDGET-ANALYSIS block
 
-> The block below (between the `AGENT-INJECT:BUDGET-ANALYSIS` markers) is extracted verbatim by the same hook and injected into the `BUDGET_ANALYSIS_AGENTS` roster. It mirrors the canonical analysis bullet (allowlist reads · reserve the emit tail · partial-on-ceiling) in full — analysis-consumer assemblies are small, so no compression beyond the byte contract is needed.
+> The block below (between the `AGENT-INJECT:BUDGET-ANALYSIS` markers) is extracted verbatim by the same hook and injected into the `BUDGET_ANALYSIS_AGENTS` roster. It carries the canonical analysis bullet (allowlist reads · reserve the emit tail · partial-on-ceiling); the ceiling-STOP rationale is omitted for the same reason as BUDGET-DEV — the non-droppable turn-budget meter block delivers it on every spawn.
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=364 B; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->
 **Budget sizing (auto-injected analysis · full: `~/.glass-atrium/scoped/shared-turn-budget.md`)**
-- Bound reads to an explicit allowlist (no repo sweep); reserve the emit tail — the final `[COMPLETION]`/StructuredOutput IS the deliverable.
-- Broad scope (>~20 reads) or near the 80% ceiling → STOP, emit a partial cited result (a partial beats a lost run).
+- Bound reads to an explicit allowlist (no repo sweep); reserve the emit tail — `[COMPLETION]`/StructuredOutput IS the deliverable.
+- Broad scope (>~20 reads) or near the ceiling → STOP, emit a partial cited result.
 <!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->

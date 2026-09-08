@@ -6,10 +6,12 @@ and the commit/PR contract. Keep changes small and focused — one concern per P
 ## Language policy
 
 **All contributions must be in English**: code comments, commit messages, PR
-titles and bodies, and documentation. Some internal rule files predate this
-policy and reference Korean comment defaults for the maintainer's own agent
-tooling (`scoped/shared-comment-logging.md`); for anything contributed to this
-repository, English wins.
+titles and bodies, and documentation. The agent rule corpus states the same
+default — see `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output
+Language, the canonical rule that everything the agents author is written in
+English. A handful of narrow carve-outs are named there (user-facing replies,
+detector literals, and quoted source material, which is reproduced rather than
+authored); for anything contributed to this repository, English wins.
 
 ## Development setup
 
