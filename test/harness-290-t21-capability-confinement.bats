@@ -14,9 +14,9 @@
 #      in enforce-harness-critical.sh's redirect regex (asserted by a direct
 #      hook invocation that blocks such a redirect).
 #
-# Fail-at-HEAD: rows 1-2 fail before the prune (Bash present) / before the deny
-# additions (negations absent); row on the hook redirect passes at HEAD by design
-# (T21 W4: the redirect regex was already correct — this row regression-guards it).
+# Every row reads its SoT live — settings.template.json .permissions, the agents'
+# frontmatter, the committed manifest. Expected values are test-side literals, so
+# a SoT edit and the oracle can never move together.
 #
 # Run via: bats test/harness-290-t21-capability-confinement.bats
 # Requires: bats, bash 3.2+, jq; python3 only for the hook-redirect regression row.
@@ -27,13 +27,19 @@
 # exercises the real path.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-META_AGENT="${GA}/agents/glass-atrium-meta-agent.md"
-META_PROMPT="${GA}/agents/glass-atrium-meta-prompt-engineer.md"
 # settings.template.json is a manifest bundle member, so it resolves under GA in a
 # consumer install exactly as in the checkout — the rows below need no skip guard.
 SETTINGS="${GA}/settings.template.json"
 HOOK_SH="${GA}/hooks/enforce-harness-critical.sh"
 MANIFEST="${GA}/manifest.json"
+
+# "<agent basename>|<grants that MUST survive the surgical prune>" — the survivor
+# column is the anti-vacuity half: a wiped or mis-parsed frontmatter passes the
+# Bash negation trivially, and only a positive grant catches that.
+META_AGENT_GRANTS=(
+  "glass-atrium-meta-agent.md|Read,Write"
+  "glass-atrium-meta-prompt-engineer.md|WebSearch,Edit"
+)
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -44,65 +50,70 @@ frontmatter_block() {
   awk 'NR==1 && $0=="---"{infm=1; next} infm && $0=="---"{exit} infm{print}' "${1}"
 }
 
-@test "meta-agent frontmatter: Bash pruned (LLM06 grant absent)" {
-  [[ -f "${META_AGENT}" ]] || skip "agent file not found: ${META_AGENT}"
-  run frontmatter_block "${META_AGENT}"
-  [[ "${status}" -eq 0 ]]
-  # -w: reject the standalone Bash token (block-list `- Bash` or inline `, Bash]`).
-  ! grep -qw 'Bash' <<<"${output}"
-}
-
-@test "meta-prompt-engineer frontmatter: Bash pruned (LLM06 grant absent)" {
-  [[ -f "${META_PROMPT}" ]] || skip "agent file not found: ${META_PROMPT}"
-  run frontmatter_block "${META_PROMPT}"
-  [[ "${status}" -eq 0 ]]
-  ! grep -qw 'Bash' <<<"${output}"
-}
-
-@test "meta agents retain their non-Bash tools (prune is surgical, not a wipe)" {
-  # Guards against an over-broad edit — Read/Grep/Edit/Write MUST survive.
-  frontmatter_block "${META_AGENT}" | grep -qw 'Read'
-  frontmatter_block "${META_AGENT}" | grep -qw 'Write'
-  frontmatter_block "${META_PROMPT}" | grep -qw 'WebSearch'
-  frontmatter_block "${META_PROMPT}" | grep -qw 'Edit'
-}
-
-@test "settings deny carries the four interpreter-invocation negations" {
-  local negation
-  for negation in 'Bash(bash -c:*)' 'Bash(sh -c:*)' 'Bash(zsh -c:*)' 'Bash(eval:*)'; do
-    run jq -e --arg n "${negation}" '.permissions.deny | index($n)' "${SETTINGS}"
-    [[ "${status}" -eq 0 ]] || {
-      echo "missing deny negation: ${negation}"
+@test "meta agents: Bash pruned from frontmatter, surviving grants intact (LLM06 grant surface)" {
+  local row file grants block tool
+  local -a want
+  for row in "${META_AGENT_GRANTS[@]}"; do
+    file="${GA}/agents/${row%%|*}"
+    grants="${row#*|}"
+    [[ -f "${file}" ]] || {
+      echo "agent file not found: ${file}"
       return 1
     }
+    block="$(frontmatter_block "${file}")"
+    # -w: reject the standalone Bash token (block-list `- Bash` or inline `, Bash]`).
+    if grep -qw 'Bash' <<<"${block}"; then
+      echo "Bash grant still present in frontmatter: ${file}"
+      return 1
+    fi
+    IFS=',' read -r -a want <<<"${grants}"
+    for tool in "${want[@]}"; do
+      grep -qw "${tool}" <<<"${block}" || {
+        echo "surviving grant absent (prune was a wipe, or frontmatter unparsed): ${file} ${tool}"
+        return 1
+      }
+    done
   done
 }
 
-@test "each interpreter negation is a well-formed command-prefix matcher (expressible)" {
+@test "settings deny: interpreter negations present, each a well-formed command-prefix matcher" {
   # A settings command-prefix matcher is Bash(<non-empty prefix>:*), anchored on
-  # the leading command token. Every interpreter negation MUST fit this shape.
-  run jq -r '.permissions.deny[] | select(test("^Bash\\((bash|sh|zsh) -c:\\*\\)$") or . == "Bash(eval:*)")' "${SETTINGS}"
+  # the leading command token — the shape that makes these negations expressible
+  # at all (contrast the redirect row below). Membership AND shape in one jq whose
+  # status is the test's last command.
+  run jq -e '
+    ["Bash(rm:*)", "Bash(rm -rf:*)",
+     "Bash(bash -c:*)", "Bash(sh -c:*)", "Bash(zsh -c:*)", "Bash(eval:*)"] as $need
+    | (($need - .permissions.deny) == [])
+      and ([.permissions.deny[] | select(test("^Bash\\([^()]+:\\*\\)$") | not)] | length) == 0
+  ' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(printf '%s\n' "${output}" | grep -c .)" -eq 4 ]]
 }
 
-@test "settings ask carries the npm publish row; deny no longer does (external-effect verb → user-approval gate)" {
-  # Membership only — a total-row-count assertion would go red on the next
-  # legitimate row addition.
-  # Both memberships in ONE jq whose status check is the LAST command: bats takes
-  # the final command as the verdict, and a bare [[ ]] mid-body cannot fail a test.
-  # The deny-negative half is what catches a row left in both arrays (deny-shadowed).
-  run jq -e '(.permissions.ask | index("Bash(npm publish:*)")) != null
-             and (.permissions.deny | index("Bash(npm publish:*)")) == null' "${SETTINGS}"
+@test "settings: blanket allow is exactly Bash(*), auto mode, npm publish gated in ask not deny" {
+  # Full-array equality on allow (the widest grant — a surplus member here is the
+  # whole security story) plus the explicit negative on the ask/deny split: a row
+  # left in BOTH arrays is deny-shadowed and the user-approval gate never fires.
+  run jq -e '
+    .permissions.allow == ["Bash(*)"]
+    and .permissions.defaultMode == "auto"
+    and (.permissions.ask | index("Bash(npm publish:*)")) != null
+    and (.permissions.deny | index("Bash(npm publish:*)")) == null
+  ' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "redirect-into-harness is INEXPRESSIBLE in settings deny/ask (no harness-path entry)" {
   # A '> harness-path' redirect cannot be a command-prefix matcher: the > operator
   # and its target appear anywhere in the command, not at the leading-token anchor.
-  run jq -r '(.permissions.deny + .permissions.ask)[] | select(test("\\.claude|\\.glass-atrium"))' "${SETTINGS}"
+  # The length guard is the anti-vacuity half — empty deny/ask arrays would satisfy
+  # the absence clause without asserting anything.
+  run jq -e '
+    (.permissions.deny + .permissions.ask) as $rows
+    | ($rows | length) > 0
+      and ([$rows[] | select(test("\\.claude|\\.glass-atrium"))] | length) == 0
+  ' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
-  [[ -z "${output}" ]]
 }
 
 @test "the redirect pattern is specified in the hook: redirect into live hooks dir blocks" {
@@ -116,17 +127,6 @@ frontmatter_block() {
   envelope="$(jq -cn --argjson ti "${tin}" '{tool_name: "Bash", tool_input: $ti}')"
   run env "HOME=${fake_home}" "${HOOK_SH}" <<<"${envelope}"
   [[ "${status}" -eq 2 ]]
-}
-
-@test "AC6 regression: blanket grant + auto mode + rm denies unchanged" {
-  run jq -e '.permissions.allow == ["Bash(*)"]' "${SETTINGS}"
-  [[ "${status}" -eq 0 ]]
-  run jq -e '.permissions.defaultMode == "auto"' "${SETTINGS}"
-  [[ "${status}" -eq 0 ]]
-  run jq -e '.permissions.deny | index("Bash(rm:*)")' "${SETTINGS}"
-  [[ "${status}" -eq 0 ]]
-  run jq -e '.permissions.deny | index("Bash(rm -rf:*)")' "${SETTINGS}"
-  [[ "${status}" -eq 0 ]]
 }
 
 @test "committed manifest carries the three shipped root artifacts" {
