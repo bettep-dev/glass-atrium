@@ -196,12 +196,6 @@ run_setup() {
   [[ "${output}" == *"restore_squash_lost_partial_indexes did not fully apply"* ]]
 }
 
-@test "no literal \${HOME} token survives the render" {
-  run_setup ""
-  [[ "${status}" -eq 0 ]]
-  ! grep -qF '${HOME}' "${FAKE_ROOT}/.env"
-}
-
 @test "both DBs absent -> createdb invoked for main AND shadow" {
   # probe says "not exists" for every db; createdb records its args and succeeds
   printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"

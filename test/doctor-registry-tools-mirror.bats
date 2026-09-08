@@ -231,13 +231,15 @@ warn_total_of_output() {
   }
 }
 
-# The symmetric twin of doctor-backup-dir-relocation.bats AC6, for the same reason: AC5 pins the
-# kind-B property BEHAVIOURALLY, but only registration makes the contract suite's promotion guard
-# bind to this stem. Drop `tools_mirror` from KIND_B_STEMS and its synthetic operand together and
-# the contract suite stays green — its own guard compares the two list LENGTHS — leaving a future
-# edit free to fold this section into the warning total unnoticed. Two greps, because registration
-# without an identifier in the doctor is a dead entry and an identifier without registration is an
-# unguarded section.
+# AC5 above pins the kind-B property BEHAVIOURALLY and is the backstop for an actual promotion.
+# This row guards the OTHER shape: DEREGISTRATION. The contract suite's promotion guard binds only
+# to the stems on its own KIND_B_STEMS list, and its length check compares that list against the
+# synthetic-operand list — so dropping `tools_mirror` from BOTH together leaves the contract suite
+# fully green with §23 no longer guarded there at all. That is not hypothetical: removing these two
+# stems is exactly the follow-on the C6 trim plan proposed and the wave declined.
+# Two greps, no doctor invocation, so the CI-cost argument that retired the duplicate end-to-end
+# rows does not reach this one: registration without an identifier in the doctor is a dead entry,
+# and an identifier without registration is an unguarded section.
 @test "AC6 the §23 identifier stem is registered kind B in the summary contract" {
   [[ -f "${CONTRACT}" ]] || {
     printf 'summary contract suite missing: %s\n' "${CONTRACT}" >&2

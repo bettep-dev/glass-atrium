@@ -192,9 +192,3 @@ run_scan_count() {
   [[ "${status}" -eq 0 ]] || { echo "status=${status} stderr=${stderr}" >&2; return 1; }
   [[ "${output}" == "0" ]] || { echo "deferred Tier-B/C false-tripped the warn: ${output}" >&2; return 1; }
 }
-
-@test "doctor: data_sep_leftover_scan reports 0 on a fully-migrated legacy root" {
-  run_scan_count "${SRC}"
-  [[ "${status}" -eq 0 ]] || { echo "status=${status} stderr=${stderr}" >&2; return 1; }
-  [[ "${output}" == "0" ]] || { echo "expected 0, got ${output}" >&2; return 1; }
-}

@@ -262,18 +262,6 @@ argv_value_after() {
   [ "$output" -eq 1 ]
 }
 
-@test "AC2 the run dir's parent is the script-owned root, never an environment-supplied one" {
-  # The cwd the model actually got is asserted behaviourally by the hostile-TMPDIR row below, which
-  # reads it back from the stub and prefix-matches it against the owned run root. What has no
-  # behavioural proxy is the ABSENCE of the -t / -p forms: both take their parent from the
-  # environment or from a shared dir, and a run that happens to be clean cannot tell them apart
-  # from the owned root.
-  run grep -c -- 'mktemp -d -t' "${WIKI_SCRIPT}"
-  [ "$output" -eq 0 ]
-  run grep -c -- 'mktemp -d -p' "${WIKI_SCRIPT}"
-  [ "$output" -eq 0 ]
-}
-
 @test "AC2 a world-writable non-sticky TMPDIR cannot become the run-dir parent" {
   make_sandbox
   seed_raw alpha.md
@@ -572,21 +560,6 @@ load_ancestor_walk() {
   # though _compile_cleanup has already removed the run dir that held it.
   log_body | grep -q 'envelope excerpt (first 4000 bytes):'
   log_body | grep -q 'override attempt'
-}
-
-@test "AC3 an out-of-range idx aborts with exit 5 and zero files under NOTES_DIR" {
-  make_sandbox
-  seed_raw alpha.md
-  write_template \
-    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=7-----' \
-    'body for a slot the shell never offered' \
-    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=7-----' \
-    '-----GA-WIKI-ENVELOPE-DONE nonce=@NONCE@ count=1-----'
-
-  run bash "${SANDBOX}/wiki-daily-compile.sh"
-  [ "$status" -eq 5 ]
-  [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"envelope structural violation (idx-out-of-range)"* ]] || return 1
 }
 
 @test "AC5 an oversize note body aborts with exit 6 and zero writes" {

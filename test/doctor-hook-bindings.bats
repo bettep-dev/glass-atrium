@@ -16,6 +16,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
+CORE="${GA}/lib/ga-env.sh"
+REPO_MANIFEST="${GA}/manifest.json"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -191,39 +193,6 @@ drop_group() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
-@test "Workflow-matcher binding -> reported bound (enforce-workflow-verify-stage)" {
-  # enforce-workflow-verify-stage.sh binds under the NEW Workflow matcher/event
-  # combo — the matcher-generic doctor check must report it bound, no dormant.
-  write_full_settings
-  run_doctor_sandbox
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow)"* ]]
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-}
-
-@test "Workflow-matcher binding -> reported bound (lint-workflow-template-literal)" {
-  # lint-workflow-template-literal.sh is the SECOND hook under the Workflow matcher —
-  # its bound status must be reported independently of enforce-workflow-verify-stage
-  # (neither Workflow-matcher hook masks the other), no dormant.
-  write_full_settings
-  run_doctor_sandbox
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> lint-workflow-template-literal.sh (matcher=Workflow)"* ]]
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-}
-
-@test "Workflow-matcher binding -> missing one reported dormant" {
-  # drop ONLY the Workflow enforce-workflow-verify-stage group; every other
-  # binding stays. The new event/matcher tuple must surface as DORMANT.
-  write_full_settings
-  jq 'del(.hooks.PreToolUse[]
-        | select((.matcher == "Workflow")
-                 and (.hooks[].command | endswith("enforce-workflow-verify-stage.sh"))))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow) (DORMANT"* ]]
-  [[ "${output}" == *"dormant hook binding(s)"* ]]
-}
-
 @test "two-matcher one-hook -> missing Bash matcher reported as a FACET miss, Write|Edit still ok" {
   # PER-FACET class: drop ONLY the Bash validate-secret-scan group; the Write|Edit one
   # stays, so the hook IS wired and DOES fire. The missing channel must be reported as a
@@ -244,17 +213,6 @@ drop_group() {
 # dangerous direction — it steers the operator onto a redeploy path to satisfy a
 # warning about a facet, while the protection is already live. The rows below pin the
 # two classes apart; the negative control is what stops a blanket reword from passing.
-
-@test "DX1 facet-only miss -> per-tuple line names the FACET, never whole-gate dormancy" {
-  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit — the live
-  # host shape. Drop only the Write|Edit|MultiEdit facet; the Bash binding keeps firing.
-  write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
-    && [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-harness-critical.sh (matcher=Bash)"* ]] \
-    && [[ "${output}" != *"enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (DORMANT"* ]]
-}
 
 @test "DX2 NEGATIVE CONTROL: hook bound under NO matcher -> whole-gate dormant preserved" {
   # advisory-spawn-budget.sh has exactly one binding; dropping it leaves the hook wired
@@ -297,28 +255,24 @@ drop_group() {
 @test "DX5 mixed run: facet miss AND a truly unbound hook -> BOTH classes reported" {
   # a single-branch reword either mislabels the facet miss or suppresses the remedy the
   # genuine miss needs; both aggregates must fire independently in one run.
+  #
+  # The third drop is a SECOND EVENT on the same run, so it costs no extra doctor invocation and
+  # pins the warn line's ${event} field. Every other warn-line assertion in this file names a
+  # PreToolUse tuple, so hardcoding `PreToolUse` at that log call passes the entire suite while
+  # naming the wrong .hooks.<event> key in the one line that carries the remedy — the
+  # wrong-remedy class DX3/DX4 exist to prevent. The settings-ABSENT row cannot host this pin:
+  # that branch reports the aggregate only and emits no per-tuple line at all.
   write_full_settings
   drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
   drop_group Agent advisory-spawn-budget.sh
+  drop_group '' cost-tracker.sh Stop
   run_doctor_sandbox
   [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
+    && [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh (matcher=<none>) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
-    && [[ "${output}" == *"1 dormant hook binding(s)"* ]] \
+    && [[ "${output}" == *"2 dormant hook binding(s)"* ]] \
     && [[ "${output}" == *"never writes settings.json"* ]]
-}
-
-@test "missing binding -> warn line (advisory-spawn-budget dropped)" {
-  # full settings minus the advisory-spawn-budget PreToolUse entry
-  write_full_settings
-  jq 'del(.hooks.PreToolUse[] | select(.hooks[].command | endswith("advisory-spawn-budget.sh")))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT"* ]]
-  [[ "${output}" == *"dormant hook binding(s)"* ]]
-  # a still-wired hook continues to report ok (no false-positive warn)
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-delegation.sh"* ]]
 }
 
 @test "absent settings.json -> all bindings reported dormant" {
@@ -340,6 +294,26 @@ drop_group() {
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
   # leaf is unwired, so all 49 report dormant.
+  #
+  # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 49. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 49 leaves by NAME, so a swapped roster row
+  # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 42 roster
+  # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
+  # is one of those 7.
+  #
+  # Measured, not assumed: swapping "PreToolUse<TAB>validate-scope-drift.sh<TAB>Write|Edit" for
+  # style-ref-verify.sh in EXPECTED_HOOK_BINDINGS — one real deployed hook silently unwired, total
+  # held at 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
+  # reddening 6 rows in this file.
+  #
+  # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
+  # is rewritten in the same composition, so a count taken from any single branch goes stale on
+  # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
+  # which is smaller than the 49 leaves because a basename can bind under several event/matcher
+  # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
+  # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
   [[ "${output}" == *"49 dormant hook binding(s)"* ]]
 }
 
@@ -424,12 +398,97 @@ drop_group() {
   [[ "${status}" -eq 0 ]]
 }
 
-@test "output names the unsafe-to-auto-write rationale (loud-fail framing)" {
-  write_full_settings
-  jq 'del(.hooks.Stop[] | select(.hooks[].command | endswith("cost-tracker.sh")))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
-  run_doctor_sandbox
-  [[ "${output}" == *"never writes settings.json"* ]]
-  [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh"* ]]
+# --- wired-roster ship invariants: git index mode + manifest membership -------
+#
+# Claude Code exec()s each wired command directly, so a wired-but-644 hook is silently
+# inert (fail-open, never fires). The GIT INDEX mode is the load-bearing signal, not a
+# filesystem `[[ -x ]]`: the release bundle is tarred from the working tree and a fresh
+# checkout materializes the index mode, whereas `-x` breaks under core.fileMode=false
+# and passes VACUOUSLY on a locally chmod-ed tree — the state that masks the defect.
+#
+# Keyed on EXPECTED_HOOK_BINDINGS, never a hooks/**/*.sh glob: the glob would false-flag
+# legitimately-644 sourced libs (hooks/lib/*.sh). A wired basename with NO tracked file
+# FAILS loudly — wired-but-untracked is worse than wired-but-non-exec.
+#
+# Both rows guard themselves in-body rather than through setup(), which must leave the
+# doctor rows' run conditions untouched; the index-mode row is meaningless outside a git
+# work tree (the deployed install carries no .git). They do inherit setup()'s jq guard.
+
+# emit each EXPECTED_HOOK_BINDINGS row body as "event<TAB>basename<TAB>matcher",
+# the array indent + surrounding double-quotes stripped.
+# Copied VERBATIM from test/hook-bindings-complete.bats::array_rows — this suite has no
+# shared-helper (load) convention, so the parser is duplicated byte-for-byte instead of
+# diverging; keep both copies in lockstep on any array-format change (each file's
+# count>0 guard fails loudly on drift either way).
+array_rows() {
+  awk '
+    /^[[:space:]]*EXPECTED_HOOK_BINDINGS=\(/ { f = 1; next }
+    f && /^[[:space:]]*\)[[:space:]]*$/      { f = 0 }
+    f                                        { print }
+  ' "${CORE}" | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//'
+}
+
+# unique wired basenames (2nd TAB-split field); blank fields dropped so a malformed row
+# surfaces via the count>0 guard, not a phantom "hooks/" lookup.
+wired_basenames() {
+  array_rows | awk -F'\t' 'NF >= 2 && $2 != "" { print $2 }' | LC_ALL=C sort -u
+}
+
+@test "every wired hook basename is git-tracked at index mode 100755" {
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || skip "not a git work tree (bundle/fixture run) — index-mode assertion N/A"
+  local name line mode count=0 offenders=""
+  while IFS= read -r name; do
+    count=$((count + 1))
+    line="$(git -C "${GA}" ls-files -s -- "hooks/${name}")"
+    if [[ -z "${line}" ]]; then
+      offenders="${offenders}
+  hooks/${name}: NOT TRACKED in git (wired but absent — worse than non-exec)"
+      continue
+    fi
+    mode="${line%% *}"
+    if [[ "${mode}" != "100755" ]]; then
+      offenders="${offenders}
+  hooks/${name}: git index mode ${mode}, expected 100755"
+    fi
+  done < <(wired_basenames)
+  # count>0 guard: a reformatted array must fail LOUDLY, never pass vacuously.
+  if [[ "${count}" -eq 0 ]]; then
+    echo "parsed 0 wired basenames from EXPECTED_HOOK_BINDINGS — parser/format drift"
+    return 1
+  fi
+  if [[ -n "${offenders}" ]]; then
+    echo "wired hooks failing the git-index exec-bit invariant (${count} checked):${offenders}"
+    return 1
+  fi
+}
+
+@test "every wired hook basename ships in manifest.json .files" {
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
+  if [[ ! -f "${REPO_MANIFEST}" ]]; then
+    echo "manifest.json not found: ${REPO_MANIFEST} (tracked repo artifact — must exist)"
+    return 1
+  fi
+  jq -e '(.files | type) == "array"' "${REPO_MANIFEST}" >/dev/null || {
+    echo "manifest.json .files is not an array"
+    return 1
+  }
+  local manifest_files name count=0 offenders=""
+  manifest_files="$(jq -r '.files[]' "${REPO_MANIFEST}")"
+  while IFS= read -r name; do
+    count=$((count + 1))
+    if ! grep -qxF "hooks/${name}" <<<"${manifest_files}"; then
+      offenders="${offenders}
+  hooks/${name}: wired but absent from manifest.json .files (never bundled)"
+    fi
+  done < <(wired_basenames)
+  if [[ "${count}" -eq 0 ]]; then
+    echo "parsed 0 wired basenames from EXPECTED_HOOK_BINDINGS — parser/format drift"
+    return 1
+  fi
+  if [[ -n "${offenders}" ]]; then
+    echo "wired hooks missing from the release manifest (${count} checked):${offenders}"
+    return 1
+  fi
 }

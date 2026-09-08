@@ -90,21 +90,12 @@ _assert_gate() {
   _assert_gate 61 40 true true true
 }
 
-@test "gate R=40 cols=50 (tall but narrow): ART_OK=false, wordmark survives" {
-  extract_launcher_fn compute_menu_geometry
-  _assert_gate 50 40 true false true
-}
-
-# --- both axes required: tall-but-narrow AND short-but-wide both drop the bulldog -----------------
+# --- both axes required: each axis alone drops the bulldog. The short-but-wide half is the R=34
+# vertical-floor row above; this is the tall-but-narrow half (art floor met, plate too narrow). ------
 
 @test "gate R=35 cols=50 (art floor met, plate too narrow): ART_OK=false" {
   extract_launcher_fn compute_menu_geometry
   _assert_gate 50 35 true false true
-}
-
-@test "gate R=34 cols=80 (plate wide, rows below floor): ART_OK=false" {
-  extract_launcher_fn compute_menu_geometry
-  _assert_gate 80 34 true false true
 }
 
 # --- ART_FIRST_ROW zero-clamp: 0 when the art tier is off, block_top (= top_pad+1) when on ---------

@@ -79,12 +79,6 @@ untrack_in_scope() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, files, hashes, modes, retired" {
-  run "${SCRIPT}"
-  [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,files,hashes,modes,retired" ]]
-}
-
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]

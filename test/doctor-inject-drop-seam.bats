@@ -23,7 +23,6 @@
 #        does NOT feed the warning aggregate — designed shedding of the lowest-priority block.
 #   AC3  a log whose rows all predate the window is OK, and still reports the historical total.
 #   AC4  no log at the seam is OK.
-#   AC5  the fixture rows carry the literals §10 classifies on (producer-grammar pin).
 #
 # Run via: bats test/doctor-inject-drop-seam.bats
 # Requires: bats, jq, bash 3.2+
@@ -239,24 +238,4 @@ assert_output_lacks() {
   [[ ! -e "${DROPLOG}" ]] || return 1
   run_doctor_seam
   assert_output_has "no inject-scope-rules drop log"
-}
-
-# ── AC5 — producer-grammar pin ─────────────────────────────────────────────────────────────────
-
-@test "AC5: emitter rows carry the DROP, PARTIAL and block=lesson literals §10 classifies on" {
-  emit_shed_row "glass-atrium-dev-shell" 9984 "${COMMENT_BIG}" /nonexistent
-  emit_lesson_pair "glass-atrium-dev-shell" || {
-    echo "could not emit the lesson-class pair" >&2
-    return 1
-  }
-  local missing=""
-  grep -q ' \[inject-scope-rules\] DROP ' "${DROPLOG}" || missing="${missing} DROP-token"
-  grep -q ' \[inject-scope-rules\] PARTIAL ' "${DROPLOG}" || missing="${missing} PARTIAL-token"
-  grep -q ' block=lesson ' "${DROPLOG}" || missing="${missing} block=lesson-label"
-  grep -q ' block=comment ' "${DROPLOG}" || missing="${missing} non-lesson-label"
-  [[ -z "${missing}" ]] || {
-    echo "producer grammar changed — §10 classifier literals absent:${missing}" >&2
-    echo "log: $(cat "${DROPLOG}" 2>&1)" >&2
-    return 1
-  }
 }

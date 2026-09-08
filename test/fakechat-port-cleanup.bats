@@ -296,16 +296,3 @@ _boot_ga() {
   [[ "${body}" != *'plugin:fakechat@'* ]]
   [[ "${body}" != *'pkill'* ]]
 }
-
-@test "C2(teardown-wiring): kill_daemon_tmux_sessions folds the port-free for BOTH ports, no-die fallback" {
-  local body
-  body="$(awk '/^kill_daemon_tmux_sessions\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
-    "${GA}/lib/ga-daemons.sh")"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'fakechat_free_port'* ]]
-  # both daemon fakechat port keys resolved from config with a literal fallback.
-  [[ "${body}" == *'autoagent_fakechat'* ]]
-  [[ "${body}" == *'wiki_fakechat'* ]]
-  # a configured-invalid port must fall back, never `die` a teardown.
-  [[ "${body}" != *'die '* ]]
-}

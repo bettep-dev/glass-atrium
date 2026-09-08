@@ -1,11 +1,13 @@
 #!/usr/bin/env bats
 # art-asset-integrity.bats — regression pin for the shipped bulldog asset (plan §4.7.5-1 dimension
 # gate). The TUI loads docs/assets/bulldog-braille.txt WHOLESALE and emits it verbatim, so its shape
-# is a hard contract: the row count IS ART_ROWS (18) and no row may exceed ART_WIDTH (55) or the
-# center-pad math + horizontal-fit gate break. Pinned invariants:
-#   1. exactly 18 lines            (== ART_ROWS; the vertical geometry contract)
-#   2. every char in U+2800-U+28FF (single-width braille only — no ASCII/emoji/double-width leak)
-#   3. widest line == 55 (ART_WIDTH), every line 1..55 cells (the horizontal bound)
+# is a hard contract: no row may exceed ART_WIDTH (55) or the center-pad math + horizontal-fit gate
+# break. Pinned invariants:
+#   1. every char in U+2800-U+28FF (single-width braille only — no ASCII/emoji/double-width leak)
+#   2. widest line == 55 (ART_WIDTH), every line 1..55 cells (the horizontal bound)
+#
+# The ROW COUNT (== ART_ROWS) is NOT pinned here: _bulldog_load_asset drops the art wholesale on a
+# row-count mismatch, so art-tier-degradation.bats and art-plate-alignment.bats already red on drift.
 #
 # NOTE — the asset is RIGHT-TRIMMED (ragged), not a uniform 55-wide raster: the offline generator
 # strips trailing blank braille cells, so per-line widths run 44..55 (leading blank cells that
@@ -19,25 +21,12 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 ASSET="${GA}/docs/assets/bulldog-braille.txt"
-ART_ROWS=18
 ART_WIDTH=55
 
 setup() {
   [[ -r "${ASSET}" ]] || skip "bulldog asset not found: ${ASSET}"
   command -v python3 >/dev/null || skip "python3 required for braille codepoint validation"
   trap - ERR
-}
-
-@test "asset has exactly ART_ROWS (18) lines" {
-  run python3 - "${ASSET}" <<'PY'
-import sys
-lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
-if lines and lines[-1] == "":  # drop the trailing element from the final newline
-    lines = lines[:-1]
-print(len(lines))
-PY
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "${ART_ROWS}" ]
 }
 
 @test "every character is single-width braille (U+2800-U+28FF)" {

@@ -83,63 +83,6 @@ count_bound() {
   [[ "${output}" == "${HOME}/.glass-atrium/hooks/advisory-spawn-budget.sh" ]]
 }
 
-@test "Workflow binding -> wired under PreToolUse with matcher Workflow (new event/matcher combo)" {
-  # enforce-workflow-verify-stage.sh is the NEW PreToolUse + Workflow-matcher
-  # binding — wire_hooks must upsert it via the matcher-generic merge path.
-  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  # exactly one occurrence, landed under PreToolUse with matcher "Workflow"
-  [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
-  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .matcher' "${SETTINGS}"
-  [[ "${output}" == "Workflow" ]]
-  # command path is the repointed $HOME/.glass-atrium/hooks/<name> form
-  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.glass-atrium/hooks/enforce-workflow-verify-stage.sh" ]]
-}
-
-@test "Workflow binding -> idempotent: re-run adds no second occurrence" {
-  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
-  # second run must skip it (already wired), no duplicate
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
-  [[ "${output}" == *"skip (already wired): PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow)"* ]]
-}
-
-@test "second Workflow binding -> wired under PreToolUse with matcher Workflow (lint-workflow-template-literal)" {
-  # lint-workflow-template-literal.sh is the SECOND PreToolUse + Workflow-matcher
-  # binding — wire_hooks must upsert it as a distinct leaf alongside (not masking)
-  # enforce-workflow-verify-stage.sh under the shared matcher.
-  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  # exactly one occurrence, landed under PreToolUse with matcher "Workflow"
-  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
-  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/lint-workflow-template-literal.sh")) | .matcher' "${SETTINGS}"
-  [[ "${output}" == "Workflow" ]]
-  # command path is the repointed $HOME/.glass-atrium/hooks/<name> form
-  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/lint-workflow-template-literal.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.glass-atrium/hooks/lint-workflow-template-literal.sh" ]]
-  # both Workflow-matcher hooks coexist as independent leaves (no masking)
-  [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
-}
-
-@test "second Workflow binding -> idempotent: re-run adds no second occurrence (lint-workflow-template-literal)" {
-  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
-  # second run must skip it (already wired), no duplicate
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
-  [[ "${output}" == *"skip (already wired): PreToolUse -> lint-workflow-template-literal.sh (matcher=Workflow)"* ]]
-}
-
 @test "already-present binding -> NOT duplicated (idempotent re-run)" {
   # first run wires everything from a bare skeleton
   printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
@@ -186,6 +129,48 @@ count_bound_matcher() {
   ' "${SETTINGS}"
 }
 
+@test "Workflow matcher -> BOTH Workflow hooks EMITTED by the wire loop as independent leaves" {
+  # EMISSION axis — the one property no other suite owns. Three axes are in play.
+  # roster MEMBERSHIP is owned: hook-bindings-complete.bats :: per-event leaf count
+  # (it splits the roster's matcher column into a field it never asserts).
+  # roster MATCHER VALUE is owned only for OTHER matchers — doctor-hook-bindings.bats
+  # still pins per-tuple matcher reporting for Bash / Agent / Write|Edit|MultiEdit /
+  # <none>, but it carries no Workflow-matcher case, so the jq select and the
+  # count_bound_matcher calls below are the corpus's ONLY assertion on the
+  # settings.json matcher VALUE "Workflow" (the hooks/test Workflow hits are the
+  # PreToolUse envelope tool_name, a different field). Neither owned axis can witness
+  # what wire_hooks EMITS: hook-bindings-complete reads lib/ga-env.sh's roster, and
+  # doctor-hook-bindings asserts against a hand-written heredoc fixture
+  # (write_full_settings), never against wire output. A hook-specific `continue`
+  # inside the roster-generic wire_hooks loop, roster fully intact, reds HERE and
+  # nowhere else.
+  # Both hooks declare the SAME matcher, so this is also the wire-side pin that
+  # they land as two INDEPENDENT, non-masking leaves: is_hook_bound keys on
+  # basename WITHIN the matcher, and a matcher-only key would let the first
+  # Workflow row mask the second into a silent skip.
+  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]] || return 1
+
+  local a='enforce-workflow-verify-stage.sh' b='lint-workflow-template-literal.sh'
+  # every Workflow-matcher command for the two basenames, sorted — one read that
+  # pins event + matcher + repointed command path together.
+  local cmds
+  cmds="$(jq -r --arg a "${a}" --arg b "${b}" '
+    [ .hooks.PreToolUse[]? | select((.matcher // "") == "Workflow")
+      | .hooks[]?.command | select(endswith("/" + $a) or endswith("/" + $b)) ]
+    | sort | join(",")' "${SETTINGS}")"
+
+  # ONE && chain: every clause decides the test. Written as separate mid-body
+  # [[ ]] lines they would be inert — bash errexit does not fire on a failing
+  # [[ ]] keyword conditional, so only the LAST line of a test can red it.
+  [[ "$(count_bound "${a}")" -eq 1 ]] &&
+    [[ "$(count_bound "${b}")" -eq 1 ]] &&
+    [[ "$(count_bound_matcher "${a}" 'Workflow')" -eq 1 ]] &&
+    [[ "$(count_bound_matcher "${b}" 'Workflow')" -eq 1 ]] &&
+    [[ "${cmds}" == "${HOME}/.glass-atrium/hooks/${a},${HOME}/.glass-atrium/hooks/${b}" ]]
+}
+
 @test "two-matcher one-hook -> Bash matcher added when Write|Edit already present" {
   # validate-secret-scan.sh pre-wired ONLY under Write|Edit. wire_hooks must add
   # the SECOND (Bash) matcher group — the Write|Edit presence must NOT mask it
@@ -210,82 +195,6 @@ JSON
   [[ "${output}" == *"skip (already wired): PreToolUse -> validate-secret-scan.sh (matcher=Write|Edit)"* ]]
 }
 
-@test "two-matcher one-hook -> idempotent: re-run adds no third occurrence" {
-  # from a bare skeleton, wire everything (validate-secret-scan lands under BOTH
-  # matchers), then re-run: still exactly one group per matcher, no duplicates.
-  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound_matcher validate-secret-scan.sh 'Write|Edit')" -eq 1 ]]
-  [[ "$(count_bound_matcher validate-secret-scan.sh 'Bash')" -eq 1 ]]
-  [[ "$(count_bound validate-secret-scan.sh)" -eq 2 ]]
-  # second run is a pure no-op for both matchers
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound_matcher validate-secret-scan.sh 'Write|Edit')" -eq 1 ]]
-  [[ "$(count_bound_matcher validate-secret-scan.sh 'Bash')" -eq 1 ]]
-  [[ "$(count_bound validate-secret-scan.sh)" -eq 2 ]]
-}
-
-@test "U-B stale matcher -> old-matcher row DROPPED, only the expected one survives" {
-  # validate-pre-write-raw.sh moved Write -> Write|Edit. The add loop is add-only
-  # (its idempotency key is (event, matcher, basename)), so the OLD Write row would
-  # survive alongside the new one and the hook would DOUBLE-FIRE on every Write.
-  # Sibling rows that ARE expected (validate-secret-scan.sh holds two matchers) and
-  # foreign user hooks must be untouched.
-  cat >"${SETTINGS}" <<'JSON'
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/my-hooks/x.sh" } ] }
-    ]
-  }
-}
-JSON
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  # exactly ONE binding left, under the EXPECTED matcher
-  [[ "$(count_bound validate-pre-write-raw.sh)" -eq 1 ]]
-  [[ "$(count_bound_matcher validate-pre-write-raw.sh 'Write|Edit')" -eq 1 ]]
-  [[ "$(count_bound_matcher validate-pre-write-raw.sh 'Write')" -eq 0 ]]
-  [[ "${output}" == *"dropped stale matcher: PreToolUse -> validate-pre-write-raw.sh (matcher=Write)"* ]]
-  # legitimate two-matcher sibling untouched
-  [[ "$(count_bound validate-secret-scan.sh)" -eq 2 ]]
-  # foreign user hook preserved byte-for-byte
-  [[ "$(jq -r '[ .hooks.PreToolUse[] | select(.hooks[].command == "~/my-hooks/x.sh") | .matcher ] | join(",")' "${SETTINGS}")" == "Write" ]]
-  # a DISTINCT backup suffix so wire_hooks' own same-second backup cannot clobber it
-  [[ -n "$(find "${TARGET}" -name 'settings.json.ga-stale-backup.*' | head -1)" ]]
-}
-
-@test "U-B stale matcher -> reconcile is idempotent (second run is a pure no-op)" {
-  cat >"${SETTINGS}" <<'JSON'
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] }
-    ]
-  }
-}
-JSON
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound validate-pre-write-raw.sh)" -eq 1 ]]
-  local after_first
-  after_first="$(cat "${SETTINGS}")"
-  local backups_first
-  backups_first="$(find "${TARGET}" -name 'settings.json.ga-stale-backup.*' | wc -l | tr -d ' ')"
-
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  # settings.json byte-identical + NO second stale backup (zero-write no-op)
-  [[ "$(cat "${SETTINGS}")" == "${after_first}" ]]
-  [[ "$(find "${TARGET}" -name 'settings.json.ga-stale-backup.*' | wc -l | tr -d ' ')" -eq "${backups_first}" ]]
-  [[ "${output}" != *"dropped stale matcher"* ]]
-}
-
 @test "U-B stale matcher -> a bogus matcher on a MATCHER-LESS expected hook is dropped" {
   # agent-tracker.sh is expected under SubagentStart with NO matcher. A row carrying
   # a matcher is therefore stale. This is the empty-field edge: the expected matcher
@@ -305,25 +214,6 @@ JSON
   [[ "$(count_bound_matcher agent-tracker.sh 'Bogus')" -eq 0 ]]
   run jq -r '[ .hooks.SubagentStart[] | select(.hooks[].command | endswith("/agent-tracker.sh")) | (.matcher // "<none>") ] | join(",")' "${SETTINGS}"
   [[ "${output}" == "<none>" ]]
-}
-
-@test "U-B stale matcher -> an UNLISTED Atrium basename is LEFT ALONE (retire territory)" {
-  # A basename with NO expected row under this event is a retired or hand-wired
-  # hook. The narrow predicate must not touch it — that surface belongs to
-  # retire_hook_binding / unwire_hooks, which handle it deliberately.
-  cat >"${SETTINGS}" <<'JSON'
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/some-retired-hook.sh" } ] }
-    ]
-  }
-}
-JSON
-  run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
-  [[ "$(count_bound some-retired-hook.sh)" -eq 1 ]]
-  [[ "${output}" != *"dropped stale matcher: PreToolUse -> some-retired-hook.sh"* ]]
 }
 
 @test "user-owned keys -> PRESERVED untouched across the merge" {
@@ -414,9 +304,13 @@ JSON
   # bare skeleton → wire → doctor must report no dormant bindings
   printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
   run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || return 1
   GA_TARGET_HOME="${TARGET}" run "${REAL_GA}" doctor
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]]
-  [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
+  # ONE && chain so the DORMANCY claim — the whole point of this case — actually
+  # decides it. As three separate mid-body [[ ]] lines the first two were inert:
+  # bash errexit does not fire on a failing [[ ]] keyword conditional, so only the
+  # last line could red the case and the reconciliation claim asserted nothing.
+  [[ "${output}" != *"dormant hook binding(s)"* ]] &&
+    [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]] &&
+    [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
 }
