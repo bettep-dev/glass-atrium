@@ -41,9 +41,9 @@ Mandatory result recording on task completion (regardless of result type). For t
 |-------|-------|
 | `done` | complete |
 | `done_with_concerns` | complete + review needed → concerns field |
-| `blocked` | technical impediment |
+| `blocked` | technical impediment → escalation target; RESETS the circuit-breaker counter, and its CID is carried into the pre-compact survival packet as active (`fail` is not) |
 | `needs_context` | insufficient info → user response needed, not escalation target |
-| `fail` | failure → glass-atrium-qa-debugger escalation target |
+| `fail` | failure → glass-atrium-qa-debugger escalation target; the ONLY value that ACCRUES the per-agent circuit-breaker counter — 3 consecutive writes a suspension signal |
 
 **Whose outcome `result` describes**: `result` reports the emitting agent's OWN task outcome.
 
@@ -78,7 +78,7 @@ Disclosing honest caveats stays mandatory; only the RESULT value is gated.
 
 **Auto-generation obligation**: If no Outcome Record exists at session end, record minimum 3 fields (agent, task_type, result)
 
-**Language invariant (internal records are English)**: every Outcome Record and `[COMPLETION]` field VALUE is system-internal / LLM-facing data — emit it in English. This covers `summary`, `lesson`, `directive_hint`, `concerns`, and every other field value. All harness-generated record + log data (track-outcome.sh, hook emit/error text, learning-aggregator) is likewise English. This is orthogonal to the user-facing reply, which still follows the user's language (GLASS_ATRIUM_GLOBAL_RULES response-language rule).
+**Language invariant (internal records are English)**: every Outcome Record and `[COMPLETION]` field VALUE is system-internal / LLM-facing data — emit it in English. This covers `summary`, `lesson`, `directive_hint`, `concerns`, and every other field value. Outcome-Record and learning-log ROW data written by the harness (track-outcome.sh, learning-aggregator) is likewise English. This is orthogonal to the user-facing reply, which still follows the user's language (GLASS_ATRIUM_GLOBAL_RULES response-language rule).
 
 ## Completion Report Output Obligation
 
