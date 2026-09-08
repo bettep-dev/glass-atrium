@@ -36,6 +36,8 @@ Request-driven decision — evaluate in order:
 | **User-requested HTML** | User explicitly requested HTML / a shareable artifact (explicit format request OR explicit share intent — see "HTML request test" below) | HTML primary (single self-contained output) · Mermaid C4 single-file render | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.glass-atrium/monitor/data/documents/` — outside the vault) · viewer-exposed |
 | **User-requested non-HTML** | User requested a plan/spec but did NOT specify HTML / a shareable artifact | the form the user asked for · unspecified (a bare "organize/summarize this" with no form) → **md default** (when in doubt, non-HTML — asymmetric cost) | monitor-internal (via POST API) · exposure follows the format (md/yaml/json/txt → default-hidden) |
 
+**Deliverable language (all three modes)**: English, per `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). Format is request-driven per the table above; language is not — a non-English plan is authored only when the user explicitly asks for one.
+
 **Backlog stub / standalone ADR placement**: a backlog stub (TBD/lightweight memo) and a standalone ADR file are agent-only records by default (token-efficient · git-diff readable · viewer-hidden · `md_body` accepted) — an `## ADR` section embedded inside a user-requested HTML plan stays HTML, while a standalone ADR file stays an agent-only md record.
 
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
