@@ -1475,7 +1475,7 @@
     "scripts/test/test_extend_section_gate.py": "4859263b0485e6f344487a0ee0c1ec3fe96fdb856c35122022d4184bfaf1f809",
     "scripts/test/test_gate_roster_sync.py": "73c90ee71f3c38522644b02ff44dcc12acde517371f6aee3ae0f4295e885ea07",
     "scripts/test/test_inject_sync.py": "ae310a5b36ff03f7933507780b4d34886f89dd6138283c2bcee89e8e42731ba0",
-    "scripts/test/test_pg_dual_write_compose_apply_status.py": "cd43452810af87a3a20a52196d72295f45a318bef01d9e39f918b86915019754",
+    "scripts/test/test_pg_dual_write_compose_apply_status.py": "782a3166785750186a74d8b68880a6f214f6bf85556f672da6c9918f9a3f2084",
     "scripts/test/test_pg_dual_write_exit_contract.py": "6b6c18cb3378eeea8c4b889866c0d8f8334970f4cedfe8b30bcb63b2f939e2d6",
     "scripts/test/test_pg_dual_write_proposal_upsert.py": "edb5bbf91263ed80ee6223bdcd2df603137d700f2ea981b9d5ce20c835b8ce3b",
     "scripts/test/test_python_portability.py": "a5e5997d19e68f87fea08587f23e9d138b85b1a449d624d9a44312e6fa2e7f08",
