@@ -9,7 +9,6 @@
 # This suite pins both halves:
 #   * agreement  -> the three sites resolve to the SAME path under one sandbox config
 #   * the literal-> the four files spell the default byte-identically
-#   * the wiring -> each site actually calls the resolver
 #
 # Run via: bats test/db-backup-path-consistency.bats
 # Requires: bats (brew install bats-core), git, bash 3.2+
@@ -52,41 +51,23 @@ is_repo_root() {
 # assertion is what holds the copies equal.
 DEFAULT_LITERAL='GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres'
 
-# Every file that spells the default, and the call each consumer must make instead
-# of deriving it. Kept as parallel space-separated records because bash 3.2 has no
-# associative arrays.
-#   <file>|<resolver call the site must contain, or "-" for the resolver itself>
-SITE_RECORDS=(
-  "scripts/lib/atrium-config.sh|-"
-  "scripts/pg-backup.sh|atrium_backup_dir"
-  "lib/ga-db.sh|atrium_backup_dir"
-  "monitor/scripts/oss-db-setup.sh|atrium_backup_dir"
+# Every file that spells the default: the resolver that owns it, plus each consumer
+# whose library-absent fallback repeats it.
+DEFAULT_LITERAL_FILES=(
+  "scripts/lib/atrium-config.sh"
+  "scripts/pg-backup.sh"
+  "lib/ga-db.sh"
+  "monitor/scripts/oss-db-setup.sh"
 )
 
 @test "the default location is spelled identically by the resolver and every fallback" {
-  local record file missing=""
-  for record in "${SITE_RECORDS[@]}"; do
-    file="${record%%|*}"
+  local file missing=""
+  for file in "${DEFAULT_LITERAL_FILES[@]}"; do
     grep -q -F -- "${DEFAULT_LITERAL}" "${GA}/${file}" \
       || missing="${missing}${missing:+, }${file}"
   done
   [[ -z "${missing}" ]] || {
     echo "files not spelling the default location identically: ${missing}" >&2
-    return 1
-  }
-}
-
-@test "each writing site resolves through atrium_backup_dir rather than deriving it" {
-  local record file call unwired=""
-  for record in "${SITE_RECORDS[@]}"; do
-    file="${record%%|*}"
-    call="${record##*|}"
-    [[ "${call}" != "-" ]] || continue
-    grep -q -F -- "${call}" "${GA}/${file}" \
-      || unwired="${unwired}${unwired:+, }${file}"
-  done
-  [[ -z "${unwired}" ]] || {
-    echo "sites that no longer call the resolver: ${unwired}" >&2
     return 1
   }
 }

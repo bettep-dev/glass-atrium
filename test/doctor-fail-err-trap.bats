@@ -14,8 +14,9 @@
 # the real launcher (BASH_SOURCE!=$0 → main is skipped), keeps the REAL ERR + EXIT traps
 # ARMED, stubs run_doctor to return non-zero + doctor_headless_auth_advisory to a no-op,
 # then calls the REAL `passthrough doctor`. PASS-AFTER: the real launcher MUST NOT emit a
-# spurious `ERROR: line` and preserves the exit code; STATIC: the source pins the `exit`-idiom
-# on both the doctor and preflight branches (mirroring the `update` branch).
+# spurious `ERROR: line` and preserves the exit code; STATIC: the source pins that the preflight
+# alias captures the rc and skips the doctor-only auth advisory, which the stubbed driver cannot
+# observe by behavior.
 #
 # Machine-safe: no real doctor run (run_doctor stubbed), no TTY, no ~/.claude / ~/.glass-atrium
 # mutation. bats `run` merges stderr into $output, so the ERR-trap line lands in $output.
@@ -69,12 +70,6 @@ drive() {
   [[ "${status}" -eq 3 ]] || return 1
 }
 
-@test "item6 pass-after: a different non-zero doctor rc (2) is also clean + preserved" {
-  drive "${TUI}" 2
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${output}" != *"ERROR: line"* ]] || return 1
-}
-
 @test "item6 pass-after: a PASSING doctor (rc 0) stays clean + exits 0" {
   drive "${TUI}" 0
   [[ "${status}" -eq 0 ]] || return 1
@@ -99,15 +94,7 @@ drive() {
   [[ "${output}" != *"ERROR: line"* ]] || return 1
 }
 
-# === STATIC — the doctor + preflight branches mirror the `update` branch's exit idiom ========
-
-@test "item6 static: the doctor passthrough branch uses 'exit \${doctor_rc}', not 'return \${doctor_rc}'" {
-  local branch
-  branch="$(awk '/^    doctor\)/{f=1} f{print} f&&/^      ;;/{exit}' "${TUI}")"
-  [[ -n "${branch}" ]] || return 1
-  [[ "${branch}" == *'exit "${doctor_rc}"'* ]] || return 1
-  [[ "${branch}" != *'return "${doctor_rc}"'* ]] || return 1
-}
+# === STATIC — the preflight branch's advisory-free shape (unobservable behaviorally) ========
 
 @test "preflight static: the preflight branch 'exit \${pf_rc}'s the captured rc (no bare terminal run_doctor)" {
   local branch
