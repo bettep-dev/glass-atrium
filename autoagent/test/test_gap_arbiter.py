@@ -482,14 +482,24 @@ class FailureLadderTest(unittest.TestCase):
                     1,
                 ),
             }
+            # The timeout case is the only one that KILLS its stub: the kill
+            # lands at timeout_sec, so under load the child can lose the
+            # fork+exec race and never append to ARB_STUB_COUNT. run_state.calls
+            # is charged before the subprocess starts, so it carries the count
+            # claim for every class. The marker file additionally proves the stub
+            # binary was resolved and exec'd, which it can only do for the
+            # classes whose stub exits on its own.
+            killed_stub = {ga.FAILURE_TIMEOUT}
             for failure_class, (env, kwargs, expected_calls) in cases.items():
                 with self.subTest(failure_class):
-                    request, decision, _state, calls = self._drive(
+                    request, decision, state, calls = self._drive(
                         env, tmpdir=tmp, **kwargs
                     )
                     self.assertEqual(decision.failure_class, failure_class)
                     self.assertEqual(decision.lines, request.local_lines)
-                    self.assertEqual(calls, expected_calls)
+                    self.assertEqual(state.calls, expected_calls)
+                    if failure_class not in killed_stub:
+                        self.assertEqual(calls, expected_calls)
                     self.assertIn(request.agent, decision.row)
                     self.assertIn("region=2/3", decision.row)
                     rows.add(decision.row)
@@ -524,7 +534,7 @@ class FailureLadderTest(unittest.TestCase):
 
     def test_a_gap_admitted_on_the_last_slot_spends_one_call_past_the_ceiling(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _request, decision, run_state, calls = self._drive(
+            _request, decision, run_state, _calls = self._drive(
                 {"ARB_STUB_SLEEP": "3"},
                 ceiling=1,
                 tmpdir=tmp,
@@ -532,7 +542,8 @@ class FailureLadderTest(unittest.TestCase):
                 escalated_timeout_sec=1,
             )
         self.assertEqual(decision.failure_class, ga.FAILURE_TIMEOUT)
-        self.assertEqual(calls, 2)
+        # This drive kills its stub, so the marker count is a race; the charged
+        # count below is the overshoot claim and is spent before the subprocess.
         self.assertEqual(run_state.calls, 2)
 
     def test_an_over_ceiling_run_emits_one_summary_row_not_one_per_gap(self):
