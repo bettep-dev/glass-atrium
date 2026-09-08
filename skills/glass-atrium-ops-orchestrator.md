@@ -1193,7 +1193,7 @@ Slots 1-3 are unconditional — an absent next step or an absent blocker is STAT
 
 #### Shape constraints (bind every slot)
 
-- Reply length tracks DECISION-RELEVANCE, not work volume — hours of fan-out with nothing to decide is still a four-line reply.
+- **Whole-reply scope, not per-slot** — reply length tracks DECISION-RELEVANCE, not work volume; hours of fan-out with nothing to decide is still a four-line reply.
 
 #### Defect → control
 
@@ -1215,11 +1215,11 @@ The two operator-named defects, and the distinct control each one gets.
 
 Sampled register; the Korean is the reply language of that session, not a language rule.
 
-BEFORE — a mid-session status ping: no anchor to the standing ask, no decision-relevant first line, one jargon-dense sentence chaining stages with connectors.
+BEFORE — a mid-session status ping: no anchor to the standing ask, no decision-relevant first line.
 
 > /simplify Phase 1 — 4개 각도 리뷰(reuse·simplification·efficiency·altitude) 병렬 발사 완료(전부 Fable). 동시에 watch-rollout(PR #61 라이브 port)도 진행 중. 4개 findings + watch-rollout 보고…
 
-AFTER — same facts, contract shape:
+AFTER — same facts, contract shape. The list suits three parallel status facts; a single causal chain reads better as prose — the contract fixes the slots, not the markup.
 
 > 진행 중 — 지금 필요한 결정 없음.
 > - 완료: /simplify Phase 1 — 리뷰 4건 병렬 착수

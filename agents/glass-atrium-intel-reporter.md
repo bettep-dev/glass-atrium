@@ -257,6 +257,8 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - the d8 validator-safe color contract below
   - WCAG 2.2 AA including the two NEW criteria — SC 2.4.11 focus appearance (`:focus-visible` ring, ≥3:1 change-of-contrast) + SC 2.5.8 target size ≥24×24px — plus text ≥4.5:1 / large ≥3:1 / UI ≥3:1
   - all status signals dual-encoded (color + symbol/text + `aria-label`, never color-only)
+  - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
+  - body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
   - `prefers-reduced-motion` SUBSTITUTES motion with a gentle fade (does not remove)
   - **at least ONE primary visual structure beyond prose** (a Mermaid diagram, a comparison table, OR a KPI/stat-card row). Headings + paragraphs only = FAIL.
 - **Content-driven escalation (apply the matching visual; do NOT force an unmatched one)**:

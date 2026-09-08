@@ -330,6 +330,8 @@ planner-specific summary (full detail in glass-atrium-intel-reporter.md):
     - **validator-safe dark palette (d8 `inline-color-literal`)**: dark colors as `oklch()` (or `hsl()`/`lab()`/`lch()`/`var(--token)`) `:root` custom properties — NEVER hex (`#…`), `rgb()`/`rgba()`, or `white`/`black` in any SCREEN-context `<style>` rule or inline `style=`; the screen palette is a perceptual near-black/near-white (halation avoidance), NOT `#000`/`#fff`
     - Tailwind v4 CDN dark mode the CORRECT way (`<style type="text/tailwindcss">` + `@variant dark`; the v3 script-config `darkMode` pattern silently FAILS on v4 CDN)
     - `@media print` reset layer REQUIRED — the ONE d8-exempt place for hex + `white`/`black`, inside a `<style>` `@media print { body { background: white; color: black } }` block (NOT inline `style=`); `.no-print` hides nav/aside; `break-inside: avoid`
+    - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
+    - body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
     - `prefers-reduced-motion` SUBSTITUTES motion with a gentle fade (never removes)
     - ≥1 primary visual structure beyond prose (Mermaid · comparison table · KPI/stat-card row).
   - **Content-driven escalation (apply the matching visual only)**:

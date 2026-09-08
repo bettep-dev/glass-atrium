@@ -91,7 +91,8 @@ An exposed HTML doc MUST maximize visual communication; a headings-plus-paragrap
 **RESTRAINT (part of the standard)**: match visual density to content and audience — every visual element earns its place by carrying information the prose does not. A short human-facing brief does not become better by being given 5 KPI cards or 3 diagrams.
 
 - Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill.
-- Residual patterns that SoT does not carry, retained here: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max. The two readability/a11y members of the former list (glassmorphism over text · ragged-right body copy) now sit in **BASELINE (always)** above.
+- Residual patterns that SoT does not carry, retained here: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max · decoration stacking (one treatment per element).
+- Relocated, not dropped: the two readability/a11y members of the former list (glassmorphism over text · ragged-right body copy) now sit in **BASELINE (always)** above. The BASELINE member is scoped to over-text readability; the broader blur+gradient+shadow-on-one-element case stays the SoT's **Glassmorphism overuse** entry.
 
 The mandated zinc/OKLCH dark canvas is the REQUIRED base — the SoT's no-shadcn-ification entry targets `zinc`-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE, NOT the dark canvas itself.
 
