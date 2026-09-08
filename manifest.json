@@ -776,7 +776,6 @@
     "test/headless-auth-selftest-cred-isolation.bats",
     "test/headless-auth-selftest-quota.bats",
     "test/hook-bindings-complete.bats",
-    "test/hook-bindings-executable.bats",
     "test/hook-matcher-shape-invariant.bats",
     "test/hook-repoint-dualdir.bats",
     "test/install-acceptance.sh",
@@ -1581,7 +1580,7 @@
     "test/doctor-consumer-install.bats": "e1cda3b2e92dd55f00d50f324a7a924329438086a649ecfd01888c419817370d",
     "test/doctor-decline-record.bats": "1f1dd580915a5092a43ff9361ba1fe58e1d0659ef64f867f1855a2dc2ddecc7c",
     "test/doctor-fail-err-trap.bats": "f76cb7f42672bb073be3658e84bfd79fbba0faf0da569f8fb5530f597e62f7ca",
-    "test/doctor-hook-bindings.bats": "b7e44c6bd43548a61777be54774929205a84ece9069a8461c75a8edf0203e1f9",
+    "test/doctor-hook-bindings.bats": "1bbe1efa8741572c50637397cfa371535bad60aebe2de885bd4c629040f7bcba",
     "test/doctor-inject-drop-seam.bats": "c55069c93e8f8508fdf8cda2f6e1a31e1406cb0221769beec84ace56c65e9268",
     "test/doctor-launchd-deploy-drift.bats": "6f004336b45deacffe7e9ca32ece9c20079ced6d46c846194975a9bd6930c3c8",
     "test/doctor-migrations.bats": "d37da08c1320a2a60deae437f6e7e92e49b84ccc5d35a12c4f561d03af71eb15",
@@ -1603,7 +1602,6 @@
     "test/headless-auth-selftest-cred-isolation.bats": "b2a548aff9a0a64c3c071b6054b900cc73fe2acfb4302388f7fb2d3126877a2f",
     "test/headless-auth-selftest-quota.bats": "ff9ce867c43085c7ed5f52a64548287e6c4a1eeecbb4e3f2117fa3618cef3415",
     "test/hook-bindings-complete.bats": "1cfe0ea08356bbea88c352c62bccbd7d516b2e15504f61115a32c8c419792949",
-    "test/hook-bindings-executable.bats": "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158",
     "test/hook-matcher-shape-invariant.bats": "52fa587a2f061f8dda31a42e86415c48cc1254d3627df435d1d4f5d138b1a451",
     "test/hook-repoint-dualdir.bats": "f0bf2afd3a66c0b69f76bb28ab01dc11b62769468413221187ffe12e798b7b56",
     "test/install-acceptance.sh": "7a5614f524cc29784b17058218c8067bf849a3ba6881e9e52f5d969310fe55ab",
@@ -2430,7 +2428,6 @@
     "test/headless-auth-selftest-cred-isolation.bats": "644",
     "test/headless-auth-selftest-quota.bats": "644",
     "test/hook-bindings-complete.bats": "644",
-    "test/hook-bindings-executable.bats": "644",
     "test/hook-matcher-shape-invariant.bats": "644",
     "test/hook-repoint-dualdir.bats": "644",
     "test/install-acceptance.sh": "755",
@@ -2588,6 +2585,9 @@
     ],
     "test/headless-auth-selftest-timeout.bats": [
       "c62e49121f9f2e4d1d867387499866a62c90ce1e2eb29e7b20af5f5dc2e9de0b"
+    ],
+    "test/hook-bindings-executable.bats": [
+      "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158"
     ],
     "test/licenses-audit-gate.bats": [
       "afaaa08b5d35b45c01f2a5a59342e65d53dfb2f4e193025d6bdede2f61887dc3"
