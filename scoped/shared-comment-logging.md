@@ -12,18 +12,18 @@ Applies to all DEV and QA agents.
 TOP PROHIBITIONS:
 - **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.
 - **Density gate (ceiling, not floor)**: comment ONLY when "why" is non-obvious from names/types/context · self-evident code → NO comment · `— because …` does NOT license it · in doubt → omit.
-- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE concise `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) → `/** */` docblock, NEVER stacked `//` nor a paragraph. `/** */` triggers: public-API/exported OR a declaration's internal "why" >1 line. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
+- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) OR public-API/exported → `/** */` docblock, NEVER stacked `//` nor a paragraph. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
 - **NO mid-sentence line-wrap** — one clause per `//` line. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
 - **NO `console.*` in production** (test files exempt) → framework logger.
 
 REMAINING RULES:
-- Comment language (highest wins): user-specified in task/CLAUDE.md → new = Korean (default) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
+- Comment language (highest wins): user-specified in task/CLAUDE.md → repo contributing policy where stated → new = match the file's comment language (no comments → English) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
 - Stale comments worse than none → sync with code.
 - Log level: error=action-required/failed · warn=potential issue · info=state change · debug=dev-only (off in prod). Error logs need what+why+context.
 - JSDoc: semantics only, MUST NOT duplicate types (`@param value - desc`, never `@param {type}`).
 - TODO: `// TODO(owner/TICKET): reason` — owner+ticket REQUIRED.
 - **File/module header = 1–3-sentence purpose limit** · prose-dump FORBIDDEN · complexity-proportional (self-evident module → omit).
-- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density or header prose; sibling violates → author COMPLIANT comments. Two carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, `// prettier-ignore`, `// #region`, `//<editor-fold>`, codegen anchors) AND a header passing the Justified-header test (architectural role / scope boundary / rejected alternative / usage contract).
+- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density/header prose; sibling violates → author COMPLIANT comments. Carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, prettier-ignore / region / fold / codegen anchors) AND a header passing the Justified-header test (role / scope boundary / rejected alternative / usage contract).
 <!-- AGENT-INJECT:END -->
 
 ## Comment Principles
@@ -45,8 +45,9 @@ GOOD → /**                                                          ← declar
 
 - **Language precedence** (highest wins; `scope-dev.md` "Consistent with existing style" + Project Convention Probe + `shared-search-first.md` Mirror defer here for comment language):
   1. a comment language specified in the user's task/CLAUDE.md (e.g., English-only)
-  2. new comment → Korean (default)
-  3. editing an existing comment → match its existing language
+  2. the repository's own contributing policy where the repository states one (this repository's `CONTRIBUTING.md` "Language policy" requires English for all contributed code comments)
+  3. new comment → match the surrounding file's comment language; a file carrying no comments → English
+  4. editing an existing comment → match its existing language
 - Identifiers/code/API names inside comments stay original form regardless of tier. Governs **comment** language ONLY — server logs stay English (`## Log Message Composition`). Project Convention Probe / Mirror govern code style (naming / import order / error+log), NOT comment language.
 - **Style**: bullet/noun-phrase MUST · narrative sentences FORBIDDEN · compress causality with `→ — , +` · verb-stem ending preferred · JSDoc lines = short noun-phrases · box/ASCII-art decoration (`/* ---- */`, banners, star columns) FORBIDDEN.
 - **No mid-sentence line-wrap**: a single clause MUST terminate on its own line · splitting ONE thought across consecutive `//` lines FORBIDDEN · distinct points → separate complete lines/bullets. Does NOT forbid (a) the 1–3-sentence header, nor (b) multiple SEPARATE one-line comments.
