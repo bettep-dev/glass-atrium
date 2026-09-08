@@ -30,7 +30,7 @@
 #     function tokens with a background+poll+kill hang guard (install-hang fix).
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
-#   * G7 fakechat marketplace-add carries a DISTINCT slow-clone ACTIVE label.
+#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label (the G7 marketplace slow-clone hint's carrier).
 #   * G3 python pip --user stays framed; on a PEP-668 failure the --break-system-packages retry
 #     AUTO-runs (no typed consent, no bracket) with a VISIBLE override log, non-fatal on retry-fail.
 #   * G8 sqlite is FTS5-CAPABILITY-gated (brew sqlite added only when system sqlite3 lacks
@@ -41,8 +41,8 @@
 #
 # Hermetic: ga-deps.sh is a pure sourceable lib (no strict mode, no main guard, no side
 # effects) — sourced directly; detect probes are stubbed so no real machine state is read.
-# Launcher assertions are STATIC (grep/awk the file text) so no TUI / TTY / real
-# brew/pip/claude is ever driven. The one env-delivery test uses a PATH-stubbed brew.
+# No TUI / TTY / real brew/pip/claude is ever driven. The one env-delivery test uses a
+# PATH-stubbed brew.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
