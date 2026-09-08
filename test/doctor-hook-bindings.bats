@@ -16,6 +16,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
+CORE="${GA}/lib/ga-env.sh"
+REPO_MANIFEST="${GA}/manifest.json"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -432,4 +434,99 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"never writes settings.json"* ]]
   [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh"* ]]
+}
+
+# --- wired-roster ship invariants: git index mode + manifest membership -------
+#
+# Claude Code exec()s each wired command directly, so a wired-but-644 hook is silently
+# inert (fail-open, never fires). The GIT INDEX mode is the load-bearing signal, not a
+# filesystem `[[ -x ]]`: the release bundle is tarred from the working tree and a fresh
+# checkout materializes the index mode, whereas `-x` breaks under core.fileMode=false
+# and passes VACUOUSLY on a locally chmod-ed tree — the state that masks the defect.
+#
+# Keyed on EXPECTED_HOOK_BINDINGS, never a hooks/**/*.sh glob: the glob would false-flag
+# legitimately-644 sourced libs (hooks/lib/*.sh). A wired basename with NO tracked file
+# FAILS loudly — wired-but-untracked is worse than wired-but-non-exec.
+#
+# Both rows guard themselves in-body rather than through setup(), which must leave the
+# doctor rows' run conditions untouched; the index-mode row is meaningless outside a git
+# work tree (the deployed install carries no .git). They do inherit setup()'s jq guard.
+
+# emit each EXPECTED_HOOK_BINDINGS row body as "event<TAB>basename<TAB>matcher",
+# the array indent + surrounding double-quotes stripped.
+# Copied VERBATIM from test/hook-bindings-complete.bats::array_rows — this suite has no
+# shared-helper (load) convention, so the parser is duplicated byte-for-byte instead of
+# diverging; keep both copies in lockstep on any array-format change (each file's
+# count>0 guard fails loudly on drift either way).
+array_rows() {
+  awk '
+    /^[[:space:]]*EXPECTED_HOOK_BINDINGS=\(/ { f = 1; next }
+    f && /^[[:space:]]*\)[[:space:]]*$/      { f = 0 }
+    f                                        { print }
+  ' "${CORE}" | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//'
+}
+
+# unique wired basenames (2nd TAB-split field); blank fields dropped so a malformed row
+# surfaces via the count>0 guard, not a phantom "hooks/" lookup.
+wired_basenames() {
+  array_rows | awk -F'\t' 'NF >= 2 && $2 != "" { print $2 }' | LC_ALL=C sort -u
+}
+
+@test "every wired hook basename is git-tracked at index mode 100755" {
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || skip "not a git work tree (bundle/fixture run) — index-mode assertion N/A"
+  local name line mode count=0 offenders=""
+  while IFS= read -r name; do
+    count=$((count + 1))
+    line="$(git -C "${GA}" ls-files -s -- "hooks/${name}")"
+    if [[ -z "${line}" ]]; then
+      offenders="${offenders}
+  hooks/${name}: NOT TRACKED in git (wired but absent — worse than non-exec)"
+      continue
+    fi
+    mode="${line%% *}"
+    if [[ "${mode}" != "100755" ]]; then
+      offenders="${offenders}
+  hooks/${name}: git index mode ${mode}, expected 100755"
+    fi
+  done < <(wired_basenames)
+  # count>0 guard: a reformatted array must fail LOUDLY, never pass vacuously.
+  if [[ "${count}" -eq 0 ]]; then
+    echo "parsed 0 wired basenames from EXPECTED_HOOK_BINDINGS — parser/format drift"
+    return 1
+  fi
+  if [[ -n "${offenders}" ]]; then
+    echo "wired hooks failing the git-index exec-bit invariant (${count} checked):${offenders}"
+    return 1
+  fi
+}
+
+@test "every wired hook basename ships in manifest.json .files" {
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
+  if [[ ! -f "${REPO_MANIFEST}" ]]; then
+    echo "manifest.json not found: ${REPO_MANIFEST} (tracked repo artifact — must exist)"
+    return 1
+  fi
+  jq -e '(.files | type) == "array"' "${REPO_MANIFEST}" >/dev/null || {
+    echo "manifest.json .files is not an array"
+    return 1
+  }
+  local manifest_files name count=0 offenders=""
+  manifest_files="$(jq -r '.files[]' "${REPO_MANIFEST}")"
+  while IFS= read -r name; do
+    count=$((count + 1))
+    if ! grep -qxF "hooks/${name}" <<<"${manifest_files}"; then
+      offenders="${offenders}
+  hooks/${name}: wired but absent from manifest.json .files (never bundled)"
+    fi
+  done < <(wired_basenames)
+  if [[ "${count}" -eq 0 ]]; then
+    echo "parsed 0 wired basenames from EXPECTED_HOOK_BINDINGS — parser/format drift"
+    return 1
+  fi
+  if [[ -n "${offenders}" ]]; then
+    echo "wired hooks missing from the release manifest (${count} checked):${offenders}"
+    return 1
+  fi
 }
