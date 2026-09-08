@@ -1654,7 +1654,7 @@
     "test/update-fetch-bundle-derivation.bats": "d50a1215d956f9c99003a79d61986697e7357c8625e8049f31cbddb5e7b05b06",
     "test/update-launchd-autoagent.bats": "20e29d990561e0f06a4e297b60d9430374bf90e727d732e37378c66f88d80eb1",
     "test/update-restore-base-reversal.bats": "4f324b55f6c8d8936a459d9a122063f65876956145a7659397285d11441d01a4",
-    "test/wire-hooks-merge.bats": "ab23363eb22eb3e90a58fbc1b93a5d94949c84cd479dd331e1e1ea57fafded86",
+    "test/wire-hooks-merge.bats": "9c63a7371a7cfafde77f2ac352520644767e75d87dda7766dccc077173365e7d",
     "test/wire-hooks-restart-notice.bats": "7651c106ecc2475f81df044279de4aa349d1215513cb1cca0d702bd914ed0d2c",
     "test/workbox-bar-count-visible-during-resolve.bats": "41dfb0658f9fd0176c98f48873b9630206ee318391eca1c04be80244f329fcaa"
   },

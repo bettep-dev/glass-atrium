@@ -130,14 +130,20 @@ count_bound_matcher() {
 }
 
 @test "Workflow matcher -> BOTH Workflow hooks EMITTED by the wire loop as independent leaves" {
-  # EMISSION axis — the one property no other suite owns. Three axes are in play:
-  # roster MEMBERSHIP (hook-bindings-complete.bats :: per-event leaf count) and
-  # roster MATCHER VALUE (doctor-hook-bindings.bats :: Workflow-matcher binding)
-  # are both owned, but neither can witness what wire_hooks EMITS — the first two
-  # read lib/ga-env.sh's roster, and doctor-hook-bindings asserts against a
-  # hand-written heredoc fixture (write_full_settings), never against wire output.
-  # A hook-specific `continue` inside the roster-generic wire_hooks loop, roster
-  # fully intact, reds HERE and nowhere else.
+  # EMISSION axis — the one property no other suite owns. Three axes are in play.
+  # roster MEMBERSHIP is owned: hook-bindings-complete.bats :: per-event leaf count
+  # (it splits the roster's matcher column into a field it never asserts).
+  # roster MATCHER VALUE is owned only for OTHER matchers — doctor-hook-bindings.bats
+  # still pins per-tuple matcher reporting for Bash / Agent / Write|Edit|MultiEdit /
+  # <none>, but it carries no Workflow-matcher case, so the jq select and the
+  # count_bound_matcher calls below are the corpus's ONLY assertion on the
+  # settings.json matcher VALUE "Workflow" (the hooks/test Workflow hits are the
+  # PreToolUse envelope tool_name, a different field). Neither owned axis can witness
+  # what wire_hooks EMITS: hook-bindings-complete reads lib/ga-env.sh's roster, and
+  # doctor-hook-bindings asserts against a hand-written heredoc fixture
+  # (write_full_settings), never against wire output. A hook-specific `continue`
+  # inside the roster-generic wire_hooks loop, roster fully intact, reds HERE and
+  # nowhere else.
   # Both hooks declare the SAME matcher, so this is also the wire-side pin that
   # they land as two INDEPENDENT, non-masking leaves: is_hook_bound keys on
   # basename WITHIN the matcher, and a matcher-only key would let the first
