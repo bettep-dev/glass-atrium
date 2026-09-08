@@ -17,9 +17,9 @@
 # uploads-then-swaps (stages the new bundle under a temp .swap name FIRST so a failed
 # upload never touches the live bundle), (c) LOUD-fails (exit 8) on ANY re-upload failure,
 # (d) POST-VERIFIES both canonical assets are present (exit 8 if not) before dropping temp.
-#   FAIL-BEFORE: a bare `gh release upload --clobber` (the naive primitive the fix wraps)
-#   returns 0 even when the release ends up WITHOUT its bundle — silent. replace_release_assets
-#   exits 8 on the SAME stub.
+#   FAIL-BEFORE: the naive `gh release upload --clobber` returns 0 even when the release ends
+#   up WITHOUT its bundle. The POST-VERIFY rows drive that same silent-success stub through
+#   replace_release_assets and require exit 8 — the discriminator runs against the real code.
 #
 # STRATEGY: publish-release.sh now carries a BASH_SOURCE==$0 source-guard, so a driver
 # SOURCES it (main skipped) and overrides `git` / `gh` as shell functions to drive the
@@ -98,17 +98,6 @@ gh() {
 }
 replace_release_assets "v1.0.1" "owner/repo" "1.0.1" "$2" "$2/glass-atrium-bundle-1.0.1.tar.gz"
 echo "REPLACE_OK"
-DRV
-
-  # --- item 4 fail-before driver: the naive `gh release upload --clobber` primitive ---
-  NDRIVER="${SANDBOX}/naive-driver.sh"
-  cat >"${NDRIVER}" <<'DRV'
-#!/usr/bin/env bash
-# shellcheck disable=SC2317
-set -Eeuo pipefail
-gh() { return "${GH_CANON_RC:-0}"; } # a 'successful' clobber that nonetheless left no bundle
-gh release upload "v1.0.1" --repo "owner/repo" --clobber /x/manifest.json /x/bundle.tar.gz
-echo "NAIVE_RC=$?"
 DRV
 }
 
@@ -228,10 +217,4 @@ drive_replace() {
   drive_replace GH_ASSETS='glass-atrium-bundle-1.0.1.tar.gz'
   [[ "${status}" -eq 8 ]] || return 1
   [[ "${output}" == *"MISSING manifest.json"* ]] || return 1
-}
-
-@test "item4 fail-before: the naive 'gh release upload --clobber' the fix replaces returns 0 (silent) even when no bundle lands" {
-  run env GH_CANON_RC=0 bash "${SANDBOX}/naive-driver.sh"
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"NAIVE_RC=0"* ]] || return 1
 }

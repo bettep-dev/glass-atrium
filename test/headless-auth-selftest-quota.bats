@@ -18,7 +18,7 @@
 # rc 2 path is untouched (AC-A4).
 #
 # Hermetic: the functions under test are EVAL'd into the test shell (extract_fn) — no TUI, no TTY, no
-# real `claude`, no real credential. Mirrors the cred-isolation / timeout sibling suites.
+# real `claude`, no real credential. Mirrors the cred-isolation sibling suite.
 #
 # Run via: bats test/headless-auth-selftest-quota.bats
 # Requires: bats (brew install bats-core), perl (run_with_timeout), bash 3.2+
@@ -181,7 +181,9 @@ _assert_no_cred_advisory() {
   [[ "${rc}" -eq 1 ]] || return 1
 }
 
-@test "selftest(ok): a passing probe still returns rc 0 with no advisory" {
+# === HAPPY PATH — a responsive CLI passes, and the probe it ran was bounded + stdin-pinned =========
+
+@test "selftest(live): a responsive CLI with a clean body passes with no advisory" {
   extract_fn run_with_timeout || return 1
   extract_fn headless_auth_selftest || return 1
   GA_AUTH_ENV_LIB="$(_write_env_lib)"
@@ -192,6 +194,12 @@ _assert_no_cred_advisory() {
   [[ "${rc}" -eq 0 ]] || return 1
   [[ "${out}" != *"quota window active"* ]] || return 1
   _assert_no_cred_advisory "${out}" || return 1
+  # Every stub here ignores stdin, so no runtime arm can observe the pin.
+  # An unpinned probe blocks on an inherited stdin until the ceiling kills it.
+  local probe_body
+  probe_body="$(awk '/^headless_auth_selftest\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+    "${GA}/lib/ga-tui-preflight.sh")" || return 1
+  [[ "${probe_body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${worker_model}" "reply with OK" </dev/null 2>&1'* ]] || return 1
 }
 
 # === AC-A4 — rc 2 (auth-env lib absent) semantics untouched by the quota branch =====================

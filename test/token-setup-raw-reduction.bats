@@ -25,42 +25,33 @@ setup() {
 }
 
 # Slice the cooked-TTY segment: from the alt-screen drop (tp rmcup) up to the
-# UNCHANGED provisioning call. The reduced point-of-need cue lives here, and
+# alt-screen re-entry (tp smcup). The reduced point-of-need cue lives here, and
 # nothing else must print in this out-of-frame window.
+#
+# The terminator is smcup, NOT the provisioning call: output stays cooked and
+# out-of-frame until the alt-screen is back, so terminating at the provisioning
+# call left the three lines between it and smcup scanned by nothing once the
+# file-wide "old verbose block gone" rows were cut.
 cooked_segment() {
-  awk '/^  tp rmcup$/{f=1} f{print} /preflight_provision_headless_token \|\| status=/{exit}' "${GA}"/lib/ga-tui-*.sh
+  awk '/^  tp rmcup$/{f=1} f{print} f&&/^  tp smcup$/{exit}' "${GA}"/lib/ga-tui-*.sh
 }
 
-@test "reduced cue: the single point-of-need line is present next to the URL" {
-  run grep -F -- "${REDUCED_LINE}" "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "reduction not removal: the cooked segment prints exactly one tty_line" {
+@test "reduction not removal: the cooked segment prints exactly one line" {
+  # Every print primitive counts, not tty_line alone: re-introducing a verbose block through
+  # section_header or a bare printf is the same out-of-frame regression, and a count is
+  # independent of whatever wording the reintroduced block would carry.
   local n
-  n="$(cooked_segment | grep -cE '^  tty_line ')"
+  n="$(cooked_segment | grep -cE '^[[:space:]]*(tty_line|section_header|printf|echo|cat)[[:space:]]' || true)"
+  n="${n:-0}"
   [[ "${n}" -eq 1 ]]
-}
-
-@test "old verbose block gone: section-header + multi-line guidance removed" {
-  # The verbose section_header banner must no longer bracket the cooked segment.
-  run grep -F 'section_header "Token Setup — OAuth approval"' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
-  [[ "${status}" -eq 1 ]]
-  # The old two-line phrasing must be gone (proves a reframe, not a keep-both).
-  run grep -F 'the OAuth URL appears below.' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
-  [[ "${status}" -eq 1 ]]
-}
-
-@test "framed pre-cue intact: run-state opener before the drop is unchanged" {
-  run grep -F 'STEP_LABEL_ACTIVE_CUR="Opening browser for OAuth approval…"' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
-  [[ "${status}" -eq 0 ]]
-  run grep -qF 'enter_run_state' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
-  [[ "${status}" -eq 0 ]]
 }
 
 @test "framed return intact: smcup re-entry + done-digest render preserved" {
   local body
   body="$(awk '/^dispatch_action_token_panel\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh)"
+  # Scoped to the panel body on purpose: enter_run_state is defined and called across the tui
+  # libs, so a file-wide grep for it holds whether or not this panel still opens the frame.
+  printf '%s\n' "${body}" | grep -qF 'enter_run_state'
   printf '%s\n' "${body}" | grep -qF 'tp smcup'
   printf '%s\n' "${body}" | grep -qF 'parse_token_summary "${status}"'
   printf '%s\n' "${body}" | grep -qF 'status_line "${status}" "Token Setup"'
@@ -73,9 +64,13 @@ cooked_segment() {
 }
 
 @test "security invariant: env-var NAME only, token value never printed" {
-  # The reduced cue names the env var, never a token value.
+  # The one cue reaching the cooked TTY is this line, and it names the env var, never a value.
+  cooked_segment | grep -qF -- "${REDUCED_LINE}"
   printf '%s\n' "${REDUCED_LINE}" | grep -qF 'CLAUDE_CODE_OAUTH_TOKEN'
-  # The cooked segment must not cat/read the secrets file into the terminal.
-  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} /preflight_provision_headless_token \\|\\| status=/{exit}' ${GA}/lib/ga-tui-*.sh); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
+  # The cooked segment must not cat/read the secrets file into the terminal. The awk is a hand
+  # copy of cooked_segment (run bash -c spawns a subshell that cannot see the bats function), so
+  # its terminator MUST track cooked_segment's: left at the provisioning call it skipped the same
+  # out-of-frame window, and a secrets cat placed there was measured to pass this row.
+  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} f&&/^  tp smcup\$/{exit}' ${GA}/lib/ga-tui-*.sh); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
   [[ "${status}" -ne 0 ]]
 }

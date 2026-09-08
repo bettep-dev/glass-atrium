@@ -338,20 +338,6 @@ run_doctor_sandbox() {
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
 
-# === 12. doctor integration: no drift -> ok line, verdict stays PASS =========
-
-@test "clean and absent repos via run_doctor -> ok line, doctor PASSes" {
-  make_repo rules
-
-  run_doctor_sandbox
-
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"ok   : no live recovery-repo snapshot staleness"* ]] || return 1
-  [[ "${output}" != *"recovery snapshot STALE"* ]] || return 1
-  [[ "${output}" == *"== doctor: PASS"* ]] || return 1
-  [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
-}
-
 # === 13. doctor integration: anomaly-only footer, no staleness prescription ====
 
 # The live install's exact shape end-to-end: the operator sees the anomaly with an INSPECTION

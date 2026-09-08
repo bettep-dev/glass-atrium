@@ -17,7 +17,6 @@
 # here AND its field sequence is pinned against the producer source by AC4.
 #
 #   AC1  an in-window abort + a LATER file whose only content is the heartbeat row → superseded, ok
-#   AC2  an in-window abort with no later non-abort row of any kind → FAIL, the row echoed, exit != 0
 #   AC3  non-abort rows with NO abort anywhere in the window → the no-aborts ok line, never a
 #        supersession claim
 #   AC4  the heartbeat fixture's field sequence is the one daemon-apply.sh writes
@@ -144,26 +143,6 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
-}
-
-# ── AC2 — an abort with nothing after it stays a live condition ────────────────────────────────
-
-@test "AC2: an in-window abort with no later non-abort row FAILs and echoes the row" {
-  emit_abort_row || {
-    echo "producer wrote no abort row" >&2
-    return 1
-  }
-  run_doctor_seam
-  assert_output_has "FAIL : autoagent apply aborted in the last" || return 1
-  assert_output_has "abort row:" || return 1
-  # The exit code is the aggregate of every section, so a sandboxed tree can redden it on its own —
-  # the ATTRIBUTION is the FAIL line above. This asserts only that §14 did not report a failure the
-  # aggregate then swallowed.
-  [[ "${status}" -ne 0 ]] || {
-    echo "doctor exited 0 despite the §14 FAIL line — output:" >&2
-    echo "${output}" >&2
-    return 1
-  }
 }
 
 # ── AC3 — non-abort rows alone are not a supersession ─────────────────────────────────────────

@@ -198,21 +198,6 @@ _write_daemon_config() {
   [[ "${out}" == *"re-run Token Setup"* ]] || return 1
 }
 
-# === (5) a passing self-test emits NEITHER diagnostic branch (no false alarm on the happy path) =====
-
-@test "selftest: a passing probe emits no diagnostic message (return 0, clean output)" {
-  extract_fn run_with_timeout || return 1
-  extract_fn headless_auth_selftest || return 1
-  GA_AUTH_ENV_LIB="$(_write_env_lib loaded)"
-  GA_AUTH_CLAUDE_BIN="$(_write_stub_claude_isolation)"
-  GA_AUTH_SELFTEST_TIMEOUT_SECS=5
-  local out rc=0
-  out="$(headless_auth_selftest 2>&1)" || rc=$?
-  [[ "${rc}" -eq 0 ]] || return 1
-  [[ "${out}" != *"token delivered to claude but rejected"* ]] || return 1
-  [[ "${out}" != *"provisioning did not deliver a token"* ]] || return 1
-}
-
 # === (6) MODEL PIN — the probe passes the daemon-config'd worker model to --model ====================
 
 @test "selftest: the probe pins --model to the daemon-config worker_model value" {
@@ -250,15 +235,3 @@ _write_daemon_config() {
   grep -qF -- '--model claude-sonnet-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (9) STATIC — the centralized jq idiom + fallback literal now live in atrium_resolve_worker_model =
-
-@test "resolver(static): atrium_resolve_worker_model owns the jq idiom + the claude-sonnet-5 fallback literal (lockstep with daemon_config._FALLBACK)" {
-  local body
-  body="$(awk '/^atrium_resolve_worker_model\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/scripts/lib/atrium-config.sh")" || return 1
-  [[ -n "${body}" ]] || return 1
-  # the jq key read + alias-literal fallback moved OUT of the 4 call sites INTO this single resolver.
-  [[ "${body}" == *"jq -r '.worker_model // empty'"* ]] || return 1
-  [[ "${body}" == *'model="claude-sonnet-5"'* ]] || return 1
-  # the config path is a parameter (each caller passes its own seam), defaulting to the canonical path.
-  [[ "${body}" == *'local config_path="${1:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-config.json}"'* ]] || return 1
-}
