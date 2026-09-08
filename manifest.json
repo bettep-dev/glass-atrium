@@ -594,7 +594,6 @@
     "scripts/sync-registry-tools.sh",
     "scripts/test/.gitignore",
     "scripts/test/_pg_stub_backend.py",
-    "scripts/test/absorption-benign-idiom.bats",
     "scripts/test/absorption-conversion.bats",
     "scripts/test/agent-frontmatter-identity.bats",
     "scripts/test/apply-lock.bats",
@@ -634,7 +633,6 @@
     "scripts/test/publish-release.bats",
     "scripts/test/recovery-repos.bats",
     "scripts/test/render-monitor-env.bats",
-    "scripts/test/retired-name-sweep.bats",
     "scripts/test/run-bats-parallel.bats",
     "scripts/test/setup_suite.bash",
     "scripts/test/skill-registry-retired.bats",
@@ -1426,7 +1424,6 @@
     "scripts/sync-registry-tools.sh": "8e758ec1ff2267abbdd0f7525031dd898f7a54adcc9238ab51b263abc6a2800e",
     "scripts/test/.gitignore": "93f36daed86dd0952910da31cf90085a011adb3245e7ea0b45beb3c15dce3994",
     "scripts/test/_pg_stub_backend.py": "03607058a57f957bdd71ec2d8bffdd3c1dd38a801477cd69d7f69f2cf590b352",
-    "scripts/test/absorption-benign-idiom.bats": "682efada0d041319c0b47118755efb6b4d4913c18fb6a2d6717102535b10f129",
     "scripts/test/absorption-conversion.bats": "f30ac22616b5437c10a293f51171c9e97b9060ecd2477ed10f9cca4805e3cb7c",
     "scripts/test/agent-frontmatter-identity.bats": "5e3b73d632d736df04784107309b96cf05cd48227872103664a0f8473cf27b92",
     "scripts/test/apply-lock.bats": "2233f3d1e73b772404ac0fbea141a877c1605c2e24bcff2912481ef1351781a3",
@@ -1436,7 +1433,7 @@
     "scripts/test/audit-cli.bats": "134d263e17884015a7a38d78d4053c7d95e01da132ae94c483907d8b41679eac",
     "scripts/test/audit-test-smells.bats": "cbbf65e28c106ca0b0aa152ca1872397cff23bb35644c92d57b533d22d8be86a",
     "scripts/test/ci-change-filter-coverage.bats": "89939d815f2d2fd7102edd5620662364283e3e36311000705b975f2587ecd552",
-    "scripts/test/config-template-reader-census.bats": "fa8c9b600930429b62a77f398ea0062a0272182f8e9c8c48223dd65b653b72e4",
+    "scripts/test/config-template-reader-census.bats": "dbd12bcd1bf7c97c3b4569e53b03dde9d2f7f4d03182dedbf229820aaef3ad0d",
     "scripts/test/config-template-reader-census.psv": "8e1352798f887978c2ecdb6e93352a14597dc48ab00cad7a56e7fb171381c2c9",
     "scripts/test/conftest.py": "d67bd6c208c929fb11012e064576a98d23243681b0fa269ff659b1925592f67e",
     "scripts/test/daemon-bootstrap-bind-fail.bats": "fb749abdbf64121b9ef4f7147d8737be89fc61ea1d601652334740fdefd132e9",
@@ -1466,10 +1463,9 @@
     "scripts/test/publish-release.bats": "22c780d3efde1f515b188f6c60ac281c25657b6368cc153528f13b38afc2287a",
     "scripts/test/recovery-repos.bats": "6bd52b680f6e71ed44a8fa5f34456b9e48574072e5aefc6f42f6f44863a702fc",
     "scripts/test/render-monitor-env.bats": "fcbd5828942f898012876106c956531fadfa82e712d33b81df68d575f5e6c94a",
-    "scripts/test/retired-name-sweep.bats": "88f08b46f9d30e3316d7357102ee1b226254739f270a1e477d8909975997952e",
     "scripts/test/run-bats-parallel.bats": "17b4ef449e939d47a73289dfbb960f28d51127873c47a3a96e27c7371365e715",
     "scripts/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
-    "scripts/test/skill-registry-retired.bats": "b2c56d262fb5e4fad2fb1a8cc6a655658f4a1d54b9e41b21a7d9898901883c9e",
+    "scripts/test/skill-registry-retired.bats": "2cb54c3a21362fcd7b4de1a9f83ce67b18408b7a90393a29aab9caeb0f96f5ad",
     "scripts/test/snapshot-live-repos.bats": "529e323972c8207bc169186bcd2740fa703d9bf155c031e54cb9c2cc958f933c",
     "scripts/test/suite-hermeticity.bats": "4adc7a7e6a0e2ffde677095b2c7f3de7dfe4bcffb282cae18465e910c5e9bd0a",
     "scripts/test/swap-symlink-collision.bats": "962f44f0327504eefe9c31818468db946568bf5f2ebecfb226afa0604c8377bf",
@@ -1479,7 +1475,7 @@
     "scripts/test/test_extend_section_gate.py": "4859263b0485e6f344487a0ee0c1ec3fe96fdb856c35122022d4184bfaf1f809",
     "scripts/test/test_gate_roster_sync.py": "73c90ee71f3c38522644b02ff44dcc12acde517371f6aee3ae0f4295e885ea07",
     "scripts/test/test_inject_sync.py": "ae310a5b36ff03f7933507780b4d34886f89dd6138283c2bcee89e8e42731ba0",
-    "scripts/test/test_pg_dual_write_compose_apply_status.py": "cd43452810af87a3a20a52196d72295f45a318bef01d9e39f918b86915019754",
+    "scripts/test/test_pg_dual_write_compose_apply_status.py": "782a3166785750186a74d8b68880a6f214f6bf85556f672da6c9918f9a3f2084",
     "scripts/test/test_pg_dual_write_exit_contract.py": "6b6c18cb3378eeea8c4b889866c0d8f8334970f4cedfe8b30bcb63b2f939e2d6",
     "scripts/test/test_pg_dual_write_proposal_upsert.py": "edb5bbf91263ed80ee6223bdcd2df603137d700f2ea981b9d5ce20c835b8ce3b",
     "scripts/test/test_python_portability.py": "a5e5997d19e68f87fea08587f23e9d138b85b1a449d624d9a44312e6fa2e7f08",
@@ -2258,7 +2254,6 @@
     "scripts/sync-registry-tools.sh": "755",
     "scripts/test/.gitignore": "644",
     "scripts/test/_pg_stub_backend.py": "644",
-    "scripts/test/absorption-benign-idiom.bats": "644",
     "scripts/test/absorption-conversion.bats": "644",
     "scripts/test/agent-frontmatter-identity.bats": "644",
     "scripts/test/apply-lock.bats": "644",
@@ -2298,7 +2293,6 @@
     "scripts/test/publish-release.bats": "644",
     "scripts/test/recovery-repos.bats": "644",
     "scripts/test/render-monitor-env.bats": "644",
-    "scripts/test/retired-name-sweep.bats": "644",
     "scripts/test/run-bats-parallel.bats": "644",
     "scripts/test/setup_suite.bash": "644",
     "scripts/test/skill-registry-retired.bats": "644",
@@ -2568,9 +2562,15 @@
     "scripts/lib/vendor-digest.sh": [
       "46e51686dab7d9f3eb361dd0ef1bc79ce3c463a9b1cb8a57ff2d96e6f60bf14d"
     ],
+    "scripts/test/absorption-benign-idiom.bats": [
+      "682efada0d041319c0b47118755efb6b4d4913c18fb6a2d6717102535b10f129"
+    ],
     "scripts/test/apply-gate.bats": [
       "8d46b4f339c98ac6deaf81e4e7339fd70060accb8862132c4eb4002bb7654997",
       "f718b750850c7d5df82f3f2edaaa20c0c8e0f9d1b81a8225eb44e660ce83ddca"
+    ],
+    "scripts/test/retired-name-sweep.bats": [
+      "88f08b46f9d30e3316d7357102ee1b226254739f270a1e477d8909975997952e"
     ],
     "scripts/test/update-charter-sync-exemption.bats": [
       "371df92955b62d2f3216e2165f233051d61db3195c3e979ec2fec2e354aa3080",
