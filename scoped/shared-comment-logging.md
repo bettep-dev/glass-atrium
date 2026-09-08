@@ -17,7 +17,7 @@ TOP PROHIBITIONS:
 - **NO `console.*` in production** (test files exempt) → framework logger.
 
 REMAINING RULES:
-- Comment language (highest wins): user-specified in task/CLAUDE.md → repo contributing policy where stated → new = match the file's comment language (no comments → English) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
+- Comment language: English by default (GLOBAL_RULES → Output Language). Overrides only: user's task/CLAUDE.md spec → target-repo contributing policy → editing an existing non-English comment (match it). Identifiers/API names keep original form. COMMENT language only — server logs stay English.
 - Stale comments worse than none → sync with code.
 - Log level: error=action-required/failed · warn=potential issue · info=state change · debug=dev-only (off in prod). Error logs need what+why+context.
 - JSDoc: semantics only, MUST NOT duplicate types (`@param value - desc`, never `@param {type}`).
@@ -43,11 +43,11 @@ GOOD → /**                                                          ← declar
 
 ## Comment Language & Style
 
-- **Language precedence** (highest wins; `scope-dev.md` "Consistent with existing style" + Project Convention Probe + `shared-search-first.md` Mirror defer here for comment language):
+- **Language precedence** (highest wins; `scope-dev.md` "Consistent with existing style" + Project Convention Probe + `shared-search-first.md` Mirror defer here for comment language). The default is the canonical — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language: **a comment an agent writes is English**. The list below orders the overrides, ending in the default itself:
   1. a comment language specified in the user's task/CLAUDE.md (e.g., English-only)
-  2. the repository's own contributing policy where the repository states one (this repository's `CONTRIBUTING.md` "Language policy" requires English for all contributed code comments)
-  3. new comment → match the surrounding file's comment language; a file carrying no comments → English
-  4. editing an existing comment → match its existing language
+  2. the target repository's own contributing policy where that repository states one (this repository's `CONTRIBUTING.md` "Language policy" requires English, so here the override and the default agree)
+  3. editing an existing non-English comment → match its existing language, so a single comment is never left half-translated
+  4. otherwise → English, per the canonical
 - Identifiers/code/API names inside comments stay original form regardless of tier. Governs **comment** language ONLY — server logs stay English (`## Log Message Composition`). Project Convention Probe / Mirror govern code style (naming / import order / error+log), NOT comment language.
 - **Style**: bullet/noun-phrase MUST · narrative sentences FORBIDDEN · compress causality with `→ — , +` · verb-stem ending preferred · JSDoc lines = short noun-phrases · box/ASCII-art decoration (`/* ---- */`, banners, star columns) FORBIDDEN.
 - **No mid-sentence line-wrap**: a single clause MUST terminate on its own line · splitting ONE thought across consecutive `//` lines FORBIDDEN · distinct points → separate complete lines/bullets. Does NOT forbid (a) the 1–3-sentence header, nor (b) multiple SEPARATE one-line comments.
