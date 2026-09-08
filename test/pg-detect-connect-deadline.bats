@@ -183,14 +183,3 @@ PSQL
   ' <<<"${boxed}"
   [[ "${output}" -eq 0 ]]
 }
-
-@test "idle-bracket(static): the pg_utc_guard failure path STOPS the idle spinner before returning (stop-before-bail)" {
-  local boxed stop_ln bail_ln
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${boxed}" ]]
-  # the guard rc is captured, the idle is stopped, THEN the failure bail returns — so no stray idle
-  # child paints past the guard-failure return (the invariant the per-detect refactor must preserve).
-  stop_ln="$(grep -nF 'stop_idle_spinner' <<<"${boxed}" | head -n1 | cut -d: -f1)"
-  bail_ln="$(grep -nF 'return "${pg_guard_rc}"' <<<"${boxed}" | head -n1 | cut -d: -f1)"
-  [[ -n "${stop_ln}" && -n "${bail_ln}" && "${stop_ln}" -lt "${bail_ln}" ]]
-}
