@@ -1644,7 +1644,7 @@
     "test/suite-hermeticity.bats": "95f936db2179dadb78a272347312a6c0866216db381530137b3b714c846709ee",
     "test/token-paste-provisioning.bats": "1f1bb5b5c24caebaf7688c76e02a45e78f06cd707f4fd015bb0394899d4d6621",
     "test/token-setup-inplace.bats": "76a748bf716ee07433fa8b010cec5d13dd0f63a9b3db29b876e30e97b0b77adf",
-    "test/token-setup-raw-reduction.bats": "36c3e616b4b396e6d67b701fdafc40c31bdcb8a68291466fe8dcb041e7b9c5f9",
+    "test/token-setup-raw-reduction.bats": "f7013afed6ccfc86fe4dc1169d8dd6c02cf57bcb0b7e3269f9f2e6d94f1c8d51",
     "test/uninstall-db-backup.bats": "e9f1e0f072e157e38ae7a3d134223a33bca4f6807a03f625ac327422da9c1a05",
     "test/uninstall-detached-daemons.bats": "9b4f750a330e150b6b18f1d58e55d383565648db7b820f17a9d109cc8e9a4641",
     "test/uninstall-empty-dirs.bats": "a71124b0c0d1e53f5cc70bdee415ee5994b809cddbc0541868803818bdddf8fd",

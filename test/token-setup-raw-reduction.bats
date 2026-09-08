@@ -25,10 +25,15 @@ setup() {
 }
 
 # Slice the cooked-TTY segment: from the alt-screen drop (tp rmcup) up to the
-# UNCHANGED provisioning call. The reduced point-of-need cue lives here, and
+# alt-screen re-entry (tp smcup). The reduced point-of-need cue lives here, and
 # nothing else must print in this out-of-frame window.
+#
+# The terminator is smcup, NOT the provisioning call: output stays cooked and
+# out-of-frame until the alt-screen is back, so terminating at the provisioning
+# call left the three lines between it and smcup scanned by nothing once the
+# file-wide "old verbose block gone" rows were cut.
 cooked_segment() {
-  awk '/^  tp rmcup$/{f=1} f{print} /preflight_provision_headless_token \|\| status=/{exit}' "${GA}"/lib/ga-tui-*.sh
+  awk '/^  tp rmcup$/{f=1} f{print} f&&/^  tp smcup$/{exit}' "${GA}"/lib/ga-tui-*.sh
 }
 
 @test "reduction not removal: the cooked segment prints exactly one line" {
@@ -62,7 +67,10 @@ cooked_segment() {
   # The one cue reaching the cooked TTY is this line, and it names the env var, never a value.
   cooked_segment | grep -qF -- "${REDUCED_LINE}"
   printf '%s\n' "${REDUCED_LINE}" | grep -qF 'CLAUDE_CODE_OAUTH_TOKEN'
-  # The cooked segment must not cat/read the secrets file into the terminal.
-  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} /preflight_provision_headless_token \\|\\| status=/{exit}' ${GA}/lib/ga-tui-*.sh); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
+  # The cooked segment must not cat/read the secrets file into the terminal. The awk is a hand
+  # copy of cooked_segment (run bash -c spawns a subshell that cannot see the bats function), so
+  # its terminator MUST track cooked_segment's: left at the provisioning call it skipped the same
+  # out-of-frame window, and a secrets cat placed there was measured to pass this row.
+  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} f&&/^  tp smcup\$/{exit}' ${GA}/lib/ga-tui-*.sh); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
   [[ "${status}" -ne 0 ]]
 }
