@@ -390,8 +390,11 @@ run_recreate() {
 # NO LIVE PATH LITERAL beyond the negative assertion already present in this file:
 # the fixture is built from sandbox paths.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every
-# assertion below `return 1`s with its own message so each fails independently.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# Every assertion below `return 1`s with its own message, so each fails independently on every version.
 
 @test "AC-C3 GA_DB_RECREATE backup lands under a CONFIGURED backup_dir" {
   # Same stub shape as the DEFAULT test: dropdb fails (exit 1) so the run stops at

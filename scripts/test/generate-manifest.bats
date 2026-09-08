@@ -129,9 +129,11 @@ untrack_in_scope() {
   # live macOS host, which then chmod'd the real GLASS_ATRIUM_GLOBAL_RULES.md
   # target (the tree's one symlink) to 755. This row FAILS at HEAD (recorded=755
   # != 644) and passes once mode_of dereferences via `stat -L`.
-  # Assertions are `|| return 1` gated: bats fails a test only on its LAST
-  # command, so a bare intermediate `[[ ]]` would not gate the recorded==644
-  # check (mirrors the sibling manifest-mode-integrity.bats convention).
+  # Assertions are `|| return 1` gated: @test bodies run under errexit, but a bare
+  # intermediate `[[ ]]` does NOT gate on macOS bash 3.2.57 — it DOES from bash 4.4
+  # onward, CI's bash 5.3.9 included (measured on 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 —
+  # bash is the variable, not bats) — so unguarded the recorded==644 check would assert
+  # nothing locally (mirrors the sibling manifest-mode-integrity.bats convention).
   printf '# real rule target\n' >"${WORK}/rules/target.md"
   chmod 644 "${WORK}/rules/target.md"
   ln -s target.md "${WORK}/rules/link.md"

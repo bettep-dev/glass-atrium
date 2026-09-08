@@ -27,8 +27,11 @@
 # read. The section under test runs the shipped sync tool with `--check` (a dry run by construction)
 # pointed at the sandbox root, so nothing is written anywhere.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every assertion here
-# `return 1`s on mismatch so each fails the test independently.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# Every assertion here `return 1`s on mismatch, so each fails the test independently on every version.
 #
 # Run via: bats test/doctor-registry-tools-mirror.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3 with PyYAML (the mirror reader's own dependency)

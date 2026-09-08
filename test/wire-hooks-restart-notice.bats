@@ -17,8 +17,13 @@
 # remove+add path, so a matcher-only change wires nothing new yet still needs the same restart.
 # AC3 is that row.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate — the keyword is read as a tested
-# condition. Every assertion here `return 1`s on mismatch, so each one independently fails.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# The exemption is a bash-VERSION property of the `[[` reserved-word construct, not a bats behaviour and
+# not a consequence of the keyword being read as a tested condition — 4.4+ reads it the same way and
+# still gates. Every assertion here `return 1`s on mismatch, so each one independently fails everywhere.
 #
 # Nothing outside the sandbox is written: GA_TARGET_HOME redirects settings.json and GA_DATA_ROOT
 # redirects the marker + artifact roots, so neither ~/.claude nor ~/.glass-atrium is touched.

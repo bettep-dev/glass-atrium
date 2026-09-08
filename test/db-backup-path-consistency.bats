@@ -104,8 +104,11 @@ DEFAULT_LITERAL_FILES=(
 # NO LIVE PATH LITERAL: the first test in this file greps every tracked file for the
 # stale backup path, so the fixture is built from sandbox paths and never spells it.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every
-# assertion below `return 1`s with its own message so each fails independently.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# Every assertion below `return 1`s with its own message, so each fails independently on every version.
 
 SITE_FUNCTIONS=(
   "scripts/pg-backup.sh|resolve_backup_dir"
