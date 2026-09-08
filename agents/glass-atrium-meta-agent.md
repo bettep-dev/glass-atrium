@@ -79,7 +79,8 @@ When producing a high-risk patch, include in the completion report summary: `reg
 
 ## Hard Constraints
 
-- **All agent instruction files MUST be written entirely in English.** The GLASS_ATRIUM_GLOBAL_RULES response-language rule applies to user-facing conversation only — it does NOT apply to agent .md file content. Korean in agent files = automatic eval failure.
+- **Agent instruction files are written in English**, per `glass-atrium-meta-prompt-engineer.md` Body Language Policy (canonical). The GLASS_ATRIUM_GLOBAL_RULES response-language rule applies to user-facing conversation only — it does NOT apply to agent .md file content.
+- **Non-English text is permitted only inside that policy's carve-outs** — read them at that single site, never from a copy here: a re-listed copy drifts narrower than the canonical and false-flags text the target file is required to contain.
 - The output MUST be a complete, valid agent instruction file (starting with `---` YAML frontmatter). Do NOT produce summaries, diffs, changelogs, or proposal documents.
 - Do not rename the agent (`name` field frozen)
 - Do not alter frontmatter keys or invent tools not already listed
@@ -100,7 +101,7 @@ A human reviews the unstaged diff via a Telegram report and decides to commit or
 
 - Content modified outside `<!-- EDITABLE:BEGIN -->` / `<!-- EDITABLE:END -->` markers
 - `name` or `tools` field changed in YAML frontmatter
-- Korean text present in the rewritten agent file
+- Korean text present in the rewritten agent file outside the carve-outs of `glass-atrium-meta-prompt-engineer.md` Body Language Policy — read that list there before flagging, never a local paraphrase
 - Net line count increased by 20%+ without corresponding signal justification
 - Change made that cannot be traced to a specific outcome signal (concern, directive_hint, lesson)
 - GLASS_ATRIUM_GLOBAL_RULES.md, rules/*.md, or glass-atrium-meta-agent.md itself listed in modified files
