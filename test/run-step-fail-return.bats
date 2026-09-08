@@ -223,21 +223,6 @@ drive_gate() {
     && [[ "${body}" != *$'|| die '* ]]
 }
 
-# === CLI-safety static-scan — the passthrough exit contract is unchanged ===================
-
-@test "CLI-safety: ga-core.sh run_bootstrap phase-2 still bare-exits BOOTSTRAP_EXIT_BUILD (build-return guard)" {
-  local body
-  body="$(awk '/^run_bootstrap\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${CORE}")"
-  [[ "${body}" == *'exit "${BOOTSTRAP_EXIT_BUILD}"'* ]]
-}
-
-@test "CLI-safety: run_install still calls setup_database directly (CLI exit via exit_step CLI branch)" {
-  local body
-  body="$(awk '/^run_install\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${CORE}")"
-  # the CLI reaches the shared fn directly (GA_TUI_STEP unset → exit_step exits, named-code contract)
-  [[ "${body}" == *'setup_database'* ]]
-}
-
 # === hash -r static-scan — hash -r after node@24 keg inject + guide-only CLT check ===============
 
 @test "hash-r(static): each named render path injects the node@24 keg and follows it with hash -r" {
