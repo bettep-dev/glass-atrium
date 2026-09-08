@@ -35,11 +35,6 @@ setup() {
   TTY="${FIFO}"
 }
 
-# _read_key_body — raw text of the eval'd read_key for static shape assertions.
-_read_key_body() {
-  awk 'index($0, "read_key() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${TERM_LIB}"
-}
-
 # _capture_bounded — run read_key in the background against the FIFO, polling for completion up to
 # DEADLINE seconds. On overrun it TERM-kills read_key so a regressed unbounded read yields empty
 # output (a failing assertion) rather than hanging the suite. Prints read_key's decoded output.
@@ -116,26 +111,4 @@ _drive() {
   [[ "$(_drive 'j')" == "down" ]] || return 1
   [[ "$(_drive 'q')" == "quit" ]] || return 1
   [[ "$(_drive '\r')" == "enter" ]] || return 1
-}
-
-# === static — the fix shape is present in the source ===================================
-
-@test "static: the CSI tail read carries the -t 1 integer timeout bound" {
-  local body
-  body="$(_read_key_body)"
-  grep -qF 'read -rsn2 -t 1 rest' <<<"${body}" || return 1
-}
-
-@test "static: the tilde-drain branch is present (matches [ + digit, drains one byte)" {
-  local body
-  body="$(_read_key_body)"
-  grep -qF "'['[0-9])" <<<"${body}" || return 1
-  grep -qF 'read -rsn1 -t 1 _' <<<"${body}" || return 1
-}
-
-@test "static: the arrow cases (ESC [ A/B) are preserved" {
-  local body
-  body="$(_read_key_body)"
-  grep -qF "'[A') printf 'up'" <<<"${body}" || return 1
-  grep -qF "'[B') printf 'down'" <<<"${body}" || return 1
 }
