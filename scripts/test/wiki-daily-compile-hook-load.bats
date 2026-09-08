@@ -14,9 +14,10 @@
 # satisfiable by a script that refuses everything.
 #
 # Every `[[ ]]` assertion here carries `|| return 1`, and that suffix is load-bearing rather than
-# decorative: a bare `[[ ]]` that fails mid-test does NOT fail the test under bats' errexit
-# handling (a `[ ]` in the same position does), so a message assertion written without it is inert
-# and reports a pass it never checked.
+# decorative: a bare `[[ ]]` that fails mid-test is inert on macOS bash 3.2.57 and GATES on CI's bash
+# 5.3.9 (a `[ ]` in the same position gates on both; measured, bats 1.13.0 on both legs, so bash is
+# the variable, not bats), so a message assertion written without it reports a macOS pass it never
+# checked.
 #
 # Hermetic: the script and its libs are copied into a mktemp sandbox with a stubbed PG helper,
 # a stubbed sync script, a stubbed lock helper and a stubbed CLI on the existing

@@ -204,9 +204,10 @@ db_available() {
 
   # A LIKE 'ok%' apply-eligibility gate must never match this row — the whole
   # apply-ineligibility safety case rests on this one literal, so it is asserted
-  # through an explicit `return 1`: a bare mid-body `[[ ]]` does NOT fail a bats
-  # test (only its LAST command and the simple-command forms gate), which is what
-  # made the earlier form of this pin pass with haiku_status="ok".
+  # through an explicit `return 1`: on bash 3.2 a bare mid-body `[[ ]]` does NOT
+  # fail a bats test (bash 5 on Linux gates it, and the simple-command forms gate
+  # on both), which is what made the earlier form of this pin pass with
+  # haiku_status="ok".
   run envelope_field haiku_status
   if [[ "$output" == ok* ]]; then
     echo "haiku_status satisfies a LIKE 'ok%' apply-eligibility gate: ${output}"
@@ -361,8 +362,9 @@ roster_paths() {
   # nothing at all.
   # The landed side must be NESTED: a top-level path's basename equals its path, so
   # it cannot tell the two key forms apart and would stamp landed either way.
-  # Every assertion is gated `|| return 1`: this bats version fails a test only on
-  # the LAST command's status, so a bare mid-body test would be silently ignored.
+  # Every assertion is gated `|| return 1`: on bash 3.2 a bare mid-body `[[ ]]` is
+  # not gated by errexit while bash 5 gates it, so it is ignored under bash 3.2
+  # (the macOS default), not on macOS as such.
   local landed_rel unlanded_rel
   landed_rel="$(roster_paths | grep / | sed -n 1p)"
   unlanded_rel="$(roster_paths | grep -v -F -x "${landed_rel}" | sed -n 1p)"

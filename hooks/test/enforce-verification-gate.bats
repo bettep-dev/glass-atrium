@@ -31,9 +31,10 @@
 # HOOK_DATA_DIR is sandboxed to a temp dir so the session-spawns marker (reviewer_present
 #   state) never touches the live runtime data dir.
 #
-# BATS GATING NOTE: this bats version runs @test bodies WITHOUT `set -e`, so only the LAST command
-#   gates pass/fail — a non-final failing `[[ ]]` is silently ignored. Every assertion below is
-#   therefore guarded with `|| { echo ...; return 1; }` so EACH one independently fails the test.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): @test bodies run under errexit, but macOS
+#   bash 3.2 exempts a non-final failing `[[ ]]` while Linux bash 5 aborts on it — bash is the
+#   variable, not bats. Every assertion below is therefore guarded with `|| { echo ...; return 1; }`
+#   so EACH one independently fails the test on both platforms.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"
@@ -86,7 +87,7 @@ seed_reviewer() {
   printf '%s\n' "glass-atrium-qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-test-001"
 }
 
-# Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
+# Per-assertion gate helpers (a bare mid-body `[[ ]]` is inert on macOS bash 3.2 — see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2

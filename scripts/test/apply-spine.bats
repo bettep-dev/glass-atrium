@@ -143,8 +143,9 @@ spine() {
     "agents/sub/nested.md" "hooks/a.sh"
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
-  # `|| return 1` is load-bearing: under bats a FAILING bare `[[ ]]` that is not
-  # the test's final command does not fail the test.
+  # `|| return 1` is load-bearing: a mid-body bare `[[ ]]` is inert on bash 3.2.57
+  # but GATES on CI's bash 5.3.9 (measured, bats 1.13.0 on both legs, so bash is
+  # the variable, not bats).
   # the E4 merge CLAIMS a top-level agent body → the spine must never touch it
   [[ "${output}" != *"agents/dev-shell.md"* ]] || return 1
   # the merge reaches NEITHER the charter nor a nested doc (basename skip / the
@@ -183,9 +184,11 @@ spine() {
 
 # T13 — spine_find_removed_files (retirement selection off the manifest `retired` map)
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates
-# pass/fail. Every assertion below `return 1`s on mismatch, so each one fails the test
-# on its own rather than being skipped past by the one after it.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is
+# inert on bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on
+# BOTH (measured, bats 1.13.0 on both legs, so bash is the variable, not bats). Every
+# assertion below `return 1`s on mismatch, so each one fails the test on its own rather
+# than being skipped past by the one after it.
 
 # Build a manifest at $1 over root $2 whose `retired` map is the raw JSON object $3
 # and whose files[] are $4.. (relative to $2). The map is passed as JSON rather than
@@ -378,9 +381,10 @@ retired_live_map() {
     printf "%s\n" "rules/glass-atrium/CHARTER.md" \
       | spine_stage_and_verify "$1" "$2" "$3"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
-  # One && chain: a bats verdict is its LAST command's status, so a mid-body
-  # bracket would pass silently. The trailing member is the danglingness inside
-  # the staging dir, which is why the hash is read at the source position.
+  # One && chain: a mid-body bare bracket is inert on bash 3.2.57 (on CI's bash
+  # 5.3.9 it gates), so the chain keeps every member live on both legs. The
+  # trailing member is the danglingness inside the staging dir, which is why the
+  # hash is read at the source position.
   [[ "${status}" -eq 0 ]] \
     && [[ -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
     && [[ "$(readlink "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
@@ -407,8 +411,8 @@ retired_live_map() {
       | spine_stage_and_verify "$1" "$2" "$3" || rc=$?
     exit "${rc}"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
-  # One && chain: a bats verdict is its LAST command's status, so a mid-body
-  # bracket would pass silently.
+  # One && chain: a mid-body bare bracket is inert on bash 3.2.57 (on CI's bash
+  # 5.3.9 it gates), so the chain keeps every member live on both legs.
   [[ "${status}" -eq 1 ]] \
     && [[ "${output}" == *"staging copy failed"* ]] \
     && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]

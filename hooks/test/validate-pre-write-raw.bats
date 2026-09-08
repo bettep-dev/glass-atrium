@@ -13,8 +13,10 @@
 # Run via: bats hooks/test/validate-pre-write-raw.bats
 # Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command (or an explicit
-# `return 1`) gates pass/fail — every assertion below `return 1`s on mismatch.
+# BATS GATING NOTE: @test bodies run under errexit — but bash 3.2 (macOS) does not abort on a
+# failing bare mid-body `[[ ]]` while bash 5.3 (CI) does (measured, bats 1.13.0 on both legs —
+# bash is the variable, not bats), so every assertion below `return 1`s on mismatch and gates
+# on both platforms.
 
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
 

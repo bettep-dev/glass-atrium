@@ -25,8 +25,10 @@
 #   exceptions — preserved invariants guarding that the new sink never corrupts the drop-rate signal and
 #   that its append can never trip the ERR trap into a spawn-suppressing exit.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
-#   assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion `return 1`s on
+#   mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 

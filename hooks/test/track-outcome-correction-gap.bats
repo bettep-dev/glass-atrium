@@ -43,9 +43,10 @@ teardown() {
   fi
 }
 
-# bats 1.13 checks only the LAST command's status, so a bare intermediate `[[ ]]` assertion is
-# silently ignored (a false one never fails the test). oc/no echo a diagnostic + return non-zero so
-# each caller's `|| return 1` aborts the test AT the failing assertion.
+# A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) — a false one
+# never fails the test there — while bash 5.3 (CI) aborts on it (measured, bats 1.13.0 on both legs:
+# bash is the variable, not bats). oc/no echo a diagnostic + return non-zero so each caller's
+# `|| return 1` aborts the test AT the failing assertion on both.
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 

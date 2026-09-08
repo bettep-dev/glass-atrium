@@ -7,8 +7,11 @@
 # Static-only by design: zero execution of the script. A real behavioral probe needs
 # a real CLI, auth and spend, so AC12 deliberately keeps it a manual procedure.
 #
-# Assertion idiom: `[[ ... ]] || return 1`. Bats does NOT catch a bare non-final
-# `[[ ]]` failure, so every assertion is routed through `|| return 1`.
+# Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
+# bare non-final `[[ ]]` is exempt under macOS bash 3.2.57 and DOES gate from bash
+# 4.4 onward (measured 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15; CI runs 5.3.9, bats 1.13.0
+# on both operational legs — bash is the variable, not bats), so every assertion is
+# routed through `|| return 1` to gate on both legs.
 #
 # Run via: bats autoagent/test/autoagents-eval-arg-combo.bats
 # Requires: bats >= 1.5.0, bash 3.2+

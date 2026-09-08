@@ -16,9 +16,10 @@
 #   sources default to HERMETIC in-sandbox fixtures built in setup() (NOT the HOME-anchored real
 #   files, absent under a CI checkout) unless a test overrides them.
 #
-# BATS GATING NOTE: this bats version runs @test bodies WITHOUT `set -e`, so only the LAST command
-#   gates pass/fail — a non-final failing `[[ ]]` is silently ignored. Every assertion below is
-#   guarded with a helper that `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion below is guarded
+#   with a helper that `return 1`s on mismatch, so EACH one independently fails the test.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"
@@ -134,7 +135,7 @@ for line in sys.stdin:
 ' 2>/dev/null
 }
 
-# Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
+# Per-assertion gate helpers — an explicit `return 1` gates on every bash (see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2

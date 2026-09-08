@@ -22,8 +22,10 @@
 #   preserved fail-open invariant — it guards that the new overage arithmetic + counter write never
 #   trip the spawn-suppressing ERR trap.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
-#   assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion `return 1`s on
+#   mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 
@@ -145,7 +147,7 @@ write_lessons() {
   }' >"${out}"
 }
 
-# Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
+# Per-assertion gate helpers — an explicit `return 1` gates on every bash (see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2

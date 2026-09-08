@@ -184,9 +184,9 @@ require_ga_repo() {
   printf 'owner: bettep\nhome = "/Users/bettep"\n' >"${WORK}/approved.txt"
   run bash "${SCANNER}" "${WORK}"
   [[ "${output}" == *"worktree-clean: PASS"* ]]
-  # The last assertion is compound — bash 3.2 bats ignores mid-test assertion
-  #   failures (errexit does not propagate), so the decisive gates are combined
-  #   into the single final command.
+  # The last assertion is compound — a bare mid-body `[[ ]]` is inert on bash 3.2.57
+  #   though CI's bash 5.3.9 gates it, so the decisive gates are combined into the
+  #   single FINAL command, which gates on both.
   [[ "${status}" -eq 0 && "${output}" == *"approved-disclosure identifier skipped"* ]]
 }
 
@@ -208,7 +208,7 @@ require_ga_repo() {
   run bash "${repo}/scripts/pii-scan.sh"
   [[ "${output}" == *"approved-disclosure identifier skipped"* ]]
   [[ "${output}" == *"worktree-clean: PASS"* ]]
-  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  # Compound final assertion — a bare mid-body `[[ ]]` is inert on bash 3.2.57 (see approved USER seam)
   [[ "${status}" -eq 0 && "${output}" == *"history-clean: PASS"* ]]
 }
 
@@ -228,7 +228,7 @@ require_ga_repo() {
   cp "${SCANNER}" "${repo}/scripts/pii-scan.sh"
   run bash "${repo}/scripts/pii-scan.sh"
   [[ "${output}" == *"worktree-clean: FAIL"* ]]
-  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  # Compound final assertion — a bare mid-body `[[ ]]` is inert on bash 3.2.57 (see approved USER seam)
   [[ "${status}" -eq 5 && "${output}" == *"history-clean: FAIL"* ]]
 }
 
@@ -238,6 +238,6 @@ require_ga_repo() {
   export USER="bettep${u_tail}"
   printf 'owner: %s\n' "${USER}" >"${WORK}/near-miss.txt"
   run bash "${SCANNER}" "${WORK}"
-  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  # Compound final assertion — a bare mid-body `[[ ]]` is inert on bash 3.2.57 (see approved USER seam)
   [[ "${status}" -eq 1 && "${output}" == *"near-miss.txt"* ]]
 }

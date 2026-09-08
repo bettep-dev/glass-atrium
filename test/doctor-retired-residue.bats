@@ -25,8 +25,11 @@
 # under test — so every assertion below reads THIS SECTION's own lines, never an aggregate the rest
 # of the run contributes to.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
+#   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
+#   on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on BOTH legs — bash is the variable,
+#   not bats), while `[ ]`, `let` and a failing `grep -q` abort on both.
+#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 
 bats_require_minimum_version 1.5.0
 

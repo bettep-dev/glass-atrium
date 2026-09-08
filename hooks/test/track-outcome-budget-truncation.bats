@@ -201,8 +201,9 @@ run_hook_transcript() {
 # The RED-first cases below fail against the pre-T6 clobber (they were recorded completion-synthesized
 # / budget-truncation instead of truncated_completion).
 #
-# Assertions are &&-chained into a SINGLE final command on purpose: Bats fails a test only on the exit
-# status of its LAST command, so separate assertion lines would leave the non-final ones un-enforced.
+# Assertions are &&-chained into a SINGLE final command on purpose: a bare mid-body `[[ ]]` is not
+# aborted by errexit under bash 3.2 (macOS) — bash 5.3 on CI does abort it (measured, bats 1.13.0 on
+# both legs) — so separate assertion lines would leave the non-final ones un-enforced on macOS.
 
 @test "tier-2 open-no-close + counter low ⇒ truncated_completion, NOT clobbered to completion-synthesized" {
   seed_counter 5

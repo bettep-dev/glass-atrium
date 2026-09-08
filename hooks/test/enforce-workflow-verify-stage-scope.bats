@@ -5,7 +5,8 @@
 # fixture below asserts the block still wins with the nudge absent. The --lint case pins AC6 —
 # the offline preview stays side-effect-free (zero trace lines) while still printing the nudge.
 #
-# BATS GATING NOTE: only the LAST command gates a test — every assertion carries `|| return 1`.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
+# not on macOS bash 3.2 — every assertion carries `|| return 1`, which gates on both.
 
 HOOK_SH="${WFGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-workflow-verify-stage.sh}"
 NUDGE_PHRASE='ADVISORY (scope declaration, non-blocking)'

@@ -4,8 +4,9 @@
 #   implementation-slot count the gate already computes (below slots x 4.5 -> `:low`, above ~40 ->
 #   `:high`). Advisory-only, so every firing test also asserts the exit code is untouched.
 #
-# bats-1.13 LAST-COMMAND SEMANTICS: a test fails ONLY on its final command's exit, so every assertion
-#   is written `[[ ... ]] || return 1`.
+# BASH GATING SEMANTICS: a mid-body bare `[[ ]]` / `(( ))` is inert on macOS bash 3.2.57 but GATES on
+#   CI's bash 5.3.9 (measured, bats 1.13.0 both legs — bash is the variable, not bats), so every
+#   assertion is written `[[ ... ]] || return 1`.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"

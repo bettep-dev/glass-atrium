@@ -19,8 +19,10 @@
 # Run via: bats hooks/test/h2-untrusted-ingest.bats
 # Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command (or an explicit
-# `return 1`) gates pass/fail — every assertion below `return 1`s on mismatch.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+# bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured, bats
+# 1.13.0 on both legs, so bash is the variable, not bats). Every assertion below `return 1`s on
+# mismatch.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 REPO_ROOT="${BATS_TEST_DIRNAME}/../.."

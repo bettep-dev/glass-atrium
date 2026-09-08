@@ -16,11 +16,11 @@
 #   escaped safely. WORKFLOW_GATE_FIRED_LOG is redirected to a temp path so the trace never touches the
 #   live runtime log.
 #
-# bats-1.13 LAST-COMMAND SEMANTICS (load-bearing): a test fails ONLY on its final command's non-zero
-#   exit — an intermediate `[[ ... ]]` that is not the last line does NOT fail the test. Every
-#   assertion below is therefore written `[[ ... ]] || return 1` so it gates regardless of position
-#   (`return` runs in the test-body function scope → fails the test immediately). Never leave a bare
-#   intermediate `[[ ... ]]` — it would silently pass.
+# BASH GATING SEMANTICS (load-bearing, measured — bats 1.13.0 on both legs, so bash is the variable,
+#   not bats): @test bodies run under errexit, but a mid-body bare `[[ ... ]]` / `(( ... ))` is inert
+#   on macOS bash 3.2.57 and GATES on CI's bash 5.3.9. Every assertion below is therefore written
+#   `[[ ... ]] || return 1` so it gates on both legs regardless of position (`return` runs in the
+#   test-body function scope → fails the test immediately). Never leave a bare intermediate `[[ ]]`.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"

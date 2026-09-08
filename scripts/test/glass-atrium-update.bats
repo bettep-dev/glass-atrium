@@ -985,8 +985,9 @@ SH
 
   run_update
   [ "$status" -eq 0 ]
-  # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does NOT fail
-  # a bats test, so it would assert nothing here.
+  # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does not fail a
+  # test on macOS bash 3.2.57 (it does on Linux bash 5.3.9 in CI — measured, bats 1.13.0
+  # both legs), so bare it would assert nothing here locally.
   if [[ "$output" != *"CONFLICT (merge-pending-arbitration)"* ]]; then
     echo "the contested body did not decline: ${output}"
     return 1
@@ -1255,9 +1256,10 @@ run_update() {
   run_update
   local body
   body="$(cat "${INSTALL}/agents/dev-a.md")"
-  # ONE &&-chain, deliberately: a bats verdict is its LAST command's status, so a
-  # mid-body bare [[ ]] that fails is overwritten by any later passing one — this
-  # very test read a false green that way before the chain went in.
+  # ONE &&-chain, deliberately: on macOS bash 3.2.57 a failing mid-body bare [[ ]] does
+  # not gate, so it is overwritten by any later passing one (it DOES gate on Linux bash
+  # 5.3.9 in CI — measured, bats 1.13.0 both legs) — this very test read a false green
+  # that way before the chain went in.
   # (a) ZERO pre-verify calls: the updater path never reaches the model seam.
   # (b) the vendor line change LANDS, region content and structure alike.
   # (c) the local region edit survives byte-for-byte.
@@ -2068,8 +2070,10 @@ rm -rf /tmp/everything
   run_update
   chmod u+w "${INSTALL}/scripts" 2>/dev/null || true # restore BEFORE teardown rm -rf
 
-  # NOTE: every assertion is `|| return 1` — bats-core only enforces the LAST command
-  # of a test body, so a bare mid-body `[[ ]]` would be silently ignored.
+  # NOTE: every assertion is `|| return 1` — @test bodies run under errexit, but a bare
+  # mid-body `[[ ]]` is exempt on macOS bash 3.2.57 and DOES gate on Linux bash 5.3.9 in
+  # CI (measured, bats 1.13.0 both legs — bash is the variable, not bats), so unguarded
+  # it would be silently ignored locally.
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"apply failed"* ]] || return 1
   [[ "$output" == *"rolled back"* ]] || return 1
@@ -2173,9 +2177,11 @@ rm -rf /tmp/everything
 
 # retirement sweep (amended Rule 1: the bundle is authoritative for removal too)
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates
-# pass/fail. Every assertion below `return 1`s on mismatch, so each one fails the test
-# on its own rather than being skipped past by the one after it.
+# BATS GATING NOTE: @test bodies run under errexit, but a mid-body `[[ ]]` / `(( ))` is
+# exempt on macOS bash 3.2.57 and DOES gate on Linux bash 5.3.9 in CI (measured, bats
+# 1.13.0 both legs — bash is the variable, not bats). Every assertion below `return 1`s
+# on mismatch, so each one fails the test on its own rather than being skipped past by
+# the one after it.
 
 # Echo a JSON object mapping each argument to a one-element list holding the live
 # sha256 of ${INSTALL}/<path> — the provenance-clean shape. Derived rather than

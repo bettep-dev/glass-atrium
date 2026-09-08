@@ -106,9 +106,10 @@ drive() {
 
 # === Self-heal npm ci before build ====================================
 
-# NB: bats fails a test only on its LAST command's status — intermediate `[[ ]]` failures
-# do NOT abort. Every multi-condition assertion below is therefore a short-circuiting `&&`
-# chain, so ANY unmet condition propagates to the final status and fails the test.
+# NB: an intermediate `[[ ]]` failure does NOT abort under bash 3.2 (the macOS default),
+# though CI's bash 5.3 aborts on it (measured: 3.2.57 vs 5.3.9, bats 1.13.0 on both legs).
+# Every multi-condition assertion below is therefore a short-circuiting `&&` chain, so ANY
+# unmet condition propagates to the final status and fails the test on either platform.
 
 @test "npm-ci-selfheal: build_monitor runs npm ci BEFORE npm run build when tsc is absent" {
   # tsc absent (fresh sandbox monitor) → self-heal must fire.

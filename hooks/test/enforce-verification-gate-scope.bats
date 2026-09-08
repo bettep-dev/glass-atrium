@@ -8,7 +8,8 @@
 # Fixtures mirror the sibling [PLAN-SUBSET] suite: a [SIZE-EST] attestation and a pre-stamped
 # qa-code-reviewer marker keep the other two surfaces from preempting this one.
 #
-# BATS GATING NOTE: only the LAST command gates a test — every assertion carries `|| return 1`.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
+# not on macOS bash 3.2 — every assertion carries `|| return 1`, which gates on both.
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'

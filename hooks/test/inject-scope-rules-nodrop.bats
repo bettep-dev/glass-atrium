@@ -21,8 +21,10 @@
 #   the worst-case sum. INJECT_SCOPE_RULES_DROP_LOG is redirected into the Bats tmpdir so any marker
 #   write never touches the real ~/.glass-atrium/logs.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
-#   assertion is guarded with a helper that `return 1`s on mismatch, so EACH one independently fails.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion is guarded with a
+#   helper that `return 1`s on mismatch, so EACH one independently fails.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"
@@ -230,7 +232,7 @@ for line in sys.stdin:
 ' 2>/dev/null
 }
 
-# Per-assertion gate helpers (bodies are NOT under set -e).
+# Per-assertion gate helpers — an explicit `return 1` gates on every bash (see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || { echo "expected status ${1}, got ${status} (output: ${output})" >&2; return 1; }
 }

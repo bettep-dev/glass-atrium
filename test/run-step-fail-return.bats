@@ -140,9 +140,10 @@ drive_gate() {
     bash "${GATE_DRIVER}"
 }
 
-# NB: bats fails a test only on its LAST command's status — intermediate `[[ ]]` failures do NOT
-# abort. Every multi-condition assertion below is a short-circuiting `&&` chain so ANY unmet
-# condition propagates to the final status.
+# NB: an intermediate `[[ ]]` failure does NOT abort under bash 3.2 (the macOS default), though
+# CI's bash 5.3 aborts on it (measured: 3.2.57 vs 5.3.9, bats 1.13.0 on both legs). Every
+# multi-condition assertion below is a short-circuiting `&&` chain so ANY unmet condition
+# propagates to the final status.
 
 # === Force-quit-guard behavioral — step-8 (setup_database → run_db_setup) same-scope sentinel ===========
 

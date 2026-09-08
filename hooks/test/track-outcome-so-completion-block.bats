@@ -341,7 +341,7 @@ run_hook_db() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-# bats checks only the LAST command's status, so a bare intermediate [[ ]] is silently ignored.
+# A bare intermediate [[ ]] is silently ignored on macOS bash 3.2; Linux bash 5 gates it (bats 1.13.0 both legs).
 # oc/no echo a diagnostic + return non-zero so each caller's `|| return 1` aborts AT the failure.
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
@@ -376,7 +376,7 @@ PY
   run_hook_stderr
   [ "${status}" -eq 0 ] || return 1
   # The writer block was recovered from the SO input and promoted — the run is writer-emitted, NOT
-  # synthesized. Each assertion is load-bearing via || return 1 (bats gates only the last command).
+  # synthesized. Each assertion is load-bearing via || return 1 (a bare mid-body [[ ]] is inert on macOS bash 3.2).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "completion_block recovered from terminal StructuredOutput input (tier-1 promotion)" "${output}" || return 1
   oc "attribution=structuredoutput-completion" "${output}" || return 1

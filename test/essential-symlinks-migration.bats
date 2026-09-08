@@ -119,7 +119,9 @@ run_ga() {
   [[ ! -e "${TARGET}/test" ]]
   # Root artifacts ride SYMLINK_EXCLUDE_EXACT: a ~/.claude/settings.template.json
   # beside the real settings.json is a confusion surface, and the licence pair has
-  # no ~/.claude consumer. One chained final command — bats gates on the LAST one.
+  # no ~/.claude consumer. One chained final command, so every member gates on both
+  # legs — a mid-body bare `[[ ]]` is inert on bash 3.2.57 (measured, bats 1.13.0 on
+  # both legs, so bash is the variable, not bats).
   [[ ! -e "${TARGET}/LICENSE" ]] && [[ ! -e "${TARGET}/LICENSES-THIRD-PARTY.md" ]] &&
     [[ ! -e "${TARGET}/settings.template.json" ]]
 }

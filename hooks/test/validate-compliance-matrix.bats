@@ -27,9 +27,10 @@
 #   COMPLIANCE_RULES_DIR / COMPLIANCE_SCOPED_DIR / COMPLIANCE_REGISTRY_FILE) —
 #   never a faked HOME, never the live matrix.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command
-#   gates pass/fail. Every assertion `return 1`s on mismatch, so EACH one
-#   independently fails the test.
+# BATS GATING NOTE: @test bodies DO run under errexit — what differs is the shape:
+#   bash 3.2 (macOS) does not abort on a failing bare mid-body `[[ ]]`, bash 5.3 (CI)
+#   does (measured, bats 1.13.0 on both legs — bash is the variable, not bats). Every
+#   assertion `return 1`s on mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-compliance-matrix.sh"
 

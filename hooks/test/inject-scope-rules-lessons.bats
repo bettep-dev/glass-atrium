@@ -7,7 +7,10 @@
 #   Isolation: every other scope source is sandboxed to /nonexistent and the meter is off, so the
 #   only variable block is the lesson block. The lesson store is a hermetic in-sandbox JSON fixture.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e` — every assertion is a helper that `return 1`s.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion here is a helper
+#   that `return 1`s.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"

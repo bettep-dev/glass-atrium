@@ -245,8 +245,8 @@ run_refresh() {
   [[ "$output" == *"agents/GLASS_ATRIUM_GLOBAL_RULES.md no no"* ]] || return 1
   # Every declared roster row, by name: the loop above passes vacuously on an empty word split.
   # The spine is not sourced in THIS process, so the list is read through one that does — an
-  # undefined function here would word-split to nothing and skip the loop, which is the inert
-  # assertion this suite's own gating note warns about. The non-empty guard is what forbids it.
+  # undefined function here would word-split to nothing and skip the loop, leaving the row-by-row
+  # claim asserting nothing. The non-empty guard is what forbids it.
   local roster roster_paths
   roster_paths="$(bash -c 'source "'"${GA}"'/scripts/lib/apply-spine.sh"; spine_get_roster_paths')"
   [[ -n "${roster_paths}" ]] || return 1

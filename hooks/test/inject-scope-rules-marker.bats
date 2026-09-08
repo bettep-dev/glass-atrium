@@ -25,8 +25,10 @@
 #   also emits no marker on a no-shed spawn) but its full-ceiling assertion pins the conditional
 #   reserve the pre-T16 hook lacks.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Each
-#   assertion `return 1`s on mismatch, so EVERY one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Each assertion `return 1`s on
+#   mismatch, so EVERY one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 
@@ -109,7 +111,7 @@ ctx_of() {
   printf '%s' "${json}" | jq -r '.hookSpecificOutput.additionalContext' 2>/dev/null || true
 }
 
-# Per-assertion gate helpers (bodies are NOT under set -e).
+# Per-assertion gate helpers — an explicit `return 1` gates on every bash (see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2

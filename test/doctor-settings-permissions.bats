@@ -22,9 +22,11 @@
 # settings.json under test are both sandbox files — no ~/.claude or ~/.glass-atrium state is read
 # or written.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` / `(( ))` does NOT gate — the keyword is read as a
-# tested condition — whereas a plain command's non-zero return IS caught mid-body. Every assertion
-# here `return 1`s on mismatch, so each one independently fails the test.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): @test bodies run under errexit.
+# Mid-body `[[ ]]` / `(( ))` → platform-split: does NOT gate on macOS bash 3.2.57, DOES gate on Linux bash 5.3.9 (CI).
+# Mid-body plain command (`[ ]`, `grep -q`, `let`) and any final command → gate on BOTH.
+# So a bare `[[ ]]` / `(( ))` is never safely inert — `(( n++ ))` at n=0 aborts the test on CI.
+# Every assertion here `return 1`s on mismatch, so each one independently fails the test.
 #
 # Run via: bats test/doctor-settings-permissions.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+

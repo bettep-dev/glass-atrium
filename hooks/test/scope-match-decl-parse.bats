@@ -10,8 +10,10 @@
 # including when a separator-less field carries prose in a sibling out=, the shape that made the
 # second half of that claim false.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail —
-# every assertion here `return 1`s on mismatch.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+# bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured, bats
+# 1.13.0 on both legs, so bash is the variable, not bats). Every assertion here `return 1`s on
+# mismatch.
 
 LIB_SH="${BATS_TEST_DIRNAME}/../lib/scope-match.sh"
 

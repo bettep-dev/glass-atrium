@@ -224,9 +224,10 @@ assert_absent_in() {
 
 @test "ALL schema-cap authority is stated once — skill prescribes, charter + META body point (gate)" {
   # NOTE ON FORM: every check below uses an `if` condition, never `cmd && { ... }`. Under the
-  # errexit bats runs each test with, a failing `grep` heading an AND-list makes the list itself
-  # return non-zero and aborts the test — which for an ABSENCE check would invert the gate (a
-  # CLEAN charter would abort as a failure). Condition context is the only safe form here.
+  # errexit each test body runs with, a failing `grep` heading an AND-list leaves the list
+  # non-zero — inert mid-body on every bash, but GATING in FINAL position, where an ABSENCE
+  # check would invert the verdict (a CLEAN charter reading as a failure). An `if` condition
+  # is exempt at every position, so reordering these checks can never acquire that hazard.
   local failures=0
 
   # charter side: no prescription, pointer present in all three prescriptive parts

@@ -147,8 +147,9 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 
 # Drive the hook with a RAW JSON envelope (renamed keys, non-object, malformed …), merging
 # stderr into $output so the emit_error JSON (DEL-003 / DEL-001) is assertable. Multi-assertion
-# rows gate via `|| return 1` per line so a mid-body failure fails the test (bats runs no set -e,
-# so only the FINAL command would otherwise gate). Args: $1 = raw JSON stdin.
+# rows gate via `|| return 1` per line so a mid-body failure fails the test (a bare mid-body
+# `[[ ]]` is not aborted by errexit under bash 3.2 on macOS, though bash 5.3 on CI does abort —
+# measured, bats 1.13.0 on both legs). Args: $1 = raw JSON stdin.
 run_raw_envelope() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required for envelope classification"
   # SC2016: inner $1/$2 are the child bash's OWN positionals — no expansion here.

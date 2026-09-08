@@ -10,13 +10,14 @@
 # a second failure hits the unchanged preflight_fatal). Every code-behavior row
 # FAILS at HEAD (no preflight exists there) and passes after.
 #
-# Assertion idiom: `[[ ... ]] || return 1`. Bats does NOT catch a bare non-final
-# `[[ ]]` failure — the double-bracket keyword is treated as a tested condition,
-# so only the LAST command of a body would gate the test — whereas a plain
-# command's non-zero return IS caught. Routing every assertion through
-# `|| return 1` makes each one actually gate the test (and reports the failing
-# line). Single-bracket `[ ]` is caught bare, but `[[ ]]` is needed for the
-# `== *glob*` output checks, so the idiom is applied uniformly.
+# Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
+# bare non-final `[[ ]]` / `(( ))` failure does not abort on macOS bash 3.2.57 —
+# it DOES on Linux bash 5.3.9 in CI (measured, bats 1.13.0 both legs, so bash is
+# the variable, not bats) — whereas a plain command's non-zero return is caught on
+# both. Routing every assertion through `|| return 1` makes each one actually gate
+# the test on both platforms (and reports the failing line). Single-bracket `[ ]`
+# is caught bare everywhere, but `[[ ]]` is needed for the `== *glob*` output
+# checks, so the idiom is applied uniformly.
 #
 # Hermetic: a mktemp "real tree" holds a COPIED daemon + its sourced libs, so
 # GA_ROOT (= the realpathed script dir's parent) is the sandbox and the four

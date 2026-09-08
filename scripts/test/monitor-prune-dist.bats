@@ -12,9 +12,11 @@
 # Every case runs against a synthetic monitor root under BATS_TEST_TMPDIR via the
 # ATRIUM_MONITOR_DIR seam — the live ~/.glass-atrium tree is unreachable from here.
 #
-# EVERY assertion carries `|| return 1`: a bare `[[ ... ]]` that fails mid-body
-# does NOT fail the test on bats 1.13 (only the final command's status is
-# consulted), so an unguarded mid-body assertion is silently vacuous.
+# EVERY assertion carries `|| return 1`: @test bodies do run under errexit, but
+# a bare `[[ ... ]]` that fails mid-body does NOT abort on macOS bash 3.2 — it
+# does on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on both
+# legs, so bash is the variable, not bats). Unguarded, the assertion is
+# silently vacuous locally and aborts the body on CI.
 #
 # Run via: bats scripts/test/monitor-prune-dist.bats
 # Requires: bats (brew install bats-core), bash 3.2+

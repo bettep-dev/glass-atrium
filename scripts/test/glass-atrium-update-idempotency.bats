@@ -22,8 +22,10 @@
 # already sits near the ceiling. A separate file gets its own slot and runs
 # concurrently.
 #
-# Every assertion is gated `|| return 1` — this bats version fails a test only on
-# the LAST command's status, so a bare mid-body `[[ ]]` would be silently ignored.
+# Every assertion is gated `|| return 1` — @test bodies run under errexit, but a bare
+# mid-body `[[ ]]` / `(( ))` is exempt on macOS bash 3.2.57 and DOES gate on Linux bash
+# 5.3.9 in CI (measured, bats 1.13.0 both legs — bash is the variable, not bats), so an
+# unguarded one would be silently ignored locally.
 #
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
 # ATRIUM_UPDATE_STATE_DIR redirected into it; the

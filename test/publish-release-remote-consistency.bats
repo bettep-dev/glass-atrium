@@ -25,7 +25,8 @@
 # SOURCES it (main skipped) and overrides `git` / `gh` as shell functions to drive the
 # pure gate logic. No real git remote, no real gh, no `gh release` against any remote.
 #
-# Every assertion is gated `|| return 1` (this bats fails only on the LAST command's status).
+# Every assertion is gated `|| return 1` (a mid-body `[[ ]]` is exempt from errexit on macOS
+# bash 3.2.57 though CI's bash 5.3.9 gates it — measured, bats 1.13.0 on both legs).
 #
 # Run via: bats test/publish-release-remote-consistency.bats
 # Requires: bats 1.5+, jq, bash 3.2+

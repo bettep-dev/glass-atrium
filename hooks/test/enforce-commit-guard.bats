@@ -13,9 +13,10 @@
 # Decision channel = exit code: 0 PASS (not blocked) / 2 BLOCK. Block detail (the
 # JSON error object) is emitted to stderr → captured into GUARD_ERR.
 #
-# bats 1.13 checks ONLY the LAST command's status, so a bare intermediate `[[ ]]` is
-# silently ignored (a false one never fails the test). Every gating assertion below
-# therefore carries `|| return 1` so it aborts the test AT the failing line.
+# A bare intermediate `[[ ]]` is silently ignored under bash 3.2 (macOS) — a false one
+# never fails the test there — while bash 5.3 (CI) aborts on it (measured, bats 1.13.0 on
+# both legs: bash is the variable, not bats). Every gating assertion below therefore
+# carries `|| return 1` so it aborts the test AT the failing line on both.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-commit-guard.sh"
 
