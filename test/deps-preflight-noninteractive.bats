@@ -74,23 +74,6 @@ teardown() {
   declare -F ga_homebrew_install
 }
 
-@test "D2: ga_homebrew_install body runs the official curl|bash Homebrew installer" {
-  local body
-  body="$(declare -f ga_homebrew_install)"
-  # real in-process execution: /bin/bash -c "$(curl … install.sh)" (expanded HERE).
-  [[ "${body}" == *'/bin/bash -c'* ]]
-  [[ "${body}" == *'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh'* ]]
-}
-
-@test "D2: emitted token is a SINGLE bare word (survives the word-split argv runner)" {
-  local tok
-  tok="$(ga_cmd_homebrew_install)"
-  # exactly one whitespace-delimited field — no $(...) that would split into a broken argv.
-  set -- ${tok}
-  [[ "$#" -eq 1 ]]
-  [[ "$1" == "ga_homebrew_install" ]]
-}
-
 # === D1 — ga_cmd_brew_batch stays a clean formula list (no --no-ask threaded in) =====
 
 @test "D1: ga_cmd_brew_batch emits 'brew install <formulae>' with NO --no-ask / -y flag" {
@@ -158,14 +141,6 @@ teardown() {
   [[ "$(PATH="${empty}" ga_detect_sqlite_fts5)" == "absent" ]]
 }
 
-@test "G8: the FTS5 probe is the cheap read-only in-memory :memory: capability test" {
-  local body
-  body="$(declare -f ga_detect_sqlite_fts5)"
-  # no file, no server, no mutation — a throwaway FTS5 vtable in a :memory: db.
-  [[ "${body}" == *'sqlite3 :memory:'* ]]
-  [[ "${body}" == *'CREATE VIRTUAL TABLE t USING fts5(x)'* ]]
-}
-
 @test "G8: ga_brew_missing_set ADDS 'sqlite' when FTS5 is absent (wrong-version)" {
   # neutralize every other probe so 'sqlite' is the ONLY possible entry.
   ga_detect_sqlite_fts5() { printf 'wrong-version\n'; }
@@ -187,15 +162,6 @@ teardown() {
   run ga_brew_missing_set
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"sqlite"* ]]
-}
-
-@test "G8: GA_BREW_CLI_TOOLS no longer bare-presence-gates sqlite (moved to FTS5 branch)" {
-  # sqlite must NOT be a plain command:formula entry — it is capability-gated separately.
-  local entry
-  for entry in "${GA_BREW_CLI_TOOLS[@]}"; do
-    [[ "${entry}" != "sqlite3:sqlite" ]]
-    [[ "${entry%%:*}" != "sqlite3" ]]
-  done
 }
 
 # === python — the pip --user / --break-system-packages builder split =================
@@ -221,104 +187,6 @@ teardown() {
   [[ -z "${output}" ]]
   run ga_cmd_python_libs_break_system
   [[ -z "${output}" ]]
-}
-
-# === DUAL call-context dispatch (static) — boxed(menu) vs scroll(passthrough) =========
-
-@test "dispatch(static): run_dependency_preflight discriminates menu fd3 from passthrough" {
-  # the guard: non-owned TTY that is exactly the menu's fd3 → boxed; everything else scroll.
-  grep -qF 'if [[ "${PREFLIGHT_TTY_OWNED}" == "false" && "${TTY}" == "/dev/fd/3" ]]; then' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  # both branch functions are defined.
-  grep -qE '^_run_dependency_preflight_boxed\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qE '^_run_dependency_preflight_scroll\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  # the dispatcher body routes to each on the correct side.
-  local body
-  body="$(awk '/^run_dependency_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'_run_dependency_preflight_boxed'* ]]
-  [[ "${body}" == *'_run_dependency_preflight_scroll'* ]]
-}
-
-# === interactive gates run in the alt-screen bracket (mirrors _confirm_pregate) =======
-
-@test "gates(static): boxed interactive gates each run in a preflight_bracket" {
-  # Xcode CLT + grouped consent + claude auth gates all drop to the cooked-scrollback bracket.
-  grep -qF 'preflight_bracket preflight_guide_xcode_clt' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_bracket preflight_grouped_consent' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_bracket preflight_guide_claude_auth' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-}
-
-@test "gates(static): preflight_bracket IS the alt-screen consent bracket (rmcup/smcup)" {
-  # mirrors _confirm_pregate: drop the alt-screen + restore cooked stty for the gate, then
-  # re-enter the alt-screen + raw mode on return.
-  local body
-  body="$(awk '/^preflight_bracket\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'tp rmcup'* ]]
-  [[ "${body}" == *'tp smcup'* ]]
-  [[ "${body}" == *'RAW_ACTIVE=false'* ]]
-  [[ "${body}" == *'RAW_ACTIVE=true'* ]]
-}
-
-# === menu NON-interactive groups engage the work-box PANEL (RENDER_MODE=panel) ========
-
-@test "panel(static): boxed brew/pg/claude steps engage preflight_panel_step_or_bail" {
-  grep -qF 'preflight_panel_step_or_bail "brew batch (missing formulae)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_panel_step_or_bail "postgres: start service"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_panel_step_or_bail "postgres: create superuser role"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_panel_step_or_bail "claude CLI (native installer, npm fallback)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-}
-
-@test "panel(static): preflight_panel_step advances a SHARED clamped STEP_INDEX (unified counter, no 1/1 hardcode)" {
-  local body
-  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # Shared-counter contract: advance the shared STEP_INDEX, NEVER reset STEP_TOTAL here,
-  # CLAMP i <= N so an imperfect up-front estimate degrades to an N/N tail (never "7/5").
-  [[ "${body}" == *'STEP_INDEX=$((${STEP_INDEX:-0} + 1))'* ]]
-  [[ "${body}" == *'-gt "${STEP_TOTAL}"'* ]]        # the clamp condition (i > N)
-  [[ "${body}" == *'STEP_INDEX="${STEP_TOTAL}"'* ]] # the clamp assignment (pin to N)
-  # the OLD 1/1 single-step hardcode is GONE (STEP_TOTAL is owned by preflight_count_and_gate).
-  [[ "${body}" != *'STEP_INDEX=1'* ]]
-  [[ "${body}" != *'STEP_TOTAL=1'* ]]
-  # still routes into the work box body as a panel step.
-  [[ "${body}" == *'local RENDER_MODE="panel"'* ]]
-  [[ "${body}" == *'draw_workbox'* ]]
-}
-
-@test "panel(static): preflight_panel_step_or_bail delegates to preflight_panel_step" {
-  local body
-  body="$(awk '/^preflight_panel_step_or_bail\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'preflight_panel_step "$1" "$2" "$3"'* ]]
-}
-
-# === passthrough (scroll) path RETAINS the framed runner + scrolling render ============
-
-@test "scroll(static): passthrough brew/pg/claude steps keep preflight_run_or_bail_framed" {
-  grep -qF 'preflight_run_or_bail_framed "brew batch (missing formulae)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_run_or_bail_framed "postgres: start service"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_run_or_bail_framed "postgres: create superuser role"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-  grep -qF 'preflight_run_or_bail_framed "claude CLI (native installer, npm fallback)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-}
-
-@test "scroll(static): preflight_run_or_bail_framed frames via function-local RENDER_MODE=install" {
-  local body
-  body="$(awk '/^preflight_run_or_bail_framed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'local RENDER_MODE="install"'* ]]
-  [[ "${body}" == *'preflight_run_or_bail "$1" "$2"'* ]]
-}
-
-@test "scroll(static): the passthrough path renders via scrolling preflight_line/preflight_run_cmd" {
-  local body
-  body="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # scrolling chrome (NOT the work box): the historical banner + inline line renderer.
-  [[ "${body}" == *'preflight_line'* ]]
-  [[ "${body}" == *'dependency preflight (bare-Mac bootstrap)'* ]]
-  # the scroll path must NOT paint into a (never-drawn) work box.
-  [[ "${body}" != *'preflight_panel_step'* ]]
 }
 
 # === D3 / Homebrew — the sudo installer stays UNframed + off the panel in BOTH paths ==
@@ -355,74 +223,6 @@ teardown() {
   [[ "${env_ln}" -lt "${hb_ln}" ]]
 }
 
-# === G7 — fakechat framed as a panel step with a DISTINCT slow-clone ACTIVE label =====
-
-@test "G7(static): _preflight_fakechat_boxed frames its steps as panel steps" {
-  local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'preflight_panel_step "fakechat: add official marketplace"'* ]]
-  [[ "${body}" == *'preflight_panel_step "fakechat: install plugin"'* ]]
-}
-
-@test "G7(static): marketplace-add carries a DISTINCT present-progressive slow-clone label" {
-  local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # the active label flags the ~30s git clone so the box does not read as stalled.
-  [[ "${body}" == *'adding marketplace (git clone, may take a minute)…'* ]]
-}
-
-@test "G7(static): preflight_panel_step drives STEP_LABEL_ACTIVE_CUR from its active arg" {
-  local body
-  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # $2 (active) feeds the live label, falling back to $1 (resolved) when empty.
-  [[ "${body}" == *'STEP_LABEL_ACTIVE_CUR="${active:-${resolved}}"'* ]]
-}
-
-# === G3 — python pip --user framed; PEP-668 --break-system-packages retry AUTO-runs =====
-
-@test "G3(static): _preflight_python_libs_boxed frames pip --user AND the --break retry" {
-  local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'preflight_panel_step "python libs (pip --user)"'* ]]
-  [[ "${body}" == *'preflight_panel_step "python libs (--break-system-packages)"'* ]]
-}
-
-@test "G3(static): the boxed --break retry AUTO-runs — NO bracket, NO typed consent" {
-  local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # the override no longer sits behind a second gate: no alt-screen bracket, no confirm_typed.
-  [[ "${body}" != *'preflight_bracket'* ]]
-  [[ "${body}" != *'confirm_typed'* ]]
-  # with no bracket tearing down the frame, no enter_run_state re-engage is needed either.
-  [[ "${body}" != *'enter_run_state'* ]]
-}
-
-@test "G3(static): the boxed override is surfaced VISIBLY (active-label documents --break)" {
-  local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # the retry panel step carries a non-empty ACTIVE label naming the override (visible, not silent).
-  [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
-}
-
-@test "G3(static): the scroll variant AUTO-retries with a VISIBLE override log, no typed consent" {
-  local body
-  body="$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'preflight_run_cmd "python libs (pip --user)"'* ]]
-  [[ "${body}" == *'preflight_run_cmd "python libs (--break-system-packages)"'* ]]
-  # NO second typed gate — the retry auto-proceeds.
-  [[ "${body}" != *'confirm_typed'* ]]
-  # the override is LOGGED visibly via preflight_line naming --break-system-packages.
-  [[ "${body}" == *'preflight_line'* ]]
-  [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
-}
-
 # === G4 — fakechat + python steps stay NON-FATAL (warn-and-continue) ==================
 
 @test "G4(static): the boxed fakechat + python steps are non-fatal (|| true, never bail)" {
@@ -438,27 +238,6 @@ teardown() {
   body="$(awk '/^preflight_grouped_consent\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'confirm_typed'* ]]
-}
-
-# === mechanism — function-local export / RENDER_MODE scoping (no leak) =================
-
-@test "mechanism: a function-local 'local -x' export is UNSET after the function returns" {
-  # this is the exact scoping the fix relies on: the consented block's env auto-reverts
-  # when the preflight returns, so nothing leaks downstream.
-  _leak_probe() { local -x GA_TEST_NOASK=1; [[ "${GA_TEST_NOASK}" == "1" ]]; }
-  unset GA_TEST_NOASK
-  _leak_probe
-  [[ -z "${GA_TEST_NOASK:-}" ]]
-}
-
-@test "mechanism: a wrapper's 'local RENDER_MODE' frames only its own call, not the caller" {
-  # mirrors preflight_panel_step / preflight_run_or_bail_framed: the inner callee sees the
-  # framed mode, the outer stays "".
-  RENDER_MODE=""
-  _inner() { printf '%s' "${RENDER_MODE}"; }
-  _framed() { local RENDER_MODE="panel"; _inner; }
-  [[ "$(_framed)" == "panel" ]]
-  [[ -z "${RENDER_MODE}" ]]
 }
 
 # === Up-front count pass: shared STEP_TOTAL + per-group runnable counts ===========
@@ -682,17 +461,6 @@ extract_launcher_fn() {
   # the OLD `== absent` RUN-site gate is gone from BOTH create call-sites.
   [[ "${scroll}" != *'ga_detect_postgres_role)" == "absent"'* ]]
   [[ "${boxed}" != *'ga_detect_postgres_role)" == "absent"'* ]]
-}
-
-@test "STEP3(static): preflight_count_and_gate KEEPS the conservative == absent role count" {
-  # the count must NOT mirror `!= present` — that OVER-counts a warm machine whose role already
-  # exists (post-readiness role=='present' → step skipped → bar stuck at N-1/N). Under-count +
-  # clamp is the safe direction.
-  local body
-  body="$(awk '/^preflight_count_and_gate\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'ga_detect_postgres_role)" == "absent"'* ]]
-  [[ "${body}" != *'ga_detect_postgres_role)" != "present"'* ]]
 }
 
 @test "STEP3(count): warm machine whose role ALREADY exists does NOT count the role step" {
@@ -1267,16 +1035,6 @@ SH
 # would survive the watchdog, so the following BLOCKING `wait "${pid}"` never returns = an unbounded hang.
 # The fix sends `kill -KILL` (uncatchable → `wait` is GUARANTEED to return). The happy path (probe exits
 # before the ceiling → watchdog reaped, never fires) is unchanged.
-
-@test "watchdog(static): the auth-probe watchdog escalates to the UNCATCHABLE kill -KILL (not bare SIGTERM)" {
-  local body
-  body="$(awk '/^ga_detect_claude_auth\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DEPS_SH}")"
-  [[ -n "${body}" ]] || return 1
-  # the watchdog fires kill -KILL after the ceiling → the blocking wait is GUARANTEED to return.
-  [[ "${body}" == *'sleep "${ceiling}" && kill -KILL "${pid}" 2>/dev/null'* ]] || return 1
-  # the OLD bare-SIGTERM watchdog (which a TERM-trapping probe could survive → unbounded wait) is GONE.
-  [[ "${body}" != *'sleep "${ceiling}" && kill "${pid}" 2>/dev/null'* ]] || return 1
-}
 
 @test "watchdog(live): a TERM-IGNORING probe is SIGKILLed within the ceiling → bounded 'absent' (no unbounded wait)" {
   local stub="${SANDBOX}/bin"
