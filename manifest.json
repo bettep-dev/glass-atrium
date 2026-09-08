@@ -775,7 +775,6 @@
     "test/harness-290-t21-capability-confinement.bats",
     "test/headless-auth-selftest-cred-isolation.bats",
     "test/headless-auth-selftest-quota.bats",
-    "test/headless-auth-selftest-timeout.bats",
     "test/hook-bindings-complete.bats",
     "test/hook-bindings-executable.bats",
     "test/hook-matcher-shape-invariant.bats",
@@ -789,7 +788,6 @@
     "test/install-update-state.bats",
     "test/lib/bats-hermetic-env.bash",
     "test/lib/stat-mode.bash",
-    "test/licenses-audit-gate.bats",
     "test/merged-box-shape.bats",
     "test/monitor-build-selfheal.bats",
     "test/oss-db-setup.bats",
@@ -1603,8 +1601,7 @@
     "test/ga-split-verify.sh": "a992932e8c2ec767a42cc59ff5e711da917e1b498ed841a978d34ccadea98c18",
     "test/harness-290-t21-capability-confinement.bats": "12b939200e41c0171c7109ae9ba13c468f6e9769630e3607ec155e7d5e470fed",
     "test/headless-auth-selftest-cred-isolation.bats": "b2a548aff9a0a64c3c071b6054b900cc73fe2acfb4302388f7fb2d3126877a2f",
-    "test/headless-auth-selftest-quota.bats": "402d5a8e15607dc3375ae3fe302ad3b9241e9a92a487eaebef815917084dad7c",
-    "test/headless-auth-selftest-timeout.bats": "c62e49121f9f2e4d1d867387499866a62c90ce1e2eb29e7b20af5f5dc2e9de0b",
+    "test/headless-auth-selftest-quota.bats": "ff9ce867c43085c7ed5f52a64548287e6c4a1eeecbb4e3f2117fa3618cef3415",
     "test/hook-bindings-complete.bats": "1cfe0ea08356bbea88c352c62bccbd7d516b2e15504f61115a32c8c419792949",
     "test/hook-bindings-executable.bats": "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158",
     "test/hook-matcher-shape-invariant.bats": "52fa587a2f061f8dda31a42e86415c48cc1254d3627df435d1d4f5d138b1a451",
@@ -1618,7 +1615,6 @@
     "test/install-update-state.bats": "94dc5c909a4e5a4d5da43071992750de15b638d1c826f28c89590f8b0ffc580b",
     "test/lib/bats-hermetic-env.bash": "c940a821276e05a07a01e86f74abda4c8473e33aa9ecb83f103364aa6f884c89",
     "test/lib/stat-mode.bash": "0b2aececea46691a4d8b6208fb8af988a6255067ab440066da4968c5316f0ea8",
-    "test/licenses-audit-gate.bats": "afaaa08b5d35b45c01f2a5a59342e65d53dfb2f4e193025d6bdede2f61887dc3",
     "test/merged-box-shape.bats": "41bad090c3cc0ddfcb22559340d0cb7aa4c7761b46d3b4e5bad0d943cbbc58b9",
     "test/monitor-build-selfheal.bats": "346120a7efec580705f6743c09eec491dcdcecfe5fb30fc779a0a99d27c190ca",
     "test/oss-db-setup.bats": "102c732a6801beb2b0ecb4ff309079d61ebc20c5a832f33c11df094c4f173a82",
@@ -2433,7 +2429,6 @@
     "test/harness-290-t21-capability-confinement.bats": "644",
     "test/headless-auth-selftest-cred-isolation.bats": "644",
     "test/headless-auth-selftest-quota.bats": "644",
-    "test/headless-auth-selftest-timeout.bats": "644",
     "test/hook-bindings-complete.bats": "644",
     "test/hook-bindings-executable.bats": "644",
     "test/hook-matcher-shape-invariant.bats": "644",
@@ -2447,7 +2442,6 @@
     "test/install-update-state.bats": "644",
     "test/lib/bats-hermetic-env.bash": "644",
     "test/lib/stat-mode.bash": "644",
-    "test/licenses-audit-gate.bats": "644",
     "test/merged-box-shape.bats": "644",
     "test/monitor-build-selfheal.bats": "644",
     "test/oss-db-setup.bats": "644",
@@ -2591,6 +2585,12 @@
     ],
     "test/ci-paths-filter-docs.bats": [
       "72e9ad25a1e7d02609d80c45861cc2fdd2b3047f354248b9c122100636ce070e"
+    ],
+    "test/headless-auth-selftest-timeout.bats": [
+      "c62e49121f9f2e4d1d867387499866a62c90ce1e2eb29e7b20af5f5dc2e9de0b"
+    ],
+    "test/licenses-audit-gate.bats": [
+      "afaaa08b5d35b45c01f2a5a59342e65d53dfb2f4e193025d6bdede2f61887dc3"
     ]
   }
 }
