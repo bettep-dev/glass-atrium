@@ -74,6 +74,16 @@ teardown() {
   declare -F ga_homebrew_install
 }
 
+@test "D2: ga_homebrew_install body runs the official curl|bash Homebrew installer" {
+  local body
+  body="$(declare -f ga_homebrew_install)"
+  # real in-process execution: /bin/bash -c "$(curl … install.sh)" (expanded HERE).
+  # SECURITY: the installer URL is a SUPPLY-CHAIN pin and this is its sole assertion repo-wide —
+  # swapping the host in ga-deps.sh must red here (core-security.md Dependency Auditing, OWASP A03).
+  [[ "${body}" == *'/bin/bash -c'* ]] \
+    && [[ "${body}" == *'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh'* ]]
+}
+
 # === D1 — ga_cmd_brew_batch stays a clean formula list (no --no-ask threaded in) =====
 
 @test "D1: ga_cmd_brew_batch emits 'brew install <formulae>' with NO --no-ask / -y flag" {
@@ -187,6 +197,33 @@ teardown() {
   [[ -z "${output}" ]]
   run ga_cmd_python_libs_break_system
   [[ -z "${output}" ]]
+}
+
+# === DUAL call-context dispatch (static) — boxed(menu) vs scroll(passthrough) =========
+
+@test "dispatch(static): run_dependency_preflight discriminates menu fd3 from passthrough" {
+  # the guard: non-owned TTY that is exactly the menu's fd3 → boxed; everything else scroll.
+  # Sole assertion of the /dev/fd/3 discriminator repo-wide (every other match is a prose comment),
+  # so a swap to another fd would otherwise red nothing.
+  local body
+  body="$(awk '/^run_dependency_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
+  grep -qF 'if [[ "${PREFLIGHT_TTY_OWNED}" == "false" && "${TTY}" == "/dev/fd/3" ]]; then' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh \
+    && grep -qE '^_run_dependency_preflight_boxed\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh \
+    && grep -qE '^_run_dependency_preflight_scroll\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh \
+    && [[ -n "${body}" ]] \
+    && [[ "${body}" == *'_run_dependency_preflight_boxed'* ]] \
+    && [[ "${body}" == *'_run_dependency_preflight_scroll'* ]]
+}
+
+# === interactive gates run in the alt-screen bracket (mirrors _confirm_pregate) =======
+
+@test "gates(static): the grouped-consent + claude-auth gates each run in a preflight_bracket" {
+  # Both non-guide interactive gates drop to the cooked-scrollback bracket. The Xcode CLT third is
+  # already homed in test/run-step-fail-return.bats ("hash-r(static)"), so it is NOT re-asserted here.
+  # The kept `consent:` case pins confirm_typed PRESENCE, not the bracket wrapping the gate —
+  # dropping either `preflight_bracket ` prefix below reds only here.
+  grep -qF 'preflight_bracket preflight_grouped_consent' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh \
+    && grep -qF 'preflight_bracket preflight_guide_claude_auth' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 # === D3 / Homebrew — the sudo installer stays UNframed + off the panel in BOTH paths ==
@@ -476,6 +513,25 @@ extract_launcher_fn() {
   preflight_count_and_gate
   [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 1 ]] # pg-service only, role uncounted (conservative)
   [[ "${STEP_TOTAL}" -eq 1 ]]
+}
+
+@test "STEP3(count): a NEITHER-present-NOR-absent role verdict is NOT counted (conservative == absent)" {
+  # The discriminating else-branch input no other count case reaches: a warm machine whose role probe
+  # returns the real THIRD state `present-but-down` (psql off PATH, or the server unreachable on the
+  # SELECT-1 re-probe). The count gate must stay `== "absent"` and NOT mirror the run-site's
+  # `!= "present"` — a `!= present` count OVER-counts here (role counted up-front, then skipped at
+  # the run site → bar stuck at N-1/N). Under-count + clamp is the safe direction.
+  extract_launcher_fn preflight_count_and_gate
+  ga_brew_missing_set() { printf ''; }                        # warm: pg NOT in the brew missing-set
+  ga_detect_postgres() { printf 'present\n'; }                # service up → pg-service NOT counted
+  ga_detect_postgres_role() { printf 'present-but-down\n'; }  # neither present NOR absent
+  ga_detect_claude_cli() { printf 'present\n'; }
+  ga_detect_fakechat() { printf 'present\n'; }
+  ga_marketplace_present() { printf 'yes\n'; }
+  ga_detect_python_libs() { printf 'present\n'; }
+  preflight_count_and_gate
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 0 ]] \
+    && [[ "${STEP_TOTAL}" -eq 0 ]]
 }
 
 # === STEP 4 — version-agnostic keg-inject (brew-keg-first, not stale-psql-first) =========
