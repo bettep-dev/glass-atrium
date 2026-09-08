@@ -295,10 +295,18 @@ drop_group() {
   # transcript that predates the subagent's edits). With settings.json absent, every
   # leaf is unwired, so all 49 report dormant.
   #
-  # This total is a COUNT, not a membership pin: it moves whenever the roster moves for unrelated
-  # reasons, and a simultaneous remove-and-add would hold it at 49. Membership is not this file's
-  # job — test/wire-hooks-merge.bats drives wire_hooks off the same array and asserts each leaf by
-  # NAME, so a remove-and-add reds there. Do not re-add per-hook rows here to cover that.
+  # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 49. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 49 leaves by NAME, so a swapped roster row
+  # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 8 of the 42 roster
+  # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
+  # is one of those 8.
+  #
+  # Measured, not assumed: swapping "PreToolUse<TAB>validate-scope-drift.sh<TAB>Write|Edit" for
+  # style-ref-verify.sh in EXPECTED_HOOK_BINDINGS — one real deployed hook silently unwired, total
+  # held at 49 — leaves wire-hooks-merge.bats 19/19 green and hook-bindings-complete.bats 2/2 green
+  # while reddening 6 rows in this file.
   [[ "${output}" == *"49 dormant hook binding(s)"* ]]
 }
 
