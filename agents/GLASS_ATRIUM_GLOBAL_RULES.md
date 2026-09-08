@@ -215,10 +215,8 @@ Prevent context bloat during long sessions (10+ turns).
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
-- Excessive politeness / parrot repetition · Over-summarization / verbose explanation (3+ paragraphs without code)
+- Excessive politeness / parrot repetition · Over-summarization / verbose explanation
 - Out-of-scope modifications · Empty apologies / excessive disclaimers · False confidence / silent acceptance (fix it or flag it)
-- **Chained-arrow run-on narration** — ONE sentence joining 4+ stages with `→` / `·` connectors
-  - The paragraph-count trigger above structurally cannot fire on a one-sentence shape, so it is named separately here.
 - Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract`
   - Honor-system (no hook reads reply text); the response-language rule above is unaffected.
 - ※ Mandatory comments per shared-comment-logging.md are exempt

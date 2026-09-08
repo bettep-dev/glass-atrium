@@ -15,7 +15,7 @@ Applies to all agents.
 
 ### Subject Line
 
-- **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics). The author's job is to find the most compressed phrasing that conveys the change's purpose — counting characters is the wrong frame.
+- **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics).
 - **Language & tone (English)**: write subjects in English imperative mood — `Add login button`, not `Added login button` / `Adding login button`. Bodies are English as well (public OSS repository, no Korean subjects).
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional. When used, place after the checkbox: `- [x] feat: <description>`.
 
@@ -29,18 +29,11 @@ Applies to all agents.
 
 - **Why over what**: the diff already shows what changed; the body explains why the change was needed. Implementation detail (how) belongs in the code, not the message.
 - **Inverted-pyramid ordering**: lead with the most important "why" sentence; supporting context follows.
-- **Meaning-unit wrapping**: break lines at clause / sentence / list-item boundaries.
-  - Identifiers (function names, file paths, hooks, tokens) MUST NEVER be split across lines.
-  - No fixed character cap — the author chooses break points that preserve readability.
-  - Short clauses (≤ ~10 words) stay on one line.
 - **Conciseness**: every sentence MUST add information not already conveyed by the subject or a prior body sentence. No formal greetings, no exaggerated adjectives (`very important`, `really cleanly`).
-- **Bullet form by default**: body content MUST be written as bullets.
-  - Prose paragraphs are admitted ONLY when the change is a single causal narrative whose steps cannot decompose into 3+ independent bullets without breaking the chain.
-  - Meaning-unit wrapping still applies inside each bullet, and Conciseness still requires every bullet — and every prose sentence written under the prose admission above — to add new information.
+- **Body shape**: bullets suit a body carrying 3+ independent facts; prose suits one causal chain.
 
 ### Anti-patterns
 
-- **Chained single-line subjects**: stacking unrelated changes onto one subject via `—`, `·`, or `:` connectors.
 - **Diff-restating body**: rephrasing what the diff already shows (`Changed X to Y` when the diff makes that visible).
 - **Subject-body redundancy**: subject and body conveying the same fact in different words.
 

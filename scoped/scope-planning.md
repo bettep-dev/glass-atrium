@@ -79,6 +79,8 @@ An exposed HTML plan MUST maximize visual communication; a text dump FAILS. Tier
 - `@media print` reset REQUIRED, the ONE d8-exempt place for `white`/`black`/hex (`<style> @media print { body { background: white; color: black } }`, NOT inline `style=`; hide nav/aside; `break-inside: avoid`)
 - WCAG 2.2 AA incl. new SC 2.4.11 focus-visible ring (≥3:1 change) + SC 2.5.8 target size ≥24×24px
 - all status dual-encoded (color + symbol/text, never color-only; verify BOTH dark+light themes)
+- no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
+- body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
 - `prefers-reduced-motion` SUBSTITUTES a gentle fade (does not merely remove)
 - ≥1 primary visual structure beyond prose
 
@@ -93,17 +95,7 @@ An exposed HTML plan MUST maximize visual communication; a text dump FAILS. Tier
 - described UI → structural mockup
 - data shapes suited to one → CSS-only bar charts
 
-**RESTRAINT (part of the standard, via an EXPLICIT PROHIBITION LIST)** — no force-fitting visuals a short human-facing plan does not support. Prohibited:
-
-- purple/indigo/lavender AI-brand gradients
-- glassmorphism / `backdrop-filter` (also an a11y exclusion)
-- gradient text on headings
-- centered body text (left-align ragged-right)
-- equal `grid-cols-3` (prefer asymmetric 1fr/3fr)
-- decoration stacking (one treatment per element)
-- emoji-as-icons
-- unverified stat banners
-- more than 1 gradient per layer, or a gradient of more than 2 stops (max 1 gradient per layer, 2-stop max)
+**RESTRAINT (part of the standard)** — match visual density to what the plan's content and audience support; a short human-facing plan does not benefit from force-fitted visuals. Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill — plus the residual patterns at `scope-report.md` → `### Visual-Maximization Floor` (canonical).
 
 ### Dark base default
 

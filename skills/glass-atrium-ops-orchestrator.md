@@ -1172,7 +1172,7 @@ Governs the FORM of the orchestrator's user-facing reply text — the terminal o
 
 - It EXTENDS the prose-summary duty in that row: the Monitoring rule fixes WHAT must not be printed (the raw `[COMPLETION]` block, a machine-facing artifact); this fixes the SHAPE of the prose that replaces it.
 - **Subagent finals are OUT of scope** — they travel the machine-facing recorded channel, not this register.
-- **Canonical here, single-sited** — `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition carries one named shape + one pointer, nothing more.
+- **Canonical here, single-sited** — `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition carries one pointer, nothing more.
 - **Composes with, never replaces**:
   - the response-language rule — every slot below is written in the USER's language (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules)
   - the clarification flow (Re-ground → Simplify → Recommend → Options)
@@ -1193,10 +1193,7 @@ Slots 1-3 are unconditional — an absent next step or an absent blocker is STAT
 
 #### Shape constraints (bind every slot)
 
-- 3+ parallel facts (agents · files · verdicts · task ids) → a list or table, NEVER one connected prose sentence.
 - Reply length tracks DECISION-RELEVANCE, not work volume — hours of fan-out with nothing to decide is still a four-line reply.
-- **Chained-arrow run-on narration is FORBIDDEN** — a single sentence joining 4+ stages with `→` / `·` connectors.
-  - The charter's paragraph-count trigger structurally cannot fire on a one-sentence shape, which is why it is named separately there.
 
 #### Defect → control
 
@@ -1205,7 +1202,7 @@ The two operator-named defects, and the distinct control each one gets.
 | Defect | Control |
 |--------|---------|
 | Reply with no context anchor (맥락 없는 답변) | Slot 1 names what is being answered · slot 2 names the delta — every reply self-locates against the ask |
-| Verbose narrative prose (장황한 서술식) | Core in the first line · lists/tables for 3+ parallel facts · length ∝ decision-relevance, detail only on divergence · chained-arrow run-on named and forbidden |
+| Verbose narrative prose (장황한 서술식) | Slot 1 carries the decision-relevant fact first · length tracks decision-relevance, with detail expanded only where the outcome diverged (slot 4) |
 
 #### HONEST BACKING — nothing here is runtime-enforced
 

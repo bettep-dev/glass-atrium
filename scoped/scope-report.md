@@ -63,6 +63,8 @@ An exposed HTML doc MUST maximize visual communication; a headings-plus-paragrap
 - `@media print` PDF reset layer REQUIRED not optional (hide nav/aside, `break-inside: avoid`)
 - WCAG 2.2 AA incl. the two NEW criteria — SC 2.4.11 focus appearance (`:focus-visible` ring, ≥3:1 change-of-contrast) + SC 2.5.8 target size (interactive ≥24×24px)
 - all status dual-encoded (color + symbol/text + `aria-label`, never color-only)
+- no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
+- body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
 - `prefers-reduced-motion` SUBSTITUTES a gentle fade (does not merely remove)
 - **≥1 primary visual structure beyond prose** (Mermaid diagram OR comparison table OR KPI/stat-card row)
 
@@ -86,20 +88,12 @@ An exposed HTML doc MUST maximize visual communication; a headings-plus-paragrap
 - described UI/screen → structural mockup with labeled placeholders
 - data shapes suited to one → CSS-only bar charts (flex-height / horizontal table inlay)
 
-**RESTRAINT (part of the standard, via an EXPLICIT PROHIBITION LIST — prohibition lowers the LLM default-trope probability better than positive description)**: match density to content + audience — do NOT force 5 KPI cards / 3 diagrams onto a short human-facing brief. Prohibited:
+**RESTRAINT (part of the standard)**: match visual density to content and audience — every visual element earns its place by carrying information the prose does not. A short human-facing brief does not become better by being given 5 KPI cards or 3 diagrams.
 
-- purple/indigo/lavender AI-brand gradients
-- glassmorphism / `backdrop-filter` (also an a11y exclusion)
-- gradient text on headings
-- centered body text (left-align ragged-right)
-- equal `grid-cols-3` (prefer asymmetric 1fr/3fr)
-- decoration stacking (one treatment per element)
-- emoji-as-icons
-- unverified stat banners
-- Inter/Roboto/Arial as the sole font
-- more than 1 gradient per layer, or a gradient of more than 2 stops (max 1 gradient per layer, 2-stop max)
+- Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill.
+- Residual patterns that SoT does not carry, retained here: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max. The two readability/a11y members of the former list (glassmorphism over text · ragged-right body copy) now sit in **BASELINE (always)** above.
 
-The mandated zinc/OKLCH dark canvas is the REQUIRED base — this anti-slop guard targets zinc-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE (no-shadcn-ification), NOT the dark canvas itself.
+The mandated zinc/OKLCH dark canvas is the REQUIRED base — the SoT's no-shadcn-ification entry targets `zinc`-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE, NOT the dark canvas itself.
 
 ### Dark base default
 

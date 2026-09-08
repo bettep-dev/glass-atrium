@@ -339,7 +339,7 @@ planner-specific summary (full detail in glass-atrium-intel-reporter.md):
     - described UI → structural mockup with labeled placeholders.
     - CSS-only bar charts (flex-height / horizontal table-inlay) for the right data shapes.
   - **Restraint (part of the standard, not an exception)**:
-    - EXPLICIT PROHIBITION LIST (prohibition lowers LLM default-trope probability better than positive description): no purple/indigo/lavender AI-brand gradients · no glassmorphism/`backdrop-filter` (also an a11y exclusion) · no gradient text on headings · no centered body text (left-align ragged-right) · no equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · no decoration stacking (one treatment per element; max 1 gradient per layer, 2-stop) · no emoji-as-icons · no unverified stat banners.
+    - Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill — plus the residual patterns at `scope-report.md` → `### Visual-Maximization Floor`.
     - Match density to content + audience — a short human-facing plan MUST NOT be force-fitted with 5 KPI cards or 3 diagrams. A plan that is only headings + paragraphs FAILS.
   - **Dark-base vs anti-slop (no conflict)** — the mandated zinc dark canvas (`bg-zinc-950 text-zinc-300` / OKLCH near-black) is the REQUIRED base; the no-shadcn-ification guard targets zinc-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE, NOT the dark canvas itself.
   - **A11y cross-cutting** — verify BOTH dark+light themes independently against AA (dark mode grants no SC 1.4.3 exception).
