@@ -78,19 +78,17 @@ summary_refs() {
     | grep -v '^warns$' || true
 }
 
-@test "anchor uniqueness: each contract pattern matches exactly once" {
-  local sum_hits summary_hits
+@test "summary contract: anchors unique, the sum and the breakdown agree, registered prefix intact" {
+  local sum_hits summary_hits operands refs head13
   sum_hits="$(anchor_count "${SUM_ANCHOR}")"
   summary_hits="$(anchor_count "${SUMMARY_ANCHOR}")"
+  # Both readers below take the FIRST match, so a second matching line would silently become the
+  # contract — uniqueness has to be asserted before either operand list is trusted.
   [[ "${sum_hits}" == "1" && "${summary_hits}" == "1" ]] || {
     printf 'AMBIGUOUS ANCHOR — sum matches=%s summary matches=%s (each MUST be 1)\n' \
       "${sum_hits}" "${summary_hits}" >&2
     return 1
   }
-}
-
-@test "parity: summary variable sequence equals the sum operand sequence" {
-  local operands refs
   operands="$(sum_operands)"
   refs="$(summary_refs)"
   [[ -n "${operands}" ]] && [[ "${operands}" == "${refs}" ]] || {
@@ -98,11 +96,9 @@ summary_refs() {
       "${operands}" "${refs}" >&2
     return 1
   }
-}
-
-@test "reader anchors: the 13 registered counters keep their names and order" {
-  local operands head13
-  operands="$(sum_operands)"
+  # Parity alone stays green when a counter is dropped from BOTH expressions, and four of the
+  # fourteen breakdown labels (dormant-hook, fresh-undeployed, registry-reconcile, arbiter-gap) are
+  # pinned by no other suite — the registered prefix is what makes that deletion loud.
   head13="$(printf '%s\n' "${operands}" | head -13)"
   [[ "${head13}" == "${REGISTERED_COUNTERS}" ]] || {
     printf 'REGISTERED PREFIX CHANGED\n--- got ---\n%s\n--- expected ---\n%s\n' \
@@ -111,18 +107,22 @@ summary_refs() {
   }
 }
 
-@test "kind B: report-only rows stay out of the warning surface" {
-  local promoted
-  promoted="$(printf '%s\n%s\n' "$(sum_operands)" "$(summary_refs)" \
-    | grep -Ei -- "${KIND_B_PATTERN}" || true)"
-  [[ -z "${promoted}" ]] || {
-    printf 'KIND-B ROW PROMOTED TO A COUNTER: %s\n' "${promoted}" >&2
+@test "kind B: the stems name live rows, the pattern binds each, and none reached the warn surface" {
+  local tokens stem missing="" unmatched stem_count synth_count promoted
+  # Non-vacuity first: a deleted or renamed kind-B row would leave the promotion guard below
+  # matching a stem no identifier carries, which passes for the wrong reason.
+  tokens="$(grep -oE '[A-Za-z_][A-Za-z0-9_]*' "${DOCTOR}" | sort -u)"
+  while IFS= read -r stem; do
+    [[ -n "${stem}" ]] || continue
+    printf '%s\n' "${tokens}" | grep -qF -- "${stem}" || missing="${missing}${stem} "
+  done <<EOF
+${KIND_B_STEMS}
+EOF
+  [[ -z "${missing}" ]] || {
+    printf 'REGISTERED STEM WITH NO IDENTIFIER IN %s (row deleted or renamed): %s\n' \
+      "${DOCTOR}" "${missing}" >&2
     return 1
   }
-}
-
-@test "kind B guard binds: a synthetic promotion of every registered stem is caught" {
-  local unmatched stem_count synth_count
   unmatched="$(printf '%s\n' "${KIND_B_SYNTHETIC}" | grep -Eiv -- "${KIND_B_PATTERN}" || true)"
   [[ -z "${unmatched}" ]] || {
     printf 'REGISTERED STEM MATCHES NOT EVEN ITS OWN SYNTHETIC OPERAND: %s\n' "${unmatched}" >&2
@@ -135,20 +135,10 @@ summary_refs() {
       "${stem_count}" "${synth_count}" >&2
     return 1
   }
-}
-
-@test "kind B fossils: every registered stem exists as an identifier fragment in ga-doctor.sh" {
-  local tokens stem missing=""
-  tokens="$(grep -oE '[A-Za-z_][A-Za-z0-9_]*' "${DOCTOR}" | sort -u)"
-  while IFS= read -r stem; do
-    [[ -n "${stem}" ]] || continue
-    printf '%s\n' "${tokens}" | grep -qF -- "${stem}" || missing="${missing}${stem} "
-  done <<EOF
-${KIND_B_STEMS}
-EOF
-  [[ -z "${missing}" ]] || {
-    printf 'REGISTERED STEM WITH NO IDENTIFIER IN %s (row deleted or renamed): %s\n' \
-      "${DOCTOR}" "${missing}" >&2
+  promoted="$(printf '%s\n%s\n' "$(sum_operands)" "$(summary_refs)" \
+    | grep -Ei -- "${KIND_B_PATTERN}" || true)"
+  [[ -z "${promoted}" ]] || {
+    printf 'KIND-B ROW PROMOTED TO A COUNTER: %s\n' "${promoted}" >&2
     return 1
   }
 }
