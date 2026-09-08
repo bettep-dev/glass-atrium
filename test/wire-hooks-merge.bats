@@ -129,6 +129,42 @@ count_bound_matcher() {
   ' "${SETTINGS}"
 }
 
+@test "Workflow matcher -> BOTH Workflow hooks EMITTED by the wire loop as independent leaves" {
+  # EMISSION axis — the one property no other suite owns. Three axes are in play:
+  # roster MEMBERSHIP (hook-bindings-complete.bats :: per-event leaf count) and
+  # roster MATCHER VALUE (doctor-hook-bindings.bats :: Workflow-matcher binding)
+  # are both owned, but neither can witness what wire_hooks EMITS — the first two
+  # read lib/ga-env.sh's roster, and doctor-hook-bindings asserts against a
+  # hand-written heredoc fixture (write_full_settings), never against wire output.
+  # A hook-specific `continue` inside the roster-generic wire_hooks loop, roster
+  # fully intact, reds HERE and nowhere else.
+  # Both hooks declare the SAME matcher, so this is also the wire-side pin that
+  # they land as two INDEPENDENT, non-masking leaves: is_hook_bound keys on
+  # basename WITHIN the matcher, and a matcher-only key would let the first
+  # Workflow row mask the second into a silent skip.
+  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]] || return 1
+
+  local a='enforce-workflow-verify-stage.sh' b='lint-workflow-template-literal.sh'
+  # every Workflow-matcher command for the two basenames, sorted — one read that
+  # pins event + matcher + repointed command path together.
+  local cmds
+  cmds="$(jq -r --arg a "${a}" --arg b "${b}" '
+    [ .hooks.PreToolUse[]? | select((.matcher // "") == "Workflow")
+      | .hooks[]?.command | select(endswith("/" + $a) or endswith("/" + $b)) ]
+    | sort | join(",")' "${SETTINGS}")"
+
+  # ONE && chain: every clause decides the test. Written as separate mid-body
+  # [[ ]] lines they would be inert — bash errexit does not fire on a failing
+  # [[ ]] keyword conditional, so only the LAST line of a test can red it.
+  [[ "$(count_bound "${a}")" -eq 1 ]] &&
+    [[ "$(count_bound "${b}")" -eq 1 ]] &&
+    [[ "$(count_bound_matcher "${a}" 'Workflow')" -eq 1 ]] &&
+    [[ "$(count_bound_matcher "${b}" 'Workflow')" -eq 1 ]] &&
+    [[ "${cmds}" == "${HOME}/.glass-atrium/hooks/${a},${HOME}/.glass-atrium/hooks/${b}" ]]
+}
+
 @test "two-matcher one-hook -> Bash matcher added when Write|Edit already present" {
   # validate-secret-scan.sh pre-wired ONLY under Write|Edit. wire_hooks must add
   # the SECOND (Bash) matcher group — the Write|Edit presence must NOT mask it
@@ -262,9 +298,13 @@ JSON
   # bare skeleton → wire → doctor must report no dormant bindings
   printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
   run_wire_sandbox
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || return 1
   GA_TARGET_HOME="${TARGET}" run "${REAL_GA}" doctor
-  [[ "${output}" != *"dormant hook binding(s)"* ]]
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]]
-  [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
+  # ONE && chain so the DORMANCY claim — the whole point of this case — actually
+  # decides it. As three separate mid-body [[ ]] lines the first two were inert:
+  # bash errexit does not fire on a failing [[ ]] keyword conditional, so only the
+  # last line could red the case and the reconciliation claim asserted nothing.
+  [[ "${output}" != *"dormant hook binding(s)"* ]] &&
+    [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]] &&
+    [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
 }
