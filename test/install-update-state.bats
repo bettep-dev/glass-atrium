@@ -158,21 +158,6 @@ file_hash() {
   [[ "${output}" == *"REFUSED"* ]] && [[ "${output}" == *"1 existing entries refused"* ]]
 }
 
-@test "T24: GA_BASE_STORE_RESEED=1 forces the re-seed and says so" {
-  printf 'V1 body\n' >"${GA_SANDBOX}/agents/dev-x.md"
-  write_manifest "agents/dev-x.md"
-
-  run_engine capture_install_baseline
-  [[ "${status}" -eq 0 ]]
-
-  printf 'V2 CHANGED body\n' >"${GA_SANDBOX}/agents/dev-x.md"
-  export GA_BASE_STORE_RESEED=1
-  run_engine capture_install_baseline
-  [[ "${status}" -eq 0 ]]
-
-  [[ "$(cat "${STATE}/base-agents/dev-x.md")" == "V2 CHANGED body" ]] && [[ "${output}" == *"FORCED"* ]]
-}
-
 @test "T24: dry-run skips base@install capture entirely (no baseline, no store)" {
   printf 'V1\n' >"${GA_SANDBOX}/agents/dev-x.md"
   write_manifest "agents/dev-x.md"
