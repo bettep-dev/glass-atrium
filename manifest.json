@@ -1580,7 +1580,7 @@
     "test/doctor-consumer-install.bats": "e1cda3b2e92dd55f00d50f324a7a924329438086a649ecfd01888c419817370d",
     "test/doctor-decline-record.bats": "1f1dd580915a5092a43ff9361ba1fe58e1d0659ef64f867f1855a2dc2ddecc7c",
     "test/doctor-fail-err-trap.bats": "f76cb7f42672bb073be3658e84bfd79fbba0faf0da569f8fb5530f597e62f7ca",
-    "test/doctor-hook-bindings.bats": "3bd8f01e56ec6026c82ddd61fd52f5926e797eac4aec96e9081eee073dec61ed",
+    "test/doctor-hook-bindings.bats": "bf21ab3ff44d7177eeefa3ce0b92b4271719ed5fd015fd682ecd8f915ce77263",
     "test/doctor-inject-drop-seam.bats": "2a38d210cf9d237796f5816b1616237dd38389fce49d09fef921f05329110aac",
     "test/doctor-launchd-deploy-drift.bats": "6f004336b45deacffe7e9ca32ece9c20079ced6d46c846194975a9bd6930c3c8",
     "test/doctor-migrations.bats": "d37da08c1320a2a60deae437f6e7e92e49b84ccc5d35a12c4f561d03af71eb15",

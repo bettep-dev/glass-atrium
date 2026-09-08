@@ -299,14 +299,21 @@ drop_group() {
   # unrelated reasons, and a simultaneous remove-and-add holds it at 49. The membership pin is
   # write_full_settings in THIS file — it enumerates all 49 leaves by NAME, so a swapped roster row
   # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
-  # only general guard on roster membership: test/wire-hooks-merge.bats names 8 of the 42 roster
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 42 roster
   # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
-  # is one of those 8.
+  # is one of those 7.
   #
   # Measured, not assumed: swapping "PreToolUse<TAB>validate-scope-drift.sh<TAB>Write|Edit" for
   # style-ref-verify.sh in EXPECTED_HOOK_BINDINGS — one real deployed hook silently unwired, total
-  # held at 49 — leaves wire-hooks-merge.bats 19/19 green and hook-bindings-complete.bats 2/2 green
-  # while reddening 6 rows in this file.
+  # held at 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
+  # reddening 6 rows in this file.
+  #
+  # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
+  # is rewritten in the same composition, so a count taken from any single branch goes stale on
+  # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
+  # which is smaller than the 49 leaves because a basename can bind under several event/matcher
+  # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
+  # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
   [[ "${output}" == *"49 dormant hook binding(s)"* ]]
 }
 
