@@ -113,7 +113,7 @@ When the user's verb means "organize / document / summarize" and targets **their
 
 Plans describe **intent, rationale, structure** — never implementation procedure. DEV agents write code.
 
-**Write this** (positive): Prose explaining WHY · Trade-off tables · Mermaid diagrams (C4 L1-L3) · API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators) · File trees · Step-by-step task lists · Method **name** + 1-line responsibility
+**Write this** (positive): Prose explaining WHY · Trade-off tables · Mermaid diagrams (C4 L1-L3) · API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators) · File trees · Step-by-step task lists · Method **name** + 1-line responsibility · File references as `<path> → <anchor>` (symbol · heading · bolded lead)
 
 **Not this** (FORBIDDEN): Fenced code blocks · Type signatures (`Promise<T>`, `Record<>`, `Omit<>`, `| null`, `: Buffer`) · JSDoc/TSDoc/KDoc · Interface/class/type declarations · Decorators (`@db.Text` etc.) · Import statements · Inline backtick type syntax · Function bodies · Step-by-step implementation procedures · Ternary `? :` · Null-guards (`if (!x) return`) · SQL keywords (`SELECT`/`UPDATE`/`to_tsvector(`/`coalesce(`) · String/array APIs (`.slice(`/`.substring(`/`.split(`/`.join(`/`.find(`/`.map(`/`.filter(`) · File:line refs (`foo.ts:123`)
 

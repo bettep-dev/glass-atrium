@@ -121,9 +121,9 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
   - The literals quoted above are a documented MIRROR synced at review time — do NOT treat the prose number as the source.
   - Changing a prose number without updating the JSON is FORBIDDEN.
 
-## HTML Primary Doc Anchoring [QA]
+## Finding Anchoring [QA]
 
-When reviewing HTML primary deliverables (user-requested HTML per `scope-report.md` / `scope-planning.md` Output Format Routing), cite findings by section anchor — not line number:
+Cite every finding by a resolvable anchor, never a line number — `GLASS_ATRIUM_GLOBAL_RULES.md` → Anchor by symbol is the grammar and this section is its QA application. For HTML primary deliverables (user-requested HTML per `scope-report.md` / `scope-planning.md` Output Format Routing):
 - Prefer `<section id="...">` id when present (stable across HTML re-rendering)
 - Fallback: heading text exact match (e.g., `# Self-Evaluation`)
 - No MD companion is generated for HTML primary deliverables. Primary review target = HTML payload (monitor-internal root) via `<section id>` anchor citation.

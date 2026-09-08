@@ -95,7 +95,7 @@ Mechanical detector for AI-slop visual patterns. Surfaces hits per category with
 # Anti-Slop Audit: <artifact>
 
 ## Hits
-- [Category/Severity] Pattern: <pattern> | Location: <file:line or selector> | Hint: <remediation policy>
+- [Category/Severity] Pattern: <pattern> | Location: <file → selector or symbol> | Hint: <remediation policy>
 
 ## Summary
 - Total hits: N (minor=N, brand-conflict=N, ai-signature=N)
