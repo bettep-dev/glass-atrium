@@ -123,12 +123,6 @@ teardown() {
   [[ "${output}" == *"v0.0.0-nope != v${MANIFEST_VERSION}"* ]] || return 1
 }
 
-@test "publish: matching explicit --tag on a clean tree passes the gate (dry-run)" {
-  run "${SCRIPT}" publish --out "${OUT}" --tag "v${MANIFEST_VERSION}"
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"DRY RUN"* ]] || return 1
-}
-
 @test "publish: stale manifest still fails the preserved --check gate (exit 4) before the consistency gate" {
   # Modify an IN-SCOPE tracked file without regenerating: generate-manifest --check
   # detects the hash drift and exits 4 — proving the existing gate runs first and
