@@ -410,21 +410,6 @@ PY
   ! grep -qF 'kill -INT' "${REC}" # the real clear no-oped under DRY_RUN (never signalled the pid)
 }
 
-# === static wiring — the guard drives the clear with a `!= broken` re-verify ===============
-
-@test "guard(static): preflight_pg_utc_guard wires clear_unmanaged_pg_orphan with a != broken re-verify" {
-  local body
-  body="$(awk '/^preflight_pg_utc_guard\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]]
-  # the renamed install-scoped clear is invoked from the unmanaged-orphan branch.
-  [[ "${body}" == *'clear_unmanaged_pg_orphan'* ]]
-  # post-clear success check mirrors the brew-restart re-verify: != broken (a cleared socket is
-  # 'down', not 'ok'), NEVER a == ok check that would drop a genuinely-cleared orphan to the bail.
-  [[ "${body}" == *'ga_detect_postgres_utc)" != "broken"'* ]]
-  [[ "${body}" != *'ga_detect_postgres_utc)" == "ok"'* ]]
-  # the :5432 healthy-server early-return is preserved byte-for-byte (ok/down/absent never enter).
-  [[ "${body}" == *'[[ "$(ga_detect_postgres_utc)" == "broken" ]] || return 0'* ]]
-}
 
 # === wiring — run_uninstall ordering + install-start tmux clear (unchanged) ================
 

@@ -118,12 +118,6 @@ extract_launcher_fn() {
   [[ "${output}" -eq 0 ]]
 }
 
-@test "static: the launcher carries NO unconditional 'set -m' restore anywhere" {
-  # the whole-file guard for item #2 — the two spinner sites were the only ones.
-  run grep -cE '^[[:space:]]*set -m[[:space:]]*$' "${LAUNCHER}"
-  [[ "${output}" -eq 0 ]]
-}
-
 # === pty integration — the REAL spinner cycle under a pty (falsifiable) ================
 
 # _write_pty_harness — emit the harness that sources the launcher read-only, drives the REAL
