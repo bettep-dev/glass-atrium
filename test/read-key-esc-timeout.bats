@@ -104,6 +104,17 @@ _drive() {
   [[ "${second}" == "quit" ]] || return 1
 }
 
+# === dynamic — the drain read is TIME-BOUND (unterminated ESC [ N tail) ================
+
+@test "dynamic: an unterminated 'ESC [ 5' tail resolves to 'none' — the drain read is time-bound" {
+  # ESC [ 5 with no '~' terminator. The tail matches '['[0-9] so read_key enters the drain
+  # read, but the terminator byte never arrives. With the `-t 1` bound the drain times out and
+  # 'none' is printed; strip that bound and the drain blocks until the watchdog kills read_key,
+  # yielding empty output → this assertion fails. Every other row supplies the '~' the drain
+  # consumes immediately, so this is the only case that reaches the drain read's timeout.
+  [[ "$(_drive '\x1b[5' 4)" == "none" ]] || return 1
+}
+
 # === dynamic — non-ESC keys are untouched by the change ================================
 
 @test "dynamic: j/k/Enter/q decode unchanged" {

@@ -1630,7 +1630,7 @@
     "test/progress-bar-continuity-harness.sh": "82974975bb849d32a6219470be6f4aab77452bbe8c207f8e8977bb822f1721cb",
     "test/publish-release-remote-consistency.bats": "aa5230827956dd6ee5177b2632d41310e948fbf01ca6033761fa81d5e03e8f8b",
     "test/python-deps-parity.bats": "bec8f90b9f97200908f6a198f129e423a53c45e64e32078074ab145302fdc622",
-    "test/read-key-esc-timeout.bats": "678979a1ea668a8fa27d1abee9ec358a38f10ff107e02cb51ad21209253edaee",
+    "test/read-key-esc-timeout.bats": "29b361a541390a8f29066c64d7d018cee3fe23b9dd9cab5d792cffc1b935889b",
     "test/reconcile-backup-dir.bats": "0b2eade94fda122672fbbe5bbc1382112797ce2b03d73f78a2e725d3a57dd401",
     "test/reconcile-stale-hook-matchers.bats": "695eae3126a951ac0671115e5dd45ee74769dbe8bdb266fb0b24902d39e4ff11",
     "test/recovery-snapshot-staleness.bats": "3b37a6380b00ef54adbc12cd7093a213bb92cf47d150d4cdf3a1f3b7f9b673fd",
