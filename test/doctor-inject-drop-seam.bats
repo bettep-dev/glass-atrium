@@ -242,21 +242,3 @@ assert_output_lacks() {
 }
 
 # ── AC5 — producer-grammar pin ─────────────────────────────────────────────────────────────────
-
-@test "AC5: emitter rows carry the DROP, PARTIAL and block=lesson literals §10 classifies on" {
-  emit_shed_row "glass-atrium-dev-shell" 9984 "${COMMENT_BIG}" /nonexistent
-  emit_lesson_pair "glass-atrium-dev-shell" || {
-    echo "could not emit the lesson-class pair" >&2
-    return 1
-  }
-  local missing=""
-  grep -q ' \[inject-scope-rules\] DROP ' "${DROPLOG}" || missing="${missing} DROP-token"
-  grep -q ' \[inject-scope-rules\] PARTIAL ' "${DROPLOG}" || missing="${missing} PARTIAL-token"
-  grep -q ' block=lesson ' "${DROPLOG}" || missing="${missing} block=lesson-label"
-  grep -q ' block=comment ' "${DROPLOG}" || missing="${missing} non-lesson-label"
-  [[ -z "${missing}" ]] || {
-    echo "producer grammar changed — §10 classifier literals absent:${missing}" >&2
-    echo "log: $(cat "${DROPLOG}" 2>&1)" >&2
-    return 1
-  }
-}

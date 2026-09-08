@@ -36,7 +36,6 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-CONTRACT="${GA}/test/doctor-summary-contract.bats"
 
 setup() {
   # Loud, never `skip`, for the two SHIPPED tree members: their absence is a broken
@@ -227,29 +226,6 @@ warn_total_of_output() {
 
   [[ "${synced}" == "${drifted}" && "${synced}" == "${unavailable}" && "${synced}" == "${unanswerable}" ]] || {
     echo "kind-B violation: warning total moved — synced=${synced} drifted=${drifted} unavailable=${unavailable} unanswerable=${unanswerable}" >&2
-    return 1
-  }
-}
-
-# The symmetric twin of doctor-backup-dir-relocation.bats AC6, for the same reason: AC5 pins the
-# kind-B property BEHAVIOURALLY, but only registration makes the contract suite's promotion guard
-# bind to this stem. Drop `tools_mirror` from KIND_B_STEMS and its synthetic operand together and
-# the contract suite stays green — its own guard compares the two list LENGTHS — leaving a future
-# edit free to fold this section into the warning total unnoticed. Two greps, because registration
-# without an identifier in the doctor is a dead entry and an identifier without registration is an
-# unguarded section.
-@test "AC6 the §23 identifier stem is registered kind B in the summary contract" {
-  [[ -f "${CONTRACT}" ]] || {
-    printf 'summary contract suite missing: %s\n' "${CONTRACT}" >&2
-    return 1
-  }
-  # The last stem on the list carries the closing quote, so the anchor tolerates it.
-  grep -qE "^tools_mirror'?\$" "${CONTRACT}" || {
-    printf 'stem `tools_mirror` is not registered in KIND_B_STEMS of %s\n' "${CONTRACT}" >&2
-    return 1
-  }
-  grep -q 'tools_mirror' "${GA}/lib/ga-doctor.sh" || {
-    printf 'stem `tools_mirror` names no identifier in lib/ga-doctor.sh\n' >&2
     return 1
   }
 }

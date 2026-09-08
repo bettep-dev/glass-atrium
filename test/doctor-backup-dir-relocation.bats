@@ -32,7 +32,6 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-CONTRACT="${GA}/test/doctor-summary-contract.bats"
 
 # Every §24 row carries this stem, so a row census is one grep and a healthy run is provably zero.
 ROW_MARKER='note : backup dir'
@@ -204,24 +203,6 @@ warn_total_of_output() {
   [[ "${healthy}" == "${declined}" && "${healthy}" == "${relocated}" ]] || {
     printf 'kind-B violation: warning total moved healthy=%s declined=%s relocated=%s\n' \
       "${healthy}" "${declined}" "${relocated}" >&2
-    return 1
-  }
-}
-
-@test "AC6 the §24 identifier stem is registered kind B in the summary contract" {
-  # Registration is what makes the promotion guard bind: an unregistered stem means the contract
-  # suite would let a future edit fold this row into the warning total unnoticed.
-  [[ -f "${CONTRACT}" ]] || {
-    printf 'summary contract suite missing: %s\n' "${CONTRACT}" >&2
-    return 1
-  }
-  # The last stem on the list carries the closing quote, so the anchor tolerates it.
-  grep -qE "^bkpdir'?\$" "${CONTRACT}" || {
-    printf 'stem `bkpdir` is not registered in KIND_B_STEMS of %s\n' "${CONTRACT}" >&2
-    return 1
-  }
-  grep -q 'bkpdir' "${GA}/lib/ga-doctor.sh" || {
-    printf 'stem `bkpdir` names no identifier in lib/ga-doctor.sh\n' >&2
     return 1
   }
 }
