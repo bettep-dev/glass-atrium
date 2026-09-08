@@ -9,16 +9,16 @@ Applies to all DEV and QA agents.
 <!-- AGENT-INJECT:START -->
 **Comment-rule core (auto-injected DEV/QA · full: `~/.glass-atrium/scoped/shared-comment-logging.md`)**
 
-TOP PROHIBITIONS (read first):
+TOP PROHIBITIONS:
 - **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.
 - **Density gate (ceiling, not floor)**: comment ONLY when "why" is non-obvious from names/types/context · self-evident code → NO comment · `— because …` does NOT license it · in doubt → omit.
-- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE concise `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) → `/** */` docblock, NEVER stacked `//` nor a paragraph. `/** */` triggers: public-API/exported OR a declaration's internal "why" >1 line. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Distinct points → separate `//` comments. Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
-- **NO mid-sentence line-wrap** — one clause per `//` line; never split ONE sentence across continuation lines. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
+- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE concise `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) → `/** */` docblock, NEVER stacked `//` nor a paragraph. `/** */` triggers: public-API/exported OR a declaration's internal "why" >1 line. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
+- **NO mid-sentence line-wrap** — one clause per `//` line. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
 - **NO `console.*` in production** (test files exempt) → framework logger.
 
 REMAINING RULES:
 - Comment language (highest wins): user-specified in task/CLAUDE.md → new = Korean (default) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
-- Explain **"why"**; restating code FORBIDDEN · stale comments worse than none → sync with code.
+- Stale comments worse than none → sync with code.
 - Log level: error=action-required/failed · warn=potential issue · info=state change · debug=dev-only (off in prod). Error logs need what+why+context.
 - JSDoc: semantics only, MUST NOT duplicate types (`@param value - desc`, never `@param {type}`).
 - TODO: `// TODO(owner/TICKET): reason` — owner+ticket REQUIRED.
