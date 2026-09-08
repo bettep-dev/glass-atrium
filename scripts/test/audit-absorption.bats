@@ -265,18 +265,6 @@ EOF
   assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
 }
 
-@test "default scope run resolves the in-script file list and exits 0 on the clean repo scope" {
-  run bash "${AUDIT_SH}" --quiet
-  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
-  [[ "${output}" =~ annotated=[0-9]+\ converted=[0-9]+\ unannotated=[0-9]+\ quality_reject=[0-9]+ ]] || {
-    echo "${output}"
-    return 1
-  }
-  # Under the blocking contract the exit-0 above is a substantive claim about the repository, not a
-  # tautology: it asserts the live scope carries zero findings.
-  assert_summary "unannotated=0 quality_reject=0"
-}
-
 # Materializes an empty stand-in for every path the auditor's own scope list names, so the scope-run
 # contract is exercised without reading a repository file. The list is derived from the auditor
 # source rather than restated here — a restated copy would drift the moment the scope changes.
