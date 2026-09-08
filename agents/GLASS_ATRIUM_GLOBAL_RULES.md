@@ -36,7 +36,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **No guessing** → Ask when unclear (1 issue = 1 question):
   - Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
-- File names, class names, lines, APIs → Use **only verified** references.
+- File names, class names, symbols, APIs → Use **only verified** references.
+  - **Anchor by symbol, never by line** — cite as `<path> → <anchor>`: an identifier, a marker literal, a heading, a table row's first cell, a bullet's bolded lead, or for bare prose a 5-8 word verbatim quote. Resolve by bare-name `grep`/`jq` BEFORE citing — **0 hits = halt**, 2+ = qualify.
+  - **Why**: a stale line still resolves, so it is *silently* wrong; a renamed symbol resolves to nothing, so it is *loudly* wrong and stops the reader. Symbols do not make an anchor permanent — they trade a silent wrong answer for a loud absent one.
+  - **A line number is an OBSERVATION, never a TARGET**: reporting what a tool returned — diff hunk, stack trace, measured span, a count — is permitted and carries its revision (`parseBody() (L410, @ 7cda954)`); telling a later actor where to go and edit is FORBIDDEN.
   - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
     - These are examples of the class, not the class itself; if unsure, treat the claim as a relation.
     - Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first.
@@ -215,7 +218,7 @@ Prevent context bloat during long sessions (10+ turns).
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
-- Excessive politeness / parrot repetition · Over-summarization / verbose explanation (3+ paragraphs without code)
+- Excessive politeness / parrot repetition · Over-summarization / verbose explanation
 - Out-of-scope modifications · Empty apologies / excessive disclaimers · False confidence / silent acceptance (fix it or flag it)
 - Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract`
   - Honor-system (no hook reads reply text); the response-language rule above is unaffected.
