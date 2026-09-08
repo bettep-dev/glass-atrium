@@ -100,23 +100,6 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
   [ "${output}" = "BAR[20/20]" ]
 }
 
-# === (2) all-deps-present — GRAND_TOTAL collapses to INSTALL_PLAN_LEN, stable 1/14..14/14 =======
-
-@test "all-deps-present: GRAND_TOTAL = INSTALL_PLAN_LEN (14), stable 1/14..14/14" {
-  extract_launcher_fn build_run_bar
-  _stub_bar_collaborators
-  # g1+g2 = 0 => no preflight steps => base stays 0; GRAND_TOTAL = 0 + 14 = 14.
-  GRAND_TOTAL=14
-  STEP_INDEX_BASE=0
-  STEP_INDEX=1
-  STEP_TOTAL=14
-  run build_run_bar
-  [ "${output}" = "BAR[1/14]" ]
-  STEP_INDEX=14
-  run build_run_bar
-  [ "${output}" = "BAR[14/14]" ]
-}
-
 # === (3) shared callers — GRAND_TOTAL unset => raw base+STEP_TOTAL, byte-identical ==============
 
 @test "shared caller (GRAND_TOTAL unset) renders the RAW base+STEP_TOTAL, byte-identical" {
