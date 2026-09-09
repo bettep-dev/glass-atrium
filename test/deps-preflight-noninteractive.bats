@@ -56,6 +56,10 @@ setup() {
   # shellcheck source=/dev/null
   source "${DEPS_SH}"
   SANDBOX="$(mktemp -d -t ga-deps-bats.XXXXXX)"
+  # PG_SOCKET redirect (GA_PG_SOCKET test seam) — INERT under the current form: this file sources
+  # only ga-deps.sh, so ga_init_env never runs and neither pg-orphan function enters scope. Kept so a
+  # later conversion to launcher-sourcing inherits the scratch redirect instead of the live /tmp.
+  export GA_PG_SOCKET="${SANDBOX}"
 }
 
 teardown() {
