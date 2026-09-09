@@ -43,7 +43,8 @@ User-requested HTML only — full authoring contract in `glass-atrium-intel-repo
 
 - Single-file self-contained (no external CSS, no build step)
 - Tailwind CDN inline + semantic HTML5 landmarks (`<header><main><article><section><footer>`)
-- Inline JS auto-ToC + `@media print` for PDF export
+- every element STATIC markup — the monitor sanitizer deletes every inline `<script>`, so nothing JS-built ships (ToC included)
+- `@media print` for PDF export (form: the BASELINE `@media print` bullet below)
 - The HTML primary is a single contract: comply with the `glass-atrium-intel-reporter.md` "Canonical HTML Skeleton" inline skeleton, the **Dark base default** below, and **HTML Visual Decision Requirements (D8)** below
 
 ### Visual-Maximization Floor (exposed HTML primary — CANONICAL policy SoT)

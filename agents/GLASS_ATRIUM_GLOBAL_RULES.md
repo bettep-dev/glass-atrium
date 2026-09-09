@@ -93,7 +93,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Spawn only when:
   - tasks are parallelizable AND independent
   - single-agent capacity confirmed insufficient
-- Concurrent children > 3 → verify rate-limit headroom before fan-out.
+- Concurrent children > 3 → verify rate-limit headroom before fan-out. Binds a spawner that decides its own fan-out degree; where a runtime governs that degree, the runtime's bound is operative and this count does not apply (orchestrator: `orchestrator-role.md` → `### Spawn Budget`).
 - **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06).
   - Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
 - **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies.
@@ -180,7 +180,6 @@ This file is the **system charter** for all agents — it governs behaviors unco
     - The StructuredOutput call still terminates the run — this does not violate the never-end-on-prose rule, because the block turn precedes the final tool call.
   - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing).
     - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
-    - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, runs the multi-line field parser over it, and records the run as WRITER-emitted with attribution `structuredoutput-completion` (a healthy row, NOT synthesized).
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
   - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
   - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.

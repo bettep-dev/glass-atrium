@@ -94,6 +94,6 @@ No specific hex values, no concrete CSS — glass-atrium-design-designer chooses
 
 - Scope-design.md `## LLM Output Validation` — contrast verification gate before downstream DEV handoff
 - Designer.md `## Red Flags` — WCAG AA not verified = flag
-- Scope-report.md / scope-planning.md `**Dark base default (Wave 44)**` — AAA contrast (≥ 7:1) recommended for HTML primary body
+- Scope-report.md / scope-planning.md `### Dark base default` — AAA contrast (≥ 7:1) recommended for HTML primary body
 - Scope-qa.md `## D8 Visual Decision Sub-Pass` — d8 axis P4 (WCAG AA contrast 4.5:1 text / 3:1 UI)
 - `glass-atrium-design-5-axis-critique` Execution axis — paired use for spacing / contrast evidence

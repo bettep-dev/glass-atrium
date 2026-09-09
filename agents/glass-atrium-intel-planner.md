@@ -375,5 +375,4 @@ Each PLANNING deliverable has a per-bullet/per-section semantic content bar — 
 | Backlog stub | each entry | 1-line scope + owner candidate + estimated effort |
 
 - **Audit trigger**: when glass-atrium-qa-code-reviewer review finds a violation of the table above → 4-Dim Clarity 1-point deduction
-- **Deliverable-locale heading exception**: in a **user-requested** non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (verb form not enforced — avoids translationese)
 <!-- EDITABLE:END -->
