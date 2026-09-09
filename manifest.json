@@ -701,8 +701,6 @@
     "skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md",
     "skills/glass-atrium-intel-defuddle/SKILL.md",
     "skills/glass-atrium-meta-authoring/SKILL.md",
-    "skills/glass-atrium-ops-model-config/SKILL.md",
-    "skills/glass-atrium-ops-model-config/apply-model-config.sh",
     "skills/glass-atrium-ops-orchestrator.md",
     "skills/glass-atrium-ops-reconcile-inject/SKILL.md",
     "skills/glass-atrium-ops-token-audit/SKILL.md",
@@ -1528,8 +1526,6 @@
     "skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md": "a4f98c82e39ef7e89b992519a5cff780f6f5e29349c1e0810a6831d3e1f413f8",
     "skills/glass-atrium-intel-defuddle/SKILL.md": "68f13b0792facbf2fb34ad3c14ff8fc6f7edecf4646cb42aa07205e22bc12286",
     "skills/glass-atrium-meta-authoring/SKILL.md": "00c361048514a2f1a229abea477f11a2f7747caed24db9b706f7df05247c0a0d",
-    "skills/glass-atrium-ops-model-config/SKILL.md": "3e1a4a55a2341010a898146160fc287c66c7388ddea0f60795e352da37757175",
-    "skills/glass-atrium-ops-model-config/apply-model-config.sh": "c03673ef7a10413ebb8cd5a11d62bca1673d1142ad93f445da9cfcf91fc9a374",
     "skills/glass-atrium-ops-orchestrator.md": "ad4f206732af2398fe085b66118290827ce33292b27f73b6bb27a0bea8553d79",
     "skills/glass-atrium-ops-reconcile-inject/SKILL.md": "34b18ad414b58485b195f928badd4de94fe1b98eb57cc0b286201cbfc072831d",
     "skills/glass-atrium-ops-token-audit/SKILL.md": "760b07d3755ddb4954595587d060accc02bf851439f9026aea68411107b8d3f1",
@@ -2355,8 +2351,6 @@
     "skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md": "644",
     "skills/glass-atrium-intel-defuddle/SKILL.md": "644",
     "skills/glass-atrium-meta-authoring/SKILL.md": "644",
-    "skills/glass-atrium-ops-model-config/SKILL.md": "644",
-    "skills/glass-atrium-ops-model-config/apply-model-config.sh": "755",
     "skills/glass-atrium-ops-orchestrator.md": "644",
     "skills/glass-atrium-ops-reconcile-inject/SKILL.md": "644",
     "skills/glass-atrium-ops-token-audit/SKILL.md": "644",
@@ -2573,6 +2567,12 @@
     ],
     "scripts/test/vendor-region-digest.bats": [
       "56d72ec1c8c32695a584ca54842da52a1936a13f0f4ba4c117997ee4aacb94d0"
+    ],
+    "skills/glass-atrium-ops-model-config/SKILL.md": [
+      "3e1a4a55a2341010a898146160fc287c66c7388ddea0f60795e352da37757175"
+    ],
+    "skills/glass-atrium-ops-model-config/apply-model-config.sh": [
+      "c03673ef7a10413ebb8cd5a11d62bca1673d1142ad93f445da9cfcf91fc9a374"
     ],
     "skills/glass-atrium-update/SKILL.md": [
       "1dd7461417a2070814be4e4719d3c3bbdba591bd20d4aa1a0846c793f65040df"
