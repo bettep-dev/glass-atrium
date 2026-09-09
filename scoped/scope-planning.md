@@ -277,22 +277,22 @@ When a **user-requested HTML primary** plan deliverable exceeds the visually-hea
 Extends the Ambiguity Gate above from axis granularity to claim granularity: the gate marks which AXIS is uncertain, this marks which CLAIM is — so the verification team receives a question list rather than a score.
 
 - **Marking format** — every substantive claim the plan rests on carries an inline tag at the end of its own bullet:
-  - `[VERIFIED: <instrument you ran this turn>]` — names the INSTRUMENT, never the conclusion: the file you Read, the pattern you Grepped, the command you ran and what it returned. A tag naming no instrument is not a verified tag.
-  - `[ASSUMED: <the question that would settle it>]` — carries a QUESTION, not a restated claim, because that string becomes another actor's work item verbatim.
-  - **An unmarked substantive claim is ASSUMED.** Omission and self-report inflation can therefore only WIDEN the downstream question list, never exempt a claim from it.
+  - `[SELF-CHECKED: <instrument you ran this turn>]` — names the INSTRUMENT, never the conclusion: the file you Read, the pattern you Grepped, the command you ran and what it returned. A tag naming no instrument is not a self-check.
+  - `[UNCHECKED: <the question that would settle it>]` — carries a QUESTION, not a restated claim, because that string becomes another actor's work item verbatim.
+  - **An unmarked substantive claim is UNCHECKED.** Omission and self-report inflation can therefore only WIDEN the downstream question list, never exempt a claim from it.
   - **Which claims carry a tag**: the ones whose falsity would change the plan — what code does, capacity/performance figures, "X already exists", "Y is unused", "this is the only caller". A structural fact you looked at (the file exists, the symbol is defined) needs none.
   - The tag is metadata, not code — `## Absolute Rules [PLANNING]`'s no-code prohibition is untouched.
-- **`## Open Questions` section of the plan body**: every `[ASSUMED:]` question appears there once, verbatim, each entry naming the task ids that rest on it. This is the list the Stage-2 team reads.
+- **`## Open Questions` section of the plan body**: every `[UNCHECKED:]` question appears there once, verbatim, each entry naming the task ids that rest on it. This is the list the Stage-2 team reads.
   - **An empty section is a valid value and is written as such** — deleting the section is not how you have none.
 - **Load-bearing marking inside Open Questions**: each entry additionally carries `load-bearing: yes|no` + a one-line reason, judged by the operational test defined ONCE at `scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`. Pointer only — cross-read at review, restated here never.
 - **Consultation while authoring — two lawful routes, in this order**:
-  - **Self-settle first**: you hold `Read`, `Glob`, `Grep`, `Bash`. A claim those can settle, you settle — then it is `[VERIFIED: <instrument>]`. Converting your own assumption is cheaper than routing it.
+  - **Self-settle first**: you hold `Read`, `Glob`, `Grep`, `Bash`. A claim those can settle, you settle — then it is `[SELF-CHECKED: <instrument>]`. Converting your own assumption is cheaper than routing it.
   - **Domain consult second**: a claim needing a domain agent's judgment you cannot supply → emit `needs_domain_consult: <agent-type> — <the question>` in your `[COMPLETION]`, mirroring the `needs_devfront_markup:` signal precedent above.
     - The orchestrator judges it in its Monitoring phase and composes a pre-authoring consultation; the lawful shapes already exist (`skills/glass-atrium-ops-orchestrator.md` → Pipeline Acceptance Criteria, 3-phase Discovery hatches (a) and (b)).
   - **FORBIDDEN — spawning an agent yourself**: your `tools:` array is frozen at spawn [LLM06] and carries no Agent/SendMessage tool, and MAX_DEPTH=2 forbids the nesting. Stated explicitly because "the planner just calls the domain agent" is otherwise re-proposed as though it were an option.
 - **Pre-commitment against this mechanism's own growth**: when the Open Questions list grows past what the plan can carry, do NOT extend the list — that is the Ambiguity Gate `< 0.6` clarification-interview band and the plan is not ready to be written. The existing score bands are the bound; no new cap, no count.
-- **Honest backing**: all of the above is honor-system — nothing checks that a `[VERIFIED:]` instrument was run, and nothing checks that marking is complete.
-  - The only structural property is the unmarked-is-ASSUMED default above, which makes under-marking widen the downstream question list instead of shrinking it. Do NOT describe claim marking as verification.
+- **Honest backing**: all of the above is honor-system — nothing checks that a `[SELF-CHECKED:]` instrument was run, and nothing checks that marking is complete.
+  - The only structural property is the unmarked-is-UNCHECKED default above, which makes under-marking widen the downstream question list instead of shrinking it. Do NOT describe claim marking as verification.
 
 ## CQRS Exception [META+PLANNING+DESIGN]
 
