@@ -134,7 +134,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - cross-match listed slugs against current user request
   - matched slug → resume from that progress file's `## Next Steps` (do NOT restart)
   - no match → treat as informational (do NOT auto-Read all — context budget)
-  - header absence = no open progress files (silent — proceed normally)
+  - header absence = the hook reported nothing, NOT proof that none are open (a SessionStart hook added mid-session stays inert until restart) → proceed normally, but when picking up continuing work, check the tracker directory yourself (`## Cross-Session Continuity (progress.md)` → Scope)
 
 ### Turn Budget & Graceful Exit [ALL]
 

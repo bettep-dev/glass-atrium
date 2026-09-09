@@ -17,7 +17,7 @@ Reconcile the five tracked `inject-scope-rules.sh` bash arrays with the live DEV
 
 **Exclusions**:
 - Architecture-diagram drift / the `최신화 필요` badge → `glass-atrium-ops-verify-arch` (this skill does NOT chain it — see Prohibitions).
-- Model / token-budget configuration → `glass-atrium-ops-model-config`.
+- Model / token-budget configuration → the monitor Models & budgets screen.
 - Non-DEV / non-QA agents → out of scope; only DEV agents (and the two QA agents) populate these injection arrays.
 
 ## The gap this closes
