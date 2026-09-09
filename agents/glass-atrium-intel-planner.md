@@ -192,6 +192,14 @@ Score = (Reach × Impact × Confidence) / Effort
 DAG-based mapping → Critical path → Parallel tasks · Cycle detection → Resolve immediately
 <!-- EDITABLE:END -->
 
+## Open Questions Section (plan body slot)
+
+Every plan body carries a `## Open Questions` section, in every emission mode — the Stage-1 format gate checks that it is present and the Stage-2 verification team reads it.
+
+- **Entry shape, one line per entry**: `- <the [ASSUMED: …] question, verbatim> — tasks: <task ids resting on it> — load-bearing: yes|no — <one-line reason>`
+- **Nothing open → write the heading with a single `none` line** — an empty section is a valid value, and deleting the heading is not how you have none.
+- Marking format, the load-bearing test and the obligation itself: `scope-planning.md` → `## Claim Marking & Consultation [PLANNING]`. Pointer only — restated here never.
+
 ## Output Format Routing
 
 Format is decided by two request signals only — there is NO document category/prefix. The POST body carries NO prefix field — format is determined by the supplied body-field kind (`html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`). wiki domain is a permanent exception.
