@@ -64,6 +64,11 @@ export GA_PLIST_OUT="${SANDBOX}/launchd-plists"
 # rewrites the REAL ~/.claude/data/update (a sandbox install of another release would
 # rewind the machine's update baseline).
 export ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/update-state"
+# hermetic sandbox — doctor's daemon-reports scan defaults to the MACHINE's live data/daemon-reports
+# a stale apply-abort row there → doctor FAIL → cascades through every install assertion below
+# empty dir → trivial scan (the DOCTOR_AUTH_REPORTS_DIR seam the bats suites already use)
+mkdir -p "${SANDBOX}/empty-reports"
+export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
 trap 'rm -rf -- "${SANDBOX}"' EXIT
 
 printf 'SANDBOX=%s\n' "${SANDBOX}"
