@@ -38,6 +38,12 @@ setup() {
   # shellcheck source=/dev/null
   source "${DEPS_SH}"
   SANDBOX="$(mktemp -d -t ga-conn-deadline.XXXXXX)"
+  # PG_SOCKET redirect (GA_PG_SOCKET test seam) — exported here so the guard-bail driver's child
+  # inherits it before its `source "${LAUNCHER}"` freezes PG_SOCKET readonly. That source brings the
+  # real preflight_pg_utc_guard into scope and only then shadows it; the redirect keeps the socket rm
+  # under the sandbox if the shadow is ever lost. The socket-blind `lsof -ti tcp:5432` fallback in
+  # ga-daemons.sh stays uncovered, so the shadow remains the primary belt.
+  export GA_PG_SOCKET="${SANDBOX}"
 }
 
 teardown() {

@@ -35,6 +35,13 @@ HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
 
+# PG_SOCKET redirect (GA_PG_SOCKET test seam) — export BEFORE the source line, since ga_init_env
+# freezes PG_SOCKET readonly at source time. The source brings the real preflight_pg_utc_guard into
+# scope and it is only shadowed later, so the redirect keeps the socket rm under a scratch dir if
+# that shadow is lost. Does NOT cover the socket-blind `lsof -ti tcp:5432` fallback in ga-daemons.sh.
+GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
+export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
+
 # shellcheck source=/dev/null
 source "${LAUNCHER}"
 set +e
@@ -394,4 +401,5 @@ fi
 echo "============================================================================"
 printf 'RESULT: %d passed, %d failed\n' "${PASSES}" "${FAILS}"
 rm -f "${GA_EVT}" "${GATE_QUIET_LOG:-}" 2>/dev/null || true
+rm -rf -- "${GA_PG_SOCK_DIR:?}" 2>/dev/null || true
 [[ "${FAILS}" -eq 0 ]]
