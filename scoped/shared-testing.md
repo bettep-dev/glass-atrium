@@ -1,6 +1,6 @@
 # Testing Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents.
+Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
 
 ## Pre-Commit Verification
 
@@ -24,11 +24,19 @@ Applies to all DEV agents.
 - **Behavioral testing**: verify external behavior (input → output), not implementation details.
 - **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter.
 - **Naming**: prefer `should_expectedBehavior_when_condition` or readable `describe/it` blocks — and make the name state the RELATIONSHIP asserted, not the input value used.
-- **Backing honesty**: this whole section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the two-signal advisory auditor named below, which never inspects the relationship claim itself.
+- **Backing honesty**: this whole section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor named below, which never inspects the relationship claim itself.
 
 ### Meaningless-Test Prohibitions
 
-**How to read the Check column (backing honesty).** MECHANICAL means **decidable-in-principle by a script — NOT that a script exists**. Of the rows below, exactly TWO have tooling: signals (a) and (b) of `scripts/audit-test-smells.sh`. That auditor is **ADVISORY** — it exits 0 on findings — and is **NOT wired into CI**; it is run by hand. Every row tagged `[no tooling]` has no implementation at all and is reviewer-applied exactly like a JUDGMENT row. **No row on this table is enforced.** Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
+**How to read the Check column (backing honesty).** MECHANICAL means **decidable-in-principle by a script — NOT that a script exists**.
+
+- Of the rows below, exactly TWO have tooling: signals (a) and (b) of `scripts/audit-test-smells.sh`.
+- That auditor is **ADVISORY** — it exits 0 on findings — and is **NOT wired into CI**; it is run by hand.
+- The auditor carries a THIRD signal this table does not document — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file.
+  - **No row below states that smell**, so a signal-(c) finding maps to no row here — in particular it is not the tooling for the change-detector row.
+- Every row tagged `[no tooling]` has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
+- **No row on this table is enforced.**
+- Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
 
 | Prohibited | Smell (source) | Detection signature | Check |
 |---|---|---|---|
@@ -88,6 +96,8 @@ Applies to all DEV agents.
 
 - Execute in T1 → T2 → T3 order (fast feedback first)
 - Diff-based: run only T2 tests related to changed files first
+  - Automatically select related tests based on changed files: `src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`
+  - Mapping rules are applied per project test structure
 - Full T3 pass REQUIRED before commit
 
 ## Mechanical Success Metrics
@@ -97,9 +107,3 @@ Applies to all DEV agents.
 - Metric results are recorded in the Outcome Record as a `metric_pass` (true/false) field
 - Discrepancy between subjective evaluation (confidence) and mechanical evaluation (metric_pass) → triggers review
 - `grader_verdict: verified_pass` on a code-type row is a PRESENCE signal, never a quality signal. Promotion rule SoT: `hooks/lib/code-based-grader.sh` → `_cbg_files_test_evidence`.
-
-## Diff-Based Test Selection
-
-- Automatically select related tests based on changed files: `src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`
-- Selective execution (T2) → full execution before commit (T3): two-stage policy
-- Mapping rules are applied per project test structure
