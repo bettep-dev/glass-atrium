@@ -39,10 +39,10 @@ When glass-atrium-meta-agent rewrites an agent instruction file:
 
 Because prompts are treated as code (see "Prompts = Code" in Absolute Rules), **glass-atrium-meta-prompt-engineer** additionally inherits the following DEV cross-cutting rules:
 - `shared-comment-logging.md` — logging and comment discipline for prompt artifacts
-- `shared-performance.md` — token-budget awareness and lazy-evaluation for prompts
+- `shared-performance.md` — measure-first discipline: no optimization without a profiler/benchmark
 - `shared-search-first.md` — search existing prompts/skills before creating new ones
 - `shared-testing.md` — prompt testing and TDD discipline (Red → Green → Refactor)
-- `shared-type-safety.md` — type-safe schema definitions in structured prompt outputs
+- `shared-type-safety.md` — the `any` / `as` / `!` discipline: no untyped escape hatches
 
 `glass-atrium-meta-agent` does **not** inherit these rules (instruction rewrite is not general code authoring).
 
