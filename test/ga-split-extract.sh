@@ -20,8 +20,17 @@
 #   ga-split-extract.sh <loader-in> <loader-out> <sibling-append> <name>...
 #     loader-out      : reduced loader (loader-in minus the moved blocks) — WRITTEN
 #     sibling-append  : moved blocks are APPENDED here (pre-create it with a header)
+#     <name>...       : N accepted, but portable only ONE per invocation (see below)
 #
-# Pure bash 3.2 + awk. No GNU coreutils. Emits a summary line to stderr.
+# Chain calls to move several functions: feed each loader-out in as the next
+# loader-in. Multiple names in a SINGLE call are gawk-only:
+#   * cause   — the name list is joined on IFS[0] (a newline here) into a `-v`
+#               assignment, which BSD awk rejects at parse time
+#               (`awk: newline in string`, exit 2)
+#   * failure — closed: no loader-out is written, the append target is byte-unchanged
+#
+# Pure bash 3.2 + awk (BSD/macOS — one name per invocation). No GNU coreutils.
+# Emits a summary line to stderr.
 set -Eeuo pipefail
 IFS=$'\n\t'
 

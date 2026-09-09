@@ -1643,8 +1643,11 @@ PLIST
   # stdout. bats captures `run` through a command substitution, which cannot return
   # until every holder of that pipe closes it, so a survivor turns a finished test into
   # an interval-long block — 300s at the production interval, past the CI per-file
-  # timeout. A distinctive fractional interval keeps the pgrep match unambiguous against
-  # the other suites running in parallel.
+  # timeout. The fractional interval only separates this sleep from the OTHER intervals
+  # in the suite files running concurrently; pgrep -xf matches a command line, so any
+  # foreign `sleep 13.7` — a second concurrent run, another worktree, a stale orphan —
+  # satisfies the poll and fails the gate at exit 6. --no-parallelize-within-files
+  # bounds in-run self-collision only.
   local t0 t1
   t0="$(date +%s)"
   run bash -c '
