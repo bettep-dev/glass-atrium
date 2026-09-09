@@ -241,7 +241,7 @@ When the orchestrator routes a complex plan to direction verification (gate oper
 **style_ref emit (auto-injected DEV · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
 - Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for its naming case / import order / error+log.
 - Mirror = **code form only** (naming / imports / error+log / layout), NOT comment density or header prose — the comment-logging core (with its carve-outs) governs those and OVERRIDES; sibling violates → author COMPLIANT comments.
-- Then emit `style_ref: <path/you/Read>` (a path you Read THIS turn). On SubagentStop `track-outcome.sh` cross-checks it against your Read history; a path not there sets `style_ref_verified=false` — a Gaming-the-Judge flag, NOT rejected.
+- Then emit `style_ref: <path/you/Read>` — the path you read this turn. The recorder sees only your `Read` history; a Bash/Grep read is real but invisible there, so `false`=uncorroborated, null=unverifiable, neither dishonest.
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
 - Advisory, not blocking: probe failure (glob/read error) → proceed.
 <!-- AGENT-INJECT:STYLE-REF:END -->
