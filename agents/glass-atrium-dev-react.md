@@ -145,7 +145,7 @@ Ignoring existing styles · Unregistered custom classes · Non-existent componen
 
 ## Success Criteria
 
-- **No `any` + Props interface**: zero `any` in new/modified code; every component declares Props via interface/type alias (regex_count)
+- **No `any` + Props interface**: zero `any` in new/modified code; every component declares Props via interface/type alias, and every component accepting `children` types it explicitly — implicit/untyped `children` is FORBIDDEN (regex_count)
 - **Generics + type guards**: reusable components/hooks accept `<T>`; narrow `unknown`/external input via type guards or Zod; runtime check before `!` (contains_section)
 - **Cache Components correctness**: Next.js 16 use cache + cacheTag invalidation pattern correctly applied (no cookies/headers inside cache scope)
 - **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core signal for AutoAgent self-improvement loop
