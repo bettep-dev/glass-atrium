@@ -4,14 +4,27 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
+  buildStyleRefChargeableFilter,
+  buildStyleRefEligibleFilter,
   buildStyleRefSummary,
   buildGraderCrosscheckSummary,
   foldConfidenceDistribution,
   foldTierBreakdownRow,
   rowToProposalSummary,
 } from "../src/server/routes/improvement.js";
+
+// Cross-layer SoT paths — the bash declarations the route's two literal mirrors track,
+// plus the registry the third condition is derived from rather than copied.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const STYLE_REF_CONSTS_LIB = resolve(REPO_ROOT, "hooks/lib/style-ref-consts.sh");
+const REVIEW_FLAG_REASONS_LIB = resolve(REPO_ROOT, "hooks/lib/review-flag-reasons.sh");
+const STYLEREF_ROSTER_LIB = resolve(REPO_ROOT, "hooks/lib/styleref-roster.sh");
+const AGENT_REGISTRY = resolve(REPO_ROOT, "agent-registry.json");
 
 // Minimal DB row factory — only fields the mapper reads.
 // (matches ProposalListDbRow interface in routes/improvement.ts)
@@ -282,50 +295,116 @@ test("foldConfidenceDistribution: 4-decimal rounding on rollup", () => {
   assert.strictEqual(out.overall_confidence_observed_avg, 0.3333, "rollup 4-decimal rounded");
 });
 
-// ----- buildStyleRefSummary split counts + fake_rate (P13) -------------------
+// ----- buildStyleRefSummary 3-count partition (P13) --------------------------
 
 function styleRow(o: Partial<Record<string, bigint | string>> = {}) {
   return {
     agent: "dev-a",
     emission_count: 0n,
     emission_total: 0n,
-    verified_true_count: 0n,
-    verified_eligible: 0n,
+    corroborated_count: 0n,
+    uncorroborated_count: 0n,
+    unverifiable_count: 0n,
     ...o,
   } as Parameters<typeof buildStyleRefSummary>[0][number];
 }
 
-test("buildStyleRefSummary: split derivation verified/unverified/greenfield", () => {
-  // emission=10, eligible=6, verified=4 → unverified=2, greenfield=4.
+test("buildStyleRefSummary: three counted buckets partition the eligible rows", () => {
+  // emission=10 → eligible = 4+2+1 = 7, greenfield = 10 - 7 = 3.
   const out = buildStyleRefSummary([
-    styleRow({ emission_count: 10n, emission_total: 12n, verified_true_count: 4n, verified_eligible: 6n }),
+    styleRow({
+      emission_count: 10n,
+      emission_total: 12n,
+      corroborated_count: 4n,
+      uncorroborated_count: 2n,
+      unverifiable_count: 1n,
+    }),
   ]);
 
-  assert.strictEqual(out.overall_verified_count, 4);
-  assert.strictEqual(out.overall_unverified_count, 2, "eligible - verified");
-  assert.strictEqual(out.overall_greenfield_count, 4, "emission - eligible");
-  assert.strictEqual(out.overall_fake_rate, Number((2 / 6).toFixed(4)), "unverified / eligible");
+  assert.strictEqual(out.overall_corroborated_count, 4);
+  assert.strictEqual(out.overall_uncorroborated_count, 2);
+  assert.strictEqual(out.overall_unverifiable_count, 1);
+  assert.strictEqual(out.overall_eligible_count, 7, "sum of the three buckets");
+  assert.strictEqual(out.overall_greenfield_count, 3, "emission - eligible");
 });
 
-test("buildStyleRefSummary: fake_rate null on zero verify-eligible (no fake zero)", () => {
-  // all greenfield: emission=5, eligible=0 → fake_rate null, greenfield=5.
-  const out = buildStyleRefSummary([
-    styleRow({ emission_count: 5n, emission_total: 5n, verified_true_count: 0n, verified_eligible: 0n }),
+test("buildStyleRefSummary: unverifiable rows stay OUT of the uncorroborated rate", () => {
+  // The regression this cycle exists for: an unadjudicated row must not be counted
+  // as one the cross-check examined and failed to corroborate. Both rows below hold
+  // corroborated=9 / uncorroborated=1 and differ ONLY in the blind spot, so the rate
+  // is identical and the widening is readable from unverifiable_count alone.
+  const noBlindSpot = buildStyleRefSummary([
+    styleRow({ emission_count: 10n, emission_total: 10n, corroborated_count: 9n, uncorroborated_count: 1n }),
+  ]);
+  const wideBlindSpot = buildStyleRefSummary([
+    styleRow({
+      emission_count: 110n,
+      emission_total: 110n,
+      corroborated_count: 9n,
+      uncorroborated_count: 1n,
+      unverifiable_count: 100n,
+    }),
   ]);
 
-  assert.strictEqual(out.overall_fake_rate, null, "eligible=0 → honest null, not 0");
+  assert.strictEqual(noBlindSpot.overall_uncorroborated_rate, 0.1);
+  assert.strictEqual(
+    wideBlindSpot.overall_uncorroborated_rate,
+    0.1,
+    "denominator is the adjudicated subset — the rate does not drift with the blind spot",
+  );
+  assert.strictEqual(wideBlindSpot.overall_unverifiable_count, 100);
+  assert.strictEqual(wideBlindSpot.overall_eligible_count, 110);
+});
+
+test("buildStyleRefSummary: all-unverifiable window → null rate, never a clean zero", () => {
+  const out = buildStyleRefSummary([
+    styleRow({ emission_count: 5n, emission_total: 5n, unverifiable_count: 5n }),
+  ]);
+
+  assert.strictEqual(out.overall_uncorroborated_rate, null, "adjudicated=0 → honest null");
+  assert.strictEqual(out.overall_unverifiable_count, 5);
+  assert.strictEqual(out.overall_greenfield_count, 0);
+});
+
+test("buildStyleRefSummary: all-greenfield window → null rate, greenfield outside the partition", () => {
+  const out = buildStyleRefSummary([
+    styleRow({ emission_count: 5n, emission_total: 5n }),
+  ]);
+
+  assert.strictEqual(out.overall_uncorroborated_rate, null, "adjudicated=0 → honest null, not 0");
   assert.strictEqual(out.overall_greenfield_count, 5);
-  assert.strictEqual(out.overall_unverified_count, 0);
+  assert.strictEqual(out.overall_eligible_count, 0);
 });
 
 test("buildStyleRefSummary: empty rows → all-zero counts + null rates", () => {
   const out = buildStyleRefSummary([]);
 
-  assert.strictEqual(out.overall_verified_count, 0);
-  assert.strictEqual(out.overall_unverified_count, 0);
+  assert.strictEqual(out.overall_corroborated_count, 0);
+  assert.strictEqual(out.overall_uncorroborated_count, 0);
+  assert.strictEqual(out.overall_unverifiable_count, 0);
+  assert.strictEqual(out.overall_eligible_count, 0);
   assert.strictEqual(out.overall_greenfield_count, 0);
-  assert.strictEqual(out.overall_fake_rate, null);
+  assert.strictEqual(out.overall_uncorroborated_rate, null);
   assert.strictEqual(out.overall_emission_rate, null);
+});
+
+test("buildStyleRefSummary: per-agent rows carry the same partition", () => {
+  const out = buildStyleRefSummary([
+    styleRow({
+      agent: "dev-b",
+      emission_count: 6n,
+      emission_total: 8n,
+      corroborated_count: 1n,
+      uncorroborated_count: 2n,
+      unverifiable_count: 3n,
+    }),
+  ]);
+
+  const row = out.agents[0];
+  assert.strictEqual(row.agent, "dev-b");
+  assert.strictEqual(row.eligible_count, 6, "sum of the three, not an independent count");
+  assert.strictEqual(row.unverifiable_count, 3);
+  assert.strictEqual(row.emission_rate, 0.75);
 });
 
 // buildGraderCrosscheckSummary — grader write/edit cross-check state distribution fold.
@@ -371,4 +450,115 @@ test("buildGraderCrosscheckSummary: unrecorded rows stay outside every recorded 
   assert.strictEqual(out.not_applicable_count, 0, "absence of a state is not a state");
   assert.strictEqual(out.withheld_count, 1, "floor over recorded rows, not a historical total");
   assert.strictEqual(out.buckets.length, 2, "the unrecorded bucket still surfaces");
+});
+
+// ----- buildStyleRefChargeableFilter — published-denominator gate ------------
+// The published style_ref rates must describe the population the probe-omission
+// charging function can hold a writer responsible on. Two of its three conditions
+// are mirrored in the route (task_type + attribution_source), so each is pinned
+// against the bash declaration it mirrors; the third is a roster the route derives
+// rather than copies, and the derivation's premise is pinned too.
+
+test("buildStyleRefEligibleFilter: greenfield excluded and bound, not inlined", () => {
+  const frag = buildStyleRefEligibleFilter();
+
+  // Both halves are load-bearing. Dropping `IS NOT NULL` admits non-emitting rows;
+  // dropping the greenfield exclusion pulls every greenfield row into the
+  // unverifiable bucket, since a greenfield row also carries a NULL verify state.
+  assert.match(
+    frag.sql,
+    /^style_ref IS NOT NULL AND style_ref <> \?$/,
+    "eligibility = emitted AND not the greenfield sentinel",
+  );
+  // LLM05 — the sentinel is a bound value, so it must not appear in the SQL text.
+  assert.strictEqual(frag.values.length, 1, "one bound value");
+  assert.ok(
+    !frag.sql.includes(frag.values[0] as string),
+    "greenfield sentinel must be bound, not inlined",
+  );
+});
+
+test("buildStyleRefChargeableFilter: AND-prefixed, both predicates bound not inlined", () => {
+  const frag = buildStyleRefChargeableFilter();
+
+  assert.match(
+    frag.sql,
+    /^AND task_type::text IN \((?:\?,)*\?\) AND attribution_source IN \((?:\?,)*\?\)$/,
+    "AND-prefixed pair, placeholder-only",
+  );
+  // LLM05 — every literal is a bound value, so none may appear in the SQL text.
+  for (const value of frag.values as string[]) {
+    assert.ok(!frag.sql.includes(value), `'${value}' must be bound, not inlined`);
+  }
+  assert.strictEqual(
+    (frag.sql.match(/\?/g) ?? []).length,
+    frag.values.length,
+    "one placeholder per bound value",
+  );
+});
+
+// Partitions the bound values by each IN group's own placeholder count, so an
+// added or dropped member shifts the partition instead of hiding outside a slice
+// sized from the expectation.
+function chargeableBoundSets(): { taskTypes: string[]; sources: string[] } {
+  const frag = buildStyleRefChargeableFilter();
+  const groups = [...frag.sql.matchAll(/IN \(((?:\?,)*\?)\)/g)].map(
+    (m) => m[1].split(",").length,
+  );
+  assert.strictEqual(groups.length, 2, "two IN groups expected");
+  const values = frag.values as string[];
+  assert.strictEqual(
+    groups[0] + groups[1],
+    values.length,
+    "every bound value belongs to one of the two IN groups",
+  );
+  return {
+    taskTypes: values.slice(0, groups[0]).sort(),
+    sources: values.slice(groups[0]).sort(),
+  };
+}
+
+test("buildStyleRefChargeableFilter: task_type set matches the charging function's case-glob", () => {
+  const src = readFileSync(STYLE_REF_CONSTS_LIB, "utf8");
+  // The allowlist is an in-function case-glob, deliberately not an exported constant.
+  const m = src.match(/case\s+"\$\{TASK_TYPE\}"\s+in\s*\n\s*([^)\n]+)\)/);
+  assert.ok(m, "charging function must declare a TASK_TYPE case-glob");
+  const bashTaskTypes = m[1].split("|").map((s) => s.trim()).filter(Boolean).sort();
+
+  assert.deepStrictEqual(
+    chargeableBoundSets().taskTypes,
+    bashTaskTypes,
+    "route mirror drifted from bash SoT",
+  );
+});
+
+test("buildStyleRefChargeableFilter: attribution set matches WRITER_ATTRIBUTION_SOURCES", () => {
+  const src = readFileSync(REVIEW_FLAG_REASONS_LIB, "utf8");
+  const m = src.match(/WRITER_ATTRIBUTION_SOURCES='([^']*)'/);
+  assert.ok(m, "recorder lib must declare WRITER_ATTRIBUTION_SOURCES");
+  const bashSources = m[1].split(/\s+/).filter(Boolean).sort();
+
+  assert.deepStrictEqual(
+    chargeableBoundSets().sources,
+    bashSources,
+    "route mirror drifted from bash SoT",
+  );
+});
+
+test("style_ref roster: registry DEV prefix set equals STYLEREF_AGENTS (third condition, derived not copied)", () => {
+  // The route gates agents by the runtime 'glass-atrium-dev-' registry prefix instead of
+  // re-declaring STYLEREF_AGENTS. That omission is only sound while the two sets coincide.
+  const registry = JSON.parse(readFileSync(AGENT_REGISTRY, "utf8")) as {
+    agents: Record<string, unknown>;
+  };
+  const registryDev = Object.keys(registry.agents)
+    .filter((name) => name.startsWith("glass-atrium-dev-"))
+    .sort();
+
+  const rosterSrc = readFileSync(STYLEREF_ROSTER_LIB, "utf8");
+  const m = rosterSrc.match(/STYLEREF_AGENTS="([^"]*)"/);
+  assert.ok(m, "roster lib must declare STYLEREF_AGENTS");
+  const roster = m[1].split(/\s+/).filter(Boolean).sort();
+
+  assert.deepStrictEqual(registryDev, roster, "prefix derivation no longer covers the roster");
 });

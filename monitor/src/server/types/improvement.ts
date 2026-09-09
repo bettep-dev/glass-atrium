@@ -117,9 +117,10 @@ export interface ImprovementCtmEpmBuckets {
 }
 
 // Per-agent style_ref telemetry (7-day rolling) — Project Convention Probe
-// emission + Gaming-the-Judge cross-verify signal. v1.0 OPTIONAL phase, sparse
+// emission + Read-history corroboration coverage. v1.0 OPTIONAL phase, sparse
 // until the style_ref + style_ref_verified columns populate. v1.1 graduation:
-// emission_rate ≥ 0.50 AND (1 - verified_rate) < 0.10 across the DEV agents (FE-side).
+// emission_rate ≥ 0.50 AND overall_uncorroborated_rate < 0.10 across the DEV agents
+// (FE-side gate: styleRefGradeBadgeI in public/src/screens/improvement.jsx).
 export interface ImprovementStyleRefAgentRow {
   agent: string;
   // rows where style_ref IS NOT NULL (path or 'greenfield').
@@ -128,12 +129,19 @@ export interface ImprovementStyleRefAgentRow {
   emission_total: number;
   // emission_count / emission_total · null when total = 0.
   emission_rate: number | null;
-  // rows with style_ref_verified = TRUE.
-  verified_true_count: number;
-  // denominator — style_ref IS NOT NULL AND != 'greenfield' (greenfield not verify-applicable).
-  verified_eligible: number;
-  // verified_true_count / verified_eligible · null when eligible = 0.
-  verified_rate: number | null;
+  // Three COUNTED buckets partitioning the verify-eligible rows (style_ref IS NOT
+  // NULL AND != 'greenfield'), one per state of the style_ref_verified column:
+  //   corroborated_count   — TRUE: the emitted path appeared in the session Read history.
+  //   uncorroborated_count — FALSE: a Read history existed and did not carry it. A
+  //                          coverage fact, not an honesty verdict.
+  //   unverifiable_count   — NULL: the cross-check had nothing to adjudicate against.
+  // No bucket is derived by subtracting another: subtraction has only two terms, so a
+  // never-adjudicated row would read as one that was examined and failed.
+  corroborated_count: number;
+  uncorroborated_count: number;
+  unverifiable_count: number;
+  // Sum of the three buckets — the partition total, not an independently counted one.
+  eligible_count: number;
 }
 
 // 3-Tier Eval Grader rollout telemetry — baseline cohort split separating
@@ -171,22 +179,30 @@ export interface ImprovementConfidenceDistribution {
 }
 
 // style_ref KPI-card rollup.
+//
+// Published as three counts, not one derived rate: any single rate over the eligible
+// rows fuses two populations the instrument itself distinguishes — the rows it could
+// adjudicate and the rows it never examined — so the number moves as the blind spot
+// widens and no reader can see that from the number.
 export interface ImprovementStyleRefSummary {
   window_days: number;
   // DEV-agent allowlist (v1.1 escalation gate); FE renders sorted-by-agent.
   agents: ImprovementStyleRefAgentRow[];
-  // Cross-agent headline rollups; null when no eligible rows exist in the window.
+  // Cross-agent emission headline; null when the window holds no chargeable row.
   overall_emission_rate: number | null;
-  overall_verified_rate: number | null;
-  // Verified/unverified/greenfield split counts (P13 Gaming-the-Judge card):
-  //   verified   = style_ref_verified TRUE
-  //   unverified = verify-eligible but not verified (the fake-rate numerator)
-  //   greenfield = emitted 'greenfield' sentinel (verify structurally N/A)
-  overall_verified_count: number;
-  overall_unverified_count: number;
+  // Cross-agent rollup of the same three-bucket partition (see the agent row above).
+  overall_corroborated_count: number;
+  overall_uncorroborated_count: number;
+  overall_unverifiable_count: number;
+  // Sum of the three — the eligible total, held by construction.
+  overall_eligible_count: number;
+  // Emitted 'greenfield' sentinel rows: verify structurally N/A, outside the partition.
   overall_greenfield_count: number;
-  // 1 - overall_verified_rate; null when no verify-eligible rows (honest "—", no fake zero).
-  overall_fake_rate: number | null;
+  // Graduation gate leg 2 (< 0.10): uncorroborated / (corroborated + uncorroborated).
+  // The denominator is the ADJUDICATED subset alone — unverifiable rows are excluded
+  // from BOTH terms and published as their own count, so this rate cannot drift with
+  // the blind spot. Null when nothing was adjudicated (honest "—", never a clean 0).
+  overall_uncorroborated_rate: number | null;
 }
 
 // One recorded grader write/edit cross-check state and how many outcome rows carry it.
