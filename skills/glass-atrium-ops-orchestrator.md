@@ -646,7 +646,8 @@ Two families live here. The **stage gates** below bind every pipeline, on either
   - If unmet, re-invoke glass-atrium-intel-researcher (max 1 time)
 
 - **Before domain agents entry (glass-atrium-intel-planner output)** — 2-stage gate:
-  - **Stage 1 — format/completeness (existing)**: Executive Summary · Tasks + assigned agents · Dependency DAG included.
+  - **Stage 1 — format/completeness (existing)**: Executive Summary · Tasks + assigned agents · Dependency DAG · Open Questions section included.
+    - An EMPTY Open Questions section is a valid value and must be written as such — deleting the section is otherwise the cheapest way to pass this item.
     - If unmet, request glass-atrium-intel-planner revision (max 1 time).
   - **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it).
     - Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2).
@@ -809,7 +810,7 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
   // scoped/scope-qa.md, one byte-identical home per actor. Only FIRST_LINK_Q is read by a raw-script
   // presence scan (hooks/enforce-workflow-verify-stage.sh), so a paraphrase of THAT one breaks the
   // match; PREMISE_AUDIT_Q is read by nothing and a paraphrase drifts it from two canonicals at once.
-  const PREMISE_AUDIT_Q = 'Attack each registered premise FROM THE CODE, never from the list';
+  const PREMISE_AUDIT_Q = 'Attack each load-bearing premise FROM THE CODE, never from the list';
   const FIRST_LINK_Q = 'name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists';
 
   // complex-plan workflow — verify stage gates DEV implementation. Every stage goes through
@@ -819,8 +820,8 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
     robustAgent('glass-atrium-intel-planner', { goal: 'author plan', /* ...delegation fields... */ }),
     // verify stage: glass-atrium-qa-code-reviewer + primary-domain DEV in parallel (independent verdicts)
     parallel(
-      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation-feasibility + test-feasibility → pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE.' }),
-      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity + approach soundness → feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
+      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation-feasibility + test-feasibility → pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each by name as CONFIRMED|REFUTED|UNVERIFIABLE; the Open Questions marked load-bearing in the plan are the starting list, not the limit.' }),
+      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity + approach soundness → feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each by name as CONFIRMED|REFUTED|UNVERIFIABLE; the Open Questions marked load-bearing in the plan are the starting list, not the limit. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
     ),
     // implementation stage runs ONLY when reviewer=pass AND DEV=feasible;
     // any revise/infeasible → glass-atrium-intel-planner revision (max 1) then re-verify, else escalate
@@ -868,8 +869,8 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
     robustAgent('glass-atrium-intel-planner',    { goal: 'design the implementation approach -> plan' }),
     // Phase 2 — verify: reviewer + primary-domain DEV in ONE parallel() (independent verdicts).
     parallel(
-      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation/test-feasibility -> pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE.' }),
-      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity/approach -> feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
+      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation/test-feasibility -> pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each by name as CONFIRMED|REFUTED|UNVERIFIABLE; the Open Questions marked load-bearing in the plan are the starting list, not the limit.' }),
+      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity/approach -> feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each by name as CONFIRMED|REFUTED|UNVERIFIABLE; the Open Questions marked load-bearing in the plan are the starting list, not the limit. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
     ),
     // Phase 3 — implement: runs ONLY on pass+feasible. This first impl dev-* is preceded by the reviewer.
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on pass+feasible */ }),
