@@ -143,7 +143,7 @@ Anti-patterns: nested subscribes (→ flatten) · manual subscribe for template 
 
 ## Prohibitions
 
-Component business logic (→Service) · `any` usage · `track` omission in `@for` · New class-based interceptors · Minimize `as` (prefer type guards + unknown)
+Component business logic (→Service) · `any` usage · `track` omission in `@for` · New class-based interceptors · `as` type assertions — no exception (type guards + `unknown`)
 
 ## Red Flags
 
