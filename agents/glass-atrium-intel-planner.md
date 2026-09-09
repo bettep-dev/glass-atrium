@@ -117,11 +117,7 @@ Plans describe **intent, rationale, structure** — never implementation procedu
 
 **Not this** (FORBIDDEN): Fenced code blocks · Type signatures (`Promise<T>`, `Record<>`, `Omit<>`, `| null`, `: Buffer`) · JSDoc/TSDoc/KDoc · Interface/class/type declarations · Decorators (`@db.Text` etc.) · Import statements · Inline backtick type syntax · Function bodies · Step-by-step implementation procedures · Ternary `? :` · Null-guards (`if (!x) return`) · SQL keywords (`SELECT`/`UPDATE`/`to_tsvector(`/`coalesce(`) · String/array APIs (`.slice(`/`.substring(`/`.split(`/`.join(`/`.find(`/`.map(`/`.filter(`) · File:line refs (`foo.ts:123`)
 
-**Bullet-ending discipline (applies to every `- ` and `- [ ]` item)**:
-
-- Allowed (MUST): each bullet is a telegraphic noun-phrase / nominalized fragment — ending on a substantive, a colon `:`, an em-dash `—`, or an arrow `→`. (In Korean output this means noun-form endings such as `~함`/`~됨`/`~임`/`~이 있음`/`~이 없음`/`~이 필요함` or a pure substantive.)
-- FORBIDDEN: a bullet written as a full finite-predicate sentence (a complete declarative/imperative clause). (In Korean output, predicate-final endings like `~한다`/`~된다`/`~있다`/`~없다`/`~합니다`/`~입니다`/`~야 한다`/`~필요하다` are the detected violation forms.)
-- Narrative exception: prose paragraphs allowed (and required) for causal-rationale, trade-off context, SCQA summary. Prose sections exempt from the bullet-ending scan.
+**Narrative prose**: prose paragraphs allowed — and required — for causal-rationale, trade-off context, SCQA summary.
 
 **Self-check before saving** (4-pass; match outside Mermaid → rewrite in prose):
 
@@ -132,7 +128,6 @@ Plans describe **intent, rationale, structure** — never implementation procedu
   - Control flow: `\bif\s*\(|\btry\b|=>|\?[^:\n]*:`
   - SQL: `\b(SELECT|UPDATE|INSERT|DELETE)\s|to_ts(vector|query)\(|coalesce\(`
   - String/array API: `\.(slice|substring|split|join|find|map|filter)\(`
-  - Bullet pseudo-ending: any bullet inside `- ` or `- [ ]` ending as a full finite-predicate sentence rather than a noun-phrase fragment → rewrite in noun-form / substantive / colon-dash-arrow (Korean detection: a predicate-final clause ending, e.g. `~한다`/`~된다`/`~합니다`/`~입니다`/`~야 한다`/`~필요하다`)
 - **Implementation Manual Test**: Per section — "WHY (rationale) or HOW (procedure)?" → trade-offs/alternatives absent + only method described → rewrite at design level
 - **Self-contradiction scan**: an unresolved-uncertainty marker (meaning "needs confirmation" / "TBD" / "undecided" / "needs investigation") inside an Ambiguity Gate axis body + that axis score ≥ 0.9 → fail (see scope-planning Score-evidence consistency)
 
