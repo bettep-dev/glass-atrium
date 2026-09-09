@@ -1,6 +1,6 @@
 # Performance Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents.
+Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
 
 ## Frontend
 
@@ -12,20 +12,19 @@ Applies to all DEV agents.
 ## Backend
 
 - **DB queries**: N+1 queries are FORBIDDEN (use JOIN/include) · optimize based on EXPLAIN ANALYZE · define index strategy upfront
-- **Caching**: cache frequently queried data (Redis/in-memory) · set HTTP Cache-Control headers
-- **Async**: run independent tasks in parallel with Promise.all · sequential await is FORBIDDEN
+- **Caching**: cache data whose query frequency is measured, not assumed (Redis/in-memory) · set HTTP Cache-Control headers
+- **Async**: run independent tasks in parallel with Promise.all · sequential await of independent tasks is FORBIDDEN (an await chain on genuine dependencies is correct)
 - **Connections**: connection pooling is REQUIRED · configure timeout/limits
 
-## Mobile
+## Android
 
-- **Compose**: ensure stability with @Stable/@Immutable · specify keys for LazyColumn/LazyRow · prevent unnecessary recomposition
 - **Memory**: resize large Bitmaps · leverage WeakReference · release resources in onCleared
 
 ## General
 
 - **Measure first**: speculative optimization is FORBIDDEN · only profiler/benchmark-driven optimization is permitted
 - **Lazy loading**: defer loading of modules/data not needed for initial render
-- **Pagination**: infinite loading of large datasets is FORBIDDEN · prefer cursor-based pagination
+- **Pagination**: fetching an unbounded record set (no LIMIT / page size) is FORBIDDEN · prefer cursor-based pagination · the bound is on the fetch, not the UI (infinite-scroll UX is permitted when each page request is bounded)
 
 ## Rationalization Rejection (Performance)
 
