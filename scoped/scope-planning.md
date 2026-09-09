@@ -15,7 +15,7 @@ Rules specific to PLANNING agents: glass-atrium-intel-planner.
 - **Save location**: Plans / specs MUST be emitted via `POST /api/clauded-docs` to the monitor-internal store (per this file's Output Format Routing → Emission contract), not `memory/plans/`.
 - **Spec-as-Prompt**: A glass-atrium-intel-planner output IS the downstream agent's input context — write for machine consumption, not humans only. Structure facts/AC/scope as parseable bullets.
 - **ADR hook**: when a plan includes a significant design choice → append an ADR section noting the chosen approach + alternatives rejected + reason.
-  - Placement is format-agnostic: a user-requested HTML primary embeds it as `<section id="adr">`; a standalone agent-only ADR record = MD only (see Output Format Routing).
+  - Placement: a user-requested HTML primary embeds it as `<section id="adr">`; a standalone ADR is an agent-only md record (see Output Format Routing).
 - **Plan Direction Verification subject**: on completing a **complex** plan, glass-atrium-intel-planner is subject to the post-authoring Plan Direction Verification Gate.
   - What the gate does: the orchestrator routes the plan to a `{glass-atrium-qa-code-reviewer, DEV}` team that judges implementation-direction validity before implementation entry.
   - Planner duty: MUST accept verification feedback and resubmit the revised plan — at most 1 revision.
@@ -33,12 +33,12 @@ Request-driven decision — evaluate in order:
 | Mode | Trigger | Format | Storage / Exposure |
 |------|---------|--------|--------------------|
 | **Agent-only record (DEFAULT fallback)** | User did NOT request a document, but a record is worth keeping — incl. an intermediate plan/spec the user does not directly review (agent-to-agent handoff · backlog stub · standalone ADR) | LLM autonomous selection from {md, yaml, json, txt} per content shape (token-optimized · see `glass-atrium-intel-planner.md` Format Selection guidance · no silent default) | monitor-internal (via POST API) · viewer default-hidden |
-| **User-requested HTML** | User explicitly requested HTML / a shareable artifact (explicit format request OR explicit share intent — see "HTML request test" below) | HTML primary (single self-contained output) · Mermaid C4 single-file render | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.glass-atrium/monitor/data/documents/` — outside the vault) · viewer-exposed |
+| **User-requested HTML** | User explicitly requested HTML / a shareable artifact (explicit format request OR explicit share intent — see "HTML request test" below) | HTML primary (single self-contained output) · Mermaid C4 single-file render | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.glass-atrium/monitor/data/documents/`) · viewer-exposed |
 | **User-requested non-HTML** | User requested a plan/spec but did NOT specify HTML / a shareable artifact | the form the user asked for · unspecified (a bare "organize/summarize this" with no form) → **md default** (when in doubt, non-HTML — asymmetric cost) | monitor-internal (via POST API) · exposure follows the format (md/yaml/json/txt → default-hidden) |
 
 **Deliverable language (all three modes)**: English, per `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). Format is request-driven per the table above; language is not — a non-English plan is authored only when the user explicitly asks for one.
 
-**Backlog stub / standalone ADR placement**: a backlog stub (TBD/lightweight memo) and a standalone ADR file are agent-only records by default (token-efficient · git-diff readable · viewer-hidden · `md_body` accepted) — an `## ADR` section embedded inside a user-requested HTML plan stays HTML, while a standalone ADR file stays an agent-only md record.
+**Backlog stub / standalone ADR placement**: a backlog stub (TBD/lightweight memo) and a standalone ADR file are agent-only records by default — token-efficient · git-diff readable · viewer-hidden · `md_body` accepted.
 
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
@@ -50,15 +50,14 @@ HTML primary is produced ONLY when 1+ explicit signal is present (canonical deta
 
 **NOT triggers** (none of these produces HTML primary): content visual-richness (diagram count, table density) · LLM self-judgment that "this looks visual" · a bare plan/spec/document request.
 
-EARS: `When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a plan was requested).`
-
 ### HTML primary requirements
 
 User-requested HTML only — full authoring contract in `glass-atrium-intel-planner.md` "Output Format Routing":
 
 - Single-file self-contained (no external CSS, no build step)
 - Tailwind CDN inline + semantic HTML5 landmarks
-- Inline JS auto-ToC + `@media print` + the **external UMD** Mermaid CDN runtime (`<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`) LOADED whenever a `<pre class="mermaid">` block is present — auto-renders via `startOnLoad` (default true), NO inline init; the only permitted non-Tailwind `<script>`. Full runtime contract (inline-strip warning · host-side render · raw-text-without-runtime): `## Diagram Standard` below
+- every element STATIC markup — the monitor sanitizer deletes every inline `<script>`, so nothing JS-built ships (ToC included)
+- `@media print` (form: the BASELINE `@media print` bullet below) + the **external UMD** Mermaid CDN runtime whenever a `<pre class="mermaid">` block is present (full runtime contract: `## Diagram Standard` below)
 - Design Expression Rules (No-code zero tolerance) apply inside the HTML body identically to inside an agent-only record (backlog stub / standalone ADR)
 - **Target-files section** — when the plan defines a target-file set, emit exactly one flat-leaf `<section id="target-files">` (no nested `<section>`; literal id; one absolute path per `<li>`; OMIT when empty) → consumed by `validate-scope-drift.sh` for per-file scope-binding · full contract: `glass-atrium-intel-planner.md` "Target-Files Section".
 
@@ -76,7 +75,7 @@ An exposed HTML plan MUST maximize visual communication; a text dump FAILS. Tier
   - NEVER hex (`#…`), `rgb()`/`rgba()`, or the words `white`/`black` in any SCREEN-context `<style>` rule, inline `style=`, or CSS comment (`oklch()` is structurally safe)
   - the near-black/near-white halation-avoidance palette is expressed in `oklch`, NOT `#000`/`#fff`
 - Tailwind v4 CDN dark mode the v4 way (`<style type="text/tailwindcss">` + `@variant dark` — v3 script-config `darkMode` silently FAILS on v4 CDN)
-- `@media print` reset REQUIRED, the ONE d8-exempt place for `white`/`black`/hex (`<style> @media print { body { background: white; color: black } }`, NOT inline `style=`; hide nav/aside; `break-inside: avoid`)
+- `@media print` reset REQUIRED — a forced light theme and the ONE d8-exempt place for `white`/`black`/hex (`<style> @media print { body { background: white; color: black } }`; NOT inline `style=`, which has no `@media` context and therefore always raises); hide nav/aside; `break-inside: avoid`
 - WCAG 2.2 AA incl. new SC 2.4.11 focus-visible ring (≥3:1 change) + SC 2.5.8 target size ≥24×24px
 - all status dual-encoded (color + symbol/text, never color-only; verify BOTH dark+light themes)
 - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
@@ -87,7 +86,7 @@ An exposed HTML plan MUST maximize visual communication; a text dump FAILS. Tier
 **CONTENT-DRIVEN ESCALATION (apply the matching visual only)** — match each content shape to its visual:
 
 - process/DAG/relationship/state/sequence → **Mermaid MANDATORY**:
-  - block + external UMD CDN runtime; hand-built div/ASCII/SVG flows FORBIDDEN. Full runtime contract (inline-strip warning · host-side render · raw-text-without-runtime · only-non-Tailwind-`<script>`): `## Diagram Standard` below
+  - block + external UMD CDN runtime; hand-built div/ASCII/SVG flows FORBIDDEN. Full runtime contract: `## Diagram Standard` below
   - diagram-type SELECTION GATE — the `## Pre-drawing Doctrine` Type step (adopted set only — SoT `diagram-types.json`, canonical in `scope-report.md`; excluded shapes become a table or prose)
   - every `<pre class="mermaid">` carries `accTitle` + `accDescr` + an adjacent visible text description
 - 2+ alternatives → comparison/decision table (semantic `thead`/`tbody`/`th scope`, JetBrains Mono numerics)
@@ -105,9 +104,8 @@ HTML primary body defaults to dark mode (aligns with the user's dark homepage ·
 - text light (`text-zinc-100` / `text-slate-100`) — AAA contrast recommended (≥ 7:1) · WCAG AA minimum 4.5:1 guaranteed
 - decision/verdict badges (T1 dual-encoded) — dark-friendly hues: `bg-green-900/40 text-green-200` (✓) / `bg-yellow-900/40 text-yellow-200` (⚠) / `bg-red-900/40 text-red-200` (✕) / `bg-blue-900/40 text-blue-200` (ℹ)
 - code blocks / tables / Mermaid containers — `bg-zinc-900` + `border-zinc-800` light hint
-- environment alignment — monitor dark viewer + dark document body = visual consistency + zero eye strain
-- the `@media print` (S-7) branch keeps a forced light theme — `@media print{ body{ background: white; color: black } }` inside a `<style>` block (the ONE d8-exempt place for `white`/`black`/hex; NOT inline `style=`, which has no `@media` context → always raises)
-- **Anti-pattern**: light-default body · silent dark/light branching (beyond the single dark default) · screen-context hex (`#…`) / `rgb()`/`rgba()` / `white`/`black` in any `<style>` rule, inline `style=`, or CSS comment (use Tailwind dark tokens or `oklch()`/`var(--token)` — see the d8 validator-safe color rule, `scope-report.md` canonical)
+- print keeps a forced light theme — form and inline-`style=` caveat per the BASELINE `@media print` bullet above
+- **Anti-pattern**: light-default body · silent dark/light branching (beyond the single dark default) · any screen-context color literal (use Tailwind dark tokens or `oklch()`/`var(--token)` — see the validator-safe dark palette bullet above)
 
 ### HTML Visual Decision Requirements (D8)
 
@@ -137,9 +135,8 @@ The literals quoted in prose throughout this file are a documented MIRROR synced
   - Copy-paste curl (both modes): `glass-atrium-intel-planner.md` → Output Format Routing.
 - **EVERY emission mode POSTs — no exceptions**: ALL three modes (user-requested HTML · user-requested non-HTML · agent-only token-optimized record) are emitted via `POST /api/clauded-docs`.
   - The agent-only record is NOT a file write — "token-optimized record" / "md record" names the BODY FORMAT, never the storage target.
-  - Writing any plan/spec deliverable to a path under `memory/plans/` (or any other filesystem location) instead of POSTing is a HARD VIOLATION (audit fail).
   - Sole sanctioned carve-out: an explicit user request for a local destination, carried ONLY by the `[DOC-ROUTE]` stamp (see "Delegation phrasing does NOT override this routing" below).
-- **`memory/` is NEVER a deliverable store**: `memory/` holds ONLY session-internal state — `progress-*.md` cross-session resume files (per `GLASS_ATRIUM_GLOBAL_RULES.md` Cross-Session Continuity). A plan / spec / PRD / ADR / roadmap — any deliverable — MUST NOT be written to `memory/` (incl. `memory/plans/`) under any framing.
+- **`memory/` is NEVER a deliverable store**: `memory/` holds ONLY session-internal state — `progress-*.md` cross-session resume files (per `GLASS_ATRIUM_GLOBAL_RULES.md` Cross-Session Continuity). Writing a plan / spec / PRD / ADR / roadmap — any deliverable — to `memory/` (incl. `memory/plans/`) or to any other filesystem location instead of POSTing is a HARD VIOLATION (audit fail), under any framing.
 - **Delegation phrasing does NOT override this routing (self-enforce)**: a delegation prompt that says "agent-only md/yaml record", "where stored", "save it as an md spec", or similar does NOT authorize a file write — it still POSTs to the monitor.
   - The agent's own Output Format Routing is BINDING and overrides any orchestrator phrasing about storage location.
   - Only the user explicitly redirecting away from the monitor (rare, explicit) is honored — and the ONE sanctioned delegation-side carrier of that exception is the stamp `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting the USER explicitly requested that local destination (new file OR edit of an existing user file); the stamped path is then honored as the destination.
@@ -167,7 +164,6 @@ The literals quoted in prose throughout this file are a documented MIRROR synced
   - Consumption is the reviewer's, not the author's: drift is judged cumulatively from this root, never as per-link deltas. Reviewer-side duty text: `scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
 - **Residual — HONOR-SYSTEM, fails OPEN silently (B)**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error anywhere; the chain root is simply never created and the next Stage-2 pass has no comparand to fetch. The duty sits here, on the completing agent, for exactly that reason. Canonical: `scope-report.md` → Document Lifecycle.
 - **Intermediate output exposure (C)**: a glass-atrium-intel-planner deliverable that the user does NOT directly review (agent-to-agent handoff · intermediate spec · internal working doc) routes to an agent-only record (viewer default-hidden · token-saving) rather than a user-requested HTML primary — HTML primary stays reserved for plans where the user explicitly requested a shareable HTML artifact.
-  - When the user asked for a plan but the form is ambiguous → default non-HTML md (when in doubt, non-HTML).
   - Decision test (single exposure bit: "did the user request a shareable HTML artifact?") + U1-U4 triggers per the canonical.
 
 ## Diagram Standard [PLANNING]
@@ -198,12 +194,9 @@ Constraints that come with that tag:
 - ASCII art diagrams in a `<pre>` block (low fidelity · breaks on narrow viewport · screen-reader incompatible)
 - `<iframe>` embeds for diagrams (sandbox bypass = security regression)
 
-**Rationale**:
-- Mermaid is text-source — LLM authoring-friendly + git diff readable + reproducible
-- monitor viewer (screen 08 architecture) + clauded-docs viewer (mermaid.run hook) both render natively in the host context without sandbox bypass
-- a single diagram authoring API → consistent visual idiom across all user-requested HTML primary documents
+**Rationale**: Mermaid is text-source (LLM-authorable · git-diff readable · reproducible), the monitor and clauded-docs viewers both render it natively in the host context without sandbox bypass, and one authoring API keeps the visual idiom consistent across every user-requested HTML primary.
 
-**Reference**: D8 sandbox-safe interactivity (existing prohibition) · `glass-atrium-intel-planner.md` "Abstraction Level & Diagram Requirement Matrix" (5+ task DAG nodes → flowchart · 3+ async actors → sequenceDiagram, etc. trigger table canonical).
+**Reference**: D8 sandbox-safe interactivity · `glass-atrium-intel-planner.md` "Abstraction Level & Diagram Requirement Matrix" (5+ task DAG nodes → flowchart · 3+ async actors → sequenceDiagram, etc. — trigger table canonical).
 
 ## Pre-drawing Doctrine [PLANNING]
 
@@ -243,11 +236,9 @@ When a **user-requested HTML primary** plan deliverable exceeds the visually-hea
 - adopted: `{glass-atrium-intel-planner, glass-atrium-design-designer}` ONLY
 - excluded from the DEFAULT team — glass-atrium-dev-front: an exposed HTML primary is self-contained Tailwind CDN and not a design-token-consumption surface, so glass-atrium-dev-front is NOT a default co-author and is NOT probe-composed (default-adding duplicates glass-atrium-design-designer, breaks the atomic 1-doc-1-POST contract R2/R3, inflates tokens).
   - **Narrow exception (governed EXTEND, not a new seat · orchestrator-judged, minimal human involvement)**: a bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities AND beyond glass-atrium-design-designer's verdict scope (e.g. CSS-only tab system, complex `:has()`/container-query layout — rare for a plan).
-  - TRIGGER PATH (NOT user-surface) — the author does NOT ask the user; the steps are:
+  - TRIGGER PATH (NOT user-surface) — the author does NOT ask the user:
     - at turn-0 self-assessment the author emits `needs_devfront_markup: true` + a 1-line justification in its `[COMPLETION]`, signaling the ORCHESTRATOR;
-    - the orchestrator, during its Monitoring phase, JUDGES capability-based — truly beyond Tailwind-CDN + glass-atrium-design-designer scope?
-    - if warranted, the orchestrator composes the skeleton-first NON-parallel handoff: glass-atrium-dev-front drafts a self-contained styled HTML skeleton (content placeholders only, NO POST) INLINE → the planner fills content + Pre-Emission validation + does the SINGLE POST;
-    - the orchestrator surfaces it to the USER only if genuinely ambiguous.
+    - the orchestrator judges it capability-based in its Monitoring phase and, if warranted, composes the skeleton-first NON-parallel handoff: glass-atrium-dev-front drafts a self-contained styled HTML skeleton (content placeholders only, NO POST) INLINE → the planner fills content + Pre-Emission validation + does the SINGLE POST.
   - The exception suspends nothing else: R2/R3 remain FORBIDDEN (atomic 1-doc-1-POST preserved), glass-atrium-design-designer stays verdict-only (no markup), and the default team stays `{glass-atrium-intel-planner, glass-atrium-design-designer}`.
   - Governance: `scope-dev.md` → DEV Agent Fleet Governance. (Mirror of `scope-report.md` Designer Co-Emission Trigger.)
 - excluded scope — every agent-only record (backlog stub · standalone ADR · intermediate handoff spec): LLM-readability-first, no visual-fidelity need, never a user-requested HTML artifact → never triggers glass-atrium-design-designer consultation (an agent-only record IS a valid glass-atrium-intel-planner intermediate-output channel per Output Format Routing → "Document Lifecycle" C-mirror, it just never co-emits)
@@ -257,13 +248,9 @@ When a **user-requested HTML primary** plan deliverable exceeds the visually-hea
 - CONDITIONAL — non-canonical badge palette expansion (T4) · table-splitting axis selection (D8 column-cap ≤ 5-col split)
 - excluded (mechanical-deterministic) — H1/H2/Body typography (D8 typography-levels) · canonical 4-badge palette · ADR section structure (glass-atrium-intel-planner SoT)
 
-**Token break-even guidance**: solo + 1 revision ≈ 12-18K · +glass-atrium-design-designer adds 6-10K → break-even ≈ 18-22K total team budget.
-
-**AC (EARS)**: When 2+ T1-T5 indicators co-occur AND the deliverable is a user-requested HTML primary plan, the system shall route to `{glass-atrium-intel-planner, glass-atrium-design-designer}` parallel team via Pre-draft consultation mode (A).
-
 ## Ambiguity Gate [PLANNING]
 
-> Detailed rules: See `scope-dev.md` Ambiguity Gate section (6-axis weighted score; ≥0.8 → proceed, below → clarify with user)
+> Detailed rules: See `scope-dev.md` Ambiguity Gate section (6-axis weighted score). What each score band obliges a planner to do is the Confidence-tiered plan generation rule below.
 
 - **6-axis Ambiguity Gate** (in sync with DEV — scope-dev.md "Ambiguity Gate" canonical): Purpose 30% · Scope 25% · Technical 20% · Acceptance 15% · Audience 5% · Dependency 5%
 - **Audience axis ≥ 0.9 obligation**: at PLANNING time, resolve the single exposure question — "will the user explicitly request a shareable HTML artifact, or is this an intermediate record?" — so the request-driven format routing is pre-decided rather than discovered at emission time

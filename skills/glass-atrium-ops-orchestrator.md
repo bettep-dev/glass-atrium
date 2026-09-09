@@ -9,22 +9,10 @@ when_to_use: Use when composing multi-agent teams, deciding execution patterns (
 Governs how the orchestrator agent delegates tasks, composes agent teams, manages execution patterns, and ensures quality.
 
 - The orchestrator never implements directly — it routes, coordinates, and verifies.
-- Incorrect orchestration causes wasted tokens, missed deadlines, and quality degradation across the entire agent system.
-
-### Where things live in this file
-
-- `## Core Process` — agent selection, team composition, delegation and communication contracts, the prompt-injection gate, cost and quality gates, architecture/workflow patterns, and the standing orchestration policies (enforcement, entropy, metrics, consensus, experimental).
-- `## Orchestrator On-Demand Mechanisms`, running through the two `## Managed Document …` sections — read on demand rather than at turn-0: agent-lifecycle ceremony, completion signals, reply-form contract, ultracode mode, scope-expansion approval, self-improvement trigger, managed-doc deletion + completion.
-- `## Common Rationalizations` · `## Red Flags` · `## Verification` — the self-check surfaces: excuses to reject, defect signals to act on, and the end-of-task checklist.
 
 ## When to Use
 
-Use for:
-
-- Any task requiring delegation to one or more sub-agents
-- Composing multi-agent teams for complex work
-- Deciding execution patterns (Router/Fan-out/Pipeline)
-- Quality gate checks before accepting deliverables
+Use for any task that delegates to sub-agents — team composition, execution-pattern choice (Router/Fan-out/Pipeline), delegation-completeness verification, cost-tier routing, quality gates on deliverables.
 
 **Exclusions** — do NOT use for:
 
@@ -34,7 +22,7 @@ Use for:
 
 ## Core Process
 
-The standing rules that bind every delegation. The early sections track the order a delegation moves through — agent selection, team composition, the delegation itself, execution pattern, gates — and the later ones are standing policies consulted when they apply.
+The standing rules that bind every delegation, ordered as a delegation moves — agent selection, team composition, the delegation itself, execution pattern, gates — then the standing policies consulted when they apply.
 
 ### Capability-Based Agent Selection [ORCHESTRATOR]
 
@@ -106,8 +94,7 @@ Due to LLM judgment characteristics, the same input may return different teams. 
 - The three safeguards above are entirely LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact.
 - To make the decision auditable, the orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
   - `route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>` — and when confidence < 0.7, append the action taken (`halt+clarify` with the 2-3 candidates presented).
-- This is a **RECOMMENDED self-logged audit trail, not a runtime-enforced gate**: the orchestrator is the main-loop LLM, so no hook can force or verify this emission (honor-system).
-  - It does NOT make routing "verified" or "enforced" — it only leaves a human-readable trace so a questionable route is reviewable post-hoc.
+- This is a **RECOMMENDED self-logged audit trail, not a runtime-enforced gate**: the orchestrator is the main-loop LLM, so no hook can force or verify this emission (honor-system). It makes a questionable route reviewable post-hoc; it does not make routing "verified".
 
 #### Routing Verification (LLM-as-Judge)
 
@@ -149,7 +136,7 @@ Choose the delegation form:
 
 #### Team Constraints
 
-- Team size bounded by the Workflow engine's runtime self-cap (core-derived, per-machine) — no fixed-number default, no "exceeding → user approval" trigger (canonical: orchestrator-role.md `### Team Size`)
+- Team size — no fixed-number gate; see `#### Team Size` above
 - 5-6 self-contained tasks per agent `[default, adjustable]`
 - Sub-agents cannot create sub-agents (nesting forbidden)
 - Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation
@@ -195,7 +182,6 @@ Prevents sub-agent tool-chain saturation (synthesis never emitted after long too
 | Field | Meaning | Default |
 |-------|---------|---------|
 | `tool_budget` | Max total tool uses; hitting ceiling → stop + emit status | glass-atrium-intel-researcher ~15, glass-atrium-intel-planner ~12, glass-atrium-qa-code-reviewer ~14, DEV: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin [default, adjustable]; reads not estimable (exploration-heavy/unfamiliar surface) → floor reads = 2×(files to edit); declare as tool_budget; est ≳40 or borderline-with-unknown-reads → SPLIT (→ orchestrator-role.md Spawn Budget → Delegation-size discipline) |
-| `checkpoint_rule` | Every N tool uses → emit 3-5 line partial summary (current / next / remaining) before next tool call | glass-atrium-intel-researcher every 5, glass-atrium-intel-planner every 4, reviewer every 4 |
 | `output_cap` | Max final-output size | 1500 KR chars or equivalent |
 | `reserved_output` | Reserve-then-check: `input_budget = context_window − reserved_output` — bound the read allowlist to fit `input_budget` so the reserved emit budget is NEVER spent on input (schema-mode analysis: the terminal StructuredOutput MUST have budget left) | reserve emit tail BEFORE work; gate the read scope against `input_budget`, never after |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
@@ -326,7 +312,7 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
 
 ### Architecture Patterns [ORCHESTRATOR]
 
-Pick the execution pattern here. The subsections below carry that pattern into execution: authoring resilience and input-side sizing for workflow scripts, a deploy-safety idiom for live-copy delegations, the Wave / Pipeline / Agent-Teams execution rules, and the acceptance criteria gating each stage transition.
+Pick the execution pattern here; the subsections below carry it into execution.
 
 Three patterns, selected by the dependency shape of the decomposed sub-tasks:
 
@@ -957,7 +943,6 @@ Agent Teams apply ONLY to parallelizable independent tasks; sequential dependent
 - **Team size** — 2-3 members for the pure Agent Teams pattern; that cap is specific to this pattern, NOT a global limit.
   - Overall delegation team size follows the Team Size rule instead — no fixed-number gate (canonical: `orchestrator-role.md` → `### Team Size`; in-file digest: `#### Team Size` above).
 - **Model tiering** — Lead and Teammate tiers are assigned per `rules/orchestrator-role.md` → `### Cost-Tier Selection` (no hardcoded tier/version here), as natural-language instructions.
-- Manually include agent instructions (`.claude/agents/*.md` content) in the spawn prompt.
 - Control Wave execution (parallel → sequential) via the `blockedBy` field.
 - Clean up idle Teammates immediately.
 - Deactivate unused MCP servers.
@@ -976,9 +961,7 @@ Prohibition rules > Security > Cost limits > Team size > Quality gates
 
 ### Delegation Enforcement [ORCHESTRATOR]
 
-- The global agent (orchestrator) does not directly write code, documents, or prompts
-- Edit/Write tools are not directly invoked in the orchestrator session
-- All write operations are delegated to appropriate sub-agents
+- The global agent (orchestrator) does not directly write code, documents, or prompts — Edit/Write are not invoked in the orchestrator session, and every write operation is delegated to an appropriate sub-agent
 - "Simple task" or "token savings" are not valid reasons to skip delegation
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
@@ -987,7 +970,7 @@ Prohibition rules > Security > Cost limits > Team size > Quality gates
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
 
-- System hygiene check during Heartbeat weekly review:
+- System hygiene checks:
   - Detect agent instruction line count bloat (warn if exceeding 300 lines)
   - Tag stale memory/ files (30+ days) for archival
   - Check unprocessed learning-log items
@@ -1016,7 +999,6 @@ Prohibition rules > Security > Cost limits > Team size > Quality gates
 - Aggregation targets based on agent-tracker logs:
   - Per-agent invocation frequency · average duration · success/failure rate
   - Cross-analysis with cost-tracker logs: per-agent cost efficiency
-- Include metric summary in Heartbeat weekly review
 
 ### Consensus Protocol [ORCHESTRATOR]
 
@@ -1040,7 +1022,6 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 
 - Budget awareness on sub-agent invocation: maxTurns-based control
 - Recommend saving intermediate results at estimated 80% budget consumption
-- Budget-to-performance ratio → agent efficiency comparison reference metric
 
 #### Skill Document Auto-Generation
 
@@ -1063,11 +1044,6 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 - Recommend error rate/response time monitoring post-deployment
 - Auto-query status via Vercel CLI/API when available
 - Suggest rollback to user on anomaly detection
-
-#### PreToolUse Integrated Gateway
-
-- Current approach: 14 hooks individually registered
-- Review transition to gateway pattern (single dispatcher) when hook count exceeds 20
 
 ## Orchestrator On-Demand Mechanisms
 
@@ -1289,13 +1265,9 @@ Mechanism and policy split into clear layers. Boundary rule: **pre-enumerable co
 
 #### JS-authoring pitfalls (digest)
 
-TWO distinct forms break the Workflow parser, and the engine MISLABELS BOTH as a "TypeScript syntax" error — the message hides the real cause, so the author must recognize them by shape:
+TWO forms break the Workflow parser and the engine MISLABELS BOTH as a "TypeScript syntax" error, so recognize them by shape: **(a)** a bash `${…}` / `$(…)` / operator form (`${VAR}`, `${#a[@]}`, `${VAR:-x}`) inside a backtick template literal, and **(b)** a nested backtick template literal inside a `${…}` interpolation.
 
-- **(a) a bash `${…}` / `$(…)` / operator form** (`${VAR}`, `${#a[@]}`, `${VAR:-x}`) pasted inside a backtick template literal, which is read as JS interpolation.
-- **(b) a nested backtick template literal placed inside a `${…}` interpolation** — e.g. a role-branch ternary that puts an inner backtick literal inside `${…}` — which trips the parser at the INNER backtick (VALID ES2015 JS that the Workflow parser nonetheless rejects).
-- **Remedy for BOTH**: precompute the value as a plain string variable, then interpolate the plain `${var}` so neither a bash form nor a nested backtick reaches the parser inside `${…}`.
-- Detail surface: this file → `#### Resilient Workflow Authoring` "Plain-JS script" bullet (carries the Bad/Good micro-example) + the Pre-submit self-check bash-pitfall item.
-- Backstop: `lint-workflow-template-literal.sh` `PreToolUse(Workflow)` detects the bash form (honor-system-primary); nested-backtick detection is DEFERRED (heuristic, no test net today) so it is doc-guidance only.
+- Remedy for both, the Bad/Good micro-example, and the backstop's scope (bash form detected; nested form DEFERRED): this file → `#### Resilient Workflow Authoring` "Plain-JS script" bullet + the Pre-submit self-check bash-pitfall item.
 
 #### Completion-channel non-emission — the measurement behind pre-flight item 8 (MEASUREMENT SoT)
 
@@ -1427,7 +1399,7 @@ Which layer performs which check — Monitoring does NOT duplicate the mechanica
 - PreToolUse hooks (`validate-secret-scan.sh`, `validate-prompt.sh`, `enforce-delegation.sh`) handle real-time tool validation — `validate-prompt.sh` is a `PreToolUse(Write|Edit)` file-content screen for prompt-injection patterns, NOT a raw user-prompt guard.
 - `track-outcome.sh` auto-generates Outcome Records — Monitoring does NOT duplicate these mechanical checks; it focuses on **semantic verification** (intent-result alignment).
 - `llm-preflight.sh` is NOT wired into any PreToolUse / SessionStart hook, so NO per-session or per-tool cost-threshold preflight runs on the interactive path — do not assume it gates interactive cost.
-  - It is NOT dead code, though: `autoagent/autoagents-eval.sh` (line ~107) sources it and calls the legacy gating mode `llm_preflight 10.00`, so it IS a dependency of the autoagent eval path, just not of the interactive hook layer.
+  - It is NOT dead code, though: `autoagent/autoagents-eval.sh` sources it at its `llm_preflight 10.00` call (the legacy gating mode), so it IS a dependency of the autoagent eval path, just not of the interactive hook layer.
   - That eval path is manually invoked, NOT exercised in CI (`.github/workflows/ci.yml` states autoagents-eval.sh is not run there).
 
 ## Managed Document Deletion (Direct Handling)
@@ -1532,7 +1504,7 @@ During the Monitoring phase, verify the completed deliverable's `doc_status`.
 
 ## Red Flags
 
-Signals that an orchestration is defective. The scan list comes first; each of the four named guards below it carries its own remedy, and the first additionally carries a pre-submit self-check.
+Signals that an orchestration is defective — the scan list first, then the named guards, each with its own remedy (the first also carries a pre-submit self-check).
 
 - Orchestrator session contains `Edit` or `Write` tool calls for non-exception files
 - Sub-agent invoked without all delegation elements (Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
@@ -1587,7 +1559,6 @@ Then confirm each item:
 A `dev-*` used for Discovery/Design analysis positioned BEFORE the `glass-atrium-qa-code-reviewer` verify-spawn is a declared-impl-type token preceding every reviewer under the declaration contract (`### Pipeline Acceptance Criteria` → "In-script verify-stage") → `block-order` (a legitimate Discovery/Design phase, NOT the implement stage).
 
 - Fix: a NON-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) OR a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
-- Honor-system-primary framing unchanged; the exit-2 `block-order` is the genuine mechanical block.
 - Skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
 
 ### Reflexive [DOC-ROUTE] stamping guard

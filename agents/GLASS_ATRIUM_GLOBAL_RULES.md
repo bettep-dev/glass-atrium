@@ -38,7 +38,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
 - File names, class names, symbols, APIs → Use **only verified** references.
   - **Anchor by symbol, never by line** — cite as `<path> → <anchor>`: an identifier, a marker literal, a heading, a table row's first cell, a bullet's bolded lead, or for bare prose a 5-8 word verbatim quote. Resolve by bare-name `grep`/`jq` BEFORE citing — **0 hits = halt**, 2+ = qualify.
-  - **Why**: a stale line still resolves, so it is *silently* wrong; a renamed symbol resolves to nothing, so it is *loudly* wrong and stops the reader. Symbols do not make an anchor permanent — they trade a silent wrong answer for a loud absent one.
+  - **Why**: a stale line still resolves, so it is *silently* wrong; a renamed symbol resolves to nothing, so it is *loudly* wrong and stops the reader. Symbols do not make an anchor permanent — that trade is all they buy.
   - **A line number is an OBSERVATION, never a TARGET**: reporting what a tool returned — diff hunk, stack trace, measured span, a count — is permitted and carries its revision (`parseBody() (L410, @ 7cda954)`); telling a later actor where to go and edit is FORBIDDEN.
   - **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it.
     - These are examples of the class, not the class itself; if unsure, treat the claim as a relation.
@@ -69,11 +69,11 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Thinking Budget Policy [ALL]
 
-- Use `effort` parameter (max / xhigh / high / medium / low) — `budget_tokens` is deprecated on Claude 4.6+.
+- Reasoning spend is controlled by the `effort` parameter (max / xhigh / high / medium / low).
 - Default `effort=high`; lower for cost-sensitive pipelines; `xhigh` for highest-capability tasks (long-horizon agents, deep reasoning); `max` may overthink — reserve for genuinely hardest tasks.
 - **Thinking is ON by default** (Opus 5 — reversed from 4.8's adaptive/as-needed default): `effort` governs thinking VOLUME, not visible response length — prompt conciseness explicitly when short output is wanted.
   - Disabling thinking is permitted ONLY at effort ≤ high; `xhigh`/`max` with thinking disabled → 400 error (per-request enforced).
-  - Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow, lower it for cost-sensitive work.
+  - Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow.
 - **5-family capability facts**: models version independently — Opus 5 is the newest release, Fable 5 the capability flagship (distinct axes)
   - 128k max output unchanged (set budget starting at 64k)
   - 1M context is default AND maximum on Opus 5 / Fable 5
@@ -86,7 +86,6 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 - Models interpret instructions narrowly by default — never assume implicit generalization across scope.
 - Scope ambiguity → state scope explicitly; "apply broadly" assumptions are FORBIDDEN.
-- When in doubt, ask first (see "Questions > Assumptions" in ETHOS).
 
 ## Sub-Agent Spawn Policy [ALL]
 
@@ -116,18 +115,14 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Context Management [ALL]
 
-- Long tasks → Record intermediate artifacts to files (do not rely on memory)
 - Clearly organize key context (target, constraints, completion criteria) at task start
-- Multi-agent → Deliver self-contained context to each agent
 
 ## Cross-Session Continuity (progress.md) [ALL]
 
 - For long tasks (3+ turns), automatically create `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`
 - Update progress file on major step completion (current state + next steps)
-- On new session start, check for incomplete progress files → restore context
 - On task completion, change status to `completed`
 - Template: See `~/.claude/agents/templates/progress.md`
-- Context bloat → Minimize unnecessary file reads, delegate to sub-agents
 - **Scope**: `progress.md` lives under the tracker directory `~/.claude-personal/projects/<home-encoded>/memory/` — the path `scripts/progress-tracker.sh` actually reads.
   - `<home-encoded>` is `$HOME` with `/` replaced by `-` (e.g. `/Users/x` → `-Users-x`).
   - It is session-internal state — NOT subject to the monitor clauded-docs HTML routing (scope-report.md / scope-planning.md Output Format Routing); always Markdown.
@@ -149,7 +144,6 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **Runtime budget meter** (makes the ceiling observable): two runtime aids supply the threshold number —
   - a SubagentStart **TURN** meter — `inject-scope-rules.sh` auto-injects a "Turn-budget meter" block into every subagent carrying a `maxTurns` frontmatter, stating the cap (in TURNS), the 80% ceiling, and the checkpoint+`[COMPLETION]: needs_context` instruction (kill switch: env `SUBAGENT_BUDGET_METER_OFF`)
   - a PreToolUse **TOOL_USE** advisory — `advisory-subagent-budget.sh` keeps a per-`agent_id` TOOL_USE counter and prints a STDERR advisory at 70%/80% of a TOOL_USE budget (default 40, anchored to the ~40–52 truncation band; kill switch: env `SUBAGENT_TOOL_BUDGET_OFF`)
-  - Keep the units distinct — the meter counts TURNS, the advisory counts TOOL_USEs.
   - **Caveat** — observable + advised, NOT enforced: these only make the threshold visible and nudge mid-run; the graceful `[COMPLETION]` emit stays behavioral/honor-system — there is no mechanical brake.
 - On approach:
   - finish current write to valid state (no partial files)
@@ -168,7 +162,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 - Orchestrator step (Failure Recovery Loop / Monitoring phase): a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues.
   - This is the supported path — continuing a completed subagent — unlike the unsupported agent-to-agent Handoff Pattern (`orchestrator-role.md` Orchestrator Identity).
-  - For cross-session durability instead, resume from `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md` (the canonical durable anchor).
+  - For cross-session durability instead, resume from the Cross-Session Continuity progress file (the canonical durable anchor).
 
 #### Emit-before-cap
 

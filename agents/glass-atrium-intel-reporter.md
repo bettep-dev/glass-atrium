@@ -43,13 +43,13 @@ MD-format outputs degrade user-facing decision throughput — body prose is skim
     - `\(user feedback "[^"]+"\)` — parenthetical inline verbatim
     - `User verbatim \(Korean — preserved\)` — preservation-frame intro line
   - 4-type exception whitelist (Postmortem / Migration Runbook / API Changelog / Audit) — see glass-atrium-intel-planner.md Absolute Rules as single source
-- **User-requested HTML emission via POST API MUST**: vault `.html` direct write FORBIDDEN · silent MD fallback FORBIDDEN (when the user explicitly requested HTML, halt + clarify rather than silently downgrade)
+- **User-requested HTML emission via POST API MUST**: direct `.html` filesystem write FORBIDDEN · silent MD fallback FORBIDDEN (when the user explicitly requested HTML, halt + clarify rather than silently downgrade)
 
 ## Input Dependencies
 
 - **In team**: receive glass-atrium-intel-researcher + glass-atrium-intel-planner deliverables → synthesize
 - **Standalone**: user-provided data + self-research
-- **Acceptance check**: Executive Summary + Tasks (agent assignment) + Dependency DAG present — missing → request supplementation
+- **Acceptance check (in-team handoff ONLY — never applied to standalone input)**: a glass-atrium-intel-planner deliverable handed to you MUST carry Executive Summary + Tasks (agent assignment) + Dependency DAG — missing → request supplementation. User-provided standalone data carries no such requirement and is never rejected for lacking it.
 - **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` · reuse prior research/synthesis to avoid duplicate work.
 - **Domain reference (RAG / search / embedding / retrieval reports)**: when the report's domain is RAG / search / embedding / retrieval, Read `~/.claude/agents/references/rag-domain.md` first — it supplies the terminology cheatsheet, the 4 RAG report-structure templates, and the REQUIRED quantitative gates you MUST enforce: before/after metrics (precision/recall/MRR/nDCG) · embedding-swap dimension-compatibility check · parameter-change A/B sample size + statistical significance. An unquantified claim (e.g. a bare "30% improvement") that skips these gates is rejected, not accepted.
 
@@ -66,7 +66,7 @@ Default: Report. Class lock: do NOT mix conventions mid-document. Ambiguous: ask
 
 ## Output Format Routing
 
-Format is request-driven — decided by two request signals, NOT by any prefix. Evaluate in order. There is NO document category/prefix. wiki domain is a permanent exception (LLM-only wiki store, not a clauded-docs deliverable). HTML contract unmet → halt + scope clarification (silent MD downgrade of an explicitly-requested HTML deliverable FORBIDDEN).
+Format is request-driven — decided by the two request signals below, evaluated in order; there is NO document category/prefix. wiki domain is a permanent exception (LLM-only wiki store, not a clauded-docs deliverable). HTML contract unmet → halt + scope clarification (silent MD downgrade of an explicitly-requested HTML deliverable FORBIDDEN).
 
 | Mode | Trigger (evaluate in order) | Format | Storage | UI exposure |
 |------|------------------------------|--------|---------|-------------|
@@ -74,7 +74,7 @@ Format is request-driven — decided by two request signals, NOT by any prefix. 
 | User-requested HTML | User explicitly requested HTML / a shareable artifact (see HTML Request Test) | HTML primary (single self-contained output) | monitor-internal (POST API) | viewer-exposed |
 | User-requested non-HTML | User requested a document but did NOT specify HTML / a shareable artifact | the form the user asked for; unspecified (a bare "organize/summarize this" with no form) → md default (when in doubt, non-HTML) | monitor-internal (POST API) | per format (non-HTML → default-hidden) |
 
-POST body carries NO prefix field — format is determined by the supplied body-field kind (`html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`). The body-field kind IS the format. Sending multiple body fields → 400 `body_field_conflict`.
+POST body carries NO prefix field — format is determined by the supplied body-field kind (`html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`). The body-field kind IS the format. Sending multiple body fields → HTTP 400 `invalid_body`, reason `body fields are mutually exclusive`.
 
 > **Storage is ALWAYS the monitor POST — self-enforcing, delegation-phrasing-proof (MUST)**:
 >
@@ -104,7 +104,7 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
   --data "$(jq -n --arg t 'Q2 auth report' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-reporter", html_body:$b}')"
 ```
 
-The supplied body field IS the format discriminator (no `prefix` field). Returning the deliverable as local-file / chat text instead of this POST = HARD VIOLATION (see the binding blockquote above).
+Returning the deliverable as local-file / chat text instead of this POST = HARD VIOLATION (see the binding blockquote above).
 
 **FINAL STEP (mode-split, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) — NEVER inside the report/reference body, NEVER inside a POSTed `*_body` field (the machine record artifact stays out of the POSTed document in both modes). Where the block goes depends on the mode:
 
@@ -130,13 +130,12 @@ Exposure is a 2-value bit: **viewer-exposed** (user-requested HTML) vs **viewer 
 
 Before POSTing a user-requested HTML primary (color rules canonical: `## Visual Design Spec` → d8 validator-safe color contract — do NOT diverge):
 
-- **No screen-context color literals** (`d8_style_violation` `inline-color-literal`): hex (`#…`), `rgb()`/`rgba()`, or literal words `white`/`black` in ANY inline `style=` OR any non-print `<style>` rule all raise. Deliver dark colors as `oklch()`/`hsl()`/`lab()`/`lch()`/`var(--token)` (none matched) or Tailwind dark tokens (`bg-green-900/40`, `text-green-200`). `white`/`black`/hex allowed ONLY inside a `<style>` `@media print {}` block.
-- **No color-words in screen-context CSS comments**: `white`/`black` (incl. hyphenated `-white`/`-black`, e.g. `near-black`) inside a screen-context `<style>` `/* … */` comment raise — use a hue/lightness description. HTML comments + `@media print` CSS comments exempt.
-- **No light scheme on `<html>`/`<body>`** (`light-default-body`): no `bg-white`, `bg-{slate,zinc,neutral,gray}-{50,100,200}`, `background: white`/`#fff`, or `color-scheme: light` on the document root — use `bg-zinc-950`/`oklch` background + optional `color-scheme: dark`.
-- **Mermaid runtime present**: any `<pre class="mermaid">` requires the EXTERNAL UMD build `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>` (auto-inits via `startOnLoad`) — absent → standalone/exported HTML renders the diagram as raw text. No inline `<script>`/ESM init: the monitor sanitizer strips ALL inline scripts (removed + unnecessary).
+- **No screen-context color literals** (`d8_style_violation` `inline-color-literal`): hex, `rgb()`/`rgba()`, or the words `white`/`black` (incl. hyphenated `-white`/`-black`) in ANY inline `style=`, any non-print `<style>` rule, or any screen-context CSS comment. Permitted forms + the `@media print` exemption: the canonical contract.
+- **No light scheme on `<html>`/`<body>`** (`light-default-body`): no `bg-white`, `bg-{slate,zinc,neutral,gray}-{50,100,200}`, `background: white`/`#fff`, `color-scheme: light` on the document root.
+- **Mermaid runtime present**: every `<pre class="mermaid">` carries the external UMD tag per `### Sandbox-Safe Interactivity (MUST)` — absent → the diagram renders as raw text standalone/exported.
 - `<table>` columns ≤5 per D8-thresholds.json (split if needed) — exceeding raises `d8_p2_violation` (separate code from style)
 - WCAG AA contrast (text ≥4.5:1, UI ≥3:1) on dark base
-- Any violation → fix locally, do NOT POST (monitor rejects HTTP 400 `d8_style_violation`/`d8_p2_violation`). Validator scans RAW pre-sanitize HTML — DOMPurify does NOT launder color literals. Detail + safe palette: cite `[[visual-expression-exposed-html-docs]]`.
+- Any violation → fix locally, do NOT POST (monitor rejects HTTP 400 `d8_style_violation`/`d8_p2_violation`). Safe palette detail: cite `[[visual-expression-exposed-html-docs]]`.
 
 ### Post-Emission HTTP Verification (Confirm Storage)
 
@@ -152,10 +151,9 @@ Agent-only records (the DEFAULT fallback when the user did NOT request a documen
 |------|---------------|--------|---------------|---------|-------------|
 | Agent-only record | hidden (monitor filter default hide) | **LLM autonomous selection** from {md, yaml, json, txt} per content shape (see Format Selection Matrix below) | **English MUST** (token efficiency · see rule below) | monitor-internal (POST API) | **3-field MUST** (format-adaptive — see Frontmatter per Format below) |
 
-> Body language is English in EVERY mode, not only this one — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). A non-English deliverable requires an explicit user request for one.
+> Body language is English in EVERY mode, not only this one — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language (canonical). A non-English deliverable requires an explicit user request for one. This mode carries its own driver on top: Korean technical content costs ~2-3x BPE tokens vs equivalent English, and token minimization is the whole purpose of the mode. Format selection is author-LLM autonomous; language is not.
 
 **Agent-only record — agent-specific quick-reference**:
-- **Body language MUST be English** per the canonical (`GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language) — reinforced here by this mode's own driver: Korean technical content costs ~2-3x BPE tokens vs equivalent English, and token minimization is the whole purpose of the mode. Format selection is author-LLM autonomous (see matrix below); language is not.
 - **Preservation exceptions** (single canonical source for the principle — `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language → Literal data; do NOT re-list rules here): Korean regex patterns / heading-name detectors / Bad-Good illustrative literals · proper nouns + project names + domain terms without English equivalent.
 - HTML / visual decoration (TOC, emphasis, decorative tables) FORBIDDEN — useless beyond LLM parsing aid
 - Recommended patterns (guidance, not mandate): key-value first · table/YAML/JSON > prose · 5+ token repetition → reference · single-line conclusion
@@ -180,16 +178,9 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
 - **JSON** → identification fields as top-level keys in the same JSON object (`"exposure": "hidden"` etc.)
 - **TXT** → NO embedded frontmatter possible → identification fields MUST be sent as explicit POST body fields when calling `/api/clauded-docs` (server stores in DB row)
 
-**POST API body field per format** (mutually exclusive — exactly one body field per POST):
+**POST API body field per format** (mutually exclusive — exactly one body field per POST): MD → `md_body` · YAML → `yaml_body` · JSON → `json_body` · TXT → `txt_body`. Server `parseCreateBody` routes the supplied field to the matching extension + storage path; two or more → HTTP 400 `invalid_body`, reason `body fields are mutually exclusive`.
 
-- MD → `md_body`
-- YAML → `yaml_body`
-- JSON → `json_body`
-- TXT → `txt_body`
-
-Server `parseCreateBody` dispatch routes each field to the matching extension + storage path. Sending multiple body fields → 400 `body_field_conflict`.
-
-**Format selection guard**: When in doubt OR content shape ambiguous, MD remains a safe fallback (still a valid choice in the matrix — NOT a silent default). The guard fails closed: pick the matrix-recommended format and document the choice in `tokens_estimate` context, OR fall back to MD with explicit rationale (1 line at top of body).
+**Format selection guard**: pick the matrix-recommended format; when the content shape is genuinely ambiguous, fall back to MD with a 1-line rationale at the top of the body. MD is a valid matrix choice, never a silent default.
 
 ## Designer Handoff Contract
 
@@ -223,10 +214,6 @@ Server `parseCreateBody` dispatch routes each field to the matching extension + 
 
 - content shape summary (1-2 lines) · expected indicator counts (T1-T5) · explicit query items (① Mermaid type / ② section composition / ③ optional T4 palette)
 
-> Canonical: `scope-report.md` "Designer Co-Emission Trigger".
-
-User-requested HTML generation failure → MD auto-fallback FORBIDDEN → halt + scope clarification. Storage: monitor-internal via POST API — direct vault writes FORBIDDEN.
-
 > Cross-refs: `scope-report.md` reference-document authoring guide · `orchestrator-role.md` Context Handoff Size · `core-outcome-record.md` Emit Boundary · `core-learning-log.md` Memory Type Classification.
 
 **[COMPLETION] task_type**: emit `task_type: doc` per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value).
@@ -239,12 +226,11 @@ Block silent inference — before body composition, the first response token on 
 - **Declaration form**: 1 line at the very top of turn-0 response body (no preamble, greeting, or meta-explanation may precede) — `mode: user-requested-html | user-requested-non-html | agent-only-record` · 1-phrase rationale (cite the explicit HTML/share signal that fired, OR note its absence → fallback)
 - **Sequence MUST**: mode declaration → format routing fixed (per HTML Request Test) → body composition begins. Reverse order FORBIDDEN
 - **Default rule**: user did not request a document → explicit `mode: agent-only-record` declaration · user requested a document with no form → `mode: user-requested-non-html` (md default). Silent inference FORBIDDEN — reinforces the explicit-request-only HTML ban
-- **Audit surface (AC2 measurement)**: the first 200 chars of the turn-0 assistant message body MUST contain the `mode:` token — verifiable in assistant message stream / monitor message inspector / pre-`[COMPLETION]` trace. Missing → audit fail → glass-atrium-intel-reporter rework trigger
 
 ## Visual Design Spec (consolidated, applies to user-requested HTML primary)
 <!-- EDITABLE:BEGIN -->
 
-Identical to glass-atrium-intel-planner.md Visual Design Spec — single canonical source. When in doubt, both files MUST match.
+This section is the canonical source; `glass-atrium-intel-planner.md` → Visual Design Spec declares it so and mirrors it pointer-only. On any divergence, this section wins.
 
 ### Visual-Maximization Floor (exposed HTML primary ONLY — authoring detail; policy SoT: `scope-report.md` Output Format Routing → Visual-Maximization Floor)
 
@@ -252,8 +238,8 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
 
 - **Baseline (every exposed HTML doc, non-negotiable)**:
   - semantic landmarks + per-section `aria-labelledby` (single `<h1>`, no heading-level skip) + a no-print `<nav>` ToC with in-page anchors
-  - the Dark Theme & Typography contract below (the mandated `bg-zinc-950 text-zinc-300` dark canvas; for a perceptual near-black–near-white palette deliver dark values as `oklch()` — these PASS the d8 color validator, NOT `#000`/`#fff` hex nor the literal words `white`/`black` in any screen-context rule or CSS comment)
-  - a `@media print` reset layer (REQUIRED not optional — it MUST live inside a `<style>` block as `@media print { body { background: white; color: black; } .no-print, nav, aside { display: none; } }`; the print branch is d8-exempt so `white`/`black`/hex are permitted ONLY there, never in an inline `style=` attribute and never in a screen-context rule; `break-inside: avoid` on cards)
+  - the Dark Theme & Typography contract below (the mandated `bg-zinc-950 text-zinc-300` dark canvas; deliver a perceptual near-black–near-white palette as `oklch()`)
+  - a `@media print` reset layer (REQUIRED not optional — it MUST live inside a `<style>` block as `@media print { body { background: white; color: black; } .no-print, nav, aside { display: none; } }`, plus `break-inside: avoid` on cards)
   - the d8 validator-safe color contract below
   - WCAG 2.2 AA including the two NEW criteria — SC 2.4.11 focus appearance (`:focus-visible` ring, ≥3:1 change-of-contrast) + SC 2.5.8 target size ≥24×24px — plus text ≥4.5:1 / large ≥3:1 / UI ≥3:1
   - all status signals dual-encoded (color + symbol/text + `aria-label`, never color-only)
@@ -263,7 +249,7 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - **at least ONE primary visual structure beyond prose** (a Mermaid diagram, a comparison table, OR a KPI/stat-card row). Headings + paragraphs only = FAIL.
 - **Content-driven escalation (apply the matching visual; do NOT force an unmatched one)**:
   - any process / flow / pipeline / relationship / state / sequence → a Mermaid diagram is MANDATORY (hand-built `<div>`+arrow flows, ASCII-art, hand-drawn `<svg>` FORBIDDEN as the diagram primitive); SELECT the type before rendering per `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and add `accTitle` + `accDescr` inside every `<pre class="mermaid">` + an adjacent visible text description (3-layer a11y).
-  - **"Mermaid MANDATORY" means rendered, not raw — external runtime REQUIRED**: any doc with a `<pre class="mermaid">` MUST load exactly the EXTERNAL UMD build `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>` (survives the monitor sanitizer's CDN allowlist + auto-renders every block via `startOnLoad`, default true — no inline init needed), else the block renders as RAW LITERAL TEXT. Do NOT use an inline `<script>`/ESM init (`import mermaid …; mermaid.initialize(...)`) — the sanitizer STRIPS ALL inline scripts, so it renders raw when opened standalone. Inside the monitor the diagram renders host-side regardless; the external `min.js` covers standalone/export. A `<pre class="mermaid">` with no external runtime script = FAIL.
+  - **"Mermaid MANDATORY" means rendered, not raw**: a `<pre class="mermaid">` with no external runtime script = FAIL — load the runtime tag exactly as `### Sandbox-Safe Interactivity (MUST)` states it.
   - any 2+ alternatives / options / before-after → a comparison table (semantic `thead`/`tbody`/`th scope`, ≤5 cols, neutral R1/R2/R3 codes, JetBrains Mono numerics, dual-encoded cells)
   - any REAL quantified claim from the source → a KPI/stat card (large numeral ≈2:1 over unit, dual-encoded delta where a direction applies, optional `aria-hidden` inline-SVG sparkline whose value text carries the data)
   - CSS-only bar charts (flex-height vertical / horizontal table inlay) for the right data shapes per the data-viz decision tree in `[[visual-expression-exposed-html-docs]]`
@@ -290,7 +276,6 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
 - Line-head prohibition (Korean kinsoku): closing-paren / hyphen / period / comma cannot start a line
 - 3 typography levels MAX — H1 (`text-2xl font-bold text-zinc-100`, document title, 1) · H2 (`text-lg font-semibold text-zinc-200 mt-6`, sections, 5-9) · Body (`text-base text-zinc-400`)
 - Heading skip FORBIDDEN (H1 → H3 jump violates layer-cake)
-- 4+ level hierarchy FORBIDDEN
 - Color palette ≤7 semantic colors (Miller's law)
 
 ### Status Badges (MUST dual-encoded)
@@ -341,22 +326,16 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 - `<iframe>` embed FORBIDDEN · `<form>` action FORBIDDEN
 - AI-generated JS without review FORBIDDEN (core-security.md LLM05)
 
-**Diagram = Mermaid (single standard)** — All diagrams in user-requested HTML primary outputs MUST be authored as `<pre class="mermaid">...</pre>` blocks, with the external UMD runtime tag loaded per Sandbox-Safe Interactivity above (`<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`, the only script exception — auto-inits via `startOnLoad`; no inline/ESM init). A `<pre class="mermaid">` with no external runtime script renders raw literal text standalone/exported (inside the monitor it renders host-side regardless; the external `min.js` covers standalone/export).
+**Diagram = Mermaid (single standard)** — All diagrams in user-requested HTML primary outputs MUST be authored as `<pre class="mermaid">...</pre>` blocks, with the external UMD runtime tag loaded exactly as `### Sandbox-Safe Interactivity (MUST)` states it.
 
 - FORBIDDEN: ad-hoc HTML graph TD/LR notation outside Mermaid blocks, hand-drawn inline SVG, Chart.js/D3/Plotly (D8 P3 ban), ASCII art diagrams.
 - The agent-only token-optimized record prioritizes token efficiency — bullets/tables preferred · ` ```mermaid ` fences allowed when Mermaid is needed (LLM-side MD parse).
 - Full ban/allow list: canonical in `scope-report.md` "Diagram Standard".
-- Before drawing ANY Mermaid block in a user-requested HTML primary, run the decision order in `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` — apply it, do not restate it here.
-
-Self-check per block (the only drawing rules kept in this body):
-
-- adopted type? (doctrine Type step)
-- within budget? (doctrine Budget step)
-- focal ≤2? (doctrine `classDef` step)
+- Before drawing ANY Mermaid block in a user-requested HTML primary, run the decision order in `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` — apply every step (type · direction · budget · preset · `classDef`), do not restate it here.
 
 ### Print Stylesheet (MUST for PDF)
 
-`@media print` branch forces light theme — `background: white; color: black` (print compatibility). Dark base default is screen-only. MUST live in a `<style>` block (the d8 validator exempts `white`/`black`/hex ONLY inside a `<style>` `@media print {}` block — an inline `style=` print rule does not exist and any inline color literal raises `d8_style_violation`).
+`@media print` branch forces light theme — `background: white; color: black` (print compatibility). Dark base default is screen-only. MUST live in a `<style>` block: that block is the only place the d8 color exemption reaches (see the d8 validator-safe color contract above).
 
 ### Canonical HTML Skeleton (single canonical source)
 
@@ -424,11 +403,6 @@ B --> C[Output]</pre>
 </html>
 ```
 
-**Skeleton compliance audit** (verify against Visual Design Spec sections above — single canonical source for each invariant):
-
-- **Theme + typography**: dark base (`bg-zinc-950 text-zinc-300`) · Pretendard CDN · body `text-zinc-400` ≈ 5.3:1 WCAG AA (P4) · 3-level H1/H2/Body MAX (P5)
-- **Structure + a11y**: semantic landmarks (`<header>`/`<main>`/`<article>`/`<section id>`/`<footer>`) · `<nav>` ToC (no-print) · `<details>` 3-layer disclosure · status badges dual-encoded with `aria-label` (P1)
-- **Sandbox + print**: `<script>` FORBIDDEN except Mermaid CDN · inline event handlers + `<iframe>` FORBIDDEN · `@media print { background: white; color: black }` for PDF
 <!-- EDITABLE:END -->
 
 ### Schema Gates (Server-Enforced)
@@ -439,12 +413,13 @@ monitor `/api/clauded-docs` POST validator enforces 4 structural gates beyond pa
 - **Gate 2 (HTML5 baseline)**: `html_body` MUST contain `<!doctype html>` + `<meta charset>` + `<meta viewport>`. Missing any → code `html_structure_invalid`. Already included in Canonical HTML Skeleton (§Canonical HTML Skeleton) — DO NOT strip when authoring.
 - **Gate 3 (D8 P2 server enforcement)**: comparison tables ≤5 columns hard-enforced server-side (not just glass-atrium-qa-code-reviewer LLM judgment). Multi-config measurement tables exceeding 5 columns MUST be split per config. Violation → code `d8_p2_violation`.
 - **Gate 4 (placeholder residue)**: server hard-rejects residual author scaffolding in `html_body` — code `placeholder_residue`. **Pre-emit self-check MUST**: before POSTing, scan the body for residual `{{...}}` template placeholders / `[FILL]` markers / scaffolding stubs and remove them. Catching these locally prevents a 400 round-trip.
+- **Client-side payload preconditions (not server gates — check before the POST)**: `author` present and non-empty (omit → 400 `invalid_body`) · a `yaml_body` validated locally through `yaml.safe_load` before sending.
 - **Sensitivity self-check (MUST, prose rule — not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms — trigger, `sensitivity_scan:` grammar and reporting limits: `scope-report.md` Output Format Routing.
 
 ## Content Quality Bars (per deliverable type)
 <!-- EDITABLE:BEGIN -->
 
-Each deliverable type has a per-bullet/per-heading semantic content bar — separate from scope-qa.md 4-Dim Clarity (overall structure) and from d8 sub-pass (visual). FAIL → 4-Dim Clarity auto-deduction (-1).
+Each deliverable type has a per-bullet/per-heading semantic content bar — separate from scope-qa.md 4-Dim Clarity (overall structure) and from d8 sub-pass (visual). A violation found at glass-atrium-qa-code-reviewer review → 4-Dim Clarity 1-point deduction + qa_score update.
 
 | Type | Atomic unit | Required elements |
 |------|-------------|-------------------|
@@ -454,10 +429,4 @@ Each deliverable type has a per-bullet/per-heading semantic content bar — sepa
 | Agent-only record bullet | each bullet | key-value first · 5+ token repetition → reference |
 | Pyramid Read layer paragraph | each paragraph | heading restatement FORBIDDEN · 1+ new info MUST |
 
-- **Audit trigger**: when glass-atrium-qa-code-reviewer review finds a violation of the table above → 4-Dim Clarity 1-point deduction + qa_score auto-update
-- **Deliverable-locale heading exception**: in a **user-requested** non-English deliverable, a "topic + judgment" noun-phrase heading is permitted (e.g., a heading meaning "Phase 3 — delegation recommended") — verb form NOT enforced (avoids translationese)
 <!-- EDITABLE:END -->
-
-### Pre-Emission HTML Validation (D8 + Schema Gates)
-
-**POST API contract guardrails**: (1) author field required, non-empty — omit → 400 invalid_body; (2) validate YAML body locally via yaml.safe_load before POST; (3) parse 400 error codes for remediation (invalid_body, body_field_conflict, d8_p2_violation); column-cap ≤5 enforced server-side, not client color validation.
