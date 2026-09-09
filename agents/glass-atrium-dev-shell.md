@@ -53,7 +53,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT use `grep -c ... || echo 0` (produces `"0\n0"`) — see Key Patterns `grep -c` zero-match trap for the correct form
 - MUST NOT use `--external-sources=true` in ShellCheck (macOS requires bare `--external-sources`)
 - MUST NOT source strict-mode scripts into Bats tests without isolating ERR traps (use subshell or `trap - ERR`)
-- MUST NOT bury a Bats assertion in a mid-body bare `[[ ]]` — Bats bodies run under errexit (`set -e`) on both platforms; bash 3.2 alone exempts mid-body `[[ ]]`, while `[ ]`/`test`/`false`/a failing `grep` fail everywhere. macOS red settles a keep; macOS green settles nothing about CI. Use `&&` chains for compound logic and let the assertion be the final command.
+- MUST NOT bury a Bats assertion in a mid-body bare `[[ ]]` — Bats bodies run under errexit (`set -e`) on both platforms; bash 3.2 alone exempts mid-body `[[ ]]`, while `[ ]`/`test`/`false`/a failing `grep` fail everywhere. A macOS failure is real on both platforms; a macOS pass proves nothing about CI. Use `&&` chains for compound logic and let the assertion be the final command.
 - MUST size the task at intake — `tool_uses ~= files x 4.5`, plus ~5 for each comprehensive Bats suite run; above ~30, decline and report for decomposition rather than discovering the shortfall mid-work.
 - MUST commit incrementally per file-group rather than all-at-once to preserve progress against budget exhaustion — **conditional on holding INDEX OWNER on the worktree**. Where the delegation marks the worktree SHARED, index mutation is FORBIDDEN: checkpoint to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` instead and report the uncommitted paths in `[COMPLETION]` for the user/orchestrator to route — an agent commits only its OWN work, so handing your edits to the index owner to commit is NOT the fallback. Where the delegation states no contract, treat the worktree as SHARED and ask (`core-git-workflow.md` → Commits).
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
@@ -98,11 +98,11 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 - **`set -e` exceptions**: `if`/`while` conditions, `&&`/`||` chains, `!` negation suppress `-e` · `(( var++ ))` → use `(( var++, 1 ))` or `|| true`
 - **Quoting**: Every expansion quoted `"${var}"` · `"$(cmd)"` (never backticks) · `[[ ]]` (never `[ ]`)
+- **Separated declaration**: `local var; var="$(cmd)"` (SC2155 — masks exit code)
+- **Subshell scope**: `cmd | while read` loses vars → use `while read ...; done < <(cmd)`
 - **Temp files**: `mktemp` / `mktemp -d` · Register `trap` cleanup before creation
 - **Job scratch (`~/.claude/jobs/<job-id>/`)**: the harness creates one scratch directory per background job (`tmp/`, `state.json`, `exit-cause`) and reaps none of them — nothing automatic or scheduled ever cleans them, so an entry outlives its job unless a human clears it: leave nothing durable there and never plant a link there into a real file. The only cleanup path is manual — `scripts/prune-job-scratch.sh` removes top-level job entries at least one whole day past its retention window (`find -mtime` truncates age to whole days; link-semantic, top-level files untouched) and runs solely when someone invokes it, so never rely on it having run
 - **Idempotency**: `mkdir -p` · `ln -sfn` · `grep -qF || append` · check-before-act
-- **Separated declaration**: `local var; var="$(cmd)"` (SC2155 — masks exit code)
-- **Subshell scope**: `cmd | while read` loses vars → use `while read ...; done < <(cmd)`
 - **`grep -c` zero-match trap**: `grep -c ... || echo 0` produces `"0\n0"` because grep already printed "0". Always use `|| true` then guard: `[[ -z "${count}" ]] && count=0`
 - **`python3 -c` + stdin (SC2259)**: A `<<'PY'` heredoc overwrites stdin, preventing pipe input in the same command. Pattern — capture source first, pass data separately:
   ```bash
@@ -175,18 +175,19 @@ metric_pass=true requires shellcheck + shfmt + bash-n all green (Bats optional w
 
 ## Prohibitions
 
-- `eval` · unquoted vars · bare `set -e` · `for f in $(ls)` · `printf "$user_input"`
-- `rm -rf` without path validation · `sudo` without user confirmation · SUID scripts
+Every Guardrails `MUST NOT` is a prohibition, stated once there and not restated here (`eval` · unquoted vars · bare `set -e` · `for f in $(ls)` · `printf "$user_input"` · `rm -rf` without path validation · bash 4+ without a version guard). These have no Guardrails entry:
+
+- `sudo` without user confirmation · SUID scripts
 - `~/.claude/settings.json` modification without orchestrator return
 - Homebrew-bash assumption (must run on stock macOS Bash 3.2)
 
 ## Red Flags
 
-- Script missing `set -Eeuo pipefail` · `eval` anywhere · ShellCheck warnings unaddressed
-- Bash 4+ feature without version guard · `rm` on non-regenerable files (use `mv ~/.Trash/`)
-- Unquoted variable expansion · Missing `trap` cleanup for temp files
-- GNU-only flags without macOS BSD portability check
-- `grep -c ... || echo 0` pattern · `python3 -c` with inline `<<'PY'` heredoc on same command (both → see Key Patterns for fixes)
+Any Guardrails violation is a red flag — scan those first. These three have no Guardrails entry:
+
+- GNU-only flags without a macOS BSD portability check
+- Missing `trap` cleanup for temp files (→ Key Patterns, Temp files)
+- `rm` on non-regenerable files — use `mv ~/.Trash/`; Guardrails covers only `rm -rf` path validation, not the choice of `rm` over Trash
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
