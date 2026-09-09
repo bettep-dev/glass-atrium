@@ -1182,12 +1182,19 @@ def _load_srm_ns(lib_path):
 
 
 # style_ref_verified: cross-verify the emitted style_ref against the session's
-# Read tool_use history (single SoT matcher in lib/style_ref_match.py, shared with
-# style-ref-verify.sh — no rule divergence). Emitted as a 3-state token:
+# Read tool_use history (matcher SoT: lib/style_ref_match.py). The RETIRED, unwired
+# hooks/style-ref-verify.sh shares that matcher but applies no empty-history withhold, so
+# its verdict diverges from this one — keep it unwired, per its own RETIRED header.
+# Emitted as a 3-state token:
 #   'true'  — style_ref is a real path AND found in Read history
-#   'false' — style_ref is a real path but NOT in Read history (Gaming-the-Judge)
-#   ''      — greenfield / absent / unverifiable (transcript unreadable, lib missing)
-#             → verification N/A, surfaced as a JSON null downstream (never a failure).
+#   'false' — style_ref is a real path NOT corroborated through the Read channel (a
+#             coverage fact, never an honesty verdict)
+#   ''      — greenfield / absent / unverifiable (transcript unreadable, lib missing, or an
+#             EMPTY Read history — see the withhold below) → verification N/A, surfaced as a
+#             JSON null downstream (never a failure).
+# Null is NOT overloaded by the empty-history case: greenfield stays distinguishable on the
+# style_ref COLUMN (the literal 'greenfield'), and absent on style_ref IS NULL — so the
+# unverifiable rows are exactly style_ref NOT IN (NULL,'greenfield') AND verified IS NULL.
 # Fail-open by contract: any error degrades to '' (null), never crashes the hook.
 def _compute_style_ref_verified(completion_d, payload_d):
     import os as _os
@@ -1210,6 +1217,15 @@ def _compute_style_ref_verified(completion_d, payload_d):
         # this tag, so style_ref's read-history scan never collides with the grader's
         # Write/Edit write-history scan (collect_write_paths) over the same transcript.
         read_paths = _ns['collect_read_paths'](tpath, ('Read',))
+        # EMPTY Read history → withhold, never 'false'. Same ground as the write side's
+        # empty-history arm, which lives in the grader
+        # (lib/code-based-grader.sh::_cbg_classify_write_crosscheck) — the sibling
+        # _compute_write_crosscheck below only reports ('verifiable', []) and decides
+        # nothing. The collector admits an entry only on a Read tool_use carrying
+        # `file_path`, so it is blind to a file read through Bash (sed/cat/grep) — and a
+        # blind instrument cannot DEMONSTRATE absence.
+        if not read_paths:
+            return ''
         return 'true' if _ns['style_ref_matches'](style_ref_val, read_paths) else 'false'
     except (OSError, IOError, KeyError, SyntaxError, ValueError):
         return ''
