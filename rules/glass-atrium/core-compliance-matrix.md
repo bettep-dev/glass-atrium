@@ -1,12 +1,30 @@
 # Rule-to-Agent Compliance Matrix
 
-## Loading Tiers
-
 This file is the **single source of truth** for agent-to-rule loading policy. Scope files MUST NOT re-declare tier membership in prose — use the stanza header `> **Loading**: Tier 2 ...` and link here.
 
-Machine-read structure — `hooks/validate-compliance-matrix.sh` parses this live file at SessionStart and exits 2 on a confirmed mismatch, checking the Tier-1 Core list against the ALL column, each conditional-exception footnote marker used in a table cell against its one blockquote definition, and every Compliance Matrix column header against the Scope Legend scopes, so a dropped Tier-1 bullet, an orphaned footnote definition or a removed legend row breaks it (the accompanying Bats suite drives temp-dir fixtures and would not catch a live edit).
+## Machine-Read Structure
 
-Machine-read path spellings — `monitor/src/server/architecture/governance-membership.ts` treats every document path this file writes in inline code as a declared document and reports it as absent when no such file exists, so an illustrative or placeholder path in that form must never be written here; the live-file guard for that extraction is `monitor/test/architecture.governance-membership.unit.test.ts`, which runs under the node test runner rather than the bats runner.
+Four live consumers parse this file. Reword around what they read, never through it.
+
+| Consumer | Reads | Breaks when |
+|---|---|---|
+| `hooks/validate-compliance-matrix.sh` — SessionStart, exit 2 on a confirmed mismatch | Tier-1 Core bullets ↔ the ALL column · footnote markers used in matrix cells ↔ their `>` definitions, 1:1 · matrix column headers ↔ Scope Legend scopes · legend agent names ↔ `agent-registry.json` | a Tier-1 bullet is dropped · a footnote definition is orphaned · a legend row is removed |
+| `monitor/src/server/architecture/governance-membership.ts` | every `scoped/…`, `rules/glass-atrium/…` or `agents/…` `.md` path written in inline code, reporting it absent when no such file exists | an illustrative or placeholder path is written in that form |
+| `hooks/test/injector-roster-docs-closed-set.bats` | the roster variables declared in `hooks/inject-scope-rules.sh` and `hooks/lib/styleref-roster.sh`, asserting each is named here | a roster name, or the inject-block name it owns, is named nowhere here |
+| `scripts/agent_lifecycle/scope_infer.py`, via `readers.py` | the `## Scope Legend` table, as an agent-name → scope map | the legend's two-column shape changes, or an agent cell gains a lowercase hyphenated non-agent token |
+
+Reserved beyond that table:
+
+- **Headings**: `## Loading Tiers`, `## Scope Legend` and `## Compliance Matrix` carry anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to; `### Tier 1` is a parse prefix; `### Membership vs. Delivery (per tier)` is cited by name from `scoped/scope-qa.md`, `hooks/inject-scope-rules.sh` and `hooks/inject-session-context.sh`.
+- **Literals**: the matrix header cell `Rule File`, the `✓` glyph, the footnote markers †‡§¶, and the Scope Legend's `~~DATA~~` strikethrough row.
+- **Row shape**: a table row anywhere in this file whose first cell is a bare `name.md` is read as a declared rule file by the drift scan — only Compliance Matrix rows may take that shape.
+
+Coupled suites, so the next editor sees which pins are live:
+
+- **Live-file pins** — `hooks/test/injector-roster-docs-closed-set.bats` (per the table above) and `monitor/test/architecture.governance-membership.unit.test.ts`, whose last case reads the real matrix and asserts it still declares `scoped/scope-dev.md` and `rules/glass-atrium/core-security.md` as inline-code paths.
+- **Fixture-driven, so they catch nothing here** — `hooks/test/validate-compliance-matrix.bats` and `scripts/test/test_inject_sync.py` both drive temp-dir fixtures through the validator's env overrides, so a live edit that breaks the validator's parse passes both.
+
+## Loading Tiers
 
 ### Tier 1 — Core (ALL agents auto-load)
 
@@ -21,7 +39,7 @@ Every agent session loads these unconditionally:
 
 ### Tier 2 — Scope (loaded when agent scope matches)
 
-The table below assigns one scope file per scope. This is a MEMBERSHIP statement — which rules govern that scope — and NOT a claim that the file reaches the agent. Exceptionally a tightly coupled file pair is assigned instead, as for ORCHESTRATOR (`scope-orchestrator.md` + `orchestrator-role.md`):
+One scope file per scope. This is a MEMBERSHIP statement — which rules govern that scope — and NOT a claim that the file reaches the agent. ORCHESTRATOR is the one exception: a tightly coupled file pair.
 
 | File | Loads when `agent_scope =` |
 |------|---------------------------|
@@ -36,88 +54,87 @@ The table below assigns one scope file per scope. This is a MEMBERSHIP statement
 | `rules/glass-atrium/scope-orchestrator.md` + `rules/glass-atrium/orchestrator-role.md` | ORCHESTRATOR |
 | `scoped/scope-wiki.md` | WIKI |
 
-**No code selects a scope file by agent** (measured 2026-09-10): no `agents/*.md` frontmatter carries a `scope:` key and `agent-registry.json` carries no scope field, so nothing at spawn time resolves a row above to a file. The only agent→scope-file map in the tree is the one `autoagent/daemon_cycle.py` uses to excerpt a scope file into the daemon's rule-improvement verify prompt, and no spawn path reads it. What a running agent actually holds is `### Membership vs. Delivery (per tier)` below — read it before relying on a row here.
+**No code selects a scope file by agent.** No `agents/*.md` frontmatter carries a `scope:` key and `agent-registry.json` carries no scope field, so nothing at spawn time resolves a row above to a file. The only agent→scope-file map in the tree is the one `autoagent/daemon_cycle.py` uses to excerpt a scope file into the daemon's rule-improvement verify prompt, and no spawn path reads it. What a running agent actually holds is `### Membership vs. Delivery (per tier)` below — read it before relying on a row here.
 
-### Tier 3 — Cross-cutting (DEV-only inheritance)
+### Tier 3 — Cross-cutting (conditional inheritance)
 
-Loaded **only** when the agent scope is DEV (plus one META exception, see note):
+Each file below is inherited on its OWN condition. DEV is the common carrier, but QA, META and ORCHESTRATOR each carry some, so this tier is not DEV-exclusive. The `†‡§¶` markers are the Compliance Matrix footnotes below, which hold the exact subsets — stated there once.
 
-- `scoped/shared-comment-logging.md` — also loads for QA (review-side comment audit)
-- `scoped/shared-performance.md`
-- `scoped/shared-search-first.md`
-- `scoped/shared-testing.md`
-- `scoped/shared-type-safety.md`
-- `scoped/shared-design-token-consumption.md` — UI-emitting DEV subset only (see note below)
-- `rules/glass-atrium/shared-self-improve-hygiene.md` — ORCHESTRATOR scope auto-load + autoagent-touching DEV subset only (see note below)
-- `scoped/shared-hook-capability-contract.md` — hook-authoring DEV/QA reference (see note below)
+| Tier-3 file | Inherited by |
+|---|---|
+| `scoped/shared-comment-logging.md` | DEV · QA · META † |
+| `scoped/shared-performance.md` | DEV · META † |
+| `scoped/shared-search-first.md` | DEV · META † |
+| `scoped/shared-testing.md` | DEV · META † |
+| `scoped/shared-type-safety.md` | DEV · META † |
+| `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
+| `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR unconditionally · autoagent-touching DEV subset § |
+| `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · QA · META † ¶ |
 
-**glass-atrium-meta-prompt-engineer exception (META)**: `glass-atrium-meta-prompt-engineer` — and only `glass-atrium-meta-prompt-engineer`, not `glass-atrium-meta-agent` — additionally loads 5 of the 8 Tier-3 files.
+- **META inheritance is `glass-atrium-meta-prompt-engineer` only.** It takes the original cross-cutting set — `shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md` — because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance"). The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". `glass-atrium-meta-agent` inherits no Tier-3 file.
+- **QA** loads Tier 1 + `scoped/scope-qa.md` + `shared-comment-logging.md` always, and `shared-hook-capability-contract.md` only when reviewing hook work — never the full set.
 
-- The 5 it loads are the original cross-cutting set: `shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md`. It loads them because "prompts = code" (see `scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance").
-- The other 3 Tier-3 files are OUT of glass-atrium-meta-prompt-engineer scope: `shared-design-token-consumption.md` (UI-emission specific), `shared-self-improve-hygiene.md` (autoagent-pipeline specific), `shared-hook-capability-contract.md` (hook-authoring specific).
-- `glass-atrium-meta-agent` loads Tier 1 + scope-meta.md only.
+### Injected Blocks (SubagentStart allowlist)
 
-**QA exception**: QA scope (`glass-atrium-qa-code-reviewer`, `glass-atrium-qa-debugger`) loads Tier 1 + scope-qa.md + `shared-comment-logging.md` (single Tier-3 file, not the full set).
+Tier MEMBERSHIP is not rule-TEXT delivery: a spawned subagent receives the `comment-logging` pointer token in its `> Rules:` header, not the rule body. `hooks/inject-scope-rules.sh` delivers extracted marker blocks — never whole scope-file bodies — as `hookSpecificOutput.additionalContext`. This is a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
 
-**design-token-consumption exception**: `shared-design-token-consumption.md` loads only for UI-emitting DEV agents.
+| Block | Source | Roster |
+|---|---|---|
+| `AGENT-INJECT` (comment-logging core) | `scoped/shared-comment-logging.md` → `## Agent Injection Core` | `INJECT_AGENTS` |
+| `AGENT-INJECT:STYLE-REF` | `scoped/scope-dev.md` | `STYLEREF_AGENTS` |
+| `AGENT-INJECT:MINIMALISM` | `scoped/scope-dev.md` | `MINIMALISM_AGENTS` |
+| `AGENT-INJECT:PLAN-GATE` | `scoped/scope-dev.md` | `PLAN_GATE_AGENTS` |
+| `AGENT-INJECT:NAMING` | the `glass-atrium-dev-naming` SKILL.md | `NAMING_AGENTS` |
+| `AGENT-INJECT:BUDGET-DEV` | `scoped/shared-turn-budget.md` | `BUDGET_DEV_AGENTS` |
+| `AGENT-INJECT:BUDGET-ANALYSIS` | `scoped/shared-turn-budget.md` | `BUDGET_ANALYSIS_AGENTS` |
+| `AGENT-INJECT:WIKI-UNTRUSTED` | `rules/glass-atrium/core-wiki-reference.md` | `WIKI_UNTRUSTED_AGENTS` |
 
-- The UI-emitting DEV agents are glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator.
-- Backend / data / shell DEV agents (glass-atrium-dev-nestjs · glass-atrium-dev-node · glass-atrium-dev-python · glass-atrium-dev-db · glass-atrium-dev-rag · glass-atrium-dev-shell) do NOT emit UI markup; rule is structurally inapplicable.
-- glass-atrium-dev-swift emits native SwiftUI (not web CSS/Tailwind design-token markup), so this web design-token rule is structurally inapplicable to it as well.
-- See `scoped/shared-design-token-consumption.md` header for scope declaration.
+`comment-logging` is the only Tier-3 rule injected this way; every other Tier-3 rule is pointer-referenced only. `STYLEREF_AGENTS` is single-sited in `hooks/lib/styleref-roster.sh`, the rest in the hook itself.
 
-**self-improve-hygiene exception**: `shared-self-improve-hygiene.md` loads automatically for ORCHESTRATOR scope (main session) + conditionally for a DEV subset.
+Roster curation — why each is the shape it is:
 
-- The conditional DEV subset is those DEV agents whose change scope touches `~/.glass-atrium/autoagent/` paths or the launchd self-improvement loop configuration (typically glass-atrium-dev-shell / glass-atrium-dev-python / glass-atrium-dev-node when modifying daemon-apply.sh / daemon_cycle.py / monitor `/api/improvement` routes).
-- Other DEV agents do NOT load this rule (autoagent pipeline is out of scope for general feature work).
-- See `rules/glass-atrium/shared-self-improve-hygiene.md` header for scope declaration.
+- `NAMING_AGENTS` — deliberately narrower: DEV minus glass-atrium-dev-swift, plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger.
+- `PLAN_GATE_AGENTS` — the whole DEV roster and deliberately not a subset: the Stage-2 gate's DEV participant is whichever agent matches the plan's primary implementation domain, a selection rule that excludes no DEV agent, so a narrower roster would silently deny the duty to whichever agent gets picked.
+  - Membership is byte-identical to `MINIMALISM_AGENTS` today and the two stay SEPARATE declarations on purpose — one is a minimalism-reflex scope decision, the other a gate-eligibility decision, and sharing a constant would make either narrowing silently narrow the other.
+  - UNTRACKED-manual (no inject_sync reconcile): a newly registered DEV agent must be added by hand or it receives no plan-gate block.
+- `BUDGET_DEV_AGENTS` — DEV minus the daemon-carrier agents (glass-atrium-dev-nestjs · glass-atrium-dev-python · glass-atrium-dev-react · glass-atrium-dev-shell), each of which keeps a daemon-evolved in-body budget bullet the daemon owns, so injecting on top would double-deliver.
+- `BUDGET_ANALYSIS_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-design-designer · glass-atrium-meta-agent · glass-atrium-wiki-curator, with glass-atrium-intel-researcher excluded as a carrier. MANUAL-curated: membership is not roster-derivable, so it stays a governance decision.
+- `WIKI_UNTRUSTED_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator, the LIGHT Bash-holding wiki-reader cluster. The code-DEV agents hold Bash too but their assembly already sits near the byte ceiling, so adding the block would shed a proven one; they stay covered by the agent-independent write-side control and the read-time advisory. MANUAL-curated — a new heavy DEV agent is deliberately NOT added.
 
-**comment-logging subagent injection**: tier MEMBERSHIP ≠ rule-TEXT delivery.
+Two injection sources are not rule files of this matrix, and neither gains membership by being injected:
 
-- The rows above declare which rules a scope *should* load, but spawned subagents only receive the `comment-logging` pointer token in their `> Rules:` header — not the rule body.
-- `shared-comment-logging.md`'s core is actively delivered to all DEV + QA agents at spawn time via the `~/.glass-atrium/hooks/inject-scope-rules.sh` SubagentStart hook, which extracts the `AGENT-INJECT` block (see `shared-comment-logging.md` → "## Agent Injection Core") and returns it as `hookSpecificOutput.additionalContext`.
-- comment-logging is the **only Tier-3 rule** injected this way — every other Tier-3 rule remains pointer-referenced only (membership declared here, body not auto-injected into subagents).
+- `scoped/shared-turn-budget.md` is an injection-TEXT source only, like the naming SKILL.md — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries NO tier membership and no matrix row.
+- `AGENT-INJECT:WIKI-UNTRUSTED` is the ONLY injected block sourced from a **Tier-1** rule file, carrying that file's raw-store data-not-instruction clause [LLM01] to agents that otherwise receive the rule as a `> Rules:` pointer. The `core-wiki-reference.md` matrix row is unchanged: the injection delivers a clause body, grants no membership and changes no tier.
 
-The same `inject-scope-rules.sh` hook ALSO injects the additional blocks listed below via the same `extract_block()` → `additionalContext` path (NOT Tier-3 rules). The list is the count — a number stated beside it would be a second thing to maintain that nothing verifies against the first:
-
-- **`AGENT-INJECT:STYLE-REF` and `AGENT-INJECT:MINIMALISM`** — both sourced from `scope-dev.md`, each to the DEV agents.
-- **`AGENT-INJECT:NAMING`** — sourced from the `glass-atrium-dev-naming` SKILL.md. Its `NAMING_AGENTS` roster is deliberately NARROWER — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, EXCLUDING glass-atrium-qa-debugger.
-- **`AGENT-INJECT:PLAN-GATE`** — sourced from `scope-dev.md`, the third block extracted from that file. Its `PLAN_GATE_AGENTS` roster is the whole DEV roster and deliberately not a subset: the Stage-2 gate's DEV participant is whichever agent matches the plan's primary implementation domain, a selection rule that excludes no DEV agent, so a narrower roster would silently deny the duty to whichever agent gets picked. Membership is byte-identical to `MINIMALISM_AGENTS` today and the two stay SEPARATE declarations on purpose — one is a minimalism-reflex scope decision, the other a gate-eligibility decision, and sharing a constant would make either narrowing silently narrow the other. UNTRACKED-manual (no inject_sync reconcile), so a newly registered DEV agent must be added by hand or it receives no plan-gate block.
-  - **What it delivers is a residual, not the duty.** The block carries the part of the DEV-side Stage-2 verdict duty that fits a byte contract — the verdict shape, the load-bearing premise test, the refuted-premise consequence and the non-waiver clause. The three-part answer shape for the revision-cycle first-link question did NOT fit and stays readable only in `scope-dev.md`, which is the block's SoT and does not reach a DEV agent (see `### Membership vs. Delivery (per tier)`). So this extraction is the only delivery channel that duty has, for the part of it that fits: do not read the block's arrival as the gate duty having been delivered.
-  - **Delivered in practice, not guaranteed** (measured 2026-09-10): the block sits low in the shed order — below both budget blocks, above the four proven ones — and the worst-case DEV assembly currently fits under the ceiling, so nothing sheds it today. That is a property of today's block sizes, not a floor; a later source growth sheds it, and the drop marker that names it is recovery rather than delivery.
-- **`AGENT-INJECT:BUDGET-DEV` and `AGENT-INJECT:BUDGET-ANALYSIS`** — both sourced from `scoped/shared-turn-budget.md`, an injection-TEXT source only, like the naming SKILL.md: its policy SoT stays the Tier-1 `GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so the file carries NO tier membership and no matrix row. Their rosters are carrier-exclusion curated:
-  - `BUDGET_DEV_AGENTS` (9) = DEV minus the four daemon-carrier agents (glass-atrium-dev-nestjs · glass-atrium-dev-python · glass-atrium-dev-react · glass-atrium-dev-shell — each keeps a daemon-evolved in-body budget bullet the daemon owns, so injecting on top would double-deliver).
-  - `BUDGET_ANALYSIS_AGENTS` (6) = glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-design-designer · glass-atrium-meta-agent · glass-atrium-wiki-curator (glass-atrium-intel-researcher EXCLUDED — carrier), a MANUAL-curated roster (not auto-reconciled; membership is not roster-derivable, so it stays a governance decision).
-- **`AGENT-INJECT:WIKI-UNTRUSTED`** — sourced from `rules/glass-atrium/core-wiki-reference.md`, the ONLY injected block whose source is a **Tier-1** rule file rather than a scope-file / SKILL.md / injection-text source, carrying that file's raw-store data-not-instruction clause [LLM01]; the hook header records that a subagent otherwise receives that rule as a `> Rules:` pointer, not the clause body.
-  - `WIKI_UNTRUSTED_AGENTS` (6) = glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator — the LIGHT Bash-holding wiki-reader cluster, deliberately NOT the 13 code-DEV agents (they hold Bash too, but their assembly already sits near the 9984-byte ceiling, so adding this block would shed a proven one; they stay covered by the agent-independent write-side control and the read-time advisory instead), and likewise a MANUAL-curated governance roster (not auto-reconciled — a new heavy DEV agent is deliberately NOT added).
-
-The injected set is a **curated, deliberate allowlist** (these named blocks → these named agent lists), NOT an open-ended mechanism: any addition is a deliberate governance decision (like these were), never ad-hoc generalization to arbitrary rules or scopes.
-
-The roster names above are machine-checked against code: `hooks/test/injector-roster-docs-closed-set.bats` enumerates every roster variable declared in `hooks/inject-scope-rules.sh` and `hooks/lib/styleref-roster.sh` and fails when one of them — or the inject-block name it owns — is named nowhere in this live file, so deleting a roster name here reds that suite rather than merely thinning the prose.
+`AGENT-INJECT:PLAN-GATE` delivers a RESIDUAL, not the duty. What fits the byte contract is the verdict shape, the load-bearing premise test, the refuted-premise consequence and the non-waiver clause; the three-part answer shape for the revision-cycle first-link question did not fit and stays readable only in `scoped/scope-dev.md`, which is the block's SoT and does not reach a DEV agent. Do not read the block's arrival as the gate duty having been delivered. Delivery is also not guaranteed: the block sits low in the shed order — below both budget blocks, above the proven ones — and nothing sheds it only because today's block sizes leave the worst-case DEV assembly under the ceiling. A later source growth sheds it, and the drop marker that names it is recovery rather than delivery.
 
 ### Membership vs. Delivery (per tier)
 
-Tier MEMBERSHIP (the rows above — which rules a scope *should* load) is DISTINCT from DELIVERY (the channel that actually carries the text to a running agent). The two delivery channels have different budgets, and this file's `inject-scope-rules.sh` SubagentStart hook is only ONE of them:
+Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIVERY, the channel that actually carries the text to a running agent. There are two channels with different budgets, and the injection hook above is only one of them.
 
-- **Tier 1 (Core) bodies → HOST project-instructions channel (UNCEILINGED, UNMEASURED), and they DO arrive.** (measured 2026-09-10) A spawned subagent's received project-instructions were read directly and carry all six Tier-1 files; a behavioural probe of three subagent types answered 3/3 Tier-1 questions correctly with 9/9 controls declined.
-- **Tier 2 (Scope) bodies do NOT reach the agent whose scope they name.** (measured 2026-09-10) What a spawned subagent receives on this channel is the set the MAIN SESSION holds — the six Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `shared-self-improve-hygiene.md` — whatever the subagent's own scope. Two instruments agree: the code reading (no selector exists — see the note under the Tier 2 table), and a probe in which glass-atrium-intel-reporter scored 0/5 on `scope-report.md` and glass-atrium-intel-planner 0/5 on `scope-planning.md` while both scored 6/6 on grammar unique to `orchestrator-role.md`. The code reading carries the claim; the probe's zeros corroborate it and are not proof on their own, since a wrong answer can be a recall failure. `inject-scope-rules.sh` is not the missing path: it injects NO Tier-2 scope-file BODY and performs NO per-agent Tier-2 scope-file SELECTION.
-  - (inferred — mechanism unread) The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent. No configuration for this channel was located, so treat WHAT arrives as measured and WHY as open; do not state the mechanism as fact anywhere.
-  - **Standing consequence**: a duty that binds a given agent must live in that agent's own body file under `agents/`, or in an injected block. Homing it in X's scope file and leaving a pointer in the body delivers the pointer and nothing else — the COUNT of a closed list survives, its MEMBERSHIP does not. This inverts the older instinct to cut a body mirror because the scope file has it.
-- **One Tier-2 file is partially delivered, and only to DEV** (measured): the marker-extracted blocks sourced from `scope-dev.md` — style_ref, minimalism, plan-gate — ride the hook channel to the DEV roster. That is the existing, tested shape for moving scope-file text to an agent — and it is byte-ceilinged, so adding a block sheds one.
-- **Tier 3 (Cross-cutting) → split delivery.**
-  - Only `shared-comment-logging.md`'s extracted AGENT-INJECT **core** is delivered to DEV + QA subagents via `inject-scope-rules.sh` on the MEASURED, **9984-byte-ceilinged** SubagentStart channel (over-ceiling blocks are shed → logged to the drop sink → named in an in-context drop marker; see the hook header).
-  - Every other Tier-3 rule is **pointer-referenced only** (membership declared here, body NOT injected).
-  - The hook additionally carries the NON-Tier-3 marker blocks (style_ref · minimalism · naming · plan-gate · budget-dev · budget-analysis · wiki-untrusted) on that same ceilinged channel against the HARDCODED rosters named in the hook header (`INJECT_AGENTS` · `STYLEREF_AGENTS` · `MINIMALISM_AGENTS` · `NAMING_AGENTS` · `PLAN_GATE_AGENTS` · `BUDGET_DEV_AGENTS` · `BUDGET_ANALYSIS_AGENTS` · `WIKI_UNTRUSTED_AGENTS` — a CLOSED set; `STYLEREF_AGENTS` is single-sited in `hooks/lib/styleref-roster.sh`, the rest in the hook itself) — again extracted cores, not scope-file bodies.
-  - **wiki-untrusted is the one case where a Tier-1 rule file also has an extracted core on this channel**: its membership row in the Compliance Matrix below is unchanged (`core-wiki-reference.md` is ALL-scope Tier 1), and the injection delivers only that file's clause body to the `WIKI_UNTRUSTED_AGENTS` roster above — it grants no membership and changes no tier.
+| Tier | Channel | Arrives? |
+|---|---|---|
+| Tier 1 — Core bodies | HOST project-instructions (unceilinged, unmeasured) | YES — all six files |
+| Tier 2 — scope-file bodies | none | NO |
+| Tier 2 — `scope-dev.md` marker blocks (style_ref · minimalism · plan-gate) | `inject-scope-rules.sh`, byte-ceilinged | YES, to the DEV roster only |
+| Tier 3 — `shared-comment-logging.md` extracted core | `inject-scope-rules.sh`, byte-ceilinged | YES, to DEV + QA |
+| Tier 3 — every other file | none | NO — pointer-referenced only |
 
-Net: the channel carrying the BULK of what an agent actually holds (Tier-1 bodies, plus the orchestrator's own Tier-2 pair) is the UNMEASURED host project-instructions one; the channel this repo budgets carefully (the hook's 9984-byte SubagentStart injection) is the MINOR one; and a Tier-2 scope body rides NEITHER. (Hook SoT: `hooks/inject-scope-rules.sh` header → "T8 — membership vs. delivery" — that header still carries the superseded sentence that a subagent's scope-rule body arrives on the host channel. Correcting it is a change to a file outside this one's scope and is tracked separately.)
+- **Tier-2 scope bodies do NOT reach the agent whose scope they name.** What a spawned subagent receives on the host channel is the set the MAIN SESSION holds — the six Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope. `inject-scope-rules.sh` is not the missing path: it injects NO Tier-2 scope-file BODY and performs NO per-agent Tier-2 scope-file SELECTION.
+- **The mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat WHAT arrives as established and WHY as open.
+- **Standing consequence**: a duty that binds a given agent MUST live in that agent's own body file under `agents/`, or in an injected block. Homing it in X's scope file and leaving a pointer in the body delivers the pointer and nothing else — the COUNT of a closed list survives, its MEMBERSHIP does not. Never cut a body mirror on the ground that the scope file already carries it.
+- **The injected channel is byte-ceilinged at 9984 bytes** (`INJECT_CTX_MAX_BYTES`): over-ceiling blocks are shed, logged to the drop sink, and named in an in-context drop marker (see the hook header). Adding a block sheds one.
+
+Net: the channel carrying the BULK of what an agent actually holds — Tier-1 bodies plus the orchestrator's own Tier-2 pair — is the UNMEASURED host one; the channel this repo budgets carefully is the MINOR one; and a Tier-2 scope body rides NEITHER.
+
+**Known divergence**: `hooks/inject-scope-rules.sh` → "T8 — membership vs. delivery" still states that a subagent's scope-rule body arrives on the host channel. This section supersedes it; correcting the hook header is a change to a file outside this one.
 
 ## Precedence Resolution
 
-- Conflict precedence: Tier 1 > Tier 2 > Tier 3.
-- Within the same Tier: `core-security.md` overrides other ALL rules (security-first principle).
-- Within Tier 2: conflicts are impossible by ASSIGNMENT — the Tier 2 table gives each scope exactly one scope file (the ORCHESTRATOR pair excepted). That is not a claim about what is in an agent's context: a spawned subagent measurably holds the ORCHESTRATOR pair and not the file assigned to its own scope (see `### Membership vs. Delivery (per tier)`). Where that happens the governing rule is still the one this table assigns to the agent's own scope — `orchestrator-role.md` disclaims itself for subagents in its own opening line.
+- Across tiers: Tier 1 > Tier 2 > Tier 3.
+- Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
 - Within Tier 3: the more conservative (restrictive) rule wins.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted). That says nothing about what is in an agent's context: a spawned subagent holds the ORCHESTRATOR pair and not the file assigned to its own scope (`### Membership vs. Delivery (per tier)`). Where that happens the governing rule is still the one this table assigns to the agent's own scope — `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line.
 - Ambiguous interpretation: the relevant scope file's Absolute Rules section is the final authority.
 
 ## Scope Legend
@@ -141,55 +158,48 @@ Net: the channel carrying the BULK of what an agent actually holds (Tier-1 bodie
 
 ## Compliance Matrix
 
+Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
+
 | Rule File | ALL | DEV | META | DESIGN | RESEARCH | PLANNING | REPORT | QA | SECURITY | ORCHESTRATOR | WIKI |
 |-----------|-----|-----|------|--------|----------|----------|--------|----|----------|--------------|------|
 | GLASS_ATRIUM_GLOBAL_RULES.md | ✓ | | | | | | | | | | |
+| core-git-workflow.md | ✓ | | | | | | | | | | |
+| core-learning-log.md | ✓ | | | | | | | | | | |
+| core-outcome-record.md | ✓ | | | | | | | | | | |
+| core-security.md | ✓ | | | | | | | | | | |
+| core-wiki-reference.md | ✓ | | | | | | | | | | |
 | scope-dev.md | | ✓ | | | | | | | | | |
 | scope-meta.md | | | ✓ | | | | | | | | |
 | scope-design.md | | | | ✓ | | | | | | | |
-| scope-qa.md | | | | | | | | ✓ | | | |
-| scope-orchestrator.md | | | | | | | | | | ✓ | |
-| scope-planning.md | | | | | | ✓ | | | | | |
 | scope-research.md | | | | | ✓ | | | | | | |
+| scope-planning.md | | | | | | ✓ | | | | | |
 | scope-report.md | | | | | | | ✓ | | | | |
+| scope-qa.md | | | | | | | | ✓ | | | |
 | scope-security.md | | | | | | | | | ✓ | | |
+| scope-orchestrator.md | | | | | | | | | | ✓ | |
+| orchestrator-role.md | | | | | | | | | | ✓ | |
 | scope-wiki.md | | | | | | | | | | | ✓ |
 | shared-comment-logging.md | | ✓ | ✓† | | | | | ✓ | | | |
-| shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
-| shared-hook-capability-contract.md | | ✓¶ | ✓† | | | | | ✓ | | | |
-| core-git-workflow.md | ✓ | | | | | | | | | | |
-| core-learning-log.md | ✓ | | | | | | | | | | |
-| orchestrator-role.md | | | | | | | | | | ✓ | |
-| core-outcome-record.md | ✓ | | | | | | | | | | |
 | shared-performance.md | | ✓ | ✓† | | | | | | | | |
 | shared-search-first.md | | ✓ | ✓† | | | | | | | | |
-| core-security.md | ✓ | | | | | | | | | | |
-| shared-self-improve-hygiene.md | | ✓§ | | | | | | | | ✓ | |
 | shared-testing.md | | ✓ | ✓† | | | | | | | | |
 | shared-type-safety.md | | ✓ | ✓† | | | | | | | | |
-| core-wiki-reference.md | ✓ | | | | | | | | | | |
+| shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
+| shared-hook-capability-contract.md | | ✓¶ | ✓† | | | | | ✓ | | | |
+| shared-self-improve-hygiene.md | | ✓§ | | | | | | | | ✓ | |
 
-> † META column: glass-atrium-meta-prompt-engineer ONLY (not glass-atrium-meta-agent). Per scope-meta.md "DEV Rule Inheritance" section, glass-atrium-meta-prompt-engineer inherits 5 of the 8 Tier-3 files — the original cross-cutting set (`shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md`) — because "prompts = code". glass-atrium-meta-agent does NOT inherit Tier 3. The 3 conditional Tier-3 files are OUT of glass-atrium-meta-prompt-engineer scope: `shared-design-token-consumption.md` (‡, UI-emission specific), `shared-self-improve-hygiene.md` (autoagent-pipeline specific), `shared-hook-capability-contract.md` (¶, hook-authoring specific) — none part of "prompts = code" inheritance.
+> † META column = `glass-atrium-meta-prompt-engineer` ONLY, never `glass-atrium-meta-agent`. Which files it inherits, and why: `### Tier 3 — Cross-cutting (conditional inheritance)` above.
 
-> ‡ DEV column: UI-emitting subset only — glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator. Backend / data / shell DEV agents (glass-atrium-dev-nestjs · glass-atrium-dev-node · glass-atrium-dev-python · glass-atrium-dev-db · glass-atrium-dev-rag · glass-atrium-dev-shell) do NOT load this rule (rule is structurally inapplicable). glass-atrium-dev-swift (native SwiftUI, not web CSS/Tailwind) likewise does not load this web-token rule. See `scoped/shared-design-token-consumption.md` header for scope declaration.
+> ‡ DEV column = the UI-emitting subset: glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator. The backend / data / shell agents (glass-atrium-dev-nestjs · glass-atrium-dev-node · glass-atrium-dev-python · glass-atrium-dev-db · glass-atrium-dev-rag · glass-atrium-dev-shell) emit no UI markup and glass-atrium-dev-swift emits native SwiftUI rather than web CSS/Tailwind token markup, so this web design-token rule is structurally inapplicable to each of them. Scope declaration: `scoped/shared-design-token-consumption.md` header.
 
-> § DEV column: autoagent-touching subset only — DEV agents whose change scope includes `~/.glass-atrium/autoagent/` paths or self-improvement launchd configuration (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node when modifying daemon-apply.sh / daemon_cycle.py / monitor `/api/improvement` routes). General feature-work DEV agents do NOT load this rule. ORCHESTRATOR scope (main session) auto-loads unconditionally. See `rules/glass-atrium/shared-self-improve-hygiene.md` header for scope declaration.
+> § DEV column = the autoagent-touching subset: DEV agents whose change scope includes `~/.glass-atrium/autoagent/` paths or the self-improvement launchd configuration (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node modifying daemon-apply.sh / daemon_cycle.py / monitor `/api/improvement` routes). General feature-work DEV agents do NOT load it. ORCHESTRATOR scope (main session) auto-loads it unconditionally. Scope declaration: `rules/glass-atrium/shared-self-improve-hygiene.md` header.
 
-> ¶ DEV + QA columns: hook-authoring reference only — DEV agents that write/modify hooks under `~/.glass-atrium/hooks/` (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node) + QA agents that review hook changes (glass-atrium-qa-code-reviewer) or analyze hook failures (glass-atrium-qa-debugger). Structurally parallel to `shared-comment-logging.md` (DEV+QA cross-cutting). META (‡-style `✓†`) = glass-atrium-meta-prompt-engineer ONLY per "prompts = code" Tier-3 inheritance; glass-atrium-meta-agent does NOT load it. NOT loaded by ALL / ORCHESTRATOR (orchestrator delegates hook work, does not author hooks). See `scoped/shared-hook-capability-contract.md` header for scope declaration.
-
-> QA loads shared-comment-logging.md (always) from Tier 3, plus shared-hook-capability-contract.md conditionally (hook-review only — per the row above and footnote ¶), not the full set. See core-compliance-matrix.md QA exception note.
+> ¶ DEV + QA columns = hook authoring and hook review only: DEV agents that write or modify hooks under `~/.glass-atrium/hooks/` (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node), plus glass-atrium-qa-code-reviewer reviewing hook changes and glass-atrium-qa-debugger analysing hook failures. Structurally parallel to `shared-comment-logging.md` as a DEV+QA cross-cutting file. NOT loaded by ALL or ORCHESTRATOR — the orchestrator delegates hook work rather than authoring it. Scope declaration: `scoped/shared-hook-capability-contract.md` header.
 
 ## Skills Registry (Reference)
 
-SKILL.md files under `~/.claude/skills/` are outside this matrix's jurisdiction.
-- Skills load globally at session start regardless of agent scope; Claude decides whether to invoke each one based on its SKILL.md `description` field.
-- Adding / removing skills does NOT require updating this matrix.
-- Exception: when a specific scope must restrict skill usage → record it in `scope-{name}.md` under a "Prohibited Skills" section.
-
----
+SKILL.md files under `~/.claude/skills/` are outside this matrix's jurisdiction — they load globally at session start regardless of agent scope, and Claude decides whether to invoke each one from its SKILL.md `description` field. Adding or removing a skill does NOT require a matrix update. Where a specific scope must restrict skill usage, record it in that scope's file under a "Prohibited Skills" section; no scope declares one today.
 
 ## Archived Agents
 
-Agents in `~/.claude/agents/archive/` are excluded from all active scope rows above. They retain their original rule references internally but are NOT subject to registry routing or compliance enforcement until reactivated.
-
-(No agents currently archived.)
+Agents under `~/.claude/agents/archive/` are excluded from every active scope row above. They retain their internal rule references but are NOT subject to registry routing or compliance enforcement until reactivated. No agents are currently archived.
