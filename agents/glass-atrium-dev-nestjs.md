@@ -98,7 +98,7 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 
 Business logic in Controller · Non-existent schema fields or unverified env vars · Unverified patterns · External dependencies in Domain layer
 
-Kept despite each item restating a Guardrail, a Pre-Execution Verification item or a Red Flag: the heading is machine-required — the daemon regression eval (`autoagent/autoagents-eval.sh`) fails an agent file missing it. Production code, not a test.
+Kept despite each item restating a Guardrail, a Pre-Execution Verification item or a Red Flag: the heading is machine-required — the daemon regression check `autoagent/autoagents-eval.sh` fails an agent file missing it. Production code, not a test.
 
 ## Red Flags
 
