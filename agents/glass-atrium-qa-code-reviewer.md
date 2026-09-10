@@ -99,6 +99,7 @@ God function (20+ lines) · Deep nesting (3+) · Magic numbers · any/dynamic ty
 
 **FINAL STEP — mode-split emit (REQUIRED; keep it FIRST-in-mind, LAST-in-action)**: the `[COMPLETION]` block goes AFTER the review below, NEVER inside the review body — folding it into the body loses the outcome record. Its form and its two channels (MANUAL/TEXT = a dedicated assistant text turn, print-block-then-emit · SCHEMA/WORKFLOW = the `completion_block` field on the terminal `StructuredOutput` call) are auto-injected on every spawn — follow them there. Schema declaring NO `completion_block` → dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
 - **Failure cost**: a missed emit on the mode-appropriate channel → SubagentStop synthesizes a lesson-less row (`confidence=low`, `metric_pass=false`), and this agent's reviews are the top synthesized source.
+- **Machine-checked repetition**: `hooks/test/emit-discipline-doc-consistency.bats` reads this live file and pins the mode-split emit marker phrase in the FINAL STEP line above, plus its placement ahead of the Review Summary template heading — keep both when dieting.
 
 ```
 ## Review Summary

@@ -306,6 +306,7 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
   - No doc-only skip tier exists: a rule-file change is reviewed, never exempted.
   - Other prose files carry a pointer to this clause, never a copy of the threshold; the `hooks/enforce-verification-gate.sh` advisory leg holds the same value as a named constant (code, not prose) and reports counts + matched prefix only.
   - Honest backing: the routing decision is orchestrator honor-system and the hook leg is advisory-only + presence-only (stderr, exit 0, silent without a `[SCOPE]` line) — describing this override as "enforced" is FORBIDDEN.
+  - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number out of this bullet's prose and compares it against the hook's own named constant, so the number stated here and the number in code must move together or that suite fails.
 - **Error recovery**: 3 failures → halt + report to user `[default, adjustable]` (infinite retry forbidden)
   - checkpoint-based resumption
 - **Team termination**: Complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → reflect in MEMORY.md → **instruction upgrade review**
@@ -368,6 +369,8 @@ MANDATORY when authoring any workflow — these bind EVERY workflow output schem
 A non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` backstops these rules (stderr-only — it never alters a verdict or an exit code).
 Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there; it is deliberately NOT restated here.
 
+Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` greps this live file for each of the five rule phrases above and for the backstop hook's filename plus the promotion-condition pointer stated in the two lines directly above, and `hooks/test/schema-cap-authority-single-site.bats` additionally requires this section's heading, its parent section's heading and the first rule phrase to survive here as the target the charter and the META body point at — so rewording a rule out of existence turns both suites red rather than merely loosening guidance.
+
 ##### Authoring idioms that implement those rules
 
 - **Retry on null (tightened re-prompt — NEVER verbatim)**: wrap every schema-mode `agent()` in a retry helper — on null, re-spawn ONCE with a tightened re-prompt (optionally a higher-turn `agentType`).
@@ -385,6 +388,7 @@ Its verbatim promotion-to-blocking condition is recorded in that hook's header �
     - Leave every property uncapped and move bulk to a file per (a).
     - **WITHDRAWN — recorded as a failure mode, NOT as sizing guidance**: an earlier revision of this bullet told you to cap every field and size each cap generously, naming a per-row / per-item evidence-string floor of a few hundred characters and an array `maxItems` sized to the true expected item count.
     - That advice is withdrawn and must not be reinstated: a per-element cap is exactly the multiplying shape that burns all five internal retries, and "generous enough" is unknowable before the content exists.
+    - Machine-checked ABSENCE: `hooks/test/orchestrator-skill-schema-example.bats` fails if the withdrawn floor's distinguishing character-count range reappears anywhere in this file, which is why the bullet above describes that range in words instead of retyping the digits — keep it that way when editing.
   - **(c)** enumerate ALL required keys explicitly in the delegation prompt so the model emits them up front rather than discovering them through validation errors.
   - Evidence for compact-schema authoring: the v2 rewrite of the schema-failure workflow — AND THIS session's over-tight-cap collapse loop, where too-small `maxLength` caps (`260`/`160`/`900`/`400`) reproduced the exact retry-cap-exceeded failure on fields that were capped AT ALL; the caps themselves, not their stinginess, were the defect.
 - **Shape-tolerant schema authoring (fixes the SHAPE mismatch — distinct from the SIZE caps above)**: for rich / open-ended / multi-faceted output do NOT force a flat, all-string `additionalProperties: false` object. Instead —
@@ -399,6 +403,7 @@ Its verbatim promotion-to-blocking condition is recorded in that hook's header �
   - RELIABLE path: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block (contract SoT: `GLASS_ATRIUM_GLOBAL_RULES.md` → Emit-before-cap).
     - Reference form — the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member.
     - Prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`.
+    - Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` requires both of that example's properties to appear UNCAPPED in this file AND requires the reserved recorder property to be a declared member inside the Analysis-Track fenced example itself (a comment or a prose mention does not satisfy it), so neither the reference form here nor the fence further down may be paraphrased away.
   - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, parses it, and records the run as WRITER-emitted (attribution `structuredoutput-completion`, a healthy row).
   - The text-mode fallback above is the exception — a schema-LESS re-spawn DOES print a text turn, captured by the `_last_assistant_text_from_transcript()` reverse-scan (which PREFERS the last `[COMPLETION]`-bearing assistant text).
   - Without the `completion_block` field, the run falls to `structuredoutput-derived` synthesis (`result=done`, `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`), permanently losing the writer signal the self-improvement loop feeds on.
@@ -737,6 +742,8 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
 - Spawn/target tokens (`agent('<type>')` first-arg · `agentType:` field literals) scan the comment-STRIPPED source, so they genuinely need non-comment placement — a commented spawn is not a real one, and a reviewer existing ONLY in a comment still trips `block-norev`.
 - The attestation tokens (plan-ref · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[DOC-ROUTE]`) raw-scan, so any placement passes.
 - The `[AGENT-COMPOSITION]` declaration block is raw-but-not-inside-a-string: comment-RESIDENT, canonical `/* */` home.
+
+Machine-checked repetition (read before editing any skeleton in this file): every fenced `js` block here is harvested and replayed through the gate hook by `hooks/test/enforce-workflow-verify-stage.bats` and through the false-positive floors in `hooks/test/workflow-gate-advisory-trace.bats` and `hooks/test/workflow-gate-completion-channel.bats`, which also fail when fewer than three declaration-bearing fences remain — so deleting, merging or paraphrasing a skeleton changes what those suites execute, and an empty harvest is itself a failure.
 
 **Skeleton authoring notes** — both bind every skeleton below:
 

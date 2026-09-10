@@ -14,6 +14,8 @@ maxTurns: 80
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + REPORT) · scope-report · git-workflow · security · outcome-record · learning-log · wiki-reference
 
+Machine-checked frontmatter: `scripts/test/agent-frontmatter-identity.bats` compares this file's identity keys above — the agent name, the tool grant list and the scope key — against the cycle base and fails on any drift, so a change to those keys is a deliberate, reviewed change rather than an incidental edit.
+
 # Report Writing Agent
 
 Synthesize research/analysis data into decision-ready reports via Progressive Disclosure 3 tiers + Self-Refine. Output format is request-driven: when the user explicitly requests a shareable HTML/report artifact → HTML primary (visual-first — graphs · diagrams · design, not text dump); otherwise → an agent-only token-optimized record (LLM-selected md/yaml/json/txt). There is NO document prefix/category — format is decided by the two request signals in `## Output Format Routing`.

@@ -4,6 +4,10 @@
 
 This file is the **single source of truth** for agent-to-rule loading policy. Scope files MUST NOT re-declare tier membership in prose — use the stanza header `> **Loading**: Tier 2 ...` and link here.
 
+Machine-read structure — `hooks/validate-compliance-matrix.sh` parses this live file at SessionStart and exits 2 on a confirmed mismatch, checking the Tier-1 Core list against the ALL column, each conditional-exception footnote marker used in a table cell against its one blockquote definition, and every Compliance Matrix column header against the Scope Legend scopes, so a dropped Tier-1 bullet, an orphaned footnote definition or a removed legend row breaks it (the accompanying Bats suite drives temp-dir fixtures and would not catch a live edit).
+
+Machine-read path spellings — `monitor/src/server/architecture/governance-membership.ts` treats every document path this file writes in inline code as a declared document and reports it as absent when no such file exists, so an illustrative or placeholder path in that form must never be written here; the live-file guard for that extraction is `monitor/test/architecture.governance-membership.unit.test.ts`, which runs under the node test runner rather than the bats runner.
+
 ### Tier 1 — Core (ALL agents auto-load)
 
 Every agent session loads these unconditionally:
@@ -83,6 +87,8 @@ The same `inject-scope-rules.sh` hook ALSO injects SIX additional blocks via the
   - `WIKI_UNTRUSTED_AGENTS` (6) = glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator — the LIGHT Bash-holding wiki-reader cluster, deliberately NOT the 13 code-DEV agents (they hold Bash too, but their assembly already sits near the 9984-byte ceiling, so adding this block would shed a proven one; they stay covered by the agent-independent write-side control and the read-time advisory instead), and likewise a MANUAL-curated governance roster (not auto-reconciled — a new heavy DEV agent is deliberately NOT added).
 
 The injected set is a **curated, deliberate allowlist** (these named blocks → these named agent lists), NOT an open-ended mechanism: any addition is a deliberate governance decision (like these were), never ad-hoc generalization to arbitrary rules or scopes.
+
+The roster names above are machine-checked against code: `hooks/test/injector-roster-docs-closed-set.bats` enumerates every roster variable declared in `hooks/inject-scope-rules.sh` and `hooks/lib/styleref-roster.sh` and fails when one of them — or the inject-block name it owns — is named nowhere in this live file, so deleting a roster name here reds that suite rather than merely thinning the prose.
 
 ### Membership vs. Delivery (per tier)
 

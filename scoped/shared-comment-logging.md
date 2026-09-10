@@ -5,6 +5,8 @@ Applies to all DEV and QA agents.
 ## Agent Injection Core
 
 > The block between the `AGENT-INJECT` markers is extracted verbatim by a SubagentStart hook and injected into DEV/QA subagents. Edit it here only.
+>
+> Machine-checked repetition: `hooks/test/inject-scope-rules-nodrop.bats` drives the hook against THIS file as a real source (not a fixture copy), asserting that the block's opening phrase `Comment-rule core` reaches every DEV/QA roster member and that the assembled context stays inside the 9984-byte ceiling — so rewording that phrase, or growing this block, turns that suite red (`hooks/test/h2-untrusted-ingest.bats` re-asserts the same ceiling against this file).
 
 <!-- AGENT-INJECT:START -->
 **Comment-rule core (auto-injected DEV/QA · full: `~/.glass-atrium/scoped/shared-comment-logging.md`)**

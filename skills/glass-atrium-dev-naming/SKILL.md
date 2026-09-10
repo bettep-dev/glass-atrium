@@ -7,6 +7,8 @@ description: Naming conventions for DEV agents — 5 conciseness principles (no-
 
 > The block below (between the `AGENT-INJECT:NAMING` markers) is the compressed injected core extracted verbatim by a SubagentStart hook and injected into DEV + glass-atrium-qa-code-reviewer subagents. Edit it here only — the full skill (User Dictionary, 5 Conciseness Principles, Quick rules, References) remains below as the on-demand detail.
 
+> Machine-checked repetition (read before dieting the block): `hooks/test/inject-scope-rules-nodrop.bats` points the injector at THIS live file as the naming source and asserts both that the block's opening bold line survives as the needle proving the block was not shed, and that the block's byte size keeps the worst-case DEV assembly under the injector's context ceiling — so renaming that line, or growing the block, turns that suite red.
+
 <!-- AGENT-INJECT:NAMING:START -->
 **Naming delta-core (auto-injected) — non-inferable subset; qa-code-reviewer = enforcement surface.**
 

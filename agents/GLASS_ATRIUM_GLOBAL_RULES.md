@@ -151,6 +151,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
   - return `result: needs_context` in `[COMPLETION]` with `summary` = 1-line resume point
   - **splitting > truncation** (next /loop tick resumes cleanly)
 - **Exempt** (section-wide — this entire `### Turn Budget & Graceful Exit` section, including every `####` subsection below): `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+- **This section's heading and its POSITION are machine-read** — the daemon excerpts it as one whole heading block for the pre-verify prompt, and `autoagent/test/test_pre_verify_section_excerpt.py` reads the DEPLOYED charter to assert the block arrives intact and still opens past the file's first 6000 characters, so a diet that shortens everything above this heading can redden that row even though nothing here changed.
 
 #### Work-unit checkpoint dimension
 
@@ -176,8 +177,10 @@ This file is the **system charter** for all agents — it governs behaviors unco
     - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
   - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema.
     - **Drift guard** — this charter prescribes no cap of its own, so any cap rule restated here is drift.
+    - **Machine-checked** — `hooks/test/schema-cap-authority-single-site.bats` greps this file directly for the three clauses above (the single-sited declaration, the imperative to read the canonical rules, the no-cap-of-its-own disclaimer) AND for the ABSENCE of the two schema size-cap key names, so rewording or re-prescribing here reddens that suite by design.
   - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call.
     - The StructuredOutput call still terminates the run — this does not violate the never-end-on-prose rule, because the block turn precedes the final tool call.
+    - **Machine-checked** — the hyphenated marker phrase leading this bullet is grepped case-insensitively out of this file by `hooks/test/emit-discipline-doc-consistency.bats`, which fails unless the same phrase is also present in `hooks/inject-scope-rules.sh` and `agents/glass-atrium-qa-code-reviewer.md`; wording around it is free, the phrase itself is the anchor and stays.
   - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded (0/129 observed — the text-channel print is behaviorally dominated by the StructuredOutput framing).
     - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.

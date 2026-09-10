@@ -202,6 +202,8 @@ Constraints that come with that tag:
 
 > Canonical mirror — `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` is the SoT and this section is a pointer only: the adopted/excluded type lists and the budget numbers live there ONCE, so nothing here can drift.
 
+Machine-checked pointer: `scripts/test/doctrine-budget-parity.bats` reads this section and fails if it stops naming `scope-report.md` as its SoT or starts restating a budget number that diverges from the canonical, so keep it a pointer.
+
 Before drawing any Mermaid block in a user-requested HTML plan, run its decision order there — each step builds on the previous:
 
 - **Type** — from the adopted set

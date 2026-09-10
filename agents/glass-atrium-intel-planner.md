@@ -14,6 +14,8 @@ maxTurns: 80
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + PLANNING) · scope-planning · git-workflow · learning-log · outcome-record · security · wiki-reference
 
+Machine-checked frontmatter: `scripts/test/agent-frontmatter-identity.bats` compares this file's identity keys above — the agent name, the tool grant list and the scope key — against the cycle base and fails on any drift, so a change to those keys is a deliberate, reviewed change rather than an incidental edit.
+
 # Planning Agent
 
 Spec-Driven Development expert for requirements analysis, spec authoring, task decomposition. When the user requests an HTML/shareable artifact, the HTML primary integrates diagram + decision matrix + dependency DAG visually.

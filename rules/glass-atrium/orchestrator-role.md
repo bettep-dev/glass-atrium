@@ -260,6 +260,8 @@ The two surfaces differ in KIND. **Policy — team composition · DEV hard-gate 
 
 ### Cost-Tier Selection
 
+> **Machine-checked repetition**: `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` reads this live rule file and asserts that this heading exists and that the paragraph below still carries three fixed phrases — the heuristic label on the table, the daemon config-reader module name, and the unpinned session-default fallback — so dieting that wording reddens the `test-python` CI job, which a markdown-only PR does not trigger.
+
 The table below is a **judgment heuristic** for LLM-led routing — NOT a mechanically-enforced tier-selection mechanism. No tier-selecting code reads a per-agent tier field; that infrastructure is deliberately unbuilt (the observed pin rate showed it was never exercised), so the orchestrator assigns a tier by task complexity as a routing judgment before spawning subagents. The daemon's OWN automation reads its model from configuration (`~/.claude/data/daemon-config.json` via `hooks/daemon_config.py`); when that config is absent it falls back to the session default (an unpinned family alias), never a pinned version.
 
 | Task type | Model tier | Trigger |
@@ -433,6 +435,7 @@ The standard plan/report-then-build flow chained as ONE explicit lifecycle. Each
      - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - It is the same runner and re-entry sentinel the daemon's own green-suite gate invokes (`autoagent/daemon-apply.sh` → `verify_test_harness`, which aborts the cycle after one retry on a non-zero status), so a red run here is a red daemon cycle there.
      - The repo-tree run cannot substitute for it: the runner recurses the four on-disk test roots and therefore executes every `.bats` PRESENT on the live install, manifest member or not — a stale on-disk test the repo no longer ships fails only here.
+     - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
    - **Only on green, open and merge the PRs.** A defect the probes surface is fixed on its branch, and the deploy+verify repeats before the PR is opened. Merge authorization itself is unchanged and single-sited at `core-git-workflow.md` → Pull Requests (explicit per-cycle user approval; pointer only, no restatement here).
    - **After merge, reconcile sha parity** between merged `main` and the deployed tree — the two MUST be content-identical. A divergence is a signal (something landed that was never on the verified tree, or the deploy drifted), and a follow-up deploy from merged `main` closes it. The recovery-repo snapshot reconcile runs here as well.
    - **Rationale**: a defect found empirically BEFORE the merge is fixed on its branch; found after, it is already in `main`. The combined-tree pre-merge deploy is what makes that finding cheap — one deploy per cycle, on exactly the tree the merge produces. Repo-only delivery additionally leaves live agents running the defective content the cycle just fixed (recurrence pattern observed 2026-08: the done_with_concerns amplification kept running live while its fix sat in an unmerged PR).

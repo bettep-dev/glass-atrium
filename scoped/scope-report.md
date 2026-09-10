@@ -246,6 +246,8 @@ Author-side skeleton + 3-layer a11y: cite [[visual-expression-exposed-html-docs]
 
 > **CANONICAL SoT** — `scope-planning.md` → `## Pre-drawing Doctrine [PLANNING]` is a pointer to this section; the type lists and the budget numbers live here ONCE. Apply the order below to EVERY Mermaid block in a user-requested HTML primary, not only the first. An agent-only record stays on the Diagram Standard agent-only branch.
 
+Machine-checked mirror: `scripts/test/doctrine-budget-parity.bats` extracts the cap numbers, the warn/fail ratios and the three size-preset class names from this section's own text and compares them against the monitor budget, viewer and export sources, so those literals and the lines carrying them are reworded only together with that suite.
+
 Decision order before drawing (each step builds on the previous):
 
 1. **Type** — SoT: `monitor/src/server/clauded-docs/diagram-types.json`.

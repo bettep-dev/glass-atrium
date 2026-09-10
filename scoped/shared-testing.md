@@ -91,6 +91,33 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
   - Automatically select related tests based on changed files, per that project's test structure: `src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`
 - Full T3 pass REQUIRED before commit
 
+## Destructive-Path Suite Safety (live-postgres reach)
+
+Two install-side shell functions can reach a live postgres: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`). Clear the procedure below before running any suite file that EXECUTES either.
+
+- **The retired condition — do not re-derive it**: "safe once `kill`, `rm` and `lsof` are shadowed" is WRONG, not merely strict.
+  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell satisfies that wording while the real command runs.
+- **Enumerate**: grep the four live test roots for either function name.
+- **Classify each hit executing or naming** — only executing sites continue.
+  - Executing: the name is a command word — after `run`, inside a child-shell command string, or bare at the start of a statement.
+  - Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, or is the definition itself.
+- **Answer three questions at every executing site, all three resolving**:
+  - **Pid control** — does `lsof` resolve to a record-only stub? No environment seam substitutes for this.
+    - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `tcp:5432` port lookup that finds the live server wherever the socket path points.
+  - **Path control** — does the socket dir resolve outside the shared temp dir for this invocation?
+    - The seam is `GA_PG_SOCKET`, frozen into the readonly `PG_SOCKET` at the moment `lib/ga-env.sh` is sourced; unset defaults to the live `/tmp`.
+  - **Mechanism binding** — which shell actually runs the function?
+    - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
+- **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
+- **Ambiguous means fail** — do not reason harder.
+  - Prepend a scratch dir of record-only stubs to the PATH of the WHOLE invocation (a PATH stub binds in every child) and run that one file under it; unavailable → stop and report.
+- **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
+- **What this does NOT cover** — the hazard is a live pid plus a live path reaching a real signal or a real removal, so these shapes still slip past:
+  - a stub dir prepended inside a child command string while an earlier statement in that same child already ran the real tool;
+  - `GA_PG_SOCKET` set but never exported, so the child re-sources the live default;
+  - path control alone, which leaves the port-lookup fallback free to find and signal the live pid;
+  - an executing site the enumeration misses because the function name is assembled from string fragments.
+
 ## Mechanical Success Metrics
 
 > Detailed per-task-type pass conditions: See `core-outcome-record.md` Field Input Guide → `metric_pass` (canonical source; `bug-fix` adds exit code 0 check)

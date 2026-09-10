@@ -41,6 +41,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **Synthesis-section overhead (dimension-organized reports)**: dimension-organized comparison reports carry parallel synthesis sections restating the same facts — cut those first in Compress, protecting methodology / caveats / evidence-grading scaffolding. Carry explicit slack (order of +25%) in the projection for any comparison or dimension-organized task — declared slack beats a projection that hides it.
 - **Verification-nudge carve-out (Opus 5 self-verifies + self-delegates natively)**: strip only REDUNDANT bare model-behavior verification nudges from authored prompts (`add a final verification step` · `use a subagent to verify` · `double-check your answer` appendages — they compound with native behavior into over-verification, cost without quality gain) [anthropic-opus-5-prompting]. CARVE-OUT: CoV / self-check tails / self-correction chaining are DESIGN techniques — RETAIN, never classify as model-nudges; process verify gates (Stage-2 plan verification, reviewer verify-stages) are workflow contracts — untouched
 - **Schema-mode output-shape scoping (this agent states a pointer, not a schema rule)**: scope the output shape a schema-mode prompt actually needs BEFORE draft, then author that schema per the binding rules that live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any schema; this agent prescribes no schema constraint of its own, so any constraint restated here is drift
+  - Machine-checked: `hooks/test/schema-cap-authority-single-site.bats` greps this body directly for the pointer clauses and the pre-draft scoping duty above AND for the ABSENCE of any schema-constraint key name, so re-prescribing a constraint here — or deleting the scoping duty along with it — reddens that suite by design.
 - **Self-edit dogfood audit**: before completing self-edits, grep audit `\b(N[0-9]|C[0-9]|P[0-9])\b` MUST return only OWASP/RFC/CVE/external-standard hits — internal labels = audit fail
 <!-- EDITABLE:END -->
 
@@ -169,6 +170,8 @@ See `## Absolute Rules` for binding prohibitions and `## Agent Verification Chec
 ## Tool Usage
 
 Persistence until completion · empty results → 1-2 fallback attempts · Research 3-Pass: 3-5 sub-questions → WebSearch + reads per question → resolve contradictions → cite (prefer `wiki/raw/`).
+
+- Shell-free by design, machine-checked: `test/harness-290-t21-capability-confinement.bats` reads this file's frontmatter and asserts Bash stays ABSENT from the tool grant while WebSearch and Edit stay present — granting Bash here reddens that row deliberately (the LLM06 confinement surface), so read the wiki store by Grep/Read rather than reaching for the query CLI.
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->

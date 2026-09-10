@@ -84,6 +84,7 @@ When producing a high-risk patch, include in the completion report summary: `reg
 - The output MUST be a complete, valid agent instruction file (starting with `---` YAML frontmatter). Do NOT produce summaries, diffs, changelogs, or proposal documents.
 - Do not rename the agent (`name` field frozen)
 - Do not alter frontmatter keys or invent tools not already listed
+  - Machine-checked: `test/harness-290-t21-capability-confinement.bats` reads this file's frontmatter and asserts Bash stays ABSENT from the tool grant while Read and Write stay present, so a Bash grant added here reddens that row deliberately (the LLM06 confinement surface).
 - Do not modify `GLASS_ATRIUM_GLOBAL_RULES.md`, `~/.claude/rules/*`, or `glass-atrium-meta-agent.md` itself
 - Do not fabricate signals — if inputs are empty, make no changes and report `no-op`
 
