@@ -54,6 +54,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST size the work before the first Edit — use the delegation-supplied `[SIZE-EST]` when one is provided, otherwise compute your own as `tool_uses ~= files x 4.5`; an estimate above ~30 → do not start, report to the orchestrator for decomposition. Mid-run, an estimate overrun is a checkpoint signal, not an abort: emit `[COMPLETION]: needs_context` with the work completed so far.
 - MUST keep a running tool_use count and checkpoint it at 70% of the sizing estimate — report the count, then judge whether the remaining work fits inside what is left; if it does not, emit `[COMPLETION]: needs_context` at that checkpoint rather than pushing on (70% matches the runtime tool_use advisory)
 - MUST emit `[COMPLETION]: needs_context` when TURNS approach the 80% working ceiling of `maxTurns` — a separate meter from the tool_use budget above (never push through to the hard cap)
+- The three budget bullets above are this agent's ONLY budget-sizing copy and are not spare duplication of the charter: `hooks/inject-scope-rules.sh` withholds the injected BUDGET-DEV block from the four daemon-carrier agents, this one included, via the carrier set in `scripts/agent_lifecycle/inject_sync.py` — production code, not a test, so deleting them leaves a real delivery gap.
 <!-- EDITABLE:END -->
 
 ## Tech Stack
@@ -90,7 +91,7 @@ All new code uses `pathlib.Path` · `os.path.join` / string path manipulation = 
 
 ### Dependencies & Config
 
-- `pyproject.toml`: separate `dependencies` / `optional-dependencies` · no test/dev leakage into runtime · Lockfile (`uv.lock`/`poetry.lock`) MUST be committed
+- `pyproject.toml`: separate `dependencies` / `optional-dependencies` · no test/dev leakage into runtime · Lockfile (`uv.lock`/`poetry.lock`) MUST be committed — cross-platform, commit alongside `pyproject.toml`
 - 12-factor config via env vars · validate at startup with `pydantic-settings` · missing → exit with clear message
 
 ### Tests = Specification
@@ -99,8 +100,7 @@ All new code uses `pathlib.Path` · `os.path.join` / string path manipulation = 
 
 ### Framework & Data Fit
 
-- FastAPI (API-first) · Django (admin/ORM-heavy) · Litestar (startup-critical) — never force single framework
-- >1GB → Polars (lazy frames) · Small data → Pandas 2.x+PyArrow · never `iterrows()` in hot paths
+- Pick by workload fit, never force a single framework: FastAPI API-first · Django admin/ORM-heavy · Litestar startup-critical · Polars >1GB lazy frames · Pandas 2.x+PyArrow small data
 
 ### Early Return / Guard Clauses
 
@@ -117,19 +117,17 @@ Return immediately on unmet preconditions · body handles happy path only
 
 ### Async & Concurrency
 
-- `asyncio.TaskGroup` default · `gather` OK for simple fire-and-wait · Cooperate with cancellation (catch `CancelledError`, clean up, re-raise) · FastAPI blocking I/O → `async def` or `run_in_threadpool` · Timeouts: `asyncio.timeout()` · anyio for library portability
-- Use `asyncio.timeout()` (3.11+) as a context manager instead of `asyncio.wait_for()` for nested timeout scoping. Use `asyncio.TaskGroup` for structured concurrency; bare `asyncio.gather` is FORBIDDEN for new code.
+- `asyncio.TaskGroup` default; bare `asyncio.gather` FORBIDDEN in new code · Cooperate with cancellation (catch `CancelledError`, clean up, re-raise) · FastAPI blocking I/O → `async def` or `run_in_threadpool` · Timeouts: `asyncio.timeout()` (3.11+) as a context manager, not `asyncio.wait_for()` — nested scoping · anyio for library portability
 
 ### Dependencies & pyproject.toml
 
 - Check existing deps first · PEP 440 specifiers · avoid unpinned wildcards · Required: `name`, `version`, `requires-python`, `dependencies`, split `optional-dependencies`
-- Co-locate tool config: `[tool.ruff]`, `[tool.pyright]`, `[tool.mypy]`, `[tool.pytest.ini_options]` · Lockfile committed
+- Co-locate tool config: `[tool.ruff]`, `[tool.pyright]`, `[tool.mypy]`, `[tool.pytest.ini_options]`
 - `uv sync --locked` for development / test environments · `uv sync --frozen` for CI (no implicit resolution; lockfile is the contract)
-- Lockfile (`uv.lock`) is cross-platform; commit alongside `pyproject.toml`.
 
 ### Testing
 
-pytest discovery via `[tool.pytest.ini_options]` · pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently · hypothesis for user-input functions · Factory patterns for test data · Coverage floor in CI
+pytest discovery via `[tool.pytest.ini_options]` · pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently · Factory patterns for test data · Coverage floor in CI
 
 ### Code Style
 
@@ -137,7 +135,7 @@ Ruff minimum rules: `E, F, W, I, N, UP, B, SIM, RUF` · `ruff format` = single s
 
 ### Comments & Logs
 
-Why-only comments (no restating code) · TODO(owner/TICKET) format · `print()` FORBIDDEN in production (use stdlib `logging` or structlog) · `# type: ignore` REQUIRES `TODO(owner/TICKET)` · No bare `except:` / `except Exception: pass` · **Log OR raise, never both**
+Why-only comments (no restating code) · TODO(owner/TICKET) format · `# type: ignore` REQUIRES `TODO(owner/TICKET)` · production logging = stdlib `logging` or structlog (the `print()` ban is in `## Guardrails`)
 
 <!-- EDITABLE:END -->
 
@@ -153,7 +151,7 @@ Why-only comments (no restating code) · TODO(owner/TICKET) format · `print()` 
 
 ## Prohibitions
 
-Mutable default arguments · Bare `except:` · `subprocess.run(shell=True)` with variable input · `print()` as production logger · `time.sleep()` inside `async def` · `import *` in production modules · Hardcoded secrets · `typing.Any` without justification comment · Pandas `iterrows()` on hot paths · Importing uninstalled packages · Introducing unverified patterns · Speculative fixes without Grep-confirmed evidence
+Hardcoded secrets · Introducing unverified patterns · plus every MUST NOT in `## Guardrails` and every cue in `## Red Flags` — enumerated there, not restated here
 
 ## Red Flags
 
@@ -187,7 +185,7 @@ Mutable default arguments · Bare `except:` · `subprocess.run(shell=True)` with
 
 ## Success Criteria
 
-- **Types + Lint + async safety**: type hints on every public API, `typing.Any` with same-line `# Any: <reason>`, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def` (regex_count)
-- **Forbidden-pattern elimination**: zero mutable default args, zero bare `except:`, zero `subprocess.run(shell=True)` with variable input, zero `from module import *` (excluding `__init__.py`), pathlib preferred (contains_section)
+- **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def` (regex_count)
+- **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred (contains_section)
 - **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core AutoAgent self-improvement signal
 - **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
