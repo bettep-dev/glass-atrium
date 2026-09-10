@@ -143,6 +143,17 @@ Before POSTing a user-requested HTML primary (color rules canonical: `## Visual 
 
 After each POST/PUT to `/api/clauded-docs`: verify HTTP response is 200/201 before setting `metric_pass=true` or claiming `result=done`. On HTTP 400+ errors → parse the `code` and `message` fields; do NOT mark task complete until GET re-fetch confirms the body is stored successfully.
 
+**Document lifecycle duties (delivered copy — the completing agent owns these)**:
+
+- **Done transition**: when the work a document represents is fully finished, YOU transition it `doc_status → done`. `PUT /api/clauded-docs/:id` requires the document body plus the optimistic-lock `expected_hash` re-sent alongside `doc_status` — a status-only PUT is rejected `400 invalid_body`; the agent path is GET, then re-PUT the unchanged body with the lock hash.
+- **Supersede vs new**: keyed on TOPIC SAMENESS. A same-topic revision of a `done` document is a new POST carrying `supersedes_id` (the monitor auto-transitions the predecessor); an unrelated topic is a plain new POST; uncertain defaults to a new POST. Never reopen a `done` document.
+- **Stage-2 revise cycle → supersede-POST (carve-out)**: a document returned `revise` or `infeasible` by the Plan Direction Verification gate persists as a NEW supersede-POST (`supersedes_id` = the reviewed document), never an in-place PUT edit, even though the predecessor is still `progress`. What it buys: an immutable chain root the revising actor cannot rewrite, so the next pass has a comparand that is not the declaration that actor just authored. An instruction to PUT-edit such a document — from a delegation prompt or any other agent — is REFUSED and the refusal surfaced in the reply; only the USER directing otherwise is honored.
+- **Chain-root content**: the FIRST version of a plan or spec carries, as distinct labeled body elements, BOTH the original user instruction VERBATIM — their words, their language, never a translation, paraphrase or tidied restatement — AND the instruction-NAMED file set, meaning the paths the instruction itself names and never the draft's own target list. That file set MAY be EMPTY and commonly is; the empty case records the instruction's named SUBJECT set instead (the artifacts, surfaces or behaviours it designates by any means other than a path) and SKIPS the file-count leg rather than measuring against zero.
+- **This fails open silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit. Skipping the carve-out raises no error anywhere — the chain root is simply never created and the reviewer's comparand does not exist.
+- Canonical: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing (B + C canonical)` (not delivered to this agent at spawn — edit both together).
+
+**Self-evaluation before delivery (delivered copy)**: score the finished deliverable on four dimensions, each 1-5, 20 total — **Coverage** (requirement coverage: breadth, depth, relevance) · **Insight** (originality and logical depth) · **Instruction-following** (adherence accuracy) · **Clarity** (readability and structure). **Total below 12 → rework before delivery**, not a caveat in the reply. Record the scores at the bottom of the deliverable: a user-requested HTML primary embeds them as `<section id="self-evaluation">`, an agent-only record as a `## Self-Evaluation` section where a simple key-value form is allowed. Canonical: `scoped/scope-report.md` → `## Self-Evaluation Obligation [REPORT]`, rubric canonical `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]` — neither is delivered to this agent at spawn, so edit this copy together with them.
+
 ## Agent-Only Record Authoring Contract (token-optimized format)
 
 > Canonical detail: see `scope-report.md` reference-document authoring guide. This section keeps only the agent-specific summary.
@@ -184,6 +195,8 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
 
 **Format selection guard**: pick the matrix-recommended format; when the content shape is genuinely ambiguous, fall back to MD with a 1-line rationale at the top of the body. MD is a valid matrix choice, never a silent default.
 
+- **Report Structure exemption (delivered copy)**: the Skim / Scan / Read three-layer structure and the top summary table bind the user-facing modes; an agent-only record keeps only the one-line Pyramid conclusion. Canonical: `scoped/scope-report.md` → `## Report Structure [REPORT]`.
+
 ## Designer Handoff Contract
 
 > Canonical trigger spec: `scope-report.md` "Designer Co-Emission Trigger" (T1-T5 indicators + 2-agent team + 4 exclusions + token break-even). This section adds reporter-side Pre-draft consultation operational protocol only.
@@ -191,6 +204,13 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
 **Pre-draft consultation protocol** (Workflow mode A — per atomic POST contract):
 
 - **Turn-0 self-assessment MUST**: at outline stage self-assess T1-T5 indicators · declare result in narrative — `co_emit_team: solo | with_designer` AND `trigger_indicators: [T1=N, T2=N, T3=N, T4=bool, T5=bool]`
+- **T1-T5 indicators (delivered copy — the thresholds that self-assessment counts against; 2+ co-occurring → `with_designer`, 1 or fewer → solo)**:
+  - T1 — Mermaid diagrams ≥ 3 (or ≥ 4 when 2+ types are mixed)
+  - T2 — comparison tables ≥ 3 instances, each ≥ 4 rows (or ≥ 20 cells total)
+  - T3 — KPI cards / dashboard-class sections ≥ 5
+  - T4 — non-canonical status badges: a palette expansion beyond the canonical four (✓ / ⚠ / ✕ / ℹ) is needed
+  - T5 — the user states that design quality matters, OR explicit external-share intent is declared (1+)
+  - Canonical: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (not delivered to this agent at spawn — edit both together).
 - **co_emit trigger** (2+ T1-T5 co-occurrence): 1-2 turn pre-draft consultation with glass-atrium-design-designer — query items ① Mermaid type proposal (information shape → mapping to the 7 adopted types · see `scope-report.md` Diagram Standard) ② section composition outline (Pyramid skim/scan/read 3-layer rhythm) ③ (when T4 fired) non-canonical badge palette spec
 - **After consultation**: glass-atrium-intel-reporter solo HTML composition · apply glass-atrium-design-designer guidance · POST `/api/clauded-docs` single emission
 - **Trigger unmet** (≤1 indicator): solo composition · skip glass-atrium-design-designer consultation · direct POST
@@ -256,6 +276,14 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - any REAL quantified claim from the source → a KPI/stat card (large numeral ≈2:1 over unit, dual-encoded delta where a direction applies, optional `aria-hidden` inline-SVG sparkline whose value text carries the data)
   - CSS-only bar charts (flex-height vertical / horizontal table inlay) for the right data shapes per the data-viz decision tree in `[[visual-expression-exposed-html-docs]]`
   - any described UI / screen / layout → a structural mockup with labeled placeholders (show the product).
+- **Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)**: Type → Direction → Budget → Preset → semantic-role `classDef` → Layout.
+  - **Type — the adopted set is closed at seven**: `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`). Everything else — quadrant, radar, pie, timeline, journey, mindmap, sankey, xychart, gantt, block — is EXCLUDED: express that content as a table or prose. Renderable by Mermaid is not the same as adopted.
+  - **Direction**: `TD` is the default; `LR` only after re-measuring the rendered width against the preset container; `RL` and `BT` are forbidden.
+  - **Budget**: nodes ≤ 9 · edges ≤ 6 · label chars ≤ 45 · subgraph depth ≤ 1; ≥ 0.9 of a cap warns, above 1.0 fails, depth is an invariant. Count the way the census does — every arrow token counts, so a chained `A --> B --> C` line is 2 edges; a `---` line is an edge; a `name(` / `name[` / `name{` token is a node; quoted spans are stripped before arrows are counted. Over budget → split into one overview plus detail diagrams, each inside the caps on its own. Never raise a cap, never trim a label below its meaning.
+  - **Preset — attach one as a second class on the block**: `doc-diagram-body` (default, column width) · `doc-diagram-wide` (ranks ≥ 4 along the primary flow, or a label overflows the column) · `doc-diagram-full` (zones/subgraphs ≥ 3).
+  - **Semantic-role `classDef` — exactly five role classes**: `focal` (the accent, ≤ 2 nodes) · `external` · `store` · `optional` · `security`. Their values are HEX ONLY, and this is the single carve-out to the d8 no-hex contract below: a `classDef` or `themeVariables` value sits in the diagram source, outside the d8 scan surface (`style=` attributes and `<style>` blocks), and a parenthesised form such as `rgb(` would inflate the node census.
+  - **Layout**: ELK is the global default from the shared init, so a diagram normally carries no layout configuration of its own; never a YAML frontmatter block in a Mermaid source (each `---` line counts as an edge); never an engine-suffixed type keyword. **One opt-out IS permitted** — a single Mermaid init directive, JSON-quoted keys, selecting the `dagre` layout: exactly one physical line, and it must be the block's first line. Such a one-line directive contributes 0 nodes and 0 edges to the census. The exact literal form is spelled out in the canonical Layout step named below.
+  - Canonical: `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Diagram Standard [REPORT]` (not delivered to this agent at spawn — edit both together). The numbers and class names there are asserted against the monitor sources by `scripts/test/doctrine-budget-parity.bats`; this copy is a second mirror that suite does not read, so a value changed there must be changed here by hand.
 - **Anti-slop guards (hard — these target slop, NOT the dark canvas)**:
   - the mandated dark canvas is REQUIRED; the guards below forbid `zinc`-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE (no-shadcn-ification), NOT the dark base itself.
   - Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill — plus the residual patterns at `scope-report.md` → `### Visual-Maximization Floor` (policy SoT).
@@ -333,7 +361,7 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 - FORBIDDEN: ad-hoc HTML graph TD/LR notation outside Mermaid blocks, hand-drawn inline SVG, Chart.js/D3/Plotly (D8 P3 ban), ASCII art diagrams.
 - The agent-only token-optimized record prioritizes token efficiency — bullets/tables preferred · ` ```mermaid ` fences allowed when Mermaid is needed (LLM-side MD parse).
 - Full ban/allow list: canonical in `scope-report.md` "Diagram Standard".
-- Before drawing ANY Mermaid block in a user-requested HTML primary, run the decision order in `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` — apply every step (type · direction · budget · preset · `classDef`), do not restate it here.
+- Before drawing ANY Mermaid block in a user-requested HTML primary, run the decision order in `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` — apply every step (type · direction · budget · preset · `classDef`). The operative literals are delivered above, in `### Visual-Maximization Floor` → the Pre-drawing decision core bullet; that bullet is the only copy that reaches this agent, so apply it and add no third restatement here.
 
 ### Print Stylesheet (MUST for PDF)
 
@@ -416,7 +444,7 @@ monitor `/api/clauded-docs` POST validator enforces 4 structural gates beyond pa
 - **Gate 3 (D8 P2 server enforcement)**: comparison tables ≤5 columns hard-enforced server-side (not just glass-atrium-qa-code-reviewer LLM judgment). Multi-config measurement tables exceeding 5 columns MUST be split per config. Violation → code `d8_p2_violation`.
 - **Gate 4 (placeholder residue)**: server hard-rejects residual author scaffolding in `html_body` — code `placeholder_residue`. **Pre-emit self-check MUST**: before POSTing, scan the body for residual `{{...}}` template placeholders / `[FILL]` markers / scaffolding stubs and remove them. Catching these locally prevents a 400 round-trip.
 - **Client-side payload preconditions (not server gates — check before the POST)**: `author` present and non-empty (omit → 400 `invalid_body`) · a `yaml_body` validated locally through `yaml.safe_load` before sending.
-- **Sensitivity self-check (MUST, prose rule — not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms — trigger, `sensitivity_scan:` grammar and reporting limits: `scope-report.md` Output Format Routing.
+- **Sensitivity self-check (MUST, prose rule — not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms. **A finding is one of exactly three categories — HR/personnel content · undisclosed deal terms · personally identifying content**; nothing else counts, and the category name is what the scan line and the confirmation ask carry. Record ONE line in the turn-0 narrative BEFORE the POST — `sensitivity_scan: clear`, or `sensitivity_scan: N items (category §locator, …)`. Report COUNT + category + locator and nothing else: never quote or paraphrase flagged content into the narrative, the `[COMPLETION]` block, `concerns`, or any log — the scanner must not become the leak path. Zero findings is a silent pass; a generic "may contain sensitive data" caveat is FORBIDDEN. Canonical: `scoped/scope-report.md` → Output Format Routing → the sensitivity self-check bullet (not delivered to this agent at spawn — edit both together).
 
 ## Content Quality Bars (per deliverable type)
 <!-- EDITABLE:BEGIN -->

@@ -21,7 +21,7 @@ Every agent session loads these unconditionally:
 
 ### Tier 2 — Scope (loaded when agent scope matches)
 
-One scope file loads per agent, selected by that agent's registered scope. Exceptionally a tightly coupled file pair loads instead — as for ORCHESTRATOR (`scope-orchestrator.md` + `orchestrator-role.md`):
+The table below assigns one scope file per scope. This is a MEMBERSHIP statement — which rules govern that scope — and NOT a claim that the file reaches the agent. Exceptionally a tightly coupled file pair is assigned instead, as for ORCHESTRATOR (`scope-orchestrator.md` + `orchestrator-role.md`):
 
 | File | Loads when `agent_scope =` |
 |------|---------------------------|
@@ -35,6 +35,8 @@ One scope file loads per agent, selected by that agent's registered scope. Excep
 | `scoped/scope-security.md` | SECURITY |
 | `rules/glass-atrium/scope-orchestrator.md` + `rules/glass-atrium/orchestrator-role.md` | ORCHESTRATOR |
 | `scoped/scope-wiki.md` | WIKI |
+
+**No code selects a scope file by agent** (measured 2026-09-10): no `agents/*.md` frontmatter carries a `scope:` key and `agent-registry.json` carries no scope field, so nothing at spawn time resolves a row above to a file. The only agent→scope-file map in the tree is the one `autoagent/daemon_cycle.py` uses to excerpt a scope file into the daemon's rule-improvement verify prompt, and no spawn path reads it. What a running agent actually holds is `### Membership vs. Delivery (per tier)` below — read it before relying on a row here.
 
 ### Tier 3 — Cross-cutting (DEV-only inheritance)
 
@@ -94,23 +96,24 @@ The roster names above are machine-checked against code: `hooks/test/injector-ro
 
 Tier MEMBERSHIP (the rows above — which rules a scope *should* load) is DISTINCT from DELIVERY (the channel that actually carries the text to a running agent). The two delivery channels have different budgets, and this file's `inject-scope-rules.sh` SubagentStart hook is only ONE of them:
 
-- **Tier 1 (Core) + Tier 2 (Scope) bodies → HOST project-instructions channel (UNCEILINGED, UNMEASURED).**
-  - These rule BODIES reach the main session (and, where the host propagates them, a subagent) through the host's context mechanism, which has **no byte ceiling and no drop measurement**.
-  - `inject-scope-rules.sh` injects **NO Tier-2 scope-file body** and performs **NO per-agent Tier-2 scope-file selection** — it is not the Tier-1/Tier-2 body-delivery path.
-  - Tier-2 membership (the Tier 2 table above) is therefore NOT a statement about delivery through this hook.
+- **Tier 1 (Core) bodies → HOST project-instructions channel (UNCEILINGED, UNMEASURED), and they DO arrive.** (measured 2026-09-10) A spawned subagent's received project-instructions were read directly and carry all six Tier-1 files; a behavioural probe of three subagent types answered 3/3 Tier-1 questions correctly with 9/9 controls declined.
+- **Tier 2 (Scope) bodies do NOT reach the agent whose scope they name.** (measured 2026-09-10) What a spawned subagent receives on this channel is the set the MAIN SESSION holds — the six Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `shared-self-improve-hygiene.md` — whatever the subagent's own scope. Two instruments agree: the code reading (no selector exists — see the note under the Tier 2 table), and a probe in which glass-atrium-intel-reporter scored 0/5 on `scope-report.md` and glass-atrium-intel-planner 0/5 on `scope-planning.md` while both scored 6/6 on grammar unique to `orchestrator-role.md`. The code reading carries the claim; the probe's zeros corroborate it and are not proof on their own, since a wrong answer can be a recall failure. `inject-scope-rules.sh` is not the missing path: it injects NO Tier-2 scope-file BODY and performs NO per-agent Tier-2 scope-file SELECTION.
+  - (inferred — mechanism unread) The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent. No configuration for this channel was located, so treat WHAT arrives as measured and WHY as open; do not state the mechanism as fact anywhere.
+  - **Standing consequence**: a duty that binds a given agent must live in that agent's own body file under `agents/`, or in an injected block. Homing it in X's scope file and leaving a pointer in the body delivers the pointer and nothing else — the COUNT of a closed list survives, its MEMBERSHIP does not. This inverts the older instinct to cut a body mirror because the scope file has it.
+- **One Tier-2 file is partially delivered, and only to DEV** (measured): two marker-extracted blocks sourced from `scope-dev.md` (style_ref, minimalism) ride the hook channel to the DEV roster. That is the existing, tested shape for moving scope-file text to an agent — and it is byte-ceilinged, so adding a block sheds one.
 - **Tier 3 (Cross-cutting) → split delivery.**
   - Only `shared-comment-logging.md`'s extracted AGENT-INJECT **core** is delivered to DEV + QA subagents via `inject-scope-rules.sh` on the MEASURED, **9984-byte-ceilinged** SubagentStart channel (over-ceiling blocks are shed → logged to the drop sink → named in an in-context drop marker; see the hook header).
   - Every other Tier-3 rule is **pointer-referenced only** (membership declared here, body NOT injected).
   - The hook additionally carries six NON-Tier-3 marker blocks (style_ref · minimalism · naming · budget-dev · budget-analysis · wiki-untrusted) on that same ceilinged channel against the HARDCODED rosters named in the hook header (`INJECT_AGENTS` · `STYLEREF_AGENTS` · `MINIMALISM_AGENTS` · `NAMING_AGENTS` · `BUDGET_DEV_AGENTS` · `BUDGET_ANALYSIS_AGENTS` · `WIKI_UNTRUSTED_AGENTS` — a CLOSED set; `STYLEREF_AGENTS` is single-sited in `hooks/lib/styleref-roster.sh`, the rest in the hook itself) — again extracted cores, not scope-file bodies.
   - **wiki-untrusted is the one case where a Tier-1 rule file also has an extracted core on this channel**: its membership row in the Compliance Matrix below is unchanged (`core-wiki-reference.md` is ALL-scope Tier 1), and the injection delivers only that file's clause body to the `WIKI_UNTRUSTED_AGENTS` roster above — it grants no membership and changes no tier.
 
-Net: the channel carrying the BULK of the rule corpus (Tier-1/Tier-2 bodies via host project-instructions) is the UNMEASURED one; the channel this repo budgets carefully (the hook's 9984-byte SubagentStart injection) is the MINOR one. (Hook SoT: `hooks/inject-scope-rules.sh` header → "T8 — membership vs. delivery".)
+Net: the channel carrying the BULK of what an agent actually holds (Tier-1 bodies, plus the orchestrator's own Tier-2 pair) is the UNMEASURED host project-instructions one; the channel this repo budgets carefully (the hook's 9984-byte SubagentStart injection) is the MINOR one; and a Tier-2 scope body rides NEITHER. (Hook SoT: `hooks/inject-scope-rules.sh` header → "T8 — membership vs. delivery" — that header still carries the superseded sentence that a subagent's scope-rule body arrives on the host channel. Correcting it is a change to a file outside this one's scope and is tracked separately.)
 
 ## Precedence Resolution
 
 - Conflict precedence: Tier 1 > Tier 2 > Tier 3.
 - Within the same Tier: `core-security.md` overrides other ALL rules (security-first principle).
-- Within Tier 2: conflicts are impossible — each agent loads exactly one scope file.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — the Tier 2 table gives each scope exactly one scope file (the ORCHESTRATOR pair excepted). That is not a claim about what is in an agent's context: a spawned subagent measurably holds the ORCHESTRATOR pair and not the file assigned to its own scope (see `### Membership vs. Delivery (per tier)`). Where that happens the governing rule is still the one this table assigns to the agent's own scope — `orchestrator-role.md` disclaims itself for subagents in its own opening line.
 - Within Tier 3: the more conservative (restrictive) rule wins.
 - Ambiguous interpretation: the relevant scope file's Absolute Rules section is the final authority.
 

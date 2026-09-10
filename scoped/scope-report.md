@@ -6,6 +6,8 @@
 
 Rules specific to REPORT agents: glass-atrium-intel-reporter.
 
+**Delivery status (measured 2026-09-10)**: this file is NOT delivered to glass-atrium-intel-reporter at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`). Its readers are a human, an agent that deliberately Reads it, and the self-improvement daemon's verify prompt. Consequence for authors: a duty that BINDS the reporter must also live in `agents/glass-atrium-intel-reporter.md`; homing it here and leaving a pointer in the body delivers the pointer and nothing else. This file stays canonical.
+
 ## Absolute Rules [REPORT]
 
 - **Summary table REQUIRED**: Every report MUST include a summary table at the top (skim-friendly format)
@@ -170,6 +172,7 @@ Agent-only documents MUST minimize token cost and use the notation / format easi
   - The report format is COUNT + category + locator and nothing else: NEVER quote or paraphrase flagged content into the narrative, `[COMPLETION]`, `concerns`, or any log — the scanner must not become the leak path (`core-security.md` Secret Management [LLM02:2025]).
   - Zero findings = silent pass — a generic "may contain sensitive data" caveat is FORBIDDEN.
   - Honest backing: honor-system semantic judgment (no hook reads it); NEVER describe it as enforced.
+  - Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `### Schema Gates (Server-Enforced)` and `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec` each carry the operative subset, three categories included, because neither this file nor `scope-planning.md` reaches those agents at spawn (measured 2026-09-10). This bullet stays canonical; edit the mirrors together with it.
 - **Monitor schema gates (server-enforced 400 if violated)**:
   - **Gate 1 (HTML5 baseline)**: `html_body` MUST contain `<!doctype html>` + `<meta charset>` + `<meta viewport>`. Missing any → code `html_structure_invalid`. The dark-base skeleton already includes these in canonical form — DO NOT strip them when authoring.
   - **Gate 2 (D8 column-cap server enforcement)**: comparison tables ≤5 columns hard-enforced server-side, not just glass-atrium-qa-code-reviewer LLM judgment. Multi-config measurement tables exceeding 5 columns MUST be split per config (e.g., 2-config 4-peak grid → 2 tables of 5 columns). Violation → code `d8_p2_violation`.
@@ -177,6 +180,8 @@ Agent-only documents MUST minimize token cost and use the notation / format easi
 ### Document Lifecycle — completion + exposure routing (B + C canonical)
 
 > Canonical authority — `scope-planning.md` Output Format Routing mirrors this lifecycle (done-transition · supersede-vs-new · exposure routing).
+
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `### Post-Emission HTTP Verification (Confirm Storage)` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together — and note that the fail-open Residual bullet below reasons from this file being the completing agent's own loaded rules, which the measurement falsifies.
 
 The monitor already implements the mechanism (`doc_status` enum `progress`/`done` · `PUT /api/clauded-docs/:id` transition · `supersedes_id` revision chain with predecessor auto-`done`). These rules govern *when* the authoring agent acts.
 
@@ -204,6 +209,8 @@ The monitor already implements the mechanism (`doc_status` enum `progress`/`done
 - **Lifecycle coherence (C↔B)**: an agent-only record follows B's done-transition + supersede-vs-new rules identically — agent-only is an exposure choice, not a lifecycle exemption.
 
 ## Diagram Standard [REPORT]
+
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
 All diagrams in user-requested HTML primary documents MUST use **Mermaid** — a single mandated diagram format.
 
@@ -248,6 +255,8 @@ Author-side skeleton + 3-layer a11y: cite [[visual-expression-exposed-html-docs]
 
 Machine-checked mirror: `scripts/test/doctrine-budget-parity.bats` extracts the cap numbers, the warn/fail ratios and the three size-preset class names from this section's own text and compares them against the monitor budget, viewer and export sources, so those literals and the lines carrying them are reworded only together with that suite.
 
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together — the mirror restates literals that the parity suite above does not read on the body side.
+
 Decision order before drawing (each step builds on the previous):
 
 1. **Type** — SoT: `monitor/src/server/clauded-docs/diagram-types.json`.
@@ -284,6 +293,8 @@ Decision order before drawing (each step builds on the previous):
 ## Designer Co-Emission Trigger [REPORT]
 
 > Canonical authority — `scope-planning.md` Designer Co-Emission Trigger mirrors this section.
+
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
 When a **user-requested HTML primary** deliverable exceeds the visually-heavy threshold, route automatically to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode. Below the threshold, glass-atrium-intel-reporter solo (default). The probe is gated only on "is this a user-requested HTML artifact?" — an agent-only record never triggers it.
 
@@ -324,6 +335,8 @@ When a **user-requested HTML primary** deliverable exceeds the visually-heavy th
 
 ## Report Structure [REPORT]
 
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `## Agent-Only Record Authoring Contract (token-optimized format)` carries the operative subset — the agent-only exemption, which is the layer's one behavioural fork — because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together.
+
 Every report MUST be navigable in skim-only mode. The three layers below are format-agnostic — a user-requested HTML primary carries them as `<section>` landmarks; an agent-only record (md/yaml/json/txt) carries them as `## Heading` or another author-chosen structure.
 
 - **Skim layer**: summary table + 3-line conclusion (decision-ready without further reading) — HTML `<section id="summary">` / MD `## Summary` (heading language follows `GLASS_ATRIUM_GLOBAL_RULES.md` → Output Language). **Agent-only record exempt** (user readability abandoned → keep only the 1-line Pyramid conclusion).
@@ -333,6 +346,8 @@ Every report MUST be navigable in skim-only mode. The three layers below are for
 The summary table (Absolute Rules) is the Skim layer's entry point; burying the conclusion in body paragraphs is FORBIDDEN.
 
 ## Self-Evaluation Obligation [REPORT]
+
+Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `### Post-Emission HTTP Verification (Confirm Storage)` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
 After completing a report, apply the G-Eval-style LLM-as-Judge 4-dimension self-assessment — Coverage / Insight / Instruction-following / Clarity, each 1-5 (rubric canonical: `scope-qa.md` Deliverable Quantitative Evaluation):
 - Total < 12 → rework before delivery.

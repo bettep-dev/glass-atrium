@@ -97,15 +97,25 @@ Two install-side shell functions can reach a live postgres: `clear_unmanaged_pg_
 
 - **The retired condition — do not re-derive it**: "safe once `kill`, `rm` and `lsof` are shadowed" is WRONG, not merely strict.
   - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell satisfies that wording while the real command runs.
-- **Enumerate**: grep the four live test roots for either function name.
-- **Classify each hit executing or naming** — only executing sites continue.
-  - Executing: the name is a command word — after `run`, inside a child-shell command string, or bare at the start of a statement.
-  - Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, or is the definition itself.
+- **Enumerate — list every occurrence and classify by READING it; a command-word pattern is FORBIDDEN as the enumeration step.**
+  - `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
+  - Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
+  - Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` TITLE and MISSES the real call, which sits at the end of a child-shell command string after a `;`. The pattern reported a naming site and hid the executing one.
+  - Derive the site list from the run; never carry a remembered count forward.
+- **Classify each occurrence executing, naming, or neutralized** — only executing sites continue.
+  - Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string, where it is most often mid-string rather than leading.
+  - Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, a `@test` title, a comment, a string literal in a non-shell file, or an argument to a helper (`extract_launcher_fn <name>`); or it is the definition itself.
+  - Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
 - **Answer three questions at every executing site, all three resolving**:
-  - **Pid control** — does `lsof` resolve to a record-only stub? No environment seam substitutes for this.
-    - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `tcp:5432` port lookup that finds the live server wherever the socket path points.
-  - **Path control** — does the socket dir resolve outside the shared temp dir for this invocation?
-    - The seam is `GA_PG_SOCKET`, frozen into the readonly `PG_SOCKET` at the moment `lib/ga-env.sh` is sourced; unset defaults to the live `/tmp`.
+  - **Pid control** — can every `lsof` the function reaches return a live postgres pid? It MUST NOT. No environment seam substitutes for this.
+    - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `lsof -ti tcp:5432` port lookup that finds the live server wherever the socket path points.
+    - Two substitute shapes resolve it: one reporting NO owner, and one reporting a pid that provably cannot name a live process (a literal above the platform pid ceiling — macOS wraps pids below 100000). A real `lsof` on PATH resolves neither, whatever the socket redirect says.
+    - The fake-pid shape leaves `kill -INT <pid>` running the REAL `kill`; it is safe only because the pid cannot exist. A fake pid inside the live range fails this question.
+  - **Path control** — does `${PG_SOCKET}/.s.PGSQL.5432` resolve to a path OTHER than the live server's socket?
+    - The object is that ONE path, not the tree containing it. A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and one suite is FORCED there: the AF_UNIX `sun_path` cap (~104 bytes on macOS) makes a `$TMPDIR` base (`/var/folders/…`, ~91 bytes) unbindable. What FAILS is `PG_SOCKET` resolving to the live socket's OWN directory — unset (defaults to `/tmp`), or an explicit `/tmp`.
+    - Two seams set it, and which one is available depends on how the file loads the code:
+      - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), which is where the `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
+      - a plain `PG_SOCKET=` assignment, which WORKS in a file that sources a domain lib directly and so never calls `ga_init_env`: nothing made the name readonly there, and exporting `GA_PG_SOCKET` in such a file is inert.
   - **Mechanism binding** — which shell actually runs the function?
     - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
 - **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
@@ -114,7 +124,8 @@ Two install-side shell functions can reach a live postgres: `clear_unmanaged_pg_
 - **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
 - **What this does NOT cover** — the hazard is a live pid plus a live path reaching a real signal or a real removal, so these shapes still slip past:
   - a stub dir prepended inside a child command string while an earlier statement in that same child already ran the real tool;
-  - `GA_PG_SOCKET` set but never exported, so the child re-sources the live default;
+  - `GA_PG_SOCKET` set but never exported, so a child that calls `ga_init_env` itself freezes `PG_SOCKET` to the live default;
+  - a same-shell shadow definition that a child-shell driver in the same file does not inherit, so the child runs the real function while the parent reads as neutralized;
   - path control alone, which leaves the port-lookup fallback free to find and signal the live pid;
   - an executing site the enumeration misses because the function name is assembled from string fragments.
 

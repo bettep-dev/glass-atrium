@@ -6,11 +6,15 @@
 
 Rules specific to PLANNING agents: glass-atrium-intel-planner.
 
+**Delivery status (measured 2026-09-10)**: this file is NOT delivered to glass-atrium-intel-planner at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`). Its readers are a human, an agent that deliberately Reads it, and the self-improvement daemon's verify prompt. Consequence for authors: a duty that BINDS the planner must also live in `agents/glass-atrium-intel-planner.md`; homing it here and leaving a pointer in the body delivers the pointer and nothing else. This file stays canonical.
+
 ## Absolute Rules [PLANNING]
 
 - **No code in plans**: SQL, TS, pseudocode, or new function-name proposals are FORBIDDEN — code authoring is the DEV agent's domain
 
 ## Output Policy [PLANNING]
+
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` carries the operative subset (the Stage-2-subject duty), because this file does not reach glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
 - **Save location**: Plans / specs MUST be emitted via `POST /api/clauded-docs` to the monitor-internal store (per this file's Output Format Routing → Emission contract), not `memory/plans/`.
 - **Spec-as-Prompt**: A glass-atrium-intel-planner output IS the downstream agent's input context — write for machine consumption, not humans only. Structure facts/AC/scope as parseable bullets.
@@ -150,6 +154,8 @@ The literals quoted in prose throughout this file are a documented MIRROR synced
 
 > Canonical mirror — `scope-report.md` "Output Format Routing" → "Document Lifecycle — completion + exposure routing" is the SoT (done-transition · supersede-vs-new on topic-sameness · exposure routing test + uncertain-default rules). This is a mirror scoped to planning.
 
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` carries the operative subset, because this file does not reach glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays canonical; edit both together.
+
 - **Done transition (B)**: on completing a plan/spec document, glass-atrium-intel-planner (the completing agent) transitions `doc_status→done`.
   - The `PUT /api/clauded-docs/:id` endpoint requires the document body (`html_body` for HTML primary; the corresponding body field for an agent-only record) + an optimistic-lock `expected_hash` re-sent with `doc_status` (a bare `{"doc_status":"done"}` PUT → `400 invalid_body`).
   - Primary human path = monitor viewer done-toggle, agent/CLI path = GET → re-PUT unchanged body+hash (operational detail + curl per the canonical).
@@ -204,6 +210,8 @@ Constraints that come with that tag:
 
 Machine-checked pointer: `scripts/test/doctrine-budget-parity.bats` reads this section and fails if it stops naming `scope-report.md` as its SoT or starts restating a budget number that diverges from the canonical, so keep it a pointer.
 
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec (applies to user-requested HTML primary)` carries the decision core in full, because neither this pointer nor the canonical it names reaches glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays a pointer and states no literal; the canonical and that body copy are edited together.
+
 Before drawing any Mermaid block in a user-requested HTML plan, run its decision order there — each step builds on the previous:
 
 - **Type** — from the adopted set
@@ -216,6 +224,8 @@ Before drawing any Mermaid block in a user-requested HTML plan, run its decision
 ## Designer Co-Emission Trigger [PLANNING]
 
 > Canonical mirror — `scope-report.md` "Designer Co-Emission Trigger" is the SoT · this section is a mirror scoped to user-requested HTML primary plans. Cross-reference to prevent duplication drift.
+
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` carries the operative subset (the T1-T5 thresholds the mandated turn-0 self-assessment counts against), because this file does not reach glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
 When a **user-requested HTML primary** plan deliverable exceeds the visually-heavy threshold, route automatically to the `{glass-atrium-intel-planner, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode. Below the threshold, glass-atrium-intel-planner solo (default). The probe is gated only on "is this a user-requested HTML artifact?" — an agent-only record never triggers it.
 
@@ -254,6 +264,8 @@ When a **user-requested HTML primary** plan deliverable exceeds the visually-hea
 
 > Detailed rules: See `scope-dev.md` Ambiguity Gate section (6-axis weighted score). What each score band obliges a planner to do is the Confidence-tiered plan generation rule below.
 
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Pre-Execution Verification [PLANNING]` carries the operative subset (the six axes, the three score bands and the score-evidence consistency rule), because this file does not reach glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays canonical; edit both together.
+
 - **6-axis Ambiguity Gate** (in sync with DEV — scope-dev.md "Ambiguity Gate" canonical): Purpose 30% · Scope 25% · Technical 20% · Acceptance 15% · Audience 5% · Dependency 5%
 - **Audience axis ≥ 0.9 obligation**: at PLANNING time, resolve the single exposure question — "will the user explicitly request a shareable HTML artifact, or is this an intermediate record?" — so the request-driven format routing is pre-decided rather than discovered at emission time
 
@@ -277,6 +289,8 @@ When a **user-requested HTML primary** plan deliverable exceeds the visually-hea
 ## Claim Marking & Consultation [PLANNING]
 
 Extends the Ambiguity Gate above from axis granularity to claim granularity: the gate marks which AXIS is uncertain, this marks which CLAIM is — so the verification team receives a question list rather than a score.
+
+Delivered mirror: `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` carries the operative subset (the two tag forms, the unmarked-is-UNCHECKED default and the which-claims test), because this file does not reach glass-atrium-intel-planner at spawn (measured 2026-09-10). This section stays canonical; edit both together — a change to either tag literal here must be hand-carried to that body copy.
 
 - **Marking format** — every substantive claim the plan rests on carries an inline tag at the end of its own bullet:
   - `[SELF-CHECKED: <instrument you ran this turn>]` — names the INSTRUMENT, never the conclusion: the file you Read, the pattern you Grepped, the command you ran and what it returned. A tag naming no instrument is not a self-check.

@@ -6,6 +6,8 @@
 
 Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debugger.
 
+**Delivery status (measured 2026-09-10)**: this file is NOT delivered to glass-atrium-qa-code-reviewer or glass-atrium-qa-debugger at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`). A duty that BINDS a QA agent must also live in that agent's own body; homing it here alone delivers nothing to the actor. This file stays canonical, and nothing in it is deleted on that ground.
+
 ## Sprint Contract Gate [DEV+QA]
 
 > Full details: See `scope-dev.md` Sprint Contract Gate section (complex tasks only; simple tasks exempt)
@@ -20,6 +22,8 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 | Plan Direction Verification Gate | the team | after planning, before implementation | **POST-verifies** an authored plan |
 
 > Full details: See `scope-dev.md` "Plan Direction Verification Gate" section (canonical SoT — DEV participation duty + hard-gate rule + revision flow)
+
+**Delivered mirror: NONE.** Measured 2026-09-10: `agents/glass-atrium-qa-code-reviewer.md` carries no text from this section — not the scope-fidelity axis, not the chain-root comparand, not the load-bearing premise check, not the non-waiver clause — and this file does not reach that agent at spawn. Until a mirror is added to the reviewer body, the reviewer-side duties stated here reach no actor. Do not treat this section as delivered, and do not home a further duty here alone.
 
 - glass-atrium-qa-code-reviewer is the QA-side participant: on a complex authored plan, judge **implementation-feasibility + test-feasibility** and emit `pass` / `revise` + concrete unmet items (the DEV participant judges technical validity in parallel — see canonical).
 - **Scope-fidelity axis (a THIRD axis, distinct from the two feasibility axes above)**: also judge whether each planned task stays inside the user's LITERAL instruction, and NAME every task that exceeds it.
