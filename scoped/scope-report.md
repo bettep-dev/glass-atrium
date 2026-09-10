@@ -8,11 +8,21 @@ Rules specific to REPORT agents: glass-atrium-intel-reporter.
 
 ## Delivery status — membership is not delivery
 
-The stanza above states MEMBERSHIP. It is not a delivery claim: this file is NOT delivered to glass-atrium-intel-reporter at spawn, because no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`, measured 2026-09-10). Its readers are a human maintainer, an agent that deliberately Reads it, and the self-improvement daemon's verify prompt.
+**This file is a maintained canonical text and co-edit map, not a rulebook that binds anyone at run time.** The stanza above states MEMBERSHIP only: it is NOT delivered to glass-atrium-intel-reporter at spawn, because no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`, measured 2026-09-10). Nothing here obliges the reporter — every duty below binds through a copy in a file its actor actually loads.
+
+Four readers keep it alive, each on its own terms:
+
+| Reader | Reads | Consequence of deleting what it reads |
+|---|---|---|
+| `scripts/test/doctrine-budget-parity.bats` | `## Pre-drawing Doctrine [REPORT]`, as the SoT it compares against the monitor sources | the suite reds — that section is machine-load-bearing HERE and cannot be moved |
+| a maintainer of the monitor, or anyone debugging a 400 | the server-enforced facts — schema gates, d8 style rules, column cap, threshold SoT | the only prose statement of what a POST is rejected for goes with it |
+| a maintainer syncing a delivered copy | every **Delivered mirror** / co-edit roster line, and the canonical text those copies derive from | the delivered copy loses its maintained source; the files naming this one canonical point at nothing |
+| the self-improvement daemon | this file, excerpted into its rule-improvement verify prompt (`autoagent/daemon_cycle.py`) | the verify prompt loses its comparand |
 
 - A duty that BINDS the reporter must ALSO live in `agents/glass-atrium-intel-reporter.md` — homing it here and leaving a pointer in the body delivers the pointer and nothing else.
 - A passage in that agent body that looks like a redundant mirror of this file is the agent's ONLY copy: never cut it on the grounds that this file carries it.
-- This file stays canonical, and every **Delivered mirror** line below names the agent-body copy of its section and means *edit the two together*. The reason is stated here once and is NOT repeated per section.
+- Every **Delivered mirror** line below names the agent-body copy of its section and means *edit the two together*. The reason is stated here once and is NOT repeated per section.
+- **Standing disposition rule**: a passage carrying no canonical text, no server fact and no machine-read literal, which nothing cites, is DELETED rather than relocated — being undelivered is not itself grounds to keep it.
 
 ## Absolute Rules [REPORT]
 
@@ -47,7 +57,7 @@ HTML primary is produced ONLY when 1+ of these explicit signals is present —
 
 **NOT triggers** (none produces HTML primary): content visual-richness (diagram count, table density) · LLM self-judgment that "this looks visual" · a bare document/report/plan request ("보고서로 정리", "문서로 작성", "write it up as a report", "make a plan") — that last routes to user-requested non-HTML (md default) per the mode table above.
 
-Copies of this test, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### HTML request test` (maintainer-read mirror) · the delivered copies `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` · and `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition`, which is not canonical yet is the one copy that reaches every subagent — so edit them together. The Korean signal literals above are detector data: translating one disables it.
+Copies of this test, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### HTML request test` (maintainer-read mirror) · the delivered copies `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` · and `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition`, which is not canonical yet is the one copy that reaches every subagent — so edit them together. The acting readers are the reporter, the planner and the orchestrator, each through its own copy; the reader HERE is whoever keeps those copies in agreement. The Korean signal literals above are detector data: translating one disables it.
 
 ### HTML primary requirements
 
@@ -155,7 +165,7 @@ Agent-only documents MUST minimize token cost and use the notation / format easi
 - **Format selection**: md, yaml, json and txt are equally adoptable and the author LLM chooses autonomously based on content shape; explicit per-content-shape selection is required and MD MUST NOT be forced as a silent default. The server `/api/clauded-docs` `parseCreateBody` natively accepts every one of them — the format is determined by the body-field kind supplied (`md_body`/`yaml_body`/`json_body`/`txt_body`), with NO `prefix` field. Format-selection decision matrix + POST API body field mapping canonical: `glass-atrium-intel-reporter.md` Authoring Contract → Format Selection Matrix.
 - **Decoration FORBIDDEN**: HTML · TOC · any visual decoration beyond what aids LLM parsing — token waste → audit fail.
 - **Storage location**: the Emission contract below governs every mode — an agent-only record POSTs to the monitor-internal root exactly like the others (see also `orchestrator-role.md` Harness Path Protection).
-- **Owner = glass-atrium-intel-reporter** (glass-atrium-intel-researcher handles only `wiki/raw/` · orchestrator self-execution violates the no-execution principle · glass-atrium-intel-planner out of CQRS scope · a new agent costs more than extending the existing one)
+- **Owner = glass-atrium-intel-reporter**; glass-atrium-intel-researcher writes only `wiki/raw/`. Whether the fleet grows a seat rather than extending this one is `scope-dev.md` → DEV Agent Fleet Governance, not a call this section carries.
 - **Exposure bit**: a single bit driven by the one question "did the user request a shareable HTML artifact?" —
   - **user-requested HTML** → viewer-exposed (visual artifact), shown in the monitor UI; HTML primary carries no YAML frontmatter — metadata lives on the monitor.ClaudedDoc DB row (server-managed)
   - **agent-only record** → viewer default-hidden (not-exposed) via the monitor frontend filter, a no-regression policy that prevents UX confusion; carries the minimal identity fields (`agent` author declaration + `tokens_estimate` for cost visibility) in a format-adaptive carrier (MD=YAML frontmatter / YAML/JSON=top-level keys / TXT=POST body fields)
@@ -196,8 +206,10 @@ Copies of the POST tuple, all in agreement — this one (canonical, maintainer-r
   - Zero findings = silent pass — a generic "may contain sensitive data" caveat is FORBIDDEN.
   - Honest backing: honor-system semantic judgment (no hook reads it); NEVER describe it as enforced.
   - Delivered mirrors: `agents/glass-atrium-intel-reporter.md` → `### Schema Gates (Server-Enforced)` and `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec`, each carrying the operative subset with all the content categories named above. This bullet stays canonical; edit the mirrors with it.
-- **Monitor schema gates (server-enforced 400 if violated)**:
-  - **Gate 1 (HTML5 baseline)**: `html_body` MUST contain `<!doctype html>` + `<meta charset>` + `<meta viewport>`. Missing any → code `html_structure_invalid`. The dark-base skeleton already includes these in canonical form — DO NOT strip them when authoring.
+- **Monitor schema gates (server-enforced 400 if violated)** — reader: whoever maintains `monitor/src/server/clauded-docs/html-validator.ts`, and whoever is reading back why a POST returned 400. These two bullets state what the SERVER rejects; they bind no agent.
+  - **Gate 1 (HTML5 baseline)** → code `html_structure_invalid`, whose response names the missing fields. `html_body` MUST carry ALL of: a doctype · an `<html>` root · a NON-EMPTY `<title>` · a `<body>` · ≥1 semantic landmark (`<main>`/`<article>`/`<section>`) · ≥1 heading (`<h1>`/`<h2>`/`<h3>`) · a `<meta charset>`.
+    - `<meta viewport>` is NOT one of the checked fields — the server re-injects charset + viewport on GET. Author it as good practice; its absence rejects nothing.
+    - The dark-base skeleton already carries every checked element in canonical form — do NOT strip them when authoring.
   - **Gate 2 (D8 column-cap server enforcement)**: comparison tables ≤5 columns hard-enforced server-side, not just glass-atrium-qa-code-reviewer LLM judgment. Multi-config measurement tables exceeding 5 columns MUST be split per config (e.g., 2-config 4-peak grid → 2 tables of 5 columns). Violation → code `d8_p2_violation`.
 
 ### Document Lifecycle — completion + exposure routing (B + C canonical)
@@ -224,7 +236,7 @@ The monitor already implements the mechanism (`doc_status` enum `progress`/`done
   - the **instruction-NAMED file set** — the paths the instruction itself names, never the draft's own target-file list; freezing the draft's list freezes the already-grown state, and the first link's growth then reads as none.
     - The named file set **MAY be EMPTY, and that is the common shape** — rule-fixing, research and review instructions routinely name no path. The empty case is NOT zero-baselined: the root instead records the instruction's **named SUBJECT set** — the artifacts, surfaces or behaviours the instruction designates by any means other than a path (a named rule, a named hook, a cited document id, a named behaviour) — as the fallback comparand, and the numeric file-count leg is SKIPPED rather than measured against zero. A zero baseline manufactures maximal drift out of an absent comparand: a false-positive generator, not a control.
   - Consumption is the reviewer's, not the author's: drift is judged cumulatively from the ROOT, never as per-link deltas (each link is locally inside the reference it is checked against, so a per-link test always passes) and never against the current `[SCOPE]` or target list. Reviewer-side duty text: `scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
-- **Residual — the persist-path choice is HONOR-SYSTEM and fails OPEN silently (B)**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error anywhere — the chain root is simply never created, the reviewer's revision-cycle comparand does not exist, and the scope-fidelity check degrades back to the current declaration it exists to replace. That fail-open is why the duty has to reach the completing agent as a standing rule rather than ride on the delegation that asks for the edit — and since this canonical is undelivered (see **Delivery status**), the copy that actually binds is the delivered mirror named at the head of this section.
+- **Residual — the persist-path choice is HONOR-SYSTEM and fails OPEN silently (B)**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error anywhere — the chain root is simply never created, the reviewer's revision-cycle comparand does not exist, and the scope-fidelity check degrades back to the current declaration it exists to replace.
 - **Exposure routing test (C)**: at turn-0, decide exposure by the single question **"did the user request a shareable HTML artifact?"** —
   - **YES** → viewer-exposed user-requested HTML (the user directly reviews/decides).
   - **NO** → viewer default-hidden (token-saving): a user-requested non-HTML document, or — when no document was requested (agent-to-agent handoff · intermediate spec · internal working doc) — an agent-only record under `agent-only selection trigger` U2, which explicitly **includes intermediate planning-domain output**.
@@ -337,7 +349,7 @@ The full cluster — this section (canonical, maintainer-read) · `scoped/scope-
 
 When a **user-requested HTML primary** deliverable exceeds the visually-heavy threshold, route automatically to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode. Below the threshold, glass-atrium-intel-reporter solo (default). The probe is gated only on "is this a user-requested HTML artifact?" — an agent-only record never triggers it, being LLM-readability-first with visual fidelity abandoned, and never a user-requested HTML artifact.
 
-**T1-T5 indicator table** (co-emission MUST when 2+ co-occur · 1 or fewer = solo):
+**T1-T5 indicator table** (co-emission MUST when 2+ co-occur · 1 or fewer = solo) — the same indicators the orchestrator's Visual-Weight Probe counts at Decision phase (`rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`), so whoever maintains that probe reads this table too:
 
 | Code | indicator | Threshold |
 |------|-----------|-----------|
@@ -366,12 +378,10 @@ When a **user-requested HTML primary** deliverable exceeds the visually-heavy th
   - Copies of this exception, all in agreement — here and `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` (both maintainer-read) · the delivered author copies `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` (reader: that agent) · and `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, which is not canonical yet is the only copy reaching every subagent, so the orchestrator half of the handoff is the half that always arrives.
 - excluded scope — the agent-only record, per the probe gate stated above
 
-**Designer contribution scope**:
+**Designer contribution scope** (the consulted designer's own copy is `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`):
 - PRIMARY — Mermaid type mapping (the adopted types → information shape · see Diagram Standard) · section composition (Pyramid skim/scan/read rhythm)
 - CONDITIONAL — non-canonical badge palette expansion (T4 trigger) · table-splitting axis selection (when D8 column-cap ≤ 5-col split is needed)
 - excluded (mechanical-deterministic) — H1/H2/Body typography (D8 typography-levels) · canonical 4-badge palette
-
-**Token break-even guidance**: solo + 1 revision ≈ 12-18K · +glass-atrium-design-designer adds 6-10K → break-even ≈ 18-22K total team budget · below it, solo is cheaper · above it, glass-atrium-design-designer nets savings by preventing cascading rework.
 
 ## Report Structure [REPORT]
 

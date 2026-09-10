@@ -114,11 +114,14 @@ conforming_doc() {
 
 # ============================ Write behavior unchanged (V1-V6 floor) =============================
 
-# A conforming Write (envelope + 3-field frontmatter) is still permitted.
+# A conforming Write (envelope + 3-field frontmatter) is still permitted. The preserved content
+# carries its own bibliography — a `## References` heading over bare-URL bullets — which is the
+# exact shape the retired V3 check blocked; the zero-output assertion below is therefore also the
+# retirement guard for SCOPE-003, on a single source correctly declared in the frontmatter.
 @test "Write: conforming raw write (envelope + 3-field frontmatter) → permitted, exit 0" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
-    '<!-- /UNTRUSTED-SOURCE -->')"
+    '## References' '- https://rfc-editor.org/rfc/rfc9110' '<!-- /UNTRUSTED-SOURCE -->')"
   content="$(raw_doc "${body}")"
   run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
   [[ "${status}" -eq 0 ]] || { echo "expected exit 0 (permit), got ${status}: ${output}" >&2; return 1; }
@@ -131,6 +134,29 @@ conforming_doc() {
   run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
   [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
   [[ "${output}" == *"SCOPE-006"* ]] || { echo "expected SCOPE-006 block: ${output}" >&2; return 1; }
+}
+
+# =========== Bypass guard for the retired content checks (SCOPE-003 / SCOPE-004) ================
+#
+# Two body-content checks were retired. V4 blocked a Korean section heading, reading it as evidence
+# of translation — but a language signal cannot separate a translated source from a source WRITTEN
+# in that language. V3 blocked a `Sources:` line or a bare-URL bullet list, reading either as
+# evidence of multi-source aggregation — but the body is PRESERVED UNTRUSTED CONTENT, so a source's
+# own bibliography is byte-identical to an agent aggregating pages. Both blocked the preservation
+# they existed to enforce; the 1-URL-1-file rule stays enforced by V1/V2 on the frontmatter.
+#
+# This is the BYPASS guard for the removals: the envelope requirement must be untouched by them, so
+# a body carrying BOTH retired trip shapes still blocks on V6 — and neither retired code may fire
+# again, asserted here on NON-EMPTY output where the assertion has teeth.
+@test "retired checks: Korean heading + bibliography, no envelope → still blocked (SCOPE-006, no SCOPE-003/004)" {
+  local content
+  content="$(raw_doc "$(printf '%s\n' '## 한국어 섹션 제목' '## References' \
+    '- https://rfc-editor.org/rfc/rfc9110' '- https://example.org/spec')")"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-006"* ]] || { echo "expected SCOPE-006: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-003"* ]] || { echo "SCOPE-003 is retired, must not fire: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-004"* ]] || { echo "SCOPE-004 is retired, must not fire: ${output}" >&2; return 1; }
 }
 
 # ========================== V8 — destination-state guard (SCOPE-008) ============================

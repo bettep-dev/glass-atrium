@@ -4,6 +4,19 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
 
 **Delivery honesty**: this is a Tier-3 cross-cutting file and its body is pointer-referenced only — nothing injects it at spawn, so a duty homed HERE reaches no running agent. Site a duty that must actually bind in the agent's own body or in an injected block (`core-compliance-matrix.md` → Membership vs. Delivery).
 
+## Who reads this file
+
+Because the body reaches no agent at spawn, every section kept below is kept because a NAMED reader outside this file resolves to it. A section nothing in this table points at was deleted rather than kept for completeness — and a new section without a reader here has no place to be read from.
+
+| Section | Established reader | Where the inbound pointer lives |
+|---|---|---|
+| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
+| Mocking Rules · Test Structure | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → 7-Perspective Checklist, Testing row |
+| Rationalization Rejection (Testing) | every agent — the charter names testing as a home file for the excuse→rebuttal pairs | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
+| 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
+| Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
+| Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
+
 ## Test Quality
 
 ### What makes a test a test
@@ -92,23 +105,6 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 - **Arrange-Act-Assert**: clearly separate into 3 phases
 - **One behavior per test** — one relationship per test (Test Quality above); multiple asserts are allowed only as facets of that same relationship
-- **Test data**: use factory/builder patterns
-- **Magic values are FORBIDDEN** — a bare literal whose meaning is not evident from a name; bind it to a named constant or a builder field
-
-## Self-Review
-
-Run both after completing code changes:
-
-- Apply the Test Quality decision procedure to each related test — one whose relationship cannot be stated is not carrying its weight.
-- Core business logic → check that the equivalence classes and their boundaries are covered, not that more cases were added.
-
-## TDD Discipline (Absolute Rules)
-
-- **Writing or modifying code without tests is FORBIDDEN** — no exceptions for code that carries behavior: a branch, a loop, a parser, or a money/security path.
-  - **The one boundary, stated rather than hidden**: Meaningless-Test Prohibitions forbids a test whose target has no branch and no logic, so for a branchless target the two rules cannot both hold literally. There, the prohibition on the meaningless test wins and NO test is the compliant outcome. Everywhere else this rule is absolute.
-- **Red → Green → Refactor**: (1) write a failing test (2) write minimal code to pass (3) refactor. Violating this order is FORBIDDEN
-- **Deliberate-break confirmation** — the ONE bounded exception to that order: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail against the break, and the break reverted. The observed failure is what the Red step buys, so producing it late produces equivalent evidence; skipping it leaves an unproven test and the delete-and-rewrite rule below applies unchanged. How that evidence is reported is not restated here — SoT is `core-outcome-record.md` → Field Input Guide → `metric_pass`
-- Bug fixes → a failing test MUST be written, executed, and confirmed BEFORE modifying code
 
 ## Rationalization Rejection (Testing)
 
@@ -119,6 +115,9 @@ Run both after completing code changes:
 | "This part is hard to test" | Difficulty testing = design problem signal → fix the design |
 | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
 | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
+
+- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail, and the break reverted. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+- Where the test-first duty actually binds: `core-outcome-record.md` → Field Input Guide → `metric_pass`, delivered to every agent, which states both the observed-failure bar and this exception. This file holds only the reconciliation with the rebuttal above.
 
 ## 3-Tier Test Hierarchy
 

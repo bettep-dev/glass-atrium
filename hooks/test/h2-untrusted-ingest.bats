@@ -147,13 +147,15 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${output}" == *"SCOPE-001"* ]] || { echo "expected SCOPE-001 (V1) block: ${output}" >&2; return 1; }
 }
 
-# ---- V4 locale portability (Linux CI parity) ---------------------------------------------------
-# The V4 Korean-heading grep must be locale-independent: a [가-힣] collation range makes GNU grep
-# leak "Invalid collation character" on stderr under the runner locale (and silently disables the
-# detection). Both polarities are pinned under a forced C locale.
+# ---- Silent permit path under a forced locale (Linux CI parity) --------------------------------
+# A conforming write must permit SILENTLY whatever the runner locale — exit 0, zero output, and no
+# stderr leak from any body-scanning grep. Both cases run under a forced C locale because that is
+# where a locale-sensitive body scan breaks: the retired language check matched a [가-힣] collation
+# range, which made GNU grep leak "Invalid collation character" on the permit path. The property
+# outlives that check — nothing scanning the body may reintroduce a locale-dependent read.
 
-# Permit polarity: zero output (no collation stderr leak) under LC_ALL=C.
-@test "R5/V4: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)" {
+# Permit polarity: zero output (no stderr leak) under LC_ALL=C.
+@test "R5: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'English-only preserved content.' \
     '<!-- /UNTRUSTED-SOURCE -->')"
@@ -163,15 +165,19 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ -z "${output}" ]] || { echo "expected zero output under LC_ALL=C: ${output}" >&2; return 1; }
 }
 
-# Detect polarity: the Korean-heading detection still FIRES under LC_ALL=C.
-@test "R5/V4: Korean heading in body under LC_ALL=C → blocked, SCOPE-004 (detection preserved)" {
+# This assertion was flipped when the language check was removed: a language signal cannot separate
+# a translated source from a source written in that language, so the check blocked the preservation
+# it existed to enforce. Preserving a Korean source in Korean is the REQUIRED behaviour, not a
+# violation — SCOPE-004 is retired and must never fire again.
+@test "R5: a Korean-language source keeping its Korean headings is permitted → exit 0 (language is not a violation)" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' '## 한국어 섹션 제목' 'content' \
     '<!-- /UNTRUSTED-SOURCE -->')"
   content="$(raw_doc "${body}")"
   run env LC_ALL=C LANG=C bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
-  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
-  [[ "${output}" == *"SCOPE-004"* ]] || { echo "expected SCOPE-004 (V4) block: ${output}" >&2; return 1; }
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0 (permit), got ${status}: ${output}" >&2; return 1; }
+  [[ -z "${output}" ]] || { echo "expected zero output on a Korean permit under LC_ALL=C: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-004"* ]] || { echo "SCOPE-004 is retired, must not fire: ${output}" >&2; return 1; }
 }
 
 # Non-raw path is untouched (regression baseline for the trigger gate).

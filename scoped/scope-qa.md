@@ -11,33 +11,32 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 - **Who actually reads it**: a human, an agent that deliberately Reads it, and the self-improvement daemon's rule-improvement verify prompt (`autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` maps both QA agents to this file, and `_read_sections` hands the verifier whole heading blocks in file order).
 - **Consequence for authors**: a duty that BINDS a QA agent must ALSO live in that agent's own body under `agents/`; homing it here and leaving a pointer in the body delivers the pointer and nothing else.
 - **Consequence for readers of this file**: every "reaches no actor at spawn" statement below is dated by THIS measurement and does not restate it.
-- This file stays canonical, and nothing in it is deleted on that ground.
+- **Disposition rule (owner ruling, 2026-09-10 — it REVERSES the earlier default)**: a passage that reaches no actor is DELETED, not relocated.
+  - A passage survives only when its reader is NAMED — an actor following a pointer that does arrive, the orchestrator, or the maintainer — or when a concrete wrong action follows from its absence.
+  - Canonical status alone preserves nothing, and neither does calling a QA duty orchestrator-facing to avoid deleting it.
 
 ## Sprint Contract Gate [DEV+QA]
 
 > Full details: See `scope-dev.md` Sprint Contract Gate section (complex tasks only; simple tasks exempt)
 
-- **glass-atrium-qa-code-reviewer is the evaluator**: before a sizable DEV task starts, the reviewer PRE-defines the verification criteria the work will be judged against.
-- **Undelivered duty**: `agents/glass-atrium-qa-code-reviewer.md` carries no text from this gate, so the reviewer-side duty above currently reaches no actor. Recommend a body mirror rather than a further duty homed here.
+**Heading kept, body removed**: `scoped/scope-dev.md` and `rules/glass-atrium/orchestrator-role.md` cite this heading by name, so it stays as a pointer anchor. The reviewer-side "PRE-defines the verification criteria" duty that stood here was DELETED — it is stated identically at the canonical, no delegation anywhere spawns the reviewer into that pre-work role, and the reviewer's only live relationship to acceptance criteria is the Stage-2 test-feasibility axis below.
 
 Pair note: the Sizable-task definition is canonical only at `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` and is pointed at — never restated — from here, from `rules/glass-atrium/orchestrator-role.md` (Decision row + Stage-2 activation scope) and from `skills/glass-atrium-ops-orchestrator.md`. That canonical reaches no DEV or QA agent at spawn, so the orchestrator-side pointers are the copies a running actor is exposed to, and this line stays a pointer stating no threshold.
 
 ## Plan Direction Verification Gate [DEV+QA]
 
-### Boundary (read first)
-
-These are distinct gates — do not conflate:
-
-| Gate | Who | When | What it does |
-|------|-----|------|--------------|
-| Sprint Contract Gate | glass-atrium-qa-code-reviewer | before work starts | **PRE-defines** acceptance criteria |
-| Plan Direction Verification Gate | the team | after planning, before implementation | **POST-verifies** an authored plan |
+The team POST-verifies an authored plan, after planning and before implementation — distinct from the Sprint Contract Gate, which PRE-defines acceptance criteria before work starts (canonical distinction: `scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`).
 
 > Full details: See `scope-dev.md` "Plan Direction Verification Gate" section (canonical SoT — DEV participation duty + hard-gate rule + revision flow)
 
-### Delivered mirror: NONE
+### Reader — why this section survives the disposition rule
 
-`agents/glass-atrium-qa-code-reviewer.md` carries no text from this section — not the scope-fidelity axis, not the chain-root comparand, not the load-bearing premise check, not the non-waiver clause — and this file does not reach that agent at spawn. Until a mirror lands in the reviewer body, every reviewer-side duty stated here reaches no actor. Do not treat this section as delivered, and do not home a further duty here alone.
+`agents/glass-atrium-qa-code-reviewer.md` carries no text from this section — not the scope-fidelity axis, not the chain-root comparand, not the load-bearing premise check, not the non-waiver clause — and this file does not reach that agent at spawn. Two channels that DO reach the reviewer point INTO it:
+
+- `rules/glass-atrium/orchestrator-role.md` arrives in every subagent's project instructions and names this section three times — once to say the orchestrator supplies the plan doc id the reviewer needs in order to fetch the chain root its scope-fidelity comparand reads.
+- `skills/glass-atrium-ops-orchestrator.md` quotes this section's premise-audit literal byte-for-byte into the reviewer's delegation goal text, so that one sentence is delivered while everything qualifying it is not.
+
+Delete the four sub-sections that follow — `### Reviewer verdict`, `### Comparand for scope-fidelity`, `### Load-bearing premise check`, `### Non-waiver` — and the reviewer receives a doc id, a question, and no instruction for either. They are RELOCATE candidates for the reviewer body, not removals; until that mirror lands, do not home a FURTHER duty here alone.
 
 ### Reviewer verdict
 
@@ -109,18 +108,9 @@ A STANDING, verdict-gating job — reviewer-side canonical. The DEV half is cano
 
 ### Pointers out of this gate
 
-| Topic | Where it lives |
-|---|---|
-| Axis definitions + gate operation (trigger · team composition · DEV specialist selection · escalation) | `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` |
-| First-link question — DEV-side duty text, the verbatim question literal, its honest backing | `scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` |
-| Ultracode declaration contract (grammar · skeletons · exit-2 verdicts) | `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode` |
+- Axis definitions + gate operation (trigger · team composition · DEV specialist selection · escalation): `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
 
-- **First-link question, twin of the chain-root comparand**: on revision cycles the DEV participant additionally answers a standing first-link question in its `feasible`/`infeasible` verdict.
-  - It is anchored at the same chain root for a different purpose — you measure how far the draft has travelled from the root, the DEV prices replacing the root's first decision.
-  - Only YOU are told to fetch the root: the DEV canonical assigns no read duty, deriving its count from the current task list at verdict time, so do not expect the DEV's answer to rest on the root document you opened.
-- **Ultracode enforcement note**: under ultracode the `enforce-verification-gate.sh` (`PreToolUse(Agent)`) hook is BYPASSED for engine `agent()` spawns.
-  - The `PreToolUse(Workflow)` declaration-contract gate (`enforce-workflow-verify-stage.sh`, blocking exit-2) backstops it, checking declaration presence + grammar + declaration↔code consistency — never role truthfulness.
-  - The in-script verify-stage therefore stays PRIMARY as an honor-system authoring obligation.
+Two pointers were DELETED from this list — the DEV-side first-link question and the ultracode declaration contract. Neither obliged the reviewer anything: the first restated "YOU fetch the root", already binding in the comparand section above, and the second governs authoring a workflow script, which a read-only reviewer never does.
 
 ## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]
 
@@ -128,12 +118,12 @@ Pair note: this section is the rubric canonical and the files below carry one-li
 
 ### Evaluator-independence posture
 
+Reader: the maintainer, and anyone weighing a recorded `qa_score`. It obliges the reviewer nothing and survives as the recorded limitation of the rubric this file is canonical for.
+
 - Generator and evaluator run in SEPARATE CONTEXTS — the glass-atrium-qa-code-reviewer review is its own isolated subagent context, not the generator's.
 - **Known residual, not eliminated**: the LLM judge is the SAME MODEL FAMILY as the generators, with no cross-vendor / external-judge layer, so same-model self-preference bias survives.
-- **Partial mitigation**: the deterministic Code-Based grader (`track-outcome.sh`, emitting `grader_verdict`) is independent of model judgment.
-  - It records an advisory `verified_pass` / `unverified` / `verified_fail` in its OWN column and surfaces a writer disagreement via `review_flag` + `downgrade_origin`, NEVER mutating the writer's `metric_pass` self-report.
-  - Its per-task-type check matrix is the `core-outcome-record.md` Field Input Guide `metric_pass` row — author-side outcomes only, infra attribution failures out of scope.
-  - This 4-Dim rubric is the Model-Based tier stacked on top of that grader.
+- **Partial mitigation**: the deterministic Code-Based grader (`track-outcome.sh`, emitting `grader_verdict`) is independent of model judgment, and this 4-Dim rubric is the Model-Based tier stacked on top of it.
+  - Its column semantics and per-task-type check matrix live in `core-outcome-record.md` → Field Input Guide → `grader_verdict` / `metric_pass`, which is Tier-1 and delivered, so they are not restated here.
 - **What the mitigation does not close**: the semantic dimensions only the LLM judge can score — Coverage / Insight / Instruction-following / Clarity, and the d8 visual axes.
 - Treat the 4-Dim scores as same-family self-assessment with a residual bias, weighted below the deterministic grader.
 
@@ -204,17 +194,6 @@ The corpus refers to the five D8 invariants by `P`-label in the veto lines of `a
   - Those two spell the values out where this copy deliberately carries no numeral, so the three are edited together but are NOT byte-identical.
   - The JSON stays the only copy any running validator reads.
 
-## Finding Anchoring [QA]
-
-Cite every finding by a resolvable anchor, never a line number — `GLASS_ATRIUM_GLOBAL_RULES.md` → Anchor by symbol is the grammar and this section is its QA application.
-
-For HTML primary deliverables (user-requested HTML per `scope-report.md` / `scope-planning.md` Output Format Routing):
-
-- Prefer the `<section id="...">` id when present (stable across HTML re-rendering).
-- Fallback: heading text exact match (e.g., `# Self-Evaluation`).
-- No MD companion is generated for HTML primary deliverables — the review target is the HTML payload in the monitor-internal root.
-  - The wiki domain is a permanent exception to this policy (the wiki is an Atrium-internal, git-ignored, LLM-only markdown store at `~/.glass-atrium/wiki/` managed by the wiki daemon — see `scope-wiki.md`).
-
 ## Regression Risk Estimation [QA]
 
 On every code review, tag the change with a regression-risk label:
@@ -228,10 +207,6 @@ On every code review, tag the change with a regression-risk label:
 - A test that cannot fail counts as NO test added (see `shared-testing.md` → `### Meaningless-Test Prohibitions`).
 - When applying this label, state in one line the relationship the added test asserts. Unable to state it → treat it as no test added.
 - High-risk reviews MUST list the affected test paths in the review output, so the orchestrator can route the next-step verification correctly.
-- **Delivery gap**: `agents/glass-atrium-qa-code-reviewer.md` carries the `Regression Risk: High / Med / Low` output line but none of the triggers above, so the reviewer emits the label without the criteria that select it. Recommend mirroring the trigger table into that body.
-
-## Workflow Log Preservation (Process Trace) [QA]
-
-- glass-atrium-qa-code-reviewer reviews process logs in addition to deliverables.
-- Logs older than 30 days → summarize and move to `memory/qa-log-archive/YYYY-MM/`.
-  - The reviewer body carries the operative form of this rule (`agents/glass-atrium-qa-code-reviewer.md` → `### Workflow Log Archive`), which adds the 1-paragraph summary shape and the delete-after-move step; this line is the governance statement, not the delivered one.
+- **Undelivered, and a RELOCATE candidate for the reviewer body**: `agents/glass-atrium-qa-code-reviewer.md` carries the `Regression Risk: High / Med / Low` output line but none of the triggers above, so the reviewer emits the label with nothing that selects it.
+  - Concrete wrong action: a core-logic change shipped with no test — or with a test that cannot fail — reads as Med, and the orchestrator skips the follow-up verification the High label exists to route.
+  - Mirror the trigger table into that body; this file is not the delivery channel.

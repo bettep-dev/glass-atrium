@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Write|Edit) — raw-ingestion gate: 6-part validation on wiki/raw/*.md save
+# PreToolUse(Write|Edit) — raw-ingestion gate: 4-part content validation on wiki/raw/*.md save
 # (1 URL = 1 immutable file) + V7 immutability (any Edit on a raw file is blocked
 # unconditionally) + V8 destination-state guard (symlinked destination or parent directory),
 # blocking on violation. No bypass.
@@ -12,7 +12,7 @@
 # untrusted, so read-side clauses key on the label) or it is blocked (content never lands). The
 # envelope lives in the BODY, not the frontmatter (H2-R1): V1 requires EXACTLY 3 frontmatter
 # fields, so a frontmatter-form envelope would be self-blocked — V6 keys on the body, which
-# V3/V4/V5 already govern with no fixed-field rule.
+# V5 already governs with no fixed-field rule.
 #
 # Honest limit: V6 enforces the untrusted-source LABEL, it does NOT sanitize the content — an
 # envelope-wrapped payload is still a payload. The mechanical property is the invariant that every
@@ -167,26 +167,19 @@ BODY=$(printf '%s\n' "${CONTENT}" | awk '
   cnt>=2 { print }
 ')
 
-# V3: block multi-source patterns in the body
-V3_HIT=$(printf '%s\n' "${BODY}" | grep -nEi '^(Primary sources?:|Secondary sources?:|Sources?:|primary source:)' | head -1 || true)
-if [[ -n "${V3_HIT}" ]]; then
-  VIOLATIONS+=("V3: 본문에 다중 출처 패턴 발견 (line ${V3_HIT})")
-fi
-V3_BULLET=$(printf '%s\n' "${BODY}" | grep -nE '^- *https?://' | head -1 || true)
-if [[ -n "${V3_BULLET}" ]]; then
-  VIOLATIONS+=("V3: 본문에 URL 불릿 목록 발견 — 다중 출처 힌트 (line ${V3_BULLET})")
-fi
+# V3 (removed — slot vacant, V5/V6 keep their numbers and SCOPE codes): it blocked a body carrying a
+# `Sources:`-prefixed line or a bare-URL bullet list, reading either as evidence the agent had
+# consolidated several fetched pages into one file. The body is PRESERVED UNTRUSTED CONTENT, so a
+# source carrying its own bibliography produces the same bytes as an agent aggregating several pages
+# — the signal cannot separate the source's content from the agent's authorship, and in practice it
+# blocked the faithful preserver while a different bullet style let the aggregator through.
+# The 1-URL-1-file rule is NOT weakened by this: V1 and V2 enforce it structurally on the
+# FRONTMATTER, which is where the agent's own claim lives and where a violation is decidable.
 
-# V4: Korean section heading within the first 30 body lines. A [가-힣] collation
-# range is locale-dependent (GNU grep under C.UTF-8 rejects it with an "Invalid
-# collation character" stderr leak on the permit path), so match the UTF-8 BYTE
-# range of Hangul syllables under LC_ALL=C instead: U+AC00–U+D7A3 encodes as
-# \xEA\xB0\x80–\xED\x9E\xA3, and the first-byte class [\xEA-\xED] is an
-# acceptable over-matching approximation for this heuristic.
-V4_HIT=$(printf '%s\n' "${BODY}" | head -30 | LC_ALL=C grep -nE $'^#{1,4} +[\xEA-\xED]' | head -1 || true)
-if [[ -n "${V4_HIT}" ]]; then
-  VIOLATIONS+=("V4: 본문 첫 30라인 내 한국어 섹션 제목 발견 (line ${V4_HIT}) — 원본 언어 보존 위반 의심")
-fi
+# V4 (removed — the slot stays vacant, V5/V6 keep their numbers and SCOPE codes): it blocked a write
+# whose body opened with a Korean section heading, reading that as evidence the source had been
+# translated. A language signal cannot distinguish a translated source from a source that was
+# WRITTEN in that language, so the check blocked the very preservation it existed to enforce.
 
 # V6 (H2/R5): body-resident provenance envelope — the mechanical, self-suppression-proof control.
 # The untrusted source content MUST be wrapped by an opening + closing envelope marker so every
@@ -223,14 +216,9 @@ for v in "${VIOLATIONS[@]}"; do
       "Raw file source_url format invalid" \
       "Provide a single valid URL in source_url field" \
       "{\"file\":\"${FILE_PATH}\"}" ;;
-    V3:*) emit_error "SCOPE-003" "block" \
-      "Raw file multi-source pattern detected" \
-      "Each raw file must represent a single source; split into separate files" \
-      "{\"file\":\"${FILE_PATH}\"}" ;;
-    V4:*) emit_error "SCOPE-004" "block" \
-      "Raw file original language not preserved" \
-      "Preserve the source material original language; do not translate headings" \
-      "{\"file\":\"${FILE_PATH}\"}" ;;
+    # No V3 or V4 arm: both checks were removed (see the vacant-slot notes above). SCOPE-003 and
+    # SCOPE-004 are retired rather than reassigned, so a stale reference to either resolves to
+    # nothing instead of to a new rule.
     V5:*) emit_error "SCOPE-005" "block" \
       "Raw file exceeds 50KB size limit" \
       "Split content into smaller files or trim unnecessary sections" \
@@ -239,7 +227,7 @@ for v in "${VIOLATIONS[@]}"; do
       "Raw file body-resident provenance envelope missing or malformed" \
       "Wrap the untrusted source content in the body with '<!-- UNTRUSTED-SOURCE -->' ... '<!-- /UNTRUSTED-SOURCE -->' (opening before closing)" \
       "{\"file\":\"${FILE_PATH}\"}" ;;
-    # unreachable by construction (VIOLATIONS only receives V1-V6 prefixes);
+    # unreachable by construction (VIOLATIONS only receives V1/V2/V5/V6 prefixes);
     # the loop-exit `exit 2` below still blocks regardless
     *) ;;
   esac
