@@ -4,11 +4,24 @@
 > **Inherits**: Tier 1 (Core) + Tier 3 (Cross-cutting: comment-logging · performance · search-first · testing · type-safety)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-**Delivery status (measured 2026-09-10)**: this file is NOT delivered to any of the thirteen DEV agents at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`). Its readers are the main session, a human, an agent that deliberately Reads it, and the self-improvement daemon's verify prompt; the only text from this file that does reach a DEV agent is the marker-extracted blocks the SubagentStart injector pulls out of it — all three marker pairs it carries, the plan-gate pair included since this cycle wired it — and nothing else in it travels. Consequence for authors: a duty that BINDS a DEV agent must also live in that agent's own body; homing it here alone delivers nothing to the actor. This file stays canonical, and nothing in it is deleted on that ground.
+**Delivery status (measured)**: this file is NOT delivered to any DEV agent at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
+
+- **Who reads it**: the main session · a human · an agent that deliberately Reads it · the self-improvement daemon's verify prompt.
+- **What reaches a DEV agent**: only the marker-extracted blocks the SubagentStart injector pulls out of this file — every marker pair it carries, the plan-gate pair included — and nothing else in it travels.
+- **What a DEV body carries instead**: a `> scope-dev pointers:` line naming section titles. A name is not a rule — the pointer arrives, the rule text does not.
+- **Consequence for authors**: a duty that BINDS a DEV agent must ALSO live in that agent's own body; homing it here alone delivers nothing to the actor.
+- **Not a deletion ground**: this file stays canonical, and nothing in it is deleted because it is undelivered.
 
 ## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]
 
-The DEV fleet roster (SoT) = the Tier-2 loading stanza above, whose brace-delimited membership list is machine-parsed by two production readers and MUST NOT be reproduced anywhere else in this file, a prose example included: `scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster` (re-parsed on every edit by `stanza.py`) raises `ReaderError` / `StanzaError` and aborts the lifecycle add/delete operation when the form is absent, while the stricter `autoagent/lib/roster_merge.py` → `_get_markdown_slots` accepts EXACTLY ONE such list file-wide and makes the updater refuse the entire file at deploy on a second occurrence (`ROSTER REFUSED: … expected exactly one brace-delimited loading list, found 2` on stderr), stranding every unrelated edit in the file — and no test asserts against this file's bytes, so neither failure ever surfaces in CI. This section governs when that roster may grow. Cross-ref: `orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is the basis that keeps `domains` arrays distinct enough for that routing.
+The DEV fleet roster (SoT) = the Tier-2 loading stanza above. This section governs when that roster may grow.
+
+**The stanza's brace-delimited membership list MUST NOT be reproduced anywhere else in this file, a prose example included.** Two production readers parse it, and neither failure surfaces in CI — no test asserts against this file's bytes:
+
+- `scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster` (re-parsed on every edit by `stanza.py`) raises `ReaderError` / `StanzaError` and aborts the lifecycle add/delete operation when the form is absent.
+- `autoagent/lib/roster_merge.py` → `_get_markdown_slots` is stricter: it accepts EXACTLY ONE such list file-wide, and on a second occurrence the updater refuses the entire file at deploy (`ROSTER REFUSED: … expected exactly one brace-delimited loading list, found 2` on stderr), stranding every unrelated edit in the file.
+
+Cross-ref: `orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is the basis that keeps `domains` arrays distinct enough for that routing.
 
 Pair note: the growth decision this section governs is also stated at `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` (the DEV-fleet-growth-authority clause, which declares extension the default and routes creation back here) and the flow that executes it at `skills/glass-atrium-ops-orchestrator.md` → `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)`, so a reader loosening the gate here is loosening a rule two other files also state.
 
@@ -34,16 +47,27 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 - **Q2 — Extend test**: can the closest-concern existing agent absorb the new knowledge via its `description` + `domains` array + body, without degrading routing precision or exceeding a single-budget turn? If yes -> EXTEND, do not create.
 - **Q3 — Fleet-size cost**: does the addition keep every agent's `domains` array semantically distinct enough that capability-based routing stays precise? Heavily overlapping `domains` indicate a merge, not a creation.
 
-**On creation** (all four, atomically): (a) add the name to the `scope-dev.md` loading stanza · (b) add an `agent-registry.json` entry with a non-overlapping `domains` array · (c) attach the standard `> Rules:` pointer set identical to every other DEV agent (no custom quality rules) · (d) add a `compatibility` field when the agent has runtime preconditions (pattern: `glass-atrium-dev-animator`).
+**On creation**, all of the following, atomically:
+
+- add the name to the `scope-dev.md` loading stanza;
+- add an `agent-registry.json` entry with a non-overlapping `domains` array;
+- attach the standard `> Rules:` pointer set identical to every other DEV agent (no custom quality rules);
+- add a `compatibility` field when the agent has runtime preconditions (pattern: `glass-atrium-dev-animator`).
 
 **In-context lifecycle wiring (decision tree → CLI)**: the orchestrator's in-context flow (ceremony SoT: `skills/glass-atrium-ops-orchestrator.md` → In-Context Agent-Lifecycle Ceremony) realises this gate through the `agent_lifecycle` CLI.
 
 - **DEFAULT branch = EXTEND** — `extend.py` via `--add-domain` / `--append-section`, additive append-only.
-- **CREATE only when Q1/Q2/Q3 all-affirmative** — the three map to `evaluate_add_gate` (add.py), and Q3 is the codified domain-overlap `>= 50%` hard-block in `overlap.py`.
+- **CREATE only when Q1/Q2/Q3 all-affirmative** — the three map to `evaluate_add_gate` (add.py), and Q3 is the codified domain-overlap hard-block in `overlap.py` (`OVERLAP_THRESHOLD`; read the bar from that constant, never from a figure copied into prose).
 - **The gate (`gate.py` + `overlap.py`) stays SOLE authority**: the flow SUPPLIES the Q1/Q2 attestation verdicts (`--gate-q1`/`--gate-q2`, each `pass`/`fail`) but NEVER computes `allowed` and NEVER re-implements the overlap predicate.
 - **The orchestrator never self-authors the body** — glass-atrium-meta-prompt-engineer is the author.
 
-**Doc-sync note (CLI auto-writes vs. manual matrix update)**: a successful `add` auto-writes the agent file, the `agent-registry.json` entry, and (via the post-commit reconcile gate) the reconcile-tracked `inject-scope-rules.sh` arrays — INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV (the NAMING roster is deliberately narrower — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger). The manual-curated rosters `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS` and `PLAN_GATE_AGENTS` are deliberately UNTRACKED by that gate — their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair. It does NOT write the `core-compliance-matrix.md` **Scope Legend** DEV row or the **Compliance Matrix** rows: those remain a SEPARATE post-creation doc update for the new agent name. Mirror pointer: the same tracked-array list is stated at `skills/glass-atrium-ops-orchestrator.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
+**Doc-sync note (CLI auto-writes vs. manual matrix update)**: a successful `add` writes some of the sites a new name must appear in, and not others.
+
+- **Auto-written**: the agent file · the `agent-registry.json` entry · (via the post-commit reconcile gate) the reconcile-tracked `inject-scope-rules.sh` arrays INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV.
+  - The NAMING roster is deliberately narrower — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger.
+- **Deliberately UNTRACKED by that gate**: the manual-curated rosters `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS` and `PLAN_GATE_AGENTS`. Their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair.
+- **NOT written at all**: the `core-compliance-matrix.md` **Scope Legend** DEV row and the **Compliance Matrix** rows — a SEPARATE post-creation doc update for the new agent name.
+- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-orchestrator.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
 
 **glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation (governance note)**: glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HTML primaries — bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the skeleton-first non-parallel handoff in `scope-report.md` / `scope-planning.md` Designer Co-Emission Trigger — is an EXTEND of the existing glass-atrium-dev-front concern (Creation-Gate Q2 = yes — markup-craft already belongs to glass-atrium-dev-front), NOT a new agent.
 
@@ -61,8 +85,9 @@ Pair note: this governance verdict restates the dev-front markup exception whose
 
 ## Skills Array Order [DEV+META]
 
-- Skills order has no significant impact on model behavior
-- Order optimization unnecessary · Focus on **content quality** · Sort by readability and logical grouping (core → supplementary)
+> Canonical: `scoped/scope-meta.md` → `## Skills Array Order [DEV+META]`, which carries the finding WITH the A/B evidence behind it. This copy is the operative residual only; do not restate the finding here without its evidence.
+
+- Do not spend effort ordering a skills array — sort by readability and logical grouping (core → supplementary) and put the effort into **content quality** instead.
 
 ## Confirm Tier Refinement [DEV]
 
@@ -73,7 +98,10 @@ Pair note: this governance verdict restates the dev-front markup exception whose
 
 ## Sprint Contract Gate [DEV+QA]
 
-Pair note: this section is the canonical, the reviewer- and orchestrator-side copies sit at `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` and `rules/glass-atrium/orchestrator-role.md` → `## Delegation Workflow` (Decision row, which condenses the four sizable criteria inline rather than pointing only), and the sole text any DEV agent actually receives is the acceptance-criteria read duty in `agents/glass-atrium-dev-node.md` → `## Guardrails` — one body of the thirteen, the other twelve carrying nothing from this section (measured 2026-09-10).
+> Pair note: this section is the canonical.
+>
+> - Reviewer- and orchestrator-side copies sit at `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` and `rules/glass-atrium/orchestrator-role.md` → `## Delegation Workflow` (Decision row, which condenses the sizable criteria inline rather than pointing only).
+> - The sole text any DEV agent actually receives is the acceptance-criteria read duty in `agents/glass-atrium-dev-node.md` → `## Guardrails` — one body of the DEV roster, every other body carrying nothing from this section (measured).
 
 - Before starting a **sizable** task (definition below), Evaluator (glass-atrium-qa-code-reviewer) pre-defines verification criteria
 - Criteria MUST be specified in `acceptance_criteria.md` or plan's `## Acceptance Criteria` section (3-5 items)
@@ -110,13 +138,15 @@ Pair note: this section is the canonical, the reviewer- and orchestrator-side co
 
 This section is the **A-side canonical (SoT)** for the DEV participation duty and for the DEV half of every job this gate hands to BOTH Stage-2 actors. `scope-qa.md` carries the reviewer-side bodies of the pair-binding jobs plus a pointer here — one canonical body per actor, in the file that actor loads, never a second copy of the same actor's duty.
 
-**Delivered mirror: STILL NONE — the marker-wrapped block at the END of this section is the only channel, and it carries only part of the duty.** Measured 2026-09-10: no `agents/glass-atrium-dev-*.md` body carries any text from this section, and this file reaches none of those thirteen agents at spawn. The injector now extracts that block to the whole DEV roster, so the section is no longer wholly undelivered — but read the split before concluding the duty is handled:
+**Delivered mirror: STILL NONE — the marker-wrapped block at the END of this section is the only channel, and it carries only part of the duty.** Measured: no `agents/glass-atrium-dev-*.md` body carries any text from this section, and this file reaches none of those agents at spawn. The injector now extracts that block to the whole DEV roster, so the section is no longer wholly undelivered — but read the split before concluding the duty is handled:
 
-- **Reaches a DEV agent**: the four residual duties that fit the byte contract — the verdict shape, the load-bearing premise test, the refuted-premise consequence, and the non-waiver clause.
-- **Reaches nobody**: everything else stated here. The three-part answer shape for the revision-cycle first-link question was CUT to fit that contract and is readable only in its own bullet above; the revision flow, the four-claim-class recognition aid and the ultracode authoring note were never block candidates. A DEV agent entering this gate has the verdict rules and none of the rest.
+- **Reaches a DEV agent**: the residual duties that fit the byte contract — the verdict shape, the load-bearing premise test, the refuted-premise consequence, and the non-waiver clause.
+- **Reaches nobody**: everything else stated here. A DEV agent entering this gate has the verdict rules and none of the rest.
+  - CUT to fit the byte contract, readable only in its own bullet above: the three-part answer shape for the revision-cycle first-link question.
+  - Never block candidates at all: the revision flow, the claim-class recognition aid, the ultracode authoring note.
 - **Delivered in practice, not guaranteed**: the block sits low in the shed order and the worst-case DEV assembly fits under the ceiling today. That is a property of today's block sizes, not a floor — a later source growth sheds it, and the drop marker naming it is recovery rather than delivery. Same fact, same wording, at `rules/glass-atrium/core-compliance-matrix.md` → the `AGENT-INJECT:PLAN-GATE` entry.
 
-Why the injector and not thirteen body mirrors: thirteen bodies would become thirteen unpinned copies of a sentence one suite reads byte-for-byte out of THIS file, which is the same drift this section exists downstream of. Gate operation is annotated on its own side at `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`, and the reviewer half at `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which records a still-undelivered status for its own actor — this block's roster is DEV-only, so no reviewer receives it. Do not treat this section as delivered, and do not home a further duty here alone.
+Why the injector and not a body mirror per DEV agent: one mirror per body would become that many unpinned copies of a sentence a suite reads byte-for-byte out of THIS file, which is the same drift this section exists downstream of. Gate operation is annotated on its own side at `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`, and the reviewer half at `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which records a still-undelivered status for its own actor — this block's roster is DEV-only, so no reviewer receives it. Do not treat this section as delivered, and do not home a further duty here alone.
 
 When the orchestrator routes a complex plan to direction verification (gate operation: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`), a DEV agent is a **mandatory** verification participant:
 
@@ -126,27 +156,55 @@ When the orchestrator routes a complex plan to direction verification (gate oper
 - **Load-bearing premise check (a STANDING, verdict-gating job — DEV-side canonical; the reviewer half is canonical in `scope-qa.md` → Plan Direction Verification Gate, same job in that actor's terms)**: check the premises the plan's approach RESTS ON — the plan's `## Open Questions` entries marked `load-bearing: yes`, plus any claim you judge load-bearing that the planner did not mark. **The planner's marking widens your list and never shrinks it; a claim tagged `[SELF-CHECKED:]` is a self-report and is not thereby exempt.** Every cycle, without being asked:
   - **Operational test for load-bearing — the ONE SoT; `scope-planning.md` and `scope-qa.md` point here and restate it in neither**: *if this premise is false, does the plan's APPROACH have to be replaced, or does the plan merely need edits?* Approach replaced → load-bearing, check it from the code. Edits only → not load-bearing, name it in your verdict and move on.
   - **Attack each load-bearing premise FROM THE CODE, never from the list** — a premise about how the code behaves is settled by reading or running the code, not by re-reading the author's account of it. Report each by name as `CONFIRMED` / `REFUTED` / `UNVERIFIABLE`; a REFUTED load-bearing premise makes the plan `infeasible` as written, and the alternative direction you owe on `infeasible` names that premise. Register grammar for premises a delegation states itself: `orchestrator-role.md` → `### Phase Notes` → Scan boundary and provenance.
-  - **REMOVED, said once so it is not re-derived**: the register-wide sweep, the unregistered-claim flag duty and the four-class mandatory-instrument rule. The per-handle vocabulary is near-absent from the recorded verdict corpus (instrumented window 2026-08-18 → 2026-09-09) while the direction errors this gate caught came from reading code against a plan claim — the bookkeeping was the cost, the code-reading the value.
+  - **REMOVED, said once so it is not re-derived**: the register-wide sweep, the unregistered-claim flag duty and the claim-class mandatory-instrument rule. The per-handle vocabulary is near-absent from the recorded verdict corpus (instrumented window 2026-08-18 → 2026-09-09) while the direction errors this gate caught came from reading code against a plan claim — the bookkeeping was the cost, the code-reading the value. The window stays because it is the instrument the removal rests on; without it a later editor cannot tell a measured decision from a preference.
   - Honest backing: **STRUCTURAL only in that the auditor is a different actor from the premise's author** — the verdict CONTENT is honor-system. The verify stage is text-mode by design and declares no schema, so nothing forces an answer to exist and a premise reported `CONFIRMED` by an actor who never re-derived it passes unnoticed. Never describe this job as verification of premise truth.
 - **First-link question (a STANDING, verdict-gating job on REVISION cycles — DEV-side canonical; the reviewer's file carries a pointer here, never a copy)**: when the plan in front of you is a REVISION — a supersede chain root exists above it, chain depth ≥ 1 — answer this question in your verdict, unasked:
   > `name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists`
   - **Why the EARLIEST link and not the newest** (the rationale slot this gate owns): each link of a chained plan is justified against the state the previous link established, so every link is locally inside the reference it was checked against and a per-link test structurally cannot fail. The first decision is the only one whose replacement re-prices everything built on top of it, and it is the one nobody re-opens once later tasks depend on it — which is why the question is STANDING rather than raised when something already looks wrong.
   - **Answer it as three parts**: name the DECISION (not the task id carrying it); count the current tasks that survive replacing it, derived from the current task list at verdict time rather than from the plan's own account; and give the cheaper replacement where one exists — `none cheaper` is an answer, silence is not. A first link you cannot price is reported `UNVERIFIABLE` by name, not waved through.
-  - **The question is a LITERAL with ONE home**: the backticked sentence above is quoted verbatim into the workflow verify-stage goal text (`skills/glass-atrium-ops-orchestrator.md` → `### Pipeline Acceptance Criteria`) and is what a raw-script presence scan can look for. Paraphrasing it there removes the mechanical half silently, so quote it rather than restate it. Machine-checked: `hooks/test/enforce-workflow-verify-stage-firstlink.bats` extracts that line from this file byte-for-byte against the hook's literal, so its bullet label and `> ` indent are load-bearing too. That extraction is a line RANGE that opens on any case-sensitive match of the bullet label and closes on the next two-space-indented list item, so an earlier occurrence of the label's exact capitalised wording is a hazard in two ways: a range opening earlier and closing only past the quoted line means this bullet's own range never opens and the extraction comes back empty, and any second quoted line falling inside a range yields two candidates and a byte mismatch. Either way the suite fails as drift. Every reference to this question elsewhere in the file is deliberately lower-case for that reason — keep it that way.
+  - **The question is a LITERAL with ONE home**: the backticked sentence above is quoted verbatim into the workflow verify-stage goal text (`skills/glass-atrium-ops-orchestrator.md` → `### Pipeline Acceptance Criteria`) and is what a raw-script presence scan can look for. Paraphrasing it there removes the mechanical half silently, so quote it rather than restate it.
+    - Machine-checked: `hooks/test/enforce-workflow-verify-stage-firstlink.bats` extracts that line from this file byte-for-byte against the hook's `FIRST_LINK_LITERAL`, so this bullet's label and the quoted line's `> ` indent are load-bearing too.
+    - The extraction is a line RANGE — it opens on any case-sensitive match of the bullet label and closes on the next two-space-indented list item. An earlier occurrence of the label's exact capitalised wording breaks it two ways: a range that opens early and closes only past the quoted line leaves this bullet's own range unopened and the extraction empty, and any second quoted line falling inside a range yields two candidates and a byte mismatch. Either way the suite fails as drift.
+    - **Every other reference to this question in this file is deliberately lower-case for that reason — keep it that way.**
   - Honest backing: the QUESTION's presence in the raw workflow script is mechanically checkable — a byte scan, which cannot separate a delegation's goal text from a mention of one; the ANSWER's existence is not checkable at all. No required key can force an answer into a payload (same text-mode reason as the premise check above) — a DOWNGRADE from the schema-key shape this replaced, stated plainly rather than presented as a swap of equals. Whether you answer, and whether the answer is honest, is honor-system.
 - **Non-waiver (binding on YOU, not on the delegation)**: the standing jobs of this gate — the load-bearing premise check and the first-link question above, and every other standing job this section names — are BINDING and are NOT waivable by delegation phrasing.
   - A prompt instruction narrowing the recheck ("only re-check X", "the rest is settled", "not yours to re-open") does NOT suspend them: run them anyway and NAME the narrowing instruction in the `feasible`/`infeasible` verdict you emit.
   - Shape borrowed from the corpus's own self-enforce precedent (`scope-report.md` Output Format Routing — the agent's own rule binds over any orchestrator phrasing). Honest ceiling: honor-system and unverifiable — an actor that obeys the fence anyway leaves no trace.
 - **Revision flow**: an `infeasible` (or glass-atrium-qa-code-reviewer `revise`) verdict triggers at most 1 glass-atrium-intel-planner revision; the revised plan returns for re-verification. A 2nd mismatch escalates to orchestrator judgment (count + escalation path canonical in `orchestrator-role.md`).
-- **Recognition aid, no mandate — four claim classes no citation settles** (policy SoT: `orchestrator-role.md` → `### Phase Notes` → Scan boundary and provenance, a file that loads for ORCHESTRATOR and instructs you to ignore it, which is why the class names are carried here in your terms): **universal-behaviour** ("all N do X") · **counterfactual** ("removing this would break Y") · **exhaustiveness / only-N** ("these are the only callers / paths / cases") · **temporal-freshness** ("this reading is still current") are hypotheses by definition, however densely cited. When one of them is load-bearing, say in your verdict what instrument would settle it and price that, rather than treating a citation as settlement.
+- **Recognition aid, no mandate — the claim classes no citation settles.** Policy SoT: `orchestrator-role.md` → `### Phase Notes` → Scan boundary and provenance, a file that loads for ORCHESTRATOR and instructs you to ignore it, which is why the class names are carried here in your terms. Each class below is a hypothesis by definition, however densely cited:
+  - **universal-behaviour** — "all N do X"
+  - **counterfactual** — "removing this would break Y"
+  - **exhaustiveness / only-N** — "these are the only callers / paths / cases"
+  - **temporal-freshness** — "this reading is still current"
+  - When one of them is load-bearing, say in your verdict what instrument would settle it and price that, rather than treating a citation as settlement.
 - **Simple-task exemption**: inherits the Sprint Contract Gate carve-out — see Sprint Contract Gate → Sizable-task definition. Simple (entry-exempt) tasks skip this gate entirely.
 - **Ultracode enforcement note (load-bearing for DEV authoring workflow scripts)**: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook is BYPASSED for engine `agent()` spawns — so the in-script verify-stage is the PRIMARY (honor-system) authoring obligation.
   - It is BACKSTOPPED by the `enforce-workflow-verify-stage.sh` `PreToolUse(Workflow)` `[AGENT-COMPOSITION]` declaration-contract gate, which catches decidable author errors only — missing / malformed / code-inconsistent declaration · zero-reviewer · declared-impl-before-reviewer ordering. Declaration TRUTHFULNESS stays honor-system — NOT full enforcement.
   - Declaration grammar + skeletons canonical: `skills/glass-atrium-ops-orchestrator.md` → Pipeline Acceptance Criteria "In-script verify-stage"; rule SoT: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`.
 
-> The block below is this section's DELIVERABLE half — the residual a DEV agent needs in order to produce a verdict, and only that residual: what the ultracode verify-stage goal text already carries (the premise-audit question, the revision-cycle question, the report vocabulary) is not restated in it, and what belongs to another role (the revision flow, the ultracode authoring note) is not in it either. Four of the five residual duties fit the byte contract — the verdict shape, the load-bearing test, the refuted-premise consequence, and the non-waiver clause. The fifth, the three-part answer shape for the revision-cycle earliest-decision question, did NOT fit and stays readable only in this section's own "Answer it as three parts" bullet: a deliberate cut recorded here rather than a breach of the ceiling, and the item to add first if the contract is ever raised. The non-waiver clause is STATED and never reduced to a pointer — an agent under a narrowing instruction is the least likely to follow a pointer to the rule saying narrowing does not apply. Sync is manual: this section stays the single source of truth for the block's content.
+> The block below is this section's DELIVERABLE half — the residual a DEV agent needs in order to produce a verdict, and only that residual. Sync is manual: this section stays the single source of truth for the block's content.
+>
+> - **In the block**: the verdict shape · the load-bearing test · the refuted-premise consequence · the non-waiver clause.
+> - **Left out because another carrier already holds it**: what the ultracode verify-stage goal text carries — the premise-audit question, the revision-cycle question, the report vocabulary.
+> - **Left out because it belongs to another role**: the revision flow · the ultracode authoring note.
+> - **CUT for the byte contract, and the item to add back first if that contract is ever raised**: the three-part answer shape for the revision-cycle earliest-decision question, readable only in this section's own "Answer it as three parts" bullet. A recorded cut, not a breach of the ceiling.
+> - **Why the non-waiver clause is STATED and never reduced to a pointer**: an agent under a narrowing instruction is the least likely to follow a pointer to the rule saying narrowing does not apply.
 
-<!-- BYTE-BUDGET — this comment is OUTSIDE the marker pair and is never injected; only the lines BETWEEN the markers are extracted, and only those bytes count against the contract. hooks/inject-scope-rules.sh injects that block into every DEV spawn under a size cap, and one byte over costs TWO blocks: budget-dev sheds first but frees less than the marker reserve that shed subtracts from the ceiling, so this block goes with it. Both bounds are pinned numerically in hooks/test/inject-scope-rules-nodrop.bats and are deliberately not restated here — PLAN_GATE_MAX_BYTES caps this block, DEV_FRONT_MAX_BYTES caps the whole dev-front assembly and bites FIRST, so this block's own cap is not the limit a rewording hits. The line you are reading replaced one carrying two inline figures, both wrong when written. Re-run that suite on any rewording; it fails at the source rather than in a spawn. -->
+<!--
+BYTE-BUDGET — this comment is OUTSIDE the marker pair and is never injected. Only the lines BETWEEN
+the markers are extracted, and only those bytes count against the contract.
+
+hooks/inject-scope-rules.sh injects that block into every DEV spawn under a size cap, and one byte
+over costs TWO blocks: budget-dev sheds first but frees less than the marker reserve that shed
+subtracts from the ceiling, so this block goes with it.
+
+Both bounds are pinned numerically in hooks/test/inject-scope-rules-nodrop.bats and are deliberately
+not restated here. PLAN_GATE_MAX_BYTES caps this block; DEV_FRONT_MAX_BYTES caps the whole dev-front
+assembly and bites FIRST, so this block's own cap is not the limit a rewording hits.
+
+The line you are reading replaced one carrying two inline figures, both wrong when written. Re-run
+that suite on any rewording; it fails at the source rather than in a spawn.
+-->
 <!-- AGENT-INJECT:PLAN-GATE:START -->
 **Plan-gate verdict (auto-injected DEV · full: ~/.glass-atrium/scoped/scope-dev.md → Plan Direction Verification Gate)**
 - Load-bearing test: premise false → APPROACH replaced (load-bearing: settle it from the code) or edits only (name it, move on). REFUTED = `infeasible` as written.
@@ -222,10 +280,11 @@ Pair note: the six weighted axes below are restated at `scoped/scope-planning.md
 ## Complete Implementation Principle [DEV]
 
 - **Default = Complete implementation** (following TDD cycle) · 150 lines complete > 80 lines at 90%
+  - Not in tension with `## Complexity Proportionality` below: that section limits UNREQUESTED scope and abstraction, this one bars leaving the REQUESTED change unfinished. A minimal diff still ships with no TODOs, no partial APIs and no skipped edge cases.
 - **No TODOs within scope** · Out-of-scope TODOs allowed in shared-comment-logging.md format (`owner/TICKET`)
 - Performance optimization → shared-performance.md "measurement first" principle takes precedence
 - Partial allowed: ①User explicitly requests ②Technically impossible → `done_with_concerns`/`blocked`
-- **Dual effort notation mandatory**: `(Human: 2 weeks / AI: ~1 hour)`
+- **Dual effort notation mandatory** wherever you state an effort estimate — a plan, a report, a `[COMPLETION]` summary: `(Human: 2 weeks / AI: ~1 hour)`. Never one figure alone; the pair is what makes the estimate readable to a human planner and to an agent scheduler at once.
 
 ## Pre-Execution Verification [DEV]
 
@@ -269,9 +328,11 @@ Pair note: the six weighted axes below are restated at `scoped/scope-planning.md
 
 ## Context Engineering [DEV]
 
-- Treat context window as a finite resource — load only the smallest high-signal token set sufficient for the task.
-- Fresh context start → restore state from `progress-{task-name}.md` + `git log` instead of re-reading entire codebase.
-- "Will removing this token degrade the output?" No → delete. Remove redundant context proactively.
+> Canonical: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Context Engineering Principle [ALL]` — the finite-resource framing, the smallest-sufficient-token-set rule, the "will removing this token degrade the output?" test and the 80K-token drift threshold all live there, and being Tier 1 they reach you already. Restating them here would be a second copy in a file that reaches no DEV agent.
+
+The one rule this scope adds:
+
+- Fresh context start → restore state from `progress-{task-name}.md` + `git log` instead of re-reading the entire codebase.
 
 ## Vendor-Routing Awareness [DEV]
 
@@ -295,24 +356,19 @@ When a task admits multiple vendors / engines / libraries for the same capabilit
 
 ## Quality Self-Check [DEV]
 
-**Stop signals** (any one → halt + redesign):
+One list, two kinds. A **hard assertion** (DSPy-style auto-check) is mechanically decidable against your own diff; a **stop signal** is a judgment cue you raise yourself. Neither consequence is discretionary.
 
-- Function 20+ lines with unclear separation (→ SRP)
-- Same pattern copy-pasted 3 times
-- Test difficulty > implementation difficulty (→ shared-testing.md)
-- Implementation complexity > requirement complexity
+| Check | Kind | Trips when | On a trip |
+|---|---|---|---|
+| Function length | assertion | a function exceeds 20 lines | halt + redesign rather than commit |
+| Function cohesion | signal | a 20+-line function has unclear separation (→ SRP) | halt + redesign · report confidence=low or ask about design direction |
+| Copy-paste | assertion | the same pattern is copy-pasted 3+ times | halt + redesign rather than commit |
+| Test cost | assertion | test difficulty exceeds implementation difficulty (→ shared-testing.md) | halt + redesign rather than commit |
+| Solution weight | signal | implementation complexity exceeds requirement complexity | halt + redesign · report confidence=low or ask about design direction |
+| In-scope TODOs | assertion | a TODO remains inside the change scope | halt + redesign rather than commit |
+| Senior-engineer self-check | signal | the `## Confirm Tier Refinement` heuristic answers "no" on your own diff | halt + redesign |
 
-→ Report confidence=low or ask about design direction
-
-**Hard assertions** (DSPy-style auto-checks):
-
-- No TODOs in scope
-- Function ≤20 lines
-- Same pattern not copy-pasted ≥3 times
-- Test difficulty not exceeding implementation difficulty
-- **Senior-engineer self-check** — the `## Confirm Tier Refinement` heuristic applied to your own diff (No → halt + redesign)
-
-Violation → halt + redesign rather than commit.
+Reconciliation with `## Complexity Proportionality` below (the two thresholds look like they collide and do not): the copy-paste assertion and the Rule of Three meet at three call sites and agree there — under three neither fires, so stay concrete; at three both point the same way, so de-duplicate. Neither licenses abstracting at two.
 
 ## Complexity Proportionality (Anti-Over-Engineering) [DEV]
 
