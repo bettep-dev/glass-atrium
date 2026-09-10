@@ -1890,11 +1890,11 @@ class PreVerifyResult:
 
     Axes:
         C1: compliance-matrix — Tier 1/2/3 loading policy not subverted.
-        C2: GLOBAL_RULES — ALL-scope absolute rules (Korean reply / security /
-                           position bias / etc.) not violated.
-        C3: scope-* — target agent's scope file Absolute Rules not violated.
-        C4: self-consistency — patch does not contradict the target agent's
-                               own existing Absolute Rules.
+        C2: GLOBAL_RULES — ALL-scope rules, as delivered in the prompt
+                           excerpt, not violated.
+        C3: scope-* — target agent's scope-file rules not violated.
+        C4: self-consistency — patch does not contradict a rule the target
+                               agent file already states.
 
     `passed` is True iff ALL 4 axes pass.
 
@@ -5866,6 +5866,12 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 # -- pre-verify (4-axis meta-prompt-engineer review) ---------------------------
 
 
+# The C2-C4 axes name no specific rule or section heading — a rule named inside a
+# prompt string is a corpus copy that nothing greps and nothing updates when the
+# corpus moves. Each axis judges against the excerpt this prompt delivers, read
+# whole from the SoT file at assembly time.
+# The NOTE ON THE EXCERPTS spells the `[TRUNCATED:` prefix _read_sections emits
+# when it drops heading blocks at the bound — a drift the test suite pins.
 _PRE_VERIFY_PROMPT_TEMPLATE = """You are meta-prompt-engineer acting as a compliance verifier for AutoAgent.
 
 A patch has been proposed for a target agent's instruction file. Your job is
@@ -5914,20 +5920,34 @@ COMPLIANCE SOURCES (excerpts):
 {target_agent_excerpt}
 ---
 
+NOTE ON THE EXCERPTS: each compliance source above may be a bounded EXCERPT. A
+line opening `[TRUNCATED:` marks where the harness stopped, and the whole heading
+blocks past it were withheld before you ever saw them. Under that marker its
+source is NOT the complete list the axis reading it calls one, so a rule you
+recall but cannot find there IS a ground for FAIL — name it in the RATIONALE.
+This gate applies edits unattended, so err that way. With no such marker the
+excerpt is COMPLETE.
+
 VERIFICATION TASK:
 
 For each of the 4 axes, decide PASS or FAIL:
   C1: Does the patch subvert / remove / weaken any Tier-1, Tier-2, or Tier-3
       rule loading policy in compliance-matrix? (FAIL if it removes a rule
       reference the target agent's scope must load.)
-  C2: Does the patch violate any GLOBAL_RULES absolute rule (Korean reply
-      requirement / secret protection / Position Bias / System Prompt
-      Protection / etc.)?
-  C3: Does the patch violate any Absolute Rule in the target agent's
-      scope file?
-  C4: Does the patch CONTRADICT (not merely add to) the target agent's
-      OWN existing Absolute Rules / Guardrails / Prohibitions sections?
-      (Adding a NEW guardrail consistent with existing ones = PASS.
+  C2: Does the patch violate any ALL-scope rule stated in the GLOBAL_RULES
+      excerpt above? That excerpt is the COMPLETE and authoritative list —
+      judge against what it states and nothing else, so a rule you recall
+      but cannot find there is not a ground for FAIL. Its `## Absolute
+      Rules` section is the densest source; every ALL-scope section the
+      excerpt carries counts equally.
+  C3: Does the patch violate any rule stated in the target agent's scope
+      excerpt above? Same excerpt-only judgement as C2. Scope files differ
+      in how they head their rule sections and some head none, so a missing
+      heading is not an absent rule — read the excerpt, not for a title.
+  C4: Does the patch CONTRADICT (not merely add to) a rule the target agent
+      file above ALREADY states? Judge on the rules that excerpt carries,
+      under whatever heading they sit and under none.
+      (Adding a NEW rule consistent with the existing ones = PASS.
        Reversing or weakening an existing rule = FAIL.)
 
 OUTPUT STRICT FORMAT (no preamble, no markdown fences, exactly these lines):

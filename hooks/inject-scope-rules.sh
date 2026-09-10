@@ -35,6 +35,11 @@
 #     turn meter, so the "stop at ~80% of maxTurns" rule is dead text — it runs to the
 #     hard-cap, dies mid-tool-use → no [COMPLETION] → orchestrator SendMessage-recover.
 #     This block supplies the meter (maxTurns N + checkpoint-at-80%).
+# These two are the ONLY injected blocks still authored as shell literals rather than extracted
+# from a corpus marker block, and each stays that way for its OWN reason — stated in full at
+# build_emit_format_block and build_meter_block. Read the relevant note before "finishing the
+# job": one is a fail-open objection, the other a test-fixture blocker, and they need
+# different work.
 #
 # fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty
 # extraction) → exit 0 + 1 stderr diagnostic, injecting whatever IS available (a
@@ -90,6 +95,7 @@ readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skill
 
 # turn-budget source rule file — BOTH budget blocks (BUDGET-DEV + BUDGET-ANALYSIS) live in this
 # single scoped/ file; same env-override + ~/.glass-atrium/scoped default as SRC_FILE/STYLEREF_SRC_FILE.
+# That file also documents the meter wording this hook still holds as a literal (build_meter_block).
 readonly BUDGET_SRC_FILE="${INJECT_SCOPE_RULES_BUDGET_SRC:-${HOME}/.glass-atrium/scoped/shared-turn-budget.md}"
 
 # wiki-untrusted source rule file — the data-not-instruction clause (plan H2 · R2 · LLM01) lives in
@@ -419,6 +425,22 @@ read_max_turns() {
 # Build the budget-meter advisory for a known maxTurns budget. The 80%-checkpoint figure is
 # the documented working-ceiling (GLOBAL_RULES Turn Budget & Graceful Exit), stated in TURNS
 # (maxTurns is a turn cap, not a tool_use cap) — the meter the agent otherwise lacks at runtime.
+#
+# WHY THIS WORDING IS STILL A SHELL LITERAL (a marker block in shared-turn-budget.md is the right
+# home, and it is a MEASURED test-harness blocker, not a design objection, that keeps it here):
+# extract_block returns literal text with no substitution step, so a marker block needs two
+# placeholders this function fills — mechanically fine (plain parameter expansion, no eval) and
+# byte-neutral, since the substituted output is identical to these lines. What blocks it is the
+# fixture shape of hooks/test/inject-scope-rules.bats: its run_hook_full driver is the only
+# meter-ENABLED driver in that suite and it synthesizes BOTH the budget source AND the agents dir in
+# BATS_TEST_TMPDIR, so a meter sourced from ANY markdown file — shared-turn-budget.md or
+# GLASS_ATRIUM_GLOBAL_RULES.md alike — extracts empty there and reds 9 tests. Landing the move means
+# writing the marker pair into that fixture writer first; doing it any other way (a source path the
+# fixture cannot override) would defeat the isolation those tests exist to provide.
+# The residual honestly stated: this wording is a compressed copy of GLASS_ATRIUM_GLOBAL_RULES.md →
+# "### Turn Budget & Graceful Exit", and keeping the two in step is a MANUAL obligation with NO
+# mechanical check. shared-turn-budget.md → "## Meter block (NOT sourced here yet)" carries the
+# reciprocal pointer so the drift is at least visible from the corpus side.
 # Args: $1=max_turns (integer) · stdout: the meter block text.
 build_meter_block() {
   local max_turns="${1}" ceiling=0
@@ -444,6 +466,22 @@ build_meter_block() {
 # field, so this directive names that field for schema-mode + delivers the strict multi-line contract
 # to the text-channel (manual) path. The manual path keeps the print-block-then-emit discipline;
 # schema-mode supersedes it with the completion_block field. stdout: block text.
+#
+# WHY THIS ONE STAYS A SHELL LITERAL (a DIFFERENT reason from the meter's — that one is blocked on a
+# test fixture and would otherwise move; this one should not move at all as the hook stands today):
+# every other injected block tolerates absence — a roster block self-skips, the meter has three
+# pre-existing empty paths. This one does not. It is assembled FIRST, is never a drop candidate, and
+# is the PRIMARY fix for the schema-mode non-emission class, so "never fails to build" is a property
+# it is REQUIRED to have. extract_block returns EMPTY on a missing file or a renamed marker and this
+# hook cannot block a spawn (fail-open by contract), so extraction would convert a guaranteed-present
+# recorder-critical directive into a silently-losable one, with no runtime channel to notice.
+# Keeping a literal FALLBACK behind an extraction is not the answer either — that re-creates exactly
+# the un-greppable copy the extraction was meant to remove, at twice the surface.
+# The residual honestly stated: this block's wording is a compressed copy of
+# rules/glass-atrium/core-outcome-record.md → "Completion Report Output Obligation", and keeping the
+# two in step is a MANUAL obligation with NO mechanical check — nothing greps a shell literal. That
+# file carries the reciprocal pointer so an editor of the rule at least sees that this copy exists.
+# Moving it needs a source seam the test harness can sandbox, which means editing the suites below.
 # BYTE-BUDGET: this printf'd block is byte-budgeted — redteam-#24 9984B injection ceiling
 # (worst-case DEV seven-block assembly <=9935B, >=49B headroom; drop order sheds lesson, then
 # the two budget blocks, before the proven four) + the EMIT+METER 2048B ~2KB-preview cap. Any
@@ -726,7 +764,7 @@ manifest_digest() {
 # Args: $1=block label · stdout: source path.
 manifest_block_source() {
   case "${1}" in
-    emit | meter) printf '%s' "${BASH_SOURCE[0]}" ;;
+    emit | meter) printf '%s' "${BASH_SOURCE[0]}" ;; # the two blocks still authored in shell — see build_emit_format_block
     lesson) printf '%s' "${LESSON_SRC_FILE}" ;;
     *) marker_source_path "${1}" ;;
   esac
