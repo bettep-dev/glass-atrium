@@ -4,9 +4,13 @@
 > **Inherits**: Tier 1 (Core) + Tier 3 (Cross-cutting: comment-logging · performance · search-first · testing · type-safety)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
+**Delivery status (measured 2026-09-10)**: this file is NOT delivered to any of the thirteen DEV agents at spawn — no code selects a scope file by agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`). Its readers are the main session, a human, an agent that deliberately Reads it, and the self-improvement daemon's verify prompt; the only text from this file that does reach a DEV agent is the two marker-extracted blocks the SubagentStart injector pulls out of it, and nothing else in it travels. Consequence for authors: a duty that BINDS a DEV agent must also live in that agent's own body; homing it here alone delivers nothing to the actor. This file stays canonical, and nothing in it is deleted on that ground.
+
 ## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]
 
 The DEV fleet roster (SoT) = the Tier-2 loading stanza above, whose brace-delimited membership list is machine-parsed by two production readers and MUST NOT be reproduced anywhere else in this file, a prose example included: `scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster` (re-parsed on every edit by `stanza.py`) raises `ReaderError` / `StanzaError` and aborts the lifecycle add/delete operation when the form is absent, while the stricter `autoagent/lib/roster_merge.py` → `_get_markdown_slots` accepts EXACTLY ONE such list file-wide and makes the updater refuse the entire file at deploy on a second occurrence (`ROSTER REFUSED: … expected exactly one brace-delimited loading list, found 2` on stderr), stranding every unrelated edit in the file — and no test asserts against this file's bytes, so neither failure ever surfaces in CI. This section governs when that roster may grow. Cross-ref: `orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is the basis that keeps `domains` arrays distinct enough for that routing.
+
+Pair note: the growth decision this section governs is also stated at `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` (the DEV-fleet-growth-authority clause, which declares extension the default and routes creation back here) and the flow that executes it at `skills/glass-atrium-ops-orchestrator.md` → `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)`, so a reader loosening the gate here is loosening a rule two other files also state.
 
 ### Separation Axis [DEV+META]
 
@@ -47,6 +51,8 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 - **glass-atrium-dev-front is NOT a default co-author** (default = `{author, glass-atrium-design-designer}`); the entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment.
 - **`shared-design-token-consumption.md` (token-consumption surfaces) does NOT gate this** — a self-contained Tailwind-CDN exposed doc is a markup-craft surface, not a token-consumption one, but markup craft is still glass-atrium-dev-front's concern.
 
+Pair note: this governance verdict restates the dev-front markup exception whose other copies are enumerated as a closed set at `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` and mirrored at `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, and that enumeration does not name this passage — reported here, not reconciled.
+
 ## Absolute Rules [DEV+META]
 
 - Follow **Read → Analyze → Plan → Approve → Execute** order
@@ -66,6 +72,8 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 - Heuristic: "Would a senior apply this without discussion?" Yes = Auto, No = Confirm
 
 ## Sprint Contract Gate [DEV+QA]
+
+Pair note: this section is the canonical, the reviewer- and orchestrator-side copies sit at `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` and `rules/glass-atrium/orchestrator-role.md` → `## Delegation Workflow` (Decision row, which condenses the four sizable criteria inline rather than pointing only), and the sole text any DEV agent actually receives is the acceptance-criteria read duty in `agents/glass-atrium-dev-node.md` → `## Guardrails` — one body of the thirteen, the other twelve carrying nothing from this section (measured 2026-09-10).
 
 - Before starting a **sizable** task (definition below), Evaluator (glass-atrium-qa-code-reviewer) pre-defines verification criteria
 - Criteria MUST be specified in `acceptance_criteria.md` or plan's `## Acceptance Criteria` section (3-5 items)
@@ -102,6 +110,8 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 
 This section is the **A-side canonical (SoT)** for the DEV participation duty and for the DEV half of every job this gate hands to BOTH Stage-2 actors. `scope-qa.md` carries the reviewer-side bodies of the pair-binding jobs plus a pointer here — one canonical body per actor, in the file that actor loads, never a second copy of the same actor's duty.
 
+**Delivered mirror: NONE.** Measured 2026-09-10: no `agents/glass-atrium-dev-*.md` body carries any text from this section — not the hard-gate rule, not the load-bearing premise check, not the first-link question, not the non-waiver clause — and this file reaches none of those thirteen agents at spawn, so every DEV-side duty stated here reaches no actor until a mirror is added to a DEV body. Gate operation is annotated on its own side at `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`, and the reviewer half at `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which records the same undelivered status for its own actor. Do not treat this section as delivered, and do not home a further duty here alone.
+
 When the orchestrator routes a complex plan to direction verification (gate operation: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`), a DEV agent is a **mandatory** verification participant:
 
 - **DEV participation = hard gate**: the gate cannot pass without a DEV verdict (the user requires "개발에이전트 참여 필수"). The participating DEV is the one matching the plan's primary implementation domain (selection rule in `orchestrator-role.md`).
@@ -129,6 +139,8 @@ When the orchestrator routes a complex plan to direction verification (gate oper
   - Declaration grammar + skeletons canonical: `skills/glass-atrium-ops-orchestrator.md` → Pipeline Acceptance Criteria "In-script verify-stage"; rule SoT: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`.
 
 ## Ambiguity Gate (Ambiguity Score) [DEV+PLANNING]
+
+Pair note: the six weighted axes below are restated at `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]` and again in the delivered planner copy at `agents/glass-atrium-intel-planner.md` → `## Pre-Execution Verification [PLANNING]`, with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]` pointing here for the Assumptions Disclosure obligation, so a weight changed here changes by hand in two other files.
 
 - Evaluate requirement clarity on 6 axes before coding (each 0-1): Purpose clarity (30%) · Scope certainty (25%) · Technical constraints (20%) · Acceptance criteria (15%) · Audience clarity (5%) · Dependency awareness (5%)
 - **Audience axis rationale**: state the deliverable target (user / operator / agent / external-share) — surfaces the request-driven exposure question ("did the user request a shareable artifact?") at the intent-verification stage rather than only at the output stage · for DEV deliverables the default audience = "team-peer reviewer"
@@ -300,6 +312,8 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **YAGNI applies to tests too**: non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check; a trivial one-liner needs none. Framework suites only where `shared-testing.md` requires them.
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
+
+Pair note: the injected block below restates this section's YAGNI and unrequested-scope bias together with the reuse-order ladder stated at `## Vendor-Routing Awareness [DEV]` above, so those two passages and this block are edited together — and unlike the block, neither of them reaches a DEV agent at spawn.
 
 <!-- BYTE-BUDGET: also feeds inject-scope-rules.sh; the `Minimalism reflex` lead is pinned by hooks/test/inject-scope-rules-nodrop.bats under the same 9984B ceiling. -->
 <!-- AGENT-INJECT:MINIMALISM:START -->

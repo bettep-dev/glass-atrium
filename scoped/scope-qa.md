@@ -12,6 +12,8 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 
 > Full details: See `scope-dev.md` Sprint Contract Gate section (complex tasks only; simple tasks exempt)
 
+Pair note: the Sizable-task definition is canonical only at `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` and is pointed at — never restated — from here, from `rules/glass-atrium/orchestrator-role.md` (Decision row + Stage-2 activation scope) and from `skills/glass-atrium-ops-orchestrator.md`; that canonical reaches no DEV or QA agent at spawn (measured 2026-09-10), so the orchestrator-side pointers are the copies a running actor is exposed to, and this line stays a pointer stating no threshold.
+
 ## Plan Direction Verification Gate [DEV+QA]
 
 **Boundary (read first)** — these are distinct gates, do not conflate:
@@ -73,6 +75,8 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 
 > Rationale: Custom evaluation dimensions inspired by G-Eval, DeepResearchGym, and other LLM-judge frameworks
 
+Pair note: this section is the rubric canonical and eight other files carry one-line pointers back to it rather than copies — the reporter, planner, reviewer and designer bodies, `scoped/scope-report.md` → `## Self-Evaluation Obligation [REPORT]`, the `qa_score` row of `rules/glass-atrium/core-outcome-record.md`, `skills/glass-atrium-design-5-axis-critique/SKILL.md` and `agents/templates/DESIGN.md` — so a change here needs no edit there and a wrong count is the drift alarm; who receives this file is stated under **Delivery status** above, and what the reviewer actually reads at spawn is the pointer in its own body, not this rubric.
+
 > Evaluator-independence posture: generator and evaluator run in SEPARATE CONTEXTS (the glass-atrium-qa-code-reviewer review is its own isolated subagent context, not the generator's).
 > - BUT the LLM judge is the SAME MODEL FAMILY as the generators, with NO cross-vendor / external-judge layer — so same-model self-preference bias is a KNOWN RESIDUAL, not eliminated.
 > - The deterministic Code-Based grader (`track-outcome.sh`, emitting `grader_verdict`; its per-task-type check matrix is the `core-outcome-record.md` Field Input Guide `metric_pass` row, author-side outcomes only — infra attribution failures out-of-scope — and this 4-Dim LLM-as-Judge is the Model-Based tier stacked on top of it) PARTIALLY MITIGATES this: its verdict is independent of model judgment and is recorded as an advisory `grader_verdict` (`verified_pass` / `unverified` / `verified_fail`) in its OWN column, surfacing a writer disagreement via `review_flag` + `downgrade_origin` provenance while NEVER mutating the writer's `metric_pass` self-report.
@@ -95,6 +99,8 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 
 > Applies to every HTML primary deliverable — i.e. any deliverable emitted as user-requested HTML (per `scope-report.md` / `scope-planning.md` Output Format Routing request-driven model). Skip for: agent-only token-optimized records (md/yaml/json/txt fallback · viewer default-hidden), code reviews (TS/Python/Shell source), other non-HTML artifacts.
 
+Pair note: the d8 requirement set is stated in five places — this reviewer-side rollup, the author-side policy at `scoped/scope-report.md` and `scoped/scope-planning.md` → `### HTML Visual Decision Requirements (D8)` (neither of which reaches its authoring agent at spawn, measured 2026-09-10), and their delivered mirrors at `agents/glass-atrium-intel-reporter.md` → `### Pre-Emission HTML Validation (D8 + Schema)` and `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]`, which are the only copies those agents read — none of the five is canonical for the numbers, which live in the JSON named under **Threshold SoT** below.
+
 - Append **5th dimension `d8`** (1-5) to existing 4-dim rubric (Coverage / Insight / Instruction-following / Clarity). Schema = extension, NOT replacement — the 4-dim canonical rubric is preserved.
 - **d8 rubric (single 1-5)**: Combined visual quality rollup of 3 semantic axes —
   - **dual-encoding** — color + symbol/text dual-encoding (color-blind safety)
@@ -110,6 +116,7 @@ Rules specific to QA agents: glass-atrium-qa-code-reviewer, glass-atrium-qa-debu
 - **Threshold SoT**: canonical D8 numeric thresholds (comparison-table maxColumns / WCAG contrast / typography levels) live in `monitor/src/server/clauded-docs/d8-thresholds.json` — server-enforced source-of-truth (code `JSON.parse`-loads it at module init).
   - The literals quoted above are a documented MIRROR synced at review time — do NOT treat the prose number as the source.
   - Changing a prose number without updating the JSON is FORBIDDEN.
+  - Pair note: this Threshold SoT paragraph is byte-identical in `scoped/scope-report.md` and `scoped/scope-planning.md` → `### Threshold SoT`, neither of which reaches its authoring agent at spawn (measured 2026-09-10) — the three prose copies are edited together or left alone, and the JSON stays the only copy any running validator reads.
 
 ## Finding Anchoring [QA]
 

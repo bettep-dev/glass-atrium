@@ -78,6 +78,8 @@ Format is request-driven — decided by the two request signals below, evaluated
 
 POST body carries NO prefix field — format is determined by the supplied body-field kind (`html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`). The body-field kind IS the format. Sending multiple body fields → HTTP 400 `invalid_body`, reason `body fields are mutually exclusive`.
 
+Four copies of the mode table above, all in agreement — canonical `scoped/scope-report.md` → `### Three emission modes` and its mirror `scoped/scope-planning.md` → `### Three emission modes`, both read by the maintainer and neither delivered to an agent at spawn (measured 2026-09-10) · this delivered copy, the only one this agent reads · and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` — so edit the four together.
+
 > **Storage is ALWAYS the monitor POST — self-enforcing, delegation-phrasing-proof (MUST)**:
 >
 > - EVERY mode above (incl. the agent-only token-optimized record) is emitted via `POST /api/clauded-docs`.
@@ -108,6 +110,8 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 
 Returning the deliverable as local-file / chat text instead of this POST = HARD VIOLATION (see the binding blockquote above).
 
+The tuple in those examples stands in four prose copies — canonical `scoped/scope-report.md` → `### Emission contract` and its mirror `scoped/scope-planning.md` → `### Emission contract` (maintainer-read, neither delivered here) · this delivered copy · and the planner body's curl block — and the authority behind all four is none of them but the route source `monitor/src/server/routes/clauded-docs.ts`.
+
 **FINAL STEP (mode-split, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) — NEVER inside the report/reference body, NEVER inside a POSTed `*_body` field (the machine record artifact stays out of the POSTed document in both modes). Where the block goes depends on the mode:
 
 - **MANUAL/TEXT mode (no schema)**: print it as a DEDICATED assistant text turn (print-block-then-emit), unchanged.
@@ -124,6 +128,8 @@ Content visual-richness (diagram count, table density), LLM self-judgment that "
 
 **EARS**: When the user utterance contains 1+ explicit format/share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format.
 
+Five copies of this test, all in agreement — canonical `scoped/scope-report.md` → `### HTML request test` and its mirror `scoped/scope-planning.md` → `### HTML request test` (maintainer-read, neither delivered here) · this delivered copy, whose EARS restatement is a local addition · `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` · and `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition`, not canonical but the one copy that reaches every subagent.
+
 ### Exposure Bit (replaces audience routing)
 
 Exposure is a 2-value bit: **viewer-exposed** (user-requested HTML) vs **viewer default-hidden** (agent-only records + non-HTML defaults). The deciding question is "did the user request a shareable HTML artifact?".
@@ -138,6 +144,8 @@ Before POSTing a user-requested HTML primary (color rules canonical: `## Visual 
 - `<table>` columns ≤5 per D8-thresholds.json (split if needed) — exceeding raises `d8_p2_violation` (separate code from style)
 - WCAG AA contrast (text ≥4.5:1, UI ≥3:1) on dark base
 - Any violation → fix locally, do NOT POST (monitor rejects HTTP 400 `d8_style_violation`/`d8_p2_violation`). Safe palette detail: cite `[[visual-expression-exposed-html-docs]]`.
+
+Five prose copies of the D8 requirement set, all in agreement — `scoped/scope-report.md` → `### HTML Visual Decision Requirements (D8)` and `scoped/scope-planning.md` → the same heading (byte-identical, maintainer-read, neither delivered here) · this delivered copy · `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]` · and the reviewer-side rollup `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — every number in all five mirrors `monitor/src/server/clauded-docs/d8-thresholds.json`, which the validator loads at module init and which is the sole authority.
 
 ### Post-Emission HTTP Verification (Confirm Storage)
 
@@ -211,6 +219,7 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
   - T4 — non-canonical status badges: a palette expansion beyond the canonical four (✓ / ⚠ / ✕ / ℹ) is needed
   - T5 — the user states that design quality matters, OR explicit external-share intent is declared (1+)
   - Canonical: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (not delivered to this agent at spawn — edit both together).
+  - Full cluster (six copies): that canonical and its maintainer-read mirror `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` · this delivered copy and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · the designer-side stub `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, which keeps the veto line so a veto stays reachable when the skill is not loaded · and the full consultative scope in `skills/glass-atrium-design-html-co-emission/SKILL.md`, read only when the designer invokes it — the split between those last two is deliberate, not a duplicate to collapse.
 - **co_emit trigger** (2+ T1-T5 co-occurrence): 1-2 turn pre-draft consultation with glass-atrium-design-designer — query items ① Mermaid type proposal (information shape → mapping to the 7 adopted types · see `scope-report.md` Diagram Standard) ② section composition outline (Pyramid skim/scan/read 3-layer rhythm) ③ (when T4 fired) non-canonical badge palette spec
 - **After consultation**: glass-atrium-intel-reporter solo HTML composition · apply glass-atrium-design-designer guidance · POST `/api/clauded-docs` single emission
 - **Trigger unmet** (≤1 indicator): solo composition · skip glass-atrium-design-designer consultation · direct POST
@@ -221,6 +230,7 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
 - Skeleton placeholders MUST be Gate-4-safe plain prose (no `{{...}}` / `[FILL]` / scaffolding-stub residue — server hard-rejects 400 `placeholder_residue`), OR run an explicit pre-POST residue scan over the glass-atrium-dev-front stubs.
 - Bespoke CSS must avoid `text-[var(...)]` for font-size (Tailwind v4 parses it as COLOR).
 - Parallel HTML stitching (R2) + post-draft review POST (R3) remain FORBIDDEN — the atomic 1-doc-1-POST contract is preserved.
+- Six copies of this exception, all in agreement — `scoped/scope-report.md` and `scoped/scope-planning.md` → Designer Co-Emission Trigger (maintainer-read, neither delivered here) · this delivered copy and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` (reader: that agent) · and `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, not canonical but the only copy reaching every subagent, which is why the orchestrator half of this protocol is the half that always arrives.
 
 **Scope branching**:
 
@@ -258,6 +268,8 @@ This section is the canonical source; `glass-atrium-intel-planner.md` → Visual
 
 The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML doc MUST maximize visual communication. A headings-plus-paragraphs text dump FAILS. Maximize WITHOUT crossing into AI-slop and WITHOUT forcing visuals the content does not support. This floor is TIERED — apply the baseline always, escalate only on matching content. Applies to user-requested HTML primary only (never to agent-only / non-HTML records — those keep token-first restraint). Deep visual patterns + full CSS snippets: cite `[[visual-expression-exposed-html-docs]]` (do NOT inline).
 
+Four copies on two axes — this one is the AUTHORING canonical and the only copy delivered to this agent · the POLICY canonical is `scoped/scope-report.md` → `### Visual-Maximization Floor (exposed HTML primary — CANONICAL policy SoT)`, whose reader is the maintainer since that file is not delivered at spawn (measured 2026-09-10) · `scoped/scope-planning.md` → `### Visual-Maximization Floor` (maintainer-read) and its delivered mirror `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec` carry the planning side, and that planning mirror is DRIFTED against the policy canonical on three carve-outs (reported by this annotation pass, not reconciled).
+
 - **Baseline (every exposed HTML doc, non-negotiable)**:
   - semantic landmarks + per-section `aria-labelledby` (single `<h1>`, no heading-level skip) + a no-print `<nav>` ToC with in-page anchors
   - the Dark Theme & Typography contract below (the mandated `bg-zinc-950 text-zinc-300` dark canvas; deliver a perceptual near-black–near-white palette as `oklch()`)
@@ -268,6 +280,7 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
   - body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
   - `prefers-reduced-motion` SUBSTITUTES motion with a gentle fade (does not remove)
+    - Canonical for the fallback itself is `agents/glass-atrium-dev-front.md` → `### prefers-reduced-motion (canonical SoT)`, which additionally forbids a hard cut; this HTML-doc variant is one of roughly eight copies across the UI-emitting DEV fleet, the design references and the DESIGN template, two of which omit that prohibition — count, not roster, because the set grows with the fleet.
   - **at least ONE primary visual structure beyond prose** (a Mermaid diagram, a comparison table, OR a KPI/stat-card row). Headings + paragraphs only = FAIL.
 - **Content-driven escalation (apply the matching visual; do NOT force an unmatched one)**:
   - any process / flow / pipeline / relationship / state / sequence → a Mermaid diagram is MANDATORY (hand-built `<div>`+arrow flows, ASCII-art, hand-drawn `<svg>` FORBIDDEN as the diagram primitive); SELECT the type before rendering per `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and add `accTitle` + `accDescr` inside every `<pre class="mermaid">` + an adjacent visible text description (3-layer a11y).
@@ -278,6 +291,7 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - any described UI / screen / layout → a structural mockup with labeled placeholders (show the product).
 - **Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)**: Type → Direction → Budget → Preset → semantic-role `classDef` → Layout.
   - **Type — the adopted set is closed at seven**: `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`). Everything else — quadrant, radar, pie, timeline, journey, mindmap, sankey, xychart, gantt, block — is EXCLUDED: express that content as a table or prose. Renderable by Mermaid is not the same as adopted.
+    - Adopted set = 7 · SoT `monitor/src/server/clauded-docs/diagram-types.json`, read once at module init by the monitor HTML validator · six prose copies restate it, this one included, and the JSON governs every one of them — one further copy, `skills/glass-atrium-design-html-co-emission/SKILL.md`, currently states fourteen permitted types, seven of which the JSON lists as excluded, so a designer consultation sourced from that skill can propose a type the doctrine and the validator both reject (divergence reported by this annotation pass, not reconciled).
   - **Direction**: `TD` is the default; `LR` only after re-measuring the rendered width against the preset container; `RL` and `BT` are forbidden.
   - **Budget**: nodes ≤ 9 · edges ≤ 6 · label chars ≤ 45 · subgraph depth ≤ 1; ≥ 0.9 of a cap warns, above 1.0 fails, depth is an invariant. Count the way the census does — every arrow token counts, so a chained `A --> B --> C` line is 2 edges; a `---` line is an edge; a `name(` / `name[` / `name{` token is a node; quoted spans are stripped before arrows are counted. Over budget → split into one overview plus detail diagrams, each inside the caps on its own. Never raise a cap, never trim a label below its meaning.
   - **Preset — attach one as a second class on the block**: `doc-diagram-body` (default, column width) · `doc-diagram-wide` (ranks ≥ 4 along the primary flow, or a label overflows the column) · `doc-diagram-full` (zones/subgraphs ≥ 3).
@@ -288,6 +302,7 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
   - the mandated dark canvas is REQUIRED; the guards below forbid `zinc`-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE (no-shadcn-ification), NOT the dark base itself.
   - Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill — plus the residual patterns at `scope-report.md` → `### Visual-Maximization Floor` (policy SoT).
   - One authoring rule stays local because it is emission-conditional, not a pattern: a stat card is emitted only when a real sourced number exists — no real number, no card.
+  - Five copies in that cluster — the SoT named above (reader: glass-atrium-design-designer) · its mechanical detector `skills/glass-atrium-design-anti-slop/SKILL.md` (reader: whoever invokes it) · the enforcement subset in `agents/glass-atrium-dev-front.md` · the `scope-report.md` residual list, a deliberate SUPPLEMENT rather than a mirror · and the `scoped/scope-planning.md` pointer — and SoT and detector are currently DRIFTED in both directions, the detector carrying patterns the SoT never adopted and omitting the SoT's mixed-radius and workflow entries (reported by this annotation pass, not reconciled).
 - **Restraint is part of the standard (not an exception)**: match density to content + audience — one decisive focal element per section, not a collage. A short non-technical human brief MUST NOT be force-fitted with 5 KPI cards or 3 Mermaid diagrams; that manufactures slop. "Maximize" = use the richest APPROPRIATE form per piece of content, never add every widget.
 - **d8 validator-safe color contract (canonical for color rules — MUST PASS the live d8 validator; non-conforming patterns rejected 400 `d8_style_violation`, fix locally before POST)**: the validator scans the RAW pre-sanitize HTML — DOMPurify does NOT launder color literals, so authoring discipline is the only guard.
   - **Dark palette via `oklch()` only** — deliver every dark color as `oklch()` (or `hsl()`/`lab()`/`lch()`/`var(--token)`); none match the color-literal pattern. Put them in `:root` custom properties referenced via `var()`, or set directly in `<style>` screen rules / inline `style=`. Example: `:root { --bg: oklch(0.16 0.01 260); --fg: oklch(0.96 0.005 260); } body { background: var(--bg); color: var(--fg); }`.
@@ -307,6 +322,8 @@ The WHY tie-breaker is a binding FLOOR, not just a tie-break: an exposed HTML do
 - 3 typography levels MAX — H1 (`text-2xl font-bold text-zinc-100`, document title, 1) · H2 (`text-lg font-semibold text-zinc-200 mt-6`, sections, 5-9) · Body (`text-base text-zinc-400`)
 - Heading skip FORBIDDEN (H1 → H3 jump violates layer-cake)
 - Color palette ≤7 semantic colors (Miller's law)
+
+Four copies of the dark-base default — policy canonical `scoped/scope-report.md` → `### Dark base default` (maintainer-read, not delivered here) · `scoped/scope-planning.md` → `### Dark base default`, maintainer-read and DRIFTED in omitting the `oklch` background option the canonical permits · this delivered copy · and `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec`.
 
 ### Status Badges (MUST dual-encoded)
 
@@ -361,6 +378,7 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 - FORBIDDEN: ad-hoc HTML graph TD/LR notation outside Mermaid blocks, hand-drawn inline SVG, Chart.js/D3/Plotly (D8 P3 ban), ASCII art diagrams.
 - The agent-only token-optimized record prioritizes token efficiency — bullets/tables preferred · ` ```mermaid ` fences allowed when Mermaid is needed (LLM-side MD parse).
 - Full ban/allow list: canonical in `scope-report.md` "Diagram Standard".
+- The runtime-load contract stated at the top of this section has four copies — canonical `scoped/scope-report.md` → `## Diagram Standard [REPORT]` and its mirror `scoped/scope-planning.md` → `## Diagram Standard [PLANNING]` (maintainer-read, neither delivered here) · this delivered copy · and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` — so edit the four together.
 - Before drawing ANY Mermaid block in a user-requested HTML primary, run the decision order in `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` — apply every step (type · direction · budget · preset · `classDef`). The operative literals are delivered above, in `### Visual-Maximization Floor` → the Pre-drawing decision core bullet; that bullet is the only copy that reaches this agent, so apply it and add no third restatement here.
 
 ### Print Stylesheet (MUST for PDF)

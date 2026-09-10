@@ -30,6 +30,8 @@ Request-driven decision — evaluate in order:
 
 **Branching decision order MUST**: apply the HTML request test (below — explicit format/share signal?) → if no signal, fall back to agent-only and apply content shape → format matrix → body composition. Reversing the order FORBIDDEN (entering body silently = audit fail).
 
+Four copies of this mode table, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### Three emission modes` (maintainer-read mirror, planning-scoped row text) · and the two delivered copies `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`, which are the only ones their agents read (measured 2026-09-10) — so edit the four together.
+
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
 HTML primary is produced ONLY when 1+ of these explicit signals is present —
@@ -38,6 +40,8 @@ HTML primary is produced ONLY when 1+ of these explicit signals is present —
 - **Explicit share intent**: the user makes third-party sharing or direct human review/presentation clear — e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing".
 
 **NOT triggers** (none produces HTML primary): content visual-richness (diagram count, table density) · LLM self-judgment that "this looks visual" · a bare document/report/plan request ("보고서로 정리", "문서로 작성", "write it up as a report", "make a plan") — that last routes to user-requested non-HTML (md default) per the 3-mode table above.
+
+Five copies of this test, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### HTML request test` (maintainer-read mirror) · the delivered copies `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` · and `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition`, which is not canonical yet is the one copy that reaches every subagent — so edit the five together.
 
 ### HTML primary requirements
 
@@ -53,6 +57,8 @@ User-requested HTML only — full authoring contract in `glass-atrium-intel-repo
 
 An exposed HTML doc MUST maximize visual communication; a headings-plus-paragraphs text dump FAILS. TIERED, NOT a flat quota — applies only to exposed HTML primaries (never forces a doc TO HTML; HTML request test above unchanged). Deep visual patterns + exact CSS snippets: cite `wiki/raw/` note [[visual-expression-exposed-html-docs]] (do NOT inline here). Author-side authoring detail: `glass-atrium-intel-reporter.md` → Visual Design Spec → Visual-Maximization Floor.
 
+Four copies on two axes — this one is the POLICY canonical and its reader is the maintainer, not the reporter (this file is not delivered at spawn, measured 2026-09-10) · `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` is the AUTHORING canonical and the only copy the reporter reads · `scoped/scope-planning.md` → `### Visual-Maximization Floor` (maintainer-read) and its delivered mirror `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec` carry the planning side, and that planning mirror is DRIFTED, compressing away this section's `light-default-body` prohibition list, its HTML-comment-dropped-pre-scan carve-out and its OKLCH 2-tier token requirement (reported here, reconciliation is the rule owner's call).
+
 **BASELINE (always)** — every item below is required:
 
 - semantic landmarks + `aria-labelledby` per `<section>` + correct heading order (single h1, no level skip)
@@ -66,6 +72,7 @@ An exposed HTML doc MUST maximize visual communication; a headings-plus-paragrap
 - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
 - body text left-aligned ragged-right (centered body copy harms readability; center only display headlines and captions)
 - `prefers-reduced-motion` SUBSTITUTES a gentle fade (does not merely remove)
+  - Canonical for the fallback itself is `agents/glass-atrium-dev-front.md` → `### prefers-reduced-motion (canonical SoT)`, which additionally forbids a hard cut; this HTML-doc variant is one of roughly eight copies spread across the UI-emitting DEV fleet, the design references and the DESIGN template, two of which omit that prohibition — count, not roster, because the set grows with the fleet.
 - **≥1 primary visual structure beyond prose** (Mermaid diagram OR comparison table OR KPI/stat-card row)
 
 **d8 validator-safe color rule (HARD — the live monitor `d8_style_violation` / `inline-color-literal` gate rejects the idiom research otherwise mandates)**:
@@ -93,10 +100,13 @@ An exposed HTML doc MUST maximize visual communication; a headings-plus-paragrap
 - Prohibited-pattern list: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — the single SoT, applied mechanically at review time by the `glass-atrium-design-anti-slop` skill.
 - Residual patterns that SoT does not carry, retained here: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max · decoration stacking (one treatment per element).
 - The BASELINE glassmorphism member is scoped to over-text readability; the broader blur+gradient+shadow-on-one-element case stays the SoT's **Glassmorphism overuse** entry.
+- Five copies in this cluster — the SoT named above (reader: glass-atrium-design-designer) · its mechanical detector `skills/glass-atrium-design-anti-slop/SKILL.md` (reader: whoever invokes it) · the enforcement subset in `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)` · this residual list, which is a deliberate SUPPLEMENT rather than a mirror (that is why it may hold patterns the SoT does not) · and the pointer in `scoped/scope-planning.md` → `### Visual-Maximization Floor` — and SoT and detector are currently DRIFTED in both directions, the detector carrying patterns the SoT never adopted (including a pure-white-on-dark numeric floor with no canonical home) while omitting the SoT's mixed-radius and workflow entries (reported here, reconciliation is the SoT owner's call).
 
 The mandated zinc/OKLCH dark canvas is the REQUIRED base — the SoT's no-shadcn-ification entry targets `zinc`-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE, NOT the dark canvas itself.
 
 ### Dark base default
+
+Four copies — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### Dark base default` (maintainer-read mirror) · and the delivered copies `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)` and `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec`; the planning mirror is DRIFTED, omitting the `oklch` background option permitted below, so a planner reading only its own file has no sanctioned oklch route to the background while that same file demands `oklch()` for dark colors (reported here, reconciliation is the rule owner's call).
 
 HTML primary body defaults to dark mode (aligns with the user's dark homepage · reduces eye strain):
 
@@ -120,11 +130,15 @@ HTML primary outputs MUST satisfy all of:
 
 Detail authoring contract: see `glass-atrium-intel-reporter.md` "HTML Visual Decision Requirements" section.
 
+Five prose copies of this list, all in agreement — this one and `scoped/scope-planning.md` → `### HTML Visual Decision Requirements (D8)` (byte-identical, both maintainer-read) · the delivered copies `agents/glass-atrium-intel-reporter.md` → `### Pre-Emission HTML Validation (D8 + Schema)` and `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]` · and the reviewer-side rollup `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — none of the five is the numeric authority, which is the JSON named in `### Threshold SoT` below.
+
 ### Threshold SoT
 
 The canonical D8 numeric thresholds (comparison-table maxColumns=5, WCAG contrast text 4.5:1 / UI 3:1, typography ≤3 levels) are defined in `monitor/src/server/clauded-docs/d8-thresholds.json` — the server-enforced source-of-truth the validator `JSON.parse`-loads at module init.
 
 The literals quoted in prose throughout this file are a documented MIRROR synced at review time — do NOT treat a prose number as the source · editing a prose number without updating the JSON FORBIDDEN.
+
+This same paragraph stands in three places — here, `scoped/scope-planning.md` → `### Threshold SoT` and `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — and none of the three reaches an agent at spawn (measured 2026-09-10), so their reader is the maintainer while the validator reads the JSON alone.
 
 ### Agent-only record authoring guide (token-optimized fallback)
 
@@ -147,6 +161,8 @@ Agent-only documents MUST minimize token cost and use the notation / format easi
 - **agent-only selection trigger**: the agent-only record is the DEFAULT — emit it whenever the user did NOT request a document but a record is worth keeping (U1 explicit user instruction to record · U2 intermediate deliverable in a multi-agent chain · U3 cross-session search catalog · U4 token-heavy raw-source synthesis). Prefer an existing mechanism when it can substitute (`memory/progress` session self-resume · one-off in-prompt handoff · `~/.claude/data/outcomes` after-action · `learning-log` accumulated patterns). Detailed use-cases + boundary definition: `glass-atrium-intel-reporter.md` Authoring Contract → `Use-Case Triggers` section canonical.
 
 ### Emission contract
+
+Four copies of the POST tuple, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `### Emission contract`, which already declares itself this section's mirror (maintainer-read) · and the delivered curl copies `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` — none of the four is the authority, which is the route source named in the tuple bullet below.
 
 - Agents MUST emit via `POST /api/clauded-docs` (`127.0.0.1:16145`). The POST body carries NO `prefix` field — format is determined by the supplied body-field kind (`html_body` → HTML primary; `md_body`/`yaml_body`/`json_body`/`txt_body` → agent-only record). The monitor stores HTML as a single file in the monitor-internal root (no MD companion generated — `md_copy_path` response NULL)
 - **Required POST tuple** (source: `monitor/src/server/routes/clauded-docs.ts`):
@@ -228,9 +244,13 @@ Constraints that come with that tag:
 - **The only script exception**: this external Mermaid `<script src>` is the **ONLY permitted non-Tailwind `<script>`** in an exposed HTML primary (D8 sandbox-safe interactivity otherwise bars third-party JS).
 - **No block → no runtime**: no `<pre class="mermaid">` block → do NOT load it.
 
+Four copies of the runtime-load contract above, all in agreement — this one (canonical, maintainer-read) · `scoped/scope-planning.md` → `## Diagram Standard [PLANNING]` (maintainer-read mirror) · and the delivered copies `agents/glass-atrium-intel-reporter.md` → `### Sandbox-Safe Interactivity (MUST)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`, which are the only ones their agents read — so edit the four together.
+
 Author-side skeleton + 3-layer a11y: cite [[visual-expression-exposed-html-docs]] (Tier 2 Mermaid external UMD CDN).
 
 **Permitted Mermaid types** (the adopted set — 7 types · SoT: `monitor/src/server/clauded-docs/diagram-types.json`): `flowchart` (header `flowchart TD` · `LR` only per the `## Pre-drawing Doctrine` Direction step · `RL`/`BT` forbidden) · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context`/`C4Container`/`C4Component`). Any other type is excluded (doctrine Type step) — express that content as a table or prose.
+
+Adopted set = 7 · SoT `monitor/src/server/clauded-docs/diagram-types.json`, read once at module init by the monitor HTML validator, which throws on a malformed shape · six prose copies restate the set and the JSON governs every one of them: this one, the `## Pre-drawing Doctrine` Type step below, the single planning-side copy at `scoped/scope-planning.md` → `## Diagram Standard [PLANNING]`, the two agent bodies `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-intel-planner.md`, and `skills/glass-atrium-design-html-co-emission/SKILL.md`. Planning's `## Pre-drawing Doctrine [PLANNING]` states no type literal and `scripts/test/doctrine-budget-parity.bats` holds it to naming this file as its SoT and restating no divergent cap, so it is not a copy of the type list and the skill is the sixth member rather than an extra beyond six — and that sixth copy currently states fourteen permitted types in both its frontmatter description and its body, seven of which the JSON lists as excluded, a live divergence reported here and left to that skill's owner.
 
 **FORBIDDEN in a user-requested HTML primary** (the agent-only branch below has its own rules):
 - Ad-hoc HTML graph notation in prose (e.g., free-form text "graph TD A --> B" outside a `<pre class="mermaid">` block)
@@ -296,6 +316,8 @@ Decision order before drawing (each step builds on the previous):
 
 Delivered mirror: `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` carries the operative subset, because this file does not reach glass-atrium-intel-reporter at spawn (measured 2026-09-10). This section stays canonical; edit both together.
 
+The full cluster is six copies — this section (canonical, maintainer-read) · `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` (maintainer-read mirror) · the delivered author-side copies `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · the designer-side stub `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, which holds the trigger, the output fields and the veto line so the veto stays reachable when the skill is not loaded · and the full consultative scope in `skills/glass-atrium-design-html-co-emission/SKILL.md`, which the designer reads only on invocation — so the split between the last two is deliberate and is not a duplicate to be collapsed.
+
 When a **user-requested HTML primary** deliverable exceeds the visually-heavy threshold, route automatically to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode. Below the threshold, glass-atrium-intel-reporter solo (default). The probe is gated only on "is this a user-requested HTML artifact?" — an agent-only record never triggers it.
 
 **T1-T5 indicator table** (co-emission MUST when 2+ co-occur · 1 or fewer = solo):
@@ -324,6 +346,7 @@ When a **user-requested HTML primary** deliverable exceeds the visually-heavy th
     - the orchestrator surfaces it to the user only if genuinely ambiguous.
   - The exception suspends nothing else: R2 (parallel stitching) / R3 (second POST) remain FORBIDDEN, and the default team stays `{glass-atrium-intel-reporter, glass-atrium-design-designer}` (glass-atrium-design-designer verdict-only, no markup).
   - Governance + boundary: `scope-dev.md` → DEV Agent Fleet Governance.
+  - Six copies of this exception, all in agreement — here and `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` (both maintainer-read) · the delivered author copies `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` (reader: that agent) · and `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, which is not canonical yet is the only copy reaching every subagent, so the orchestrator half of the handoff is the half that always arrives.
 - excluded scope — agent-only record (LLM-readability-first · visual fidelity 100% abandoned · never a user-requested HTML artifact)
 
 **Designer contribution scope**:

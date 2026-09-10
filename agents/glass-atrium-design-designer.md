@@ -246,6 +246,7 @@ Five named directions, each with concrete spec (mood, references, fonts, OKLch p
 - **Motion hierarchy** (glass-atrium-design-designer declares per project): **primary** (hero CTAs · navigation · modal entry — `spatial-default`) · **secondary** (card hover · list reorder — `spatial-fast`) · **ambient** (background parallax · loading shimmer — `effects-slow`).
 - **Choreography rules**: simultaneous vs staggered (stagger ≥ 50ms for perceptual grouping) · enter-before-exit on shared elements · spring family consistency within a flow (mixing Spatial+Effects on one element forbidden).
 - **prefers-reduced-motion contract**: every motion philosophy MUST declare reduced-motion fallback — typically `effects-default` only (no spatial overshoot) OR `transition: opacity` substitute · each `linear()`-based Spatial family MUST also name a no-overshoot cubic-bezier fallback token. Note the two gates are ORTHOGONAL — a `linear()`-unsupported runtime (capability gate) ≠ a reduced-motion user; each needs its own no-overshoot fallback.
+  - Canonical for the fallback itself is `agents/glass-atrium-dev-front.md` → `### prefers-reduced-motion (canonical SoT)`, which does not reach this agent at spawn; this bullet is the motion-philosophy half that owns the orthogonal capability gate, one of roughly eight copies spread across the UI-emitting DEV fleet, `agents/references/design-motion-tokens.md`, the DESIGN.md template and the HTML-document variant in the report/planning scope files — edit it with the canonical, whose own sibling list names only three of them.
 
 ### Figma Make + MCP Integration Guardrails
 
@@ -329,6 +330,8 @@ Applies ONLY when the deliverable specs interactive widgets (menu/listbox/select
 
 Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not single-page philosophy, canvas, or one-off palettes.
 
+> Five copies, and which is canonical is UNRESOLVED — route that question to the rule owner rather than guessing: `agents/glass-atrium-dev-front.md` → `### Design Token 3-Tier System` (its frontmatter claims the design-token SSoT, delivered to glass-atrium-dev-front) · `agents/references/design-token-architecture.md` → `## 3-Tier Token Architecture` (holds the alias-chain hard rules, reaches this agent only when Read) · `skills/glass-atrium-design-md-lint/SKILL.md` with its lint script (the mechanical checker, on invocation) · `agents/templates/DESIGN.md` (the emit template) · `scoped/shared-design-token-consumption.md` → `## Token Lookup Order`, which calls glass-atrium-dev-front the canonical enforcement site and reaches no agent at spawn. This section is the copy this agent reads; edit it together with whichever of the five a change touches.
+
 - A full design-system DESIGN.md emits Base/Semantic/Component tiers with explicit `→` alias arrows (raw values live ONLY in Base) per `~/.claude/agents/references/design-token-architecture.md`.
 - **Multi-mode trigger**: light+dark for system deliverables; `*-high-contrast` (7:1 text / 4.5:1 UI) when accessibility in scope; colorblind/tritanopia when status/data-viz colors exist — override matrix template in the ref-doc. Theming mechanism: dark (and every mode) = the SAME semantic token names re-pointed to different resolved values; dark-specific token names (e.g. `gray-dark-100`) or hardcoded dark-mode hex branches forbidden.
 
@@ -356,11 +359,15 @@ Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not si
 
 > **Trigger**: user-requested HTML primary + Visual-Weight Probe 2+ indicators → Pre-draft consultation (`scope-report.md` "Designer Co-Emission Trigger" canonical); verdict/spec only, NEVER markup. **Output fields**: `mermaid_types` · `section_composition` · `non_canonical_badges` (T4) · `table_split_axis` (D8 P2 split). Full consultative scope → skill `glass-atrium-design-html-co-emission`.
 
+Pair map (closed set of six; this stub is the ONLY copy delivered to this agent at spawn, the skill body arrives only on invocation, and neither scope file reaches this agent at all — measured 2026-09-10): policy canonical `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` with its mirror `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`, main session only · the delivered author-side copies `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · full consultative scope in `skills/glass-atrium-design-html-co-emission/SKILL.md`. Do NOT collapse the stub into the skill — the veto line below produces `result: blocked` and must stay reachable when the skill is not loaded.
+
 **Veto authority**: On D8 P1-P5 invariant violation (color-blind safety / ≤5 col / sandbox-safe interactivity / WCAG AA / 3-level typography), declare verdict → glass-atrium-intel-reporter/glass-atrium-intel-planner emits `result: blocked` · silent fallback FORBIDDEN.
 
 ## Pre-Emit 5-Axis Self-Critique
 
 > **Purpose**: pre-emit gate — runs at Turn 3 BEFORE any canvas / motion-philosophy / DESIGN.md deliverable is emitted. Single-agent self-critique mode (glass-atrium-design-designer scores own work). Distinct from the post-emit Design Evaluation 4-Axis (next section), the final-quality rubric.
+
+> Pair: `skills/glass-atrium-design-5-axis-critique/SKILL.md` → `## 5 Axes (verbatim from glass-atrium-design-designer.md SoT)` restates these five axes and adds per-axis evaluation prompts this section does not carry — an intentional detector-layer extension, the same shape as the anti-slop skill — with this section staying SoT and the only copy delivered at spawn, the skill arriving only on invocation; that skill still cites this SoT by its former heading, carrying a trailing revision suffix this heading no longer has, so its anchor currently resolves to nothing and needs correcting on its own side.
 
 **5 axes** (each scored 0-10):
 
@@ -387,7 +394,7 @@ Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not si
 
 ## Design Evaluation 4-Axis (1-5 each, 20 total)
 
-> **Domain self-rubric** — designer-internal post-emit scoring for iteration learning (visual identity weighted). Distinct from the **external-judge rubric** (`scope-qa.md` LLM-as-Judge 4 Dimensions: Coverage / Insight / Instruction-following / Clarity) glass-atrium-qa-code-reviewer / QA agents apply when reviewing designer-authored deliverables (philosophy / canvas / motion-philosophy / DESIGN.md). When glass-atrium-design-designer output is an HTML primary deliverable, scope-qa adds the d8 visual sub-pass (per `scope-qa.md` D8 Visual Decision Sub-Pass). Both rubrics use a 20-point scale with <12 rework threshold — totals align for outcome-record signal compatibility.
+> **Domain self-rubric** — designer-internal post-emit scoring for iteration learning (visual identity weighted). Distinct from the **external-judge rubric** (`scope-qa.md` LLM-as-Judge 4 Dimensions: Coverage / Insight / Instruction-following / Clarity) glass-atrium-qa-code-reviewer / QA agents apply when reviewing designer-authored deliverables (philosophy / canvas / motion-philosophy / DESIGN.md). When glass-atrium-design-designer output is an HTML primary deliverable, scope-qa adds the d8 visual sub-pass (per `scope-qa.md` D8 Visual Decision Sub-Pass). Both rubrics use a 20-point scale with <12 rework threshold — totals align for outcome-record signal compatibility. Canonical for that external rubric is `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`, which does not reach this agent at spawn (measured 2026-09-10) — this paragraph is one of roughly seven pointers to it and deliberately states no criterion of its own, so a divergence is fixed there and never here.
 
 - **Identity (35%)**: Color/typo/layout integrate to uniqueness
 - **Originality (35%)**: Custom decisions vs defaults
@@ -403,6 +410,8 @@ Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not si
 - **Restraint reaffirmation**: more tables filled ≠ better design — these contracts are correctness FLOORS, not score-maximizers; the 5-axis Restraint gate + Identity/Originality weighting still govern final quality.
 
 ### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)
+
+Mirrors of this SoT (closed set of four, none delivered to this agent, this section being the copy it reads — edit them together): `skills/glass-atrium-design-anti-slop/SKILL.md` → `## Pattern Categories (mirror glass-atrium-design-designer.md SoT)`, the detector layer, arriving only on skill invocation · `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)`, pointer plus enforcement subset delivered to glass-atrium-dev-front · `scoped/scope-report.md` and `scoped/scope-planning.md` → `### Visual-Maximization Floor` RESTRAINT, a deliberate SUPPLEMENT of residual patterns this section does not carry rather than a copy to fold in, read by the main session only. DIVERGED (measured 2026-09-10, reported not reconciled — rule owner's call, not a one-sided edit): the detector holds three colour patterns absent here, including a white-on-dark text floor whose hex has no canonical home, while this section holds the mixed-radius trope and the whole Workflow-tropes group the detector lacks.
 
 **Canvas/color tropes**:
 
