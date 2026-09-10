@@ -1,0 +1,24 @@
+# Suite census — one row per test root per occasion. Append-only; never rewrite a row.
+# Columns: iso8601_utc	short_sha	root	bats	python	ts
+# Occasion: the pre-merge live-deploy gate (orchestrator-role.md -> Document-Driven Workflow step 6),
+#   at the point the combined tree is deployed and run-bats-parallel.sh is run before the PR opens.
+# Five roots, not four: run-bats-parallel.sh recurses only the first four and monitor/test is absent
+#   from the live install, so a census keyed to the runner reproduces the blind spot it exists to watch.
+# This is a RECORD, never a gate: no threshold, no CI failure on growth. Honor-system, like the rest of step 6.
+# Command: see .claude/prompt-audit/evidence/ledger.md -> "Suite census" (single copy, not duplicated here).
+# The first three rows are a BACKFILL of the CI diet, computed with git grep over each commit's tree.
+2026-09-07T03:07:32Z	8229b66	test	776	0	0
+2026-09-07T03:07:32Z	8229b66	hooks/test	1509	290	0
+2026-09-07T03:07:32Z	8229b66	scripts/test	676	145	0
+2026-09-07T03:07:32Z	8229b66	autoagent/test	172	796	0
+2026-09-07T03:07:32Z	8229b66	monitor/test	0	0	1305
+2026-09-08T09:36:48Z	88cee9f	test	691	0	0
+2026-09-08T09:36:48Z	88cee9f	hooks/test	1509	290	0
+2026-09-08T09:36:48Z	88cee9f	scripts/test	634	140	0
+2026-09-08T09:36:48Z	88cee9f	autoagent/test	172	796	0
+2026-09-08T09:36:48Z	88cee9f	monitor/test	0	0	1165
+2026-09-09T15:34:53Z	8ac62b8	test	691	0	0
+2026-09-09T15:34:53Z	8ac62b8	hooks/test	1512	290	0
+2026-09-09T15:34:53Z	8ac62b8	scripts/test	634	140	0
+2026-09-09T15:34:53Z	8ac62b8	autoagent/test	172	796	0
+2026-09-09T15:34:53Z	8ac62b8	monitor/test	0	0	1173

@@ -6,7 +6,7 @@
 
 ## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]
 
-The DEV fleet roster (SoT) = the Tier-2 loading stanza above. This section governs when that roster may grow. Cross-ref: `orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is the basis that keeps `domains` arrays distinct enough for that routing.
+The DEV fleet roster (SoT) = the Tier-2 loading stanza above; its `agent_scope ∈ {…}` brace list is machine-parsed by production code (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, re-parsed on every edit by `stanza.py`), which raises `ReaderError` / `StanzaError` and aborts the lifecycle operation when the brace form is absent — no test asserts against this file's bytes, so a reworded stanza surfaces at agent add/delete time, never in CI. This section governs when that roster may grow. Cross-ref: `orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is the basis that keeps `domains` arrays distinct enough for that routing.
 
 ### Separation Axis [DEV+META]
 
@@ -73,7 +73,7 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 - On completion, record pass/fail per criterion → Reflect in Outcome Record
 - **Sizable-task definition (single SoT — the positive entry floor)**: a DEV task is **SIZABLE** (MUST enter the Document-Driven Workflow — plan authoring + Stage-2 entry) when **ANY ONE** of the criteria below holds.
   - **Read this FIRST (governing):** this is an **orchestrator-judgment criterion, not a hook-computed value** — size is not statically computable at delegation time (target-file count is free-prose, turn count is post-spawn); no hook reads or parses it. Apply the criteria below as conservative judgment cues, not mechanical bright-lines.
-  - (a) **multi-file blast radius — ~3+ COORDINATED target files**. 3+ files is a STRONG sizable signal; borderline → SIZABLE. This is a blast-radius judgment cue (proxy for ripple), NOT a hard file-count bright-line — only genuinely-independent trivial multi-file edits (no shared contract/behavior) are NOT auto-sizable.
+  - (a) **multi-file blast radius — ~3+ COORDINATED target files**. 3+ files is a STRONG sizable signal (blast radius, a proxy for ripple); borderline → SIZABLE — only genuinely-independent trivial multi-file edits (no shared contract/behavior) are NOT auto-sizable.
   - (b) **cross-module change** — the change spans ≥ 2 distinct modules / packages / bounded-contexts (e.g. server route + DB schema; mobile UI + native bridge), even at low file count.
   - (c) **≥ 3 expected agent turns** — the orchestrator's pre-delegation estimate of agent turns to complete is 3+.
   - (d) **public-contract change** — the change alters a public API signature, a persisted data schema, or a cross-agent / cross-service contract (a 1-file change can still be sizable via blast-radius — ripple, not line-count).
@@ -86,9 +86,7 @@ Default = **extend an existing agent**; creation is the exception. Before creati
   - **Honest caveat — gate enforces signal-ABSENCE, not size**: the gate blocks only the "no plan-ref AND no token" case; it does NOT compute whether a task is genuinely sizable ('sizable' stays orchestrator-judgment per the bullet above, not hook-computed). The `simple-task` token is **self-emitted**, so a gamed token (a sizable task mislabeled simple) still passes — the gate stops the unsignalled entry, not the misclassified one. Fail-open is preserved (internal error / missing tooling → exit 0, never blocks legitimate work).
   - **Not-gaming clarification (honesty, not bias):** emitting `[ENTRY-CLASS] simple-task` after an HONEST judgment that NONE of the four sizable criteria genuinely hold is the CORRECT, expected use of the token — it is NOT gaming. Gaming is ONLY the dishonest inverse: knowingly labeling a task that DOES meet a criterion as simple.
     - Error-direction asymmetry under the no-편법 value: **under-classifying sizable work as simple is the DANGEROUS error (a 편법 — it skips the plan + Stage-2 the work actually needed); over-escalating a genuinely-simple task is the SAFE error.** When a case is borderline, prefer SIZABLE (per the top framing of the Sizable-task definition).
-    - This clarification adds NO new "simple" cases — the `simple-task` token is valid ONLY when NONE of the four criteria genuinely hold.
   - **Sibling token — `[SIZE-EST]` (delegation-size self-attestation)**: this Spawn-time entry gate answers "is this DEV spawn classified?" (sizable vs simple, via `[ENTRY-CLASS]`/plan-ref); `[SIZE-EST]` is a separate self-attestation answering "how big is THIS delegation?" (bundle-count + rough tool_use estimate, gating per-delegation PACKING split vs no-split) — contract SoT: `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline (do not restate the format here).
-    - Both share the same honesty framing (under-estimating = dangerous error, over-estimating = safe error).
     - BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only) + ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`). A gamed estimate still passes.
 - **Work outside the delegation's `[SCOPE]` is SURFACED, never performed**: spotting something worth doing that the delegation's `[SCOPE] files=` does not cover — an adjacent refactor, an extra test, a neighbouring cleanup, the thing you are "already in there anyway" for — does NOT authorize doing it.
   - Record it in the `[COMPLETION]` `concerns:` field, and when it genuinely blocks the tasked work return `needs_context` with the proposal instead of proceeding.
@@ -118,8 +116,8 @@ When the orchestrator routes a complex plan to direction verification (gate oper
   > `name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists`
   - **Why the EARLIEST link and not the newest** (the rationale slot this gate owns): each link of a chained plan is justified against the state the previous link established, so every link is locally inside the reference it was checked against and a per-link test structurally cannot fail. The first decision is the only one whose replacement re-prices everything built on top of it, and it is the one nobody re-opens once later tasks depend on it — which is why the question is STANDING rather than raised when something already looks wrong.
   - **Answer it as three parts**: name the DECISION (not the task id carrying it); count the current tasks that survive replacing it, derived from the current task list at verdict time rather than from the plan's own account; and give the cheaper replacement where one exists — `none cheaper` is an answer, silence is not. A first link you cannot price is reported `UNVERIFIABLE` by name, not waved through.
-  - **The question is a LITERAL with ONE home**: the backticked sentence above is quoted verbatim into the workflow verify-stage goal text (`skills/glass-atrium-ops-orchestrator.md` → `### Pipeline Acceptance Criteria`) and is what a raw-script presence scan can look for. Paraphrasing it there removes the mechanical half silently, so quote it rather than restate it.
-  - Honest backing: the QUESTION's presence in the raw workflow script is mechanically checkable — a byte scan, which cannot separate a delegation's goal text from a mention of one; the ANSWER's existence is not checkable at all. The canonical verify stage is text-mode and declares no schema, so no required key can force an answer into a payload — a DOWNGRADE from the schema-key shape this replaced, stated plainly rather than presented as a swap of equals. Whether you answer, and whether the answer is honest, is honor-system.
+  - **The question is a LITERAL with ONE home**: the backticked sentence above is quoted verbatim into the workflow verify-stage goal text (`skills/glass-atrium-ops-orchestrator.md` → `### Pipeline Acceptance Criteria`) and is what a raw-script presence scan can look for. Paraphrasing it there removes the mechanical half silently, so quote it rather than restate it. Machine-checked: `hooks/test/enforce-workflow-verify-stage-firstlink.bats` extracts that line from this file byte-for-byte against the hook's literal, so its bullet label and `> ` indent are load-bearing too.
+  - Honest backing: the QUESTION's presence in the raw workflow script is mechanically checkable — a byte scan, which cannot separate a delegation's goal text from a mention of one; the ANSWER's existence is not checkable at all. No required key can force an answer into a payload (same text-mode reason as the premise check above) — a DOWNGRADE from the schema-key shape this replaced, stated plainly rather than presented as a swap of equals. Whether you answer, and whether the answer is honest, is honor-system.
 - **Non-waiver (binding on YOU, not on the delegation)**: the standing jobs of this gate — the load-bearing premise check and the first-link question above, and every other standing job this section names — are BINDING and are NOT waivable by delegation phrasing.
   - A prompt instruction narrowing the recheck ("only re-check X", "the rest is settled", "not yours to re-open") does NOT suspend them: run them anyway and NAME the narrowing instruction in the `feasible`/`infeasible` verdict you emit.
   - Shape borrowed from the corpus's own self-enforce precedent (`scope-report.md` Output Format Routing — the agent's own rule binds over any orchestrator phrasing). Honest ceiling: honor-system and unverifiable — an actor that obeys the fence anyway leaves no trace.
@@ -140,15 +138,14 @@ When the orchestrator routes a complex plan to direction verification (gate oper
 
 ### Assumptions Disclosure (Karpathy Think-Before-Coding) [DEV+PLANNING]
 
-- DEV and PLANNING agents MUST emit explicit `Assumptions:` line on first turn of every task — `Assumptions: 0건` when no implicit assumptions exist, OR `Assumptions: N건` followed by N noun-phrase lines (each ≤15 tokens · one assumption per line)
-- Each assumption MUST be a noun-phrase (verbosity control) — verb-stem / full-sentence form FORBIDDEN
-- EARS: "When an agent starts a task with Ambiguity Score < 0.8, the system shall require an explicit 'Assumptions:' line"
+- DEV and PLANNING agents MUST emit explicit `Assumptions:` line on first turn of every task — `Assumptions: 0건` when no implicit assumptions exist, OR `Assumptions: N건` followed by N lines, one assumption per line
+- EARS: "When a DEV or PLANNING agent starts a non-exempt task, the system shall require an explicit 'Assumptions:' line"
 - Exempt: simple tasks (typo / import / config) — matches the Ambiguity Gate exemption condition
 - Rationale: implicit assumptions silently embedded in code = leading cause of revision_count ≥ 2 — surfacing them at turn-0 prevents downstream rework
 
 ### Pre-Edit Facts Disclosure (Karpathy Investigation-Before-Editing) [DEV]
 
-- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape (parsed by the Stop advisory hook):
+- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape:
 
   ```
   Pre-Edit Facts: <file_path>
@@ -196,11 +193,11 @@ When the orchestrator routes a complex plan to direction verification (gate oper
 
 ## Complete Implementation Principle [DEV]
 
-- **Default = Complete implementation** (following TDD cycle) · 150 lines complete > 80 lines at 90% (→ **always complete**)
+- **Default = Complete implementation** (following TDD cycle) · 150 lines complete > 80 lines at 90%
 - **No TODOs within scope** · Out-of-scope TODOs allowed in shared-comment-logging.md format (`owner/TICKET`)
 - Performance optimization → shared-performance.md "measurement first" principle takes precedence
 - Partial allowed: ①User explicitly requests ②Technically impossible → `done_with_concerns`/`blocked`
-- **Dual effort notation mandatory**: `(Human: 2 weeks / AI: ~1 hour)` — single notation forbidden
+- **Dual effort notation mandatory**: `(Human: 2 weeks / AI: ~1 hour)`
 
 ## Pre-Execution Verification [DEV]
 
@@ -216,9 +213,9 @@ When the orchestrator routes a complex plan to direction verification (gate oper
   - **Probe failure** (glob err / read err) → emit warning, do NOT block (ask user when ambiguous).
   - See `shared-search-first.md` → Pattern recognition.
 - **Ripple check**: Before the first `Write`/`Edit`, reason one line beyond WHAT surface changes (the layer Pre-Edit Facts covers) to WHAT breaks / bends / slows downstream as a consequence — callers, dependent APIs, affected tests, integration points. This is a free-text reasoning step you perform:
-  - NOT a 5th `Pre-Edit Facts:` key — the `advisory-preedit-facts.sh` hook parses exactly the 4 fixed keys importers / affected-API / data-schemas / user-instruction, so a 5th key would be malformed input.
+  - NOT a 5th `Pre-Edit Facts:` key — that block's four keys are fixed by the rule above, and the advisory reads only the `Pre-Edit Facts:` header line, so nothing mechanically rejects a 5th (honor-system).
   - NOT a missing-info gather item — no Gap Table / user question; you reason it yourself.
-- **Gap Table on Missing Info**: when 1+ of the Pre-Execution Verification check items is found missing → a prose response is FORBIDDEN; a table-format emit is a MUST; ask exactly one question immediately after emitting the table (aligns with GLASS_ATRIUM_GLOBAL_RULES "1 issue = 1 question"); writing code before receiving the user's answer is forbidden:
+- **Gap Table on Missing Info**: when 1+ of the Pre-Execution Verification check items is found missing → emit the table below rather than prose; ask exactly one question immediately after emitting the table (aligns with GLASS_ATRIUM_GLOBAL_RULES "1 issue = 1 question"); writing code before receiving the user's answer is forbidden:
 
   | 항목 | 상태 | 필요 정보 |
   |------|------|-----------|
@@ -259,7 +256,7 @@ When a task admits multiple vendors / engines / libraries for the same capabilit
 
 ## Agent-Level Tool Exceptions [DEV]
 
-- **glass-atrium-dev-rag**: WebSearch and WebFetch are retained for RAG domain research and technique verification — exception to the general DEV tool restriction. See glass-atrium-dev-rag.md frontmatter and scope-dev.md for rationale.
+- **glass-atrium-dev-rag**: WebSearch and WebFetch are retained for RAG domain research and technique verification — exception to the general DEV tool restriction. See `glass-atrium-dev-rag.md` frontmatter.
 
 ## Prohibitions [DEV]
 
@@ -285,7 +282,7 @@ When a task admits multiple vendors / engines / libraries for the same capabilit
 - Function ≤20 lines
 - Same pattern not copy-pasted ≥3 times
 - Test difficulty not exceeding implementation difficulty
-- **Senior-engineer self-check** — "Can a senior engineer apply this without discussion? Yes/No" (No → halt + redesign · cross-ref: `## Confirm Tier Refinement` Heuristic)
+- **Senior-engineer self-check** — the `## Confirm Tier Refinement` heuristic applied to your own diff (No → halt + redesign)
 
 Violation → halt + redesign rather than commit.
 
@@ -293,7 +290,7 @@ Violation → halt + redesign rather than commit.
 
 These are judgment defaults you bias toward, not hard gates — exceed any of them when you can state a concrete reason (a request line, a failing test, a named workload trigger). They limit unrequested scope and abstraction, not the completeness of the requested change: finish the asked-for work fully, just don't add work nobody asked for.
 
-- **Complexity proportionality**: solution complexity should track problem complexity — a one-sentence change biases toward a single-file, minimal edit. Exceed only with a stated reason.
+- **Complexity proportionality**: solution complexity should track problem complexity — a one-sentence change biases toward a single-file, minimal edit.
 - **Abstain when already satisfied**: before modifying existing code, check whether it already meets the requirement — if so, prefer a note plus zero changes over a rewrite. Don't "fix" code that was already correct.
 - **Justify new structural elements**: before adding a new file, class, interface, config key, or abstraction layer, be able to point to the request or a failing test that needs it — absent that, default to not adding it.
 - **Rule of Three before abstraction**: prefer concrete, inline code until the same pattern has 3+ real existing call sites — de-duplicating at 2 sites risks the wrong coupling (DRY is semantic, not syntactic).
@@ -304,6 +301,7 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
+<!-- BYTE-BUDGET: also feeds inject-scope-rules.sh; the `Minimalism reflex` lead is pinned by hooks/test/inject-scope-rules-nodrop.bats under the same 9984B ceiling. -->
 <!-- AGENT-INJECT:MINIMALISM:START -->
 **Minimalism reflex (auto-injected · full: ~/.glass-atrium/scoped/scope-dev.md)** Lazy senior engineer, every response: efficient, never careless.
 - Ladder (stop at the first rung that holds; runs AFTER you understand the problem + the code it touches, never instead): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code LAST.

@@ -2,11 +2,6 @@
 
 Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
 
-## Pre-Commit Verification
-
-- All existing tests MUST pass before committing · committing with failures is FORBIDDEN
-- New features → unit tests SHOULD accompany · bug fixes → a failing test MUST be written first
-
 ## Test Quality
 
 - **Relationship over enumeration**: a test asserts a RELATIONSHIP that holds across an input class — not one hand-picked input/output pair. Anchor: Kent Beck, *Programmer Test Principles* (2019) — a test suite is sensitive to behavior change and insensitive to structure change.
@@ -28,25 +23,22 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
 
 ### Meaningless-Test Prohibitions
 
-**How to read the Check column (backing honesty).** MECHANICAL means **decidable-in-principle by a script — NOT that a script exists**.
+**How to read the Check column (backing honesty).** MECHANICAL means **decidable-in-principle by a script — NOT that a script exists**. **No row on this table is enforced.**
 
-- Of the rows below, exactly TWO have tooling: signals (a) and (b) of `scripts/audit-test-smells.sh`.
-- That auditor is **ADVISORY** — it exits 0 on findings — and is **NOT wired into CI**; it is run by hand.
-- The auditor carries a THIRD signal this table does not document — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file.
-  - **No row below states that smell**, so a signal-(c) finding maps to no row here — in particular it is not the tooling for the change-detector row.
+- Of the rows below, exactly TWO have tooling: signals (a) and (b) of `scripts/audit-test-smells.sh` — an **ADVISORY** auditor, exiting 0 on findings, **NOT wired into CI**, run by hand.
+- That auditor carries a THIRD signal **no row below states** — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row here, and is in particular not the tooling for the change-detector row.
 - Every row tagged `[no tooling]` has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
-- **No row on this table is enforced.**
 - Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
 
 | Prohibited | Smell (source) | Detection signature | Check |
 |---|---|---|---|
-| A test with no assertion, or whose only claim is "it did not throw" | assertion-free test (the `expect-expect` lint rule family) | **xUnit / JS**: zero assertion nodes in the test body. **Bats / shell**: a bare command whose non-zero exit fails the test IS the assertion, so "no assertion node" is meaningless here — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body (the result was captured and then never inspected). | MECHANICAL — tooling: signal (a) |
+| A test with no assertion, or whose only claim is "it did not throw" | assertion-free test (the `expect-expect` lint rule family) | **xUnit / JS**: zero assertion nodes in the test body. **Bats / shell**: a bare command whose non-zero exit fails the test IS the assertion, so "no assertion node" is meaningless here — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body. | MECHANICAL — tooling: signal (a) |
 | An assertion that cannot fail | tautological test (Pereira 2010) | the asserted value is a literal compared to itself, or is the same variable the test set, with no call into the code under test between set and assert | MECHANICAL — tooling: signal (b) |
 | Asserting back the value a mock was configured to return | tautological test — mock-echo sub-case | a literal or variable handed to a mock's return-configuration reappears untransformed in the same test's assertion | MECHANICAL `[no tooling]` — JS/Python shapes only; the shell corpus has no mock-configuration form |
-| An expected value copied from observed output | change-detector test (Google Testing Blog 2015) | full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec. **Carve-out — a characterization test (see Test Quality) is EXEMPT**: copying observed output is its whole purpose. The exemption is bounded by that carve-out's own condition — deliberately temporary, and rewritten or deleted once the refactor lands. A snapshot with no stated expiry is not a characterization test and is not exempt. | JUDGMENT `[no tooling]` |
+| An expected value copied from observed output | change-detector test (Google Testing Blog 2015) | full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec. **Carve-out — a characterization test (see Test Quality) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not a characterization test and is not exempt. | JUDGMENT `[no tooling]` |
 | Near-duplicate cases that one property or one parameterized table would cover | test code duplication (van Deursen et al. 2001) | 3+ test bodies differing only in literals, all inside ONE equivalence class | JUDGMENT `[no tooling]` — see the DAMP carve-out |
 | A test whose target has no branch and no logic | trivial getter/setter/constructor test | the production target is a single assignment or return with no branch, and the test only sets then gets | JUDGMENT `[no tooling]` — resolving the production target from the test is not implemented |
-| Control flow that can SKIP an assertion | conditional test logic (Meszaros 2007) | `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing. **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form and is the preferred shape under Test Quality step 2. The trigger is a skippable assertion, never the presence of a loop keyword. | JUDGMENT `[no tooling]` — deliberately excluded from the auditor (the carve-out requires reading which branch the assertion sits on) |
+| Control flow that can SKIP an assertion | conditional test logic (Meszaros 2007) | `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing. **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Test Quality step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword. | JUDGMENT `[no tooling]` — deliberately excluded from the auditor (the carve-out requires reading which branch the assertion sits on) |
 
 - **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper (Google Testing Blog, *Tests Too DRY? Make Them DAMP!*, 2019). The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
 - **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
@@ -66,7 +58,7 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
 
 ## Self-Review
 
-- After completing code changes → for each related test, state in one line the relationship it asserts; unable to state it → the test is not carrying its weight
+- After completing code changes → apply the Test Quality decision procedure to each related test; one whose relationship cannot be stated is not carrying its weight
 - Core business logic → check that the equivalence classes and their boundaries are covered, not that more cases were added
 
 ## TDD Discipline (Absolute Rules)
@@ -96,8 +88,7 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
 
 - Execute in T1 → T2 → T3 order (fast feedback first)
 - Diff-based: run only T2 tests related to changed files first
-  - Automatically select related tests based on changed files: `src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`
-  - Mapping rules are applied per project test structure
+  - Automatically select related tests based on changed files, per that project's test structure: `src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`
 - Full T3 pass REQUIRED before commit
 
 ## Mechanical Success Metrics
@@ -105,5 +96,4 @@ Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = cod
 > Detailed per-task-type pass conditions: See `core-outcome-record.md` Field Input Guide → `metric_pass` (canonical source; `bug-fix` adds exit code 0 check)
 
 - Metric results are recorded in the Outcome Record as a `metric_pass` (true/false) field
-- Discrepancy between subjective evaluation (confidence) and mechanical evaluation (metric_pass) → triggers review
 - `grader_verdict: verified_pass` on a code-type row is a PRESENCE signal, never a quality signal. Promotion rule SoT: `hooks/lib/code-based-grader.sh` → `_cbg_files_test_evidence`.
