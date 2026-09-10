@@ -9,11 +9,12 @@
 #   512B to 256B to admit the byte-contracted BUDGET-DEV block). This test PINS the invariant:
 #   assembled from the REAL repo sources (NOT hermetic fixtures) with the meter ON (worst case), the
 #   worst-case DEV assembly for every NAMING-roster DEV member fits the ceiling with ZERO drop-loop
-#   iterations — every roster-due block survives (seven blocks for a BUDGET_DEV_AGENTS member like
-#   dev-front). It is satisfiable ONLY with the compression; a ceiling raise alone cannot fit the
-#   pre-compression ~11540B sum. A future block edit that re-inflates the assembly past the ceiling
-#   re-triggers a drop and fails this test. The BUDGET-DEV source block additionally carries a
-#   <=300B byte contract (the D3 ceiling math input) pinned numerically below.
+#   iterations — every roster-due block survives (EIGHT blocks for a BUDGET_DEV_AGENTS member like
+#   dev-front, since the Stage-2 PLAN-GATE block joined the assembly). It is satisfiable ONLY with the
+#   compression; a ceiling raise alone cannot fit the pre-compression ~11540B sum. A future block edit
+#   that re-inflates the assembly past the ceiling re-triggers a drop and fails this test. The
+#   BUDGET-DEV and PLAN-GATE source blocks additionally carry byte contracts (<=300B / <=664B) pinned
+#   numerically below.
 #
 #   REAL-SOURCE wiring: the hook's INJECT_SCOPE_RULES_SRC / STYLEREF_SRC / NAMING_SRC / BUDGET_SRC /
 #   AGENTS_DIR env overrides are pointed at the repo files + real agents/ frontmatter (maxTurns →
@@ -46,6 +47,17 @@ DEV_FRONT_MAX_BYTES=9935
 # BUDGET-DEV source-block byte contract (hard bound; target 260B) — the D3 ceiling math input: the
 # 9984 ceiling admits the seven-block assembly ONLY while this block stays <=300B.
 BUDGET_DEV_MAX_BYTES=300
+# PLAN-GATE source-block byte contract. RE-DERIVED BY BISECT against the real assembly on
+# 2026-09-10 (not inherited from a relayed figure): driving the hook for dev-front with a synthetic
+# PLAN-GATE body of N bytes, N=664 assembles to exactly 9984 and sheds NOTHING, N=665 sheds
+# budget-dev AND plan-gate (one byte over the ceiling costs two blocks, because the first shed lowers
+# the ceiling by the 256B marker reserve and the freed budget-dev block is only 244B). So 664 is the
+# cliff, and the block ships at 586B with 78B of margin.
+#   NOTE the tighter bound bites first IN COMPOSITION: DEV_FRONT_MAX_BYTES above pins the whole
+#   dev-front assembly at 9935, which today sits at 9906 — so plan-gate growth past ~615B fails that
+#   pin before reaching this one. Both are kept: this one is the property of THIS block against the
+#   ceiling, that one catches growth anywhere in the assembly.
+PLAN_GATE_MAX_BYTES=664
 # Engine persist threshold: additionalContext larger than this is file-persisted + delivered as a
 # ~2KB preview (stripping later blocks). A lesson-drop marker legitimately overflows the 9984 ceiling
 # into the 256B margin below THIS threshold ("emit + accept"), so a full-drop assembly (7 proven blocks
@@ -67,6 +79,7 @@ MINIMALISM_NEEDLE="Minimalism reflex"
 NAMING_NEEDLE="Naming delta-core"
 BUDGET_DEV_NEEDLE="Budget sizing (auto-injected DEV"
 BUDGET_ANALYSIS_NEEDLE="Budget sizing (auto-injected analysis"
+PLAN_GATE_NEEDLE="Plan-gate verdict (auto-injected DEV"
 
 # The 12 NAMING-roster DEV agents — the worst case, receiving the six proven blocks (emit + meter +
 # comment + style_ref + minimalism + naming) PLUS budget-dev for BUDGET_DEV_AGENTS members (the four
@@ -327,6 +340,7 @@ assert_ctx_no_replacement_char() {
     assert_ctx_contains "${STYLEREF_NEEDLE}"  || { echo "FAIL agent=${agent} (style_ref)" >&2; return 1; }
     assert_ctx_contains "${MINIMALISM_NEEDLE}" || { echo "FAIL agent=${agent} (minimalism)" >&2; return 1; }
     assert_ctx_contains "${NAMING_NEEDLE}"    || { echo "FAIL agent=${agent} (naming)" >&2; return 1; }
+    assert_ctx_contains "${PLAN_GATE_NEEDLE}" || { echo "FAIL agent=${agent} (plan-gate)" >&2; return 1; }
     if [[ "${BUDGET_DEV_CARRIERS}" == *" ${agent} "* ]]; then
       assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}" || { echo "FAIL agent=${agent} (budget-dev leaked to carrier)" >&2; return 1; }
     else
@@ -338,13 +352,14 @@ assert_ctx_no_replacement_char() {
 # (b) The canonical worst-case member (maxTurns=80 → largest meter; seven blocks incl. budget-dev)
 # as an explicit single case, numerically bounded at the D3 plan figure (tighter than the ceiling).
 
-@test "dev-front (maxTurns=80 worst case) → seven blocks incl. BUDGET-DEV, zero drops, <= ${DEV_FRONT_MAX_BYTES}B" {
+@test "dev-front (maxTurns=80 worst case) → eight blocks incl. BUDGET-DEV + PLAN-GATE, zero drops, <= ${DEV_FRONT_MAX_BYTES}B" {
   run_hook_real "glass-atrium-dev-front"
   assert_status 0                             || return 1
   assert_no_drop                              || return 1
   assert_ctx_contains "${STYLEREF_NEEDLE}"    || return 1
   assert_ctx_contains "${NAMING_NEEDLE}"      || return 1
   assert_ctx_contains "${BUDGET_DEV_NEEDLE}"  || return 1
+  assert_ctx_contains "${PLAN_GATE_NEEDLE}"   || return 1
   assert_ctx_within_ceiling                   || return 1
   local ctx bytes; ctx="$(ctx_of)"
   bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
@@ -365,6 +380,9 @@ assert_ctx_no_replacement_char() {
   assert_ctx_contains "${NAMING_NEEDLE}"           || return 1
   assert_ctx_contains "${BUDGET_ANALYSIS_NEEDLE}"  || return 1
   assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"   || return 1
+  # PLAN_GATE_AGENTS is DEV-only: the reviewer is the OTHER Stage-2 participant and reads its own
+  # duty from scope-qa.md, so a plan-gate block here would be a roster leak, not a courtesy copy.
+  assert_ctx_not_contains "${PLAN_GATE_NEEDLE}"    || return 1
   assert_ctx_within_ceiling                        || return 1
 }
 
@@ -377,6 +395,9 @@ assert_ctx_no_replacement_char() {
   assert_no_drop                                  || return 1
   assert_ctx_contains "${BUDGET_DEV_NEEDLE}"      || return 1
   assert_ctx_not_contains "${NAMING_NEEDLE}"      || return 1
+  # dev-swift is OUT of the naming roster but IN the plan-gate roster — the two exclusions are
+  # independent, and a plan-gate roster copied from NAMING_AGENTS would silently lose it here.
+  assert_ctx_contains "${PLAN_GATE_NEEDLE}"       || return 1
   assert_ctx_within_ceiling                       || return 1
 }
 
@@ -389,6 +410,7 @@ assert_ctx_no_replacement_char() {
   assert_no_drop                                   || return 1
   assert_ctx_contains "${BUDGET_ANALYSIS_NEEDLE}"  || return 1
   assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"   || return 1
+  assert_ctx_not_contains "${PLAN_GATE_NEEDLE}"    || return 1
   assert_ctx_within_ceiling                        || return 1
 }
 
@@ -409,6 +431,27 @@ assert_ctx_no_replacement_char() {
   bytes="$(printf '%s' "${block}" | wc -c | tr -cd '0-9')"
   [[ -n "${bytes}" && "${bytes}" -le "${BUDGET_DEV_MAX_BYTES}" ]] || {
     echo "BUDGET-DEV source block ${bytes}B exceeds the ${BUDGET_DEV_MAX_BYTES}B byte contract" >&2
+    return 1
+  }
+}
+
+# (c5) Numeric source-contract pin for PLAN-GATE. The bound is the MEASURED cliff, re-derived by
+# bisect rather than relayed: at 664B the dev-front assembly is exactly 9984B and sheds nothing, at
+# 665B it sheds budget-dev AND plan-gate. Growth past the bound must fail HERE, at the source, rather
+# than silently costing an agent the Stage-2 duty this block exists to deliver.
+
+@test "PLAN-GATE source block byte contract: extracted block non-empty and <= ${PLAN_GATE_MAX_BYTES}B" {
+  local block bytes
+  block="$(sed -n '/<!-- AGENT-INJECT:PLAN-GATE:START -->/,/<!-- AGENT-INJECT:PLAN-GATE:END -->/p' "${STYLEREF_SRC}" \
+    | grep -vxF '<!-- AGENT-INJECT:PLAN-GATE:START -->' \
+    | grep -vxF '<!-- AGENT-INJECT:PLAN-GATE:END -->')"
+  [[ "${block}" == *"${PLAN_GATE_NEEDLE}"* ]] || {
+    echo "PLAN-GATE extraction empty or needle missing (markers moved?): [${block}]" >&2
+    return 1
+  }
+  bytes="$(printf '%s' "${block}" | wc -c | tr -cd '0-9')"
+  [[ -n "${bytes}" && "${bytes}" -le "${PLAN_GATE_MAX_BYTES}" ]] || {
+    echo "PLAN-GATE source block ${bytes}B exceeds the ${PLAN_GATE_MAX_BYTES}B byte contract" >&2
     return 1
   }
 }
@@ -505,9 +548,18 @@ open('${BATS_TEST_TMPDIR}/lessons-utf8.json', 'w').write(json.dumps({
   assert_ctx_contains "${EMIT_NEEDLE}"           || return 1   # whole injection survived (no fail-open)
 }
 
-# (v) NODROP INVARIANT beside a lesson (REAL sources, meter ON): dev-front's 7 proven blocks all
-# survive even when a lesson is present — the marker-reserve cascade into budget-dev is prevented, and
-# the assembly (proven blocks + lesson-drop marker) stays under the engine persist threshold.
+# (v) NODROP INVARIANT beside a lesson (REAL sources, meter ON): dev-front's proven blocks AND the
+# plan-gate block all survive even when a lesson is present — the marker-reserve cascade into
+# budget-dev is prevented, and the assembly (kept blocks + lesson-drop marker) stays under the engine
+# persist threshold.
+#
+# MEASURED TRADE, recorded here because the pin below would otherwise hide it (2026-09-10, this same
+# 400-char lesson, dev-front): before the plan-gate block was wired the lesson residual was 664B and
+# this lesson fit WHOLE at 9840B with no drop at all. With plan-gate in the assembly the base is
+# 9906B, so the residual is 76B — below the 150B LESSON_FLOOR — and the lesson now FULL-DROPS instead
+# of truncate-keeping. That is the sanctioned direction (lesson recall is the explicitly best-effort,
+# first-shed block and a shed lesson is logged, marked in-context and recovers on re-spawn) but it is
+# a real per-spawn cost on the nine heaviest DEV agents, not a free addition.
 
 @test "real dev-front + lesson: 7 proven blocks never shed, within engine threshold" {
   python3 -c "
@@ -528,8 +580,11 @@ open('${BATS_TEST_TMPDIR}/lessons-real.json', 'w').write(json.dumps({
   assert_ctx_contains "${BUDGET_DEV_NEEDLE}"   || return 1
   assert_ctx_valid_utf8                         || return 1
   assert_ctx_within_engine                      || return 1
-  # NO proven block may appear in a drop diagnostic (the lesson itself MAY be dropped).
-  for proven in budget-dev naming styleref minimalism comment; do
+  assert_ctx_contains "${PLAN_GATE_NEEDLE}"    || return 1
+  # NO proven block may appear in a drop diagnostic (the lesson itself MAY be dropped). plan-gate is
+  # listed too: it sits BELOW the proven four in shed order, so a cascade reaching it would be the
+  # first visible sign that the assembly no longer fits, one block before a proven block goes.
+  for proven in plan-gate budget-dev naming styleref minimalism comment; do
     [[ "${output}" != *"dropped ${proven} block"* ]] || { echo "proven block '${proven}' was SHED beside a lesson: ${output}" >&2; return 1; }
   done
 }
