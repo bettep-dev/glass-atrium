@@ -133,7 +133,15 @@ print(counts["pass"], counts["trip"], counts["total"])
 # FALSE-POSITIVE FLOOR — the same probe that satisfies the promotion condition's second clause. The
 # skill's copy-verbatim skeletons must record NO schema-cap tag.
 @test "advisory-trace(floor): the skill's copy-verbatim skeletons record no schema-cap tag" {
-  [[ -f "${SKILL_MD}" ]] || skip "skill file not found: ${SKILL_MD}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${SKILL_MD}" ]] || {
+    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" >&2
+    return 1
+  }
   local outdir="${BATS_TEST_TMPDIR}/skill-fences"
   mkdir -p "${outdir}"
   awk -v dir="${outdir}" '

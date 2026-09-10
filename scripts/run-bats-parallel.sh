@@ -6,15 +6,24 @@
 # tests WITHIN a file stay sequential, preserving setup_file-once and ordered-
 # side-effect semantics. The job count derives from the host core count at
 # runtime (macOS sysctl first, GNU nproc fallback for Linux).
-# Stage 2 runs the hooks/test unittest suites in a sandbox HOME with the data-root
-# env scrubbed alongside it (see the stage itself); stage 3 runs the scripts/test
-# pytest suites under the SAME scrub but WITHOUT a sandbox HOME (measured reason at
-# the stage), and only when pytest is importable.
+# Stages 2 and 3 run the TWO unittest roots — hooks/test and autoagent/test — each in
+# its OWN sandbox HOME with the data-root env scrubbed alongside it (see the stages
+# themselves); stage 4 runs the scripts/test pytest suites under the SAME data-root
+# scrub but WITHOUT a sandbox HOME (measured reason at the stage), and only when pytest
+# is importable.
 #
-# The hooks/test unittest corpus therefore runs TWICE per invocation, deliberately:
-# stage 1's hooks/test/suite-hermeticity.bats drives the same `unittest discover` to
-# probe for sandbox escape, and stage 2 then runs it as the corpus's own verdict. The
-# probe asserts a property of the run (nothing escaped, something ran) while stage 2
+# TWO unittest roots because `unittest discover` takes a single -s — the same reason the
+# CI test-python leg loops over the identical pair. They are separate STAGES rather than
+# one looping stage because their environments differ: the autoagent root additionally
+# scrubs AUTOAGENT_CLAUDE_BIN, matching its own hermeticity probe. That scrub is not
+# hypothetical on the path that matters — daemon-cycle.sh EXPORTS that variable at the
+# resolved claude binary before daemon-apply.sh ever reaches this runner, so without it
+# the green-suite gate would drive 700+ autoagent tests with a live model seam in scope.
+#
+# Both unittest corpora therefore run TWICE per invocation, deliberately: stage 1's
+# <root>/suite-hermeticity.bats drives the same `unittest discover` to probe for sandbox
+# escape, and the matching python stage then runs it as that corpus's own verdict. The
+# probe asserts a property of the run (nothing escaped, something ran) while the stage
 # owns the rc, and neither can stand in for the other. The daemon's one flaky-retry
 # doubles the pair again on a red cycle, which the per-stage duration banners expose.
 #
@@ -47,9 +56,13 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly TEST_ROOTS=(test hooks/test scripts/test autoagent/test)
 readonly HOOKS_TEST_ROOT=hooks/test
+readonly AUTOAGENT_TEST_ROOT=autoagent/test
 readonly SCRIPTS_TEST_ROOT=scripts/test
 
-SANDBOX_HOME=""
+# One parent scratch dir; each unittest stage gets its OWN sandbox HOME beneath it, so
+# stage 3 never inherits what stage 2's suites left behind. The cleanup trap still tracks
+# a single path because removing the parent removes both.
+SANDBOX_ROOT=""
 # The highest exit code any stage has returned so far, folded by run_stage itself. The
 # fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
 # disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
@@ -59,8 +72,8 @@ WORST_RC=0
 # SC2329: invoked indirectly by the EXIT trap below — not dead code.
 # shellcheck disable=SC2329
 cleanup() {
-  if [[ -n "${SANDBOX_HOME}" && -d "${SANDBOX_HOME}" ]]; then
-    rm -rf -- "${SANDBOX_HOME}"
+  if [[ -n "${SANDBOX_ROOT}" && -d "${SANDBOX_ROOT}" ]]; then
+    rm -rf -- "${SANDBOX_ROOT}"
   fi
 }
 trap cleanup EXIT
@@ -98,11 +111,11 @@ main() {
     printf 'run-bats-parallel: GNU parallel not found — required by bats --jobs (brew install parallel)\n' >&2
     exit 1
   }
-  # python3 carries stages 2 and 3. Absent, both would contribute rc 0 and the green
-  # gate would pass on a suite half of which never ran — loud-fail instead.
+  # python3 carries stages 2, 3 and 4. Absent, all three would contribute rc 0 and the
+  # green gate would pass on a suite half of which never ran — loud-fail instead.
   command -v python3 >/dev/null 2>&1 || {
-    printf 'run-bats-parallel: python3 not found — required by the %s unittest stage\n' \
-      "${HOOKS_TEST_ROOT}" >&2
+    printf 'run-bats-parallel: python3 not found — required by the %s and %s unittest stages\n' \
+      "${HOOKS_TEST_ROOT}" "${AUTOAGENT_TEST_ROOT}" >&2
     exit 1
   }
 
@@ -123,7 +136,7 @@ main() {
   printf 'run-bats-parallel: bats --jobs %s --no-parallelize-within-files over %s\n' \
     "${job_count}" "${TEST_ROOTS[*]}" >&2
 
-  run_stage 'stage 1/3 bats' \
+  run_stage 'stage 1/4 bats' \
     bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
 
   # The unittest suites are hermetic under a sandbox HOME (they write nothing below it)
@@ -135,12 +148,33 @@ main() {
   # This is the same scrub hooks/test/suite-hermeticity.bats applies to the identical
   # discover run; the two are kept identical on purpose, so the probe cannot read green
   # under conditions this stage does not share.
-  SANDBOX_HOME="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
-  run_stage "stage 2/3 ${HOOKS_TEST_ROOT} unittest" \
-    env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR "HOME=${SANDBOX_HOME}" \
+  SANDBOX_ROOT="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
+  mkdir -p "${SANDBOX_ROOT}/hooks" "${SANDBOX_ROOT}/autoagent"
+
+  run_stage "stage 2/4 ${HOOKS_TEST_ROOT} unittest" \
+    env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR "HOME=${SANDBOX_ROOT}/hooks" \
     python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
 
-  # Stage 3 is conditional: the live install has no pytest, and the honest outcome
+  # Stage 3 is the autoagent twin of stage 2 and is NOT conditional: autoagent/test is a
+  # manifest member (its *.py suites ship to every live install), and daemon-apply.sh's
+  # own T1a precondition already refuses to run when the root is absent. So absence here
+  # means a broken install, not a thin environment — and `unittest discover` against a
+  # missing -s exits non-zero on its own, which is the loud outcome that case deserves.
+  # Guarding it the way stage 4 guards pytest would convert a broken install into a
+  # silent pass, which is the failure this stage exists to close.
+  #
+  # The env carries ONE variable stage 2 does not, matching autoagent/test's own
+  # suite-hermeticity.bats: AUTOAGENT_CLAUDE_BIN. daemon_cycle.CLAUDE_BIN freezes that
+  # value at IMPORT, ahead of any per-test patch, and daemon-cycle.sh exports it at the
+  # resolved claude binary — so an unscrubbed run would let a suite relying on the
+  # default reach a metered model from inside a green-suite gate. Keeping the stage and
+  # its probe on identical conditions is the same contract stage 2 holds with its own.
+  run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \
+    env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
+    "HOME=${SANDBOX_ROOT}/autoagent" \
+    python3 -m unittest discover -s "${AUTOAGENT_TEST_ROOT}" -p 'test_*.py'
+
+  # Stage 4 is conditional: the live install has no pytest, and the honest outcome
   # there is a LOUD skip (one stderr line naming the interpreter) rather than a silent
   # pass. The probe's own stderr is suppressed because the skip line below is the
   # message the operator should read — the ModuleNotFoundError traceback is noise.
@@ -159,13 +193,13 @@ main() {
   # nothing. What is still absent is the STRUCTURAL guarantee: nothing stops a module
   # added later from writing under HOME, which is exactly what the sandbox would buy.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
-    run_stage "stage 3/3 ${SCRIPTS_TEST_ROOT} pytest" \
+    run_stage "stage 4/4 ${SCRIPTS_TEST_ROOT} pytest" \
       env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
   else
     local python3_path
     python3_path="$(command -v python3)"
-    printf 'run-bats-parallel: [stage 3/3 %s pytest] SKIPPED — pytest is not importable by %s (0s)\n' \
+    printf 'run-bats-parallel: [stage 4/4 %s pytest] SKIPPED — pytest is not importable by %s (0s)\n' \
       "${SCRIPTS_TEST_ROOT}" "${python3_path}" >&2
   fi
 

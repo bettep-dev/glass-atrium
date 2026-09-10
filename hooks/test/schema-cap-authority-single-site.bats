@@ -103,9 +103,25 @@ SKILL_SECTION='Resilient Workflow Authoring'
 SKILL_RULES_HEADING='Absolute schema-cap rules'
 
 setup() {
-  [[ -f "${CHARTER}" ]] || skip "owner site not found: ${CHARTER}"
-  [[ -f "${SKILL}" ]] || skip "owner site not found: ${SKILL}"
-  [[ -f "${META_AGENT}" ]] || skip "owner site not found: ${META_AGENT}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${CHARTER}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${CHARTER}" >&2
+    return 1
+  }
+  [[ -f "${SKILL}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL}" >&2
+    return 1
+  }
+  [[ -f "${META_AGENT}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${META_AGENT}" >&2
+    return 1
+  }
 }
 
 # helper: fixed-string presence assertion with a legible failure message

@@ -16,9 +16,25 @@ ROSTER_LIB="${BATS_TEST_DIRNAME}/../lib/styleref-roster.sh"
 MATRIX="${BATS_TEST_DIRNAME}/../../rules/glass-atrium/core-compliance-matrix.md"
 
 setup() {
-  [[ -f "${INJECTOR}" ]] || skip "injector not found: ${INJECTOR}"
-  [[ -f "${ROSTER_LIB}" ]] || skip "roster library not found: ${ROSTER_LIB}"
-  [[ -f "${MATRIX}" ]] || skip "compliance matrix not found: ${MATRIX}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${INJECTOR}" ]] || {
+    printf 'injector absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${INJECTOR}" >&2
+    return 1
+  }
+  [[ -f "${ROSTER_LIB}" ]] || {
+    printf 'roster library absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${ROSTER_LIB}" >&2
+    return 1
+  }
+  [[ -f "${MATRIX}" ]] || {
+    printf 'compliance matrix absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${MATRIX}" >&2
+    return 1
+  }
 }
 
 # Roster prefixes declared in code, one per line (both declaration sites).

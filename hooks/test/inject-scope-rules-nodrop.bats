@@ -82,14 +82,42 @@ WORST_DEV_AGENTS=(
 BUDGET_DEV_CARRIERS=" glass-atrium-dev-nestjs glass-atrium-dev-python glass-atrium-dev-react glass-atrium-dev-shell "
 
 setup() {
-  [[ -f "${HOOK_SH}" ]] || skip "inject-scope-rules.sh not found: ${HOOK_SH}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${HOOK_SH}" ]] || {
+    printf 'injector absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${HOOK_SH}" >&2
+    return 1
+  }
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
-  [[ -f "${COMMENT_SRC}" ]] || skip "real comment source missing: ${COMMENT_SRC}"
-  [[ -f "${STYLEREF_SRC}" ]] || skip "real scope-dev source missing: ${STYLEREF_SRC}"
-  [[ -f "${NAMING_SRC}" ]] || skip "real naming source missing: ${NAMING_SRC}"
-  [[ -f "${BUDGET_SRC}" ]] || skip "real turn-budget source missing: ${BUDGET_SRC}"
-  [[ -d "${AGENTS_DIR}" ]] || skip "real agents dir missing: ${AGENTS_DIR}"
+  [[ -f "${COMMENT_SRC}" ]] || {
+    printf 'comment-logging source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${COMMENT_SRC}" >&2
+    return 1
+  }
+  [[ -f "${STYLEREF_SRC}" ]] || {
+    printf 'scope-dev source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${STYLEREF_SRC}" >&2
+    return 1
+  }
+  [[ -f "${NAMING_SRC}" ]] || {
+    printf 'naming SKILL source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${NAMING_SRC}" >&2
+    return 1
+  }
+  [[ -f "${BUDGET_SRC}" ]] || {
+    printf 'turn-budget source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${BUDGET_SRC}" >&2
+    return 1
+  }
+  [[ -d "${AGENTS_DIR}" ]] || {
+    printf 'agents dir absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${AGENTS_DIR}" >&2
+    return 1
+  }
 
   # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
   # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`).

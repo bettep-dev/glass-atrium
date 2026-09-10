@@ -353,7 +353,15 @@ agent('b', { schema: { properties: { completion_block: { type: 'string' } } } })
 # FALSE-POSITIVE FLOOR — the copy-verbatim authoring skeletons are the shapes an author pastes, so a
 # firing on one of them is a false block waiting to happen.
 @test "completion-channel(floor): no skill JS skeleton fires the detector" {
-  [[ -f "${SKILL_MD}" ]] || skip "skill file not found: ${SKILL_MD}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${SKILL_MD}" ]] || {
+    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" >&2
+    return 1
+  }
   local outdir="${BATS_TEST_TMPDIR}/skill-fences"
   mkdir -p "${outdir}"
   awk -v dir="${outdir}" '
@@ -677,7 +685,11 @@ PYX
 # author would paste it.
 @test "schema-absent(floor): no skill JS skeleton fires the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
-  [[ -f "${SKILL_MD}" ]] || skip "skill file not found: ${SKILL_MD}"
+  [[ -f "${SKILL_MD}" ]] || {
+    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" >&2
+    return 1
+  }
   local outdir="${BATS_TEST_TMPDIR}/absent-fences"
   mkdir -p "${outdir}"
   awk -v dir="${outdir}" '
