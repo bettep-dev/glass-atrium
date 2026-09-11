@@ -33,7 +33,13 @@ from .gate import GateVerdict, evaluate_gate
 from .lock import mutation_lock
 from .paths import StorePaths, trash_path
 from .readers import registry_domains
-from .registry_ops import add_entry, build_entry, remove_entry
+from .registry_ops import (
+    RegistryMutationError,
+    add_entry,
+    build_entry,
+    get_rules_for_scope,
+    remove_entry,
+)
 from .scaffold import (
     PreflightError,
     assert_add_targets_absent,
@@ -63,9 +69,9 @@ class AddRequest:
     q2_verdict: str | None
     description: str | None = None
     # Authored agent body (from --body-file). None => the minimal scaffold stub
-    # is rendered (backward-compat, byte-identical). When set, the CLI has
-    # already non-empty-validated it, reconciled the `> Rules:` anchor, and
-    # fail-closed secret-scanned it (the CLI boundary owns those gates).
+    # is rendered. When set, the CLI has already non-empty-validated it,
+    # structure-gated it (no smuggled frontmatter, no retired `> Rules:` header)
+    # and fail-closed secret-scanned it (the CLI boundary owns those gates).
     body_md: str | None = None
 
 
@@ -130,15 +136,20 @@ def _run_add_locked(
     model_value = resolve_model_for_scope(req.scope)
     md_text = render_agent_md(
         name=req.name,
-        scope=req.scope,
         domains=req.domains,
         description=req.description,
         body=req.body_md,
         model=model_value,
     )
-    # `scope` is a roster-routing hint only (decides the DEV stanza + scaffold
-    # `> Rules:` header); it is NOT persisted on the registry row.
-    entry = build_entry(domains=req.domains, origin=req.origin)
+    # `scope` reaches the body nowhere: it decides the DEV stanza step and the
+    # registry `rules` defaults, which is where per-agent rule membership lives.
+    # An unknown scope refuses here — still before the transaction's first write.
+    try:
+        entry = build_entry(
+            domains=req.domains, origin=req.origin, scope=req.scope
+        )
+    except RegistryMutationError as exc:
+        raise AddRefused(str(exc)) from exc
 
     tx = Transaction(name=f"add:{req.name}", marker_dir=paths.ga_root)
 
@@ -253,8 +264,17 @@ def dry_run_add(paths: StorePaths, req: AddRequest) -> str:
         preflight_clear = False
         reasons.append(str(exc))
 
+    # An unknown scope has no Tier-2 rule file to record, so the real ADD would
+    # HALT at build_entry — preview it here rather than reporting allowed:true.
+    scope_clear = True
+    try:
+        get_rules_for_scope(req.scope)
+    except RegistryMutationError as exc:
+        scope_clear = False
+        reasons.append(str(exc))
+
     out = {
-        "allowed": bool(verdict.allowed and preflight_clear),
+        "allowed": bool(verdict.allowed and preflight_clear and scope_clear),
         "preflight_clear": preflight_clear,
         "reasons": reasons,
         "q3_conflicts": [

@@ -1,16 +1,16 @@
 """agents/<name>.md scaffold body + ADD pre-flight absence checks (§3.4).
 
 Responsibilities:
-    Render the minimal agent .md scaffold (frontmatter + the `> Rules:` header
-    that is the Tier-2 scope-load anchor) and assert every ADD target location
-    is ABSENT before any write (clobber guard — a clean-tree re-run is a no-op,
-    one pre-existing location HALTs). The body is intentionally minimal: the CLI
-    creates a routable, rule-loading stub; prompt-content authoring is out of
-    scope (F1 territory).
+    Render the minimal agent .md scaffold (frontmatter + body) and assert every
+    ADD target location is ABSENT before any write (clobber guard — a clean-tree
+    re-run is a no-op, one pre-existing location HALTs). The body is
+    intentionally minimal: the CLI creates a routable stub; prompt-content
+    authoring is out of scope (F1 territory).
 
-The `> Rules:` header is load-bearing: inject-scope-rules.sh and the Tier-2
-loader key on `(ALL + <SCOPE>)` to attach the scope rules, so a scaffold without
-it is a spawnable-but-rule-less orphan.
+Per-agent rule membership lives on the registry row (`rules`), NOT in the body:
+no code ever read the former `> Rules:` header to load a rule, so a rendered
+body carries none and both authored-text gates REFUSE one (a stale header reused
+from an old --body-file would otherwise be baked into a new agent silently).
 """
 
 from __future__ import annotations
@@ -21,20 +21,20 @@ from .paths import StorePaths
 from .readers import load_registry_agents
 from .validation import ValidationError
 
-# Matches a `> Rules: ... (ALL + <SCOPE>)` anchor line and captures <SCOPE>. The
-# Tier-2 loader keys on this, so an authored body must carry the RIGHT scope (a
-# wrong-scope anchor mis-loads rules — worse than absent, so it HALTs not injects).
+# Matches the RETIRED `> Rules: ... (ALL + <SCOPE>)` header line. Membership now
+# lives on the registry row, so this pattern exists only to REFUSE the line: an
+# operator reusing a pre-retirement --body-file would otherwise bake a stale
+# membership claim into a new agent that no consumer reads.
 _ANCHOR_RE = re.compile(
-    r"^>\s*Rules:\s*GLASS_ATRIUM_GLOBAL_RULES\.md\s*\(ALL\s*\+\s*(?P<scope>[^)]*?)\s*\)",
+    r"^>\s*Rules:\s*GLASS_ATRIUM_GLOBAL_RULES\.md\s*\(ALL\s*\+\s*[^)]*?\s*\)",
     re.MULTILINE,
 )
 
-# Frontmatter-shaped key lines an authored body must NOT carry ABOVE the anchor.
-# These shadow the canonical frontmatter (tools allowlist, name, scope, maxTurns)
-# — a body that injects its own escalates privilege if the loader picks the LAST
+# Frontmatter-shaped key lines an authored body must NOT carry ANYWHERE. These
+# shadow the canonical frontmatter (tools allowlist, name, scope, maxTurns) — a
+# body that injects its own escalates privilege if the loader picks the LAST
 # block. Matched at line start (allowing leading whitespace) so only a real
-# YAML-key line trips it; the same word appearing inside prose below the anchor
-# is intentionally NOT matched (the gate slices on the anchor position).
+# YAML-key line trips it; the same word mid-sentence in prose is NOT matched.
 #
 # The key token is quote-tolerant (`tools:` / `"tools":` / `'tools':`): YAML folds
 # a quoted key to the same scalar, so a quote-blind gate reads as a guard the
@@ -88,13 +88,13 @@ class PreflightError(RuntimeError):
 
 
 class BodyAnchorError(ValueError):
-    """Supplied text carries a `> Rules:` anchor the renderer cannot reconcile — HALT.
+    """Supplied text carries the retired `> Rules:` header line — HALT.
 
-    On the ADD path that means a WRONG-scope anchor, which mis-attaches Tier-2
-    rules (worse than an absent one, which can be injected). On the EXTEND path
-    it means ANY anchor, since an append has no strip step. Distinct from
-    ValidationError so the CLI can map it to the same EXIT_HALT path with a
-    body-specific message.
+    The line is no longer emitted, no longer read, and carries a membership
+    claim the registry row now owns, so a body or section bearing one is stale
+    input rather than a renderable header — both authored-text gates refuse it
+    on either path. Distinct from ValidationError so the CLI can map it to the
+    same EXIT_HALT path with a body-specific message.
     """
 
 
@@ -103,8 +103,8 @@ class BodyFrontmatterError(ValueError):
 
     The canonical frontmatter (with the FIXED `tools:` allowlist) is emitted
     first; a body that begins with its own `---` fence, or that carries a
-    `name:` / `tools:` / `scope:` / `maxTurns:` key line ABOVE the `> Rules:`
-    anchor, would produce a second frontmatter block. Whether it escalates
+    `name:` / `tools:` / `scope:` / `maxTurns:` key line at the start of any
+    line, would produce a second frontmatter block. Whether it escalates
     depends on the loader's first-vs-last-wins rule, so the boundary is made
     EXPLICIT here rather than left positional/loader-dependent (OWASP LLM06 /
     A01). Distinct from ValidationError/BodyAnchorError so the CLI maps it to
@@ -112,32 +112,27 @@ class BodyFrontmatterError(ValueError):
     """
 
 
-def rules_anchor_line(scope: str) -> str:
-    """The load-bearing `> Rules:` header line for `scope` (the Tier-2 anchor)."""
-    return f"> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + {scope})"
-
-
 def render_agent_md(
     *,
     name: str,
-    scope: str,
     domains: list[str],
     description: str | None = None,
     body: str | None = None,
     model: str | None = None,
 ) -> str:
-    """Render a rule-loading agent .md scaffold (frontmatter + Rules header + body).
+    """Render an agent .md scaffold (canonical frontmatter + body).
 
-    The frontmatter carries name + description + the standard tool grant; the
-    `> Rules:` header is the scope-load anchor (`ALL + <SCOPE>`). domains are
-    recorded in a comment so the file is self-documenting without duplicating
-    the registry (the registry remains the routing SoT).
+    The frontmatter carries name + description + the standard tool grant. No
+    rule header is emitted: membership lives on the registry row, and `scope`
+    reaches this renderer nowhere (it decides the DEV stanza step in add.py and
+    the registry `rules` defaults, neither of which is body text).
 
-    `body` ABSENT renders the minimal scaffold stub (byte-identical to the
-    historical output — a backward-compat invariant). `body` PRESENT places the
-    authored markdown as the agent body, BELOW the `> Rules:` anchor and AFTER
-    the frontmatter `description` (the two stay distinct — the body is the prompt
-    content, the description is the routing blurb; no duplication).
+    `body` ABSENT renders the minimal scaffold stub — byte-identical to the
+    historical output apart from the retired `> Rules:` header, deliberately
+    re-baselined here rather than discovered later. `body` PRESENT places the
+    authored markdown as the agent body, directly below the frontmatter (the
+    body is the prompt content, the `description` the routing blurb; the two
+    stay distinct, no duplication).
 
     `model` carries the scope-resolved SAVED TARGET model id (from the monitor
     DB via db_utils.resolve_model_for_scope). When set, a `model: <id>` line is
@@ -162,8 +157,6 @@ def render_agent_md(
         f"{model_line}"
         "---\n"
         "\n"
-        f"{rules_anchor_line(scope)}\n"
-        "\n"
     )
     if body is None:
         # backward-compat: byte-identical to the historical minimal stub.
@@ -174,7 +167,7 @@ def render_agent_md(
             f"Scaffolded agent. Routing domains: {domains_line}.\n"
             "Body authoring is out of scope for the lifecycle scaffold.\n"
         )
-    # authored body: single trailing newline, anchor already emitted above.
+    # authored body: single trailing newline, frontmatter already emitted above.
     rendered = frontmatter + f"{body.rstrip()}\n"
     _assert_single_frontmatter_block(rendered, name=name)
     return rendered
@@ -183,7 +176,7 @@ def render_agent_md(
 def _assert_single_frontmatter_block(rendered: str, *, name: str) -> None:
     """Defense-in-depth: assert the rendered .md carries ONLY the canonical block.
 
-    The input gate (assert_body_no_smuggled_frontmatter) rejects a smuggled body
+    The input gate (assert_body_no_smuggled_structure) rejects a smuggled body
     at the CLI boundary, but render_agent_md is also reachable directly (e.g. a
     direct run_add). This post-render check catches a second frontmatter however
     the body arrived: the canonical block contributes exactly 2 `---` fence lines,
@@ -202,20 +195,56 @@ def _assert_single_frontmatter_block(rendered: str, *, name: str) -> None:
         )
 
 
-def assert_body_no_smuggled_frontmatter(body: str) -> None:
-    """Input gate: HALT a body that smuggles a frontmatter-shaped block.
+def _assert_no_frontmatter_key(text: str, *, label: str) -> None:
+    """HALT when `text` carries a frontmatter-shaped guarded key on any line.
 
-    Rejects (fail-closed, BodyFrontmatterError) an authored body that either
-      - begins with a `---` frontmatter fence (after lstrip), OR
-      - carries a `name:` / `tools:` / `scope:` / `maxTurns:` key line BEFORE the
-        `> Rules:` anchor (a frontmatter-shaped declaration shadowing the
-        canonical block), in either the bare or a quoted (`"tools":`) spelling.
-    These tokens are TOLERATED below the anchor as ordinary body prose — the risk
-    is a frontmatter block above/instead of the canonical one, not the word
-    "tools" in a sentence in the body. When the body carries no anchor, the whole
-    body is treated as the pre-anchor head (render_agent_md injects the canonical
-    anchor ABOVE the body, so any frontmatter key in the body would still land
-    above the agent's real content and shadow the canonical block).
+    Shared by both authored-text gates so ADD and EXTEND refuse the identical
+    shape: a `--body-file` the ADD gate rejects must not become admissible by
+    being handed to `extend --append-section` instead.
+    """
+    key_match = _FRONTMATTER_KEY_RE.search(text)
+    if key_match is None:
+        return
+    key = key_match.group("key")
+    raise BodyFrontmatterError(
+        f"{label} carries a frontmatter-shaped {key!r}: line — such a key shadows "
+        f"the canonical frontmatter; remove it (the canonical {key} is fixed); HALT"
+    )
+
+
+def _assert_no_retired_anchor(text: str, *, label: str) -> None:
+    """HALT when `text` carries the retired `> Rules:` header line.
+
+    Refusal rather than a silent strip: the line states a rule membership the
+    registry row now owns, so a body still carrying one was authored against the
+    old contract and its claim needs an operator's eyes, not a rewrite.
+    """
+    if _ANCHOR_RE.search(text):
+        raise BodyAnchorError(
+            f"{label} carries a retired `> Rules:` header line — per-agent rule "
+            "membership lives on the registry `rules` object and no consumer "
+            "reads the header; remove the line; HALT"
+        )
+
+
+def assert_body_no_smuggled_structure(body: str) -> None:
+    """Input gate: HALT an ADD body carrying structure the frontmatter owns.
+
+    Refuses (fail-closed) an authored body that either
+      - begins with a `---` frontmatter fence (a second frontmatter block
+        shadowing the canonical one, with its FIXED tools allowlist), OR
+      - carries a `name:` / `tools:` / `scope:` / `maxTurns:` key line ANYWHERE,
+        in either the bare or a quoted (`"tools":`) spelling, OR
+      - carries the retired `> Rules:` header line.
+
+    The key scan covers the WHOLE body deliberately. It used to stop at the
+    `> Rules:` anchor and tolerate the same token below it; with the anchor
+    retired an anchorless body would have made that slice the whole body anyway
+    — i.e. the position-dependent tolerance could no longer be expressed, so the
+    strictest of the two former behaviours is the one kept. Measured cost: 0 of
+    the 23 live agent bodies carries a line-start guarded key, so nothing
+    legitimate is refused today; a future body documenting frontmatter in a
+    fenced yaml block WOULD be — a loud HALT naming the key, never silent.
     """
     if _FENCE_RE.match(body.lstrip()):
         raise BodyFrontmatterError(
@@ -223,32 +252,21 @@ def assert_body_no_smuggled_frontmatter(body: str) -> None:
             "not carry its own frontmatter (it would shadow the canonical block "
             "with its FIXED tools allowlist); remove the leading `---` block; HALT"
         )
-    anchor = _ANCHOR_RE.search(body)
-    head = body[: anchor.start()] if anchor is not None else body
-    key_match = _FRONTMATTER_KEY_RE.search(head)
-    if key_match is not None:
-        key = key_match.group("key")
-        raise BodyFrontmatterError(
-            f"authored body carries a frontmatter-shaped {key!r}: line before the "
-            "`> Rules:` anchor — such a key shadows the canonical frontmatter; "
-            f"move it below the anchor or remove it (the canonical {key} is fixed); HALT"
-        )
+    _assert_no_frontmatter_key(body, label="authored body")
+    _assert_no_retired_anchor(body, label="authored body")
 
 
-def assert_section_no_fence_or_anchor(section: str) -> None:
+def assert_section_no_smuggled_structure(section: str) -> None:
     """Input gate: HALT an EXTEND section that breaks a rendered-.md invariant.
 
-    An appended section always lands at end-of-file — below both the canonical
-    frontmatter and the anchor — so it structurally cannot shadow the
-    frontmatter, and assert_body_no_smuggled_frontmatter deliberately does NOT
-    apply here (its anchorless-head slicing would refuse ordinary body prose
-    that the ADD path tolerates below the anchor). Two invariants an append can
-    still break AFTER render, where no render-time assertion runs again:
+    Holds the EXTEND path at the SAME strength as the ADD gate above — the
+    guarded-key scan is shared, so a section cannot smuggle in what a body
+    cannot. Two invariants an append can additionally break AFTER render, where
+    no render-time assertion runs again:
       - the exactly-2 `---` fence count _assert_single_frontmatter_block pins,
         including a lone thematic break a last-wins loader could read as a
         block boundary;
-      - the single `> Rules:` anchor — ADD tolerates a matching-scope one only
-        because reconcile_body_anchor strips it before render.
+      - the absence of the retired `> Rules:` header line.
     Fail-closed (BodyFrontmatterError / BodyAnchorError).
     """
     if _FENCE_RE.search(section):
@@ -259,43 +277,8 @@ def assert_section_no_fence_or_anchor(section: str) -> None:
             "as a second block boundary shadowing the canonical tools "
             "allowlist; remove the `---` line; HALT"
         )
-    if _ANCHOR_RE.search(section):
-        raise BodyAnchorError(
-            "appended section carries its own `> Rules:` anchor — the append "
-            "would leave the .md with a SECOND anchor (--body-file tolerates a "
-            "matching-scope anchor only because render strips it first; an "
-            "append has no strip step); remove the anchor line; HALT"
-        )
-
-
-def reconcile_body_anchor(body: str, scope: str) -> str:
-    """Return `body` guaranteed to yield the canonical `> Rules:` anchor for `scope`.
-
-    The anchor is load-bearing — without it the spawned agent loads no Tier-2
-    rules (a rule-less orphan). Three cases:
-      - body has NO anchor   -> return body unchanged; render_agent_md injects the
-        canonical anchor above it (INJECT path).
-      - body has a MATCHING-scope anchor -> strip that line so render_agent_md emits
-        exactly one canonical anchor (no duplicate).
-      - body has a WRONG-scope anchor -> HALT (BodyAnchorError); silently rewriting
-        an operator-authored scope would mask a real mismatch.
-    Scope comparison is case-insensitive, trimmed (the canonical token is upper).
-    """
-    match = _ANCHOR_RE.search(body)
-    if match is None:
-        return body
-    found = match.group("scope").strip()
-    if found.upper() != scope.strip().upper():
-        raise BodyAnchorError(
-            f"body `> Rules:` anchor scope {found!r} does not match --scope "
-            f"{scope!r} — HALT (a wrong-scope anchor mis-loads Tier-2 rules)"
-        )
-    # matching scope: drop the authored anchor line; render_agent_md re-emits the
-    # single canonical one. Splicing on the matched span keeps the rest verbatim.
-    start, end = match.span()
-    line_end = body.find("\n", end)
-    cut_to = len(body) if line_end == -1 else line_end + 1
-    return body[:start] + body[cut_to:]
+    _assert_no_frontmatter_key(section, label="appended section")
+    _assert_no_retired_anchor(section, label="appended section")
 
 
 def assert_add_targets_absent(paths: StorePaths, name: str, *, is_dev: bool) -> None:

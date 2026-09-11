@@ -61,7 +61,7 @@ write_agent_md() {
   {
     printf -- '---\n'
     printf '%s\n' "${frontmatter}"
-    printf -- '---\n\n> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n'
+    printf -- '---\n\n# glass-atrium-dev-x\n'
   } >"${AGENTS}/glass-atrium-dev-x.md"
 }
 

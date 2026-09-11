@@ -1,7 +1,8 @@
 """Regression tests for the agent-management overhaul (origin baseline + migration removal).
 
 Covers PART-A backend behavior changes:
-  - ADD builds an entry with origin (the CLI passes --origin user) and NO scope field.
+  - ADD builds an entry with origin (the CLI passes --origin user), the `rules`
+    membership object, and NO scope field.
   - DELETE is origin:user-only: a shipped row is refused, a user row permitted.
   - The hardcoded NON-DEV block list still refuses regardless of origin.
   - A row missing origin fail-closes (HALT).
@@ -22,7 +23,14 @@ from agent_lifecycle.atomic import load_json
 from agent_lifecycle.delete import authorize_delete
 from agent_lifecycle.paths import NON_DEV_BLOCK_LIST, StorePaths
 from agent_lifecycle.readers import ReaderError, registry_domains
-from agent_lifecycle.registry_ops import add_entry, build_entry
+from agent_lifecycle.registry_ops import (
+    SCOPE_SHARED_RULE_FILES,
+    RegistryMutationError,
+    add_entry,
+    add_shared_rule_file,
+    assert_rule_files_known,
+    build_entry,
+)
 
 
 def _write_registry(root: Path, agents: dict[str, dict]) -> StorePaths:
@@ -40,17 +48,213 @@ def _write_registry(root: Path, agents: dict[str, dict]) -> StorePaths:
 
 
 def test_when_build_entry_then_origin_present_and_scope_absent() -> None:
-    entry = build_entry(domains=["x"], origin="user")
+    entry = build_entry(domains=["x"], origin="user", scope="DEV")
     assert entry["origin"] == "user"
     assert "scope" not in entry
 
 
 def test_when_add_user_agent_then_registry_row_is_origin_user(tmp_path: Path) -> None:
     paths = _write_registry(tmp_path, {})
-    add_entry(paths, "dev-new", build_entry(domains=["x"], origin="user"))
+    add_entry(paths, "dev-new", build_entry(domains=["x"], origin="user", scope="DEV"))
     row = load_json(paths.registry)["agents"]["dev-new"]
     assert row["origin"] == "user"
     assert "scope" not in row
+
+
+# --- registry `rules` membership object -----------------------------------
+
+
+def test_when_build_entry_dev_then_rules_carry_scope_shared_conditional() -> None:
+    rules = build_entry(domains=["x"], origin="user", scope="DEV")["rules"]
+    assert rules["scope"] == "scoped/scope-dev.md"
+    # the 5 Tier-3 files that bind every DEV unconditionally. The UI-emitting
+    # subset also takes shared-design-token-consumption.md, which is a per-agent
+    # fact the scope label cannot carry — added by hand, so absent from defaults.
+    assert rules["shared"] == [
+        "scoped/shared-comment-logging.md",
+        "scoped/shared-performance.md",
+        "scoped/shared-search-first.md",
+        "scoped/shared-testing.md",
+        "scoped/shared-type-safety.md",
+    ]
+    # conditional membership is a separate facet, never folded into `shared`:
+    # each entry carries the `when` that makes it conditional rather than standing.
+    assert [c["file"] for c in rules["conditional"]] == [
+        "rules/glass-atrium/shared-self-improve-hygiene.md",
+        "scoped/shared-hook-capability-contract.md",
+    ]
+    assert all(c["when"] for c in rules["conditional"])
+
+
+def test_when_build_entry_scope_without_tier3_then_shared_is_empty() -> None:
+    rules = build_entry(domains=["x"], origin="user", scope="RESEARCH")["rules"]
+    assert rules["scope"] == "scoped/scope-research.md"
+    assert rules["shared"] == []
+    assert rules["conditional"] == []
+
+
+def test_when_build_entry_scope_lowercase_then_mapped() -> None:
+    rules = build_entry(domains=["x"], origin="user", scope="qa")["rules"]
+    assert rules["scope"] == "scoped/scope-qa.md"
+    assert rules["shared"] == ["scoped/shared-comment-logging.md"]
+    # QA cites the hook contract under a REVIEW condition, not the DEV authoring one
+    assert rules["conditional"] == [
+        {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task reviews a hook change or analyses a hook failure",
+        }
+    ]
+
+
+def test_when_build_entry_then_conditional_defaults_are_not_shared_state() -> None:
+    # The module-level condition dicts must not leak into a built entry: mutating
+    # one row's conditional would otherwise rewrite every later ADD.
+    first = build_entry(domains=["x"], origin="user", scope="DEV")["rules"]
+    first["conditional"][0]["when"] = "mutated"
+    second = build_entry(domains=["y"], origin="user", scope="DEV")["rules"]
+    assert second["conditional"][0]["when"] != "mutated"
+
+
+def test_when_build_entry_scope_unknown_then_halts() -> None:
+    # A silent empty default would ship an agent claiming membership in nothing.
+    with pytest.raises(RegistryMutationError, match="unknown scope"):
+        build_entry(domains=["x"], origin="user", scope="ORCHESTRATOR")
+
+
+def test_when_entry_cites_unknown_rule_file_then_add_entry_halts(
+    tmp_path: Path,
+) -> None:
+    # The vocabulary check is homed on the write surface, so a path no consumer
+    # could resolve is refused at the registry boundary, not by its first reader.
+    paths = _write_registry(tmp_path, {})
+    entry = build_entry(domains=["x"], origin="user", scope="DEV")
+    entry["rules"]["shared"].append("scoped/shared-typo-safety.md")
+    with pytest.raises(RegistryMutationError, match="unknown rule file"):
+        add_entry(paths, "dev-new", entry)
+
+
+def test_when_conditional_entry_omits_when_then_add_entry_halts(
+    tmp_path: Path,
+) -> None:
+    # A conditional without its `when` is indistinguishable from standing
+    # membership, which is the one thing this facet exists to keep apart.
+    paths = _write_registry(tmp_path, {})
+    entry = build_entry(domains=["x"], origin="user", scope="DEV")
+    entry["rules"]["conditional"].append({"file": "scoped/shared-testing.md"})
+    with pytest.raises(RegistryMutationError, match="needs both"):
+        add_entry(paths, "dev-new", entry)
+
+
+def test_when_dry_run_scope_unknown_then_preview_reports_not_allowed(
+    tmp_path: Path,
+) -> None:
+    # The preview has to see the same refusal the real ADD would hit: reporting
+    # allowed:true for a run that HALTs is worse than no preview at all.
+    from agent_lifecycle.add import AddRequest, dry_run_add
+
+    paths = _write_registry(tmp_path, {})
+    paths.agents_dir.mkdir(parents=True, exist_ok=True)
+    out = json.loads(
+        dry_run_add(
+            paths,
+            AddRequest(
+                name="glass-atrium-dev-probe",
+                scope="ORCHESTRATOR",
+                origin="user",
+                domains=["probes"],
+                q1_verdict="pass",
+                q2_verdict="pass",
+            ),
+        )
+    )
+    assert out["allowed"] is False
+    assert any("unknown scope" in reason for reason in out["reasons"])
+
+
+def test_when_live_registry_read_then_every_row_passes_the_vocabulary_check() -> None:
+    # The shipped rows are the check's real corpus: a writer whose vocabulary
+    # disagrees with the backfill would emit rows shaped unlike all 23 of them.
+    registry = load_json(Path(__file__).resolve().parents[2] / "agent-registry.json")
+    for name, row in registry["agents"].items():
+        assert "rules" in row, f"{name} carries no rules object"
+        assert_rule_files_known(row)
+
+
+def test_when_entry_has_no_rules_object_then_add_entry_passes(tmp_path: Path) -> None:
+    # Pre-backfill rows carry no `rules` — the check must not refuse them.
+    paths = _write_registry(tmp_path, {})
+    add_entry(paths, "dev-legacy", {"domains": ["x"], "origin": "user"})
+    assert "rules" not in load_json(paths.registry)["agents"]["dev-legacy"]
+
+
+# --- additive rules.shared append ----------------------------------------
+
+
+def _dev_row(tmp_path: Path) -> StorePaths:
+    """A registry holding one freshly ADDed DEV row, ready to extend."""
+    paths = _write_registry(tmp_path, {})
+    add_entry(paths, "dev-new", build_entry(domains=["x"], origin="user", scope="DEV"))
+    return paths
+
+
+def _shared_of(paths: StorePaths, name: str) -> list[str]:
+    return load_json(paths.registry)["agents"][name]["rules"]["shared"]
+
+
+def test_when_shared_rule_file_appended_then_row_gains_it_after_the_defaults(
+    tmp_path: Path,
+) -> None:
+    # The motivating divergence: a UI-emitting DEV also takes the design-token
+    # file, a per-agent fact no scope label carries, so ADD lands without it.
+    paths = _dev_row(tmp_path)
+    add_shared_rule_file(paths, "dev-new", "scoped/shared-design-token-consumption.md")
+    shared = _shared_of(paths, "dev-new")
+    assert shared[-1] == "scoped/shared-design-token-consumption.md"
+    assert shared[:-1] == list(SCOPE_SHARED_RULE_FILES["DEV"])
+
+
+def test_when_shared_rule_file_already_present_then_append_is_a_noop(
+    tmp_path: Path,
+) -> None:
+    paths = _dev_row(tmp_path)
+    before = _shared_of(paths, "dev-new")
+    undo = add_shared_rule_file(paths, "dev-new", "scoped/shared-testing.md")
+    assert _shared_of(paths, "dev-new") == before
+    # the reverse-op of a no-op must not strip a file this call never added
+    undo()
+    assert _shared_of(paths, "dev-new") == before
+
+
+def test_when_append_reversed_then_shared_returns_to_its_prior_value(
+    tmp_path: Path,
+) -> None:
+    paths = _dev_row(tmp_path)
+    before = _shared_of(paths, "dev-new")
+    undo = add_shared_rule_file(
+        paths, "dev-new", "scoped/shared-design-token-consumption.md"
+    )
+    undo()
+    assert _shared_of(paths, "dev-new") == before
+
+
+def test_when_appended_file_outside_vocabulary_then_halts_before_write(
+    tmp_path: Path,
+) -> None:
+    # assert_rule_files_known runs on the RESULT, so an unresolvable path is
+    # refused at the boundary and the stored row never sees it.
+    paths = _dev_row(tmp_path)
+    before = _shared_of(paths, "dev-new")
+    with pytest.raises(RegistryMutationError, match="unknown rule file"):
+        add_shared_rule_file(paths, "dev-new", "scoped/shared-typo-safety.md")
+    assert _shared_of(paths, "dev-new") == before
+
+
+def test_when_row_has_no_rules_object_then_append_halts(tmp_path: Path) -> None:
+    # A pre-backfill row has no membership to extend; inventing one would claim
+    # a scope default this op cannot know.
+    paths = _write_registry(tmp_path, {"dev-legacy": {"domains": ["x"]}})
+    with pytest.raises(RegistryMutationError, match="no rules"):
+        add_shared_rule_file(paths, "dev-legacy", "scoped/shared-testing.md")
 
 
 # --- DELETE origin:user-only ---------------------------------------------
@@ -132,14 +336,14 @@ def test_when_add_then_extend_on_fixture_root_then_round_trip_holds(
         "maxTurns: 40\n"
         "---\n"
         "\n"
-        "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n",
+        "# glass-atrium-dev-fixture\n",
         encoding="utf-8",
     )
 
     add_entry(
         paths,
         "glass-atrium-dev-fixture",
-        build_entry(domains=["fixtures"], origin="user"),
+        build_entry(domains=["fixtures"], origin="user", scope="DEV"),
     )
     assert "glass-atrium-dev-fixture" in load_json(paths.registry)["agents"]
 

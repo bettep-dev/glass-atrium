@@ -1,14 +1,16 @@
-"""Behavioral tests for the scaffold body frontmatter-smuggle gate.
+"""Behavioral tests for the scaffold body structure gate.
 
-Covers `scaffold.assert_body_no_smuggled_frontmatter` — the ADD-path input gate
-that refuses an authored body carrying a frontmatter-shaped guarded key above
-the `> Rules:` anchor:
+Covers `scaffold.assert_body_no_smuggled_structure` — the ADD-path input gate
+that refuses an authored body carrying a frontmatter-shaped guarded key, a
+leading frontmatter fence, or the retired `> Rules:` header line:
 
   - quoted key spellings (`"tools":` / `'tools':`) are recognized exactly like
     the bare spelling — the host YAML parser folds the quotes, so a quote-blind
     gate would let a shadowing key through.
   - the bare spelling and the leading-`---` fence keep blocking (non-regression).
-  - the same tokens BELOW the anchor stay ordinary prose (containment).
+  - a guarded key is refused WHEREVER it appears, a heading above it included —
+    the scan covers the whole body, so there is no position that tolerates one.
+  - the guarded WORD mid-sentence in prose stays ordinary prose (containment).
 
 Self-contained: inserts the scripts root on sys.path (no live store touched).
 
@@ -29,16 +31,17 @@ if str(_SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_ROOT))
 
 from agent_lifecycle.scaffold import (  # noqa: E402
+    BodyAnchorError,
     BodyFrontmatterError,
-    assert_body_no_smuggled_frontmatter,
+    assert_body_no_smuggled_structure,
 )
 
-_ANCHOR = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)"
+_RETIRED_ANCHOR = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)"
 
 
 def _body(head: str) -> str:
-    """An authored body with `head` above the canonical anchor."""
-    return f"{head}\n\n{_ANCHOR}\n\n# dev-x\n\nAuthored body.\n"
+    """An authored body opening with `head`."""
+    return f"{head}\n\n# dev-x\n\nAuthored body.\n"
 
 
 # --- quoted guarded keys: the quote-blind bypass ---------------------------
@@ -54,14 +57,14 @@ def _body(head: str) -> str:
         "'maxTurns': 400",
     ],
 )
-def test_when_quoted_guarded_key_above_anchor_then_halts(head: str) -> None:
+def test_when_quoted_guarded_key_then_halts(head: str) -> None:
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter(_body(head))
+        assert_body_no_smuggled_structure(_body(head))
 
 
 def test_when_quoted_key_indented_then_halts() -> None:
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter(_body('  "tools": [Bash]'))
+        assert_body_no_smuggled_structure(_body('  "tools": [Bash]'))
 
 
 def test_when_both_quoted_duplicate_keys_then_halts() -> None:
@@ -70,50 +73,60 @@ def test_when_both_quoted_duplicate_keys_then_halts() -> None:
     # of the single-occurrence rule cannot silently reopen the duplicate vector.
     head = '"tools": [Read]\n"tools": [Read, Bash]'
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter(_body(head))
+        assert_body_no_smuggled_structure(_body(head))
 
 
 def test_when_quoted_key_reported_then_message_names_the_key() -> None:
     with pytest.raises(BodyFrontmatterError, match="'tools'"):
-        assert_body_no_smuggled_frontmatter(_body('"tools": [Bash]'))
+        assert_body_no_smuggled_structure(_body('"tools": [Bash]'))
 
 
-def test_when_body_has_no_anchor_then_quoted_key_still_halts() -> None:
-    # No anchor -> the whole body is the pre-anchor head (render injects the
-    # canonical anchor above it), so the key would still land above the content.
+def test_when_guarded_key_below_a_heading_then_halts() -> None:
+    # The pin this gate change buys: a heading no longer opens a tolerated zone,
+    # so a guarded key under one is refused exactly like one at the top.
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter('"tools": [Bash]\n\n# dev-x\n')
+        assert_body_no_smuggled_structure('# dev-x\n\n"tools": [Read, Bash]\n')
 
 
 # --- non-regression: shapes that already blocked ---------------------------
 
 
-def test_when_bare_guarded_key_above_anchor_then_halts() -> None:
+def test_when_bare_guarded_key_then_halts() -> None:
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter(_body("tools: [Read, Bash]"))
+        assert_body_no_smuggled_structure(_body("tools: [Read, Bash]"))
 
 
 def test_when_body_starts_with_fence_then_halts() -> None:
     with pytest.raises(BodyFrontmatterError):
-        assert_body_no_smuggled_frontmatter("---\ntools: [Bash]\n---\n\n# dev-x\n")
+        assert_body_no_smuggled_structure("---\ntools: [Bash]\n---\n\n# dev-x\n")
 
 
 # --- containment: the same tokens as ordinary prose ------------------------
 
 
-def test_when_quoted_key_below_anchor_then_passes() -> None:
-    body = f'{_ANCHOR}\n\n# dev-x\n\n"tools": [Read, Bash]\n'
-    assert_body_no_smuggled_frontmatter(body)
-
-
 def test_when_guarded_word_in_prose_then_passes() -> None:
-    body = f'{_ANCHOR}\n\n# dev-x\n\nThe "tools" allowlist is frozen at spawn.\n'
-    assert_body_no_smuggled_frontmatter(body)
+    body = '# dev-x\n\nThe "tools" allowlist is frozen at spawn.\n'
+    assert_body_no_smuggled_structure(body)
+
+
+# --- the retired `> Rules:` header line ------------------------------------
+
+
+def test_when_body_carries_retired_anchor_then_halts() -> None:
+    # Refusal, not a silent strip: the line claims a rule membership the registry
+    # row now owns, so a body reused from before the retirement needs an operator.
+    with pytest.raises(BodyAnchorError):
+        assert_body_no_smuggled_structure(_body(_RETIRED_ANCHOR))
+
+
+def test_when_retired_anchor_sits_below_a_heading_then_halts() -> None:
+    with pytest.raises(BodyAnchorError):
+        assert_body_no_smuggled_structure(f"# dev-x\n\n{_RETIRED_ANCHOR}\n")
 
 
 def test_when_quote_opens_a_non_guarded_key_then_passes() -> None:
-    assert_body_no_smuggled_frontmatter(_body('"domains": [a, b]'))
+    assert_body_no_smuggled_structure(_body('"domains": [a, b]'))
 
 
 def test_when_plain_body_then_passes() -> None:
-    assert_body_no_smuggled_frontmatter(_body("# dev-x"))
+    assert_body_no_smuggled_structure(_body("# dev-x"))
