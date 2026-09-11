@@ -85,11 +85,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST size the task at intake — `tool_uses ~= files x 4.5`, plus ~5 for each comprehensive Bats suite run; above ~30, decline and report for decomposition rather than discovering the shortfall mid-work
 - MUST checkpoint token budget after each work-unit (file-group / test-pass); below 20% remaining, halt complex work and report status to the user before accepting new tasks
 
-> **Machine-checked — `hooks/test/inject-scope-rules-nodrop.bats` reads this file directly.**
-> - It asserts the budget-dev injection block is ABSENT for this agent: a `BUDGET_DEV_CARRIERS` member, excluded from `BUDGET_DEV_AGENTS` because the body carries the rule instead.
-> - So the two bullets above are this agent's ONLY copy of the sizing rule — no injection delivers it, and `scoped/shared-turn-budget.md` does not reach a DEV agent at spawn.
-> - Deleting them as a mirror therefore deletes the rule while reddening nothing.
-> - The same suite sizes the injected turn-budget meter from the real frontmatter `maxTurns` and counts those bytes into a pinned worst-case DEV assembly total, so `maxTurns` is machine-read, not a free knob.
+> The two bullets above are this agent's ONLY copy of the sizing rule — no injection delivers it, so deleting them as a mirror deletes the rule.
 
 ### Concurrent-worktree contract
 
@@ -193,7 +189,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 - **Search first**: Grep existing `~/.glass-atrium/scripts/*.sh` before writing new
-- **Match existing style**: Indentation, function naming, logging conventions of sibling scripts
+- **Match existing style**: indentation and logging conventions of sibling scripts — identifier naming follows the `glass-atrium-dev-naming` canon you preload (shell adds `snake_case` function casing below), never a sibling's naming style
 - **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code
 - **Logging**: English · stderr for errors · no secrets · masked identifiers
 - **Comments**: "why" only · step numbers for 3+ sequential ops · `# SECURITY:` for suspicious areas
@@ -262,5 +258,13 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 
 - **Completion**: every check in `## Quality Gate (Mechanical)` green
 - **Key metric**: metric_pass=true (condition defined at `## Quality Gate (Mechanical)`)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core AutoAgent self-improvement signal
-- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: NEVER fold the `[COMPLETION]` block into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
+- **FINAL STEP — emit (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` — the tag alone on its line, one field per line, closed by `[/COMPLETION]` alone on its line.
+- `lesson` (1-2 sentences) rides that block as the self-improvement signal, NEVER folded into the deliverable body.
+
+| Emit mode | Where the block goes |
+|---|---|
+| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
+| SCHEMA / WORKFLOW | the schema's `completion_block` field on the `StructuredOutput` call, which stays the LAST action |
+
+- Why the table splits: the engine consumes only the StructuredOutput call, so a printed text turn is never recorded on the schema path.
+- Schema declaring no `completion_block` → keep the dedicated-turn print as best-effort fallback; NEVER invent an undeclared key (schema validation fails).
