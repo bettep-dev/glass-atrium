@@ -26,13 +26,11 @@
 # PRESERVATION SEMANTICS (present-before ⇒ present-after — NOT unconditional
 # presence, which would self-reject the rules files that never had frontmatter):
 #   * frontmatter present in the before-image but absent after → FAIL (restore).
-#   * a `> Rules:` anchor present before but absent after → FAIL.
 #   * the target shrinks past a proportional floor relative to the before-image → FAIL.
 #   * a target that NEVER had frontmatter is not penalized for its continued absence.
 #
 # FAIL-AT-HEAD (RED against a627de7, GREEN after T20):
 #   * removed-frontmatter after-image → predicate FAILS (HEAD passes: has a heading).
-#   * removed-`> Rules:`-anchor after-image → predicate FAILS (HEAD passes).
 #   * gutted (shrunk-past-floor) after-image → predicate FAILS (HEAD passes).
 #   * the predicate reads the VERIFY_BEFORE_IMAGE global (HEAD ignores it entirely).
 #   * the doc header names a defect class it cannot detect (HEAD says only "basic").
@@ -70,15 +68,11 @@ setup() {
 
   # Before-image fixtures.
   BEFORE_FM="${WORK}/before_fm.md"       # frontmatter + heading + body
-  BEFORE_RULES="${WORK}/before_rules.md" # frontmatter + heading + > Rules: + body
   BEFORE_BIG="${WORK}/before_big.md"     # large body (for the shrink floor)
   BEFORE_NO_FM="${WORK}/before_no_fm.md" # a rules-file shape: NEVER had frontmatter
   {
     printf '%s\n' '---' 'name: probe-agent' '---' '# Probe Agent' 'a meaningful body line'
   } >"${BEFORE_FM}"
-  {
-    printf '%s\n' '---' 'name: probe-agent' '---' '# Probe Agent' '> Rules: comment-logging' 'a body line'
-  } >"${BEFORE_RULES}"
   {
     printf '%s\n' '---' 'name: probe-agent' '---' '# Probe Agent'
     local i
@@ -90,16 +84,12 @@ setup() {
 
   # After-image (post-apply target) fixtures.
   AFTER_NO_FM="${WORK}/after_no_fm.md"       # frontmatter STRIPPED (heading kept)
-  AFTER_NO_RULES="${WORK}/after_no_rules.md" # > Rules: anchor REMOVED (fm + heading kept)
   AFTER_SHRUNK="${WORK}/after_shrunk.md"     # gutted to a lone heading
   AFTER_FM_OK="${WORK}/after_fm_ok.md"       # a valid patch: preserves fm + heading + body
   AFTER_NO_FM_OK="${WORK}/after_no_fm_ok.md" # never-had-fm target, still no fm (valid)
   {
     printf '%s\n' '# Probe Agent' 'a meaningful body line, frontmatter gone'
   } >"${AFTER_NO_FM}"
-  {
-    printf '%s\n' '---' 'name: probe-agent' '---' '# Probe Agent' 'a body line, anchor gone'
-  } >"${AFTER_NO_RULES}"
   {
     printf '%s\n' '# Probe Agent'
   } >"${AFTER_SHRUNK}"
@@ -130,11 +120,6 @@ verify() {
 @test "removed-frontmatter after-image → predicate FAILS [FAIL-AT-HEAD: HEAD passes on the heading]" {
   verify "${BEFORE_FM}" "${AFTER_NO_FM}"
   [[ "${status}" -ne 0 ]] || { echo "stripping present-before frontmatter must fail the predicate" >&2; return 1; }
-}
-
-@test "removed-\`> Rules:\`-anchor after-image → predicate FAILS [FAIL-AT-HEAD]" {
-  verify "${BEFORE_RULES}" "${AFTER_NO_RULES}"
-  [[ "${status}" -ne 0 ]] || { echo "removing a present-before > Rules: anchor must fail the predicate" >&2; return 1; }
 }
 
 @test "gutted (shrunk past the proportional floor) after-image → predicate FAILS [FAIL-AT-HEAD]" {

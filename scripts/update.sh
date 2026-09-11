@@ -1560,15 +1560,11 @@ _update_roster_verify() {
     update_log "WARN: roster verify has no readable before-image for ${_update_roster_verify_target} — failing verify"
     return 1
   fi
-  # Frontmatter and the rules anchor: present-before implies present-after, vacuous
-  # on a shape that carries neither. Separated substitution so head's exit is not
-  # masked (SC2312).
+  # Frontmatter: present-before implies present-after, vacuous on a shape that
+  # carries none. Separated substitution so head's exit is not masked (SC2312).
   before_fm="$(head -n 1 "${before}")"
   after_fm="$(head -n 1 "${on_disk}")"
   if [[ "${before_fm}" == '---' && "${after_fm}" != '---' ]]; then
-    return 1
-  fi
-  if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${on_disk}"; then
     return 1
   fi
   # A shell roster declaring one array twice is valid shell whose LAST declaration

@@ -4424,14 +4424,17 @@ def _get_protected_kind(line: str) -> str | None:
     not an edit but a change to what the later guards can still reason about. The
     blank member is protected because a blank line carries no identity — it can
     never be evidenced as "exactly one" anything.
+
+    The leading `> ...` header quote block is deliberately NOT a member: every
+    one of its lines sits above the body's first EDITABLE:BEGIN marker, so the
+    region rule below already refuses their removal, and a `> `-prefixed member
+    would over-reach onto the ordinary prose blockquotes bodies use throughout.
     """
     body = line.rstrip("\n")
     if not body.strip():
         return "blank"
     if body.strip() == "---":
         return "frontmatter-delimiter"
-    if body.startswith("> Rules:"):
-        return "rules-anchor"
     if "<!-- EDITABLE:BEGIN -->" in body or "<!-- EDITABLE:END -->" in body:
         return "region-marker"
     if _heading_level(body) > 0:

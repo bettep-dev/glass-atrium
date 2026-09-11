@@ -1583,13 +1583,12 @@ sys.stdout.write("\n".join(out))
 # (Precondition Loud-Fail, shared-self-improve-hygiene).
 #
 # Preservation semantics — present-before implies present-after, NOT unconditional
-# presence: a target that never had frontmatter or a `> Rules:` anchor is not
-# penalized for its continued absence (the rules files and the global-rules file
-# never carried frontmatter). Checks: non-empty · one heading · present-before
-# frontmatter kept · present-before `> Rules:` anchor kept · editable-region
-# marker COUNTS not reduced · the multiset of lines absent after the apply equal
-# to the declared removal set (gate-armed patches only) · not shrunk below half
-# the before-image line count.
+# presence: a target that never had frontmatter is not penalized for its continued
+# absence (the rules files and the global-rules file never carried frontmatter).
+# Checks: non-empty · one heading · present-before frontmatter kept · editable-
+# region marker COUNTS not reduced · the multiset of lines absent after the apply
+# equal to the declared removal set (gate-armed patches only) · not shrunk below
+# half the before-image line count.
 #
 # Why the marker check COUNTS rather than tests presence: a patch that deletes one
 # END marker of several leaves markers present while silently merging two regions
@@ -1633,15 +1632,10 @@ verify_patched() {
         return 1
     fi
 
-    # `> Rules:` anchor: present-before implies present-after.
-    if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${target}"; then
-        return 1
-    fi
-
     # Editable-region markers: present-before implies present-after, per-marker
     # COUNT (rationale in the header). A marker-less before-image counts 0 and so
-    # is never penalized, inheriting the same present-before semantics as the two
-    # checks above. awk (not `grep -c`) does the counting because it exits 0 on a
+    # is never penalized, inheriting the same present-before semantics as the
+    # frontmatter check above. awk (not `grep -c`) counts because it exits 0 on a
     # zero count — no `|| true` suppression to reason about under set -e, and no
     # `grep -c` no-match exit-1 trap.
     local marker before_markers after_markers

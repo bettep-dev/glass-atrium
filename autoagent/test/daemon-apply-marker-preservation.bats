@@ -4,9 +4,9 @@
 # TWO deliverables share one file, so one suite covers both:
 #
 #   (1) verify_patched gains a SIXTH check — editable-region marker COUNTS.
-#       The five existing checks (non-empty · one heading · present-before
-#       frontmatter · present-before `> Rules:` anchor · proportional shrink
-#       floor) never look at `<!-- EDITABLE:BEGIN/END -->`, so a patch that
+#       The four existing checks (non-empty · one heading · present-before
+#       frontmatter · proportional shrink floor) never look at
+#       `<!-- EDITABLE:BEGIN/END -->`, so a patch that
 #       deletes one END marker of several verifies clean while silently merging
 #       two regions into one. Counting (not mere presence) is the point: a
 #       presence test passes exactly the case worth catching.
@@ -24,7 +24,7 @@
 #     selected on the fourth at HEAD (the verify-fail branch never advances the
 #     stale counter, so the row never reaches 'snoozed').
 #
-# REGRESSION PINS (green at HEAD and after): the five existing checks each still
+# REGRESSION PINS (green at HEAD and after): the four existing checks each still
 # fail their own case; a marker-count-preserving result still passes; a target
 # that never carried markers is not penalized; the verify failure still hands off
 # to the atomic restore; the verify-fail branch keeps counting ERRORS (NOT
@@ -67,12 +67,11 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 # write_two_region_body PATH — a body carrying TWO editable regions (2 begin
-# markers, 2 end markers) plus frontmatter, a heading and a `> Rules:` anchor.
+# markers, 2 end markers) plus frontmatter and a heading.
 write_two_region_body() {
   printf '%s\n' \
     '---' 'name: probe-agent' '---' \
     '# Probe Agent' \
-    '> Rules: comment-logging' \
     '## Goal' "${BEGIN_MARK}" 'goal line one' 'goal line two' "${END_MARK}" \
     '## Work Rules' "${BEGIN_MARK}" 'work rule one' 'work rule two' "${END_MARK}" \
     >"$1"
@@ -164,14 +163,6 @@ verify() {
   tail -n +4 "${before}" >"${after}"
   verify "${before}" "${after}"
   [[ "${status}" -ne 0 ]] || { echo "stripping present-before frontmatter must fail" >&2; return 1; }
-}
-
-@test "existing check: a result removing a present-before \`> Rules:\` anchor still fails" {
-  local before="${WORK}/before.md" after="${WORK}/after.md"
-  write_two_region_body "${before}"
-  grep -v '^> Rules:' "${before}" >"${after}"
-  verify "${before}" "${after}"
-  [[ "${status}" -ne 0 ]] || { echo "removing a present-before anchor must fail" >&2; return 1; }
 }
 
 @test "existing check: a result shrunk past the proportional floor still fails" {

@@ -66,7 +66,10 @@ tools: [Read, Glob, Grep, Edit, Write, Bash]
 maxTurns: 40
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)
+# glass-atrium-dev-scaffold
+
+Scaffolded agent. Routing domains: (none).
+Body authoring is out of scope for the lifecycle scaffold.
 MD
 
   # Guarded keys adjacent, for the key-line reorder ruling.
