@@ -1,9 +1,9 @@
 # Type Safety Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
+Each rule names the construct it binds on. Where the language has no such construct, that rule is inert — it is never generalized to a near-equivalent.
 
 ## Core Principles
 
-- Using the `any` type is **FORBIDDEN** — replace with `unknown` + type guards
-- `as` type assertions SHOULD be minimized — prefer type inference; when unavoidable, a justifying comment is REQUIRED
-- `!` non-null assertion — a runtime check MUST precede its use
+- **Escape-hatch type (`any`)** — the `glass-atrium-dev-patterns` skill forbids it; the replacement is `unknown` plus a type guard at the boundary, never a widened signature.
+- **Type assertion (`as`)** — minimize, prefer inference. Unavoidable → a comment stating why the assertion holds is REQUIRED, and that comment is a sanctioned non-obvious "why" the comment-density ceiling does not delete.
+- **Force unwrap / non-null assertion (`!`)** — a runtime check MUST precede its use.

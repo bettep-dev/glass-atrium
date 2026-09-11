@@ -1,23 +1,14 @@
 # Turn-Budget Injection Text (Cross-Cutting Concern)
 
-Single-source SoT for the INJECTED turn-budget discipline TEXT — the two marker blocks below, delivered by the `inject-scope-rules.sh` SubagentStart hook. Policy SoT is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`; this file owns only the compressed injection variants, never the policy — a policy change lands there first, then is manually re-compressed here (sync is a manual obligation, not a mechanically enforced guarantee).
-
-## Rosters (delivery — `hooks/inject-scope-rules.sh`)
-
-- `BUDGET_DEV_AGENTS` (9) = DEV(13) − daemon-carrier exclusions {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell}. The four carriers keep daemon-evolved in-body budget bullets (the daemon rewrites agent BODIES, never hook sources) — injecting on top would double-deliver.
-- `BUDGET_ANALYSIS_AGENTS` (6) = glass-atrium-intel-planner, glass-atrium-intel-reporter, glass-atrium-qa-code-reviewer, glass-atrium-design-designer, glass-atrium-meta-agent, glass-atrium-wiki-curator (glass-atrium-intel-researcher excluded — carrier).
+Source file for the two marker blocks below, which the `inject-scope-rules.sh` SubagentStart hook extracts verbatim. Nothing else here is delivered, so a duty homed in this file reaches no agent. The policy SoT is `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`: a policy change lands there first and is then re-compressed into the blocks below by hand, an obligation no test checks.
 
 ## Meter block (NOT sourced here yet — the third injected turn-budget text)
 
-A THIRD turn-budget text reaches every subagent at spawn and is **not** in this file: the turn-budget meter, `hooks/inject-scope-rules.sh` → `build_meter_block`. It is the block that delivers the 80%-ceiling / `needs_context` half of the discipline — which is exactly why both blocks below omit that half. It is authored as a `printf` literal in shell, so **an edit to `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit` does not reach a running agent**, and nothing greps a shell literal.
-
-- **Why it is not a marker block here.** A marker block would need two substitution placeholders, because the meter interpolates the agent's frontmatter `maxTurns` and the derived 80% ceiling while `extract_block` returns literal text. That part is mechanically fine and byte-neutral. The actual blocker is the test harness: `hooks/test/inject-scope-rules.bats` → `run_hook_full` is the only meter-ENABLED driver in that suite and it synthesizes BOTH the budget source AND the agents dir under `BATS_TEST_TMPDIR`, so a meter sourced from ANY markdown file extracts empty there and reds 9 tests. Moving the wording means writing the marker pair into that fixture writer FIRST. Measured, not assumed — the extraction was implemented, run, and reverted.
-- **Do not park a dormant copy of the meter text here** while it is unsourced. A second copy no code reads is a drift surface with no reader, which is strictly worse than one literal that is correct.
-- **Honest backing — MANUAL, unenforced.** No test compares the policy section against that literal; `hooks/test/inject-scope-rules-nodrop.bats` pins only the needle `Turn-budget meter`, which survives almost any rewording. This note makes the copy visible from the corpus side; it does not prevent it drifting.
+A third turn-budget text reaches every subagent at spawn and is not in this file: the meter, `hooks/inject-scope-rules.sh` → `build_meter_block`. It delivers the 80%-ceiling / `needs_context` half of the discipline, which is exactly why both blocks below omit that half. It is a `printf` literal in shell, so an edit to the policy section does not reach a running agent and nothing greps a shell literal — this pointer is what makes that copy visible from the corpus side. Do not park a dormant second copy of the meter text here while it is unsourced.
 
 ## BUDGET-DEV block
 
-> The block below (between the `AGENT-INJECT:BUDGET-DEV` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the `BUDGET_DEV_AGENTS` roster. It is sizing-only ON PURPOSE: the 80%-ceiling / `needs_context` half of the canonical discipline is intentionally OMITTED — the non-droppable turn-budget meter block already delivers it on every spawn, so restating it here would be intra-assembly duplication. The marker name differs from every other `AGENT-INJECT` block so the sed ranges never collide.
+Injected to `BUDGET_DEV_AGENTS`. Sizing-only on purpose — the non-droppable meter block already carries the ceiling half on every spawn.
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=300 B hard, <=260 B target (nodrop.bats pins the source-contract); any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-DEV:START -->
@@ -28,7 +19,7 @@ A THIRD turn-budget text reaches every subagent at spawn and is **not** in this 
 
 ## BUDGET-ANALYSIS block
 
-> The block below (between the `AGENT-INJECT:BUDGET-ANALYSIS` markers) is extracted verbatim by the same hook and injected into the `BUDGET_ANALYSIS_AGENTS` roster. It carries the canonical analysis bullet (allowlist reads · reserve the emit tail · partial-on-ceiling); the ceiling-STOP rationale is omitted for the same reason as BUDGET-DEV — the non-droppable turn-budget meter block delivers it on every spawn.
+Injected to `BUDGET_ANALYSIS_AGENTS`, a roster with no DEV member. It carries the analysis bullet — allowlist reads · reserve the emit tail · partial on ceiling — and omits the ceiling rationale for the same reason as BUDGET-DEV.
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=364 B; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->

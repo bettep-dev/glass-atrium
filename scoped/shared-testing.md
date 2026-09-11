@@ -1,22 +1,5 @@
 # Testing Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
-
-**Delivery honesty**: this is a Tier-3 cross-cutting file and its body is pointer-referenced only — nothing injects it at spawn, so a duty homed HERE reaches no running agent. Site a duty that must actually bind in the agent's own body or in an injected block (`core-compliance-matrix.md` → Membership vs. Delivery).
-
-## Who reads this file
-
-Because the body reaches no agent at spawn, every section kept below is kept because a NAMED reader outside this file resolves to it. A section nothing in this table points at was deleted rather than kept for completeness — and a new section without a reader here has no place to be read from.
-
-| Section | Established reader | Where the inbound pointer lives |
-|---|---|---|
-| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
-| Mocking Rules · Test Structure | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → 7-Perspective Checklist, Testing row |
-| Rationalization Rejection (Testing) | every agent — the charter names testing as a home file for the excuse→rebuttal pairs | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
-| 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
-| Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
-| Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
-
 ## Test Quality
 
 ### What makes a test a test
@@ -26,7 +9,6 @@ Because the body reaches no agent at spawn, every section kept below is kept bec
 - **Behavioral testing**: verify external behavior (input → output), not implementation details.
 - **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter.
 - **Naming**: prefer `should_expectedBehavior_when_condition` or readable `describe/it` blocks — and make the name state the RELATIONSHIP asserted, not the input value used.
-- **Backing honesty**: this whole section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor named below, which never inspects the relationship claim itself.
 
 ### Decision procedure — run it before writing the SECOND test of the same behavior
 
@@ -51,25 +33,20 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 ### Meaningless-Test Prohibitions
 
-#### How to read the Check column (backing honesty)
-
-- **MECHANICAL means decidable-in-principle by a script — NOT that a script exists. No row on this table is enforced.**
-- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row below, and that auditor is **ADVISORY**: it exits 0 on findings, is **NOT wired into CI**, and is run by hand.
-- That auditor carries a THIRD signal no row below states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row here, and is in particular not the tooling for the change-detector row.
-- Every row tagged `[no tooling]` has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
+- **Every row is reviewer-applied**: no row below is enforced by a gate — apply each one yourself. A hand-run advisory auditor reports shapes for a subset and never adjudicates whether a shape is a defect.
 - Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
 
 #### The prohibited shapes
 
-| Prohibited | Smell (source) | Check |
-|---|---|---|
-| A test with no assertion, or whose only claim is "it did not throw" | assertion-free test (the `expect-expect` lint rule family) | MECHANICAL — tooling: signal (a) |
-| An assertion that cannot fail | tautological test (Pereira 2010) | MECHANICAL — tooling: signal (b) |
-| Asserting back the value a mock was configured to return | tautological test — mock-echo sub-case | MECHANICAL `[no tooling]` |
-| An expected value copied from observed output | change-detector test (Google Testing Blog 2015) | JUDGMENT `[no tooling]` |
-| Near-duplicate cases that one property or one parameterized table would cover | test code duplication (van Deursen et al. 2001) | JUDGMENT `[no tooling]` |
-| A test whose target has no branch and no logic | trivial getter/setter/constructor test | JUDGMENT `[no tooling]` |
-| Control flow that can SKIP an assertion | conditional test logic (Meszaros 2007) | JUDGMENT `[no tooling]` |
+| Prohibited | Smell |
+|---|---|
+| A test with no assertion, or whose only claim is "it did not throw" | assertion-free test |
+| An assertion that cannot fail | tautological test |
+| Asserting back the value a mock was configured to return | tautological test — mock-echo sub-case |
+| An expected value copied from observed output | change-detector test |
+| Near-duplicate cases that one property or one parameterized table would cover | test code duplication |
+| A test whose target has no branch and no logic | trivial getter/setter/constructor test |
+| Control flow that can SKIP an assertion | conditional test logic |
 
 #### Detection signature per row, keyed by the Prohibited literal above
 
@@ -83,17 +60,15 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
   - **Carve-out — a characterization test (Test Quality → Legitimate example tests) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not a characterization test and is not exempt.
 - **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
   - The DAMP carve-out below decides whether a given cluster is this smell.
-- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets.
-  - Reviewer-applied: resolving the production target from the test is not implemented.
+- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it; no tool resolves it for you.
 - **Control flow that can SKIP an assertion** — `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing.
   - **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
-  - Deliberately excluded from the auditor, because the carve-out requires reading which branch the assertion sits on.
 
 #### Rules spanning the whole table
 
-- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper (Google Testing Blog, *Tests Too DRY? Make Them DAMP!*, 2019). The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
+- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
 - **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
-- **Empirical backing**: smelly tests carry measurably higher defect risk than clean ones (Palomba et al., ASE 2016; corroborated ICSME 2018). This list is defect-risk regulation, not style preference.
+- **This list is defect-risk regulation, not style preference**: smelly tests carry measurably higher defect risk than clean ones.
 
 ## Mocking Rules
 
@@ -110,14 +85,13 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "Too simple to need tests" | Even simple code regresses · tests serve as documentation |
+| "Too simple to need tests" | Even simple code regresses · sole exception: a test whose target has no branch and no logic (prohibited above) |
 | "Will add tests later due to time constraints" | "Later" never comes · test debt = technical debt |
 | "This part is hard to test" | Difficulty testing = design problem signal → fix the design |
 | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
 | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 
 - **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail, and the break reverted. Skip that step and the test is unproven, so the rebuttal applies unchanged.
-- Where the test-first duty actually binds: `core-outcome-record.md` → Field Input Guide → `metric_pass`, delivered to every agent, which states both the observed-failure bar and this exception. This file holds only the reconciliation with the rebuttal above.
 
 ## 3-Tier Test Hierarchy
 
@@ -133,7 +107,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 ## Destructive-Path Suite Safety (live-postgres reach)
 
-The install-side shell functions that can reach a live postgres are exactly these: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`). Clear the procedure below before running any suite file that EXECUTES either. The steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
+**Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are exactly the functions that can reach a live postgres. No such run → skip to the next section. Otherwise clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
 
 ### Before you start: do not re-derive the retired condition
 
@@ -142,49 +116,52 @@ The install-side shell functions that can reach a live postgres are exactly thes
 
 ### Step 1 — Enumerate the occurrences
 
-- **Enumerate — list every occurrence and classify by READING it; a command-word pattern is FORBIDDEN as the enumeration step.**
-  - `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
-  - Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
-  - Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` TITLE and MISSES the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`. The pattern reported a naming site and hid the executing one.
-  - Derive the site list from the run; never carry a remembered count forward.
+List every occurrence and classify by READING it; a command-word pattern is FORBIDDEN as the enumeration step.
+
+- `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
+- Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
+- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` TITLE and MISSES the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`. The pattern reported a naming site and hid the executing one.
+- Derive the site list from the run; never carry a remembered count forward.
 
 ### Step 2 — Classify each occurrence
 
-- **Classify each occurrence executing, naming, or neutralized** — only executing sites continue.
-  - Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string, where it is most often mid-string rather than leading.
-  - Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, a `@test` title, a comment, a string literal in a non-shell file, or an argument to a helper (`extract_launcher_fn <name>`); or it is the definition itself.
-  - Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
-    - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
-    - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
-    - Reading the file top-down invites the opposite conclusion, which is the exact misclassification this bucket exists to prevent — it silently converts a real executing site into a pass.
-    - The mirror of that rule, and the reason a control installed once still counts: whatever `setup` defines DOES reach every body, because it runs inside each one. A shadow or a PATH stub installed there covers the whole file; only a body-local one stops at its own body.
-    - PROBED, not inferred, both halves: a two-body file whose first body defines a function and whose second asserts `declare -F` does not find it — the second body passes, so nothing leaked; and a file defining the same name in `setup` instead — both bodies see it.
+Classify each occurrence executing, naming, or neutralized — only executing sites continue.
+
+- Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string, where it is most often mid-string rather than leading.
+- Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, a `@test` title, a comment, a string literal in a non-shell file, or an argument to a helper (`extract_launcher_fn <name>`); or it is the definition itself.
+- Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
+  - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
+  - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
+  - Reading the file top-down invites the opposite conclusion, which is the exact misclassification this bucket exists to prevent — it silently converts a real executing site into a pass.
+  - The mirror of that rule, and the reason a control installed once still counts: whatever `setup` defines DOES reach every body, because it runs inside each one. A shadow or a PATH stub installed there covers the whole file; only a body-local one stops at its own body.
 
 ### Step 3 — Read the reached function body
 
-- **Read the reached function body BEFORE answering — the pid question is not answerable from the test file alone.** Open `clear_unmanaged_pg_orphan` in `lib/ga-daemons.sh` and read ONLY these:
-  - Every lookup that feeds the signal, and how each is reached: a socket-scoped lookup, plus a socket-blind port fallback that runs only when the first returns nothing.
-    - COUNT them rather than assuming one — a substitute must cover every one, which a stub ignoring its arguments does in a single file.
-  - Which layer consumes each answer: the pid feeds the signal, and the resolved socket path feeds the removal. That mapping is what makes the Step 4 questions answerable rather than a guess.
-  - Then resolve the SITE's own controls the same way: a test file usually installs its stub through a helper defined elsewhere in that file, so follow the helper's definition — the call site shows only its name, which answers nothing.
+Read the reached function body BEFORE answering — the pid question is not answerable from the test file alone. Open `clear_unmanaged_pg_orphan` in `lib/ga-daemons.sh` and read ONLY these:
+
+- Every lookup that feeds the signal, and how each is reached: a socket-scoped lookup, plus a socket-blind port fallback that runs only when the first returns nothing.
+  - COUNT them rather than assuming one — a substitute must cover every one, which a stub ignoring its arguments does in a single file.
+- Which layer consumes each answer: the pid feeds the signal, and the resolved socket path feeds the removal. That mapping is what makes the Step 4 questions answerable rather than a guess.
+- Then resolve the SITE's own controls the same way: a test file usually installs its stub through a helper defined elsewhere in that file, so follow the helper's definition — the call site shows only its name, which answers nothing.
 - This READ is required, and it relaxes no criterion below.
 
 ### Step 4 — Answer the questions at every executing site
 
-- **Answer every question below at every executing site, all of them resolving**:
-  - **Pid control** — can every `lsof` the function reaches return a live postgres pid? It MUST NOT. No environment seam substitutes for this.
-    - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `lsof -ti tcp:5432` port lookup that finds the live server wherever the socket path points.
-    - Two substitute shapes resolve it: one reporting NO owner, and one reporting a pid that provably cannot name a live process (a literal above the platform pid ceiling — macOS wraps pids below 100000). A real `lsof` on PATH resolves neither, whatever the socket redirect says.
-    - The fake-pid shape leaves `kill -INT <pid>` running the REAL `kill`; it is safe only because the pid cannot exist. A fake pid inside the live range fails this question.
-  - **Path control** — does `${PG_SOCKET}/.s.PGSQL.5432` resolve to a path OTHER than the live server's socket?
-    - The object is that ONE path, not the tree containing it.
-    - A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and one suite is FORCED there — `test/uninstall-detached-daemons.bats`, because the AF_UNIX `sun_path` cap (~104 bytes on macOS) makes a `$TMPDIR` base (`/var/folders/…`, ~91 bytes) unbindable.
-    - What FAILS is `PG_SOCKET` resolving to the live socket's OWN directory — unset (defaults to `/tmp`), or an explicit `/tmp`.
-    - Which seam sets it depends on how the file loads the code:
-      - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), which is where the `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
-      - a plain `PG_SOCKET=` assignment, which WORKS in a file that sources a domain lib directly and so never calls `ga_init_env`: nothing made the name readonly there, and exporting `GA_PG_SOCKET` in such a file is inert.
-  - **Mechanism binding** — which shell actually runs the function?
-    - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
+Answer every question below at every executing site, all of them resolving.
+
+- **Pid control** — can every `lsof` the function reaches return a live postgres pid? It MUST NOT. No environment seam substitutes for this.
+  - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `lsof -ti tcp:5432` port lookup that finds the live server wherever the socket path points.
+  - Two substitute shapes resolve it: one reporting NO owner, and one reporting a pid that provably cannot name a live process (a literal above the platform pid ceiling — macOS wraps pids below 100000). A real `lsof` on PATH resolves neither, whatever the socket redirect says.
+  - The fake-pid shape leaves `kill -INT <pid>` running the REAL `kill`; it is safe only because the pid cannot exist. A fake pid inside the live range fails this question.
+- **Path control** — does `${PG_SOCKET}/.s.PGSQL.5432` resolve to a path OTHER than the live server's socket?
+  - The object is that ONE path, not the tree containing it.
+  - A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and one suite is FORCED there — `test/uninstall-detached-daemons.bats`, because the AF_UNIX `sun_path` cap (~104 bytes on macOS) makes a `$TMPDIR` base (`/var/folders/…`, ~91 bytes) unbindable.
+  - What FAILS is `PG_SOCKET` resolving to the live socket's OWN directory — unset (defaults to `/tmp`), or an explicit `/tmp`.
+  - Which seam sets it depends on how the file loads the code:
+    - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), which is where the `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
+    - a plain `PG_SOCKET=` assignment, which WORKS in a file that sources a domain lib directly and so never calls `ga_init_env`: nothing made the name readonly there, and exporting `GA_PG_SOCKET` in such a file is inert.
+- **Mechanism binding** — which shell actually runs the function?
+  - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
 
 ### Step 5 — Decide, and verify the decision after the run
 
@@ -205,7 +182,5 @@ The hazard is a live pid plus a live path reaching a real signal or a real remov
 
 ## Mechanical Success Metrics
 
-> Detailed per-task-type pass conditions: See `core-outcome-record.md` Field Input Guide → `metric_pass` (canonical source; `bug-fix` adds exit code 0 check)
-
-- Metric results are recorded in the Outcome Record as a `metric_pass` (true/false) field
-- `grader_verdict: verified_pass` on a code-type row is a PRESENCE signal, never a quality signal. Promotion rule SoT: `hooks/lib/code-based-grader.sh` → `_cbg_files_test_evidence`.
+- Per-task-type pass conditions are canonical in `core-outcome-record.md` → Field Input Guide → `metric_pass` (`bug-fix` adds an exit-code-0 check); the result is recorded there as the `metric_pass` boolean.
+- `grader_verdict: verified_pass` on a code-type row is a PRESENCE signal, never a quality signal.
