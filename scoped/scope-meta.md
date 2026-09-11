@@ -69,7 +69,7 @@ What remains here is what the delegation composer needs:
 **The rationale `core-compliance-matrix.md` cites this heading for**: prompts are code (`## Absolute Rules` above), so glass-atrium-meta-prompt-engineer inherits the Tier-3 DEV cross-cutting rules that govern code authoring — comment and logging discipline, measure-first before optimizing, search existing artifacts before creating new ones, Red → Green → Refactor test discipline, and no untyped escape hatches. `glass-atrium-meta-agent` does not inherit them: instruction rewrite is not general code authoring.
 
 - **Membership is deliberately not restated here.** The exact file set is `core-compliance-matrix.md` → `### Tier 3 — Cross-cutting (conditional inheritance)`, footnote †; a second list here would diverge from it silently.
-- **What reaches the agent** is the `> Rules:` header line in `agents/glass-atrium-meta-prompt-engineer.md`, which names the inherited files and the glass-atrium-meta-agent exclusion. The Tier-3 bodies themselves are pointer-referenced only, per that same matrix section.
+- **Where the inheritance is declared** is the `glass-atrium-meta-prompt-engineer` entry in `agent-registry.json` (`rules.shared`); the exclusion shows as the `glass-atrium-meta-agent` entry not carrying those files. The declaration delivers no rule text — the Tier-3 bodies stay pointer-referenced only, per that same matrix section.
 
 ## Prompt Authoring Hygiene [META]
 

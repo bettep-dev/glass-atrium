@@ -69,14 +69,16 @@ Each file below is inherited on its OWN condition. DEV is the common carrier, bu
 | `scoped/shared-type-safety.md` | DEV · META † |
 | `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
 | `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR unconditionally · autoagent-touching DEV subset § |
-| `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · QA · META † ¶ |
+| `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · hook-reviewing QA ¶ |
 
 - **META inheritance is `glass-atrium-meta-prompt-engineer` only.** It takes the original cross-cutting set — `shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md` — because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance"). The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". `glass-atrium-meta-agent` inherits no Tier-3 file.
+  - **Hook-capability exclusion, adjudicated 2026-09-11**: the Tier-3 row above and the Compliance Matrix `shared-hook-capability-contract.md` row each carried a META marker asserting the opposite; both were corrected to match this bullet.
+  - It stands because `glass-atrium-meta-prompt-engineer` authors prompts, not hooks — and code already agreed: `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry, and that agent's registry row keeps an empty `conditional` list.
 - **QA** loads Tier 1 + `scoped/scope-qa.md` + `shared-comment-logging.md` always, and `shared-hook-capability-contract.md` only when reviewing hook work — never the full set.
 
 ### Injected Blocks (SubagentStart allowlist)
 
-Tier MEMBERSHIP is not rule-TEXT delivery: a spawned subagent receives the `comment-logging` pointer token in its `> Rules:` header, not the rule body. `hooks/inject-scope-rules.sh` delivers extracted marker blocks — never whole scope-file bodies — as `hookSpecificOutput.additionalContext`. This is a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
+Tier MEMBERSHIP is not rule-TEXT delivery: an agent's Tier-2 and Tier-3 membership is DECLARED on its registry row — `agents.<name>.rules.scope` (the one Tier-2 file) · `.shared` (unconditional Tier-3) · `.conditional` (task-conditional Tier-3, each entry carrying its own `when`) in `agent-registry.json` — and no spawn path reads that object, so a row naming `comment-logging` delivers no rule text. Tier 1 is universal and therefore sits in the ALL column below rather than on any row. The retired `> Rules:` body header carried the same declaration and is gone from every body; the lifecycle CLI refuses one. `hooks/inject-scope-rules.sh` delivers extracted marker blocks — never whole scope-file bodies — as `hookSpecificOutput.additionalContext`. This is a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
 
 | Block | Source | Roster |
 |---|---|---|
@@ -104,7 +106,7 @@ Roster curation — why each is the shape it is:
 Two injection sources are not rule files of this matrix, and neither gains membership by being injected:
 
 - `scoped/shared-turn-budget.md` is an injection-TEXT source only, like the naming SKILL.md — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries NO tier membership and no matrix row.
-- `AGENT-INJECT:WIKI-UNTRUSTED` is the ONLY injected block sourced from a **Tier-1** rule file, carrying that file's raw-store data-not-instruction clause [LLM01] to agents that otherwise receive the rule as a `> Rules:` pointer. The `core-wiki-reference.md` matrix row is unchanged: the injection delivers a clause body, grants no membership and changes no tier.
+- `AGENT-INJECT:WIKI-UNTRUSTED` is the ONLY injected block sourced from a **Tier-1** rule file, carrying that file's raw-store data-not-instruction clause [LLM01] to `WIKI_UNTRUSTED_AGENTS`. `core-wiki-reference.md` is ALL-scope Tier 1, so its membership sits in the ALL column below and on no registry row; the injection delivers a clause body, grants no membership and changes no tier.
 
 `AGENT-INJECT:PLAN-GATE` delivers a RESIDUAL, not the duty. What fits the byte contract is the verdict shape, the load-bearing premise test, the refuted-premise consequence and the non-waiver clause; the three-part answer shape for the revision-cycle first-link question did not fit and stays readable only in `scoped/scope-dev.md`, which is the block's SoT and does not reach a DEV agent. Do not read the block's arrival as the gate duty having been delivered. Delivery is also not guaranteed: the block sits low in the shed order — below both budget blocks, above the proven ones — and nothing sheds it only because today's block sizes leave the worst-case DEV assembly under the ceiling. A later source growth sheds it, and the drop marker that names it is recovery rather than delivery.
 
@@ -185,7 +187,7 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 | shared-testing.md | | ✓ | ✓† | | | | | | | | |
 | shared-type-safety.md | | ✓ | ✓† | | | | | | | | |
 | shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
-| shared-hook-capability-contract.md | | ✓¶ | ✓† | | | | | ✓ | | | |
+| shared-hook-capability-contract.md | | ✓¶ | | | | | | ✓ | | | |
 | shared-self-improve-hygiene.md | | ✓§ | | | | | | | | ✓ | |
 
 > † META column = `glass-atrium-meta-prompt-engineer` ONLY, never `glass-atrium-meta-agent`. Which files it inherits, and why: `### Tier 3 — Cross-cutting (conditional inheritance)` above.

@@ -41,7 +41,7 @@ An agent boundary is justified only when the two sides hold **ALL THREE** of the
 - **Disjoint decision domain** — the expertise for correct decisions is non-overlapping (React lifecycle vs. GSAP timeline · NestJS DI/CQRS vs. Node ESM stream pipeline · retrieval tuning vs. API routing).
 - **Non-transferable quality judgment** — a quality review in one concern cannot be performed by an agent holding only the other's expertise (EXPLAIN ANALYZE index calls need DB-specialist judgment a NestJS agent cannot substitute).
 
-**Code-quality rules are NOT part of the axis.** Every DEV agent loads an identical `> Rules:` pointer set (scope-dev · testing · type-safety · git-workflow · security); quality consistency is centralised at the rule layer. A new agent proposed solely to enforce a different quality standard is invalid — update the shared rule instead.
+**Code-quality rules are NOT part of the axis.** Every DEV agent declares an identical rule membership in its `agent-registry.json` entry (`rules.scope` = scope-dev · `rules.shared` = the Tier-3 cross-cutting set); quality consistency is centralised at the rule layer. A new agent proposed solely to enforce a different quality standard is invalid — update the shared rule instead.
 
 **Language alone is not an axis.** A new language/framework runtime justifies a new agent only when it ALSO introduces a concern meeting all three criteria above. Counter-example: `glass-atrium-dev-python` covers FastAPI + Litestar + Django + CLIs + data pipelines in one agent (the Python-runtime concern is unified).
 
@@ -57,7 +57,7 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 
 - add the name to the `scope-dev.md` loading stanza;
 - add an `agent-registry.json` entry with a non-overlapping `domains` array;
-- attach the standard `> Rules:` pointer set identical to every other DEV agent (no custom quality rules);
+- give that entry the standard `rules` object — `rules.scope` / `rules.shared` identical to every other DEV agent (no custom quality rules);
 - add a `compatibility` field when the agent has runtime preconditions (pattern: `glass-atrium-dev-animator`).
 
 **In-context lifecycle wiring (decision tree → CLI)**: the orchestrator's in-context flow (ceremony SoT: `skills/glass-atrium-ops-orchestrator.md` → In-Context Agent-Lifecycle Ceremony) realises this gate through the `agent_lifecycle` CLI.

@@ -1064,7 +1064,7 @@ When Decision-phase routing finds NO matching DEV agent at `confidence < 0.7` (r
 
 - **EXTEND is the default branch; CREATE is the gated exception** — decision tree + gate authority: `scope-dev.md` → DEV Agent Fleet Governance.
 - **Invocation is a DIRECT Bash CLI call** (`python -m agent_lifecycle …`), NO HTTP route.
-  - The CLI owns a crash-safe `fcntl.flock` mutation lock (single owner of `run_add`/`run_delete`) + all authored-body safety (`> Rules:` anchor assert/inject with wrong-scope HALT · fail-closed secret-scan · frontmatter-injection rejection), all fail-closed to `EXIT_HALT`.
+  - The CLI owns a crash-safe `fcntl.flock` mutation lock (single owner of `run_add`/`run_delete`) + all authored-body safety, all fail-closed to `EXIT_HALT`. Nothing is injected into the body any more — the gate only REFUSES: a body opening on a `---` frontmatter fence · a frontmatter-shaped `name`/`tools`/`scope`/`maxTurns` key on any line of the body or an appended section · a retired `> Rules:` header line · a fail-closed secret-scan hit.
 - **The orchestrator NEVER self-authors a body** — glass-atrium-meta-prompt-engineer is the body author.
 - **Two human-in-the-loop pauses are MANDATORY** — ⏸ at step 2 (create-vs-extend, reached on either branch) and ⏸ at step 5 (foreground commit, CREATE — its Harness Path Protection basis is the `~/.claude/agents/` symlink-farm write `add` performs at step 4).
 

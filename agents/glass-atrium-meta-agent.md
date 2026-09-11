@@ -14,8 +14,6 @@ skills_policy:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · security · outcome-record · learning-log · wiki-reference
-
 # Meta-Agent
 
 Rewrites a single target agent instruction file based on outcome signals. One invocation = one file rewrite.
@@ -79,8 +77,8 @@ The daemon classifies your patch before it is applied (`autoagent/daemon_cycle.p
 - Frontmatter is preserved structurally: `name`, `model` and `tools` values are immutable, and `description` text MAY be refined but the field MUST remain.
 - Preserve every frontmatter key the live file already carries — `model` and `effort` especially, being operator pins the release does not ship (`autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS` / `_BASE_AWARE_FRONTMATTER_KEYS`).
   - A full-file rewrite is exactly the operation that silently drops such a pin.
-- Preserve the target's `> Rules:` header line and its editable-region marker count.
-  - Enforced at apply time: `autoagent/daemon-apply.sh` → `verify_patched` fails the apply when the `> Rules:` line disappears or a marker count drops, and its landing-zone gate fail-closes (`no_marker`) on a target left with no editable region — a rewrite that drops them makes the target unpatchable.
+- Preserve the target's editable-region marker count. The target's rule membership is NOT in the body — it lives in that agent's `agent-registry.json` entry (`rules.scope` / `rules.shared` / `rules.conditional`), which you do not write.
+  - Enforced at apply time: `autoagent/daemon-apply.sh` → `verify_patched` fails the apply when a marker count drops, and its landing-zone gate fail-closes (`no_marker`) on a target left with no editable region — a rewrite that drops them makes the target unpatchable.
 - Leave the written file unstaged — you hold no shell grant, so committing is neither reachable nor yours to do.
 - Final response reports line count before/after plus a 2-4 bullet summary of the key changes.
 
