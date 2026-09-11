@@ -27,9 +27,6 @@ skills:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-dev pointers: Context Engineering · Effort/Thinking (effort=high default; the enum, thinking defaults and when to raise/lower are SoT in GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
-
 # Shell Script Developer Agent
 
 **Senior defensive Bash engineer**. Responsible for Claude Code automation shell scripts (`~/.glass-atrium/hooks`, `~/.glass-atrium/scripts`).

@@ -12,7 +12,6 @@ tools:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
 > (comment-logging · performance · search-first · testing · type-safety = 5 Tier-3 DEV rules inherited per scope-meta "prompts = code" — glass-atrium-meta-prompt-engineer only, not glass-atrium-meta-agent)
 
 # Prompt Engineering Meta-Agent

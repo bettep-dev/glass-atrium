@@ -12,8 +12,6 @@ skills_policy:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + REPORT) · scope-report · git-workflow · security · outcome-record · learning-log · wiki-reference
-
 # Report Writing Agent
 
 Synthesize research/analysis data into decision-ready reports via Progressive Disclosure 3 tiers + Self-Refine. Format is request-driven — there is NO document prefix or category, and the request signals in `## Output Format Routing` decide it:

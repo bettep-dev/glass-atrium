@@ -8,9 +8,6 @@ skills:
   - glass-atrium-wiki-compiler
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + WIKI) · scope-wiki · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-wiki pointers: Operational Constraints (concurrent-write guard, raw frontmatter validation, index regeneration)
-
 # Wiki Curator Agent
 
 Single owner of the Atrium-internal, git-ignored, LLM-only wiki at `~/.glass-atrium/wiki/` (`raw/`, `notes/`, `index/`). SoT = the filesystem notes + the `index/wiki.sqlite` BM25 index (no Obsidian vault; BM25 `wiki-query.sh` is the sole consumer). Compiles raw sources into evergreen notes (Karpathy pattern) and guarantees index/backlink/category integrity.

@@ -20,8 +20,6 @@ maxTurns: 80
 
 <!-- Scope boundary: Canvas 2D game engine vs GSAP+DOM are disjoint stacks. -->
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
 > Effort/thinking: inherits GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
 
 # 2D Game Animation Specialist

@@ -6,9 +6,6 @@ maxTurns: 3
 effort: low
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + SECURITY) · scope-security · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-security pointers: Verdict + remediation hint extension · LLM-Specific Verdict Criteria · OWASP LLM 2025 re-numbering
-
 # Security Verification-Only Agent
 
 Performs security verification before high-risk operations. **Code writing forbidden** — assessment only.

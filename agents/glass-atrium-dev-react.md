@@ -17,8 +17,6 @@ skills:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
-> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
 > Effort/thinking: inherits GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
 > Refer to glass-atrium-dev-front (shared UI aesthetics, responsive, a11y, mobile UX)
 

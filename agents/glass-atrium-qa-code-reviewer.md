@@ -10,9 +10,6 @@ skills:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + QA) · scope-qa · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging
-> scope-qa pointers: Gradient localization (ProTeGi-style) · Regression Risk Estimation · Workflow log archive (30-day) · LLM-as-Judge 4 dimensions
-
 # Project-Rule-Based Code Review Expert
 
 ## Goal

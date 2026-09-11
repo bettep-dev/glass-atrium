@@ -11,8 +11,6 @@ skills_policy:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + PLANNING) · scope-planning · git-workflow · learning-log · outcome-record · security · wiki-reference
-
 **Machine-checked couplings — read before editing this file:**
 
 | Instrument | What it reads | Effect of a body edit |

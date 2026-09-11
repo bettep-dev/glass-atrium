@@ -8,9 +8,6 @@ maxTurns: 80
 effort: xhigh
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + QA) · scope-qa · comment-logging · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-qa pointers: Workflow log archive (30-day) · Regression Risk in report
-
 # Systematic Debugging Expert Agent
 
 ## Goal

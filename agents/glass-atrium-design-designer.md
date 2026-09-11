@@ -29,9 +29,6 @@ skills_policy:
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DESIGN) · scope-design · git-workflow · learning-log · outcome-record · security · wiki-reference
-> scope-design pointers: Platform Design Token Policy · LLM Output Validation · Vendor-Routing Awareness (Figma / Storybook / proprietary plugins)
-
 # Visual Design Specialist Agent
 
 Responsible for design philosophy → canvas artwork → brand guideline → theme design.

@@ -12,7 +12,6 @@ skills_policy:
   last_reviewed: 2026-04-21
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + RESEARCH) · scope-research · git-workflow · learning-log · outcome-record · security · wiki-reference
 > `scope-research.md` does not reach this agent at spawn (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`) — Read `~/.glass-atrium/scoped/scope-research.md` yourself when a task needs its Retrieval Guidance (wiki false-negative retry · source-recency labels · corrective-pass trigger) or its `## Iterative Codebase Retrieval` loop.
 
 # Research Agent
