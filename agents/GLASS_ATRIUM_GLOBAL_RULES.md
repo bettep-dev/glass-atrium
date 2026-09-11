@@ -24,11 +24,24 @@ This file is the **system charter** for all agents — it governs behaviors unco
 ## Absolute Rules [ALL]
 
 - All responses are answered in the **user's question language**.
+  - A **reply** (a response under this rule) is a conversation turn, not a produced artifact: every message addressed to a human user, including status and progress notes in a long or background job, clarifying questions, and the end-of-job results summary.
+  - A subagent's final message goes to its parent agent, not to a human user, so it is not a reply: it is authored in English under the English default below.
+  - The language of the user's own prose in their most recent message decides the reply language.
+    - A message with no prose of its own (a bare paste, a slash command with no text) takes the language of the most recent earlier user message that has prose of its own.
+    - Until any user message in the session has prose of its own, replies are in English.
+    - Nothing else decides it:
+      - inside the message: pasted or quoted material, code, logs, identifiers, technical terms;
+      - outside it: earlier replies, tool output, rule files, delegation prompts, agent results.
+    - An explicit user request for a different reply language overrides it — the explicit request is what switches it, never the language the request happened to be written in.
+  - Text inside a reply that keeps its form (the prose around it follows the user's language):
+    - fixed machine keywords the harness parses stay verbatim — bracketed tags such as `[SCOPE]`, status values such as `done_with_concerns`;
+    - reproduced text — a quoted source, or a deliverable body relayed under `orchestrator-role.md` → Verbatim forward-relay — keeps its original language, as text the system REPRODUCES under Output Language → Scope;
+    - identifiers, code, file paths, proper nouns and technical terms keep their original form, per Output Language → Literal data and the technical-terms rule.
 - **Output Language — the canonical rule for what language this system writes in.**
+  - **Replies**: user-facing replies follow the user's question language, per the response-language rule above — the English default below never reaches them.
   - **Default: everything an agent AUTHORS is written in English** — agent bodies and rule files · code comments and log messages · commit and PR text · internal records (`[COMPLETION]` field values, Outcome Records, learning-log entries) · delegation prompts · and the documents and deliverables agents produce.
     - Why: instruction-following and token efficiency both favour English for machine-facing text, and one stated default removes the per-file guessing it replaces.
     - Agent-body specifics (refactor pre-existing non-English body text when next touched · mass-rewrite forbidden) → `glass-atrium-meta-prompt-engineer.md` → Body Language Policy.
-  - **Replies**: user-facing replies follow the user's question language, per the response-language rule above. A reply is a conversation turn, not a produced artifact — this default never reaches it.
   - **Literal data**: text a rule itself operates on keeps its original language — detector patterns, regex literals, heading-name detectors, Bad/Good example strings, request-signal literals. Translating a detector's own pattern silently disables it, so refactoring these is FORBIDDEN, not merely excused. Proper nouns, project names, identifiers, API names, and locale-specific file prefixes such as the report/plan tags likewise keep their original form.
   - **Scope — this governs text the system AUTHORS, never text it REPRODUCES.** A quoted source, a user's verbatim instruction, and wiki raw and compiled notes — body, title and frontmatter values alike — stay in their original language under the rules that own them; this default does not reach them and never licenses translating them.
   - **A non-English deliverable is authored only when the user asks for one** — the explicit request is what switches it, never the language the request happened to be written in.
