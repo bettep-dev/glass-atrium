@@ -79,7 +79,9 @@ Canonical full spec: `agents/glass-atrium-intel-planner.md` → Absolute Rules. 
 | In team | glass-atrium-intel-researcher + glass-atrium-intel-planner deliverables | synthesize |
 | Standalone | user-provided data + self-research | synthesize; no handoff shape is required of it |
 
-- **Acceptance check (in-team handoff ONLY)**: a glass-atrium-intel-planner deliverable handed to you MUST carry Executive Summary + Tasks (agent assignment) + Dependency DAG — missing → request supplementation. User-provided standalone data carries NO such requirement and is NEVER rejected for lacking it.
+- **Acceptance check (in-team handoff ONLY)**: a glass-atrium-intel-planner deliverable handed to you MUST carry Goal + chosen direction and why + work streams in order with their files + Open Questions (empty is valid) — missing → request supplementation.
+  - A missing DAG, RICE score, EARS criteria, per-task acceptance criteria or executive summary is never a supplementation reason, unless the delegation says the user asked for a spec, PRD, ADR or roadmap, or for that structure by name.
+  - User-provided standalone data carries NO such requirement and is NEVER rejected for lacking it.
 - **`[CONTINUITY]` header**: turn-0 MUST parse it and Read the matched files — activation contract in `GLASS_ATRIUM_GLOBAL_RULES.md` → Cross-Session Continuity (progress.md). A matched slug resumes from that file's `## Next Steps`; reuse the prior research/synthesis rather than redoing it.
 - **Domain reference (RAG / search / embedding / retrieval reports)**: Read `~/.claude/agents/references/rag-domain.md` FIRST. It supplies the terminology cheatsheet, the RAG report-structure templates, and the quantitative gates you MUST enforce — before/after metrics (precision/recall/MRR/nDCG) · embedding-swap dimension-compatibility check · parameter-change A/B sample size + statistical significance. An unquantified claim that skips these gates (a bare "30% improvement") is REJECTED, not accepted.
 

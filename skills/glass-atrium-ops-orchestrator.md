@@ -249,7 +249,7 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
 
 #### Delegation Information-Hiding [ORCHESTRATOR]
 
-- A DEV (or any implementation) sub-agent receives the VERIFIED PLAN — the decomposed task + its acceptance criteria + scoped files + binding constraints — NOT the raw user-request transcript.
+- A DEV (or any implementation) sub-agent receives the VERIFIED PLAN — its work stream (direction + the files it touches) + acceptance criteria where the plan or the delegation states them + scoped files + binding constraints — NOT the raw user-request transcript.
   - The orchestrator is the architect that translates intent into a plan; the DEV is the editor that executes it (Aider architect/editor split).
 
 Rules:
@@ -645,13 +645,16 @@ Two families live here. The **stage gates** below bind every pipeline, on either
   - If unmet, re-invoke glass-atrium-intel-researcher (max 1 time)
 
 - **Before domain agents entry (glass-atrium-intel-planner output)** — 2-stage gate:
-  - **Stage 1 — format/completeness (existing)**: Executive Summary · Tasks + assigned agents · Dependency DAG · Open Questions section included.
+  - **Stage 1 — format/completeness (existing)**: Goal · chosen direction and why · work streams in execution order, each naming the files it touches · Open Questions section included.
+    - Plans are brief and direction-only by default: a missing DAG, RICE score, EARS criteria, per-task acceptance criteria or executive summary is NOT a format miss. Check those structures only when the user asked for that kind of deliverable (spec · PRD · ADR · roadmap) or for that structure by name.
     - An EMPTY Open Questions section is a valid value and must be written as such — deleting the section is otherwise the cheapest way to pass this item.
     - If unmet, request glass-atrium-intel-planner revision (max 1 time).
   - **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it).
     - Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2).
     - DEV specialist selection + team composition: see `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
     - DEV-side participation duty canonical: `scope-dev.md` "Plan Direction Verification Gate".
+    - Both verdicts judge the plan's direction, not its completeness (`orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` → Direction, not completeness).
+      - The composer appends the direction-not-completeness rule to both verify members' goal text, because the verify-stage goal strings in the `In-script verify-stage` skeletons below do not carry it.
     - Under ultracode this same gate is encoded INTO the workflow script — spec + copyable skeletons: `In-script verify-stage` below.
   - **Stage-2 revision/escalation**: on a revise/infeasible verdict, request glass-atrium-intel-planner revision at most 1 time (count basis = this section's "max 1"); a 2nd mismatch escalates to orchestrator judgment via the `orchestrator-role.md` Failure Recovery Loop path (path only — its Retry max-2 count is a separate mechanism, not cited here).
 
@@ -662,7 +665,9 @@ Two families live here. The **stage gates** below bind every pipeline, on either
   - If unmet, request domain agent revision (max 1 time)
 
 - **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**:
-  - **Coverage** — every plan task-ID maps to implemented work (each task's declared target file actually changed) → report N/N; on any miss, re-delegate the dropped task BEFORE transitioning `doc_status → done`. An independent-entry task with no dependency is the one that otherwise slips.
+  - **Coverage** — every plan work stream (or task-ID, where the plan was asked to decompose into tasks) maps to implemented work (the files it names actually changed) → report N/N.
+    - On any miss, re-delegate the dropped work BEFORE transitioning `doc_status → done`.
+    - An independent-entry stream with no dependency is the one that otherwise slips.
   - **Excess** — nothing was built that the plan and the delegation's `[SCOPE] files=` never authorized; an excess routes through `### Scope-Expansion Approval Protocol` (this file), never absorbed silently.
   - Both are DISTINCT from the correctness gates: Quality Gates verify the work that WAS built, these two verify what went unbuilt and what grew.
   - Honor-system, NOT mechanically enforced. Procedure + honest backing (SoT): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.

@@ -221,7 +221,12 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 Scoping does not scope out edges, and ordering is already mandatory under `### Spawn Budget` → Automatic Parallelization (c). What this section adds is finding the edges and handling a missing predecessor.
 
-Read each included task's declared predecessors from **any declaration site in the plan** — its DAG, its critical path, its wave notes, a per-task `depends:` field, an acceptance criterion or a prose premise that names one. An edge stated in any of them binds, and that list is examples rather than an enumeration. Then classify each predecessor:
+Read the declared predecessors of each included work stream (or task, where the plan was asked to decompose into tasks) from **any declaration site in the plan**; an edge stated at any of them binds.
+
+- **Declaration sites (examples, not an enumeration)**: an ordering note on a work stream that names a predecessor (the form a brief plan uses) · a DAG · a critical path · wave notes · a per-task `depends:` field · an acceptance criterion or a prose premise that names one.
+- **Stream order alone declares no edge**: the order a brief plan lists its work streams in is sequencing advice; only an ordering note naming a predecessor declares an edge.
+
+Then classify each predecessor:
 
 - **LANDED** — verified against the tree or history with an instrument (`git log`, the file's current content), never from the plan's status field, a wave note, or memory.
   - **Whether a named change is present in the tree is a ROUTING fact the orchestrator establishes directly; what that change implies about the code's behaviour is a FINDING and belongs to an agent.** `#### Scan boundary and provenance` above draws the same boundary — restated here so the two rules do not collide.
@@ -236,6 +241,7 @@ The asymmetry that makes the HALT above worth its cost: a task shipped without i
 
 **Attestation** (evidence of the check, never the rule itself — **the obligations above are unconditional and do not depend on this token**): on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge), placed per `### Context Handoff Size` → Attestation-token placement.
 
+- **What an `<id>` resolves to**: the plan's own task id where it carries one; on a brief plan, whose work streams carry no identifier, the stream's ordinal in the execution-order list (`included=2,3 order=2>3`).
 - **Ids and flags only — no free text**: sibling token parsers are strict enough to carry a dedicated `block-grammar` verdict, and a justification with spaces and commas inside a single-line token breaks them. Justifications go in the delegation body.
 - **Distinct from `## Document-Driven Workflow` step 4**, which reconciles the WHOLE plan AFTER implementation; this validates edges BEFORE delegation.
 - **HONEST BACKING**: honor-system for the check; the token's presence is hook-checkable on both paths, its truthfulness never — the same existence-only boundary as every sibling attestation.
@@ -251,11 +257,15 @@ Inserted between the planning phase and the implementation phase: after a glass-
 - **Verification team = `glass-atrium-qa-code-reviewer` + one `DEV` agent** (exactly these two roles). DEV participation is a **hard gate** — no pass without a DEV verdict (advisory-only DEV FORBIDDEN — direct user requirement "개발에이전트 참여 필수").
 - **DEV specialist selection**: pick the DEV agent matching the plan's **primary implementation domain**.
   - E.g. backend-heavy plan → glass-atrium-dev-nestjs / glass-atrium-dev-node / glass-atrium-dev-python · UI-heavy → glass-atrium-dev-react / glass-atrium-dev-android.
-  - Multi-domain plan → the primary-domain DEV: the domain owning the most acceptance criteria / the critical-path tasks.
+  - Multi-domain plan → the primary-domain DEV: the domain owning the most work streams / the streams the others wait on.
   - Justify the pick by `domains`/description alignment, same basis as normal routing.
 - **Verdicts (independent, parallel)**:
   - glass-atrium-qa-code-reviewer → `pass` / `revise` + concrete unmet items (implementation-feasibility · test-feasibility · scope-fidelity).
   - DEV → `feasible` / `infeasible` + alternative direction (technical validity · approach soundness).
+  - **Direction, not completeness**: both verdicts judge the plan's direction, never its exhaustiveness — a brief plan lacking a structure the user did not ask for (a DAG, per-task acceptance criteria, an executive summary) is never a `revise` or `infeasible` reason.
+    - The orchestrator states this rule in both Stage-2 members' delegation prompts.
+    - Why: neither participant canonical (`scoped/scope-qa.md` / `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`) states this rule, and subagents ignore this file.
+    - Honest backing: honor-system — no hook reads the delegation prompt for it.
 - **Scope-fidelity axis (reviewer-side, SEPARATE from the two feasibility axes)**: the reviewer additionally judges whether the plan's tasks stay inside the user's LITERAL instruction, naming every task that exceeds it.
   - Feasible ≠ in-scope — a plan can be technically sound, testable and well-decomposed and still be an over-interpretation of what was asked, so this is its own axis and an unaddressed excess is a sufficient `revise` reason on its own.
   - Honest backing: **honor-system** — an LLM judgment, not a mechanical check. Its value is positional rather than mechanical: the judge is a DIFFERENT actor from the one that decomposed the scope, which is the self-reference defect this axis exists to break. Claiming any mechanical guarantee for it is FORBIDDEN.
@@ -489,12 +499,13 @@ The standard plan/report-then-build flow chained as ONE explicit lifecycle. Each
 3. **Implementation** — DEV team per the verified document (domain-matched DEV selection, delegation-size discipline per `### Spawn Budget`).
 4. **Implementation verification** — a correctness family and a reconciliation family, BOTH of which must pass before completion. Correctness judges the work that WAS built; reconciliation runs in BOTH directions — nothing planned dropped, nothing unplanned added:
    - **Correctness gates** (existing): tests pass + glass-atrium-qa-code-reviewer / glass-atrium-sec-guard verdicts on the built work (`skills/glass-atrium-ops-orchestrator.md` → Quality Gates).
-   - **Plan↔implementation coverage reconciliation (MANDATORY — distinct gate)**: the orchestrator checks that EVERY plan task-ID maps to implemented work (e.g. each task's declared target file was actually changed) — i.e. nothing planned was silently dropped.
-     - Procedure: reconcile the plan's task-ID set N against the implemented set, report N/N, and on any miss → re-delegate the dropped task BEFORE completion (never close with a gap).
-     - This is DISTINCT from the correctness gates: qa/sec verify the work that WAS built, whereas the coverage gate verifies that NOTHING planned went unbuilt. An independent-entry task with no dependency can otherwise slip unnoticed (the root cause of a planned task being missed).
+   - **Plan↔implementation coverage reconciliation (MANDATORY — distinct gate)**: the orchestrator checks that EVERY plan work stream (or task-ID, where the plan was asked to decompose into tasks) maps to implemented work, so nothing planned is silently dropped.
+     - Procedure: reconcile the plan's work-stream (or task-ID) set N against the implemented set → report N/N → on any miss, re-delegate the dropped work BEFORE completion (never close with a gap).
+       - A stream or task counts as implemented when the files it names were actually changed.
+     - This is DISTINCT from the correctness gates: qa/sec verify the work that WAS built, whereas the coverage gate verifies that NOTHING planned went unbuilt. An independent-entry work stream with no dependency can otherwise slip unnoticed (the root cause of planned work being missed).
      - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: a MANDATORY authoring/process obligation (the orchestrator MUST run the reconciliation) with no runtime backstop verifying it did — like the ultracode in-script verify-stage obligation. Self-discipline + the Monitoring-phase self-check are the SOLE surface; do NOT describe this gate as "enforced".
    - **Declaration↔implementation EXCESS reconciliation (MANDATORY — the symmetric half, same rank as the coverage gate above, not a sub-check of it)**: the coverage gate asks whether anything PLANNED went unbuilt. This one asks the opposite and equally binding question — **was anything BUILT that the plan and the delegation's `[SCOPE]` never authorized?**
-     - Procedure: reconcile the authored path set against the plan's declared task targets ∪ the delegation's `[SCOPE] files=`.
+     - Procedure: reconcile the authored path set against the files the plan's work streams (or tasks) declare ∪ the delegation's `[SCOPE] files=`.
      - On any excess, SILENT ACCEPTANCE IS FORBIDDEN: surface it and route it through `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol` — approved → stamp and continue · not approved → report the already-built excess and WAIT for disposition; automatic revert is FORBIDDEN per the File Deletion Policy.
      - BOTH directions clear before completion — a task set that is complete in the coverage direction can still have grown in this one, and that growth is exactly what nothing else in the pipeline looks for.
      - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: identical backing to the coverage gate above. The recorder's `scope-excess` `review_flag` is an after-the-fact ADVISORY signal on a strictly NARROWER surface (Write/Edit-authored paths of a SUBAGENT whose delegation carried a `[SCOPE]` line), not an enforcement of this gate and not a substitute for running it: Bash-authored writes, the updater path, and the orchestrator's own main-session edits leave it silent. Do NOT describe either as "enforced".

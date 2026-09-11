@@ -28,10 +28,13 @@ Rules specific to PLANNING agents: glass-atrium-intel-planner.
 
 **Reader**: the maintainer resolving an ambiguous interpretation, per `rules/glass-atrium/core-compliance-matrix.md` → Precedence Resolution, which names this section as the PLANNING scope's final authority.
 
-**Copies (edit together)**: this statement · the delivered and stronger copy at `agents/glass-atrium-intel-planner.md` → `## Design Expression Rules (No Code — Zero Tolerance)`, which is the one the planner actually reads and which carries both the detector patterns and the Mermaid carve-out.
-
 - **No code in plans**: SQL, TS, pseudocode, or new function-name proposals are FORBIDDEN — code authoring is the DEV agent's domain.
+  - Copies of this statement (edit together):
+    - this statement
+    - the delivered and stronger copy at `agents/glass-atrium-intel-planner.md` → `## Design Expression Rules (No Code — Zero Tolerance)`, which carries the detector patterns and the Mermaid carve-out
   - Scope of the prohibition = the IMPLEMENTATION the plan prescribes. The presentation carrier of a user-requested HTML primary (Tailwind classes, Mermaid source, the claim-marking tags below) is the deliverable's own form, not plan content.
+- **Brief plans by default**: a plan is brief and direction-only; the exhaustive structures appear only when the on-request test is met.
+  - Pointer only — the default shape, the on-request list and its test live once, in the copy the planner reads: `agents/glass-atrium-intel-planner.md` → `### Default Plan Shape` → On-request structures.
 
 ## Output Format Routing [PLANNING]
 
@@ -88,20 +91,22 @@ Before drawing any Mermaid block in a user-requested HTML plan, run its decision
 
 - Axis containing ≥ 1 unresolved-uncertainty item (any marker meaning "needs confirmation" / "TBD" / "undecided" / "needs investigation") → axis score **capped at 0.85**
 - Axis score ≥ 0.9 → body MUST contain an explicit "0 unresolved-uncertainty items" audit line
-- Every Acceptance Criterion MUST declare a **measurement method**
+- Every Acceptance Criterion a plan carries MUST declare a **measurement method**
   - Good: "AC2: p95 < 500ms — measured via: Grafana prod-api dashboard, 1-week average"
   - Bad: "AC2: responses get faster"
 - Integrates with the self-check scans at `agents/glass-atrium-intel-planner.md` → `## Design Expression Rules (No Code — Zero Tolerance)` as the self-contradiction scan
+
+**Acceptance-criteria format** (PLANNING-only):
+
+- A plan carries acceptance criteria only when the on-request test is met (`## Absolute Rules [PLANNING]` → Brief plans by default)
+- **EARS Acceptance Criteria format**: when a plan carries acceptance criteria, every AC MUST use EARS syntax — `When [trigger], the system shall [response]` (with optional `unless [exception]`).
+  - The AC example format above ("AC2: p95 < 500ms — measured via: …") stays valid as measurement-method reinforcement; the EARS sentence itself is required for every AC.
 
 **Confidence-tiered plan generation**:
 
 - Score < 0.6 → do NOT generate plan; conduct clarification interview first.
 - Score 0.6 – 0.79 → generate Draft Plan; mark every unresolved axis as `[DRAFT: clarify before DEV]`.
 - Score ≥ 0.8 → generate Final Plan.
-
-**EARS Acceptance Criteria format**: Every AC MUST use EARS syntax — `When [trigger], the system shall [response]` (with optional `unless [exception]`).
-
-- The AC example format above ("AC2: p95 < 500ms — measured via: …") stays valid as measurement-method reinforcement; the EARS sentence itself is required for every AC.
 
 ## Claim Marking & Consultation [PLANNING]
 
