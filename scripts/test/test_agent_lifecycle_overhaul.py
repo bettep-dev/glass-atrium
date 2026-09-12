@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from agent_lifecycle.atomic import load_json
+from agent_lifecycle.atomic import _atomic_replace, load_json
 from agent_lifecycle.delete import authorize_delete
 from agent_lifecycle.paths import NON_DEV_BLOCK_LIST, StorePaths
 from agent_lifecycle.readers import ReaderError, registry_domains
@@ -428,3 +429,42 @@ def test_when_registry_malformed_then_orphan_mode6_reports_instead_of_raising(
     findings = _check_domains_overlap(paths)
     assert [f.mode for f in findings] == ["domains-overlap"]
     assert "non-list" in findings[0].detail
+
+
+def test_when_target_exists_then_atomic_replace_keeps_its_mode(
+    tmp_path: Path,
+) -> None:
+    """mkstemp creates 0600 and os.replace carries that mode onto the target.
+
+    Git tracks only the exec bit, so an unpreserved mode is invisible in a diff
+    while generate-manifest.sh records it and both install paths apply it.
+    """
+    target = tmp_path / "agent.md"
+    target.write_text("old\n", encoding="utf-8")
+    target.chmod(0o644)
+
+    _atomic_replace(target, "new\n")
+
+    assert target.stat().st_mode & 0o777 == 0o644
+    assert target.read_text(encoding="utf-8") == "new\n"
+
+    script = tmp_path / "hook.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    _atomic_replace(script, "#!/bin/sh\ntrue\n")
+
+    assert script.stat().st_mode & 0o777 == 0o755
+
+
+def test_when_target_is_new_then_atomic_replace_takes_the_umask_default(
+    tmp_path: Path,
+) -> None:
+    """A first write lands where a plain open() would have, not at mkstemp's 0600."""
+    umask = os.umask(0o022)
+    os.umask(umask)
+    target = tmp_path / "fresh.md"
+
+    _atomic_replace(target, "x\n")
+
+    assert target.stat().st_mode & 0o777 == 0o666 & ~umask

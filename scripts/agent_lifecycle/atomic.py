@@ -26,6 +26,21 @@ class AtomicWriteError(RuntimeError):
     """Serialization, validation, or rename failed — the live file is UNCHANGED."""
 
 
+def _target_mode(path: Path) -> int:
+    """Return the permission bits a rewrite of `path` must land with.
+
+    An existing target keeps its own bits; a new one takes the umask default a
+    plain open() would have produced. `chmod --reference` is GNU-only and absent
+    on macOS, so the mode is read and reapplied explicitly.
+    """
+    try:
+        return path.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        umask = os.umask(0o022)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
 def _atomic_replace(
     path: Path,
     text: str,
@@ -36,12 +51,20 @@ def _atomic_replace(
 
     The shared temp+rename core both the JSON and the scope-dev text store use:
     mkstemp in the target's dir -> fdopen(w) -> write -> (optional pre-replace
-    hook against the temp path) -> os.replace -> cleanup the temp on any failure.
+    hook against the temp path) -> chmod to the target mode -> os.replace ->
+    cleanup the temp on any failure.
     `before_replace`, when supplied, runs against the written temp path and may
     raise to abort the swap (the JSON store re-parses + validates here). On any
     OSError the live file is untouched and the temp is removed.
+
+    The chmod is load-bearing, not cosmetic: mkstemp creates 0600 and os.replace
+    carries that mode onto the target, so without it every rewritten file is
+    silently demoted to owner-only. Git tracks only the exec bit, so the demotion
+    appears in no diff, while generate-manifest.sh records the raw stat mode and
+    both install paths chmod landed files to it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = _target_mode(path)
     tmp_name: str | None = None
     try:
         fd, tmp_name = tempfile.mkstemp(
@@ -51,6 +74,7 @@ def _atomic_replace(
             fh.write(text)
         if before_replace is not None:
             before_replace(Path(tmp_name))
+        os.chmod(tmp_name, mode)
         os.replace(tmp_name, path)
         tmp_name = None
     finally:
