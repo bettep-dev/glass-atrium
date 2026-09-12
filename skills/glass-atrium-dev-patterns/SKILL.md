@@ -7,23 +7,7 @@ description: Code structure (member ordering, section separation, Stepdown), fun
 
 Writing new classes, functions, modules, types · refactoring for structure/complexity · code review for structural compliance. Excludes configs, build scripts, test fixtures.
 
-## Core Principles
-
-- **Newspaper Metaphor** — top = high-level public API, bottom = low-level private implementation
-- **SRP** — if described with "and", split it
-- **High cohesion + low coupling** — split on violation
-
-**Quick rules**:
-
-- Member ordering: type sigs → static → decorated → instance → constructors → accessors → static methods → instance methods. Within each: public → protected → private. `readonly` first.
-- **Stepdown Rule**: callee directly below caller
-- Function cap: **20 lines OR cyclomatic complexity 10** → Extract Method
-- **SLAP**: one abstraction level per function ("And-Then test")
-- **CQS**: Commands → void · Queries → T · no mixing
-- Type safety: `any`/`dynamic`/`Object` forbidden · nested generics ≤ 2 levels · extract when reused 2+ times or 3+ properties
-- Import direction: Controller → Service → Repository · reverse forbidden
-- Barrels: library entry points only · app-internal forbidden
-- DI: depend on interfaces · 7+ constructor deps = God Class · circular DI forbidden (forwardRef = design flaw)
+> Structural core relocated: the Newspaper/SRP/cohesion principles and the quick-rule thresholds now live in `scoped/shared-code-structure.md`. What stays here is the on-demand lookup detail below.
 
 ## References (Progressive Disclosure)
 
