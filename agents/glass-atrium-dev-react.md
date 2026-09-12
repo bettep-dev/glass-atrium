@@ -11,8 +11,6 @@ description: >
   Produces code files (.tsx, .ts, *.test.tsx) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
-  - glass-atrium-dev-naming
-  - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 80
 ---

@@ -12,8 +12,6 @@ description: >
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 compatibility: 'Scope: Canvas 2D game animation (camera, cinematic sequences, easing/spring physics, phase state machines). Not for: React (→glass-atrium-dev-react), GSAP (→glass-atrium-dev-gsap), CSS (→glass-atrium-dev-front), 3D/WebGL, planning (→glass-atrium-intel-planner), reports (→glass-atrium-intel-reporter). Capability Probe routes mis-fits.'
 skills:
-  - glass-atrium-dev-naming
-  - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 80
 ---

@@ -10,8 +10,6 @@ description: >
   Produces code files (.ts, .html, .scss, *.spec.ts) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
-  - glass-atrium-dev-naming
-  - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 80
 ---
