@@ -175,7 +175,6 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 Open items a later pass owns, both outside this wave's file set:
 
 - The two moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) are now reached in one hop through the stubs left in the rule file. Repointing the citing sites in `orchestrator-role.md`, `core-compliance-matrix.md`, `scope-qa.md`, `scope-report.md` and `skills/glass-atrium-ops-orchestrator.md` at this companion would remove that hop.
-- `hooks/advisory-preedit-facts.sh` (a registered Stop hook) cites a `scope-dev.md` "Pre-Edit Facts Disclosure" rule that exists in no rule, scope or agent file — a dangling citation that predates this pass.
 - `rules/glass-atrium/core-compliance-matrix.md` footnote ‡ points at the `scoped/shared-design-token-consumption.md` header for the UI-emitting agent ROSTER, and that header now declares a task trigger instead (the roster moved to `scoped/maintainers/shared-design-token-consumption.md`). The footnote needs rewording to drop the header pointer — it is neither a moved-subheading repoint nor an in-wave file, so it falls outside both halves of this wave and is booked here so it is not lost between them.
 
 ## Follow-up fix pass — what changed in the rule file
@@ -194,3 +193,21 @@ Removed from the rule file, recorded so they are not re-derived as omissions:
 - Three pointer-only sections — naming conventions, code structure/function/type design, and the iron-law escalation pointer. Their skills load globally at session start and the naming rules additionally reach DEV agents through an injected block, so each line obliged nothing and was cited by nothing.
 - The package-provenance bullet: `core-security.md` → Dependency Auditing states it, is Tier 1, and measurably reaches every agent.
 - The reuse-order ladder bullet under vendor routing: the injected minimalism block carries the ladder and the never-hand-roll-crypto carve-out verbatim.
+
+## Pre-Edit Facts Disclosure — restored, and the record corrected
+
+An earlier open-item bullet here filed the dangling `hooks/advisory-preedit-facts.sh` citation as one that "predates this pass". That is false, and the correction matters: a companion recording the wave's own deletion as an inherited defect hides it from the next reader.
+
+- **Provenance, measured**: `git log --oneline -S "Pre-Edit Facts Disclosure" -- scoped/scope-dev.md` returns exactly `3cdeb07` (added, initial commit) and `32a0685` (deleted). `32a0685` — one of this wave's own two cut commits — is what orphaned the citation; `2dbac77` never touched the literal.
+- **What kept citing it meanwhile**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory (binding SoT `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row), names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
+- **Disposition taken**: the section is restored to the rule file verbatim from `32a0685^`, placed after the style-ref marker block and before `## Context Engineering [DEV]`, so it opens a clean sibling section under `## Pre-Execution Verification [DEV]` and moves no injected byte.
+- **Why restore rather than retire the hook**: the restore costs no extra file, makes the operator-visible citation resolve today, and holds under either branch of the delivery direction this epic is still deciding.
+- **The delivery half stays OPEN, and a new marker block is NOT how to close it**: the DEV assembly's slack is under one block against the ceiling `hooks/test/inject-scope-rules-nodrop.bats` pins, and the marker blocks are themselves being retired. Should split injection fail AND the skills-preload fallback be rejected, this duty's operative destination becomes the DEV agent bodies.
+- **The hook is not edited in this wave**: its citation resolves again, so no repoint is owed.
+
+## Leave-deleted verdicts here are dated, not closed
+
+Every leave-deleted verdict in this companion, and in the audits behind it, reasons from the measured fact that a `scoped/` body reaches no agent at spawn (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`, measured 2026-09-10). That premise is scheduled to go false when split injection lands.
+
+- Read the leave-deleted set as decided under the CURRENT delivery regime and re-litigable once the regime changes — never as settled.
+- Relocating a duty into an agent body to route around the premise stays FORBIDDEN: it manufactures the body-versus-rule-file drift this epic exists to end.

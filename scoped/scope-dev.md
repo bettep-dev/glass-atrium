@@ -90,6 +90,24 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 - Advisory, not blocking: probe failure (glob/read error) → proceed.
 <!-- AGENT-INJECT:STYLE-REF:END -->
 
+### Pre-Edit Facts Disclosure (Karpathy Investigation-Before-Editing) [DEV]
+
+- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape:
+
+  ```
+  Pre-Edit Facts: <file_path>
+  - importers: <who imports/depends on this file>
+  - affected API: <public surface this change touches>
+  - data schemas: <data shapes/contracts involved>
+  - user instruction: "<verbatim quote of the relevant user directive>"
+  ```
+
+- Each fact MUST carry investigated content — `unknown` / `N/A` only after an actual Glob/Grep/Read confirms the absence (fabricated or skipped investigation FORBIDDEN); the 4 keys are fixed and ordered as shown
+- **Checked post-hoc** by a `Stop` advisory hook (`advisory-preedit-facts.sh`) — it reads the turn transcript + emits a WARNING for any edited file lacking a `Pre-Edit Facts:` declaration · advisory only, it NEVER blocks an edit
+- EARS: "When a turn ends in which a DEV agent edited a non-trivial file without a `Pre-Edit Facts:` block, the system shall WARN (advisory, non-blocking)"
+- Exempt: simple tasks (typo / import / config) — matches the Ambiguity Gate / Assumptions exemption condition
+- Rationale: investigation creates awareness that self-eval never did (Karpathy) — surfacing concrete importer / API / schema / instruction facts before editing prevents blind edits (same family as Assumptions Disclosure above, applied at the per-file first-edit boundary)
+
 ## Context Engineering [DEV]
 
 - Fresh context start → restore state from `progress-{task-name}.md` + `git log` instead of re-reading the entire codebase.
