@@ -57,7 +57,7 @@ Applies to all agents.
 - **Title** MUST be under 70 characters
 - **Body** MUST include Summary + Test Plan
 - Diffs exceeding 400 lines → split for review
-- **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` / `scope-planning.md` Output Format Routing Emission contract. Git-only conclusions for PR review:
+- **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` → Output Format Routing → Emission contract. Git-only conclusions for PR review:
   - **PR semantic diff target** = the plan MD body + monitor code changes.
   - **Monitor-internal root** (`$CLAUDED_DOCS_HTML_ROOT`) git-excluded via the repo-root `.gitignore` `monitor/data/*` entry (folded from the former `monitor/.gitignore` per its comment) — outside PR review scope.
 - **Merge authorization**: the orchestrator MAY execute `gh pr ready <n>` + `gh pr merge <n> --merge` for a cycle's PRs ONCE the user has EXPLICITLY approved merging that cycle.

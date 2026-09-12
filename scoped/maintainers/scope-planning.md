@@ -62,13 +62,30 @@ Two edits would make it live, and neither is in this pass's scope:
 - `agents/glass-atrium-intel-planner.md` — an emit duty beside the existing `needs_devfront_markup:` signal in `## Designer Handoff Contract`.
 - `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` — a consuming judgment beside the dev-front markup one, which is where the precedent already sits.
 
-## Open pointers into the removed mirrors
+## Pointers into the removed mirrors — repaired
 
-This file stopped mirroring the report-side canonicals, and `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` still lists it as a mirror site. Recorded, not repaired: the planner body belongs to another track this pass.
+This file stopped mirroring the report-side canonicals, and the sites still calling it a mirror have now been repaired. The repair REPOINTS rather than deletes: the sections named below are pointer prose in this file that names the report headings, so the co-edit edge is live — rename a heading in `scope-report.md` and this file's pointer text goes stale with nothing to catch it. Deleting the entries would hide that edge.
 
-- Rows naming a mirror that is now a pointer-only section: three emission modes / emission contract · HTML request test · document lifecycle duties · designer handoff contract and indicator thresholds.
-- Row naming a mirror this file carries in no form at all: visual-maximization floor / dark base default.
-- Row whose anchor still resolves: dev-front markup exception, which names `## Designer Co-Emission Trigger [PLANNING]` — that heading survives as a pointer, so only the word mirror is wrong.
-- Repair when the planner body is next opened: point the row at the report canonical and drop the mirror entry, a pointer-only section being no copy that can drift.
-- The two rows naming this file as CANONICAL — Open Questions / claim marking, and Ambiguity Gate — are correct and stay.
+- `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`: the rows for three emission modes / emission contract, HTML request test, document lifecycle duties, D8 thresholds and visual-maximization floor / dark base default now name `## Output Format Routing [PLANNING]` as a pointer; the designer-handoff row names `## Designer Co-Emission Trigger [PLANNING]`, which always resolved — only the word mirror was wrong.
+- The visual-floor row additionally states that this file carries no dark-base copy in any form, so the entry cannot be read as a second copy.
+- `skills/glass-atrium-ops-orchestrator.md`: the lifecycle-SoT bullet and the completing-agent bullet name the same pointer section. The `[DOC-ROUTE]` paragraph's mirror clause was DROPPED instead — its claimed counterpart, the delegation-phrasing sentence, has no match in this file at HEAD, so there was no pointer left to name.
+- `rules/glass-atrium/core-git-workflow.md` → `## Pull Requests`: the `scope-planning.md` half of the `.html`-deliverable bullet was dropped, the citation being to an Emission contract only `scope-report.md` carries. That file is Tier 1 and reaches every agent, which is why the half was removed rather than softened.
+- `skills/glass-atrium-design-contrast-check/SKILL.md`: the `scope-planning.md` half of its `### Dark base default` cross-reference was dropped on the same ground.
+- The two rows naming this file as CANONICAL — Open Questions / claim marking, and Ambiguity Gate — are correct and unchanged.
+- The row for the dev-front markup exception names `## Designer Co-Emission Trigger [PLANNING]`, which resolves, and was left as it stands.
 - The same class in `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-design-designer.md` is recorded by `scoped/maintainers/scope-report.md` rather than here.
+
+## The eleven headings the cut removed — the answer is citer repair, not restore
+
+`32a0685` removed eleven headings from the rule file, and they are recoverable from the commit rather than from any surviving audit: Output Policy [PLANNING] · Three emission modes · HTML request test · HTML primary requirements · Visual-Maximization Floor · Dark base default · HTML Visual Decision Requirements (D8) · Threshold SoT · Emission contract · Document Lifecycle · Diagram Standard [PLANNING].
+
+- Every one of them was a MIDDLE copy — between a canonical a maintainer reads directly at `scoped/scope-report.md` and a delivered copy the planner applies in its own body. Restoring any of them re-creates a drift pair in a file no agent reads.
+- The defect they left is the dangling pointers, not lost text, so repairing the citing sites discharges it in full. Read the eleven as REPOINTED, never as an unexplained shortfall in a restore count.
+- The repaired sites are the ones listed in the section above.
+
+## Leave-deleted verdicts here are dated, not closed
+
+Every leave-deleted verdict in this companion reasons from the measured fact recorded under `## Delivery status` — that a `scoped/` body reaches no agent at spawn. That premise is scheduled to go false when split injection lands.
+
+- Read the leave-deleted set as decided under the CURRENT delivery regime and re-litigable once the regime changes — never as settled.
+- Relocating a duty into an agent body to route around the premise stays FORBIDDEN: it manufactures the body-versus-rule-file drift this epic exists to end.

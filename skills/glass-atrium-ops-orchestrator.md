@@ -926,7 +926,7 @@ Sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an IN
 
 ##### [DOC-ROUTE] token placement (ultracode — user-requested local destination)
 
-When the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria).
+When the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing"; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria).
 
 - Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate).
 - NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
@@ -1448,7 +1448,7 @@ The orchestrator oversees document-lifecycle completion (`doc_status` transition
 - **Shipped mechanism**: `doc_status` enum `progress` (DB default) / `done`, `PUT /api/clauded-docs/:id` for the transition, same-`folder_id` cascade, and a `supersedes_id` revision chain (same-topic only · predecessor auto-transitioned to `done`).
 - **Target store**: `monitor.ClaudedDoc` managed docs (monitor-internal root)
 - **Target scope**: all managed clauded-docs (no document category/prefix — supersede/completion key on topic + `id`, not a `[prefix]` token)
-- **Lifecycle rule SoT for the authoring side** = `scope-report.md` "Output Format Routing" Emission contract (B-side canonical, `scope-planning.md` mirrors it) — this section covers the orchestrator's operation + fallback role.
+- **Lifecycle rule SoT for the authoring side** = `scope-report.md` "Output Format Routing" Emission contract (B-side canonical; `scope-planning.md` → `## Output Format Routing [PLANNING]` is a pointer at it, not a second copy) — this section covers the orchestrator's operation + fallback role.
 
 ### Procedure
 
@@ -1487,7 +1487,7 @@ Row notes, plus the one rule that binds every row:
 - **A `done` document MUST NOT be reopened/edited** — revisions reach it only via supersede. This binds regardless of which row you land on.
 - **supersede** (predecessor `done`): the monitor auto-transitions the predecessor to `done` — no agent intervention.
 - **supersede-POST** (the Stage-2 revise carve-out): the gate that returns `revise`/`infeasible` is `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`. This carve-out is the only branch where a `progress` predecessor supersedes, and it is what makes the reviewed revision an immutable, fetchable chain root the revising actor cannot rewrite — the next pass then compares against the origin rather than against the declaration that actor just authored.
-  - The completing agent's own obligation, including what the chain root must CONTAIN, is duty text in its loaded rules: `scope-report.md` → Document Lifecycle (canonical) · `scope-planning.md` mirror.
+  - The completing agent's own obligation, including what the chain root must CONTAIN, is duty text in its loaded rules: `scope-report.md` → Document Lifecycle (canonical) · `scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer at it.
 - **new POST on uncertain relatedness** is the decisive tiebreaker because the cost is asymmetric: a surplus new document is cheap + recoverable, whereas reopening a done document causes progress regression.
 - **Residual — the per-cycle persist-path choice is HONOR-SYSTEM and fails OPEN silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error on any surface — the chain root is simply never created, the next Stage-2 pass has no immutable comparand to fetch, and the scope-fidelity check degrades back to the current declaration it exists to replace.
   - That fail-open is exactly why the duty is written into the completing agent's OWN loaded rules rather than left to the delegation that asks for the edit: a control the growing actor can suspend by phrasing is not a control.
