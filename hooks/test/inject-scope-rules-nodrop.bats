@@ -5,8 +5,8 @@
 #   comment + style_ref + minimalism + naming + separators) exceeded INJECT_CTX_MAX_BYTES, so the
 #   drop-loop silently shed STYLE-REF (all 13 DEV) and NAMING (12 DEV) — those scope rules never
 #   reached the subagents. The fix is compression of the AGENT-INJECT source blocks + a ceiling
-#   raise to 9984 (still under the ~10240 engine persist threshold; the margin was halved from
-#   512B to 256B to admit the byte-contracted BUDGET-DEV block). This test PINS the invariant:
+#   raise to 9984 bytes, which for an all-ASCII assembly is 9984 units — 16 under the measured
+#   10,000-unit engine cap (see ENGINE_MAX_UNITS below). This test PINS the invariant:
 #   assembled from the REAL repo sources (NOT hermetic fixtures) with the meter ON (worst case), the
 #   worst-case DEV assembly for every NAMING-roster DEV member fits the ceiling with ZERO drop-loop
 #   iterations — every roster-due block survives (EIGHT blocks for a BUDGET_DEV_AGENTS member like
@@ -42,27 +42,31 @@ AGENTS_DIR="${REPO_ROOT}/agents"
 CEILING=9984
 # The D3 plan bound for the worst-case dev-front seven-block assembly (9635B six-block sum + the
 # <=300B byte-contracted BUDGET-DEV block) — tighter than CEILING, pinned so source-block growth
-# surfaces here BEFORE it erodes the 256B engine margin.
+# surfaces here BEFORE it reaches the ceiling itself.
 DEV_FRONT_MAX_BYTES=9935
 # BUDGET-DEV source-block byte contract (hard bound; target 260B) — the D3 ceiling math input: the
 # 9984 ceiling admits the seven-block assembly ONLY while this block stays <=300B.
 BUDGET_DEV_MAX_BYTES=300
 # PLAN-GATE source-block byte contract. RE-DERIVED BY BISECT against the real assembly on
-# 2026-09-10 (not inherited from a relayed figure): driving the hook for dev-front with a synthetic
-# PLAN-GATE body of N bytes, N=664 assembles to exactly 9984 and sheds NOTHING, N=665 sheds
-# budget-dev AND plan-gate (one byte over the ceiling costs two blocks, because the first shed lowers
-# the ceiling by the 256B marker reserve and the freed budget-dev block is only 244B). So 664 is the
-# cliff, and the block ships at 586B with 78B of margin.
+# 2026-09-13 (not inherited from a relayed figure): driving the hook for dev-front with a synthetic
+# PLAN-GATE body of N bytes, N=700 assembles to exactly 9984 and sheds NOTHING, while N=701 sheds
+# budget-dev ALONE — one byte over the ceiling costs exactly one block, because the marker is
+# budgeted from its RENDERED size (132B for that one entry, ceiling 9984 -> 9850) and the 9739B
+# remainder already fits, so the loop stops. The bound stays at the tighter 664: it is a guard on
+# this block, not a licence to grow to the cliff, and the block ships at 586B.
 #   NOTE the tighter bound bites first IN COMPOSITION: DEV_FRONT_MAX_BYTES above pins the whole
-#   dev-front assembly at 9935, which today sits at 9906 — so plan-gate growth past ~615B fails that
+#   dev-front assembly at 9935, which today sits at 9871 — so plan-gate growth past ~650B fails that
 #   pin before reaching this one. Both are kept: this one is the property of THIS block against the
 #   ceiling, that one catches growth anywhere in the assembly.
 PLAN_GATE_MAX_BYTES=664
-# Engine persist threshold: additionalContext larger than this is file-persisted + delivered as a
-# ~2KB preview (stripping later blocks). A lesson-drop marker legitimately overflows the 9984 ceiling
-# into the 256B margin below THIS threshold ("emit + accept"), so a full-drop assembly (7 proven blocks
-# + a lesson-drop marker) is bounded by THIS, not CEILING. In sync with INJECT_CTX_MAX_BYTES header.
-ENGINE_MAX_BYTES=10240
+# Engine persist cap: additionalContext larger than this is file-persisted + delivered as a ~2KB
+# preview (stripping later blocks). 10,000 UTF-16 code UNITS, INCLUSIVE — measured by the W1 channel
+# probe on a SINGLE host build, which is the whole provenance: no producer-side check can see a real
+# cap LOWER than this, since a short cap is observable only at the consumer (W9(b) is that detector).
+# Raising this guard above the measured figure would let an emit the engine persists pass the suite,
+# so it moves only on a new measurement. The hook budgets bytes, which are never fewer than units for
+# this corpus, so its byte ceiling stays a conservative proxy for this cap.
+ENGINE_MAX_UNITS=10000
 # The lesson truncate-keep residual floor — in sync with inject-scope-rules.sh LESSON_MIN_RESIDUAL_BYTES.
 LESSON_FLOOR=150
 # Lesson-path needles.
@@ -307,12 +311,27 @@ assert_ctx_valid_utf8() {
   printf '%s' "${ctx}" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' 2>/dev/null \
     || { echo "ctx is NOT valid UTF-8 (mid-codepoint truncation)" >&2; return 1; }
 }
-# The assembled context must fit under the ENGINE persist threshold (a full-drop marker may overflow
-# CEILING into the 256B engine margin, but must never reach the ~2KB-preview-stripping threshold).
+# The assembled context must fit the ENGINE persist cap, counted in the engine's own unit. The drop
+# marker is budgeted inside the hook's ceiling now, so nothing legitimately overflows into a margin.
 assert_ctx_within_engine() {
-  local ctx bytes; ctx="$(ctx_of)"
-  bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
-  [[ -n "${bytes}" && "${bytes}" -le "${ENGINE_MAX_BYTES}" ]] || { echo "ctx ${bytes}B exceeds engine threshold ${ENGINE_MAX_BYTES}B" >&2; return 1; }
+  local ctx units; ctx="$(ctx_of)"
+  units="$(printf '%s' "${ctx}" | python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le"))//2)')"
+  [[ -n "${units}" && "${units}" -le "${ENGINE_MAX_UNITS}" ]] || { echo "ctx ${units} units exceeds engine cap ${ENGINE_MAX_UNITS}" >&2; return 1; }
+}
+# A LESSON full-drop can never carry its in-context marker, on any host — so this asserts the one
+# branch rather than accepting either, which would also pass on a host where the marker silently
+# stopped being written at all. The proof is arithmetic, not a measurement of this host: the room
+# left for the marker after the lesson is dropped IS the room the lesson was denied
+# (ceiling - base - 2); a full drop happens only when that room is below LESSON_FLOOR; and the lesson
+# is the one block whose marker entry carries no source path, so its marker renders at a constant
+# 167B whatever the checkout or tmpdir. 167 > 150, always. Args: $1=drop log path.
+assert_marker_lost() {
+  local log="${1}"
+  assert_ctx_not_contains "${DROP_MARKER_NEEDLE}" || return 1
+  grep -q ' MARKERLOST ' "${log}" || {
+    echo "a shed whose marker cannot fit left no MARKERLOST record (log: $(cat "${log}" 2>/dev/null))" >&2
+    return 1
+  }
 }
 # jq-version-robust corruption guard for the multibyte-boundary case: a naive mid-codepoint cut is
 # handled DIFFERENTLY by jq builds — an older/strict jq REJECTS it → empty OUTPUT_JSON → fail-open
@@ -435,10 +454,10 @@ assert_ctx_no_replacement_char() {
   }
 }
 
-# (c5) Numeric source-contract pin for PLAN-GATE. The bound is the MEASURED cliff, re-derived by
-# bisect rather than relayed: at 664B the dev-front assembly is exactly 9984B and sheds nothing, at
-# 665B it sheds budget-dev AND plan-gate. Growth past the bound must fail HERE, at the source, rather
-# than silently costing an agent the Stage-2 duty this block exists to deliver.
+# (c5) Numeric source-contract pin for PLAN-GATE. The bound sits below the MEASURED cliff, re-derived
+# by bisect rather than relayed (figures at PLAN_GATE_MAX_BYTES above). Growth past the bound must
+# fail HERE, at the source, rather than silently costing an agent the Stage-2 duty this block exists
+# to deliver.
 
 @test "PLAN-GATE source block byte contract: extracted block non-empty and <= ${PLAN_GATE_MAX_BYTES}B" {
   local block bytes
@@ -509,7 +528,18 @@ assert_ctx_no_replacement_char() {
   assert_status 0                                 || return 1
   assert_ctx_not_contains "${LESSON_HEADER_NEEDLE}" || return 1  # lesson fully dropped
   assert_ctx_not_contains "${LESSON_KEPT_LINE}"   || return 1
-  assert_ctx_contains "${DROP_MARKER_NEEDLE}"     || return 1    # a genuine shed ⇒ marker present
+  # A genuine shed is never silent. The marker is budgeted INSIDE the ceiling now, and this case
+  # pins a deliberately tiny one (base + 102B) with no room for it, so the recorded omission is the
+  # only channel left — asserted as that one branch, not as either.
+  assert_marker_lost "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" || return 1
+  # And the branch is DERIVED, not assumed: the MARKERLOST row's pre_drop_bytes is base + 2 + the
+  # rendered marker, so the marker's own size falls out of it — and it must exceed the residual the
+  # lesson was denied, which is what makes the omission inevitable rather than incidental.
+  local pre marker_bytes
+  pre="$(grep -m1 ' MARKERLOST ' "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" | grep -o 'pre_drop_bytes=[0-9]*' | cut -d= -f2)"
+  [[ -n "${pre}" ]] || { echo "MARKERLOST row carries no pre_drop_bytes" >&2; return 1; }
+  marker_bytes=$((pre - base - 2))
+  [[ "${marker_bytes}" -gt "${residual}" ]] || { echo "marker ${marker_bytes}B would have fit the ${residual}B residual, yet was dropped" >&2; return 1; }
   assert_ctx_contains "${EMIT_NEEDLE}"            || return 1    # non-droppable block survives
   assert_ctx_valid_utf8                            || return 1
   [[ "${output}" == *"dropped lesson block"* ]] || { echo "expected a lesson full-drop diagnostic" >&2; return 1; }
@@ -549,17 +579,18 @@ open('${BATS_TEST_TMPDIR}/lessons-utf8.json', 'w').write(json.dumps({
 }
 
 # (v) NODROP INVARIANT beside a lesson (REAL sources, meter ON): dev-front's proven blocks AND the
-# plan-gate block all survive even when a lesson is present — the marker-reserve cascade into
-# budget-dev is prevented, and the assembly (kept blocks + lesson-drop marker) stays under the engine
-# persist threshold.
+# plan-gate block all survive even when a lesson is present — the marker-budget cascade into
+# budget-dev is prevented, and the emitted assembly stays under the engine cap.
 #
-# MEASURED TRADE, recorded here because the pin below would otherwise hide it (2026-09-10, this same
-# 400-char lesson, dev-front): before the plan-gate block was wired the lesson residual was 664B and
-# this lesson fit WHOLE at 9840B with no drop at all. With plan-gate in the assembly the base is
-# 9906B, so the residual is 76B — below the 150B LESSON_FLOOR — and the lesson now FULL-DROPS instead
-# of truncate-keeping. That is the sanctioned direction (lesson recall is the explicitly best-effort,
-# first-shed block and a shed lesson is logged, marked in-context and recovers on re-spawn) but it is
-# a real per-spawn cost on the nine heaviest DEV agents, not a free addition.
+# MEASURED TRADE, recorded here because the pin below would otherwise hide it (2026-09-13, this same
+# 400-char lesson, dev-front): the lesson-free base is 9871B, so the lesson residual is 111B — below
+# the 150B LESSON_FLOOR — and the lesson FULL-DROPS rather than truncate-keeping. That is the
+# sanctioned direction (lesson recall is the explicitly best-effort, first-shed block and a shed
+# lesson is logged, marked in-context and recovers on re-spawn) but it is a real per-spawn cost on
+# the heaviest DEV agents, not a free addition. The marker is the second thing to yield here: at
+# 9871B the one-entry marker (167B) does not fit under the ceiling either, so it is omitted and a
+# MARKERLOST row records the omission — the drop-log keeps the shed visible when the in-context
+# marker cannot, and that omission is asserted as the single possible branch rather than as one of two.
 
 @test "real dev-front + lesson: 7 proven blocks never shed, within engine threshold" {
   python3 -c "
@@ -581,6 +612,11 @@ open('${BATS_TEST_TMPDIR}/lessons-real.json', 'w').write(json.dumps({
   assert_ctx_valid_utf8                         || return 1
   assert_ctx_within_engine                      || return 1
   assert_ctx_contains "${PLAN_GATE_NEEDLE}"    || return 1
+  # The lesson sheds here, and the 167B marker cannot fit the 111B the lesson was denied — the same
+  # arithmetic as the hermetic case above, so the sink is the channel and is asserted as that one
+  # branch. Nothing here is host-dependent: the assembly is built from repo sources, which carry no
+  # paths, and the lesson's marker entry carries no path either.
+  assert_marker_lost "${BATS_TEST_TMPDIR}/inject-drop-realL.log" || return 1
   # NO proven block may appear in a drop diagnostic (the lesson itself MAY be dropped). plan-gate is
   # listed too: it sits BELOW the proven four in shed order, so a cascade reaching it would be the
   # first visible sign that the assembly no longer fits, one block before a proven block goes.

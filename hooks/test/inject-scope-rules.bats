@@ -365,6 +365,24 @@ assert_ctx_max_bytes() {
   }
 }
 
+# Engine cap on one hook's additionalContext: 10,000 UTF-16 code UNITS, INCLUSIVE — the unit the
+# engine itself counts, measured by the W1 channel probe on a single host build. The hook budgets
+# BYTES, which are never fewer than units for UTF-8 input, so its byte ceiling is a conservative
+# proxy: it can under-spend the channel, never overflow it.
+ENGINE_MAX_UNITS=10000
+
+# Assert the assembled additionalContext is at most $1 UTF-16 code units. bash cannot count them and
+# jq counts code points, so python3 does it; the trailing newline jq -r adds is stripped first.
+assert_ctx_max_units() {
+  local ctx nunits
+  ctx="$(ctx_of)"
+  nunits="$(printf '%s' "${ctx}" | python3 -c 'import sys; print(len(sys.stdin.read().rstrip("\n").encode("utf-16-le"))//2)')"
+  [[ -n "${nunits}" && "${nunits}" -le "${1}" ]] || {
+    echo "expected additionalContext <= ${1} units, got ${nunits}" >&2
+    return 1
+  }
+}
+
 @test "emit directive delivered under SUBAGENT_BUDGET_METER_OFF=1 (kill-switch independent)" {
   # run_hook forces SUBAGENT_BUDGET_METER_OFF=1 → meter suppressed; the emit directive must survive.
   run_hook "glass-atrium-dev-react"
@@ -393,10 +411,15 @@ assert_ctx_max_bytes() {
   assert_ctx_order "${EMIT_NEEDLE}" "${NAMING_NEEDLE}"
 }
 
-@test "assembled additionalContext stays <= 9984 bytes with emit block included, under drop pressure" {
+@test "assembled additionalContext stays <= 10000 units under drop pressure, drop marker included" {
   run_hook_full "glass-atrium-dev-react" 5000 5000 5000 5000
   assert_status 0
   assert_ctx_contains "${EMIT_NEEDLE}"
+  # Drop pressure means blocks shed, so a drop marker is part of what gets emitted — and it is
+  # budgeted INSIDE the ceiling rather than appended past it, so the marker-inclusive total is what
+  # must fit. Measured in the engine's own unit; the hook's byte ceiling is the tighter proxy.
+  assert_ctx_contains "Injection shed"
+  assert_ctx_max_units "${ENGINE_MAX_UNITS}"
   assert_ctx_max_bytes 9984
 }
 

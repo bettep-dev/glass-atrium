@@ -233,7 +233,7 @@ readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-
 # standing knowledge-utilization instruction: the analysis / QA / support cluster. Space-padded.
 #
 # BYTE-BUDGET SCOPING (honest limit): the 13 code-DEV agents ALSO hold Bash, but each already carries
-# the near-ceiling seven-block assembly (dev-front ~9891B under the 9984 ceiling, pinned by
+# the near-ceiling seven-block assembly (dev-front 9871B under the 9984 ceiling, pinned by
 # inject-scope-rules-nodrop.bats). A ~942B clause cannot be added to them without shedding a PROVEN
 # block, which the nodrop invariant forbids — so this clause is scoped to the LIGHT Bash-holding
 # wiki-readers, who have ample headroom. The code-DEV agents are NOT the primary raw-store readers
@@ -243,32 +243,40 @@ readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-
 readonly WIKI_UNTRUSTED_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-reporter glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-design-designer glass-atrium-wiki-curator "
 
 # Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c).
-# WHY: the engine persists any SubagentStart additionalContext larger than ~10KB (10240
-# bytes) to a file and delivers only a ~2KB preview — so an oversized assembly silently
-# strips the meter (the exact failure this hook repairs). 9984 stays clear of the 10240
-# trigger (256B margin — halved from 512B to admit the byte-contracted BUDGET-DEV block, still
-# clear), and the ~900B meter fits even the 2KB preview, so meter delivery
-# holds in every degradation mode. The six AGENT-INJECT source blocks are compressed so the
-# worst-case DEV assembly (all seven blocks, <=9935B measured) fits under this ceiling with
-# >=49B headroom — a ceiling
-# raise ALONE cannot fit the pre-compression ~11540B sum, since no compliant ceiling can hold
-# it under the 10240 persist threshold; the fit is compression + ceiling together. The zero-
-# drop invariant is pinned by hooks/test/inject-scope-rules-nodrop.bats against the real repo
-# sources. UNIVERSAL: the envelope carries no spawn-mode discriminator, so engine/schema-mode
-# spawns are bounded identically to manual ones.
+# WHY: an additionalContext over the engine cap is persisted to a file and delivered as a ~2KB
+# preview — so an oversized assembly silently strips the meter (the exact failure this hook
+# repairs). The cap is 10,000 UTF-16 code UNITS, INCLUSIVE, measured by the W1 channel probe on a
+# SINGLE host build; no producer-side check can see a real cap lower than that, since a short cap
+# is observable only at the consumer.
+# UNIT NOTE (read this before hunting a multibyte overflow): this ceiling counts BYTES while the
+# cap counts UTF-16 units, and bytes are never FEWER than units for UTF-8 input — so the byte
+# budget is a CONSERVATIVE proxy, under-spending the channel on non-ASCII text rather than
+# overflowing it. Its cost is capacity, not correctness. The margin is tight but real: an all-ASCII
+# assembly at 9984 bytes is 9984 units, 16 under the 10,000 cap. That 16-unit margin belongs to the
+# NO-SHED path, where no drop marker exists; on the shed path the marker is budgeted INSIDE the
+# ceiling (see INJECT_MARKER_JOIN_BYTES) rather than parked in a margin above it.
+# The ~900B meter fits even the 2KB preview, so meter delivery holds in every degradation mode. The
+# six AGENT-INJECT source blocks are compressed so the worst-case DEV assembly (all seven blocks,
+# <=9935B measured) fits under this ceiling with >=49B headroom — a ceiling raise ALONE cannot fit
+# the pre-compression ~11540B sum, since no compliant ceiling can hold it under the cap; the fit is
+# compression + ceiling together. The zero-drop invariant is pinned by
+# hooks/test/inject-scope-rules-nodrop.bats against the real repo sources. UNIVERSAL: the envelope
+# carries no spawn-mode discriminator, so engine/schema-mode spawns are bounded identically to
+# manual ones.
 readonly INJECT_CTX_MAX_BYTES="${INJECT_SCOPE_RULES_CTX_MAX_BYTES:-9984}"
 
-# T16 in-context drop marker reserve — a FIXED byte reserve subtracted from the ceiling the drop
-# loop compares against, applied CONDITIONALLY (only after the first shed; an under-ceiling spawn
-# keeps the full ceiling and grows no marker). Sized to the engine SAFETY MARGIN: the 9984 ceiling
-# sits 256B below the ~10240 engine persist threshold (see INJECT_CTX_MAX_BYTES), so a 256B reserve
-# guarantees that even when the widened marker overflows the reserve, the total stays below the
-# engine threshold (the overflow rule's "emit + accept" is absorbed by this margin, never triggering
-# the file-persist that strips the meter). The reserve is FIXED (not marker-length-derived) and the
-# ceiling lowers exactly ONCE, so a widening marker can never re-trigger a shed — the byte arithmetic
-# converges because each named shed just freed a whole block (hundreds-to-1200B) while its name+path
-# costs ~40-60B (net negative). A larger reserve would needlessly shed blocks that fit the margin.
-readonly INJECT_MARKER_RESERVE=256
+# T16 in-context drop marker budget — the marker is accounted for INSIDE the size check, never
+# parked in a margin above the ceiling: the ceiling the drop loop compares against is the FULL ceiling
+# minus this join and the RENDERED marker for the shed set so far, recomputed after each shed.
+# WHY it cannot ride a fixed margin: the real ASCII margin under the 10,000-unit cap is 16 units (see
+# INJECT_CTX_MAX_BYTES), while the marker measures 226B at two sheds and 487B at nine — so from FOUR
+# sheds it alone exceeds any margin the ceiling leaves, and an over-cap emit does not degrade
+# gracefully: the whole additionalContext collapses to the ~2KB preview, taking the emit directive's
+# tail and the meter with it. The accounting converges because each named shed frees a whole block
+# (hundreds-to-1200B) while its name+path costs ~40-60B. When even the non-droppable blocks plus the
+# marker exceed the ceiling, the MARKER is dropped and the fact logged: a lost marker is recoverable,
+# a collapsed preview is not.
+readonly INJECT_MARKER_JOIN_BYTES=2 # join_block's blank-line separator ahead of the marker
 
 # Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
 # SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
@@ -1047,17 +1055,16 @@ ctx_bytes="$(byte_len "${CTX}")"
 #     verdict that is a hard gate. Total loss outranks partial, so plan-gate survives longer.
 #   * vs. the proven four: it does NOT outrank them, and must not. Shedding a proven block to keep
 #     this one trades one undelivered rule for another, and the nodrop invariant forbids it outright.
-# Inert in practice at today's sizes (worst-case DEV 9906B under the 9984 ceiling, measured
-# 2026-09-10 by driving the hook), exactly as the wiki-untrusted slot above is: the ordering is what
+# Inert in practice at today's sizes (worst-case DEV 9871B under the 9984 ceiling, measured
+# 2026-09-13 by driving the hook), exactly as the wiki-untrusted slot above is: the ordering is what
 # happens if a source block later grows, not something a current spawn exercises.
 # Residual, stated because it is the same defect class this block exists to fix: a shed plan-gate is
 # NOT silent — the post-loop T16 marker names it with its scope-dev.md source path and invites a Read
 # — but a marker is recovery, not delivery, and an agent that does not follow it loses the duty.
 #
-# T16: the loop compares against effective_ceiling (starts FULL; lowers ONCE by INJECT_MARKER_RESERVE
-# on the first shed, then never again — a widening marker can never lower it a second time) and
-# accumulates a marker entry for every ACTUALLY-PRESENT block it sheds. The post-loop marker is
-# NON-DROPPABLE by placement (appended after the loop, never re-size-checked).
+# T16: the loop compares against effective_ceiling (FULL while nothing has shed, then FULL minus the
+# rendered marker for the shed set, recomputed after each shed) and accumulates a marker entry for
+# every ACTUALLY-PRESENT block it sheds. The post-loop marker is size-checked before it is appended.
 effective_ceiling="${INJECT_CTX_MAX_BYTES}"
 marker_entries=""
 shed_count=0
@@ -1105,14 +1112,18 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate nam
   # the if-condition disabling set -e (SC2310) is intended.
   # shellcheck disable=SC2310
   if block_is_present "${drop_block}"; then
-    # First REAL shed lowers the ceiling ONCE to reserve room for the post-loop marker; the full-
-    # ceiling equality is the "not yet lowered" guard, so it lowers at most once per invocation.
-    if [[ "${effective_ceiling}" -eq "${INJECT_CTX_MAX_BYTES}" ]]; then
-      effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
-      printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
-    fi
+    # Every REAL shed re-renders the marker and re-derives the ceiling from it, so the budget tracks
+    # the marker the emit will actually carry rather than a fixed guess at its size.
     marker_entries="$(append_marker_entry "${marker_entries}" "${drop_block}")"
     shed_count=$((shed_count + 1))
+    shed_marker="$(build_drop_marker "${shed_count}" "${marker_entries}")"
+    marker_bytes="$(byte_len "${shed_marker}")"
+    effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_JOIN_BYTES - marker_bytes))
+    # One diagnostic per invocation: the ceiling now tracks the marker, but an operator needs the
+    # fact once, not once per shed.
+    if [[ "${shed_count}" -eq 1 ]]; then
+      printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
+    fi
     printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
     append_drop_log "${drop_block}" "${pre_drop_bytes}"
   fi
@@ -1135,26 +1146,35 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate nam
   CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}" "${keep_plan_gate}")"
   ctx_bytes="$(byte_len "${CTX}")"
   # After a PRESENT lesson's FULL-drop, BREAK *iff the lesson-free assembly now fits the FULL ceiling*.
-  # For a real agent the nodrop invariant pins that base <= the FULL ceiling, so the marker-reserve
-  # lowering (effective_ceiling 9984→9728) is the ONLY reason the top-of-loop guard would keep going and
-  # cascade into a proven block whenever the base sits inside the 256B reserve band (e.g. dev-front's
-  # 9891B base > 9728) — the marker instead fits the 256B engine margin ABOVE the full ceiling, so this
-  # break upholds the 7-proven-blocks-never-shed invariant. THREE guards, all required: (a) this IS the
-  # lesson iteration, (b) a lesson was actually present (else the loop must proceed to shed the lower-
-  # priority blocks — the forced-shed path the marker / dropsink suites exercise), (c) the lesson-free
-  # ctx already fits the FULL ceiling (a SYNTHETIC over-full assembly, e.g. a 9000B test comment block,
-  # is genuinely too big and MUST keep shedding past the lesson).
+  # For a real agent the nodrop invariant pins that base <= the FULL ceiling, so the marker budgeting
+  # (effective_ceiling = FULL - 2 - the rendered marker) is the ONLY reason the top-of-loop guard would
+  # keep going and cascade into a proven block whenever the base sits inside the marker band — measured
+  # on dev-front + a real lesson: the lesson sheds, the one-entry marker renders at 167B so the
+  # effective ceiling falls to 9815, and the lesson-free base is 9871B, ABOVE it. Without this break a
+  # PROVEN block would shed to pay for a marker. With it, the marker is what yields: the post-loop
+  # size check finds 9871+2+167 = 10040 > 9984, omits the marker and records MARKERLOST, leaving the
+  # 7-proven-blocks-never-shed invariant intact. Nothing is parked ABOVE the full ceiling any more.
+  # THREE guards, all required: (a) this IS the lesson iteration, (b) a lesson was actually present
+  # (else the loop must proceed to shed the lower-priority blocks — the forced-shed path the marker /
+  # dropsink suites exercise), (c) the lesson-free ctx already fits the FULL ceiling (a SYNTHETIC
+  # over-full assembly, e.g. a 9000B test comment block, is genuinely too big and MUST keep shedding
+  # past the lesson).
   [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" && "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
 done
 
-# T16 in-context drop marker — appended AFTER the loop, so it is NON-DROPPABLE by placement (no shed
-# can remove it). Emitted only when >=1 actually-present block was shed, and never re-size-checked:
-# the OVERFLOW RULE accepts the pathological case where the two non-droppable blocks plus the marker
-# exceed the reduced ceiling (emit + accept, NEVER loop). The byte arithmetic otherwise converges —
-# each named shed freed a whole block (hundreds-to-1200B) while its name+path costs ~40-60B.
+# T16 in-context drop marker — appended AFTER the loop, and size-checked before it is appended. The
+# loop already budgeted for it, so this check bites only where the non-droppable blocks alone leave no
+# room: there the marker is omitted and the omission logged, rather than emitted over the cap.
 if [[ "${shed_count}" -gt 0 ]]; then
   drop_marker="$(build_drop_marker "${shed_count}" "${marker_entries}")"
-  CTX="$(join_block "${CTX}" "${drop_marker}")"
+  marked_ctx="$(join_block "${CTX}" "${drop_marker}")"
+  marked_bytes="$(byte_len "${marked_ctx}")"
+  if [[ "${marked_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]]; then
+    CTX="${marked_ctx}"
+  else
+    printf '[inject-scope-rules] drop marker omitted: assembly+marker %sB exceeds the %d ceiling (agent=%s)\n' "${marked_bytes}" "${INJECT_CTX_MAX_BYTES}" "${AGENT_TYPE}" >&2
+    append_drop_log "marker" "${marked_bytes}" "MARKERLOST"
+  fi
 fi
 
 # All blocks empty → nothing to inject, fail-open exit.

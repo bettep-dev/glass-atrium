@@ -255,6 +255,66 @@ assert_contains() {
 
 # ── AC5 — lesson truncate-and-keep records a PARTIAL row; DROP semantics untouched ─────────────────
 
+# Drive one injection with an overridable ceiling — the only way to put the assembly in the state
+# where a block sheds AND the resulting marker no longer fits, which is what writes a MARKERLOST row.
+run_inject_ceiling() {
+  local agent="${1}" comment_src="${2}" ceiling="${3}"
+  run bash -c '
+    agent="$1"; hook="$2"; comment="$3"; droplog="$4"; counter="$5"; ceiling="$6"
+    printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
+      INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
+      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
+      INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
+      SUBAGENT_BUDGET_METER_OFF=1 \
+      INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      INJECT_SCOPE_RULES_SRC="${comment}" \
+      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+      "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${comment_src}" "${DROPLOG}" "${COUNTER}" "${ceiling}"
+}
+
+@test "AC3: a MARKERLOST row records the omitted marker without inflating the DROP numerator" {
+  # The marker is budgeted inside the size check, so when the non-droppable blocks alone leave no
+  # room it is omitted rather than emitted over the cap — and the omission is recorded. MARKERLOST is
+  # a second row for the SAME shed, so the risk it carries is double-counting: the aggregation greps
+  # ' DROP ', and a MARKERLOST row written as a DROP row would report two drops for one shed.
+  #
+  # The ceiling is DERIVED, never a literal. A literal would make this case host-dependent in exactly
+  # the way the marker suite already was: the marker embeds the fixture's own source path, so its
+  # rendered size grows with TMPDIR, and a ceiling chosen on one host can leave room for it on
+  # another. base + 2 removes the variable outright — once the comment sheds, the surviving assembly
+  # is exactly `base` bytes and the join alone consumes the remaining 2, so the marker cannot fit at
+  # ANY path length (its shortest possible rendering is still one byte longer than nothing).
+  local base ceiling drop_rows
+  base="$(measure_base_bytes glass-atrium-dev-shell)"
+  [[ -n "${base}" && "${base}" -gt 0 ]] || {
+    echo "could not measure base bytes" >&2
+    return 1
+  }
+  ceiling=$((base + 2))
+  run_inject_ceiling "glass-atrium-dev-shell" "${COMMENT_BIG}" "${ceiling}"
+  assert_status 0
+  grep -q ' MARKERLOST agent=glass-atrium-dev-shell block=marker ' "${DROPLOG}" || {
+    echo "no MARKERLOST row for an omitted marker (log: $(cat "${DROPLOG}"))" >&2
+    return 1
+  }
+  # Exactly one DROP row — the shed itself. The MARKERLOST row is not one.
+  drop_rows="$(grep -c ' DROP ' "${DROPLOG}" || true)"
+  [[ -z "${drop_rows}" ]] && drop_rows=0
+  [[ "${drop_rows}" -eq 1 ]] || {
+    echo "expected 1 DROP row, got ${drop_rows} (log: $(cat "${DROPLOG}"))" >&2
+    return 1
+  }
+  run_drop_rate
+  assert_status 0
+  assert_contains "drops=1"
+  assert_contains "injection_attempted=1"
+}
+
 @test "AC5: a truncated-and-kept lesson appends a PARTIAL sink row with kept_bytes, never DROP" {
   local base residual ceiling ov
   base="$(measure_base_bytes glass-atrium-dev-shell)"
