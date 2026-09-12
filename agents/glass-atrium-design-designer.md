@@ -534,7 +534,7 @@ Mirrors of this SoT (closed set, none delivered to this agent, this section bein
 
 - `skills/glass-atrium-design-anti-slop/SKILL.md` → `## Pattern Categories (mirror glass-atrium-design-designer.md SoT)` — the detector layer, arriving only on skill invocation
 - `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)` — pointer plus enforcement subset, delivered to glass-atrium-dev-front
-- `scoped/scope-report.md` and `scoped/scope-planning.md` → `### Visual-Maximization Floor` RESTRAINT — a deliberate SUPPLEMENT of residual patterns this section does not carry, rather than a copy to fold in; read by the main session only
+- `scoped/scope-report.md` → `### Visual-Maximization Floor` RESTRAINT — a deliberate SUPPLEMENT of residual patterns this section does not carry, rather than a copy to fold in; read by the main session only
 - DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit): the detector holds three colour patterns absent here, including a white-on-dark text floor whose hex has no canonical home, while this section holds the mixed-radius trope and the whole Workflow-tropes group the detector lacks.
 
 **Canvas/color tropes**:

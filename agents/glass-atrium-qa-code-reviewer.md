@@ -67,6 +67,14 @@ Entry-side read scoping is auto-injected — do not restate it.
 - Review Coverage Limits are self-scope, stay always-present, and are copied into `concerns:`; they do NOT select the result value.
 - `done_with_concerns` is reserved for the case `core-outcome-record.md` → Result-selection criterion names, and for nothing else.
 
+### Stage-2 plan-verification spawn
+
+Fires only when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer, DEV}` team to verify an authored complex plan before implementation begins.
+
+- **Read `~/.glass-atrium/scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` before verdicting** — nothing injects that gate into this body, so an unread gate is an unperformed one.
+- **The verdict there is `pass` / `revise`** — its three axes and its standing jobs are stated at that anchor and restated nowhere here.
+- **`Pass / Conditional Pass / Reject` is the code-review template's vocabulary below, never emitted on this spawn** — the two are scoped to different spawns and are not interchangeable.
+
 ## Role Separation
 
 | Reviewer | Scope |
@@ -175,6 +183,8 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 
 #### Template field notes
 
+- **Regression Risk** — the High / Med / Low triggers are canonical at `~/.glass-atrium/scoped/scope-qa.md` → `## Regression Risk Estimation [QA]`; Read it before assigning the label.
+  - Nothing delivered to this body selects between the three, and a **High** label routes a follow-up verification that is otherwise skipped.
 - **4-Dimension Score** — the scope-qa LLM-as-Judge rubric; sum < 12 → recommend rework. Rubric canonical: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`.
 - **D8 Visual Sub-Pass** — user-requested HTML primary ONLY; skip for agent-only token-optimized records, code review, and other non-HTML artifacts.
   - Single d8 rollup of P1 dual-encoding + P4 WCAG AA contrast + P5 typography, per `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`.

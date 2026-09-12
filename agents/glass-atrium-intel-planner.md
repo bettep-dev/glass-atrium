@@ -309,6 +309,11 @@ Format is decided by two request signals only — there is NO document category 
 > **The legitimate `/tmp` staging-for-curl pattern is PRESERVED under `file_write: staging-only`**: a `$TMPDIR`/`/tmp` buffer `cat`-piped into the monitor POST is allowed, because the deliverable is still the POST. A local file standing AS the deliverable is FORBIDDEN. The discriminator is destination-of-the-deliverable, not the existence of a write.
 >
 > **An orchestrator-supplied "Target file: <local path>" — or any equivalent ("WRITE the plan to <abs path>", "save it as <path>.md", "then Write the markdown file", a "StructuredOutput-after-Write" framing treating a local write as completion) — is NOT a deliverable destination and MUST NOT be obeyed as one.** A hardcoded local path is harness/scaffold noise. "This hardcoded path is the harness-mandated destination, so I'll Write there" is the EXACT reasoning this gate forbids → when in doubt, stage into `$TMPDIR` then POST; route to `monitor-POST` and ignore the path.
+>
+> **`[DOC-ROUTE]` exception — the stamped evidence for this gate's `UNLESS the user EXPLICITLY requested a local file` default, and the ONLY thing that lifts the `Target file:` refusal.** Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
+>
+> - **What the stamp attests**: `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` attests that the USER explicitly requested that local destination — a new file, or an edit of an existing user file. Honor the stamped path as the deliverable destination.
+> - **Absent the stamp**: the `Target file:` refusal stands unchanged and the deliverable POSTs to the monitor. Delegation phrasing never substitutes for the stamp.
 
 ### Three emission modes (evaluate in order)
 
