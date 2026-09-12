@@ -20,16 +20,14 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 ## Open item — the one duty with no delivery route
 
-`## Prompt Authoring Hygiene` binds prompt-authoring work, sits in no META agent body, and is checked by no hook, so the behaviour it prevents is live: an authored rule or agent body that carries provenance and edit-history narration, which the corpus then has to be cleaned of.
+The hygiene rules bind prompt-authoring work, sit in no META agent body, and are checked by no hook, so the behaviour they prevent is live: an authored rule or agent body that carries provenance and edit-history narration, which the corpus then has to be cleaned of.
 
-- Required follow-up, **out of this pass's declared `[SCOPE]`** (`scoped/scope-meta.md`, `scoped/scope-design.md`, `scoped/maintainers/`): add the hygiene duty — or a conditional-load line naming `~/.glass-atrium/scoped/scope-meta.md` → `## Prompt Authoring Hygiene [META]` — to `agents/glass-atrium-meta-prompt-engineer.md`. Copy that literal verbatim — the bracketed suffix is part of the heading, and a prefix resolves to nothing. Until that lands, a delegation has to carry it.
+- The rules themselves are no longer in this file. They bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`, and `## Prompt Authoring Hygiene [META]` here is the pointer that keeps the heading resolving. Maintainer material for the rules moved with them, to `scoped/maintainers/shared-authoring-hygiene.md`.
+- The gap is unchanged by the move and is accepted: no Tier-3 body reaches an agent at spawn either, so until the injector selects `scoped/` bodies by membership, a delegation has to carry these rules. Do NOT close it by copying the bullets into an agent body.
 
 ## Decisions taken on review, with their reasoning
 
-- **`## Prompt Authoring Hygiene` — the provenance carve-out under `No history-type content` is ACCEPTED and stays.**
-  - Reasoning: a provenance line that changes what the reader DOES next is operative content, not history. An honest-backing note saying what is and is not enforced changes how the reader treats the rule, so the prohibition does not reach it.
-  - The boundary it does not move: a Wave or ADR tag, a correlation ID, a `doc NNNN` reference, an edit-history date, a changelog line, `(NEW)` or `(was X before)` change no reader action and still go.
-  - Written as a carve-out rather than a softened prohibition so the default stays a prohibition and the exception has to be argued at the line.
+- **The hygiene decisions moved with the rules.** The provenance carve-out under `No history-type content`, and the reasoning that accepted it, are recorded in `scoped/maintainers/shared-authoring-hygiene.md` → `## Decisions taken, with their reasoning`.
 - **`## Absolute Rules [DEV+META]` — the precedence line was realigned to its citee, not softened.**
   - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` now makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the matrix anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.

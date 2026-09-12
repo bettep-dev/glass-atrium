@@ -27,14 +27,7 @@ glass-atrium-meta-prompt-engineer, glass-atrium-intel-planner and glass-atrium-d
 
 ## Prompt Authoring Hygiene [META]
 
-Binds every prompt, agent instruction, rule and skill you author or edit.
-
-- **Instruction-only**: state what the agent should DO plus the functional references it needs to act — never why a rule was added or how it evolved.
-- **No unclear-source citations**: the test is whether the reader must FOLLOW the reference in order to act.
-  - Keep: a rule file the agent must obey · a hook, script or API the rule invokes · a canonical-SoT pointer.
-  - Omit: a `(src: …)` pointing at an internal session artifact · a derivation note · a "3-angle review" · a research claim with no checkable reference.
-- **No history-type content**: no Wave / ADR provenance tags, correlation IDs, `doc NNNN` / `plan doc` references, edit-history dates, changelog narration, "(NEW)", "(was X before)". Version history lives in git, not in a prompt body.
-  - Carve-out: provenance that changes what the reader DOES stays — an honest-backing note stating what is and is not enforced is a functional reference, not history.
+Pointer only. The rules bind META, PLANNING and REPORT alike, so they live once as a Tier-3 file: `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`.
 
 ## Prompt Deliverable Team Rule [META]
 
