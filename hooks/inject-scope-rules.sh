@@ -187,12 +187,14 @@ source "${BASH_SOURCE%/*}/lib/styleref-roster.sh"
 # minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
 readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
-# naming scope-match — the 13 agents whose frontmatter declares glass-atrium-dev-naming:
-# DEV(12, EXCLUDING dev-swift) + qa-code-reviewer. Space-padded. DELIBERATELY NOT
-# INJECT_AGENTS, which wrongly adds qa-debugger + dev-swift (neither declares the skill,
-# frontmatter-verified). AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked
-# array via a dedicated predicate (dev_roster − {dev-swift} ∪ {qa-code-reviewer}) — a new
-# DEV agent is wired in automatically.
+# naming scope-match — a curated delivery roster of 13: DEV(12, EXCLUDING dev-swift) +
+# qa-code-reviewer. Space-padded; membership is a hardcoded literal, not read from
+# frontmatter. DELIBERATELY NOT INJECT_AGENTS, which is wider by qa-debugger + dev-swift:
+# qa-code-reviewer alone is the review-enforcement surface, and dev-swift targets native
+# SwiftUI rather than the web naming conventions the delta-core carries. AUTO-RECONCILED
+# by agent_lifecycle inject_sync as a 4th tracked array via a dedicated predicate
+# (dev_roster − {dev-swift} ∪ {qa-code-reviewer}) — a new DEV agent is wired in
+# automatically.
 readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
 # plan-gate scope-match — the FULL DEV(13) roster, and deliberately not a subset. The Stage-2 gate's
