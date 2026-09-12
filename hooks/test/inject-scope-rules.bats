@@ -591,19 +591,53 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
 # blocks, so the pinned order sheds them (after lesson) BEFORE naming/style-ref/minimalism/comment.
 # Their rosters are DISJOINT, so each order test targets an agent that receives exactly one of them.
 
+# Byte length of the last run's assembled additionalContext.
+ctx_bytes() {
+  printf '%s' "$(ctx_of)" | wc -c | tr -cd '0-9'
+}
+
+# The drop marker's byte cost, MEASURED from an emit that actually sheds. The marker embeds each
+# shed block's ABSOLUTE source path, so it grows with the sandbox root: a test that assumed a
+# marker size passed under a short TMPDIR and shed a second block under a long one. Driving every
+# block over the ceiling names them all, so this is an UPPER bound on any smaller shed set.
+# Args: $1=agent type · stdout: byte count.
+measured_marker_bytes() {
+  run_hook_full "${1}" 5000 5000 5000 5000 5000 16
+  ctx_of | grep -F 'Injection shed' | head -1 | wc -c | tr -cd '0-9'
+}
+
 @test "over the ceiling — budget-dev sheds BEFORE naming; four proven blocks + meter retained (dev-front)" {
-  # Four scope blocks at ~1919B each (pad 1900) + budget-dev ~622B (pad 600) + emit+meter ~2029B
-  # ≈ 10341B > 9984 by ~357B (< the budget-dev block size): dropping budget-dev ALONE (after the
-  # empty lesson/budget-analysis no-ops) restores the ceiling — naming MUST survive.
-  run_hook_full "glass-atrium-dev-front" 1900 1900 1900 1900 600 16
+  # Every size here is MEASURED from an emit, none assumed. The claim under test is the shed
+  # ORDER — budget-dev goes before naming — so the fixture has to put the assembly just over the
+  # ceiling by less than the budget-dev block, AND leave room for the marker the shed adds back.
+  # Both quantities move with the sandbox path length, which is why neither is a literal.
+  local ceiling=9984 overshoot=200 marker_bytes budget_pad base_bytes scope_pad
+  marker_bytes="$(measured_marker_bytes "glass-atrium-dev-front")"
+  [ -n "${marker_bytes}" ]
+  # Size budget-dev so that removing it frees the overshoot AND the marker with slack to spare.
+  budget_pad=$((marker_bytes + 1200))
+  # Baseline: four minimal scope blocks, nothing shed. Every cost the pads do not carry — block
+  # headers, joins, the emit directive, the meter — is measured here rather than predicted.
+  run_hook_full "glass-atrium-dev-front" 16 16 16 16 "${budget_pad}" 16
   assert_status 0
+  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"
+  base_bytes="$(ctx_bytes)"
+  [ "${base_bytes}" -le "${ceiling}" ]
+  # write_block_src pads with literal bytes, so one pad byte is one context byte: grow the four
+  # scope blocks until the assembly clears the ceiling by `overshoot`.
+  scope_pad=$((16 + (ceiling + overshoot - base_bytes + 3) / 4))
+  run_hook_full "glass-atrium-dev-front" \
+    "${scope_pad}" "${scope_pad}" "${scope_pad}" "${scope_pad}" "${budget_pad}" 16
+  assert_status 0
+  # Non-vacuity: the assembly really was over the ceiling, so the order assertions below are
+  # about a shed that happened.
+  assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"
   assert_ctx_contains "${METER_NEEDLE}"
   assert_ctx_contains "${COMMENT_NEEDLE}"
   assert_ctx_contains "${STYLEREF_NEEDLE}"
   assert_ctx_contains "${MINIMALISM_NEEDLE}"
   assert_ctx_contains "${NAMING_NEEDLE}"
-  assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"
-  assert_ctx_max_bytes 9984
+  assert_ctx_max_bytes "${ceiling}"
 }
 
 @test "over the ceiling — budget-analysis sheds BEFORE naming; comment + naming + meter retained (qa-code-reviewer)" {
