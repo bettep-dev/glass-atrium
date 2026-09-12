@@ -23,6 +23,10 @@
 #        does NOT feed the warning aggregate — designed shedding of the lowest-priority block.
 #   AC3  a log whose rows all predate the window is OK, and still reports the historical total.
 #   AC4  no log at the seam is OK.
+#   AC5  the split scope-rule channel's own aggregate stays SEPARATE from inject-drop: the two
+#        surfaces answer different questions (a block shed from the marker-block slot vs. the
+#        twelve-slot channel's wiring and capacity) and share a section, so a folded counter would
+#        let a live shed be reported as a wiring warn or the reverse.
 #
 # Run via: bats test/doctor-inject-drop-seam.bats
 # Requires: bats, jq, bash 3.2+
@@ -241,4 +245,25 @@ assert_output_lacks() {
   [[ ! -e "${DROPLOG}" ]] || return 1
   run_doctor_seam
   assert_output_has "no inject-scope-rules drop log"
+}
+
+@test "AC5: the split-channel aggregate is its own counter, never folded into inject-drop" {
+  # Drives the REAL producer, per this file's fixture discipline: one emitter-authored non-lesson
+  # drop, which AC1 already pins as exactly 1 inject-drop. What is new here is that the §10b
+  # split-channel counter carries its own name in the same rollup, so neither can absorb the other.
+  emit_shed_row "glass-atrium-dev-shell" 9984 "${COMMENT_BIG}" /nonexistent
+  grep -q 'block=comment ' "${DROPLOG}" || {
+    echo "producer wrote no block=comment row — log: $(cat "${DROPLOG}" 2>&1)" >&2
+    return 1
+  }
+  run_doctor_seam
+  assert_output_has "1 inject-drop"
+  assert_output_has "inject-slot"
+  # A shed of a marker block says nothing about the slot wiring, so the two totals must differ in
+  # KIND: this run has a live shed and a healthy channel.
+  [[ "${output}" == *"0 inject-slot"* ]] || {
+    echo "a live block shed inflated the split-channel counter — output:" >&2
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
 }

@@ -457,6 +457,148 @@ run_doctor() {
     fi
   fi
 
+  # 10b. The split scope-rule channel — twelve SubagentStart slots (inject-scope-rules.sh keeps the
+  #      marker blocks; inject-scope-part-01.sh .. -11.sh each carry one part). Three questions §6
+  #      structurally cannot answer, because §6 asks settings.json about each DECLARED row one at a
+  #      time and knows nothing about what the chunker itself needs:
+  #        i.   are the part slots BOUND? The deploy wires bindings through update.sh ->
+  #             update_wire_hooks_post_apply -> the launcher's wire-hooks subcommand, and a missing
+  #             or non-executable launcher there is a WARN with exit 0 — files applied, bindings NOT
+  #             reconciled. With eleven part wrappers that lands every wrapper on disk, NONE of them
+  #             bound, and every agent receiving the marker-block slot alone. §6 reports eleven
+  #             unrelated-looking dormant lines; nothing else names that shape.
+  #        ii.  does the declared row count match the chunker's own slot constant? A part addressed
+  #             above the last declared slot is computed and discarded with no slot left to run and
+  #             report its own absence — the one class that MUST be checked from outside.
+  #        iii. is an agent's assembled total approaching the envelope? The per-hook cap is enforced
+  #             per part; the envelope is a whole-spawn property no single part can see.
+  #      Every verdict is a warn: a quiet channel is an investigation, never a reason to abort an
+  #      install through the preflight alias. An unreadable core is BLIND, never ok (§16 precedent).
+  #      The slot constant, the soft envelope and the warning vocabulary are all read FROM the core
+  #      (--audit / --print-events), never re-declared here: a reader carrying its own copy of a
+  #      producer's vocabulary can only ever report clean once the two drift. The audit runs against
+  #      GA_ROOT rather than its own default, so the totals describe the install under inspection.
+  local inject_slot_warns=0
+  local chunk_core="${GA_ROOT}/hooks/lib/inject_chunk.py"
+  local slot_declared=0 slot_bound=0 slot_readable=0
+  local slot_binding slot_event slot_hook slot_matcher slot_path
+  for slot_binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
+    IFS=$'\t' read -r slot_event slot_hook slot_matcher <<<"${slot_binding}"
+    [[ "${slot_event}" == "SubagentStart" ]] || continue
+    case "${slot_hook}" in
+      inject-scope-part-[0-9][0-9].sh) ;;
+      *) continue ;;
+    esac
+    slot_declared=$((slot_declared + 1))
+    slot_path="${GA_ROOT}/hooks/${slot_hook}"
+    [[ -f "${slot_path}" ]] && slot_readable=$((slot_readable + 1))
+    if [[ -f "${SETTINGS_JSON}" ]] && command -v jq >/dev/null 2>&1; then
+      # shellcheck disable=SC2310,SC2311,SC2312
+      if [[ "$(is_hook_bound "${slot_event}" "${slot_hook}" "${slot_matcher}")" == "yes" ]]; then
+        slot_bound=$((slot_bound + 1))
+      fi
+    fi
+  done
+
+  local slot_audit="" slot_constant=""
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ ! -f "${chunk_core}" ]]; then
+    log "  warn : split scope-rule channel BLIND — the chunker core is absent (${chunk_core}), so the slot constant and the per-agent totals cannot be read; ${slot_declared} part-slot binding row(s) are declared and unverifiable"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  elif ! command -v python3 >/dev/null 2>&1; then
+    log "  warn : split scope-rule channel BLIND — python3 absent, so the chunker core cannot be asked for its slot count; the slots themselves are also inert on this install (the seam skips without an interpreter)"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  elif ! slot_audit="$(GA_CHUNK_RULES_ROOT="${GA_ROOT}" python3 "${chunk_core}" --audit 2>/dev/null)" || [[ -z "${slot_audit}" ]]; then
+    log "  warn : split scope-rule channel BLIND — the chunker core produced no audit (${chunk_core} --audit); the agent-registry is likely unreadable, so neither the slot count nor any assembled total can be established"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  else
+    slot_constant="$(printf '%s\n' "${slot_audit}" | awk 'NR==1 { for (i=1;i<=NF;i++) if (substr($i,1,6)=="slots=") print substr($i,7) }')"
+    if [[ ! "${slot_constant}" =~ ^[0-9]+$ ]]; then
+      log "  warn : split scope-rule channel BLIND — the chunker audit header carries no parsable slots= field; the declared/needed comparison cannot be made"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    elif [[ "${slot_declared}" -ne "${slot_constant}" ]]; then
+      log "  warn : injector slot-count drift — ${slot_declared} part-slot binding row(s) in EXPECTED_HOOK_BINDINGS vs the chunker's slots=${slot_constant}; parts above ${slot_declared} reach no slot and are discarded with nothing left to report them"
+      log "         fix: add or remove hooks/inject-scope-part-NN.sh plus its SubagentStart row in lib/ga-env.sh until the two agree, then move monitor/src/server/architecture/arch-invariants.ts SubagentStart to match"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    else
+      log "  ok   : injector slot count agrees — ${slot_declared} part-slot binding row(s), chunker slots=${slot_constant}"
+    fi
+
+    # Whole-spawn capacity, two reads of the SAME audit and two different questions.
+    #
+    # The envelope read compares each agent's source DEMAND against the core's own soft= field —
+    # never its delivered total. Delivery is bounded by slots x cap by construction, so a
+    # threshold set at the envelope and read off the delivered sum would sit at a number the
+    # channel cannot reach and could only ever report clean, which is the detector-shaped-hole
+    # class this section exists to avoid.
+    #
+    # The overflow read compares chunks (needed) against slots (available). It duplicates no
+    # producer work: the chunker records its own OVERFLOW event on its sink, but that row is
+    # written at spawn time by part 1 alone, so an install that has spawned nothing since the
+    # corpus grew has the condition and no row. This read has neither dependency.
+    local slot_soft slot_over slot_overflow
+    slot_soft="$(printf '%s\n' "${slot_audit}" | awk 'NR==1 { for (i=1;i<=NF;i++) if (substr($i,1,5)=="soft=") print substr($i,6) }')"
+    if [[ "${slot_soft}" =~ ^[0-9]+$ ]]; then
+      slot_over="$(printf '%s\n' "${slot_audit}" | awk -v soft="${slot_soft}" '
+        NR == 1 { next }
+        {
+          agent = ""; demand = -1
+          for (i = 1; i <= NF; i++) {
+            if (substr($i, 1, 6) == "agent=") { agent = substr($i, 7) }
+            else if (substr($i, 1, 7) == "demand=") { demand = substr($i, 8) + 0 }
+          }
+          if (demand >= soft) { printf "%s(%d) ", agent, demand }
+        }')"
+      if [[ -n "${slot_over}" ]]; then
+        log "  warn : scope-rule source demand at or above the ${slot_soft}-unit soft envelope for: ${slot_over% } — a MARGIN, not a measured overflow (the envelope figure rests on one host probe); cut a member source while there is still room"
+        inject_slot_warns=$((inject_slot_warns + 1))
+      fi
+    fi
+    slot_overflow="$(printf '%s\n' "${slot_audit}" | awk -v slots="${slot_constant}" '
+      NR == 1 { next }
+      {
+        agent = ""; chunks = -1
+        for (i = 1; i <= NF; i++) {
+          if (substr($i, 1, 6) == "agent=") { agent = substr($i, 7) }
+          else if (substr($i, 1, 7) == "chunks=") { chunks = substr($i, 8) + 0 }
+        }
+        if (slots ~ /^[0-9]+$/ && chunks > slots + 0) { printf "%s(%d) ", agent, chunks }
+      }')"
+    if [[ -n "${slot_overflow}" ]]; then
+      log "  warn : scope-rule parts needed exceed the ${slot_constant} available slot(s) for: ${slot_overflow% } — the last delivered part names what it displaced, so the content is recoverable by Read, not lost; cut a member source or add a slot"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    fi
+  fi
+
+  # Wrapper presence. §6 deliberately leaves an absent hook file to the §4/§7 deploy-presence class
+  # (test/doctor-hook-bindings.bats pins that partition, so asserting it there would double-report
+  # the same defect). What is new here is the CHANNEL consequence: a part wrapper that missed the
+  # manifest is bound, absent, and costs exactly one part of every agent's scope rules, with the
+  # remaining slots healthy enough that nothing else looks wrong.
+  if [[ "${slot_declared}" -gt 0 && "${slot_readable}" -lt "${slot_declared}" ]]; then
+    log "  warn : ${slot_readable} of ${slot_declared} scope-rule part wrapper(s) present under ${GA_ROOT}/hooks — each absent wrapper costs every agent the part it carries, and the surviving slots still read correctly on their own"
+    log "         fix: redeploy through the sanctioned updater; a wrapper missing from manifest.json .files is never bundled"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  fi
+
+  # Binding reconciliation. Declared-but-unbound is the post-deploy signature above; it is reported
+  # here as ONE named shape rather than left as N unrelated §6 dormant lines.
+  if [[ "${slot_declared}" -gt 0 ]]; then
+    if [[ ! -f "${SETTINGS_JSON}" ]] || ! command -v jq >/dev/null 2>&1; then
+      : # §6 already said settings.json / jq is unavailable; a second line would restate it.
+    elif [[ "${slot_bound}" -eq 0 ]]; then
+      log "  warn : NONE of the ${slot_declared} scope-rule part slots is bound (${slot_readable} of ${slot_declared} wrapper file(s) present on disk) — every agent receives the marker-block slot ALONE and no scope-rule body at all; this is the signature of an apply that landed the files and never reconciled the bindings (update.sh warns and exits 0 when the launcher is missing or non-executable)"
+      log "         fix: run \`glass-atrium wire-hooks\`, then start a NEW session — Claude Code snapshots hook bindings at session start"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    elif [[ "${slot_bound}" -lt "${slot_declared}" ]]; then
+      log "  warn : ${slot_bound} of ${slot_declared} scope-rule part slots bound — parts carried by the unbound slots reach no agent, and each part reads correctly alone so the gap is invisible from the transcript"
+      log "         fix: run \`glass-atrium wire-hooks\`, then start a NEW session"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    else
+      log "  ok   : all ${slot_declared} scope-rule part slots bound"
+    fi
+  fi
+
   # 11. launchd deploy-drift gate (recurrence guard for the stale-deployed PATH incident). The plist
   #     renderer (render-launchd-plists.sh) is RENDER-ONLY (T32): it writes plists into RENDERED_PLIST_DIR
   #     but NEVER deploys/reloads them — deploy+reload is a SEPARATE step (load_launchd_jobs / --load-launchd).
@@ -1157,7 +1299,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending + inject_slot_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1165,7 +1307,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot — see above) =="
     fi
     return 0
   fi
