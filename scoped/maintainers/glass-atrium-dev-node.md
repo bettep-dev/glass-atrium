@@ -15,7 +15,6 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 |---|---|---|
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it |
 | `hooks/enforce-harness-critical.sh` | live-install frontmatter identity keys (name, tools, scope) and the fence-line count | a live edit touching either is blocked for every caller (LLM06) |
-| `scoped/scope-dev.md` → Sprint Contract Gate | cites this body's `## Guardrails` as the only place any DEV agent actually receives the acceptance-criteria read duty | keep that heading and keep the `acceptance_criteria.md` bullet inside it |
 
 ## Correction landed in this pass
 
@@ -26,6 +25,11 @@ The `## Prohibitions` section carried a justification for restating Guardrails: 
 - **Effort/thinking blockquote** — duplicate of `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that measurably reaches every subagent.
 - **Self line budget ("keep this file ≤180 lines, largest DEV body, compress before appending")** — a maintenance constraint on whoever edits the body plus its recurrence-prevention provenance, neither of which changes what the agent does on a Node task. It is recorded here instead: this body is the longest DEV body in the corpus, its length is carried almost entirely by the Guardrails list, and an addition should replace or merge rather than append.
 - **"Measurable pass conditions only (binding guardrail rules live in the Guardrails section)"** — framing for the editor, not a duty.
+- **The `acceptance_criteria.md` Guardrails bullet** ("MUST read `acceptance_criteria.md` (if present in repo) or plan's `## Acceptance Criteria` section before starting…") — DELETED, not rewritten, together with the `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` branch it mirrored.
+  - Ground: no `acceptance_criteria*` file exists anywhere in the tree (globbed this pass), and a plan carries an acceptance-criteria section only on request (`scoped/scope-planning.md`; `rules/glass-atrium/core-outcome-record.md` → `metric_pass`, the `plan` bar).
+  - What stands in its place: the gate's surviving table routes the DEV to the delegation's criteria or to its own turn-0 `Assumptions:` line, and this body keeps its feature-side duty ("MUST verify implementation against acceptance criteria (not just unit-test passage)").
+  - The `## Machine constraints on the body` row telling an editor to keep the bullet went with it — it was the only thing standing on that bullet.
+    - That row also asserted that `scoped/scope-dev.md` → Sprint Contract Gate *cites* this body's `## Guardrails`. It does not: grep over that rule file returns only the Tier-2 loading roster naming this agent.
 - **Guardrails items re-listed under Red Flags and Prohibitions** — both sections now name Guardrails as the owner and list only what has no Guardrails entry, the shape `agents/glass-atrium-dev-shell.md` already uses.
 
 ## Decisions worth keeping

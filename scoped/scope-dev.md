@@ -14,9 +14,10 @@ glass-atrium-qa-code-reviewer pre-defines 3-5 verification criteria before a siz
 
 | Signal your delegation carries | Your duty before the first edit |
 |---|---|
-| a plan reference | read the plan's `## Acceptance Criteria` (or `acceptance_criteria.md`) and acknowledge every item |
+| criteria stated in the delegation | work to them as stated, and acknowledge every item |
+| a plan reference whose plan carries acceptance criteria | read them and acknowledge every item |
+| a plan reference with no criteria, or no criteria anywhere | state in the turn-0 `Assumptions:` line the 3-5 criteria you will work to; inferring them silently is FORBIDDEN |
 | `[ENTRY-CLASS] simple-task` | none — the task is entry-exempt |
-| a plan reference, but no criteria section | say so in the turn-0 `Assumptions:` line and propose the 3-5 criteria you will work to; inferring them silently is FORBIDDEN |
 
 - **Report per criterion on completion**: `metric_pass` carries the overall bar, and every criterion that failed or stayed unverified is named as its own `concerns:` item.
 - The Sizable-task definition your spawn was classified against, and the spawn-time entry gate enforcing that classification, are the orchestrator's: `scoped/maintainers/scope-dev.md` → Sprint Contract Gate (orchestrator side).

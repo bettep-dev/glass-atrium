@@ -46,7 +46,6 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 - MUST update test oracles when changing algorithmic boundaries (day-windows, bucketing, discriminated-union branches) — hardcoded assertions become false-positives after boundary shifts
 - When modifying daemon/server code in a production build: rebuild (npm run build / equivalent) and verify on the compiled artifact before completion, not on a dev server — .ts edits don't hot-reload in non-watch builds
 - When modifying plist files or env-injection paths: verify the exact injected value is present in the target config file via Grep/Read before completion — config changes need explicit read-back verification
-- MUST read `acceptance_criteria.md` (if present in repo) or plan's `## Acceptance Criteria` section before starting; on test failure set `metric_pass=false` and list failed test names in concerns
 - MUST verify the target module's type before editing: `package.json` `type` field (ESM vs CJS) + `exports` declarations match intent
 - MUST Grep-confirm every import target exists (`node_modules/`, local `.js`/`.ts`) before writing import statements
 - MUST verify external library version-specific behavior in the changelog before upgrading — audit all call sites for behavior changes
