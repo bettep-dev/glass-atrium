@@ -57,7 +57,7 @@ One scope file per scope. This is a MEMBERSHIP statement — which rules govern 
 | `rules/glass-atrium/scope-orchestrator.md` + `rules/glass-atrium/orchestrator-role.md` | ORCHESTRATOR |
 | `scoped/scope-wiki.md` | WIKI |
 
-**No code selects a scope file by agent.** No `agents/*.md` frontmatter carries a `scope:` key and `agent-registry.json` carries no scope field, so nothing at spawn time resolves a row above to a file. The only agent→scope-file map in the tree is the one `autoagent/daemon_cycle.py` uses to excerpt a scope file into the daemon's rule-improvement verify prompt, and no spawn path reads it. What a running agent actually holds is `### Membership vs. Delivery (per tier)` below — read it before relying on a row here.
+**What MUST resolve a row above to a file at spawn** is the agent's `agent-registry.json` row — `rules.scope` (the one Tier-2 file) and `rules.shared` — read by the SubagentStart injector. No `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field either: the resolution is `rules.scope` per row, and this table is the AUTHORING input for those rows rather than a runtime input. `autoagent/daemon_cycle.py` holds a second agent→scope-file map, used only to excerpt a scope file into the daemon's rule-improvement verify prompt. No spawn path reads either one TODAY — the selector is a requirement of the split channel, not a description of it. What a running agent actually holds is `### Membership vs. Delivery (per tier)` below — read it before relying on a row here.
 
 ### Tier 3 — Cross-cutting (conditional inheritance)
 
@@ -123,24 +123,27 @@ Two injection sources are not rule files of this matrix, and neither gains membe
 
 ### Membership vs. Delivery (per tier)
 
-Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIVERY, the channel that actually carries the text to a running agent. There are two channels with different budgets, and the injection hook above is only one of them.
+Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIVERY, the channel that actually carries the text to a running agent. Two channels carry rule text and they have different budgets; the injection hook above is only one of them.
+
+**Read the "Arrives?" column with its tense.** A row reading YES records a measurement. A row reading REQUIRED records what the split SubagentStart channel MUST do once it is bound on the live install, and nothing more: that channel is not bound today, so no `scoped/` body reaches any agent by any route, and per-scope arrival is verified agent by agent at the end of the wave. Do not read a REQUIRED row as a description of what happens now.
 
 | Tier | Channel | Arrives? |
 |---|---|---|
-| Tier 1 — Core bodies | HOST project-instructions (unceilinged, unmeasured) | YES — all six files |
-| Tier 2 — scope-file bodies | none | NO |
-| Tier 2 — `scope-dev.md` marker blocks (style_ref · minimalism · plan-gate) | `inject-scope-rules.sh`, byte-ceilinged | YES, to the DEV roster only |
-| Tier 3 — `shared-comment-logging.md` extracted core | `inject-scope-rules.sh`, byte-ceilinged | YES, to DEV + QA |
-| Tier 3 — every other file | none | NO — pointer-referenced only |
+| Tier 1 — Core bodies | HOST project-instructions (unceilinged, unmeasured) | YES — all six files (measured 2026-09-10) |
+| Tier 2 — the agent's own scope file | the split SubagentStart channel, selected from the registry row | REQUIRED — not bound yet; verified per scope at the end of the wave |
+| Tier 3 — unconditional `shared-*` members | same channel | REQUIRED — same verification |
+| Tier 3 — CONDITIONAL members (footnote cells) | path pointer only | NO body — selection cannot key on a task at spawn |
+| `rules/glass-atrium/` members and the ALL column | HOST project-instructions | YES — and deliberately NOT selected, to avoid delivering them twice |
 
-- **Tier-2 scope bodies do NOT reach the agent whose scope they name.** What a spawned subagent receives on the host channel is the set the MAIN SESSION holds — the six Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope. `inject-scope-rules.sh` is not the missing path: it injects NO Tier-2 scope-file BODY and performs NO per-agent Tier-2 scope-file SELECTION.
-- **The mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat WHAT arrives as established and WHY as open.
-- **Standing consequence**: a duty that binds a given agent MUST live in that agent's own body file under `agents/`, or in an injected block. Homing it in X's scope file and leaving a pointer in the body delivers the pointer and nothing else — the COUNT of a closed list survives, its MEMBERSHIP does not. Never cut a body mirror on the ground that the scope file already carries it.
-- **The injected channel is byte-ceilinged at 9984 bytes** (`INJECT_CTX_MAX_BYTES`): over-ceiling blocks are shed, logged to the drop sink, and named in an in-context drop marker (see the hook header). Adding a block sheds one.
+- **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there is the set the MAIN SESSION holds — the six Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope (measured 2026-09-10, by reading a spawned subagent's received project-instructions directly).
+- **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat WHAT arrives as established and WHY as open.
+- **Membership MUST be read from the registry row, not from this file.** `agent-registry.json` → `agents.<name>.rules` carries `{scope, shared, conditional}`, AUTHORED from this matrix. This matrix stays the governance SoT; the reconcile that binds the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, which runs off the delivery path, where a fail-open matrix parser is the right instrument.
+  - That reconcile reads the **Tier-2 and Tier-3 DECLARATION ROWS, never the Compliance Matrix table cell.** The declaration rows are the membership statement and the table below is a coarser summary of them: `scoped/shared-naming.md` is declared for DEV and for glass-atrium-qa-code-reviewer alone, while its Compliance Matrix QA cell carries a bare tick covering both QA agents, so a cell reader reports a permanent false divergence for glass-atrium-qa-debugger. `shared-code-structure.md` is the identical shape.
+  - **Why the registry and not this file:** the registry is merge-claimed by the updater and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not (driven against `autoagent/lib/roster_merge.py`, 2026-09-13).
+- **Standing consequence, narrowed but NOT yet inverted**: once the channel is bound and arrival is verified, a duty that binds an agent may live in that agent's `scoped/` member file. It may NEVER live in a CONDITIONAL member, an un-membered file, or a skill — those deliver a pointer at most. Until arrival is verified per scope, a body mirror is the only proven channel: **do not cut one.**
+- **The per-chunk budget replaces the old 9984-byte block ceiling for the split channel.** Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer. A membership entry resolving to a file absent on the live install takes the same loud-and-degrade path.
 
-Net: the channel carrying the BULK of what an agent actually holds — Tier-1 bodies plus the orchestrator's own Tier-2 pair — is the UNMEASURED host one; the channel this repo budgets carefully is the MINOR one; and a Tier-2 scope body rides NEITHER.
-
-**Known divergence**: `hooks/inject-scope-rules.sh` → "T8 — membership vs. delivery" still states that a subagent's scope-rule body arrives on the host channel. This section supersedes it; correcting the hook header is a change to a file outside this one.
+Net: the channel carrying the BULK of what an agent holds today — Tier-1 bodies plus the orchestrator's own Tier-2 pair — is the UNMEASURED host one, and a Tier-2 scope body rides neither channel until the split channel is bound.
 
 ## Precedence Resolution
 
@@ -148,8 +151,8 @@ Net: the channel carrying the BULK of what an agent actually holds — Tier-1 bo
 - Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
 - Within Tier 3: the more conservative (restrictive) rule wins.
 - Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted).
-  - That says nothing about what is in an agent's context: a spawned subagent holds the ORCHESTRATOR pair and not the file assigned to its own scope (`### Membership vs. Delivery (per tier)`).
-  - Where that happens the governing rule is still the one this table assigns to the agent's own scope — `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line.
+  - That says nothing about what is in an agent's context. A spawned subagent holds the ORCHESTRATOR pair, which the host propagates from the main session whatever the subagent's own scope; once the split channel is bound it will ALSO hold the file assigned to its own scope, delivered from its registry row (`### Membership vs. Delivery (per tier)`).
+  - Either way the governing rule is the one this table assigns to the agent's own scope. `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line, which is what makes the overlap harmless rather than ambiguous.
 - Ambiguous interpretation: the final authority is the scope file the Tier 2 table assigns to that scope — the whole file, never a named section inside it.
   - A scope file MAY concentrate that authority in an Absolute Rules section and cite this clause by name; `scoped/scope-research.md` and `scoped/scope-security.md` carry no such section and govern whole.
 

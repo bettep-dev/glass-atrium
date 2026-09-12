@@ -39,7 +39,7 @@ glass-atrium-design-designer supplies the judgment calls an author cannot make m
 A skill does NOT reach a reader the way an agent body does (measured 2026-09-10).
 
 - This body reaches glass-atrium-design-designer only when the skill is invoked; the frontmatter `description` is all that is present at the invocation decision, and at spawn the designer holds only the body stub.
-- The SubagentStart injector delivers marker-extracted blocks and reads exactly one skill file — the naming skill — not this one.
+- The SubagentStart injector delivers marker-extracted blocks from rule files under `scoped/` and `rules/glass-atrium/`; it reads no skill file at all, so nothing delivers this body at spawn.
 - Closed set of copies for this contract — this file, plus:
   - `scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (policy canonical)
   - `scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` (mirror)

@@ -64,12 +64,16 @@
 # budget-dev · budget-analysis · wiki-untrusted) against the HARDCODED rosters below (INJECT_AGENTS,
 # STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, PLAN_GATE_AGENTS, BUDGET_DEV_AGENTS,
 # BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS).
-# It performs NO per-agent Tier-2 scope-file SELECTION and injects NO Tier-2 scope-file BODY — a subagent's
-# scope-rule body reaches it through the HOST project-instructions context channel, which is
-# UNCEILINGED and UNMEASURED (unlike this hook's byte-accurate 9984-byte SubagentStart budget). So
-# Tier-2 MEMBERSHIP (core-compliance-matrix.md) is NOT the same as delivery through this hook, and
-# the corpus this hook budgets carefully is the MINOR channel. (Matrix SoT: core-compliance-matrix.md
-# → "Membership vs. Delivery".)
+# A Tier-2 scope-file BODY does NOT arrive on the HOST project-instructions channel: what a
+# spawned subagent receives there is the set the MAIN SESSION holds, whatever its own scope
+# (measured 2026-09-10; SoT core-compliance-matrix.md → "Membership vs. Delivery (per tier)").
+# So the SubagentStart channel is the only path a scope-file body can take, and it MUST select
+# per agent from the registry row (agent-registry.json → agents[<type>].rules) and chunk the
+# selected bodies across the bound slots. `rules.conditional` entries are NOT chunked — they
+# ride as path pointers, because selection cannot key on a task at spawn.
+# That selection is a REQUIREMENT, not a description: until the split channel is bound on the
+# live install, this hook selects nothing per agent and delivers no scope-file body, so Tier-2
+# MEMBERSHIP is not yet delivery through any channel.
 
 set -Eeuo pipefail
 IFS=$'\n\t'

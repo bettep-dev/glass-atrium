@@ -1,37 +1,40 @@
 ---
 name: glass-atrium-ops-reconcile-inject
-description: Bidirectionally reconcile the five tracked inject-scope-rules.sh bash arrays (INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS) with the DEV/QA roster — INSERTING every newly registered agent missing from an array AND REMOVING every stale name of a deleted agent — so each array matches the live roster and a new agent loads its scope-rule injection blocks; the sixth, manual-curated BUDGET_ANALYSIS_AGENTS array is never written by the CLI. Runs the tested agent_lifecycle sync-inject CLI subcommand (transactional, .bak backup, atomic write, rollback), never an in-session hook edit. Use when you just registered OR deleted a DEV agent from the monitor flow, when the add-result or delete-result card shows the "skill-execution request" badge naming this skill, when finishing integrating or removing an agent, when asked to sync inject-scope-rules.sh, when a newly added agent loads no scope rules, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or non-DEV/QA agents.
+description: Bidirectionally reconcile the five tracked roster arrays — INJECT_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS and BUDGET_DEV_AGENTS in hooks/inject-scope-rules.sh plus STYLEREF_AGENTS in hooks/lib/styleref-roster.sh — with the DEV/QA roster, INSERTING every newly registered agent missing from an array AND REMOVING every stale name of a deleted agent, so each array matches the live roster and a new agent receives its injected blocks; the manual-curated governance rosters (BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS, PLAN_GATE_AGENTS) are never written by the CLI. Without it a registered DEV agent receives no comment-logging core, no minimalism reflex, no naming delta-core and no BUDGET-DEV sizing block, and is missing from the style_ref review_flag predicate that hooks/lib/style-ref-consts.sh reads directly. It does NOT decide whether an agent receives its scope RULES — that follows the agent-registry.json `rules` object the ADD already wrote. Runs the tested agent_lifecycle sync-inject CLI subcommand (transactional, .bak backup, atomic write, rollback), never an in-session hook edit. Use when you just registered OR deleted a DEV agent from the monitor flow, when the add-result or delete-result card shows the "skill-execution request" badge naming this skill, when finishing integrating or removing an agent, when asked to sync the roster arrays, when a registered DEV agent gets no injected block or its style_ref omission flag never fires, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or for an agent whose scope-RULE membership looks wrong — that is a registry or selector problem, not an array one.
 ---
 
-# Reconcile inject-scope-rules.sh arrays
+# Reconcile the tracked roster arrays
 
-Reconcile the five tracked `inject-scope-rules.sh` bash arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI — one executable, transactional command serving both the add and delete lifecycle.
+Reconcile the five tracked roster arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI — one executable, transactional command serving both the add and delete lifecycle.
 
 ## When to Use
 
 - You just registered a DEV (or QA) agent through the monitor add-agent flow and need to finish integrating it (insert path).
 - You just deleted a DEV agent through the monitor delete flow and need to drop its stale name from the arrays (remove path).
 - The add-result OR delete-result card shows the Pill **"skill-execution request"** badge naming `glass-atrium-ops-reconcile-inject`.
-- You are asked to "finish integrating the new agent", "remove the deleted agent's array entries", "sync inject-scope-rules.sh", or you observe that a newly added agent loads no scope rules.
+- You are asked to "finish integrating the new agent", "remove the deleted agent's array entries", or "sync the roster arrays".
+- A registered DEV agent receives no comment-logging core, minimalism reflex, naming delta-core or BUDGET-DEV sizing block, or its `style_ref` omission `review_flag` never fires.
 - The `/glass-atrium-ops-reconcile-inject` slash command was invoked.
 
 **Exclusions**:
 - Architecture-diagram drift / the `최신화 필요` badge → `glass-atrium-ops-verify-arch` (this skill does NOT chain it — see Prohibitions).
 - Model / token-budget configuration → the monitor Models & budgets screen.
-- Non-DEV / non-QA agents → out of scope; only DEV agents (and the two QA agents) populate these injection arrays.
+- **An agent whose scope-RULE membership looks wrong** → NOT this skill. That membership lives on the agent's `agent-registry.json` row, not in these arrays, so the symptom is a registry or selector problem and running this CLI would waste the diagnosis. Start with `agent_lifecycle orphan-scan --mode rules-membership-mismatch`. (A missing injected BLOCK is the opposite case and IS this skill.)
+- Agents outside the DEV roster and the two QA names → out of scope; no tracked array carries another name.
 
 ## The gap this closes
 
-Six readonly roster arrays drive scope-rule injection at SubagentStart — five CLI-tracked plus one manual-curated. Five live in `~/.glass-atrium/hooks/inject-scope-rules.sh`; STYLEREF_AGENTS lives in `~/.glass-atrium/hooks/lib/styleref-roster.sh`, the declaration-only lib the hook and the style_ref flag predicate both source, and the CLI writes it there:
+**Not the scope-RULE gap.** Per-agent rule membership is recorded on the registry row (`rules.scope` / `.shared` / `.conditional`) by `build_entry` at ADD time, so a lifecycle-created agent's rule membership is complete the moment its row lands — no reconcile run is involved. What an unreconciled array costs is the INJECTED BLOCK it gates, and each is worth naming exactly:
 
-- **INJECT_AGENTS** — DEV (12) + QA (2): receives the comment-logging core block.
-- **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block. Declared in `hooks/lib/styleref-roster.sh` (sourced by the hook), NOT in the hook itself.
-- **MINIMALISM_AGENTS** — DEV (12): receives the MINIMALISM block.
-- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. This array is auto-reconciled by the CLI alongside the other four tracked arrays.
-- **BUDGET_DEV_AGENTS** — DEV minus the four daemon-carrier agents {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell} = 9: receives the BUDGET-DEV sizing block (source `scoped/shared-turn-budget.md`). The carriers keep daemon-evolved in-body budget bullets (the daemon rewrites agent BODIES, never hook sources) — injecting on top would double-deliver. Tracked 5th array: reconciled via the predicate dev_roster − `_BUDGET_DAEMON_CARRIERS` (the carrier constant changes ONLY by manual governance, like NAMING's exclusions).
-- **BUDGET_ANALYSIS_AGENTS** — 6 analysis consumers (glass-atrium-intel-planner, glass-atrium-intel-reporter, glass-atrium-qa-code-reviewer, glass-atrium-design-designer, glass-atrium-meta-agent, glass-atrium-wiki-curator): receives the BUDGET-ANALYSIS block (same source file). MANUAL-curated — NOT tracked by the CLI (membership is not roster-derivable: glass-atrium-meta-agent in, glass-atrium-meta-prompt-engineer out, glass-atrium-intel-researcher out as a carrier); a reconcile run leaves it byte-identical.
+- **INJECT_AGENTS** — the DEV roster plus both QA names: receives the comment-logging core block.
+- **STYLEREF_AGENTS** — the DEV roster whole: receives the STYLE-REF block. Declared in `~/.glass-atrium/hooks/lib/styleref-roster.sh`, the declaration-only lib the hook sources and `hooks/lib/style-ref-consts.sh` reads for the `style_ref` `review_flag` predicate — so a DEV agent missing here loses the block AND never has its `style_ref` omission flagged, a detector that silently stops covering one agent. The CLI writes it in that lib, not in the hook.
+- **MINIMALISM_AGENTS** — the DEV roster whole: receives the MINIMALISM block.
+- **NAMING_AGENTS** — the DEV roster minus glass-atrium-dev-swift, plus glass-atrium-qa-code-reviewer: receives the naming delta-core block. Deliberately narrower than the others — it excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger — and reconciled through its own dedicated predicate rather than the plain roster.
+- **BUDGET_DEV_AGENTS** — the DEV roster minus the four daemon-carrier agents {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell}, which keep daemon-evolved in-body budget bullets the daemon owns (the daemon rewrites agent BODIES, never hook sources), so injecting on top would double-deliver: receives the BUDGET-DEV sizing block (source `scoped/shared-turn-budget.md`). Reconciled through the predicate dev_roster − `_BUDGET_DAEMON_CARRIERS`; the carrier constant changes only by manual governance, like NAMING's exclusions.
 
-A newly registered DEV/QA agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently loads NO injection blocks. Symmetrically, a deleted DEV agent's name lingers in the arrays after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. This skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
+The governance rosters — `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS`, `PLAN_GATE_AGENTS` — are UNTRACKED by design: their membership is not roster-derivable, so a predicate would be a second copy of the array rather than a check on it. A reconcile run leaves each byte-identical.
+
+A newly registered agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently receives NONE of the blocks above. Symmetrically, a deleted DEV agent's name lingers in every tracked array after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. This skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
 
 ## Core Process
 
@@ -67,7 +70,7 @@ A non-zero exit means the live hook was NOT left in a partial state — the `.ba
 
 ## Idempotency
 
-Membership is checked by `split()` + token equality (not substring), so `glass-atrium-dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change. The manual-curated `BUDGET_ANALYSIS_AGENTS` array is never written — every reconcile run leaves it byte-identical.
+Membership is checked by `split()` + token equality (not substring), so `glass-atrium-dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change. Every untracked array is left byte-identical by every run.
 
 ## Output Format
 
@@ -85,15 +88,16 @@ Backup: <path to .bak>                                                # omit if 
 
 ## Prohibitions
 
-- **No in-session array edit** — never edit `inject-scope-rules.sh` via in-session Edit/Write/sed. The only sanctioned mutation path is the CLI subprocess (`.bak` backup + atomic write + rollback). Harness Path Protection blocks and forbids the direct edit.
-- **DEV/QA agents only** — the tracked arrays populate from the DEV (12) + QA (2) roster. Non-DEV/non-QA agents are not tracked-array members; do not attempt to inject them. (The manual-curated `BUDGET_ANALYSIS_AGENTS` roster does name non-DEV/QA analysis agents, but the CLI never writes it — its membership is a manual governance decision, out of this skill's write scope.)
+- **No in-session array edit** — never edit `inject-scope-rules.sh` or `hooks/lib/styleref-roster.sh` via in-session Edit/Write/sed. The only sanctioned mutation path is the CLI subprocess (`.bak` backup + atomic write + rollback). Harness Path Protection blocks and forbids the direct edit.
+- **DEV/QA agents only** — the tracked arrays populate from the DEV roster plus the two QA names. An agent outside that set belongs to no tracked array; do not attempt to insert one. (The untracked governance rosters do name analysis agents, but the CLI never writes them — their membership is a manual governance decision, out of this skill's write scope.)
 - **Does NOT chain verify-arch** — this skill is a fast array-sync only. It MUST NOT trigger `glass-atrium-ops-verify-arch` (the heavy build + launchctl restart). Architecture-diagram reconciliation is a separate, decoupled skill/badge — keeping them separate avoids `execFile` timeout coupling.
 
 ## Red Flags
 
 - A request to edit `inject-scope-rules.sh` directly → route to this CLI, never an in-session edit.
 - `--ga-root` placed after `sync-inject` → wrong order, the CLI errors; the global flag precedes the subcommand (and is for tests only).
-- A non-DEV/non-QA agent named for injection → out of scope.
+- An agent outside the DEV roster and the two QA names offered for insertion → out of scope.
+- "The new agent's scope-RULE membership is wrong" offered as the reason to run this → wrong CLI; that is registry/selector territory, and running this would report already-in-sync and prove nothing. A missing injected BLOCK is the case this skill does fix.
 - This skill kicking off an architecture-diagram build/restart → boundary violation; that is verify-arch's job.
 
 ## Verification
@@ -101,5 +105,6 @@ Backup: <path to .bak>                                                # omit if 
 - [ ] Ran from `cd ~/.glass-atrium/scripts` (the module's package root), not the repo root.
 - [ ] Used the no-flag `python3 -m agent_lifecycle sync-inject` for live operator use (`--ga-root` reserved for disposable test fixtures, placed before the subcommand).
 - [ ] Reported inserted names (or "already in sync"), the `.bak` backup path, and the exit code.
+- [ ] Did not present the run as having fixed an agent's scope-RULE membership — it cannot, and does not need to; what it fixes is the roster that gates the injected blocks.
 - [ ] No in-session edit of `inject-scope-rules.sh` occurred — mutation happened only inside the CLI subprocess.
 - [ ] verify-arch was NOT triggered.
