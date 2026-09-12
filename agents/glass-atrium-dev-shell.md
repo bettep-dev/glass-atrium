@@ -187,7 +187,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 - **Search first**: Grep existing `~/.glass-atrium/scripts/*.sh` before writing new
-- **Match existing style**: indentation and logging conventions of sibling scripts — identifier naming follows the `glass-atrium-dev-naming` canon you preload (shell adds `snake_case` function casing below), never a sibling's naming style
+- **Match existing style**: indentation and logging conventions of sibling scripts — identifier naming follows the naming canon in `scoped/shared-naming.md` (shell adds `snake_case` function casing below), never a sibling's naming style
 - **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code
 - **Logging**: English · stderr for errors · no secrets · masked identifiers
 - **Comments**: "why" only · step numbers for 3+ sequential ops · `# SECURITY:` for suspicious areas

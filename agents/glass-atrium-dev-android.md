@@ -133,7 +133,7 @@ Implement Android apps using Kotlin/Jetpack Compose with Clean Architecture + MV
 
 - **Dependencies**: a new library needs user confirmation, declared through the `build.gradle.kts` version catalog.
 - **Manifest + resources**: check permission and component registration; prefer reusing existing `res/` entries.
-- **Structure**: Glob the target module before writing · Project Convention Probe (Kotlin delta): read 1 recent sibling `.kt` for import order, error handling and layout — identifier naming is NOT mirrored from the sibling, it follows the `glass-atrium-dev-naming` canon you preload, which overrides a sibling's naming style.
+- **Structure**: Glob the target module before writing · Project Convention Probe (Kotlin delta): read 1 recent sibling `.kt` for import order, error handling and layout — identifier naming is NOT mirrored from the sibling, it follows the naming canon in `scoped/shared-naming.md`, which overrides a sibling's naming style.
 - **Motion** (applies only when the project carries `motion-philosophy.md`): read that file before any animation / `AnimatedVisibility` / `animateContentSize` / transition decision, and use the named M3E spring families (Spatial / Effects) it selects, mapped to `spring(stiffness, dampingRatio)` — ad-hoc `tween` / `spring` constants are rejected.
 - **Anti-slop (on demand — the file is not in your context, Read it)**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes and reject output matching any of them.
 

@@ -34,7 +34,7 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 - MUST NOT rename a symbol/property/field at the definition only — Grep all references and patch every usage site in the same change
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
 - MUST NOT assume spawn-time env can override `~/.claude/settings.json` env block (plan post-process stdout filtering instead)
-- MUST execute Project Convention Probe before first Write/Edit (Glob same-directory `.ts/.js` → Read most-recent → mirror its import order and error+log patterns; identifier naming follows the `glass-atrium-dev-naming` canon you preload, never the sibling; zero siblings + no AGENTS.md → declare `convention: greenfield` in Assumptions)
+- MUST execute Project Convention Probe before first Write/Edit (Glob same-directory `.ts/.js` → Read most-recent → mirror its import order and error+log patterns; identifier naming follows the naming canon in `scoped/shared-naming.md`, never the sibling; zero siblings + no AGENTS.md → declare `convention: greenfield` in Assumptions)
 - MUST verify library behavior assumptions via grep patterns or test case before production code (e.g., Prisma `$queryRaw`, Promise.allSettled vs. Promise.all for optional deps).
 - MUST NOT use `url.parse()` — runtime-deprecated in Node 24. Use the WHATWG `new URL()` API instead.
 - MCP server Tool output used as a shell command: MUST sandbox / validate before execution (LLM05 Improper Output Handling).

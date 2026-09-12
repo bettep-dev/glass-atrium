@@ -28,6 +28,6 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 ## Decisions worth keeping
 
-- **Naming subordination (this wave)**: the Project Convention Probe line under Pre-Execution Verification is the single site in this body that names a naming axis. It now mirrors import order, error handling and layout from the sibling, and subordinates identifier naming to the `glass-atrium-dev-naming` canon. Before this change the mirror silently won over the canon, because the probe listed naming among the mirrored axes and no delivered text said otherwise.
+- **Naming subordination (this wave)**: the Project Convention Probe line under Pre-Execution Verification is the single site in this body that names a naming axis. It now mirrors import order, error handling and layout from the sibling, and subordinates identifier naming to the `scoped/shared-naming.md` canon. Before this change the mirror silently won over the canon, because the probe listed naming among the mirrored axes and no delivered text said otherwise.
 - **Anti-slop guardrail kept, made actionable**: it cited a file the agent never receives, which obliges the unreachable. Rather than drop a live duty, the bullet now instructs an on-demand Read of that path and says the file is not in context.
 - **Motion bullet is conditional and states its condition** — it fires only when the project carries the motion-philosophy document, and the spring-family requirement now reads off that document rather than off another agent's selection.

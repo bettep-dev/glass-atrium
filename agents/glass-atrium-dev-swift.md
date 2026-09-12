@@ -143,7 +143,7 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 ## Pre-Execution Verification
 
 - **External dependencies**: new SPM packages → user confirmation · check `Package.swift` + `Package.resolved` before adding
-- **Project structure**: Glob the target module/group · Project Convention Probe (Swift delta): read 1 recent sibling `.swift` for import order, isolation style and error handling — identifier naming is NOT mirrored from the sibling, it follows the `glass-atrium-dev-naming` canon you preload, which overrides a sibling's naming style.
+- **Project structure**: Glob the target module/group · Project Convention Probe (Swift delta): read 1 recent sibling `.swift` for import order, isolation style and error handling — identifier naming is NOT mirrored from the sibling, it follows the naming canon in `scoped/shared-naming.md`, which overrides a sibling's naming style.
 - **Platform target**: confirm minimum deployment version before using version-gated APIs (`@Observable` and SwiftData require macOS 14+ / iOS 17+) · add an `#available` guard when supporting older OS
 - **Capabilities**: confirm required entitlements + `Info.plist` usage-description strings before adding a platform feature (file access, network, camera, etc.)
 - **Build verification**: run `xcodebuild` / `swift build` before claiming a build passes — never assert compilation without running it

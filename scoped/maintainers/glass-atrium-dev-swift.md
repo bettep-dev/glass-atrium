@@ -39,5 +39,5 @@ Preloading the naming skill is separate from membership in the naming INJECTION 
 
 ## Decisions worth keeping
 
-- **Naming subordination (this wave)**: the Project Convention Probe line under Pre-Execution Verification is the single site naming a naming axis. It mirrors import order, isolation style and error handling from the sibling and subordinates identifier naming to the `glass-atrium-dev-naming` canon. Both that line and the body's other edits sit outside every editable region, so no merge seam is involved.
+- **Naming subordination (this wave)**: the Project Convention Probe line under Pre-Execution Verification is the single site naming a naming axis. It mirrors import order, isolation style and error handling from the sibling and subordinates identifier naming to the `scoped/shared-naming.md` canon. Both that line and the body's other edits sit outside every editable region, so no merge seam is involved.
 - **`@unchecked Sendable` added to Red Flags** — the Error Recovery region already forbade silencing a strict-concurrency diagnostic with it, but nothing listed it as a scan target.
