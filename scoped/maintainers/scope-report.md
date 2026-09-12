@@ -17,7 +17,6 @@ Consequences a maintainer works from:
 
 - A duty that must BIND the reporter has to live in the agent body. Homing it here and leaving a pointer in the body delivers the pointer and nothing else.
 - A passage in the agent body that looks like a redundant mirror of this file is the agent's ONLY copy — never cut it on the grounds that this file carries it.
-- Being undelivered is not itself grounds to keep a passage: a passage carrying no canonical text, no server fact and no machine-read literal, which nothing cites, is DELETED rather than relocated.
 
 ## Coupled readers
 
