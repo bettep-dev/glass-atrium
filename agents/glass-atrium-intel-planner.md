@@ -49,6 +49,7 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
     - a user-requested HTML primary that defines a target-file set carries `### Target-Files Section`
     - a user-requested HTML primary carries the Visual-Maximization Floor's at-least-one primary visual structure (`## Visual Design Spec`)
   - Why: implementers catch problems and ask, so a plan that pre-answers every detail adds tokens and review time without adding direction.
+  - A figure you state is direction, not contract: the implementing session measures it for itself, and a difference between your figure and the measurement is not a defect.
   - A stream that must follow another says so in its own line — an ordering note naming the stream it waits on; execution order alone declares no dependency.
 - **On-request structures**: each structure below appears only when the user explicitly asks for that kind of deliverable — a spec, PRD, ADR or roadmap, or the structure by name. A bare request for a plan is not such a request. This is the on-request test every other site in this file defers to.
   - the EARS requirements/design/tasks 3-document system
