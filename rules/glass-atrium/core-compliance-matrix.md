@@ -89,7 +89,7 @@ Tier MEMBERSHIP is not rule-TEXT delivery: an agent's Tier-2 and Tier-3 membersh
 | `AGENT-INJECT:STYLE-REF` | `scoped/scope-dev.md` | `STYLEREF_AGENTS` |
 | `AGENT-INJECT:MINIMALISM` | `scoped/scope-dev.md` | `MINIMALISM_AGENTS` |
 | `AGENT-INJECT:PLAN-GATE` | `scoped/scope-dev.md` | `PLAN_GATE_AGENTS` |
-| `AGENT-INJECT:NAMING` | the `glass-atrium-dev-naming` SKILL.md | `NAMING_AGENTS` |
+| `AGENT-INJECT:NAMING` | `scoped/shared-naming.md` → `## Agent Injection Core` | `NAMING_AGENTS` |
 | `AGENT-INJECT:BUDGET-DEV` | `scoped/shared-turn-budget.md` | `BUDGET_DEV_AGENTS` |
 | `AGENT-INJECT:BUDGET-ANALYSIS` | `scoped/shared-turn-budget.md` | `BUDGET_ANALYSIS_AGENTS` |
 | `AGENT-INJECT:WIKI-UNTRUSTED` | `rules/glass-atrium/core-wiki-reference.md` | `WIKI_UNTRUSTED_AGENTS` |

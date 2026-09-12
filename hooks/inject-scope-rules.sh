@@ -8,9 +8,9 @@
 # DEV(13) ONLY (excludes QA) also gets two blocks from
 # scope-dev.md — STYLE-REF (style_ref DEV-scoped; the pointer token alone left it
 # ~0% emitted) and MINIMALISM (the DEV-scoped minimalism reflex the pointer did not
-# deliver). The NAMING block (glass-atrium-dev-naming
-# SKILL.md) goes to the 13 agents whose frontmatter declares that skill — DEV(12,
-# excl dev-swift) + qa-code-reviewer (the enforcement surface). Its NAMING_AGENTS
+# deliver). The NAMING block (scoped/shared-naming.md) goes to a curated 13-agent
+# delivery roster — DEV minus dev-swift (12), plus qa-code-reviewer (the enforcement
+# surface); membership is a hardcoded literal, not read from frontmatter. Its NAMING_AGENTS
 # roster is DELIBERATELY narrower than INJECT_AGENTS (no qa-debugger, no dev-swift)
 # and is AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked array — a
 # new DEV agent is wired into naming injection automatically. Two BUDGET-SIZING blocks
@@ -97,10 +97,10 @@ readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.glass-atrium/scoped/shared
 # style_ref source rule file — DEV-only injection; same env-override + ~/.glass-atrium/scoped default.
 readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-atrium/scoped/scope-dev.md}"
 
-# naming source SKILL file — DEV(12)+qa-code-reviewer. UNLIKE SRC_FILE/STYLEREF_SRC_FILE
-# (relocated to ~/.glass-atrium/scoped), skills STAY FARMED into ~/.claude/skills, so this
-# default keeps that path (a symlink into the canonical ~/.glass-atrium store).
-readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skills/glass-atrium-dev-naming/SKILL.md}"
+# naming source rule file — DEV(12)+qa-code-reviewer. Same shape as SRC_FILE/STYLEREF_SRC_FILE:
+# scoped/ is consumed IN PLACE from ~/.glass-atrium/scoped (not the ~/.claude skills farm), so the
+# DEFAULT constant carries that path (these client-fired hooks have no env block).
+readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.glass-atrium/scoped/shared-naming.md}"
 
 # turn-budget source rule file — BOTH budget blocks (BUDGET-DEV + BUDGET-ANALYSIS) live in this
 # single scoped/ file; same env-override + ~/.glass-atrium/scoped default as SRC_FILE/STYLEREF_SRC_FILE.

@@ -3,26 +3,7 @@ name: glass-atrium-dev-naming
 description: Naming conventions for DEV agents — 5 conciseness principles (no-stutter context removal + identifier-kind verb-form scoping nouns-on-data/verbs-on-functions, with intention-revealing reduction floor), variables (scope-proportional, collections, maps), booleans (stative-first), functions (inverse-scope, layer-specific, 17-category verb taxonomy), classes/types, enums/constants, greppability, anti-pattern prohibition
 ---
 
-## Agent Injection Core
-
-> The block below (between the `AGENT-INJECT:NAMING` markers) is the compressed injected core extracted verbatim by a SubagentStart hook and injected into DEV + glass-atrium-qa-code-reviewer subagents. Edit it here only — the full skill (User Dictionary, 5 Conciseness Principles, Quick rules, References) remains below as the on-demand detail.
-
-> Machine-checked repetition (read before dieting the block): `hooks/test/inject-scope-rules-nodrop.bats` points the injector at THIS live file as the naming source and asserts both that the block's opening bold line survives as the needle proving the block was not shed, and that the block's byte size keeps the worst-case DEV assembly under the injector's context ceiling — so renaming that line, or growing the block, turns that suite red.
-
-<!-- AGENT-INJECT:NAMING:START -->
-**Naming delta-core (auto-injected) — non-inferable subset; qa-code-reviewer = enforcement surface.**
-
-1. **Canonical verb set (PRIMARY)** — prefer `get/set/find/create/update/delete/put/build` for ~all functions; domain verb ONLY when the set cannot express the op · mappings (keep): storeTranscript→`setTranscript` · resolveUrl→`getURL` · convertImage→`getImage` · combineFileEmbeddings→`getFileEmbeddings`.
-2. **`get` contract (diverges from AIP-130)** — `get` = acquisition, null/undefined POSSIBLE, NOT throws-on-miss · non-null ONLY via `*OrFail`/`*OrThrow` suffix.
-3. **`put` vs `update`** — `put*` = internal domain-transition pipeline (layer marker) · `update*` = public CRUD update.
-4. **Layer-verb map** — Controller = REST verbs · Repository = Prisma verbs (`find*` glob), non-null via `*OrThrow`/`*OrFail` · Service = small set (noun-form OK on vendor-adapter surfaces).
-5. **One verb per purpose per layer** — never mix get/find/fetch/retrieve in one layer; never rename an op across layers (create ≠ add ≠ insert).
-6. **Identifier-kind binary** — data identifier (var/property/field/param/class/type) = NOUN · function/method = direct verb (vendor-adapters excepted); no noun↔verb cross-form. (Padding verbs + noise nouns Data/Info/Manager: model-inferable.)
-7. **No-stutter** — strip the domain the enclosing class/module/receiver/type already supplies (`User.userName`→`User.name` · `getBucketImage`→`getImage` in a bucket service).
-8. **Reduction-floor guardrail [NON-COMPRESSIBLE — never trim; counterweight to no-stutter]** — never collapse to a generic terminal (`data`/`value`/`status`/`result`/`count`-unqualified); on sibling collision KEEP the qualifier (`userCount`/`projectCount`); KEEP the verb when it is the sole compute-vs-stored-field signal (`calculateTotal` ≠ stored `total`).
-
-Full skill: 17-category verb taxonomy, scope-proportional length table, abbreviations, anti-pattern tables, boolean stative-first.
-<!-- AGENT-INJECT:NAMING:END -->
+> Injected core: the compressed `AGENT-INJECT:NAMING` block the SubagentStart hook delivers is in `scoped/shared-naming.md` → `## Agent Injection Core`. This file is the on-demand detail that block defers to.
 
 ## When to Use
 

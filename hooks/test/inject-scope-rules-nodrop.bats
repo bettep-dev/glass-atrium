@@ -34,7 +34,7 @@ REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
 # Real repo sources (single source of truth for the injected blocks).
 COMMENT_SRC="${REPO_ROOT}/scoped/shared-comment-logging.md"
 STYLEREF_SRC="${REPO_ROOT}/scoped/scope-dev.md"          # STYLE-REF + MINIMALISM both live here
-NAMING_SRC="${REPO_ROOT}/skills/glass-atrium-dev-naming/SKILL.md"
+NAMING_SRC="${REPO_ROOT}/scoped/shared-naming.md"
 BUDGET_SRC="${REPO_ROOT}/scoped/shared-turn-budget.md"   # BUDGET-DEV + BUDGET-ANALYSIS both live here
 AGENTS_DIR="${REPO_ROOT}/agents"
 
@@ -117,7 +117,7 @@ setup() {
     return 1
   }
   [[ -f "${NAMING_SRC}" ]] || {
-    printf 'naming SKILL source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+    printf 'naming source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
       "${NAMING_SRC}" >&2
     return 1
   }

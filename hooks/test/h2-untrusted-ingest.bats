@@ -33,7 +33,7 @@ READ_HOOK="${HOOKS_DIR}/advisory-raw-store-read.sh"
 # Real repo sources for the injection assembly (single source of truth for the injected blocks).
 COMMENT_SRC="${REPO_ROOT}/scoped/shared-comment-logging.md"
 STYLEREF_SRC="${REPO_ROOT}/scoped/scope-dev.md"
-NAMING_SRC="${REPO_ROOT}/skills/glass-atrium-dev-naming/SKILL.md"
+NAMING_SRC="${REPO_ROOT}/scoped/shared-naming.md"
 BUDGET_SRC="${REPO_ROOT}/scoped/shared-turn-budget.md"
 WIKI_UNTRUSTED_SRC="${REPO_ROOT}/rules/glass-atrium/core-wiki-reference.md"
 AGENTS_DIR="${REPO_ROOT}/agents"
