@@ -15,7 +15,10 @@ Four live consumers parse this file. Reword around what they read, never through
 
 Reserved beyond that table:
 
-- **Headings**: `## Loading Tiers`, `## Scope Legend` and `## Compliance Matrix` carry anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to; `### Tier 1` is a parse prefix; `### Membership vs. Delivery (per tier)` is cited by name from `scoped/scope-qa.md`, `hooks/inject-scope-rules.sh` and `hooks/inject-session-context.sh`.
+- **Headings**:
+  - `## Loading Tiers`, `## Scope Legend` and `## Compliance Matrix` carry anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to; `### Tier 1` is a parse prefix.
+  - `### Membership vs. Delivery (per tier)` is cited in full by `agents/glass-atrium-intel-researcher.md` and by maintainer notes under `scoped/maintainers/` — named as a group, because which companions carry that citation changes as they are edited.
+  - `hooks/inject-scope-rules.sh` and `hooks/inject-session-context.sh` cite that same heading by its `Membership vs. Delivery` prefix.
 - **Literals**: the matrix header cell `Rule File`, the `✓` glyph, the footnote markers †‡§¶, and the Scope Legend's `~~DATA~~` strikethrough row.
 - **Row shape**: a table row anywhere in this file whose first cell is a bare `name.md` is read as a declared rule file by the drift scan — only Compliance Matrix rows may take that shape.
 
@@ -136,8 +139,11 @@ Net: the channel carrying the BULK of what an agent actually holds — Tier-1 bo
 - Across tiers: Tier 1 > Tier 2 > Tier 3.
 - Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
 - Within Tier 3: the more conservative (restrictive) rule wins.
-- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted). That says nothing about what is in an agent's context: a spawned subagent holds the ORCHESTRATOR pair and not the file assigned to its own scope (`### Membership vs. Delivery (per tier)`). Where that happens the governing rule is still the one this table assigns to the agent's own scope — `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line.
-- Ambiguous interpretation: the relevant scope file's Absolute Rules section is the final authority.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted).
+  - That says nothing about what is in an agent's context: a spawned subagent holds the ORCHESTRATOR pair and not the file assigned to its own scope (`### Membership vs. Delivery (per tier)`).
+  - Where that happens the governing rule is still the one this table assigns to the agent's own scope — `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line.
+- Ambiguous interpretation: the final authority is the scope file the Tier 2 table assigns to that scope — the whole file, never a named section inside it.
+  - A scope file MAY concentrate that authority in an Absolute Rules section and cite this clause by name; `scoped/scope-research.md` and `scoped/scope-security.md` carry no such section and govern whole.
 
 ## Scope Legend
 
