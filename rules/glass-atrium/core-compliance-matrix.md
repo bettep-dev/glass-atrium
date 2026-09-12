@@ -61,7 +61,7 @@ One scope file per scope. This is a MEMBERSHIP statement — which rules govern 
 
 ### Tier 3 — Cross-cutting (conditional inheritance)
 
-Each file below is inherited on its OWN condition. DEV is the common carrier, but QA, META and ORCHESTRATOR each carry some, so this tier is not DEV-exclusive. The `†‡§¶` markers are the Compliance Matrix footnotes below, which hold the exact subsets — stated there once.
+Each file below is inherited on its OWN condition. DEV is the common carrier, but QA, META, PLANNING, REPORT and ORCHESTRATOR each carry some, so this tier is not DEV-exclusive — one file has no DEV member at all. The `†‡§¶` markers are the Compliance Matrix footnotes below, which hold the exact subsets — stated there once.
 
 | Tier-3 file | Inherited by |
 |---|---|
@@ -73,11 +73,19 @@ Each file below is inherited on its OWN condition. DEV is the common carrier, bu
 | `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
 | `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR unconditionally · autoagent-touching DEV subset § |
 | `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · hook-reviewing QA ¶ |
+| `scoped/shared-naming.md` | DEV · glass-atrium-qa-code-reviewer |
+| `scoped/shared-code-structure.md` | DEV · glass-atrium-qa-code-reviewer |
+| `scoped/shared-investigation-discipline.md` | DEV · QA |
+| `scoped/shared-authoring-hygiene.md` | META (both agents) · PLANNING · REPORT |
 
-- **META inheritance is `glass-atrium-meta-prompt-engineer` only.** It takes the original cross-cutting set — `shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md` — because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance"). The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". `glass-atrium-meta-agent` inherits no Tier-3 file.
+- **META inheritance is `glass-atrium-meta-prompt-engineer` only, with the one exception named below.** It takes the original cross-cutting set — `shared-comment-logging.md` · `shared-performance.md` · `shared-search-first.md` · `shared-testing.md` · `shared-type-safety.md` — because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance"). The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". `glass-atrium-meta-agent` inherits no Tier-3 file but `shared-authoring-hygiene.md`.
+  - **`shared-authoring-hygiene.md` is the exception on both counts** — the one Tier-3 file BOTH META agents take, and the one with no DEV member. `glass-atrium-meta-agent` rewrites agent instructions, so a rule binding authored instruction text binds it. Its other members are PLANNING and REPORT, whose authored documents it binds equally, so its META cell carries a bare `✓` and no subset marker.
   - **Hook-capability exclusion, adjudicated 2026-09-11**: the Tier-3 row above and the Compliance Matrix `shared-hook-capability-contract.md` row each carried a META marker asserting the opposite; both were corrected to match this bullet.
   - It stands because `glass-atrium-meta-prompt-engineer` authors prompts, not hooks — and code already agreed: `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry, and that agent's registry row keeps an empty `conditional` list.
 - **QA** loads Tier 1 + `scoped/scope-qa.md` + `shared-comment-logging.md` always, and `shared-hook-capability-contract.md` only when reviewing hook work — never the full set.
+  - **`shared-naming.md` is glass-atrium-qa-code-reviewer ONLY**, and its Compliance Matrix QA cell carries no footnote marker for that subset — the Tier-3 row above names the single agent outright, which no marker could state more precisely. glass-atrium-qa-debugger is read-only by iron-law and authors no identifier, so the rule is structurally inapplicable to it. DEV takes it unconditionally, all 13: `NAMING_AGENTS` excludes glass-atrium-dev-swift from the INJECTED block, which is a delivery roster and not a membership statement.
+  - **`shared-code-structure.md` is glass-atrium-qa-code-reviewer ONLY** for the same reason and with the same bare `✓` in its Compliance Matrix QA cell — the Tier-3 row above names the single agent. glass-atrium-qa-debugger authors no code, so a structural authoring rule is inapplicable to it; DEV takes it unconditionally, all 13.
+  - **`shared-investigation-discipline.md` is the one Tier-3 file BOTH QA agents take**, so its `✓` carries no subset qualifier and glass-atrium-qa-debugger is its heaviest consumer — diagnosis IS the investigation sequence. ORCHESTRATOR is deliberately absent: the moved section's former `[DEV+ORCHESTRATOR]` tag covered a duty PAIR, and the orchestrator half — routing the escalation, rejecting a conclusion carrying no evidence — stayed in `skills/glass-atrium-core-iron-laws/SKILL.md` → `### Debugger Escalation [ORCHESTRATOR]`, which `rules/glass-atrium/scope-orchestrator.md` still cites.
 
 ### Injected Blocks (SubagentStart allowlist)
 
@@ -195,6 +203,10 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 | shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
 | shared-hook-capability-contract.md | | ✓¶ | | | | | | ✓ | | | |
 | shared-self-improve-hygiene.md | | ✓§ | | | | | | | | ✓ | |
+| shared-naming.md | | ✓ | | | | | | ✓ | | | |
+| shared-code-structure.md | | ✓ | | | | | | ✓ | | | |
+| shared-investigation-discipline.md | | ✓ | | | | | | ✓ | | | |
+| shared-authoring-hygiene.md | | | ✓ | | | ✓ | ✓ | | | | |
 
 > † META column = `glass-atrium-meta-prompt-engineer` ONLY, never `glass-atrium-meta-agent`. Which files it inherits, and why: `### Tier 3 — Cross-cutting (conditional inheritance)` above.
 

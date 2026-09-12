@@ -46,6 +46,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -92,6 +95,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -138,6 +144,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -173,7 +182,10 @@
       "rules": {
         "scope": "scoped/scope-qa.md",
         "shared": [
-          "scoped/shared-comment-logging.md"
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -216,7 +228,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -251,7 +266,8 @@
       "rules": {
         "scope": "scoped/scope-qa.md",
         "shared": [
-          "scoped/shared-comment-logging.md"
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-investigation-discipline.md"
         ],
         "conditional": [
           {
@@ -322,6 +338,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -366,6 +385,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -402,7 +424,9 @@
       "dual_phase": false,
       "rules": {
         "scope": "scoped/scope-meta.md",
-        "shared": [],
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
         "conditional": []
       },
       "origin": "shipped"
@@ -440,7 +464,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -484,7 +511,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -523,7 +553,9 @@
       "compatibility": "Requires monitor running at 127.0.0.1:16145 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.",
       "rules": {
         "scope": "scoped/scope-planning.md",
-        "shared": [],
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
         "conditional": []
       },
       "origin": "shipped"
@@ -555,7 +587,8 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-authoring-hygiene.md"
         ],
         "conditional": []
       },
@@ -608,7 +641,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -655,7 +691,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -702,6 +741,9 @@
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
           "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
           "scoped/shared-design-token-consumption.md"
         ],
         "conditional": [
@@ -744,7 +786,9 @@
       "compatibility": "Requires monitor running at 127.0.0.1:16145 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.",
       "rules": {
         "scope": "scoped/scope-report.md",
-        "shared": [],
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
         "conditional": []
       },
       "origin": "shipped"
@@ -836,7 +880,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {
@@ -914,7 +961,10 @@
           "scoped/shared-performance.md",
           "scoped/shared-search-first.md",
           "scoped/shared-testing.md",
-          "scoped/shared-type-safety.md"
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
         ],
         "conditional": [
           {

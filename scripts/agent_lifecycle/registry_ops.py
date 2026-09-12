@@ -97,8 +97,17 @@ SCOPE_SHARED_RULE_FILES: dict[str, tuple[str, ...]] = {
         f"{_SCOPED}shared-search-first.md",
         f"{_SCOPED}shared-testing.md",
         f"{_SCOPED}shared-type-safety.md",
+        f"{_SCOPED}shared-code-structure.md",
+        f"{_SCOPED}shared-investigation-discipline.md",
+        f"{_SCOPED}shared-naming.md",
     ),
-    "QA": (f"{_SCOPED}shared-comment-logging.md",),
+    "META": (f"{_SCOPED}shared-authoring-hygiene.md",),
+    "PLANNING": (f"{_SCOPED}shared-authoring-hygiene.md",),
+    "REPORT": (f"{_SCOPED}shared-authoring-hygiene.md",),
+    "QA": (
+        f"{_SCOPED}shared-comment-logging.md",
+        f"{_SCOPED}shared-investigation-discipline.md",
+    ),
 }
 
 # Tier-3 files binding only when the TASK meets the stated condition — NOT
@@ -128,6 +137,9 @@ SCOPE_CONDITIONAL_RULES: dict[str, tuple[dict[str, str], ...]] = {
 # The closed file set a registry row may cite. shared-design-token-consumption
 # appears only here: it binds the UI-emitting DEV subset unconditionally, which
 # is a per-AGENT fact no scope-level default can derive, so it is added by hand.
+# shared-code-structure.md and shared-naming.md also bind glass-atrium-qa-code-
+# reviewer alone within QA — likewise hand-added per agent, but already in this
+# set through the DEV defaults, so they need no entry of their own.
 RULE_FILES: frozenset[str] = frozenset(
     set(SCOPE_RULE_FILES.values())
     | {f for files in SCOPE_SHARED_RULE_FILES.values() for f in files}
@@ -139,10 +151,12 @@ RULE_FILES: frozenset[str] = frozenset(
 def get_rules_for_scope(scope: str) -> dict[str, Any]:  # Any: str | list values
     """Return the scope-level `rules` defaults for a newly ADDed agent.
 
-    Defaults, not a derivation of truth: two documented per-AGENT divergences
+    Defaults, not a derivation of truth: three documented per-AGENT divergences
     cannot be read off a scope label — the UI-emitting DEV subset that also takes
-    shared-design-token-consumption.md, and glass-atrium-meta-prompt-engineer
-    taking the 5 DEV Tier-3 files its META sibling does not. Each is corrected by
+    shared-design-token-consumption.md, glass-atrium-meta-prompt-engineer taking
+    the 5 original cross-cutting DEV Tier-3 files its META sibling does not, and
+    glass-atrium-qa-code-reviewer taking shared-code-structure.md and
+    shared-naming.md that its QA sibling does not. Each is corrected by
     appending the missing file with add_shared_rule_file — additively, since both
     divergences ADD to the scope defaults rather than contradicting them. The
     write surface is ADD / remove / additive domains append / additive

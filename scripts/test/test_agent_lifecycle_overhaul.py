@@ -67,7 +67,7 @@ def test_when_add_user_agent_then_registry_row_is_origin_user(tmp_path: Path) ->
 def test_when_build_entry_dev_then_rules_carry_scope_shared_conditional() -> None:
     rules = build_entry(domains=["x"], origin="user", scope="DEV")["rules"]
     assert rules["scope"] == "scoped/scope-dev.md"
-    # the 5 Tier-3 files that bind every DEV unconditionally. The UI-emitting
+    # the 8 Tier-3 files that bind every DEV unconditionally. The UI-emitting
     # subset also takes shared-design-token-consumption.md, which is a per-agent
     # fact the scope label cannot carry — added by hand, so absent from defaults.
     assert rules["shared"] == [
@@ -76,6 +76,9 @@ def test_when_build_entry_dev_then_rules_carry_scope_shared_conditional() -> Non
         "scoped/shared-search-first.md",
         "scoped/shared-testing.md",
         "scoped/shared-type-safety.md",
+        "scoped/shared-code-structure.md",
+        "scoped/shared-investigation-discipline.md",
+        "scoped/shared-naming.md",
     ]
     # conditional membership is a separate facet, never folded into `shared`:
     # each entry carries the `when` that makes it conditional rather than standing.
@@ -96,7 +99,13 @@ def test_when_build_entry_scope_without_tier3_then_shared_is_empty() -> None:
 def test_when_build_entry_scope_lowercase_then_mapped() -> None:
     rules = build_entry(domains=["x"], origin="user", scope="qa")["rules"]
     assert rules["scope"] == "scoped/scope-qa.md"
-    assert rules["shared"] == ["scoped/shared-comment-logging.md"]
+    # QA takes investigation-discipline as a scope default; shared-code-structure
+    # and shared-naming bind glass-atrium-qa-code-reviewer ALONE, so they are a
+    # per-agent hand-add and never a QA default.
+    assert rules["shared"] == [
+        "scoped/shared-comment-logging.md",
+        "scoped/shared-investigation-discipline.md",
+    ]
     # QA cites the hook contract under a REVIEW condition, not the DEV authoring one
     assert rules["conditional"] == [
         {
