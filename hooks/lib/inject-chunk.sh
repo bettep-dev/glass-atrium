@@ -3,20 +3,11 @@
 # scope-rule channel sources. It is a LIBRARY: sourcing it defines functions and runs
 # nothing.
 #
-# Twelve SubagentStart bindings ARE TO SHIP. Slot 1 is inject-scope-rules.sh, which carries
-# the kept marker blocks and no chunk; slots 2..12 are to be argument-free wrappers, one
-# basename each, carrying parts 01..11. Today three bindings are registered (the architecture
-# invariant reads `SubagentStart: 3`) and NO wrapper exists yet — stage 2 authors them. A
-# binding carries no argument, so a wrapper will name its part in its own basename —
-# `inject-scope-part-<NN>.sh` — or export GA_CHUNK_PART before sourcing. The wrapper body
-# stage 2 is to write is:
-#
-#   #!/usr/bin/env bash
-#   set -Eeuo pipefail
-#   IFS=$'\n\t'
-#   # shellcheck source=lib/inject-chunk.sh
-#   source "${BASH_SOURCE%/*}/lib/inject-chunk.sh"
-#   ga_chunk_inject
+# Twelve SubagentStart bindings ship. Slot 1 is inject-scope-rules.sh, which carries the kept
+# marker blocks and no chunk; inject-scope-part-01.sh .. -11.sh carry parts 01..11, one basename
+# each. A binding carries no argument, so a wrapper names its part in its own basename — the same
+# string wire_hooks puts in the bound command, which is why the two cannot drift. GA_CHUNK_PART
+# overrides the derivation for a sandbox that binds no wrapper.
 #
 # Selection, packing, counting and the warning-token set all live in the python core
 # (lib/inject_chunk.py): bash cannot count UTF-16 code units and jq counts code points.
@@ -84,20 +75,33 @@ ga_chunk_warn() {
 
 # Part index this slot carries: the GA_CHUNK_PART override wins (the Bats sandbox binds no
 # wrapper), otherwise the trailing digits of the calling wrapper's basename.
+#
+# The digit strip is a shell loop rather than `tr -cd`, and that is load-bearing: this runs
+# BEFORE the python3 guard, so on a broken or empty PATH an external command here fails the
+# pipeline under `set -Eeuo pipefail` and aborts the wrapper with no sink row — in exactly
+# the state (no interpreter reachable) whose sink row is the only evidence the spawn lost its
+# scope rules. Every external call in ga_chunk_warn runs after a `|| true` for the same reason.
 # Args: $1=caller path · stdout: part index, empty when underivable.
 ga_chunk_part() {
-  local raw="${GA_CHUNK_PART:-}" base
+  local raw="${GA_CHUNK_PART:-}" base digits="" pos char
   if [[ -z "${raw}" ]]; then
     base="${1##*/}"
     base="${base%.sh}"
     raw="${base##*-}"
   fi
-  printf '%s' "${raw}" | tr -cd '0-9'
+  for ((pos = 0; pos < ${#raw}; pos++)); do
+    char="${raw:pos:1}"
+    case "${char}" in
+      [0-9]) digits="${digits}${char}" ;;
+      *) ;; # a non-digit is dropped, exactly as `tr -cd` dropped it
+    esac
+  done
+  printf '%s' "${digits}"
 }
 
 # Emit this slot's part for the spawning agent. Reads the SubagentStart envelope on stdin.
 ga_chunk_inject() {
-  local caller="${BASH_SOURCE[1]:-${0}}" part agent input out
+  local caller="${BASH_SOURCE[1]:-${0}}" part agent input out core_status=0
 
   part="$(ga_chunk_part "${caller}")"
   if [[ -z "${part}" ]]; then
@@ -119,7 +123,14 @@ ga_chunk_inject() {
   agent="$(hook_get_field "${input}" "agent_type")"
   [[ -z "${agent}" ]] && return 0
 
-  out="$(python3 "${GA_CHUNK_CORE}" --agent "${agent}" --part "$((10#${part}))" || true)"
+  out="$(python3 "${GA_CHUNK_CORE}" --agent "${agent}" --part "$((10#${part}))")" || core_status=$?
+  # A non-zero core exit is RECORDED, never discarded. An empty stdout is also the sanctioned
+  # no-op below, so a swallowed status left an internal fault indistinguishable from a healthy
+  # quiet slot. The core writes its own sink row when it still can; this row is what survives the
+  # case where it cannot — a signal, an interpreter-level abort, a fault inside its own handler.
+  if [[ "${core_status}" -ne 0 ]]; then
+    ga_chunk_warn "core exited ${core_status} (part=${part}); slot delivered nothing" "${agent}"
+  fi
   # An empty core stdout is the sanctioned no-op for a slot above this agent's part count:
   # no JSON, no empty additionalContext.
   [[ -n "${out}" ]] && printf '%s\n' "${out}"

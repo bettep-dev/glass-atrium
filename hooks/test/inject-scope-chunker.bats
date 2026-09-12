@@ -2,10 +2,9 @@
 # inject-scope-chunker.bats — the membership selector, the UTF-16 chunker and the shared
 # slot library of the split SubagentStart scope-rule channel.
 #
-#   The channel is to replace a single ceilinged injection with twelve bound slots: slot 1
-#   keeps the marker blocks, slots 2..12 carry parts 01..11. Three bindings are registered
-#   today and no wrapper exists yet — stage 2 authors them. Every part must read correctly
-#   ALONE (hook outputs arrive in completion order), must stay at or under the engine's
+#   The channel replaces a single ceilinged injection with twelve bound slots: slot 1 keeps the
+#   marker blocks, inject-scope-part-01.sh .. -11.sh carry parts 01..11. Every part must read
+#   correctly ALONE (hook outputs arrive in completion order), must stay at or under the engine's
 #   inclusive 10,000 UTF-16-unit cap WITH its wrapper, and must never shed silently.
 #
 #   WHICH CHANNELS A FAULT ACTUALLY REACHES (measured 2026-09-13, not assumed — an earlier
@@ -417,6 +416,121 @@ PY
   }
 }
 
+# --- the packing allowance ---------------------------------------------------
+#
+# The allowance decides which H2 sections get re-split at H3, so it is the one number that decides
+# what a part can open with. It is asked of the producer's own get_allowance here: a fixture that
+# recomputed it would agree only with itself, which is how it drifted in the first place.
+
+# Ask the core for its allowance and budget against the fixture root. Args: $1=agent $2=member
+# $3=index width · stdout: `<allowance> <budget>`.
+core_allowance() {
+  GA_CHUNK_RULES_ROOT="${ROOT}" python3 - "${CORE}" "${1}" "${2}" "${3}" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import inject_chunk as core
+cfg = core.Config()
+print("%d %d" % (core.get_allowance(cfg, sys.argv[2], [sys.argv[3]], int(sys.argv[4])), cfg.budget))
+PY
+}
+
+@test "T-ALW-1: an atom at exactly the allowance renders inside the BUDGET, not into the reserve" {
+  # pack() opens a part with the header and then charges TWO "\n\n" joins before the first atom —
+  # one ahead of the band lead, one ahead of the atom. An allowance short by one join admits an
+  # atom two units too large, and the part it opens is over budget by those two units. Nothing
+  # breaks, because CHUNK_RESERVE absorbs them: that reserve is defensive slack against a later
+  # wrapper growing the envelope the engine counts, so leaning on it here spends it in advance.
+  mk_registry ag '{"scope":"scoped/a.md","shared":[],"conditional":[]}'
+  printf '# fixture\n' >"${ROOT}/scoped/a.md"
+  local pair allowance budget rendered
+  pair="$(core_allowance ag scoped/a.md 2)"
+  allowance="${pair%% *}"
+  budget="${pair##* }"
+  [[ "${allowance}" -gt 0 && "${budget}" -gt 0 ]] || {
+    printf 'the core reported no allowance/budget: %s\n' "${pair}" >&2
+    return 1
+  }
+  # One H2 section measuring EXACTLY the allowance, so it is admitted unsplit and opens part 01.
+  python3 - "${ROOT}/scoped/a.md" "${allowance}" <<'PY'
+import sys
+path, allowance = sys.argv[1], int(sys.argv[2])
+head = "## Exactly one allowance\n"
+pad = allowance - len(head.encode("utf-16-le")) // 2
+open(path, "w", encoding="utf-8").write(head + ("x" * pad))
+PY
+  run_core --agent ag --part 1
+  assert_ok
+  rendered="$(printf '%s' "${output}" | ctx_of | u16_of)"
+  [[ "${rendered}" -le "${budget}" ]] || {
+    printf 'a part opened by an allowance-sized atom measures %s units, over the %s-unit budget — the allowance is spending CHUNK_RESERVE\n' \
+      "${rendered}" "${budget}" >&2
+    return 1
+  }
+  # and it must actually carry the section, or the row passes by delivering nothing
+  assert_has "Exactly one allowance"
+}
+
+@test "T-ALW-2: the allowance charges the index width, so a wider index costs allowance" {
+  # build_header zfills both indices, so a width-3 header is two units larger than a width-2 one.
+  # An allowance computed at a fixed width is that much too generous for any agent that packs into
+  # 100 parts or more — the same class of quiet overspend as the missing join, reached by a corpus
+  # rather than by an edit.
+  mk_file a.md 4 400
+  mk_registry ag '{"scope":"scoped/a.md","shared":[],"conditional":[]}'
+  local narrow wide
+  narrow="$(core_allowance ag scoped/a.md 2)"
+  wide="$(core_allowance ag scoped/a.md 3)"
+  assert_eq "$((${narrow%% *} - ${wide%% *}))" "2" "a wider index must cost the allowance exactly two units"
+}
+
+# --- the shipped wrappers ----------------------------------------------------
+
+@test "T-SLOT-1: the shipped wrappers are one contiguous set matching the core's slot count" {
+  # The wrappers, the binding rows and the core's constant are three independent declarations of
+  # the same number, and only this row compares the first to the third. A gap in the sequence is
+  # the quiet failure: nine wrappers numbered 01..08 and 10 leave part 09 addressed to nothing,
+  # and every surviving part still reads correctly alone, so no agent can notice.
+  local slots shipped n expected
+  slots="$(python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import inject_chunk;print(inject_chunk.CHUNK_SLOTS)' "${HOOKS_DIR}/lib")"
+  [[ "${slots}" -gt 0 ]] || {
+    printf 'the core reports no slot count\n' >&2
+    return 1
+  }
+  shipped=0
+  for n in "${HOOKS_DIR}"/inject-scope-part-[0-9][0-9].sh; do
+    [[ -f "${n}" ]] || continue
+    shipped=$((shipped + 1))
+    [[ -x "${n}" ]] || {
+      printf 'wrapper not executable: %s — a bound command that is not executable never runs\n' "${n}" >&2
+      return 1
+    }
+  done
+  assert_eq "${shipped}" "${slots}" "shipped wrappers must equal the core's CHUNK_SLOTS"
+  # contiguity: every index from 01 to CHUNK_SLOTS is present, so no part is addressed to a gap
+  for ((n = 1; n <= slots; n++)); do
+    expected="$(printf '%s/inject-scope-part-%02d.sh' "${HOOKS_DIR}" "${n}")"
+    [[ -f "${expected}" ]] || {
+      printf 'missing wrapper for part %02d: %s\n' "${n}" "${expected}" >&2
+      return 1
+    }
+  done
+}
+
+@test "T-SLOT-2: each shipped wrapper resolves its OWN part from its own basename" {
+  # The derivation is the producer's own ga_chunk_part, asked of each real file. A wrapper whose
+  # basename stopped matching its binding would resolve to a different part — or to none — and
+  # deliver another slot's content under this slot's binding.
+  local file base want got
+  for file in "${HOOKS_DIR}"/inject-scope-part-[0-9][0-9].sh; do
+    [[ -f "${file}" ]] || continue
+    base="${file##*/}"
+    want="${base#inject-scope-part-}"
+    want="${want%.sh}"
+    got="$(GA_CHUNK_PART= bash -c 'source "$1"; ga_chunk_part "$2"' _ "${LIB}" "${file}")"
+    assert_eq "${got}" "${want}" "wrapper ${base} resolved the wrong part"
+  done
+}
+
 # --- the slot library seam ---------------------------------------------------
 
 @test "T-SEAM-1: a wrapper's basename resolves its part, and an empty envelope emits nothing" {
@@ -468,8 +582,9 @@ PY
   }
 
   # (b) python3 unreachable — the abort a live install without the interpreter produces. The PATH is
-  #     narrowed to a dir holding every tool the seam itself uses and NOT python3, rather than being
-  #     emptied: an empty PATH would break the seam's own `tr` and land on branch (c) instead.
+  #     narrowed to a dir holding every tool the seam uses and NOT python3. The narrowing is no
+  #     longer load-bearing (T-SEAM-3 drives the same abort on an EMPTY PATH), but it is kept as the
+  #     realistic shape: an install missing only the interpreter, with the rest of userland intact.
   local nopybin="${BATS_TEST_TMPDIR}/nopybin" tool
   mkdir -p "${nopybin}"
   for tool in bash tr wc date mkdir rm cat grep sed; do
@@ -501,6 +616,91 @@ PY
   # The seam's token can never inflate the injector drop-rate aggregation, which greps ' DROP '.
   ! grep -q ' DROP ' "${SINK}" || {
     printf 'a seam row carries the DROP aggregation token: %s\n' "$(cat "${SINK}")" >&2
+    return 1
+  }
+}
+
+@test "T-SEAM-4: an unhandled core fault reaches the sink and the seam records the exit status" {
+  # An empty core stdout is the SANCTIONED no-op for a slot above the agent's part count, so a
+  # fault that only wrote stderr — a channel the engine discards — was indistinguishable from a
+  # healthy quiet slot. Both halves are asserted: the core's own durable row, and the seam's row
+  # for the case where the core cannot write one.
+  mk_file a.md 4 500
+  # A registry whose top level is a LIST is a REAL unhandled path through the shipped core
+  # (`data.get` on a list), not an injected raise — so the handler under test is the shipped one.
+  printf '[]\n' >"${ROOT}/agent-registry.json"
+  run env GA_CHUNK_RULES_ROOT="${ROOT}" GA_CHUNK_SINK="${SINK}" \
+    python3 "${CORE}" --agent ag --part 1
+  [[ "${status}" -ne 0 ]] || {
+    printf 'an unhandled core fault exited 0 — the seam cannot tell it from a quiet slot\n' >&2
+    return 1
+  }
+  grep -q ' INTERNAL agent=ag ' "${SINK}" || {
+    printf 'the core fault left no INTERNAL sink row: %s\n' "$(cat "${SINK}" 2>&1)" >&2
+    return 1
+  }
+
+  # The seam leg: a core that exits non-zero writing NOTHING anywhere (a signal, an
+  # interpreter-level abort) still leaves the slot's own row, and the slot itself stays exit 0.
+  local stub="${BATS_TEST_TMPDIR}/faulting-core.py" wrapper="${BATS_TEST_TMPDIR}/inject-scope-part-06.sh"
+  printf 'import sys\nsys.exit(70)\n' >"${stub}"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -Eeuo pipefail\n'
+    printf 'IFS=$%s\n' "'\\n\\t'"
+    printf 'source "%s"\n' "${LIB}"
+    printf 'ga_chunk_inject\n'
+  } >"${wrapper}"
+  local seam_sink="${BATS_TEST_TMPDIR}/seam-core-exit.log"
+  run env GA_CHUNK_RULES_ROOT="${ROOT}" GA_CHUNK_SINK="${seam_sink}" GA_CHUNK_CORE="${stub}" \
+    bash "${wrapper}" <<<'{"agent_type":"ag"}'
+  assert_ok
+  grep -q 'core exited 70 (part=06)' "${seam_sink}" || {
+    printf 'the seam discarded the core exit status: %s\n' "$(cat "${seam_sink}" 2>&1)" >&2
+    return 1
+  }
+  # Neither row may inflate the injector drop-rate aggregation, which greps ' DROP '.
+  ! grep -q ' DROP ' "${SINK}" "${seam_sink}" || {
+    printf 'a fault row carries the DROP aggregation token\n' >&2
+    return 1
+  }
+}
+
+@test "T-SEAM-3: an EMPTY PATH still records the abort, so no external stands before the guard" {
+  # The abort that most needs a durable row is the one where the least is reachable. Before the
+  # part index was derived in-shell, the seam ran `tr -cd` BEFORE its python3 guard, so an empty
+  # PATH failed that pipeline under `set -Eeuo pipefail` and the wrapper exited with no row at all
+  # — fail-open, but fail-silent, which is the state this sink exists to remove. Every external the
+  # seam still uses sits behind a `|| true` or a `[[ -d ]]` test, so the append survives.
+  mk_file a.md 4 500
+  mk_registry ag '{"scope":"scoped/a.md","shared":[],"conditional":[]}'
+  local wrapper="${BATS_TEST_TMPDIR}/inject-scope-part-05.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -Eeuo pipefail\n'
+    printf 'IFS=$%s\n' "'\\n\\t'"
+    printf 'source "%s"\n' "${LIB}"
+    printf 'ga_chunk_inject\n'
+  } >"${wrapper}"
+  # The sink's directory is pre-created, since mkdir is one of the externals an empty PATH removes.
+  local sink="${BATS_TEST_TMPDIR}/emptypath/chunk.diag.log"
+  mkdir -p "${sink%/*}"
+  # bash is invoked by ABSOLUTE path: with PATH emptied, env(1) cannot resolve the interpreter
+  # itself, which would test env's lookup rather than the seam's.
+  local bash_bin
+  bash_bin="$(command -v bash)"
+  run env PATH= GA_CHUNK_RULES_ROOT="${ROOT}" GA_CHUNK_SINK="${sink}" \
+    "${bash_bin}" "${wrapper}" <<<'{"agent_type":"ag"}'
+  assert_ok
+  grep -q 'python3 not on PATH' "${sink}" || {
+    printf 'an empty PATH left no sink row at all: %s\n' "$(cat "${sink}" 2>&1)" >&2
+    return 1
+  }
+  # The row must still name the part, or an operator cannot tell which slot went quiet. The
+  # zero-padded form is the wrapper's own basename digits: only the core's argument is decimal-
+  # normalised, so `08` and `09` cannot be read as octal.
+  grep -q 'part=05' "${sink}" || {
+    printf 'the row does not name the part: %s\n' "$(cat "${sink}")" >&2
     return 1
   }
 }

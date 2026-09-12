@@ -25,7 +25,7 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 		PreToolUse: 27,
 		PostToolUse: 8,
 		SessionStart: 4,
-		SubagentStart: 3,
+		SubagentStart: 14,
 		Stop: 3,
 		SubagentStop: 3,
 		PreCompact: 1,
