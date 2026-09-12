@@ -1,14 +1,20 @@
-"""6-mode orphan-scan + symlink integrity + reconciliation (AC4 / §5).
+"""orphan-scan + symlink integrity + reconciliation (AC4 / §5).
 
 Responsibilities:
     Lint the agent definition's spread across stores (md / registry / matrix /
-    inject-list / manifest / symlink) for the six mismatch modes plus symlink
+    inject-list / manifest / symlink) for every mismatch mode plus symlink
     integrity, with the NON-AGENT EXCLUSION SET applied BEFORE every check so a
     clean store never false-fires on GLASS_ATRIUM_GLOBAL_RULES.md / references/ / templates/.
-    count-mismatch keys on a SINGLE declared-count SoT = the registry agents dict
-    (23). domains-overlap reuses the ONE overlap predicate (overlap.py) the R1-Q3
+    count-mismatch keys on a SINGLE declared-count SoT = the registry agents dict.
+    domains-overlap reuses the ONE overlap predicate (overlap.py) the R1-Q3
     gate also calls — same function, same threshold, no drift. A reconciliation
     mode surfaces failed-rollback recovery markers left by the transaction.
+
+    rules-membership-mismatch is the reconcile that binds the registry's
+    per-agent `rules` object to the compliance matrix. It runs HERE, off the
+    delivery path, which is what makes a fail-open matrix parser the right
+    instrument: a table-format edit that defeats the parser costs a report line,
+    not a silently short assembly at spawn.
 
 Every check is a pure function over the parsed stores (read by readers.py), so
 the scan is testable against a temp fixture with no live tree. The scan REPORTS
@@ -22,12 +28,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .atomic import load_json
-from .inject_sync import _BUDGET_DAEMON_CARRIERS
+from .inject_sync import _expected_membership
 from .overlap import scan_existing_pairs
 from .paths import NON_AGENT_DIRS, NON_AGENT_EXCLUSIONS, StorePaths
 from .readers import (
     ReaderError,
     load_registry_agents,
+    load_registry_rules,
     parse_dev_set_text,
     parse_inject_arrays,
     parse_scope_dev_roster,
@@ -35,19 +42,13 @@ from .readers import (
     parse_sql_in_list_text,
     registry_domains,
 )
+from .scope_infer import (
+    build_scope_index_from_registry,
+    build_scope_index_from_text,
+    build_tier2_index_from_text,
+    build_tier3_index_from_text,
+)
 from .subproc import target_home
-
-# DEV roster size SoT cross-check — the QA names INJECT_AGENTS adds over the DEV
-# roster (DEV + QA). Used by inject-list-mismatch to model the QA-vs-DEV split.
-_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"})
-
-# NAMING_AGENTS expected-membership inputs (the narrower 4th array): it adds
-# qa-code-reviewer ONLY (NEVER qa-debugger) and EXCLUDES dev-swift from the DEV
-# roster. Mirrors inject_sync._expected_naming_membership so detection and the
-# fix agree on the same dedicated rule.
-_NAMING_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer"})
-_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"glass-atrium-dev-swift"})
-
 
 @dataclass(frozen=True)
 class Finding:
@@ -169,7 +170,14 @@ def _check_matrix_name_absent(
             Finding("matrix-name-absent", "<matrix>", f"could not parse legend: {exc}")
         ]
     return [
-        Finding("matrix-name-absent", name, "registry agent missing from Scope Legend")
+        Finding(
+            "matrix-name-absent",
+            name,
+            "registry agent missing from Scope Legend — a GOVERNANCE gap: the "
+            "legend is a hand-maintained record no store reads for membership, "
+            "and the updater overwrites a hand-added row because the matrix is "
+            "not merge-claimed",
+        )
         for name in sorted(registry_names - legend)
     ]
 
@@ -204,12 +212,12 @@ def _check_count_mismatch(
 def _check_one_inject_array(
     array_name: str, members: set[str], expected: set[str]
 ) -> list[Finding]:
-    """Diff one inject array against its expected membership (symmetric set diff).
+    """Diff one tracked inject array against its expected membership.
 
-    `array_name` is the bash variable (e.g. INJECT_AGENTS) used in the human-
+    `array_name` is the bash variable (e.g. STYLEREF_AGENTS) used in the human-
     readable detail. A name in `expected` but not `members` is a missing-from
-    finding; the reverse is a stale-extra finding. Same finding `mode` for all
-    five tracked arrays so a single reconcile pass can act on the full set.
+    finding; the reverse is a stale-extra finding. Same finding `mode` for every
+    tracked array so a single reconcile pass can act on the full set.
     """
     findings: list[Finding] = []
     for name in sorted(expected - members):
@@ -226,20 +234,25 @@ def _check_one_inject_array(
 def _check_inject_list_mismatch(
     paths: StorePaths, registry_names: set[str], roster: list[str]
 ) -> list[Finding]:
-    """Mode 5: an inject-scope-rules.sh bash array out of sync with the roster (B4).
+    """Mode 5: a tracked roster array out of sync with the DEV roster (B4).
 
-    Parses all 5 tracked arrays: INJECT_AGENTS (DEV+QA), STYLEREF_AGENTS (DEV),
-    MINIMALISM_AGENTS (DEV), NAMING_AGENTS (DEV − {dev-swift} + qa-code-reviewer,
-    EXCLUDES qa-debugger), BUDGET_DEV_AGENTS (DEV − the daemon-carrier
-    exclusions — the SHARED inject_sync._BUDGET_DAEMON_CARRIERS constant, never
-    a second hardcoded list). STYLEREF + MINIMALISM must equal the DEV roster;
-    INJECT must equal the DEV roster + QA; NAMING + BUDGET_DEV use their
-    dedicated predicates. The untracked BUDGET_ANALYSIS_AGENTS array is not
-    linted (manual-curated). Lint-only — a fix is reported to a human/DEV,
+    The tracked set is readers._TRACKED_INJECT_ARRAYS: INJECT_AGENTS (DEV + QA),
+    STYLEREF_AGENTS and MINIMALISM_AGENTS (the DEV roster whole), NAMING_AGENTS
+    (DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger) and
+    BUDGET_DEV_AGENTS (DEV minus the daemon carriers). The untracked governance
+    rosters are not linted — their membership is not roster-derivable, so a
+    predicate would be a second copy of the array.
+
+    The expected sets come from inject_sync._expected_membership — the SAME
+    function the fix applies, not a mirror of it, so detection and the fix
+    cannot disagree. This mode does not decide whether an agent receives its
+    scope RULES (that follows the registry `rules` object, linted by
+    rules-membership-mismatch); it decides whether the agent is in the rosters
+    that gate the injected BLOCKS. Lint-only — a fix is reported to a human/DEV,
     never auto-edited here (the reconcile-inject CLI verb owns writes).
     """
     try:
-        inject, styleref, minimalism, naming, budget_dev = parse_inject_arrays(paths)
+        arrays = parse_inject_arrays(paths)
     except (ReaderError, OSError) as exc:
         return [
             Finding(
@@ -247,20 +260,164 @@ def _check_inject_list_mismatch(
             )
         ]
 
-    dev_roster = set(roster)
-    naming_expected = (dev_roster - _NAMING_EXCLUDED_DEV) | _NAMING_QA_NAMES
+    expected = _expected_membership(set(roster))
     findings: list[Finding] = []
-    findings += _check_one_inject_array(
-        "INJECT_AGENTS", set(inject), dev_roster | _QA_NAMES
-    )
-    findings += _check_one_inject_array("STYLEREF_AGENTS", set(styleref), dev_roster)
-    findings += _check_one_inject_array(
-        "MINIMALISM_AGENTS", set(minimalism), dev_roster
-    )
-    findings += _check_one_inject_array("NAMING_AGENTS", set(naming), naming_expected)
-    findings += _check_one_inject_array(
-        "BUDGET_DEV_AGENTS", set(budget_dev), dev_roster - _BUDGET_DAEMON_CARRIERS
-    )
+    for array_name, members in arrays.items():
+        findings += _check_one_inject_array(
+            array_name, set(members), expected[array_name]
+        )
+    return findings
+
+
+def _check_rules_membership_mismatch(paths: StorePaths) -> list[Finding]:
+    """Mode 9: a registry `rules` object disagreeing with the matrix declarations.
+
+    Compares in BOTH directions against the Tier-2 table and the Tier-3
+    DECLARATION rows — never the Compliance Matrix table cell, whose ticks are a
+    coarser summary. `scoped/shared-naming.md` is declared for DEV and for
+    glass-atrium-qa-code-reviewer alone while its Compliance Matrix QA cell
+    carries a bare tick, so a cell reader reports a permanent false divergence
+    for glass-atrium-qa-debugger.
+
+    Asserted forwards: a file whose Tier-3 row names the agent's scope
+    UNQUALIFIED, or names the agent itself, must sit in `rules.shared`.
+    Asserted in reverse: every file the row carries must be declared by some
+    Tier-3 row, for a scope or agent that covers this one. A SUBSET declaration
+    (`UI-emitting DEV subset ‡`) satisfies the reverse direction and is never
+    asserted forwards — which agents of that scope are members is stated in
+    prose no parser reproduces.
+    """
+    try:
+        rules_by_agent = load_registry_rules(paths)
+        matrix_text = paths.compliance_matrix.read_text(encoding="utf-8")
+    except (ReaderError, OSError) as exc:
+        return [
+            Finding("rules-membership-mismatch", "<registry>", f"could not read: {exc}")
+        ]
+
+    tier2 = build_tier2_index_from_text(matrix_text)
+    tier3 = build_tier3_index_from_text(matrix_text)
+    legend = build_scope_index_from_text(matrix_text)
+    scope_of = build_scope_index_from_registry(rules_by_agent)
+    scope_by_file = {f: scope for scope, files in tier2.items() for f in files}
+
+    findings: list[Finding] = []
+    for name in sorted(rules_by_agent):
+        rules = rules_by_agent[name]
+        scope_file = rules["scope"]
+        scope = scope_of.get(name)
+        if scope is None or scope_file not in scope_by_file:
+            findings.append(
+                Finding(
+                    "rules-membership-mismatch",
+                    name,
+                    f"rules.scope `{scope_file}` is declared by no Tier-2 row",
+                )
+            )
+            continue
+        declared_scope = scope_by_file[scope_file]
+        legend_scope = legend.get(name)
+        if legend_scope is not None and legend_scope != declared_scope:
+            findings.append(
+                Finding(
+                    "rules-membership-mismatch",
+                    name,
+                    f"Scope Legend says {legend_scope}, rules.scope resolves to "
+                    f"{declared_scope} via the Tier-2 row",
+                )
+            )
+        carried = set(rules.get("shared") or [])
+        conditional = {
+            entry.get("file")
+            for entry in (rules.get("conditional") or [])
+            if isinstance(entry, dict)
+        }
+        for rule_file, decl in sorted(tier3.items()):
+            if scope in decl["scopes"] or name in decl["agents"]:
+                if rule_file not in carried:
+                    findings.append(
+                        Finding(
+                            "rules-membership-mismatch",
+                            name,
+                            f"Tier-3 row declares `{rule_file}` for this agent "
+                            "unconditionally; rules.shared does not carry it",
+                        )
+                    )
+        for rule_file in sorted(carried | conditional):
+            decl = tier3.get(rule_file)
+            if decl is None:
+                findings.append(
+                    Finding(
+                        "rules-membership-mismatch",
+                        name,
+                        f"row cites `{rule_file}`, declared by no Tier-3 row",
+                    )
+                )
+                continue
+            covered = (
+                scope in decl["scopes"]
+                or scope in decl["subsets"]
+                or name in decl["agents"]
+                or name in decl["subsets"]
+            )
+            if not covered:
+                findings.append(
+                    Finding(
+                        "rules-membership-mismatch",
+                        name,
+                        f"row carries `{rule_file}`, whose Tier-3 row declares "
+                        f"neither {scope} nor this agent",
+                    )
+                )
+    return findings
+
+
+def _check_dev_roster_declaration_mismatch(
+    paths: StorePaths, roster: list[str]
+) -> list[Finding]:
+    """Mode 10: the two declarations of the DEV set disagreeing.
+
+    `scoped/scope-dev.md`'s brace list gates DEV_SET and the SQL audit lists;
+    `{name : rules.scope == the Tier-2 DEV file}` is the registry's answer to the
+    same question. Nothing binds them, and gate_roster_sync deliberately does not
+    read the registry — writing a second store into a lock-free transaction step
+    would be the wrong fix. This check is the binding.
+    """
+    try:
+        rules_by_agent = load_registry_rules(paths)
+    except (ReaderError, OSError) as exc:
+        return [
+            Finding(
+                "dev-roster-declaration-mismatch",
+                "<registry>",
+                f"could not read registry rules: {exc}",
+            )
+        ]
+    from .registry_ops import SCOPE_RULE_FILES
+
+    dev_file = SCOPE_RULE_FILES["DEV"]
+    from_registry = {
+        name for name, rules in rules_by_agent.items() if rules.get("scope") == dev_file
+    }
+    from_brace = set(roster)
+    findings = [
+        Finding(
+            "dev-roster-declaration-mismatch",
+            name,
+            "carries the DEV Tier-2 file on its registry row but is absent from "
+            "the scope-dev.md brace roster",
+        )
+        for name in sorted(from_registry - from_brace)
+    ]
+    findings += [
+        Finding(
+            "dev-roster-declaration-mismatch",
+            name,
+            "is in the scope-dev.md brace roster but its registry row does not "
+            "carry the DEV Tier-2 file",
+        )
+        for name in sorted(from_brace - from_registry)
+    ]
     return findings
 
 
@@ -475,6 +632,8 @@ ALL_MODES = (
     "gate-roster-mismatch",
     "domains-overlap",
     "symlink-integrity",
+    "rules-membership-mismatch",
+    "dev-roster-declaration-mismatch",
 )
 
 
@@ -523,6 +682,10 @@ def run_scan(paths: StorePaths, modes: list[str] | None = None) -> ScanReport:
         report.findings += _check_symlink_integrity(
             paths, md_names, manifest_paths, manifest_names, registry_names
         )
+    if "rules-membership-mismatch" in selected:
+        report.findings += _check_rules_membership_mismatch(paths)
+    if "dev-roster-declaration-mismatch" in selected:
+        report.findings += _check_dev_roster_declaration_mismatch(paths, roster)
 
     return report
 

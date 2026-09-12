@@ -1,17 +1,26 @@
-"""inject-scope-rules.sh 5-array transactional sync (T2 / AC1-AC3 / AC4).
+"""inject-scope-rules.sh tracked-array transactional sync (T2 / AC1-AC3 / AC4).
 
 Responsibilities:
-    Reconcile the five tracked space-padded bash arrays in inject-scope-rules.sh
-    (INJECT_AGENTS = DEV+QA, STYLEREF_AGENTS = DEV, MINIMALISM_AGENTS = DEV,
-    NAMING_AGENTS = DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger,
-    BUDGET_DEV_AGENTS = DEV − the daemon-carrier exclusions)
-    with the DEV roster + the QA names (per-array predicate), bidirectionally —
-    INSERTING every missing roster member AND REMOVING every stale array name
-    absent from the expected membership (a deleted agent). The write is
-    transactional: back the live file
-    up to `.bak`, rebuild each array body, write atomically via
-    atomic._atomic_replace, round-trip re-parse to assert inserts landed AND
-    removes are gone, and on any failure restore from `.bak` and raise.
+    Reconcile the tracked space-padded bash arrays — STYLEREF_AGENTS in the
+    roster lib, INJECT_AGENTS / MINIMALISM_AGENTS / NAMING_AGENTS /
+    BUDGET_DEV_AGENTS in the inject hook — with the DEV roster (per-array
+    predicate), bidirectionally: INSERT every missing roster member AND REMOVE
+    every stale array name absent from the expected membership (a deleted
+    agent). The write is transactional: back the live file up to `.bak`, rebuild
+    each array body, write atomically via atomic._atomic_replace, round-trip
+    re-parse to assert inserts landed AND removes are gone, and on any failure
+    restore from `.bak` and raise.
+
+What this reconcile is NOT: it does not decide whether an agent receives its
+scope RULES. Per-agent rule membership is recorded on the registry row
+(`rules`), which `registry_ops.build_entry` writes at ADD time, so the
+new-agent rule-membership gap is closed by construction rather than by a run of
+this module. What an unreconciled array still costs is the INJECTED BLOCK it
+gates — the comment-logging core, the minimalism reflex, the naming delta-core
+and the BUDGET-DEV sizing block, each silently absent from a new agent's
+assembly — plus the style_ref review_flag predicate, which
+hooks/lib/style-ref-consts.sh reads from STYLEREF_AGENTS directly, independently
+of any injected block.
 
 Mirrors stanza.py: membership is `split()` + token equality (NOT substring —
 so `dev-rag` never matches `dev-rag-x`), insert is idempotent (a name already
@@ -32,11 +41,8 @@ from pathlib import Path
 
 from .atomic import _atomic_replace
 from .readers import (
-    _BUDGET_DEV_AGENTS_RE,
-    _INJECT_AGENTS_RE,
-    _MINIMALISM_AGENTS_RE,
-    _NAMING_AGENTS_RE,
-    _STYLEREF_AGENTS_RE,
+    _INJECT_ARRAY_RES,
+    _TRACKED_INJECT_ARRAYS,
     ReaderError,
     parse_inject_text,
     parse_scope_dev_roster,
@@ -71,18 +77,9 @@ _BUDGET_DAEMON_CARRIERS: frozenset[str] = frozenset(
     }
 )
 
-# The 5 tracked arrays keyed by bash variable name -> the compiled assignment
-# regex. BUDGET_ANALYSIS_AGENTS is deliberately ABSENT: its membership is not
-# roster-derivable (meta-agent in / meta-prompt-engineer out / intel-researcher
-# out), so a predicate would be a second copy of the array — false confidence.
-# It stays manual-curated; the reconcile never touches untracked arrays.
-_ARRAY_RES = {
-    "INJECT_AGENTS": _INJECT_AGENTS_RE,
-    "STYLEREF_AGENTS": _STYLEREF_AGENTS_RE,
-    "MINIMALISM_AGENTS": _MINIMALISM_AGENTS_RE,
-    "NAMING_AGENTS": _NAMING_AGENTS_RE,
-    "BUDGET_DEV_AGENTS": _BUDGET_DEV_AGENTS_RE,
-}
+# The tracked set and its regexes are single-sited in readers; this alias keeps
+# the writer's key vocabulary identical to the parser's by construction.
+_ARRAY_RES = _INJECT_ARRAY_RES
 
 
 # The one tracked array declared OUTSIDE the inject hook: STYLEREF_AGENTS lives in the
@@ -149,11 +146,11 @@ def _expected_naming_membership(dev_roster: set[str]) -> set[str]:
 
 
 def _expected_membership(dev_roster: set[str]) -> dict[str, set[str]]:
-    """The expected name set per array given the DEV roster (the single rule).
+    """The expected name set per tracked array given the DEV roster.
 
     INJECT carries DEV + QA; STYLEREF + MINIMALISM are DEV-only; NAMING carries
     the narrower DEV − {dev-swift} + qa-code-reviewer set; BUDGET_DEV carries
-    DEV − the daemon-carrier exclusions. Mirrors
+    DEV minus the daemon-carrier exclusions. Mirrors
     orphan_scan._check_inject_list_mismatch so detection and the fix agree.
     """
     return {
@@ -280,19 +277,12 @@ def plan_removes(text: str, dev_roster: set[str]) -> dict[str, list[str]]:
 
 
 def _actual_membership(text: str) -> dict[str, set[str]]:
-    """The current name set per array, parsed from the hook text."""
-    inject, styleref, minimalism, naming, budget_dev = parse_inject_text(text)
-    return {
-        "INJECT_AGENTS": set(inject),
-        "STYLEREF_AGENTS": set(styleref),
-        "MINIMALISM_AGENTS": set(minimalism),
-        "NAMING_AGENTS": set(naming),
-        "BUDGET_DEV_AGENTS": set(budget_dev),
-    }
+    """The current name set per tracked array, parsed from the declaration text."""
+    return {name: set(names) for name, names in parse_inject_text(text).items()}
 
 
 def apply(paths: StorePaths) -> SyncResult:
-    """Bidirectionally reconcile the 5 tracked inject arrays with the DEV roster, in one tx.
+    """Bidirectionally reconcile the tracked inject arrays with the DEV roster, in one tx.
 
     Steps:
       1. Read the live hook + the DEV roster, compute the per-array insert AND

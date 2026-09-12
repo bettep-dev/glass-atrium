@@ -42,7 +42,7 @@ _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_ROOT))
 
-from agent_lifecycle import gate_roster_sync, inject_sync, orphan_scan  # noqa: E402
+from agent_lifecycle import gate_roster_sync, inject_sync, orphan_scan, readers  # noqa: E402
 from agent_lifecycle.cli import (  # noqa: E402
     EXIT_OK,
     EXIT_ROLLBACK_FAILED,
@@ -589,6 +589,9 @@ def _inject_hook_text(budget_dev: list[str]) -> str:
                 _array_line("MINIMALISM_AGENTS", _DEV_ROSTER),
                 _array_line("NAMING_AGENTS", naming),
                 _array_line("BUDGET_DEV_AGENTS", budget_dev),
+                # an UNTRACKED governance roster, present so a parse that reached
+                # past its own set would be visible rather than merely unmodelled.
+                _array_line("BUDGET_ANALYSIS_AGENTS", ["glass-atrium-meta-agent"]),
             ]
         )
         + "\n"
@@ -603,28 +606,48 @@ def _styleref_roster_text() -> str:
     )
 
 
-def test_parse_inject_text_returns_five_tuple_in_documented_order() -> None:
-    """readers 5-tuple widening: (inject, styleref, minimalism, naming, budget_dev)."""
+def test_parse_inject_text_is_keyed_by_array_name_over_the_tracked_set() -> None:
+    """readers returns a dict keyed by array name, over exactly the tracked set.
+
+    The old positional tuple was a second declaration of that set, so retiring an
+    array changed an arity every destructuring caller had to mirror. Asserting
+    the KEY SET is what keeps `_TRACKED_INJECT_ARRAYS` the only declaration.
+    """
     expected_budget = [
         n for n in _DEV_ROSTER if n not in inject_sync._BUDGET_DAEMON_CARRIERS
     ]
     text = _inject_hook_text(expected_budget) + _styleref_roster_text()
 
-    inject, styleref, minimalism, naming, budget_dev = parse_inject_text(text)
+    arrays = parse_inject_text(text)
 
-    assert inject == _DEV_ROSTER + [
+    assert set(arrays) == set(readers._TRACKED_INJECT_ARRAYS)
+    assert arrays["INJECT_AGENTS"] == _DEV_ROSTER + [
         "glass-atrium-qa-code-reviewer",
         "glass-atrium-qa-debugger",
     ]
-    assert styleref == _DEV_ROSTER
-    assert minimalism == _DEV_ROSTER
-    assert naming[-1] == "glass-atrium-qa-code-reviewer"
-    assert "glass-atrium-dev-swift" not in naming
-    assert budget_dev == expected_budget
+    assert arrays["STYLEREF_AGENTS"] == _DEV_ROSTER
+    assert arrays["MINIMALISM_AGENTS"] == _DEV_ROSTER
+    assert arrays["NAMING_AGENTS"][-1] == "glass-atrium-qa-code-reviewer"
+    assert "glass-atrium-dev-swift" not in arrays["NAMING_AGENTS"]
+    assert arrays["BUDGET_DEV_AGENTS"] == expected_budget
+    # the untracked governance roster sits in the same text and is deliberately unparsed.
+    assert "BUDGET_ANALYSIS_AGENTS" in text
+    assert "BUDGET_ANALYSIS_AGENTS" not in arrays
+
+
+def test_parse_inject_text_loud_fails_without_a_tracked_array() -> None:
+    """A declaration text missing a tracked array raises ReaderError, loud."""
+    text = _inject_hook_text(["glass-atrium-dev-front"]) + _styleref_roster_text()
+    without_styleref = (
+        "\n".join(ln for ln in text.splitlines() if "STYLEREF_AGENTS" not in ln) + "\n"
+    )
+
+    with pytest.raises(ReaderError, match="STYLEREF_AGENTS"):
+        parse_inject_text(without_styleref)
 
 
 def test_parse_inject_text_loud_fails_without_budget_dev_array() -> None:
-    """A hook missing the 5th tracked array raises ReaderError (loud, not a 4-tuple)."""
+    """A hook missing BUDGET_DEV_AGENTS raises ReaderError (loud, never a short dict)."""
     text = _inject_hook_text(["glass-atrium-dev-front"]) + _styleref_roster_text()
     without_budget = (
         "\n".join(
@@ -641,9 +664,14 @@ def test_orphan_scan_budget_dev_lint_uses_shared_carrier_predicate(
     tmp_path: Path,
 ) -> None:
     """orphan_scan flags BUDGET_DEV deviations from roster − carriers via the
-    SHARED inject_sync constant — identity-pinned so a re-hardcoded local copy
-    fails even when equal (a second carrier list is forbidden)."""
-    assert orphan_scan._BUDGET_DAEMON_CARRIERS is inject_sync._BUDGET_DAEMON_CARRIERS
+    SHARED inject_sync predicate — identity-pinned so a re-hardcoded local copy
+    fails even when equal (a second carrier list is forbidden).
+
+    The pin is on `_expected_membership`, not on the carrier constant alone: the
+    scan calls the same function the fix applies, so every per-array predicate
+    is shared rather than mirrored, and the constant travels inside it.
+    """
+    assert orphan_scan._expected_membership is inject_sync._expected_membership
 
     paths = _write_fixture(
         tmp_path, dev_set=_DEV_ROSTER, sql=_DEV_ROSTER, roster=_DEV_ROSTER

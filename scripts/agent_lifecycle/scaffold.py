@@ -7,10 +7,16 @@ Responsibilities:
     intentionally minimal: the CLI creates a routable stub; prompt-content
     authoring is out of scope (F1 territory).
 
-Per-agent rule membership lives on the registry row (`rules`), NOT in the body:
-no code ever read the former `> Rules:` header to load a rule, so a rendered
-body carries none and both authored-text gates REFUSE one (a stale header reused
-from an old --body-file would otherwise be baked into a new agent silently).
+Per-agent rule membership is RECORDED on the registry row (`rules`) and nowhere
+in the body: no code ever read the former `> Rules:` header to load a rule, so a
+rendered body carries none and both authored-text gates REFUSE one (a stale
+header reused from an old --body-file would otherwise be baked into a new agent
+silently).
+
+Recording is not delivery. The row is the input the SubagentStart selector MUST
+read once the split channel is bound; until then no code reads the `rules`
+object at all, so a created agent receives its rules through no channel and the
+row is a governance record.
 """
 
 from __future__ import annotations
