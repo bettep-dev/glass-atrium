@@ -48,6 +48,6 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
 
 - The composer states the verdict-only constraint inside the delegation prompt: `agents/glass-atrium-intel-reporter.md` states it nowhere, so no other channel carries it to the reviewer.
 
-## Skills Array Order [DEV+META]
+## Skills Array Order [META]
 
 - When authoring an agent's frontmatter `skills:` array, sort it for readability and logical grouping (core → supplementary). Order has no significant effect on model behaviour, so spend the effort on content quality instead.

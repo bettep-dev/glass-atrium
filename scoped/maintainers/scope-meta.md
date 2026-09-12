@@ -44,7 +44,13 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
-- A sixth row claimed `Skills Array Order` was cited from `scope-dev.md`. Grep over `scoped/` this pass returns that string only inside `scope-meta.md`, so the row protected a citation that does not exist; it is dropped and the heading is kept unchanged for stability alone.
+- A sixth row claimed `Skills Array Order` was cited from `scope-dev.md`. Grep over `scoped/` this pass returns that string only inside `scope-meta.md`, so the row protected a citation that does not exist; it is dropped, and the heading stays out of the register.
+- **`Skills Array Order` retagged `[DEV+META]` → `[META]`** — the DEV half named a `scope-dev.md` pointer that `32a0685` deleted, so it claimed a scope with no member.
+  - Safe as a heading edit: `Skills Array Order` occurs only in `scoped/scope-meta.md` and in this note, `core-compliance-matrix.md` names the file and never the section, and no `.bats` / `.py` / `.ts` suite pins the heading or the `DEV+META` literal.
+- **Open, deliberately not taken here: `## Absolute Rules [DEV+META]` carries the identical dead DEV half** — `scoped/scope-dev.md` holds no `## Absolute Rules` heading either.
+  - Either retag it on the same finding or record why that one keeps DEV; retagging it was outside this pass's disposition.
+- **Judgement recorded, not acted on**: the surviving `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody.
+  - The A/B evidence behind it died with the deleted `scope-dev.md` pointer, so deleting the section and keeping the null result here is the stronger disposition. The retag does not make the bullet load-bearing.
 
 ## Stale material removed in this pass
 
