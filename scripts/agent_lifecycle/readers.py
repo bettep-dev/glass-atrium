@@ -44,10 +44,16 @@ def _array_re(var_name: str) -> re.Pattern[str]:
 
 # The tracked arrays, declared ONCE. A tracked array is one whose membership is
 # DERIVABLE from the DEV roster, so a reconcile can write it without a second
-# copy of the list. BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS and
-# PLAN_GATE_AGENTS are deliberately absent: their membership is a governance
-# decision no predicate reproduces, so tracking them would mean declaring them
-# twice.
+# copy of the list. Three arrays are absent, for two DIFFERENT reasons.
+# BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are governance memberships no
+# predicate reproduces, so tracking them would mean declaring them twice.
+# PLAN_GATE_AGENTS IS derivable — it is the plain DEV roster, the predicate
+# MINIMALISM_AGENTS already carries in _expected_membership — and is absent for
+# the other reason: it is a declaration deliberately SEPARATE from
+# MINIMALISM_AGENTS, byte-identical today but answering a gate-eligibility
+# question rather than a minimalism-reflex one, so narrowing either must not
+# silently narrow the other. Until it gains a tracked entry of its own, a newly
+# registered DEV agent is added to it by hand.
 #
 # An array is tracked while the hook still READS it. INJECT_AGENTS,
 # MINIMALISM_AGENTS and NAMING_AGENTS still gate COMMENT_BLOCK, MINIMALISM_BLOCK

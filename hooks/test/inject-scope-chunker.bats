@@ -485,27 +485,27 @@ PY
 
 # --- the shipped wrappers ----------------------------------------------------
 
-@test "T-SLOT-1: the shipped wrappers are one contiguous set matching the core's slot count" {
+@test "T-SLOT-1: the wrappers present are one contiguous set matching the core's slot count" {
   # The wrappers, the binding rows and the core's constant are three independent declarations of
   # the same number, and only this row compares the first to the third. A gap in the sequence is
   # the quiet failure: nine wrappers numbered 01..08 and 10 leave part 09 addressed to nothing,
   # and every surviving part still reads correctly alone, so no agent can notice.
-  local slots shipped n expected
+  local slots present_count n expected
   slots="$(python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import inject_chunk;print(inject_chunk.CHUNK_SLOTS)' "${HOOKS_DIR}/lib")"
   [[ "${slots}" -gt 0 ]] || {
     printf 'the core reports no slot count\n' >&2
     return 1
   }
-  shipped=0
+  present_count=0
   for n in "${HOOKS_DIR}"/inject-scope-part-[0-9][0-9].sh; do
     [[ -f "${n}" ]] || continue
-    shipped=$((shipped + 1))
+    present_count=$((present_count + 1))
     [[ -x "${n}" ]] || {
       printf 'wrapper not executable: %s — a bound command that is not executable never runs\n' "${n}" >&2
       return 1
     }
   done
-  assert_eq "${shipped}" "${slots}" "shipped wrappers must equal the core's CHUNK_SLOTS"
+  assert_eq "${present_count}" "${slots}" "wrappers present must equal the core's CHUNK_SLOTS"
   # contiguity: every index from 01 to CHUNK_SLOTS is present, so no part is addressed to a gap
   for ((n = 1; n <= slots; n++)); do
     expected="$(printf '%s/inject-scope-part-%02d.sh' "${HOOKS_DIR}" "${n}")"

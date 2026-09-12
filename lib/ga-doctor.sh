@@ -474,10 +474,13 @@ run_doctor() {
   #             per part; the envelope is a whole-spawn property no single part can see.
   #      Every verdict is a warn: a quiet channel is an investigation, never a reason to abort an
   #      install through the preflight alias. An unreadable core is BLIND, never ok (§16 precedent).
-  #      The slot constant, the soft envelope and the warning vocabulary are all read FROM the core
-  #      (--audit / --print-events), never re-declared here: a reader carrying its own copy of a
-  #      producer's vocabulary can only ever report clean once the two drift. The audit runs against
-  #      GA_ROOT rather than its own default, so the totals describe the install under inspection.
+  #      The slot constant and the soft envelope are both read FROM the core (--audit), never
+  #      re-declared here: a reader carrying its own copy of a producer's number can only ever
+  #      report clean once the two drift. The core's warning vocabulary is NOT read — this section
+  #      invokes no --print-events and consumes no event token — so a reader that wants to report
+  #      the chunker's own events is REQUIRED to read them from there rather than re-declare them.
+  #      The audit runs against GA_ROOT rather than its own default, so the totals describe the
+  #      install under inspection.
   local inject_slot_warns=0
   local chunk_core="${GA_ROOT}/hooks/lib/inject_chunk.py"
   local slot_declared=0 slot_bound=0 slot_readable=0

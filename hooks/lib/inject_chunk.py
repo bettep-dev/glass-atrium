@@ -44,8 +44,10 @@ CHUNK_RESERVE = 64
 
 CHUNK_BUDGET = CHUNK_MAX_UNITS - CHUNK_RESERVE
 
-# Chunk-carrying slots. Twelve SubagentStart bindings ship: slot 1 is inject-scope-rules.sh, which
-# carries the kept marker blocks and no chunk, leaving eleven parts bound to
+# Chunk-carrying slots. Twelve SubagentStart bindings are DECLARED and are REQUIRED to ship — a
+# requirement, not a description: the release manifest carries no wrapper row yet, so none of them
+# reaches a live install until it does. Slot 1 is inject-scope-rules.sh, which carries the kept
+# marker blocks and no chunk, leaving eleven parts bound to
 # hooks/inject-scope-part-01.sh .. -11.sh.
 #
 # This is the count of slots the channel is BUILT for, and three other declarations must agree with

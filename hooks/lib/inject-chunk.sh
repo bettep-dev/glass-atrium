@@ -3,11 +3,13 @@
 # scope-rule channel sources. It is a LIBRARY: sourcing it defines functions and runs
 # nothing.
 #
-# Twelve SubagentStart bindings ship. Slot 1 is inject-scope-rules.sh, which carries the kept
-# marker blocks and no chunk; inject-scope-part-01.sh .. -11.sh carry parts 01..11, one basename
-# each. A binding carries no argument, so a wrapper names its part in its own basename — the same
-# string wire_hooks puts in the bound command, which is why the two cannot drift. GA_CHUNK_PART
-# overrides the derivation for a sandbox that binds no wrapper.
+# Twelve SubagentStart bindings are DECLARED and are REQUIRED to ship — a requirement, not a
+# description: the release manifest carries no wrapper row yet, so no wrapper reaches a live install
+# and the marker-block slot runs there alone until it does. Slot 1 is inject-scope-rules.sh, which
+# carries the kept marker blocks and no chunk; inject-scope-part-01.sh .. -11.sh carry parts 01..11,
+# one basename each. A binding carries no argument, so a wrapper names its part in its own
+# basename — the same string wire_hooks puts in the bound command, which is why the two cannot
+# drift. GA_CHUNK_PART overrides the derivation for a sandbox that binds no wrapper.
 #
 # Selection, packing, counting and the warning-token set all live in the python core
 # (lib/inject_chunk.py): bash cannot count UTF-16 code units and jq counts code points.
