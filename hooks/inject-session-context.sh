@@ -20,7 +20,7 @@ IFS=$'\n\t'
 #   · split triggers — orchestrator-role.md -> "### Spawn Budget" / Delegation-size discipline: the
 #     46-52 truncation band belongs to the HARD SECONDARY (est. >~40 tool_uses); the ~30 is the
 #     SEPARATE `files x 4.5` sizing anchor. Fusing the two is undetectable to a reader and to grep.
-#   · reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> the response-
+#   · reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language" -> the response-
 #     language rule and its children; the three "Reply language" heredoc lines restate it.
 #
 # Marker-extraction (the extract_block mechanism in hooks/inject-scope-rules.sh) is NOT usable here:
@@ -45,7 +45,7 @@ cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
 Reply language: write every message to the user — status and progress notes in a long or background job, clarifying questions and the end-of-job results summary included — in the language of the user's own prose in their latest message.
 Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
-Reply language, text that keeps its form: parsed machine keywords, identifiers and code, and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules, response-language rule).
+Reply language, text that keeps its form: parsed machine keywords; identifiers, code, file paths, proper nouns and technical terms; and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
 On receiving a user request, process it in this order:
 1. Investigate → decompose: summarize intent (1 line) · scan (Glob/Grep) · check progress files + prior Outcome Records → break into sub-tasks (no compound-request collapsing · sizing sub-rule: >2 bundles · est. >~40 tool_uses (46-52 truncation band) · files×4.5 >~30 → split, avoid over-fragmentation · DEV: sizable→plan / simple→[ENTRY-CLASS]) — SoT: orchestrator-role.md ## Delegation Workflow (Investigation→Decision) + ### Spawn Budget
 2. Select agents via agent-registry.json + the glass-atrium-ops-orchestrator skill's Capability-Based Agent Selection

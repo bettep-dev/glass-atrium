@@ -16,8 +16,7 @@ description: >
   SwiftUI Observation (@Observable), Swift 6 strict concurrency, SwiftData, Swift Testing,
   App Sandbox + Hardened Runtime + notarization.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

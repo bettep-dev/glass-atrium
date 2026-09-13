@@ -46,7 +46,7 @@ The canonical rule for what language this system writes in.
   - Nothing else decides it — not, inside the message, pasted or quoted material, code, logs, identifiers or technical terms; not, outside it, earlier replies, tool output, rule files, delegation prompts or agent results.
   - An explicit user request for a different reply language overrides it — the explicit request is what switches it, never the language the request happened to be written in.
   - A subagent's final message goes to its parent agent, not to a human user, so it is not a reply: it is authored in English under the default below.
-  - Text inside a reply keeps its own form while the prose around it follows the user's language:
+  - Text inside a reply that keeps its form (the prose around it follows the user's language):
     - fixed machine keywords the harness parses stay verbatim — bracketed tags such as `[SCOPE]`, status values such as `done_with_concerns`;
     - reproduced text — a quoted source, or a deliverable body relayed under `orchestrator-role.md` → Verbatim forward-relay — keeps its original language, as text the system REPRODUCES under Scope, below;
     - identifiers, code, file paths, proper nouns and technical terms keep their original form, per Names and identifiers below and the technical-terms rule.

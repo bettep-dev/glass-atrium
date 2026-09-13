@@ -9,9 +9,9 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
-## Frontmatter `skills:` key added in this wave
+## Frontmatter `skills:` key
 
-The body had no `skills:` key at all — it was one of the few agent files without one. This wave adds the three-member list every DEV sibling carries (naming, patterns, iron-laws), which is what makes the naming canon resolvable from this body.
+The key reads `skills: []` — no skill is preloaded. The naming canon reaches this body through `scoped/shared-naming.md` membership, not a preload.
 
 Two placement facts, both deliberate:
 
@@ -20,7 +20,7 @@ Two placement facts, both deliberate:
 
 ## Roster work this body does NOT carry
 
-Preloading the naming skill is separate from membership in the naming INJECTION roster. Adding this agent to that roster is a multi-file change owned by another track of this wave: the injector's roster array and header comments, `scripts/agent_lifecycle/inject_sync.py`'s naming-exclusion set and docstrings, the second functional exclusion set in `orphan_scan.py`, `readers.py` docstrings, the lifecycle roster comment in `add.py`, the roster prose in `rules/glass-atrium/core-compliance-matrix.md` (corrected, never deleted — a suite enumerates roster declarations from code and requires each to be named in the live matrix), and four absence-asserting suites that must be inverted together with their comments. Byte headroom is the binding constraint there, not here: this body is not injected, so its length costs install bytes only.
+Membership in the naming INJECTION roster is separate from `scoped/shared-naming.md` membership. Adding this agent to that roster is a multi-file change owned by another track of this wave: the injector's roster array and header comments, `scripts/agent_lifecycle/inject_sync.py`'s naming-exclusion set and docstrings, the second functional exclusion set in `orphan_scan.py`, `readers.py` docstrings, the lifecycle roster comment in `add.py`, the roster prose in `rules/glass-atrium/core-compliance-matrix.md` (corrected, never deleted — a suite enumerates roster declarations from code and requires each to be named in the live matrix), and four absence-asserting suites that must be inverted together with their comments. Byte headroom is the binding constraint there, not here: this body is not injected, so its length costs install bytes only.
 
 ## Machine constraints on the body
 

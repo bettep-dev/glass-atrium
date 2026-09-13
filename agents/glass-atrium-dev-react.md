@@ -10,8 +10,7 @@ description: >
   backend API (→glass-atrium-dev-nestjs), DB queries (→glass-atrium-dev-db).
   Produces code files (.tsx, .ts, *.test.tsx) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

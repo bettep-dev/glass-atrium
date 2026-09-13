@@ -41,7 +41,7 @@ ADD `od:` when:
 
 DO NOT add `od:` when:
 - Skill is narrative / guidance (e.g., `glass-atrium-meta-authoring`)
-- Skill has no fixed I/O shape (e.g., `glass-atrium-core-iron-laws` cross-cutting invariant)
+- Skill has no fixed I/O shape
 - Skill is consumed implicitly during task execution rather than invoked
 
 ## Validation

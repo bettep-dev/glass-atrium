@@ -164,7 +164,7 @@ active_conn_count() {
 
 # Conflict-recreate: backup → drain connections (REVOKE CONNECT + terminate, a
 # reconnect-race guard) → dropdb → fall through to the caller's createdb path. Safety
-# invariants (Excessive-Agency iron-law):
+# invariants (core-security.md LLM06):
 #   1) never live 'glass_atrium' — only runs under a GA_DB_NAME override (DB_NAME != it).
 #   2) backup completes + is verified non-empty before the drop (backup_db_to_file).
 # Args: $1 = recreate target DB name.

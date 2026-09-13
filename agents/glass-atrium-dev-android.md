@@ -16,8 +16,7 @@ tools:
   - Edit
   - Write
   - Bash
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

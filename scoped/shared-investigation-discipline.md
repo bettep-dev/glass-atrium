@@ -2,7 +2,7 @@
 
 Binds any bug fix, error resolution or unexpected-behaviour investigation, and every code change intended to fix a defect — including a bug discovered mid-refactor. New feature development, a refactor that fixes no defect, and typo or formatting fixes are out of scope.
 
-This is a PROCESS rule: `[default, adjustable]` only through a documented escalation path. It is not one of the three `[hardcoded]` safety laws — Prompt Injection Refusal, Excessive Agency Refusal, Unbounded Consumption Stop — which no operator or user instruction can override and which stay in `skills/glass-atrium-core-iron-laws/SKILL.md`. Confusing the two layers is the most common source of incident.
+This is a process rule, adjustable only through a documented escalation path.
 
 ## Investigation Discipline [DEV+QA]
 
@@ -15,7 +15,7 @@ Mandatory bug fix sequence: **Confirm symptoms → Formulate cause hypothesis �
 
 - "Just try fixing it" / hypothesis-free fixes are forbidden
 - 1st failure → reformulate hypothesis + retry
-- 2nd failure → STOP and hand the bug to glass-atrium-qa-debugger. Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half stays in `skills/glass-atrium-core-iron-laws/SKILL.md` → `### Debugger Escalation [ORCHESTRATOR]`.
+- 2nd failure → STOP and hand the bug to glass-atrium-qa-debugger. Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half is `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`.
 
 ## Common Rationalizations
 
@@ -26,6 +26,7 @@ Mandatory bug fix sequence: **Confirm symptoms → Formulate cause hypothesis �
 | "The stack trace points directly to the line" | Stack traces show where it crashed, not why — trace the data flow to the root cause |
 | "I've seen this exact bug before" | Prior experience is a hypothesis, not a diagnosis — verify it applies to this instance |
 | "Manual testing confirms it works now" | Manual confirmation alone is insufficient — automated test required per the verify step |
+| "One surface is disabled, so every related channel is inactive" | Related surfaces can be independently active — verify each channel separately (a disabled MCP integration ≠ a quiet direct Bot API; both can reach the same endpoint by different code paths) |
 
 ## Red Flags
 

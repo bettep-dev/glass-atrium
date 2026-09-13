@@ -9,8 +9,7 @@ description: >
   GSAP animations (→glass-atrium-dev-gsap), backend API (→glass-atrium-dev-nestjs), Android (→glass-atrium-dev-android).
   Produces code files (.ts, .html, .scss, *.spec.ts) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

@@ -12,7 +12,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Membership
 
-- DEV unconditionally, all 13, plus `glass-atrium-qa-code-reviewer` as the enforcement surface. `glass-atrium-qa-debugger` is excluded: read-only by iron-law, it authors no identifier.
+- DEV unconditionally, all 13, plus `glass-atrium-qa-code-reviewer` as the enforcement surface. `glass-atrium-qa-debugger` is excluded: read-only by its Guardrails, it authors no identifier.
 - Declared on each agent's `agent-registry.json` row (`rules.shared`) and summarized in `rules/glass-atrium/core-compliance-matrix.md`.
 - The Compliance Matrix QA cell is a plain `✓` with NO footnote marker. The design called for a fifth marker glyph (`‖`) for the qa-code-reviewer-only subset; the Tier-3 row states that subset by naming the single agent outright, which is more precise than a marker and costs no edit to `readonly FOOTNOTE_MARKERS` in `hooks/validate-compliance-matrix.sh`. An unlisted glyph would not fail check B2 — it would go unchecked, which is worse than a false failure. If a later file needs a genuine multi-agent QA subset, introduce `‖` there, add it to that constant in the same edit, and this row may adopt it.
 
