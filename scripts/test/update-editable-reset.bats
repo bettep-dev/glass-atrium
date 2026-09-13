@@ -28,6 +28,8 @@
 #                   row; a failed consumed_utc stamp after the move leaves the request consumed.
 #   L11 counts    — a release that adds region lines reports deleted and added lines
 #                   separately on the queued row, never a negative drop.
+#   L12 log line  — an applied reset body logs a reset-to-release success line, never the
+#                   "local EDITABLE regions preserved" line an unmarked applied merge keeps.
 #
 # And the OPERATOR surface:
 #   O1 record     — writes a request the next run consumes; the run keeps durable images.
@@ -536,6 +538,24 @@ vendor line three}" >"${NEWSRC}/agents/dev-r.md"
   grep -q "agents/dev-r.md.*outcome=landed.*deleted_lines=1 added_lines=2.*request=${REQUEST_ID}" "${ledger}" || return 1
   [[ "${output}" == *"agents/dev-r.md drops 1 EDITABLE-region line(s) (request ${REQUEST_ID}), adds 2"* ]] || return 1
   if grep -qE '_lines=-' "${ledger}" || [[ "${output}" == *"drops -"* ]]; then return 1; fi
+}
+
+@test "L12 a reset body logs its reset success line and only an unmarked merge claims preserved regions" {
+  # The unmarked body's release moves outside its region, so it merges and applies too.
+  printf '%s\n' "${UNMARKED_RELEASE}" '## Rules' 'vendor rules v2' >"${NEWSRC}/agents/dev-u.md"
+  write_manifest agents/dev-r.md agents/dev-u.md
+  seed_request
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  grep -qx 'vendor rules v2' "${INSTALL}/agents/dev-u.md" || return 1
+  grep -qx -- '- MUST daemon line that stays' "${INSTALL}/agents/dev-u.md" || return 1
+
+  local preserved='local EDITABLE regions preserved'
+  if grep -F -- "${preserved}" <<<"${output}" | grep -qF 'agents/dev-r.md'; then return 1; fi
+  grep -F -- "${preserved}" <<<"${output}" | grep -qF 'agents/dev-u.md' || return 1
+  grep -F -- "EDITABLE regions reset to the release (request ${REQUEST_ID})" <<<"${output}" \
+    | grep -qF 'agents/dev-r.md' || return 1
+  if grep -F -- 'EDITABLE regions reset to the release' <<<"${output}" | grep -qF 'agents/dev-u.md'; then return 1; fi
 }
 
 @test "O10 record refuses a body whose EDITABLE region count differs from its base entry" {

@@ -1925,7 +1925,12 @@ _update_agent_commit_callback() {
         # not in that result. Names the policy so the skip is never inferred from
         # the ABSENCE of a pre-verify line, which is also what a broken gate looks
         # like. Keeps the WARN arms below untouched — a merge that fails still fails.
-        update_log "agent merge: release content applied without the daemon pre-verify (CI-verified vendor tree; local EDITABLE regions preserved by the 3-way merge): ${logical}"
+        # A queued reset body had its local regions dropped by request, so the preserved claim would be false.
+        if [[ "${_update_reset_queued}" == *$'\n'"${logical}"$'\n'* ]]; then
+          update_log "agent merge: release content applied without the daemon pre-verify (CI-verified vendor tree; local EDITABLE regions reset to the release (request ${_update_reset_id})): ${logical}"
+        else
+          update_log "agent merge: release content applied without the daemon pre-verify (CI-verified vendor tree; local EDITABLE regions preserved by the 3-way merge): ${logical}"
+        fi
         # Applied cleanly → the base-content store may advance for this file
         # (finding #9). Any other GIT_TXN outcome leaves the file at its local
         # version, so it is deliberately NOT recorded (the capture keeps its prior
