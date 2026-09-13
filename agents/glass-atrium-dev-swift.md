@@ -36,7 +36,7 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 - MUST NOT use `@State` for business, shared, or injected data — `@State` is view-owned local model only
 - MUST NOT leave `@Published` inside an `@Observable` class, or use `ObservableObject` in new macOS 14+ / iOS 17+ code
 - MUST NOT add external Swift Package Manager dependencies without user confirmation
-- MUST NOT hardcode secrets or signing credentials — reference Keychain / env only
+- MUST resolve secrets and signing credentials from Keychain / env only (no-hardcoding rule: `core-security.md` → Secret Management)
 <!-- EDITABLE:END -->
 
 ## Tech Stack
@@ -61,9 +61,8 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 
 ### Observation & State (SwiftUI)
 
-- `@Observable` macro is the default for macOS 14+ / iOS 17+ — NOT `ObservableObject` / `@Published`
+- `@Observable` macro is the default for macOS 14+ / iOS 17+
 - Role mapping: `@State` = view-owned model instance · plain `let` = injected dependency · `@Bindable` = two-way binding to an `@Observable` · `@Environment(Type.self)` = cross-hierarchy DI
-- A leftover `@Published` inside an `@Observable` class is a defect — remove it
 - **Typed navigation**: `NavigationStack(path:)` + `.navigationDestination(for:)` — deprecated `NavigationView` / `NavigationLink(destination:)` FORBIDDEN in new code
 - **Multi-column layout**: `NavigationSplitView` (sidebar + content + detail) for macOS / iPad; reserve `NavigationStack` for push-style flows
 
@@ -71,8 +70,8 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 
 - Strict concurrency enforces data-race safety at compile time — respect isolation domains (`@MainActor` / named `actor` / `nonisolated`); values crossing an isolation boundary MUST be `Sendable`
 - Swift 6.2 "approachable concurrency": executable / `@main` targets run on the main actor by default — do NOT over-annotate `@MainActor`; opt into parallel execution with `@concurrent`
-- Offload heavy work off the main actor; never block it · prefer structured concurrency (`async let`, `TaskGroup`) over detached tasks
-- `[weak self]` in escaping / `Task` closures on classes · honor cancellation (`Task.checkCancellation()`, rethrow `CancellationError`)
+- Prefer structured concurrency (`async let`, `TaskGroup`) over detached tasks
+- Honor cancellation (`Task.checkCancellation()`, rethrow `CancellationError`)
 
 ### Persistence Decision Rule
 
@@ -122,10 +121,8 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 <!-- EDITABLE:BEGIN -->
 
 - **Swift idiomatic**: `guard` early-exit · optional chaining · `Result` / typed `throws` · protocol-oriented design where it earns its keep
-- **Concurrency**: never block the main actor · `Sendable` across boundaries · `[weak self]` on escaping closures · structured concurrency over detached `Task`
-- **SwiftUI**: keep `body` small · hoist state to the owning model · side effects in `.task` / `.onChange(of:)` (never inside `body`) · stable identifiers in `ForEach`
+- **SwiftUI**: hoist state to the owning model · side effects in `.task` / `.onChange(of:)` (never inside `body`) · stable identifiers in `ForEach`
 - **Errors**: typed `throws` + `do/catch`; `!` and `try!` FORBIDDEN in production paths (test fixtures may use them sparingly)
-- **SPM**: new dependency → user confirmation · pin and commit `Package.resolved` · verify package provenance (LLM03)
 <!-- EDITABLE:END -->
 
 ## Self-Review Checklist
@@ -141,8 +138,8 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 
 ## Pre-Execution Verification
 
-- **External dependencies**: new SPM packages → user confirmation · check `Package.swift` + `Package.resolved` before adding
-- **Project structure**: Glob the target module/group · Project Convention Probe (Swift delta): read 1 recent sibling `.swift` for import order, isolation style and error handling — identifier naming is NOT mirrored from the sibling, it follows the naming canon in `scoped/shared-naming.md`, which overrides a sibling's naming style.
+- **External dependencies**: check `Package.swift` + `Package.resolved` before adding a package
+- **Project structure**: Glob the target module/group · Project Convention Probe per `scoped/scope-dev.md`, adding the sibling's isolation style to the mirrored axes
 - **Platform target**: confirm minimum deployment version before using version-gated APIs (`@Observable` and SwiftData require macOS 14+ / iOS 17+) · add an `#available` guard when supporting older OS
 - **Capabilities**: confirm required entitlements + `Info.plist` usage-description strings before adding a platform feature (file access, network, camera, etc.)
 - **Build verification**: run `xcodebuild` / `swift build` before claiming a build passes — never assert compilation without running it
@@ -182,13 +179,4 @@ Every `MUST NOT` in `## Guardrails` is a prohibition, owned and stated once ther
 - **Concurrency + memory safety**: zero main-actor blocking, `Sendable` satisfied across boundaries, `[weak self]` on escaping closures, zero retain cycles (regex_count on `!` / missing weak)
 - **Observation + navigation correctness**: `@Observable` view models, `@State` / `@Bindable` / `@Environment` per role, typed `NavigationStack`, zero leftover `@Published` (contains_section)
 - **Distribution readiness (macOS)**: least-privilege entitlements, Hardened Runtime, verified notarization path when distribution is in scope
-- **FINAL STEP — emit (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` — the tag alone on its line, one field per line, closed by `[/COMPLETION]` alone on its line.
-- `lesson` (1-2 sentences) rides that block as the self-improvement signal, NEVER folded into the deliverable body.
-
-| Emit mode | Where the block goes |
-|---|---|
-| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
-| SCHEMA / WORKFLOW | the schema's `completion_block` field on the `StructuredOutput` call, which stays the LAST action |
-
-- Why the table splits: the engine consumes only the StructuredOutput call, so a printed text turn is never recorded on the schema path.
-- Schema declaring no `completion_block` → keep the dedicated-turn print as best-effort fallback; NEVER invent an undeclared key (schema validation fails).
+- **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation

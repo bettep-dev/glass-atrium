@@ -9,19 +9,19 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
-## Scope of this pass
-
-This body had already taken the restructure-and-diet pass (commit 2dbac77; touched since only by the pointer-line drop at bc03f9d). It was therefore edited here only where a disposition binds, plus one maintainer blockquote moved into this note.
-
 ## Budget-sizing bullets — why they are not a mirror
 
-`hooks/test/inject-scope-rules-nodrop.bats` reads this body directly and asserts that the DEV budget injection block is ABSENT for this agent: it is a carrier, excluded from the injected roster because the body carries the rule instead. The two sizing bullets under the Guardrails budget heading are consequently this agent's ONLY copy — `scoped/shared-turn-budget.md` reaches no DEV agent at spawn — so deleting them as a duplicate deletes the rule while reddening nothing. A one-line guard stays in the body under `### Budget sizing`, and it states the no-mirror fact on its own — it does not cite this note, per the companion-citation convention above (verified against the body, which contains no `maintainers/` citation at all).
+`hooks/test/inject-scope-rules-nodrop.bats` holds its own `BUDGET_DEV_CARRIERS` literal naming this agent and asserts that the DEV budget injection block is ABSENT for it: it is a carrier, excluded from the injected roster because the body carries the rule instead. The suite asserts no body prose.
+
+- The intake-sizing bullet under `### Budget sizing` is consequently this agent's ONLY copy of the sizing rule — `scoped/shared-turn-budget.md` reaches no DEV agent at spawn — so deleting it as a duplicate deletes the rule while reddening nothing.
+- The checkpoint bullet beside it is a reference: the checkpoint itself is `GLASS_ATRIUM_GLOBAL_RULES.md` → Work-unit checkpoint dimension (host-delivered), and the bullet keeps only the below-20% halt delta.
+- The one-line guard blockquote in the body is scoped to the intake-sizing bullet and states the no-mirror fact on its own; it does not cite this note, per the companion-citation convention above.
 
 The same suite sizes the injected turn-budget meter from the real frontmatter `maxTurns` and counts those bytes into a pinned worst-case DEV assembly total, so `maxTurns` is machine-read, not a free knob.
 
 ## Destructive-literal convention — kept in the body deliberately
 
-The blockquote under the role line is maintainer-facing by audience, and the wave rule would move it here. It stays in the body, and this is the reasoning: the guard protects the patchability of the file it sits in. The updater's sensitive-diff check scans ADDED lines of any patch to this body, cannot distinguish a rule forbidding a destructive command from a patch running it, and makes the merge planner refuse the file while the cycle still reports success. Whoever patches this body — including the daemon's own editor, which reads the file and not this directory — must see that constraint at the point of editing. Moving it out would leave the guard true and unread.
+The blockquote under the role line is maintainer-facing by audience, so the companion convention would move it here. It stays in the body, and this is the reasoning: the guard protects the patchability of the file it sits in. The updater's sensitive-diff check scans ADDED lines of any patch to this body, cannot distinguish a rule forbidding a destructive command from a patch running it, and makes the merge planner refuse the file while the cycle still reports success. Whoever patches this body — including the daemon's own editor, which reads the file and not this directory — must see that constraint at the point of editing. Moving it out would leave the guard true and unread.
 
 Its operative content, restated once here so the decision is auditable: every destructive command named in that body is written in words (verb plus flags), never as an invocation, and reflowing a line counts as adding it, so a literal form is never restored for tidiness.
 
@@ -29,25 +29,34 @@ Its operative content, restated once here so the decision is auditable: every de
 
 | Reader | What it reads | Consequence |
 |---|---|---|
-| `hooks/test/inject-scope-rules-nodrop.bats` | this file as a real source; carrier exclusion + `maxTurns` | see above |
+| `hooks/test/inject-scope-rules-nodrop.bats` | frontmatter `maxTurns`; its own `BUDGET_DEV_CARRIERS` literal names this agent | see above |
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 | meter sizing |
 | `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) + fence-line count | blocked for every caller (LLM06); several suites additionally use a fake-HOME copy of this filename as a fixture, which is unaffected by repo-tree edits |
 | the updater's sensitive-diff check | ADDED lines of any patch to this body | destructive-literal convention above |
 
 ## Decision landed in this pass
 
-**Naming subordination**: the `Match existing style` bullet under Work Rules is the one site in this body naming a naming axis. It now mirrors indentation and logging conventions from sibling scripts and subordinates identifier naming to the `scoped/shared-naming.md` canon, while the shell-specific `snake_case` function casing stays where it was, in the Functions bullet directly below. The bullet sits INSIDE an editable region, so the edit was held to exactly what the disposition needs — a live install with local edits resolves that region through a merge.
+**Naming subordination**: the `Match existing style` bullet under Work Rules points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes and subordinates identifier naming to the naming canon. The bullet keeps only the shell naming delta, the `snake_case` function casing stated in the Functions bullet. It sits INSIDE an editable region, so a live install with local edits resolves that region through a merge.
+
+## What moved out of the body
+
+| Cut | Canonical that reaches this agent | Kept delta |
+|---|---|---|
+| Work Rules **Search first** | `scoped/shared-search-first.md` → Principles (`rules.shared`) | none |
+| Work Rules **Logging** + **Comments** | `scoped/shared-comment-logging.md` (`rules.shared`) · `core-security.md` → Secret Management (host) | none |
+| Hook Script Specifics "0 default" and "<1s typical" | `GLASS_ATRIUM_GLOBAL_RULES.md` → Hook Operation Policy (host) | 2 blocking · document any non-zero · `timeout` wrapper |
+| Concurrent-worktree lead "treat as SHARED and ask" | `core-git-workflow.md` → Commits → Concurrent worktree (host) | the contract table and the barrier note |
+| Red Flags "use `mv ~/.Trash/`" | `GLASS_ATRIUM_GLOBAL_RULES.md` → File Deletion Policy (host) | the disambiguation against the recursive-force guardrail |
+| Success Criteria emit-mode table and notes | `core-outcome-record.md` → Completion Report Output Obligation (host) + slot-1 emit-format block | one pointer line |
+| In-file repeats: Key Patterns "Every expansion quoted", the `grep -c` guardrail's output example | the unquoted-`$var` guardrail · Key Patterns `grep -c` zero-match trap | none |
+
+- The index-mutation class is defined only in `rules/glass-atrium/orchestrator-role.md`, which disclaims itself for subagents, so the contract reaches this agent through the delegation's own worktree-contract line, not through the body.
 
 ## Daemon-evolved `## Work Rules` lines — all dropped
 
-The live body carries two EDITABLE lines this release body lacks. Both repeat `### Budget sizing`, so neither is integrated; that section stays the single copy the carrier note above protects.
+Neither daemon-evolved line below is integrated: both repeat `### Budget sizing`, which stays the single copy the carrier note above protects.
 
 | Quote | Proposal | Class | Reason |
 |---|---|---|---|
 | "**MANDATORY AT INTAKE**: Size task via `tool_uses ~= files × 4.5 + 5 per Bats run`" | 1957 | duplicates | `### Budget sizing` already sizes at intake and declines above ~30; its added ">50% maxTurns" gate is covered by the 80% turn meter |
 | "**Task size gate**: Verify pre-acceptance size-est (`files × 4.5 + Bats runs`)" | 1957 | duplicates | a second copy of the row above and of `### Budget sizing` |
-
-- **Requirement, not fact**: the redeploy MUST remove these two lines from the live body.
-  - Mechanism: the owner-approved reset-to-release updater mechanism — an operator-recorded reset of EDITABLE regions to the release, applied by the next seam deploy. A hand edit of the live install is FORBIDDEN.
-  - Verification: after that deploy, the release-versus-live diff for this body MUST be the operator `model:` line only.
-  - Why a plain redeploy is not enough: the EDITABLE three-way merge resolves a region KEEP_LOCAL when the release equals the base, so a live-only insertion in a region the release leaves unchanged survives it. The 2026-09-13 arbiter run (proposal 7407) left both lines in place.
