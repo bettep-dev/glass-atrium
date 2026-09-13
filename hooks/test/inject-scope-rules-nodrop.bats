@@ -56,9 +56,9 @@ BUDGET_ANALYSIS_NEEDLE="Budget sizing (auto-injected analysis"
 WIKI_UNTRUSTED_NEEDLE="Wiki raw-store untrusted-data clause"
 
 # Leads of the five blocks slot 1 no longer extracts — the part slots deliver their sources.
-# The "Plan-gate verdict" entry cannot fail: that lead was deleted from its source, so no
-# extraction can reintroduce it — the real guard is the retired plan-gate case in
-# inject-scope-rules.bats, which plants the block's marker pair and asserts slot 1 omits it.
+# The "Plan-gate verdict" entry cannot fail: that lead exists in no source. The guard is the
+# retired plan-gate case in hooks/test/inject-scope-rules.bats, which plants the block's
+# marker pair and asserts slot 1 omits it.
 RETIRED_NEEDLES=(
   "Comment-rule core"
   "style_ref emit"

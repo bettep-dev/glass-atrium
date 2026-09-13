@@ -44,13 +44,14 @@ def _array_re(var_name: str) -> re.Pattern[str]:
 
 # The tracked arrays, declared ONCE. An array is tracked while something still
 # reads it — a shipped block, or the style_ref review_flag predicate — and its
-# membership is DERIVABLE from the DEV roster, so a reconcile can write it without
-# a second copy of the list. An array nothing reads any more is untracked, and a
-# stale copy left in a live hook is neither parsed nor rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are
-# governance memberships no predicate reproduces, so tracking them would mean
-# declaring them twice. STYLEREF_AGENTS gates the style_ref review_flag predicate
-# (hooks/lib/style-ref-consts.sh reads it); BUDGET_DEV_AGENTS gates the BUDGET-DEV
-# sizing block against the daemon-carrier exclusions.
+# membership is DERIVABLE from the DEV roster, so a reconcile can write it
+# without a second copy of the list. An array nothing reads any more is
+# untracked, and a stale copy left in a live hook is neither parsed nor
+# rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are governance
+# memberships no predicate reproduces, so tracking them would mean declaring
+# them twice. STYLEREF_AGENTS gates the style_ref review_flag predicate
+# (hooks/lib/style-ref-consts.sh reads it); BUDGET_DEV_AGENTS gates the
+# BUDGET-DEV sizing block against the daemon-carrier exclusions.
 _TRACKED_INJECT_ARRAYS: tuple[str, ...] = (
     "STYLEREF_AGENTS",
     "BUDGET_DEV_AGENTS",

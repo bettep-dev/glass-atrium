@@ -135,9 +135,8 @@ PY
 }
 
 @test "styleref-roster.sh survives because a non-injection consumer reads it" {
-  # The STYLE-REF injected block is retired and the injector no longer sources this
-  # lib, but the FILE must not retire with the block: style-ref-consts.sh still
-  # sources it and tests STYLEREF_AGENTS for the style_ref review_flag predicate.
+  # style-ref-consts.sh is this file's consumer: it sources the lib and tests
+  # STYLEREF_AGENTS for the style_ref review_flag predicate.
   # Deleting it would also drop a claimed path.
   [ -f "${GA}/hooks/lib/styleref-roster.sh" ]
   run grep -qF "styleref-roster.sh" "${GA}/hooks/lib/style-ref-consts.sh"
