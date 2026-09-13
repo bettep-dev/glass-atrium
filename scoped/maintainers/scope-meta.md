@@ -12,24 +12,22 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 ## Delivery — what actually reads this file
 
-- No spawn path delivers it. `hooks/inject-scope-rules.sh` sources exactly three files under `scoped/` (`shared-comment-logging.md`, `scope-dev.md` for the STYLE-REF / MINIMALISM / PLAN-GATE blocks, `shared-turn-budget.md`), and `scope-meta.md` is not one of them; no hook reads the registry's `rules.scope` array at spawn time.
-- The only agent→scope-file map in the tree is `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, which excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch. That is a daemon reader, not a delivery channel.
-- **Consequence for authors**: a duty stated only in the rule file binds nobody at spawn. The corpus's one working pattern is a conditional-load line in the agent's own body naming the absolute path and the heading — `agents/glass-atrium-intel-researcher.md` carries the precedent.
-- **Consequence for editors**: a passage in either META body that looks like a redundant mirror of the rule file is that agent's ONLY copy. Never cut it on the grounds that the rule file has it.
-- The former `## Reach and Consumers` section stated this inside the rule file, addressed to a maintainer who does not read it there. It is retired; this section replaces it.
+- Both META agents receive the file whole at spawn. Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, and the part-slot channel (`hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py`) packs every `rules.scope` and `.shared` member into the agent's context. `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
+- A second reader, not a delivery channel: `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch.
+- **Consequence for authors**: a duty stated in the rule file binds both META agents; no conditional-load line in a body is needed.
+- **Consequence for editors**: a passage in either META body that mirrors the rule file is a duplicate of delivered text. The rule file is the site that survives; the body keeps only its agent-specific delta.
 
-## Open item — the one duty with no delivery route
+## Authoring hygiene — where the rules live
 
-The hygiene rules bind prompt-authoring work, sit in no META agent body, and are checked by no hook, so the behaviour they prevent is live: an authored rule or agent body that carries provenance and edit-history narration, which the corpus then has to be cleaned of.
-
-- The rules themselves are no longer in this file. They bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`, and `## Prompt Authoring Hygiene [META]` here is the pointer that keeps the heading resolving. Maintainer material for the rules moved with them, to `scoped/maintainers/shared-authoring-hygiene.md`.
-- The gap is unchanged by the move and is accepted: no Tier-3 body reaches an agent at spawn either, so until the injector selects `scoped/` bodies by membership, a delegation has to carry these rules. Do NOT close it by copying the bullets into an agent body.
+- The rules bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`. `## Prompt Authoring Hygiene [META]` in the rule file is the pointer that keeps that heading resolving; maintainer material for the rules is in `scoped/maintainers/shared-authoring-hygiene.md`.
+- Both META rows carry the file in `rules.shared`, so it arrives whole at spawn. No body copy is owed — do not copy the bullets into an agent body.
+- No hook checks authored text against these rules; adherence is honor-system.
 
 ## Decisions taken on review, with their reasoning
 
 - **The hygiene decisions moved with the rules.** The provenance carve-out under `No history-type content`, and the reasoning that accepted it, are recorded in `scoped/maintainers/shared-authoring-hygiene.md` → `## Decisions taken, with their reasoning`.
 - **`## Absolute Rules [DEV+META]` — the precedence line was realigned to its citee, not softened.**
-  - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` now makes the assigned scope file the final authority, the whole file and never a named section inside it.
+  - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the matrix anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
 
 ## Heading-citation register — do not rename these
@@ -42,26 +40,24 @@ The hygiene rules bind prompt-authoring work, sit in no META agent body, and are
 | `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
-- A sixth row claimed `Skills Array Order` was cited from `scope-dev.md`. Grep over `scoped/` this pass returns that string only inside `scope-meta.md`, so the row protected a citation that does not exist; it is dropped, and the heading stays out of the register.
-- **`Skills Array Order` retagged `[DEV+META]` → `[META]`** — the DEV half named a `scope-dev.md` pointer that `32a0685` deleted, so it claimed a scope with no member.
-  - Safe as a heading edit: `Skills Array Order` occurs only in `scoped/scope-meta.md` and in this note, `core-compliance-matrix.md` names the file and never the section, and no `.bats` / `.py` / `.ts` suite pins the heading or the `DEV+META` literal.
-- **Open, deliberately not taken here: `## Absolute Rules [DEV+META]` carries the identical dead DEV half** — `scoped/scope-dev.md` holds no `## Absolute Rules` heading either.
-  - Either retag it on the same finding or record why that one keeps DEV; retagging it was outside this pass's disposition.
-- **Judgement recorded, not acted on**: the surviving `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody.
-  - The A/B evidence behind it died with the deleted `scope-dev.md` pointer, so deleting the section and keeping the null result here is the stronger disposition. The retag does not make the bullet load-bearing.
+- `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
+- **`Skills Array Order` carries `[META]` only**: no DEV rule file holds a matching pointer. No suite pins the heading or its tag.
+- **Open: `## Absolute Rules [DEV+META]` carries a dead DEV half** — `scoped/scope-dev.md` holds no `## Absolute Rules` heading. Retag it to `[META]`, or record why it keeps DEV.
+- **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
 
-## Stale material removed in this pass
+## Stale material removed — do not restore
 
-- **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). It described a selection mechanism that does not select this file. Safe to remove: the `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no roster reader loses a match.
-- **Pair note under `## Absolute Rules`** — it instructed an editor to edit this file together with `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md`, and to keep the two `Absolute Rules` bodies deliberately different. `scope-dev.md` carries neither heading (grep this pass), so the pair had one member.
-- **The `Skills Array Order` self-correction** ("the `scope-dev.md` pointer overstates this section … WITH the A/B evidence behind it"). It corrected a pointer that no longer exists; the surviving line is an unsourced advisory and is stated as a plain preference, with no evidence claim attached.
-- **`## CQRS Exception` honest note** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file, so the exception has no located antecedent. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
+- **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
+- **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md` — that file carries neither heading, so there is no pair to maintain.
+- **`Skills Array Order` evidence claim** — the surviving line is a plain preference with no evidence attached.
+- **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant
 
-- Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate, and the rule file no longer narrates how the two compose. The four-item checklist itself stays, because `scope-planning.md` and `scope-design.md` resolve their pointers into it.
-- The `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy` redirect paragraph. One line naming the three body sections replaces it; the body remains the operative site.
-- The `## DEV Rule Inheritance` explanation of the Compliance Matrix footnote and of where `agent-registry.json` declares the inheritance. The rule file now states the rationale and the two declaration sites in three bullets.
+- Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate. The four-item checklist itself stays, because `scope-planning.md` and `scope-design.md` resolve their pointers into it.
+- The `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy` redirect paragraph — one line naming the body sections replaces it; the body remains the operative site.
+- The `## DEV Rule Inheritance` explanation of the Compliance Matrix footnote and of where `agent-registry.json` declares the inheritance — the rule file states the rationale and the two declaration sites.
+- The meta-prompt-engineer body's top-of-body inheritance blockquote and its `**Prompts = Code**` Absolute Rules bullet — both restated this rule file, which reaches that agent whole.
 
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
@@ -70,5 +66,5 @@ The composer-facing line stays in the rule file rather than moving here, because
 ## Readers, coupled tests, and operational constraints
 
 - **No test pins this file's text.** Searching `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit for `scope-meta`. That is the correct state: the file carries no machine-read literal of its own, and what consumers depend on is its `##` heading structure plus the heading names sibling files cite.
-- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit: `agent-registry.json` (`rules.scope`), `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, `scripts/agent_lifecycle/registry_ops.py`, `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings), and `manifest.json`.
+- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit: `agent-registry.json` (`rules.scope`, which `hooks/lib/inject_chunk.py` resolves at spawn), `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, `scripts/agent_lifecycle/registry_ops.py`, `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings), and `manifest.json`.
 - **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `_read_sections` emits SCOPE-FILE-EMPTY and directs a `C3: FAIL` verdict on an empty scope file.
