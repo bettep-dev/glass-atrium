@@ -36,3 +36,20 @@ The `## Prohibitions` section carried a justification for restating Guardrails: 
 
 - **Naming subordination (this wave)**: the one site naming a naming axis is the Project Convention Probe bullet, and it sits INSIDE the Guardrails editable region. The change there was held to the minimum the disposition needs — the probe now mirrors import order and error+log patterns and subordinates identifier naming to the `scoped/shared-naming.md` canon; the rest of the bullet, including the greenfield branch, is unchanged. A live install with local edits resolves that region through a merge, which is why nothing else in it was touched.
 - **The `### Comments & Logs` block under Work Rules duplicates the injected comment-rule core** (why-only, TODO owner/ticket, no production `console.*`). It was left in place because it sits inside an editable region and no disposition covers it; the Node-only clause about CLI `console` on stdout/stderr is genuine residue. A later pass owning that region should cut the duplicated clauses and keep the CLI carve-out.
+
+## Daemon-evolved `## Guardrails` lines — all dropped
+
+The live body carries five EDITABLE lines this release body lacks. Each was judged against this body plus the rules the agent receives; none is valid, so none is integrated.
+
+| Quote | Proposal | Class | Reason |
+|---|---|---|---|
+| "MUST default to `effort=medium` for routine implementations" | 1709 | contradicts | Thinking Budget Policy defaults `effort=high`; effort is set by the caller, not the spawned agent |
+| "MUST consolidate tool exploration (Grep/Read results) into one exploratory pass" | 1709 | unsupported | no outcome evidence it caused or cured anything |
+| "confirm all Grep/Read is complete and documented before first Write/Edit" | 6790 | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
+| "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | 3386 | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |
+| "On effort=medium qualification: straightforward literal edits/moves with known targets only" | 3386 | contradicts | same effort conflict as the first row |
+
+- **Requirement, not fact**: the redeploy MUST remove these five lines from the live body.
+  - Mechanism: the owner-approved reset-to-release updater mechanism — an operator-recorded reset of EDITABLE regions to the release, applied by the next seam deploy. A hand edit of the live install is FORBIDDEN.
+  - Verification: after that deploy, the release-versus-live diff for this body MUST be the operator `model:` line only.
+  - Why a plain redeploy is not enough: the EDITABLE three-way merge resolves a region KEEP_LOCAL when the release equals the base, so a live-only insertion in a region the release leaves unchanged survives it.

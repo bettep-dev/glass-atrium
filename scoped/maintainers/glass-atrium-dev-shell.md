@@ -37,3 +37,17 @@ Its operative content, restated once here so the decision is auditable: every de
 ## Decision landed in this pass
 
 **Naming subordination**: the `Match existing style` bullet under Work Rules is the one site in this body naming a naming axis. It now mirrors indentation and logging conventions from sibling scripts and subordinates identifier naming to the `scoped/shared-naming.md` canon, while the shell-specific `snake_case` function casing stays where it was, in the Functions bullet directly below. The bullet sits INSIDE an editable region, so the edit was held to exactly what the disposition needs — a live install with local edits resolves that region through a merge.
+
+## Daemon-evolved `## Work Rules` lines — all dropped
+
+The live body carries two EDITABLE lines this release body lacks. Both repeat `### Budget sizing`, so neither is integrated; that section stays the single copy the carrier note above protects.
+
+| Quote | Proposal | Class | Reason |
+|---|---|---|---|
+| "**MANDATORY AT INTAKE**: Size task via `tool_uses ~= files × 4.5 + 5 per Bats run`" | 1957 | duplicates | `### Budget sizing` already sizes at intake and declines above ~30; its added ">50% maxTurns" gate is covered by the 80% turn meter |
+| "**Task size gate**: Verify pre-acceptance size-est (`files × 4.5 + Bats runs`)" | 1957 | duplicates | a second copy of the row above and of `### Budget sizing` |
+
+- **Requirement, not fact**: the redeploy MUST remove these two lines from the live body.
+  - Mechanism: the owner-approved reset-to-release updater mechanism — an operator-recorded reset of EDITABLE regions to the release, applied by the next seam deploy. A hand edit of the live install is FORBIDDEN.
+  - Verification: after that deploy, the release-versus-live diff for this body MUST be the operator `model:` line only.
+  - Why a plain redeploy is not enough: the EDITABLE three-way merge resolves a region KEEP_LOCAL when the release equals the base, so a live-only insertion in a region the release leaves unchanged survives it. The 2026-09-13 arbiter run (proposal 7407) left both lines in place.
