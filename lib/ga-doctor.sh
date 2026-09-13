@@ -815,9 +815,14 @@ run_doctor() {
   #     prescribed remedy is a HAND repair (re-apply the local edit onto the new base, then re-sync),
   #     and a warn leaves a prescribed repair permanently optional. The window is what keeps that from
   #     becoming a forever-red: an aged entry is history and reports `note`, never a failure.
+  #     An in-window entry is RESOLVED when its body now sits at the release anchor — live body equal
+  #     to its base-store entry at the release hash (_get_body_anchor_state), the state a sanctioned
+  #     reset or a later landed merge leaves. Limits, by design: a hand repair that keeps local edits
+  #     and a live-only `model:` pin never equal the base, so both stay FAIL until the entry ages out.
   local decline_fail=0
   local decline_log="" decline_cutoff="" decline_scan="" decline_counts="" decline_body=""
-  local decline_in=0 decline_out=0 decline_malformed=0
+  local decline_in=0 decline_out=0 decline_malformed=0 decline_repaired=0 decline_open=0
+  local decline_open_body="" decline_notes="" decline_note="" anchor_reason="" anchor_rc=0
   # shellcheck disable=SC2310,SC2311
   decline_log="$(_decline_record_path)"
   # shellcheck disable=SC2310,SC2311
@@ -827,18 +832,44 @@ run_doctor() {
     log "  warn : merge-decline entries present but un-windowable (${decline_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so an un-repaired decline cannot be separated from history; install a BSD- or GNU-compatible date(1)"
     decline_fail=1
   else
-    # Two stdout lines: `<in-window> <out-of-window> <malformed>`, then the first declined body.
+    # Line 1: `<in-window> <out-of-window> <malformed>`; each later line: one in-window body.
     # shellcheck disable=SC2311
     decline_scan="$(_decline_scan "${decline_log}" "${decline_cutoff}")"
     decline_counts="$(printf '%s\n' "${decline_scan}" | sed -n '1p')"
-    decline_body="$(printf '%s\n' "${decline_scan}" | sed -n '2p')"
     # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
     # space-joined count line (same reason as the §10 drop-count read).
     IFS=' ' read -r decline_in decline_out decline_malformed <<<"${decline_counts}"
     if [[ "${decline_in}" -gt 0 ]]; then
-      log "  FAIL : ${decline_in} agent body/bodies declined a merge in the last ${DECLINE_WINDOW_DAYS}d and the local copy was kept (${decline_log}) — the live body is diverged from the base store until it is hand-repaired: re-apply the local edit onto the new base, then re-sync the base store"
-      log "         declined body: ${decline_body}"
+      while IFS= read -r decline_body; do
+        anchor_rc=0
+        # shellcheck disable=SC2311
+        anchor_reason="$(_get_body_anchor_state "${decline_body}")" || anchor_rc=$?
+        if [[ "${anchor_rc}" -eq 0 ]]; then
+          decline_repaired=$((decline_repaired + 1))
+          continue
+        fi
+        [[ -n "${decline_open_body}" ]] || decline_open_body="${decline_body}"
+        if [[ "${anchor_rc}" -eq 2 ]]; then
+          decline_notes+="${decline_body} not comparable — ${anchor_reason}"$'\n'
+        fi
+      done <<<"${decline_scan#*$'\n'}"
+    fi
+    # Every row not PROVEN at its release anchor stays open — an unreadable row never clears itself.
+    decline_open=$((decline_in - decline_repaired))
+    if [[ "${decline_open}" -gt 0 ]]; then
+      log "  FAIL : ${decline_open} agent body/bodies declined a merge in the last ${DECLINE_WINDOW_DAYS}d and the local copy was kept (${decline_log}) — the live body is diverged from the base store until it is hand-repaired: re-apply the local edit onto the new base, then re-sync the base store"
+      log "         declined body: ${decline_open_body}"
+      while IFS= read -r decline_note; do
+        if [[ -n "${decline_note}" ]]; then
+          log "  note : ${decline_note}"
+        fi
+      done <<<"${decline_notes}"
       decline_fail=1
+    fi
+    if [[ "${decline_repaired}" -gt 0 ]]; then
+      log "  note : ${decline_repaired} in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed) (${decline_log})"
+    elif [[ "${decline_open}" -gt 0 ]]; then
+      : # verdict already reported above
     elif [[ "${decline_out}" -gt 0 ]]; then
       log "  note : ${decline_out} agent-body merge decline(s) recorded, all older than ${DECLINE_WINDOW_DAYS}d (${decline_log}) — history, not a live divergence (advisory)"
     elif [[ "${decline_malformed}" -eq 0 ]]; then
@@ -954,7 +985,9 @@ run_doctor() {
   #     local run, which is a correct outcome and a silent one, and the silence is what this section
   #     removes. WARN, never fail — an unreachable model seam is a supported state for an unattended
   #     run, so naming it must not abort an install through the preflight alias.
-  local arbiter_warns=0 arbiter_resolved=0
+  #     A failure-class record whose target body now sits at its release anchor (_get_body_anchor_state)
+  #     is SUPERSEDED — a reset or later landed merge replaced the local run it kept — and reports info.
+  local arbiter_warns=0 arbiter_resolved=0 arbiter_superseded=0
   local arbiter_dir="" arbiter_rec="" arbiter_row=""
   local rec_fail="" rec_agent="" rec_region="" rec_target="" rec_choice=""
   # Derived through the producer's OWN state-root helper rather than by restating the default path
@@ -989,17 +1022,21 @@ run_doctor() {
         continue
       fi
       IFS=$'\t' read -r rec_fail rec_agent rec_region rec_target rec_choice <<<"${arbiter_row}"
-      if [[ "${rec_fail}" != "-" ]]; then
-        log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
-        arbiter_warns=$((arbiter_warns + 1))
-      else
+      # shellcheck disable=SC2310  # predicate in an elif condition: the helper returns explicitly
+      if [[ "${rec_fail}" == "-" ]]; then
         log "  info : contested gap arbiter-resolved — ${rec_choice} agent=${rec_agent} region=${rec_region} target=${rec_target}"
         arbiter_resolved=$((arbiter_resolved + 1))
+      elif _get_body_anchor_state "${rec_target}" >/dev/null; then
+        log "  info : contested gap superseded — target body equals its base-store entry at the release hash (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
+        arbiter_superseded=$((arbiter_superseded + 1))
+      else
+        log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
+        arbiter_warns=$((arbiter_warns + 1))
       fi
     done
     if [[ "${arbiter_warns}" -gt 0 ]]; then
       log "         remedy: the named gap(s) kept the local run — re-run the update once the arbiter's model seam is reachable, or hand-merge the region"
-    elif [[ "${arbiter_resolved}" -eq 0 ]]; then
+    elif [[ "${arbiter_resolved}" -eq 0 && "${arbiter_superseded}" -eq 0 ]]; then
       log "  ok   : no contested-gap decision records (${arbiter_dir})"
     fi
   fi
@@ -1553,7 +1590,7 @@ _decline_record_path() {
 # reported rather than dropped: the entry still testifies to a divergence, and dropping it silently
 # would tell an operator the record is clean (Precondition Loud-Fail Principle). A blank separator
 # line is not an entry and is not counted.
-# stdout: line 1 = `<in-window> <out-of-window> <malformed>`, line 2 = the first in-window body.
+# stdout: line 1 = `<in-window> <out-of-window> <malformed>`, then one line per in-window body.
 _decline_scan() {
   awk -F'\t' -v cutoff="${2}" '
     $0 == "" { next }
@@ -1563,11 +1600,73 @@ _decline_scan() {
       if ($1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) {
         in_window = (substr($1, 1, 10) >= cutoff)
       }
-      if (in_window) { inw++; if (body == "") { body = $3 } }
+      if (in_window) { inw++; bodies = bodies $3 "\n" }
       else { aged++ }
     }
-    END { printf "%d %d %d\n%s\n", inw + 0, aged + 0, malformed + 0, body }
+    END { printf "%d %d %d\n%s", inw + 0, aged + 0, malformed + 0, bodies }
   ' "${1}"
+}
+
+# Classify the repo-relative agent body $1 against its RELEASE ANCHOR: the base-store entry the next
+# 3-way merge reads, at the hash the updater recorded for $1 in the state-dir baseline manifest
+# (spine_baseline_path). That manifest — not the install-root one — is the release record paired
+# with the base store: update_capture_baseline writes both in one finalize sequence, while a dev
+# tree's own manifest names the NEXT release. Equality alone is not enough: a hand-synced or
+# contaminated base equals the live body too, so the hash is what ties the base to the release.
+# rc 0 = at the anchor · rc 1 = compared and diverged · rc 2 = not comparable, reason on stdout.
+# Fail-closed and errexit-independent (callers test it in a condition): only rc 0 clears a verdict.
+_get_body_anchor_state() {
+  local rel="$1" live base_entry baseline release_hash base_hash cmp_rc=0
+  local -a sha=()
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/apply-spine.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/apply-spine.sh"
+  live="${GA_ROOT}/${rel}"
+  # shellcheck disable=SC2311
+  base_entry="$(spine_baseline_dir)/base-agents/${rel##*/}"
+  # shellcheck disable=SC2311
+  baseline="$(spine_baseline_path)"
+  if [[ -z "${rel}" ]]; then
+    printf '%s\n' "the record names no body"
+    return 2
+  elif [[ ! -f "${live}" || ! -r "${live}" ]]; then
+    printf '%s\n' "live body missing or unreadable (${live})"
+    return 2
+  elif [[ ! -f "${base_entry}" || ! -r "${base_entry}" ]]; then
+    printf '%s\n' "no base-store entry (${base_entry})"
+    return 2
+  elif ! command -v cmp >/dev/null 2>&1; then
+    printf '%s\n' "cmp(1) absent"
+    return 2
+  elif ! command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "jq absent — the release hash cannot be read"
+    return 2
+  fi
+  release_hash="$(jq -r --arg rel "${rel}" '(.hashes // {})[$rel] // empty' -- "${baseline}" 2>/dev/null)" \
+    || release_hash="" # GA-ABSORB[handled@empty-hash branch below]: absent/unparseable manifest reported as not comparable
+  if [[ -z "${release_hash}" ]]; then
+    printf '%s\n' "no release hash for ${rel} in ${baseline}"
+    return 2
+  fi
+  # shellcheck disable=SC2310
+  IFS=$' \t' read -ra sha < <(_resolve_sha256_cmd) || true
+  if [[ "${#sha[@]}" -eq 0 ]]; then
+    printf '%s\n' "no shasum/sha256sum to hash the base entry"
+    return 2
+  fi
+  cmp -s "${live}" "${base_entry}" || cmp_rc=$?
+  if [[ "${cmp_rc}" -gt 1 ]]; then
+    printf '%s\n' "cmp failed reading ${live} or ${base_entry}"
+    return 2
+  elif [[ "${cmp_rc}" -eq 1 ]]; then
+    return 1
+  fi
+  # shellcheck disable=SC2310,SC2311
+  if ! base_hash="$(_sha_hex "${sha[@]}" -- "${base_entry}")"; then
+    printf '%s\n' "hashing the base entry failed (${base_entry})"
+    return 2
+  fi
+  [[ "${base_hash}" == "${release_hash}" ]]
 }
 
 # sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens

@@ -15,9 +15,13 @@
 #   AC4  a mixed record               -> FAIL wins over note — an aged sibling never masks a live one
 #   AC5  the record path follows the PRODUCER's own derivation (AUTOAGENT_BACKUP_DIR honoured)
 #   AC6  the line grammar §15 classifies on is the one scripts/update.sh writes
+#   AC7  a truncated entry is counted as malformed, never dropped
+#   AC8-AC12  a declined body equal to its base-store entry at the release hash is a repaired note;
+#        a differing, absent or off-release base still FAILs, and a mixed record FAILs on the open body
 #
 # Hermetic: GA_TARGET_HOME + GA_DATA_ROOT point at throwaway temp dirs, AUTOAGENT_BACKUP_DIR points
-# the record derivation at the fixture (the SAME var the producer honours — no test-only seam), a
+# the record derivation at the fixture (the SAME var the producer honours — no test-only seam),
+# ATRIUM_UPDATE_STATE_DIR points the base store + baseline manifest at a scratch dir, a
 # nonexistent manifest-gen skips §8 hashing and an echo-OK claude stub neutralises the auth
 # advisory's live probe. No ~/.claude or ~/.glass-atrium state is read or written.
 #
@@ -42,6 +46,7 @@ setup() {
   DATA_ROOT="$(mktemp -d -t ga-doctor-decline-data.XXXXXX)"
   WORK="$(cd -- "$(mktemp -d -t ga-doctor-decline-work.XXXXXX)" && pwd -P)"
   BACKUP_DIR="${WORK}/agents-bak"
+  STATE_DIR="${WORK}/update-state" # update state seam → no case reads the real ~/.claude/data/update
   DECLINE_LOG="${WORK}/update-declines/conflict-declines.log"
   mkdir -p "${TARGET}/bin" "${BACKUP_DIR}"
   cat >"${TARGET}/bin/claude" <<'SH'
@@ -67,7 +72,28 @@ teardown() {
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
-    AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" run "${REAL_GA}" doctor
+    AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" ATRIUM_UPDATE_STATE_DIR="${STATE_DIR}" \
+    run "${REAL_GA}" doctor
+}
+
+# Lay the release anchor §15 compares a declined body against, for the REPO body $1 (GA_ROOT is the
+# entry point's own tree, so the live side is never written — only the scratch state dir varies).
+# $2 = base entry shape: `equal` copies the live body, `differs` appends a line, `absent` writes none.
+# $3 = manifest hash shape: `base` records sha256(base entry), `other` records a hash of nothing.
+seed_release_anchor() {
+  local rel="$1" base_shape="$2" hash_shape="$3" base_entry hash
+  base_entry="${STATE_DIR}/base-agents/${rel##*/}"
+  mkdir -p -- "${STATE_DIR}/base-agents"
+  case "${base_shape}" in
+    equal) cp -- "${GA}/${rel}" "${base_entry}" ;;
+    differs) { cat -- "${GA}/${rel}" && printf 'hand edit\n'; } >"${base_entry}" ;;
+    absent) ;;
+  esac
+  hash="$(printf '' | shasum -a 256 | awk '{print $1}')"
+  if [[ "${hash_shape}" == base && -f "${base_entry}" ]]; then
+    hash="$(shasum -a 256 -- "${base_entry}" | awk '{print $1}')"
+  fi
+  printf '{"version":"test","hashes":{"%s":"%s"}}\n' "${rel}" "${hash}" >"${STATE_DIR}/baseline-manifest.json"
 }
 
 # Append one decline entry dated $1 days ago (0 = now) for the body $2, in the producer's grammar:
@@ -195,4 +221,56 @@ assert_output_lacks() {
   # additive, never a substitute: the live entry still drives its own FAIL verdict
   assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
   assert_output_has "agents/live-body.md" || return 1
+}
+
+# ── AC8-AC12 — a declined body now at its release anchor is repaired, never a standing FAIL ────
+# The FAIL claims divergence from the base store, so the check that falsifies it is: live body
+# byte-equal to its base-store entry AND that entry at the release hash the updater recorded. Each
+# row varies ONE side of that conjunction; GA_ROOT is this repo tree, so only the scratch state moves.
+
+@test "AC8: a declined body equal to its base entry at the release hash is a repaired note, not FAIL" {
+  append_decline 0 "agents/glass-atrium-dev-shell.md"
+  seed_release_anchor "agents/glass-atrium-dev-shell.md" equal base
+  run_doctor_seam
+  assert_output_has "note : 1 in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed)" || return 1
+  assert_output_lacks "declined a merge in the last" || return 1
+  assert_output_lacks "not comparable" || return 1
+}
+
+@test "AC9: a declined body differing from its base entry still FAILs" {
+  append_decline 0 "agents/glass-atrium-dev-shell.md"
+  seed_release_anchor "agents/glass-atrium-dev-shell.md" differs base
+  run_doctor_seam
+  assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
+  assert_output_has "declined body: agents/glass-atrium-dev-shell.md" || return 1
+  assert_output_lacks "repaired — live body equals" || return 1
+}
+
+@test "AC10: a declined body with no base entry FAILs and says why it is not comparable" {
+  append_decline 0 "agents/glass-atrium-dev-shell.md"
+  seed_release_anchor "agents/glass-atrium-dev-shell.md" absent base
+  run_doctor_seam
+  assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
+  assert_output_has "note : agents/glass-atrium-dev-shell.md not comparable — no base-store entry" || return 1
+}
+
+@test "AC11: a base entry equal to the live body but off the release hash still FAILs" {
+  # a hand-synced or contaminated base: live == base proves nothing unless base is the release
+  append_decline 0 "agents/glass-atrium-dev-shell.md"
+  seed_release_anchor "agents/glass-atrium-dev-shell.md" equal other
+  run_doctor_seam
+  assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
+  assert_output_lacks "repaired — live body equals" || return 1
+}
+
+@test "AC12: one repaired and one open body FAIL on the open body alone" {
+  append_decline 0 "agents/glass-atrium-dev-shell.md"
+  append_decline 0 "agents/glass-atrium-dev-node.md"
+  seed_release_anchor "agents/glass-atrium-dev-shell.md" equal base # dev-node gets no base entry
+  run_doctor_seam
+  assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
+  assert_output_has "declined body: agents/glass-atrium-dev-node.md" || return 1
+  assert_output_lacks "declined body: agents/glass-atrium-dev-shell.md" || return 1
+  assert_output_has "note : 1 in-window decline(s) repaired" || return 1
+  [[ "${status}" -ne 0 ]] || return 1
 }
