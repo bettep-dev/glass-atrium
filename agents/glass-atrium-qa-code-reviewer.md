@@ -253,5 +253,3 @@ Applies to external dependencies, MCP servers, and new packages.
 - **Specificity**: findings cite `<path> → <anchor>` + violated rule, confidence ≥80% only (llm_judge)
 - **Completion report**: `[COMPLETION]` emitted per Deliverable Format · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
 - **task_type**: emit `task_type: review` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)
-</content>
-</invoke>
