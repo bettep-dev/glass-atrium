@@ -83,43 +83,45 @@ Each file below is inherited on its OWN condition. DEV is the common carrier, bu
   - **Hook-capability exclusion, adjudicated 2026-09-11**: the Tier-3 row above and the Compliance Matrix `shared-hook-capability-contract.md` row each carried a META marker asserting the opposite; both were corrected to match this bullet.
   - It stands because `glass-atrium-meta-prompt-engineer` authors prompts, not hooks — and code already agreed: `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry, and that agent's registry row keeps an empty `conditional` list.
 - **QA** loads Tier 1 + `scoped/scope-qa.md` + `shared-comment-logging.md` always, and `shared-hook-capability-contract.md` only when reviewing hook work — never the full set.
-  - **`shared-naming.md` is glass-atrium-qa-code-reviewer ONLY**, and its Compliance Matrix QA cell carries no footnote marker for that subset — the Tier-3 row above names the single agent outright, which no marker could state more precisely. glass-atrium-qa-debugger is read-only by iron-law and authors no identifier, so the rule is structurally inapplicable to it. DEV takes it unconditionally, all 13: `NAMING_AGENTS` excludes glass-atrium-dev-swift from the INJECTED block, which is a delivery roster and not a membership statement.
+  - **`shared-naming.md` is glass-atrium-qa-code-reviewer ONLY**, and its Compliance Matrix QA cell carries no footnote marker for that subset — the Tier-3 row above names the single agent outright, which no marker could state more precisely. glass-atrium-qa-debugger is read-only by iron-law and authors no identifier, so the rule is structurally inapplicable to it. DEV takes it unconditionally, all 13.
   - **`shared-code-structure.md` is glass-atrium-qa-code-reviewer ONLY** for the same reason and with the same bare `✓` in its Compliance Matrix QA cell — the Tier-3 row above names the single agent. glass-atrium-qa-debugger authors no code, so a structural authoring rule is inapplicable to it; DEV takes it unconditionally, all 13.
   - **`shared-investigation-discipline.md` is the one Tier-3 file BOTH QA agents take**, so its `✓` carries no subset qualifier and glass-atrium-qa-debugger is its heaviest consumer — diagnosis IS the investigation sequence. ORCHESTRATOR is deliberately absent: the moved section's former `[DEV+ORCHESTRATOR]` tag covered a duty PAIR, and the orchestrator half — routing the escalation, rejecting a conclusion carrying no evidence — stayed in `skills/glass-atrium-core-iron-laws/SKILL.md` → `### Debugger Escalation [ORCHESTRATOR]`, which `rules/glass-atrium/scope-orchestrator.md` still cites.
 
 ### Injected Blocks (SubagentStart allowlist)
 
-Tier MEMBERSHIP is not rule-TEXT delivery: an agent's Tier-2 and Tier-3 membership is DECLARED on its registry row — `agents.<name>.rules.scope` (the one Tier-2 file) · `.shared` (unconditional Tier-3) · `.conditional` (task-conditional Tier-3, each entry carrying its own `when`) in `agent-registry.json` — and no spawn path reads that object, so a row naming `comment-logging` delivers no rule text. Tier 1 is universal and therefore sits in the ALL column below rather than on any row. The retired `> Rules:` body header carried the same declaration and is gone from every body; the lifecycle CLI refuses one. `hooks/inject-scope-rules.sh` delivers extracted marker blocks — never whole scope-file bodies — as `hookSpecificOutput.additionalContext`. This is a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
+Tier MEMBERSHIP is DECLARED on each agent's registry row — `agents.<name>.rules.scope` (the one Tier-2 file) · `.shared` (unconditional Tier-3) · `.conditional` (task-conditional Tier-3, each entry carrying its own `when`) in `agent-registry.json`. Tier 1 is universal and therefore sits in the ALL column below rather than on any row. The retired `> Rules:` body header carried the same declaration and is gone from every body; the lifecycle CLI refuses one.
+
+Two SubagentStart channels carry text, and they divide the work by kind:
+
+| Channel | Code | What it carries |
+|---|---|---|
+| Part slots | `hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py` | every `scoped/` file in the row's `scope` and `shared` entries, packed whole at heading boundaries (an over-cap section is named by an in-context marker instead); `.conditional` entries as path pointers only |
+| Slot 1 | `hooks/inject-scope-rules.sh` | the named marker blocks below, plus the emit-format directive, the turn-budget meter and the lesson recall, which the hook builds rather than extracts |
+
+- **Slot 1 MUST carry no scope-file text.** The comment-logging, style_ref, minimalism, naming and plan-gate cores ride the part slots only; `hooks/inject-scope-rules.sh` extracts none of them, and their source files carry no marker.
+- **Retirement precondition**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every agent. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
+- **Degraded mode**: an install with no runnable python3, or an unreadable registry, delivers no scope-file text at all; `lib/ga-doctor.sh` MUST warn when a part slot is bound in that state.
+
+The slot-1 blocks are a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
 
 | Block | Source | Roster |
 |---|---|---|
-| `AGENT-INJECT` (comment-logging core) | `scoped/shared-comment-logging.md` → `## Agent Injection Core` | `INJECT_AGENTS` |
-| `AGENT-INJECT:STYLE-REF` | `scoped/scope-dev.md` | `STYLEREF_AGENTS` |
-| `AGENT-INJECT:MINIMALISM` | `scoped/scope-dev.md` | `MINIMALISM_AGENTS` |
-| `AGENT-INJECT:PLAN-GATE` | `scoped/scope-dev.md` | `PLAN_GATE_AGENTS` |
-| `AGENT-INJECT:NAMING` | `scoped/shared-naming.md` → `## Agent Injection Core` | `NAMING_AGENTS` |
 | `AGENT-INJECT:BUDGET-DEV` | `scoped/shared-turn-budget.md` | `BUDGET_DEV_AGENTS` |
 | `AGENT-INJECT:BUDGET-ANALYSIS` | `scoped/shared-turn-budget.md` | `BUDGET_ANALYSIS_AGENTS` |
 | `AGENT-INJECT:WIKI-UNTRUSTED` | `rules/glass-atrium/core-wiki-reference.md` | `WIKI_UNTRUSTED_AGENTS` |
 
-`comment-logging` is the only Tier-3 rule injected this way; every other Tier-3 rule is pointer-referenced only. `STYLEREF_AGENTS` is single-sited in `hooks/lib/styleref-roster.sh`, the rest in the hook itself.
+Those block rosters are declared in the hook itself. `STYLEREF_AGENTS`, single-sited in `hooks/lib/styleref-roster.sh`, is NOT an injection roster: it is the `style_ref` review_flag roster that `hooks/lib/style-ref-consts.sh` reads, and it equals the DEV rows whose `rules.scope` is `scoped/scope-dev.md`.
 
 Roster curation — why each is the shape it is:
 
-- `NAMING_AGENTS` — deliberately narrower: DEV minus glass-atrium-dev-swift, plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger.
-- `PLAN_GATE_AGENTS` — the whole DEV roster and deliberately not a subset: the Stage-2 gate's DEV participant is whichever agent matches the plan's primary implementation domain, a selection rule that excludes no DEV agent, so a narrower roster would silently deny the duty to whichever agent gets picked.
-  - Membership is byte-identical to `MINIMALISM_AGENTS` today and the two stay SEPARATE declarations on purpose — one is a minimalism-reflex scope decision, the other a gate-eligibility decision, and sharing a constant would make either narrowing silently narrow the other.
-  - UNTRACKED-manual (no inject_sync reconcile): a newly registered DEV agent must be added by hand or it receives no plan-gate block.
 - `BUDGET_DEV_AGENTS` — DEV minus the daemon-carrier agents (glass-atrium-dev-nestjs · glass-atrium-dev-python · glass-atrium-dev-react · glass-atrium-dev-shell), each of which keeps a daemon-evolved in-body budget bullet the daemon owns, so injecting on top would double-deliver.
 - `BUDGET_ANALYSIS_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-design-designer · glass-atrium-meta-agent · glass-atrium-wiki-curator, with glass-atrium-intel-researcher excluded as a carrier. MANUAL-curated: membership is not roster-derivable, so it stays a governance decision.
-- `WIKI_UNTRUSTED_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator, the LIGHT Bash-holding wiki-reader cluster. The code-DEV agents hold Bash too but their assembly already sits near the byte ceiling, so adding the block would shed a proven one; they stay covered by the agent-independent write-side control and the read-time advisory. MANUAL-curated — a new heavy DEV agent is deliberately NOT added.
+- `WIKI_UNTRUSTED_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator, the LIGHT Bash-holding wiki-reader cluster. The code-DEV agents hold Bash too and are deliberately NOT on it; they stay covered by the agent-independent write-side control and the read-time advisory. MANUAL-curated — a new heavy DEV agent is deliberately NOT added.
 
 Two injection sources are not rule files of this matrix, and neither gains membership by being injected:
 
-- `scoped/shared-turn-budget.md` is an injection-TEXT source only, like the naming SKILL.md — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries NO tier membership and no matrix row.
+- `scoped/shared-turn-budget.md` is an injection-TEXT source only — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries NO tier membership and no matrix row.
 - `AGENT-INJECT:WIKI-UNTRUSTED` is the ONLY injected block sourced from a **Tier-1** rule file, carrying that file's raw-store data-not-instruction clause [LLM01] to `WIKI_UNTRUSTED_AGENTS`. `core-wiki-reference.md` is ALL-scope Tier 1, so its membership sits in the ALL column below and on no registry row; the injection delivers a clause body, grants no membership and changes no tier.
-
-`AGENT-INJECT:PLAN-GATE` delivers a RESIDUAL, not the duty. What fits the byte contract is the verdict shape, the load-bearing premise test, the refuted-premise consequence and the non-waiver clause; the three-part answer shape for the revision-cycle first-link question did not fit and stays readable only in `scoped/scope-dev.md`, which is the block's SoT and does not reach a DEV agent. Do not read the block's arrival as the gate duty having been delivered. Delivery is also not guaranteed: the block sits low in the shed order — below both budget blocks, above the proven ones — and nothing sheds it only because today's block sizes leave the worst-case DEV assembly under the ceiling. A later source growth sheds it, and the drop marker that names it is recovery rather than delivery.
 
 ### Membership vs. Delivery (per tier)
 

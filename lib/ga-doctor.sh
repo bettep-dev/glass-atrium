@@ -386,9 +386,9 @@ run_doctor() {
   else
     log "  warn : no base@install baseline — run 'glass-atrium install' to capture it (next update falls back to a wider merge base)"
   fi
-  # 10. inject-scope-rules shed surface. inject-scope-rules.sh compresses the AGENT-INJECT source
-  #     blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; when the assembly still
-  #     overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
+  # 10. inject-scope-rules shed surface. inject-scope-rules.sh assembles its droppable AGENT-INJECT
+  #     marker blocks (budget + wiki-untrusted) and the lesson under INJECT_CTX_MAX_BYTES; when the
+  #     assembly still overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
   #     hook persists each shed to a HOME-relative diag log. Two properties of that log decide the
   #     verdict shape here, and getting either wrong emits an unclearable imperative:
   #       · APPEND-ONLY + lifetime-scoped — a count over the whole file asserts a condition that may
@@ -503,13 +503,27 @@ run_doctor() {
     fi
   done
 
+  # Delivery preconditions a bound slot needs at spawn, probed once for the audit and the bound-slot
+  # check below. RUNNABLE, not merely on PATH: a python3 shim that cannot execute passes `command -v`
+  # yet makes the core exit non-zero, and the slot delivers nothing. The registry is the file the core
+  # itself reads (GA_CHUNK_REGISTRY overrides it there too); without jq only readability is checked.
+  local slot_python_ok=0 slot_registry_ok=0
+  local slot_registry="${GA_CHUNK_REGISTRY:-${GA_ROOT}/agent-registry.json}"
+  python3 -c 'import sys' >/dev/null 2>&1 && slot_python_ok=1
+  if [[ -r "${slot_registry}" ]]; then
+    if ! command -v jq >/dev/null 2>&1 \
+      || jq -e '.agents | type == "object"' "${slot_registry}" >/dev/null 2>&1; then
+      slot_registry_ok=1
+    fi
+  fi
+
   local slot_audit="" slot_constant=""
   # shellcheck disable=SC2310,SC2311,SC2312
   if [[ ! -f "${chunk_core}" ]]; then
     log "  warn : split scope-rule channel BLIND — the chunker core is absent (${chunk_core}), so the slot constant and the per-agent totals cannot be read; ${slot_declared} part-slot binding row(s) are declared and unverifiable"
     inject_slot_warns=$((inject_slot_warns + 1))
-  elif ! command -v python3 >/dev/null 2>&1; then
-    log "  warn : split scope-rule channel BLIND — python3 absent, so the chunker core cannot be asked for its slot count; the slots themselves are also inert on this install (the seam skips without an interpreter)"
+  elif [[ "${slot_python_ok}" -ne 1 ]]; then
+    log "  warn : split scope-rule channel BLIND — no runnable python3, so the chunker core cannot be asked for its slot count"
     inject_slot_warns=$((inject_slot_warns + 1))
   elif ! slot_audit="$(GA_CHUNK_RULES_ROOT="${GA_ROOT}" python3 "${chunk_core}" --audit 2>/dev/null)" || [[ -z "${slot_audit}" ]]; then
     log "  warn : split scope-rule channel BLIND — the chunker core produced no audit (${chunk_core} --audit); the agent-registry is likely unreadable, so neither the slot count nor any assembled total can be established"
@@ -599,6 +613,22 @@ run_doctor() {
       inject_slot_warns=$((inject_slot_warns + 1))
     else
       log "  ok   : all ${slot_declared} scope-rule part slots bound"
+    fi
+  fi
+
+  # Bound but undeliverable. The marker-block slot carries no scope-rule text, so the part slots are
+  # the ONLY scope-rule channel: a bound slot that cannot run leaves every agent with no scope-rule
+  # body, and the seam records that on its sink alone, never in front of an operator.
+  if [[ "${slot_bound}" -gt 0 ]]; then
+    local slot_blockers=""
+    [[ "${slot_python_ok}" -eq 1 ]] || slot_blockers="no runnable python3 (the seam skips the slot or the core exits)"
+    if [[ "${slot_registry_ok}" -ne 1 ]]; then
+      slot_blockers="${slot_blockers:+${slot_blockers}; }the agent-registry is unreadable (${slot_registry}), so the core renders a 'Scope rules NOT delivered' prelude instead of any member body"
+    fi
+    if [[ -n "${slot_blockers}" ]]; then
+      log "  warn : ${slot_bound} scope-rule part slot(s) bound but undeliverable — ${slot_blockers}; the marker-block slot carries no scope-rule text, so every agent receives no scope-rule body at all"
+      log "         fix: install a runnable python3 on the hook PATH and restore a parseable agent-registry.json, then start a NEW session"
+      inject_slot_warns=$((inject_slot_warns + 1))
     fi
   fi
 

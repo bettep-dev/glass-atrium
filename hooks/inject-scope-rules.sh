@@ -1,34 +1,17 @@
 #!/usr/bin/env bash
-# inject-scope-rules.sh — SubagentStart hook: inject scope-rule cores + a budget
-# meter + the [COMPLETION] emit-format contract into subagents.
+# inject-scope-rules.sh — SubagentStart hook, slot 1: the [COMPLETION] emit-format contract, a budget
+# meter, and the roster-gated blocks no part slot carries.
 #
-# On a DEV(13)/QA(2) spawn, extracts the AGENT-INJECT block from
-# shared-comment-logging.md and delivers it as hookSpecificOutput.additionalContext
-# (the subagent otherwise gets only the comment-logging pointer token, not the body).
-# DEV(13) ONLY (excludes QA) also gets two blocks from
-# scope-dev.md — STYLE-REF (style_ref DEV-scoped; the pointer token alone left it
-# ~0% emitted) and MINIMALISM (the DEV-scoped minimalism reflex the pointer did not
-# deliver). The NAMING block (scoped/shared-naming.md) goes to a curated 13-agent
-# delivery roster — DEV minus dev-swift (12), plus qa-code-reviewer (the enforcement
-# surface); membership is a hardcoded literal, not read from frontmatter. Its NAMING_AGENTS
-# roster is DELIBERATELY narrower than INJECT_AGENTS (no qa-debugger, no dev-swift)
-# and is AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked array — a
-# new DEV agent is wired into naming injection automatically. Two BUDGET-SIZING blocks
-# (shared-turn-budget.md — injection-text SoT; policy SoT = GLOBAL_RULES Turn Budget &
-# Graceful Exit) ride DISJOINT rosters: BUDGET-DEV (sizing-only — the non-droppable
-# meter block already owns the 80%-ceiling half) → BUDGET_DEV_AGENTS, DEV(13) minus the
-# four daemon-carrier agents whose bodies keep daemon-evolved budget bullets,
-# AUTO-RECONCILED by inject_sync as a 5th tracked array; BUDGET-ANALYSIS →
-# BUDGET_ANALYSIS_AGENTS, 6 curated analysis consumers, UNTRACKED-manual (membership is
-# a governance decision, not roster-derivable).
-# The PLAN-GATE block (scope-dev.md, same source file as STYLE-REF / MINIMALISM) goes to
-# PLAN_GATE_AGENTS — the FULL DEV(13) roster, because the Stage-2 plan-verification DEV participant
-# is picked by the plan's primary implementation domain, which no rule narrows to a subset. It
-# carries the verdict-shape / load-bearing-test / non-waiver residual a DEV agent needs to produce
-# the hard-gated `feasible`/`infeasible` verdict; the Tier-2 scope file stating that duty does NOT
-# reach the agent through this hook (see T8 below), and no DEV body mirrors it, so absent this block
-# the duty reaches no actor at all. UNTRACKED-manual like BUDGET_ANALYSIS / WIKI_UNTRUSTED: a newly
-# registered DEV agent must be added here BY HAND (inject_sync reconciles five arrays, not this one).
+# Slot 1 carries only the non-droppable emit/meter pair, the wiki-untrusted clause, the two budget
+# blocks and the lesson recall. Scope-file text (comment-logging, style_ref, minimalism, naming,
+# plan-gate) is NOT extracted here: the part slots (inject-scope-part-NN.sh) deliver it whole by
+# registry membership, so a slot-1 copy would reach the agent twice.
+# Two BUDGET-SIZING blocks (shared-turn-budget.md — injection-text SoT; policy SoT = GLOBAL_RULES
+# Turn Budget & Graceful Exit) ride DISJOINT rosters: BUDGET-DEV (sizing-only — the non-droppable
+# meter block already owns the 80%-ceiling half) → BUDGET_DEV_AGENTS, DEV(13) minus the four
+# daemon-carrier agents whose bodies keep daemon-evolved budget bullets, AUTO-RECONCILED by
+# agent_lifecycle inject_sync as a tracked array; BUDGET-ANALYSIS → BUDGET_ANALYSIS_AGENTS, 6 curated
+# analysis consumers, UNTRACKED-manual (membership is a governance decision, not roster-derivable).
 #
 # Two NON-DROPPABLE universal blocks (ALL subagents, not DEV/QA-scoped), INDEPENDENT
 # of each other and of the scope blocks:
@@ -60,20 +43,18 @@
 # drop-rate numerator's rotation is untouched. `--manifest-coverage` is its required reader.
 #
 # T8 — membership vs. delivery (roster disclaimer): this hook injects a FIXED set of extracted
-# AGENT-INJECT MARKER blocks (comment-logging · style_ref · minimalism · naming · plan-gate ·
-# budget-dev · budget-analysis · wiki-untrusted) against the HARDCODED rosters below (INJECT_AGENTS,
-# STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, PLAN_GATE_AGENTS, BUDGET_DEV_AGENTS,
-# BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS).
+# AGENT-INJECT MARKER blocks (budget-dev · budget-analysis · wiki-untrusted) against the HARDCODED
+# rosters below (BUDGET_DEV_AGENTS, BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS) — none of their
+# sources is a registry member, so no part slot carries them.
 # A Tier-2 scope-file BODY does NOT arrive on the HOST project-instructions channel: what a
 # spawned subagent receives there is the set the MAIN SESSION holds, whatever its own scope
-# (measured 2026-09-10; SoT core-compliance-matrix.md → "Membership vs. Delivery (per tier)").
-# So the SubagentStart channel is the only path a scope-file body can take, and it MUST select
+# (SoT core-compliance-matrix.md → "Membership vs. Delivery (per tier)").
+# So the SubagentStart channel is the only path a scope-file body can take: the part slots select
 # per agent from the registry row (agent-registry.json → agents[<type>].rules) and chunk the
 # selected bodies across the bound slots. `rules.conditional` entries are NOT chunked — they
 # ride as path pointers, because selection cannot key on a task at spawn.
-# That selection is a REQUIREMENT, not a description: until the split channel is bound on the
-# live install, this hook selects nothing per agent and delivers no scope-file body, so Tier-2
-# MEMBERSHIP is not yet delivery through any channel.
+# Degraded mode: a part slot needs python3 and a readable registry, this slot needs neither — so an
+# install lacking either receives no scope-file text through any channel.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -93,21 +74,10 @@ SUBAGENT_BUDGET_METER_OFF="${SUBAGENT_BUDGET_METER_OFF:-}"
 # sandbox (the test points it at a fixture dir). Canonical SoT root = ~/.glass-atrium/agents.
 readonly AGENTS_DIR="${INJECT_SCOPE_RULES_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
 
-# Comment-logging source rule file — env-overridable (test fail-open branch). scoped/ is
-# consumed IN PLACE from ~/.glass-atrium/scoped (not the ~/.claude farm), so the DEFAULT
-# constant carries the new path (these client-fired hooks have no env block).
-readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.glass-atrium/scoped/shared-comment-logging.md}"
-
-# style_ref source rule file — DEV-only injection; same env-override + ~/.glass-atrium/scoped default.
-readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-atrium/scoped/scope-dev.md}"
-
-# naming source rule file — DEV(12)+qa-code-reviewer. Same shape as SRC_FILE/STYLEREF_SRC_FILE:
-# scoped/ is consumed IN PLACE from ~/.glass-atrium/scoped (not the ~/.claude skills farm), so the
-# DEFAULT constant carries that path (these client-fired hooks have no env block).
-readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.glass-atrium/scoped/shared-naming.md}"
-
 # turn-budget source rule file — BOTH budget blocks (BUDGET-DEV + BUDGET-ANALYSIS) live in this
-# single scoped/ file; same env-override + ~/.glass-atrium/scoped default as SRC_FILE/STYLEREF_SRC_FILE.
+# single scoped/ file. Env-overridable for the Bats sandbox; scoped/ is consumed IN PLACE from
+# ~/.glass-atrium/scoped (not the ~/.claude farm), so the DEFAULT constant carries that path (these
+# client-fired hooks have no env block).
 # That file also documents the meter wording this hook still holds as a literal (build_meter_block).
 readonly BUDGET_SRC_FILE="${INJECT_SCOPE_RULES_BUDGET_SRC:-${HOME}/.glass-atrium/scoped/shared-turn-budget.md}"
 
@@ -143,29 +113,6 @@ readonly LESSON_MIN_RESIDUAL_BYTES=150
 # available for lesson TEXT is the full-ceiling headroom minus this separator.
 readonly LESSON_JOIN_SEP_BYTES=2
 
-# Comment-logging AGENT-INJECT block boundaries — literal anchors (stable across file edits).
-readonly MARKER_START='<!-- AGENT-INJECT:START -->'
-readonly MARKER_END='<!-- AGENT-INJECT:END -->'
-
-# style_ref AGENT-INJECT block boundaries — DISTINCT marker name so the two blocks never collide.
-readonly STYLEREF_MARKER_START='<!-- AGENT-INJECT:STYLE-REF:START -->'
-readonly STYLEREF_MARKER_END='<!-- AGENT-INJECT:STYLE-REF:END -->'
-
-# minimalism AGENT-INJECT block boundaries — DISTINCT marker name so the blocks never collide.
-readonly MINIMALISM_MARKER_START='<!-- AGENT-INJECT:MINIMALISM:START -->'
-readonly MINIMALISM_MARKER_END='<!-- AGENT-INJECT:MINIMALISM:END -->'
-
-# naming AGENT-INJECT block boundaries — DISTINCT marker name (NEVER the plain AGENT-INJECT marker;
-# that sed-range would collide with the comment-logging block).
-readonly NAMING_MARKER_START='<!-- AGENT-INJECT:NAMING:START -->'
-readonly NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
-
-# plan-gate AGENT-INJECT block boundaries — DISTINCT marker name. Sourced from the SAME file as
-# STYLE-REF / MINIMALISM (STYLEREF_SRC_FILE = scope-dev.md), so it needs no source constant of its
-# own; a distinct marker pair is what keeps the three sed ranges from colliding.
-readonly PLAN_GATE_MARKER_START='<!-- AGENT-INJECT:PLAN-GATE:START -->'
-readonly PLAN_GATE_MARKER_END='<!-- AGENT-INJECT:PLAN-GATE:END -->'
-
 # budget AGENT-INJECT block boundaries — two DISTINCT marker names (one per roster variant), so
 # neither sed range collides with the other nor with any other block.
 readonly BUDGET_DEV_MARKER_START='<!-- AGENT-INJECT:BUDGET-DEV:START -->'
@@ -178,52 +125,13 @@ readonly BUDGET_ANALYSIS_MARKER_END='<!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->'
 readonly WIKI_UNTRUSTED_MARKER_START='<!-- AGENT-INJECT:WIKI-UNTRUSTED:START -->'
 readonly WIKI_UNTRUSTED_MARKER_END='<!-- AGENT-INJECT:WIKI-UNTRUSTED:END -->'
 
-# Comment-logging scope-match — DEV + QA (core-compliance-matrix.md Scope Legend SoT).
-# Space-padded to block partial matches. Update when DEV/QA agents are added.
-readonly INJECT_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-dev-swift "
-
-# style_ref scope-match — DEV ONLY. Declared in lib/styleref-roster.sh, not here: the flag
-# predicate holds only agents that RECEIVED this block responsible, so both readers source one
-# declaration. A plain source, no registry read or JSON parse on the spawn path.
-# shellcheck source=lib/styleref-roster.sh
-source "${BASH_SOURCE%/*}/lib/styleref-roster.sh"
-
-# minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
-readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
-
-# naming scope-match — a curated delivery roster of 13: DEV(12, EXCLUDING dev-swift) +
-# qa-code-reviewer. Space-padded; membership is a hardcoded literal, not read from
-# frontmatter. DELIBERATELY NOT INJECT_AGENTS, which is wider by qa-debugger + dev-swift:
-# qa-code-reviewer alone is the review-enforcement surface, and dev-swift targets native
-# SwiftUI rather than the web naming conventions the delta-core carries. AUTO-RECONCILED
-# by agent_lifecycle inject_sync as a 4th tracked array via a dedicated predicate
-# (dev_roster − {dev-swift} ∪ {qa-code-reviewer}) — a new DEV agent is wired in
-# automatically.
-readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
-
-# plan-gate scope-match — the FULL DEV(13) roster, and deliberately not a subset. The Stage-2 gate's
-# DEV participant is "the DEV agent matching the plan's primary implementation domain"
-# (orchestrator-role.md → Plan Direction Verification (Stage-2 gate) → DEV specialist selection); that
-# rule names domains by EXAMPLE and excludes no DEV agent, and both enforcement hooks validate a
-# declared verify dev-* against a 13-member DEV_SET (enforce-verification-gate.sh /
-# enforce-workflow-verify-stage.sh). So any of the 13 can be selected and a narrower roster would
-# silently deny the duty to whichever one is. Membership is byte-identical to MINIMALISM_AGENTS today,
-# but the two are SEPARATE declarations on purpose (as STYLEREF and MINIMALISM already are): one is a
-# minimalism-reflex scope decision, the other a gate-eligibility decision, and sharing a constant would
-# make either narrowing silently narrow the other. Space-padded.
-# UNTRACKED-manual (no inject_sync reconcile) — a governance residual, NOT a preference: the set IS
-# roster-derivable (it is the DEV roster), so a sixth tracked array in scripts/agent_lifecycle is the
-# right home, and until that lands a newly registered DEV agent must be added HERE BY HAND or it
-# receives no plan-gate block.
-readonly PLAN_GATE_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
-
 # budget-dev scope-match — DEV(13) MINUS the four daemon-carrier agents (dev-nestjs, dev-python,
 # dev-react, dev-shell) whose BODIES keep daemon-evolved in-body budget bullets (the daemon
 # rewrites agent bodies, never hook sources) — injecting on top would double-deliver. Space-padded.
-# AUTO-RECONCILED by agent_lifecycle inject_sync as a 5th tracked array via the predicate
+# AUTO-RECONCILED by agent_lifecycle inject_sync as a tracked array via the predicate
 # dev_roster − _BUDGET_DAEMON_CARRIERS — a new DEV agent is wired in automatically; the carrier
 # constant changes ONLY when the daemon adds/removes an in-body budget bullet (a manual
-# governance change, like NAMING's exclusions).
+# governance change).
 readonly BUDGET_DEV_AGENTS=" glass-atrium-dev-front glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-node glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-swift "
 
 # budget-analysis scope-match — 6 curated analysis consumers. UNTRACKED-manual (no inject_sync
@@ -236,14 +144,10 @@ readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-
 # wiki-untrusted scope-match (H2/R2) — the Bash-holding roles that read the wiki raw store under the
 # standing knowledge-utilization instruction: the analysis / QA / support cluster. Space-padded.
 #
-# BYTE-BUDGET SCOPING (honest limit): the 13 code-DEV agents ALSO hold Bash, but each already carries
-# the near-ceiling seven-block assembly (dev-front 9871B under the 9984 ceiling, pinned by
-# inject-scope-rules-nodrop.bats). A ~942B clause cannot be added to them without shedding a PROVEN
-# block, which the nodrop invariant forbids — so this clause is scoped to the LIGHT Bash-holding
-# wiki-readers, who have ample headroom. The code-DEV agents are NOT the primary raw-store readers
-# (they implement, they do not research); they remain covered by the agent-independent write-side V6
-# control and by advisory-raw-store-read.sh at read time. This roster is a governance decision (like
-# BUDGET_ANALYSIS_AGENTS) — NOT auto-reconciled, so a new heavy DEV agent is deliberately NOT added.
+# The 13 code-DEV agents ALSO hold Bash but are not members: they implement rather than research, so
+# they are not the primary raw-store readers, and they stay covered by the agent-independent write-side
+# V6 control and by advisory-raw-store-read.sh at read time. This roster is a governance decision (like
+# BUDGET_ANALYSIS_AGENTS) — NOT auto-reconciled, so a new DEV agent is not added automatically.
 readonly WIKI_UNTRUSTED_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-reporter glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-design-designer glass-atrium-wiki-curator "
 
 # Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c).
@@ -259,12 +163,11 @@ readonly WIKI_UNTRUSTED_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-r
 # assembly at 9984 bytes is 9984 units, 16 under the 10,000 cap. That 16-unit margin belongs to the
 # NO-SHED path, where no drop marker exists; on the shed path the marker is budgeted INSIDE the
 # ceiling (see INJECT_MARKER_JOIN_BYTES) rather than parked in a margin above it.
-# The ~900B meter fits even the 2KB preview, so meter delivery holds in every degradation mode. The
-# six AGENT-INJECT source blocks are compressed so the worst-case DEV assembly (all seven blocks,
-# <=9935B measured) fits under this ceiling with >=49B headroom — a ceiling raise ALONE cannot fit
-# the pre-compression ~11540B sum, since no compliant ceiling can hold it under the cap; the fit is
-# compression + ceiling together. The zero-drop invariant is pinned by
-# hooks/test/inject-scope-rules-nodrop.bats against the real repo sources. UNIVERSAL: the envelope
+# The ~900B meter fits even the 2KB preview, so meter delivery holds in every degradation mode. With
+# the real sources every slot-1 assembly sits far under this ceiling, even with a full-cap lesson
+# block, so only an oversized source or a synthetic fixture reaches the drop loop; the ceiling still
+# guards that path. The zero-drop property is pinned by hooks/test/inject-scope-rules-nodrop.bats
+# against the real repo sources. UNIVERSAL: the envelope
 # carries no spawn-mode discriminator, so engine/schema-mode spawns are bounded identically to
 # manual ones.
 readonly INJECT_CTX_MAX_BYTES="${INJECT_SCOPE_RULES_CTX_MAX_BYTES:-9984}"
@@ -327,7 +230,9 @@ readonly METER_MIN_MAX_TURNS=4
 # silently under-reported it: an operator asking "did this agent see block X" got a false negative
 # from the tool built to answer exactly that. manifest_block_kept's case still enumerates the same
 # labels (a case cannot be derived from a list); the suite pins it equal to this roster.
-readonly MANIFEST_BLOCK_LABELS="emit meter wiki-untrusted comment styleref minimalism naming plan-gate budget-dev budget-analysis lesson"
+# Kept UNPADDED: a leading space would make it a roster slot to the roster merge's shell-array parser.
+# Older manifest lines naming a label outside this roster are silently absent from --manifest-coverage.
+readonly MANIFEST_BLOCK_LABELS="emit meter wiki-untrusted budget-dev budget-analysis lesson"
 
 # Named aggregation query over the drop sink — reports the block-drop count (numerator, from the drop
 # sink) against spawns-with-injection-attempted (denominator, from the spawn counter) plus the drop
@@ -436,7 +341,7 @@ extract_block() {
 }
 
 # Extract a droppable scope block WHEN AGENT_TYPE is in the roster, emitting one fail-open
-# diagnostic on an empty extraction (markers/file absent). Consolidates the six scope-block
+# diagnostic on an empty extraction (markers/file absent). Consolidates the roster-gated block
 # sites; blocks stay independent — an empty one self-skips (a non-matching roster yields empty
 # with no diagnostic). Args: $1=roster $2=src_file $3=marker_start $4=marker_end $5=label.
 extract_scope_block() {
@@ -527,9 +432,8 @@ build_meter_block() {
 # two in step is a MANUAL obligation with NO mechanical check — nothing greps a shell literal. That
 # file carries the reciprocal pointer so an editor of the rule at least sees that this copy exists.
 # Moving it needs a source seam the test harness can sandbox, which means editing the suites below.
-# BYTE-BUDGET: this printf'd block is byte-budgeted — redteam-#24 9984B injection ceiling
-# (worst-case DEV seven-block assembly <=9935B, >=49B headroom; drop order sheds lesson, then
-# the two budget blocks, before the proven four) + the EMIT+METER 2048B ~2KB-preview cap. Any
+# BYTE-BUDGET: this printf'd block is byte-budgeted — the 9984B injection ceiling (it is a term of
+# the nodrop byte pin) + the EMIT+METER 2048B ~2KB-preview cap. Any
 # rewording MUST re-run hooks/test/inject-scope-rules-nodrop.bats
 # and hooks/test/inject-scope-rules.bats before commit.
 build_emit_format_block() {
@@ -701,9 +605,6 @@ append_drop_log() {
 # tags it instead. Args: $1=block label · stdout: source path (empty for lesson / unknown).
 marker_source_path() {
   case "${1}" in
-    comment) printf '%s' "${SRC_FILE}" ;;
-    styleref | minimalism | plan-gate) printf '%s' "${STYLEREF_SRC_FILE}" ;;
-    naming) printf '%s' "${NAMING_SRC_FILE}" ;;
     budget-dev | budget-analysis) printf '%s' "${BUDGET_SRC_FILE}" ;;
     wiki-untrusted) printf '%s' "${WIKI_UNTRUSTED_SRC_FILE}" ;;
     *) : ;; # lesson (runtime-derived) + any unknown → no path
@@ -754,11 +655,6 @@ block_is_present() {
     wiki-untrusted) [[ -n "${WIKI_UNTRUSTED_BLOCK}" ]] ;;
     budget-analysis) [[ -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
     budget-dev) [[ -n "${BUDGET_DEV_BLOCK}" ]] ;;
-    plan-gate) [[ -n "${PLAN_GATE_BLOCK}" ]] ;;
-    naming) [[ -n "${NAMING_BLOCK}" ]] ;;
-    styleref) [[ -n "${STYLEREF_BLOCK}" ]] ;;
-    minimalism) [[ -n "${MINIMALISM_BLOCK}" ]] ;;
-    comment) [[ -n "${COMMENT_BLOCK}" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -802,7 +698,7 @@ manifest_digest() {
   printf '%s' "${out}"
 }
 
-# C03: the Read-resolvable source a kept block came from. Delegates the six rule-doc blocks to
+# C03: the Read-resolvable source a kept block came from. Delegates the rule-doc blocks to
 # marker_source_path (one declaration, so a manifest path can never drift from the extraction source)
 # and adds the two the drop marker never needs: emit/meter are printf'd in THIS file, and the lesson
 # block's source IS the runtime store (the drop marker withholds that path because a shed lesson
@@ -824,11 +720,6 @@ manifest_block_kept() {
     emit) [[ -n "${EMIT_BLOCK}" ]] ;;
     meter) [[ -n "${METER_BLOCK}" ]] ;;
     wiki-untrusted) [[ "${keep_wiki_untrusted}" -eq 1 && -n "${WIKI_UNTRUSTED_BLOCK}" ]] ;;
-    comment) [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]] ;;
-    styleref) [[ "${keep_styleref}" -eq 1 && -n "${STYLEREF_BLOCK}" ]] ;;
-    minimalism) [[ "${keep_minimalism}" -eq 1 && -n "${MINIMALISM_BLOCK}" ]] ;;
-    naming) [[ "${keep_naming}" -eq 1 && -n "${NAMING_BLOCK}" ]] ;;
-    plan-gate) [[ "${keep_plan_gate}" -eq 1 && -n "${PLAN_GATE_BLOCK}" ]] ;;
     budget-dev) [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]] ;;
     budget-analysis) [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
     lesson) [[ "${keep_lesson}" -eq 1 && -n "${LESSON_BLOCK}" ]] ;;
@@ -908,26 +799,18 @@ join_block() {
 
 # Assemble additionalContext: the two NON-DROPPABLE blocks first (EMIT-FORMAT, then METER), then the
 # wiki-untrusted security clause (H2/R2 — displayed high, right after the meter, so a Bash-holding
-# wiki-reader sees it prominently), followed by the seven droppable scope blocks in display
-# order (comment-logging, style_ref, minimalism, naming, plan-gate, budget-dev, budget-analysis), each
-# gated by its keep-flag. Reads the module-level *_BLOCK variables. Emit-first/meter-second is load-bearing: both
-# must survive the 2KB preview, so neither may sit behind a larger droppable block. Emit leads as the
-# PRIMARY fix.
-# Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming $5=keep_budget_dev
-# $6=keep_budget_analysis $7=keep_lesson $8=keep_wiki_untrusted $9=keep_plan_gate (each 0/1).
-# plan-gate is APPENDED as $9 rather than slotted into display order, matching how keep_wiki_untrusted
-# ($8, displayed third) was already added — call-site arg order is append-only, display order is the
-# function body.
+# wiki-reader sees it prominently), followed by the droppable blocks in display order (budget-dev,
+# budget-analysis, lesson), each gated by its keep-flag. Reads the module-level *_BLOCK variables.
+# Emit-first/meter-second is load-bearing: both must survive the 2KB preview, so neither may sit
+# behind a larger droppable block. Emit leads as the PRIMARY fix.
+# Args: $1=keep_budget_dev $2=keep_budget_analysis $3=keep_lesson $4=keep_wiki_untrusted (each 0/1).
+# Every call site passes all four positionally — a mismatched site does not fail, it shifts the flags.
 # stdout: the assembled context (no trailing newline). DROP PRIORITY (distinct from display order):
 # wiki-untrusted is the FIRST block the drop loop sheds under ceiling pressure (its light roster never
-# overflows, so this is inert in practice but keeps the nodrop invariant safe if the roster ever
-# grows), then the AD-3 lesson block, then the two budget blocks (newest, least proven — their
-# DISJOINT rosters make their mutual order inert), so the proven four (worst-case DEV seven-block
-# assembly <=9935B, >=49B headroom under 9984) always win.
+# overflows, so this is inert in practice), then the AD-3 lesson block, then the two budget blocks
+# (DISJOINT rosters make their mutual order inert).
 assemble_ctx() {
-  local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}"
-  local keep_budget_dev="${5}" keep_budget_analysis="${6}" keep_lesson="${7}" keep_wiki_untrusted="${8}"
-  local keep_plan_gate="${9}"
+  local keep_budget_dev="${1}" keep_budget_analysis="${2}" keep_lesson="${3}" keep_wiki_untrusted="${4}"
   local ctx=""
   if [[ -n "${EMIT_BLOCK}" ]]; then
     ctx="${EMIT_BLOCK}"
@@ -937,21 +820,6 @@ assemble_ctx() {
   fi
   if [[ "${keep_wiki_untrusted}" -eq 1 && -n "${WIKI_UNTRUSTED_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${WIKI_UNTRUSTED_BLOCK}")"
-  fi
-  if [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${COMMENT_BLOCK}")"
-  fi
-  if [[ "${keep_styleref}" -eq 1 && -n "${STYLEREF_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${STYLEREF_BLOCK}")"
-  fi
-  if [[ "${keep_minimalism}" -eq 1 && -n "${MINIMALISM_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${MINIMALISM_BLOCK}")"
-  fi
-  if [[ "${keep_naming}" -eq 1 && -n "${NAMING_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${NAMING_BLOCK}")"
-  fi
-  if [[ "${keep_plan_gate}" -eq 1 && -n "${PLAN_GATE_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${PLAN_GATE_BLOCK}")"
   fi
   if [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${BUDGET_DEV_BLOCK}")"
@@ -965,28 +833,15 @@ assemble_ctx() {
   printf '%s' "${ctx}"
 }
 
-# Seven droppable scope blocks — each extracted only when AGENT_TYPE is in that block's roster (an
-# empty extraction self-skips with a fail-open diagnostic; see extract_scope_block). Rosters DIFFER:
-# comment-logging = DEV+QA · style_ref/minimalism/plan-gate = DEV-only (shared scope-dev.md source) ·
-# naming = DEV(12)+qa-code-reviewer · budget-dev = DEV(9, minus daemon carriers) · budget-analysis = 6
-# curated analysis consumers (shared shared-turn-budget.md source). Blocks are independent — a
-# missing one never suppresses the others (see the *_AGENTS definitions above for exact rosters +
-# rationale).
-COMMENT_BLOCK="$(extract_scope_block "${INJECT_AGENTS}" "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}" "comment-logging")"
-STYLEREF_BLOCK="$(extract_scope_block "${STYLEREF_AGENTS}" "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}" "style_ref")"
-MINIMALISM_BLOCK="$(extract_scope_block "${MINIMALISM_AGENTS}" "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}" "minimalism")"
-NAMING_BLOCK="$(extract_scope_block "${NAMING_AGENTS}" "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}" "naming")"
+# Budget blocks — each extracted only when AGENT_TYPE is in that block's roster (an empty extraction
+# self-skips with a fail-open diagnostic; see extract_scope_block). budget-dev = DEV(9, minus daemon
+# carriers) · budget-analysis = 6 curated analysis consumers, one shared-turn-budget.md source. Blocks
+# are independent — a missing one never suppresses the others.
 BUDGET_DEV_BLOCK="$(extract_scope_block "${BUDGET_DEV_AGENTS}" "${BUDGET_SRC_FILE}" "${BUDGET_DEV_MARKER_START}" "${BUDGET_DEV_MARKER_END}" "budget-dev")"
 BUDGET_ANALYSIS_BLOCK="$(extract_scope_block "${BUDGET_ANALYSIS_AGENTS}" "${BUDGET_SRC_FILE}" "${BUDGET_ANALYSIS_MARKER_START}" "${BUDGET_ANALYSIS_MARKER_END}" "budget-analysis")"
 
-# Stage-2 plan-gate verdict residual — DEV(13), extracted from the SAME scope-dev.md source as
-# style_ref/minimalism. Its Tier-2 home does not reach a DEV agent and no DEV body mirrors it, so this
-# extraction is the ONLY delivery channel the duty has.
-PLAN_GATE_BLOCK="$(extract_scope_block "${PLAN_GATE_AGENTS}" "${STYLEREF_SRC_FILE}" "${PLAN_GATE_MARKER_START}" "${PLAN_GATE_MARKER_END}" "plan-gate")"
-
 # wiki-untrusted security clause (H2/R2) — roster-gated to the Bash-holding wiki-reader cluster (an
-# empty extraction self-skips for every other agent, so their assembly is byte-identical to before —
-# the code-DEV nodrop invariant is untouched).
+# empty extraction self-skips for every other agent).
 WIKI_UNTRUSTED_BLOCK="$(extract_scope_block "${WIKI_UNTRUSTED_AGENTS}" "${WIKI_UNTRUSTED_SRC_FILE}" "${WIKI_UNTRUSTED_MARKER_START}" "${WIKI_UNTRUSTED_MARKER_END}" "wiki-untrusted")"
 
 # AD-3 lesson-recall block — universal (any agent_type), self-skipping on no store / no match
@@ -1009,7 +864,7 @@ fi
 # candidate.
 EMIT_BLOCK="$(build_emit_format_block)"
 
-# Budget-meter block — ALL subagents (universal), independent of the six scope blocks above.
+# Budget-meter block — ALL subagents (universal), independent of the roster-gated blocks above.
 # Kill-switch + un-derivable maxTurns → empty (no meter). A missing meter must not suppress a
 # scope block, and vice-versa.
 METER_BLOCK=""
@@ -1027,44 +882,20 @@ fi
 
 # Combine blocks (EMIT-FORMAT first, METER second), then enforce the byte ceiling. assemble_ctx
 # places the two non-droppable blocks first + appends the kept droppable blocks; the drop loop
-# below removes the lowest-value blocks in the PINNED order lesson → budget-analysis → budget-dev
-# → plan-gate → naming → style-ref → minimalism → comment-logging until the total fits
-# INJECT_CTX_MAX_BYTES.
+# below removes the lowest-value blocks in the PINNED order wiki-untrusted → lesson → budget-analysis
+# → budget-dev until the total fits INJECT_CTX_MAX_BYTES.
 # Neither emit-format nor meter is a drop candidate, so under extreme pressure only those two
 # survive.
-keep_comment=1
-keep_styleref=1
-keep_minimalism=1
-keep_naming=1
 keep_budget_dev=1
 keep_budget_analysis=1
 keep_lesson=1
 keep_wiki_untrusted=1
-keep_plan_gate=1
-CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}" "${keep_plan_gate}")"
+CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
 ctx_bytes="$(byte_len "${CTX}")"
 # wiki-untrusted FIRST — its LIGHT roster (Bash-holding wiki-readers) never overflows, so this shed
-# is inert in practice, but ordering it first keeps the nodrop invariant safe if the roster ever
-# grows to a near-ceiling agent. lesson next (AD-3 best-effort recall), then the two budget blocks
-# (newest, least proven — DISJOINT rosters, mutual order inert), THEN plan-gate, before the proven
-# four (the code-DEV agents are NOT in the wiki-untrusted roster, so their assembly is unchanged).
-#
-# WHY plan-gate sheds AFTER both budget blocks but BEFORE the proven four — the two comparisons that
-# fix its slot, neither of which is "it is newest":
-#   * vs. budget-dev/-analysis: losing a budget block is a PARTIAL loss — the NON-DROPPABLE meter
-#     already carries the hard cap and the 80% ceiling, so the sizing bullets are the remainder of a
-#     rule the agent still receives. Losing plan-gate is a TOTAL loss: measured 2026-09-10, no DEV
-#     body mirrors the Stage-2 duty and the Tier-2 file stating it does not reach the agent, so this
-#     block is the duty's only channel and shedding it returns the agent to knowing nothing about a
-#     verdict that is a hard gate. Total loss outranks partial, so plan-gate survives longer.
-#   * vs. the proven four: it does NOT outrank them, and must not. Shedding a proven block to keep
-#     this one trades one undelivered rule for another, and the nodrop invariant forbids it outright.
-# Inert in practice at today's sizes (worst-case DEV 9871B under the 9984 ceiling, measured
-# 2026-09-13 by driving the hook), exactly as the wiki-untrusted slot above is: the ordering is what
-# happens if a source block later grows, not something a current spawn exercises.
-# Residual, stated because it is the same defect class this block exists to fix: a shed plan-gate is
-# NOT silent — the post-loop T16 marker names it with its scope-dev.md source path and invites a Read
-# — but a marker is recovery, not delivery, and an agent that does not follow it loses the duty.
+# is inert in practice, but ordering it first protects the budget blocks if the roster ever grows to
+# a heavier agent. lesson next (AD-3 best-effort recall), then the two budget blocks (DISJOINT
+# rosters, mutual order inert). Inert with the real sources: only an oversized source reaches it.
 #
 # T16: the loop compares against effective_ceiling (FULL while nothing has shed, then FULL minus the
 # rendered marker for the shed set, recomputed after each shed) and accumulates a marker entry for
@@ -1072,7 +903,7 @@ ctx_bytes="$(byte_len "${CTX}")"
 effective_ceiling="${INJECT_CTX_MAX_BYTES}"
 marker_entries=""
 shed_count=0
-for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate naming styleref minimalism comment; do
+for drop_block in wiki-untrusted lesson budget-analysis budget-dev; do
   [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
 
   # AD-3 lesson TRUNCATE-AND-KEEP short-circuit (attempted BEFORE the full-drop path). The 1200B-
@@ -1085,7 +916,7 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate nam
   # emitted; the ONLY record is a PARTIAL sink row (distinct event token — never counted by the
   # aggregate ' DROP ' grep). Only a sub-floor residual falls through to the normal full-drop path below.
   if [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" ]]; then
-    lesson_base_ctx="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" 0 "${keep_wiki_untrusted}" "${keep_plan_gate}")"
+    lesson_base_ctx="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" 0 "${keep_wiki_untrusted}")"
     lesson_base_bytes="$(byte_len "${lesson_base_ctx}")"
     lesson_residual=$((INJECT_CTX_MAX_BYTES - lesson_base_bytes - LESSON_JOIN_SEP_BYTES))
     if [[ "${lesson_residual}" -ge "${LESSON_MIN_RESIDUAL_BYTES}" ]]; then
@@ -1097,7 +928,7 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate nam
       # flag keeps the record from over-claiming what the child actually received.
       LESSON_TRUNCATED=1
       keep_lesson=1
-      CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}" "${keep_plan_gate}")"
+      CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
       ctx_bytes="$(byte_len "${CTX}")"
       printf '[inject-scope-rules] lesson block truncated to %d-byte residual and kept (agent=%s)\n' "${lesson_residual}" "${AGENT_TYPE}" >&2
       break
@@ -1140,29 +971,21 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev plan-gate nam
     lesson) keep_lesson=0 ;;
     budget-analysis) keep_budget_analysis=0 ;;
     budget-dev) keep_budget_dev=0 ;;
-    plan-gate) keep_plan_gate=0 ;;
-    naming) keep_naming=0 ;;
-    styleref) keep_styleref=0 ;;
-    minimalism) keep_minimalism=0 ;;
-    comment) keep_comment=0 ;;
     *) ;; # unreachable — the loop iterates a fixed literal set; present only to satisfy SC2249.
   esac
-  CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}" "${keep_plan_gate}")"
+  CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
   ctx_bytes="$(byte_len "${CTX}")"
   # After a PRESENT lesson's FULL-drop, BREAK *iff the lesson-free assembly now fits the FULL ceiling*.
-  # For a real agent the nodrop invariant pins that base <= the FULL ceiling, so the marker budgeting
-  # (effective_ceiling = FULL - 2 - the rendered marker) is the ONLY reason the top-of-loop guard would
-  # keep going and cascade into a proven block whenever the base sits inside the marker band — measured
-  # on dev-front + a real lesson: the lesson sheds, the one-entry marker renders at 167B so the
-  # effective ceiling falls to 9815, and the lesson-free base is 9871B, ABOVE it. Without this break a
-  # PROVEN block would shed to pay for a marker. With it, the marker is what yields: the post-loop
-  # size check finds 9871+2+167 = 10040 > 9984, omits the marker and records MARKERLOST, leaving the
-  # 7-proven-blocks-never-shed invariant intact. Nothing is parked ABOVE the full ceiling any more.
+  # The marker budgeting (effective_ceiling = FULL - 2 - the rendered marker) is otherwise the ONLY
+  # reason the top-of-loop guard would keep going, cascading into a budget block whenever the base
+  # sits inside the marker band — a block shed purely to pay for a marker. With the break the marker
+  # is what yields: the post-loop size check omits it and records MARKERLOST. Nothing is parked ABOVE
+  # the full ceiling.
   # THREE guards, all required: (a) this IS the lesson iteration, (b) a lesson was actually present
   # (else the loop must proceed to shed the lower-priority blocks — the forced-shed path the marker /
   # dropsink suites exercise), (c) the lesson-free ctx already fits the FULL ceiling (a SYNTHETIC
-  # over-full assembly, e.g. a 9000B test comment block, is genuinely too big and MUST keep shedding
-  # past the lesson).
+  # over-full assembly, e.g. an oversized budget-dev fixture, is genuinely too big and MUST keep
+  # shedding past the lesson).
   [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" && "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
 done
 

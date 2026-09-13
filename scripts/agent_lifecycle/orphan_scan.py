@@ -236,20 +236,20 @@ def _check_inject_list_mismatch(
 ) -> list[Finding]:
     """Mode 5: a tracked roster array out of sync with the DEV roster (B4).
 
-    The tracked set is readers._TRACKED_INJECT_ARRAYS: INJECT_AGENTS (DEV + QA),
-    STYLEREF_AGENTS and MINIMALISM_AGENTS (the DEV roster whole), NAMING_AGENTS
-    (DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger) and
-    BUDGET_DEV_AGENTS (DEV minus the daemon carriers). The untracked governance
-    rosters are not linted — their membership is not roster-derivable, so a
-    predicate would be a second copy of the array.
+    The tracked set is readers._TRACKED_INJECT_ARRAYS: STYLEREF_AGENTS (the DEV
+    roster whole — the style_ref review_flag roster, not an injection roster)
+    and BUDGET_DEV_AGENTS (DEV minus the daemon carriers). The untracked
+    governance rosters are not linted — their membership is not
+    roster-derivable, so a predicate would be a second copy of the array.
 
     The expected sets come from inject_sync._expected_membership — the SAME
     function the fix applies, not a mirror of it, so detection and the fix
     cannot disagree. This mode does not decide whether an agent receives its
     scope RULES (that follows the registry `rules` object, linted by
     rules-membership-mismatch); it decides whether the agent is in the rosters
-    that gate the injected BLOCKS. Lint-only — a fix is reported to a human/DEV,
-    never auto-edited here (the reconcile-inject CLI verb owns writes).
+    that gate the BUDGET-DEV block and the style_ref omission flag. Lint-only —
+    a fix is reported to a human/DEV, never auto-edited here (the
+    reconcile-inject CLI verb owns writes).
     """
     try:
         arrays = parse_inject_arrays(paths)

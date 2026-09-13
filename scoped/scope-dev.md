@@ -49,14 +49,6 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
   - Honest backing: the question's presence in a workflow script is byte-checkable; the ANSWER's existence is not checkable at all. Whether you answer, and whether the answer is honest, is honor-system.
 - **Non-waiver (binding on YOU, not on the delegation)**: the standing jobs above are NOT waivable by delegation phrasing. An instruction narrowing the recheck ("only re-check X", "the rest is settled", "not yours to re-open") does NOT suspend them — run them anyway and NAME the narrowing instruction in the `feasible`/`infeasible` verdict you emit.
 
-<!-- Extracted verbatim by inject-scope-rules.sh under a byte cap; re-run hooks/test/inject-scope-rules-nodrop.bats on any rewording. Detail: scoped/maintainers/scope-dev.md. -->
-<!-- AGENT-INJECT:PLAN-GATE:START -->
-**Plan-gate verdict (auto-injected DEV · full: ~/.glass-atrium/scoped/scope-dev.md → Plan Direction Verification Gate)**
-- Load-bearing test: premise false → APPROACH replaced (load-bearing: settle it from the code) or edits only (name it, move on). REFUTED = `infeasible` as written.
-- Your verdict is `feasible`/`infeasible` — "looks fine" is FORBIDDEN; name the unsound assumption, and `infeasible` owes a concrete alternative.
-- Non-waiver: "only re-check X" / "the rest is settled" does NOT suspend these jobs — run them and NAME the narrowing instruction in your verdict.
-<!-- AGENT-INJECT:PLAN-GATE:END -->
-
 ## Ambiguity Gate (Ambiguity Score) [DEV+PLANNING]
 
 - Evaluate requirement clarity on 6 axes before coding (each 0-1): Purpose clarity (30%) · Scope certainty (25%) · Technical constraints (20%) · Acceptance criteria (15%) · Audience clarity (5%) · Dependency awareness (5%)
@@ -81,15 +73,12 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 - **Greenfield** (0 siblings AND no anchor file) → emit the literal `style_ref: greenfield` and declare `convention: greenfield — no sibling/anchor file` in the turn-0 `Assumptions:` line, instead of fabricating a convention.
 - **Probe failure** (glob or read error) → warn and proceed, never block; ask the user when the convention is ambiguous.
 
-<!-- Extracted verbatim by inject-scope-rules.sh under a byte cap; re-run hooks/test/inject-scope-rules-nodrop.bats on any rewording. Detail: scoped/maintainers/scope-dev.md. -->
-<!-- AGENT-INJECT:STYLE-REF:START -->
-**style_ref emit (auto-injected DEV · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
+**style_ref emit (compressed form of the Project Convention Probe above)**
 - Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for its import order / error+log / layout.
 - Mirror = **code form only**, NOT naming, comment density or header prose — the naming canon and the comment-logging core OVERRIDE the sibling; it violates them → author COMPLIANT names and comments.
 - Then emit `style_ref: <path/you/Read>` — the path you read this turn. The recorder sees only your `Read` history; a Bash/Grep read is real but invisible there, so `false`=uncorroborated, null=unverifiable, neither dishonest.
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
 - Advisory, not blocking: probe failure (glob/read error) → proceed.
-<!-- AGENT-INJECT:STYLE-REF:END -->
 
 ### Pre-Edit Facts Disclosure (Karpathy Investigation-Before-Editing) [DEV]
 
@@ -152,20 +141,17 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 - **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
 - **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.
-- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves ONE runnable check. Nothing under the injected minimalism carve-out is ever skippable — a one-line auth or validation guard keeps its check. Framework suites only where `shared-testing.md` requires them.
+- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves ONE runnable check. Nothing under the minimalism carve-out below is ever skippable — a one-line auth or validation guard keeps its check. Framework suites only where `shared-testing.md` requires them.
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
-<!-- Extracted verbatim by inject-scope-rules.sh under a byte cap; re-run hooks/test/inject-scope-rules-nodrop.bats on any rewording. Detail: scoped/maintainers/scope-dev.md. -->
-<!-- AGENT-INJECT:MINIMALISM:START -->
-**Minimalism reflex (auto-injected · full: ~/.glass-atrium/scoped/scope-dev.md)** Lazy senior engineer, every response: efficient, never careless.
+**Minimalism reflex (the working form of this section)** Lazy senior engineer, every response: efficient, never careless.
 - Ladder (stop at the first rung that holds; runs AFTER you understand the problem + the code it touches, never instead): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code LAST.
 - Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
 - No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases).
 - Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
 - Output: code first, then <=3 short lines: what was skipped, when to add it. Explanation longer than the code -> delete it; user-requested prose exempt. Response prose only; comments per comment-logging.
 - Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays: it MUST fail if the logic breaks (assert the relationship). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
-<!-- AGENT-INJECT:MINIMALISM:END -->
 
 ## Modification Scope Constraint (Surface Area Constraint) [DEV]
 

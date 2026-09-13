@@ -1,26 +1,19 @@
 #!/usr/bin/env bats
-# inject-scope-rules-nodrop.bats — recurrence-prevention pin for the SubagentStart injection ceiling.
+# inject-scope-rules-nodrop.bats — recurrence-prevention pin for the SubagentStart slot-1 ceiling.
 #
-#   Root cause (redteam finding #24): the assembled worst-case DEV additionalContext (emit + meter +
-#   comment + style_ref + minimalism + naming + separators) exceeded INJECT_CTX_MAX_BYTES, so the
-#   drop-loop silently shed STYLE-REF (all 13 DEV) and NAMING (12 DEV) — those scope rules never
-#   reached the subagents. The fix is compression of the AGENT-INJECT source blocks + a ceiling
-#   raise to 9984 bytes, which for an all-ASCII assembly is 9984 units — 16 under the measured
-#   10,000-unit engine cap (see ENGINE_MAX_UNITS below). This test PINS the invariant:
-#   assembled from the REAL repo sources (NOT hermetic fixtures) with the meter ON (worst case), the
-#   worst-case DEV assembly for every NAMING-roster DEV member fits the ceiling with ZERO drop-loop
-#   iterations — every roster-due block survives (EIGHT blocks for a BUDGET_DEV_AGENTS member like
-#   dev-front, since the Stage-2 PLAN-GATE block joined the assembly). It is satisfiable ONLY with the
-#   compression; a ceiling raise alone cannot fit the pre-compression ~11540B sum. A future block edit
-#   that re-inflates the assembly past the ceiling re-triggers a drop and fails this test. The
-#   BUDGET-DEV and PLAN-GATE source blocks additionally carry byte contracts (<=300B / <=664B) pinned
-#   numerically below.
+#   Slot 1 carries the non-droppable emit/meter pair plus the roster-gated wiki-untrusted, budget and
+#   lesson blocks; scope-file text rides the part slots. This suite PINS, against the REAL repo
+#   sources with the meter ON: every DEV agent's slot 1 is EXACTLY emit + meter (+ budget-dev for a
+#   BUDGET_DEV_AGENTS member) with ZERO drops — a byte sum measured in the same run, so any extra
+#   block (a retired one creeping back, or a new one) breaks equality. The BUDGET-DEV source block
+#   additionally carries a byte contract pinned numerically below.
 #
-#   REAL-SOURCE wiring: the hook's INJECT_SCOPE_RULES_SRC / STYLEREF_SRC / NAMING_SRC / BUDGET_SRC /
-#   AGENTS_DIR env overrides are pointed at the repo files + real agents/ frontmatter (maxTurns →
-#   the real meter size). Meter is LEFT ON (SUBAGENT_BUDGET_METER_OFF unset) — the meter is part of
-#   the worst-case sum. INJECT_SCOPE_RULES_DROP_LOG is redirected into the Bats tmpdir so any marker
-#   write never touches the real ~/.glass-atrium/logs.
+#   REAL-SOURCE wiring: the hook's BUDGET_SRC / WIKI_UNTRUSTED_SRC / AGENTS_DIR env overrides point
+#   at the repo files + real agents/ frontmatter (maxTurns → the real meter size). The drop log,
+#   spawn counter and manifest sink are redirected into the Bats tmpdir.
+#
+#   HOST INVARIANCE: no expectation here is a literal byte count. The assembled context carries no
+#   absolute path (the block leads use `~/`), and every size is derived from an emit of the same run.
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
 #   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
@@ -32,33 +25,14 @@ HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"
 REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
 
 # Real repo sources (single source of truth for the injected blocks).
-COMMENT_SRC="${REPO_ROOT}/scoped/shared-comment-logging.md"
-STYLEREF_SRC="${REPO_ROOT}/scoped/scope-dev.md"          # STYLE-REF + MINIMALISM both live here
-NAMING_SRC="${REPO_ROOT}/scoped/shared-naming.md"
 BUDGET_SRC="${REPO_ROOT}/scoped/shared-turn-budget.md"   # BUDGET-DEV + BUDGET-ANALYSIS both live here
+WIKI_UNTRUSTED_SRC="${REPO_ROOT}/rules/glass-atrium/core-wiki-reference.md"
 AGENTS_DIR="${REPO_ROOT}/agents"
 
 # The ceiling constant the hook enforces — kept in sync with inject-scope-rules.sh:INJECT_CTX_MAX_BYTES.
 CEILING=9984
-# The D3 plan bound for the worst-case dev-front seven-block assembly (9635B six-block sum + the
-# <=300B byte-contracted BUDGET-DEV block) — tighter than CEILING, pinned so source-block growth
-# surfaces here BEFORE it reaches the ceiling itself.
-DEV_FRONT_MAX_BYTES=9935
-# BUDGET-DEV source-block byte contract (hard bound; target 260B) — the D3 ceiling math input: the
-# 9984 ceiling admits the seven-block assembly ONLY while this block stays <=300B.
+# BUDGET-DEV source-block byte contract (hard bound; target 260B) — a guard on this block's growth.
 BUDGET_DEV_MAX_BYTES=300
-# PLAN-GATE source-block byte contract. RE-DERIVED BY BISECT against the real assembly on
-# 2026-09-13 (not inherited from a relayed figure): driving the hook for dev-front with a synthetic
-# PLAN-GATE body of N bytes, N=700 assembles to exactly 9984 and sheds NOTHING, while N=701 sheds
-# budget-dev ALONE — one byte over the ceiling costs exactly one block, because the marker is
-# budgeted from its RENDERED size (132B for that one entry, ceiling 9984 -> 9850) and the 9739B
-# remainder already fits, so the loop stops. The bound stays at the tighter 664: it is a guard on
-# this block, not a licence to grow to the cliff, and the block ships at 586B.
-#   NOTE the tighter bound bites first IN COMPOSITION: DEV_FRONT_MAX_BYTES above pins the whole
-#   dev-front assembly at 9935, which today sits at 9871 — so plan-gate growth past ~650B fails that
-#   pin before reaching this one. Both are kept: this one is the property of THIS block against the
-#   ceiling, that one catches growth anywhere in the assembly.
-PLAN_GATE_MAX_BYTES=664
 # Engine persist cap: additionalContext larger than this is file-persisted + delivered as a ~2KB
 # preview (stripping later blocks). 10,000 UTF-16 code UNITS, INCLUSIVE — measured by the W1 channel
 # probe on a SINGLE host build, which is the whole provenance: no producer-side check can see a real
@@ -74,25 +48,27 @@ LESSON_HEADER_NEEDLE="Prior-lesson recall"
 LESSON_KEPT_LINE="- [bug-fix] KEPTLINE_ONE_WHOLE"
 DROP_MARKER_NEEDLE="Injection shed"
 
-# Stable, unique first-line needles for each of the eight blocks (proves none was dropped).
+# Stable first-line needles for the slot-1 blocks.
 EMIT_NEEDLE="REQUIRED by the outcome recorder"
 METER_NEEDLE="Turn-budget meter"
-COMMENT_NEEDLE="Comment-rule core"
-STYLEREF_NEEDLE="style_ref emit"
-MINIMALISM_NEEDLE="Minimalism reflex"
-NAMING_NEEDLE="Naming delta-core"
 BUDGET_DEV_NEEDLE="Budget sizing (auto-injected DEV"
 BUDGET_ANALYSIS_NEEDLE="Budget sizing (auto-injected analysis"
-PLAN_GATE_NEEDLE="Plan-gate verdict (auto-injected DEV"
+WIKI_UNTRUSTED_NEEDLE="Wiki raw-store untrusted-data clause"
 
-# The 12 NAMING-roster DEV agents — the worst case, receiving the six proven blocks (emit + meter +
-# comment + style_ref + minimalism + naming) PLUS budget-dev for BUDGET_DEV_AGENTS members (the four
-# daemon carriers below are excluded from that roster). dev-swift (no naming, budget-dev member) and
-# qa-* are covered separately below.
-WORST_DEV_AGENTS=(
+# Leads of the five blocks slot 1 no longer extracts — the part slots deliver their sources.
+RETIRED_NEEDLES=(
+  "Comment-rule core"
+  "style_ref emit"
+  "Minimalism reflex"
+  "Naming delta-core"
+  "Plan-gate verdict"
+)
+
+DEV_AGENTS=(
   glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap
   glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python
   glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell
+  glass-atrium-dev-swift
 )
 # The four daemon-carrier agents excluded from BUDGET_DEV_AGENTS (their bodies keep daemon-evolved
 # in-body budget bullets) — kept in sync with inject-scope-rules.sh:BUDGET_DEV_AGENTS rationale.
@@ -103,38 +79,16 @@ setup() {
   # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
   # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
   # Every path below is one the repository always ships, so its absence is drift and FAILS.
-  [[ -f "${HOOK_SH}" ]] || {
-    printf 'injector absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${HOOK_SH}" >&2
-    return 1
-  }
+  local required
+  for required in "${HOOK_SH}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}"; do
+    [[ -e "${required}" ]] || {
+      printf 'pin target absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+        "${required}" >&2
+      return 1
+    }
+  done
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
-  [[ -f "${COMMENT_SRC}" ]] || {
-    printf 'comment-logging source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${COMMENT_SRC}" >&2
-    return 1
-  }
-  [[ -f "${STYLEREF_SRC}" ]] || {
-    printf 'scope-dev source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${STYLEREF_SRC}" >&2
-    return 1
-  }
-  [[ -f "${NAMING_SRC}" ]] || {
-    printf 'naming source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${NAMING_SRC}" >&2
-    return 1
-  }
-  [[ -f "${BUDGET_SRC}" ]] || {
-    printf 'turn-budget source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${BUDGET_SRC}" >&2
-    return 1
-  }
-  [[ -d "${AGENTS_DIR}" ]] || {
-    printf 'agents dir absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${AGENTS_DIR}" >&2
-    return 1
-  }
 
   # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
   # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`).
@@ -146,26 +100,23 @@ setup() {
 }
 
 # Drive the hook with a SubagentStart envelope for $1, assembling from the REAL repo sources with the
-# meter ON. The drop log is redirected into the Bats tmpdir.
+# meter ON. $2 (optional) = lessons.json path; $3 (optional) = drop log path.
 run_hook_real() {
-  local agent="${1}"
+  local agent="${1}" lessons="${2:-/nonexistent}" droplog="${3:-${BATS_TEST_TMPDIR}/inject-drop.log}"
   run bash -c '
-    agent="$1"; hook="$2"; comment="$3"; styleref="$4"; naming="$5"; budget="$6"; agents="$7"; droplog="$8"
+    agent="$1"; hook="$2"; budget="$3"; wiki="$4"; agents="$5"; droplog="$6"; lessons="$7"
     payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
-    printf "%s" "${payload}" | env \
-      INJECT_SCOPE_RULES_SRC="${comment}" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC="${styleref}" \
-      INJECT_SCOPE_RULES_NAMING_SRC="${naming}" \
+    printf "%s" "${payload}" | env -u SUBAGENT_BUDGET_METER_OFF \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki}" \
       INJECT_SCOPE_RULES_AGENTS_DIR="${agents}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       bash "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${BUDGET_SRC}" \
-    "${AGENTS_DIR}" "${BATS_TEST_TMPDIR}/inject-drop.log"
+  ' _ "${agent}" "${HOOK_SH}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" "${droplog}" "${lessons}"
 }
 
-# HERMETIC lesson driver: meter OFF + all scope sources /nonexistent, so the assembled base is JUST
+# HERMETIC lesson driver: meter OFF + every block source /nonexistent, so the assembled base is JUST
 # the emit block. That makes the lesson residual a precise function of the injected ceiling, letting a
 # test dial the truncate-keep / full-drop boundary deterministically without depending on real-source
 # sizes. $1=agent $2=lessons.json path $3=ceiling override.
@@ -176,9 +127,6 @@ run_hook_lesson() {
     payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
     printf "%s" "${payload}" | env \
       SUBAGENT_BUDGET_METER_OFF=1 \
-      INJECT_SCOPE_RULES_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
@@ -189,56 +137,47 @@ run_hook_lesson() {
   ' _ "${agent}" "${HOOK_SH}" "${lessons}" "${ceiling}" "${BATS_TEST_TMPDIR}/inject-drop-lesson.log"
 }
 
-# REAL-SOURCE lesson driver: like run_hook_real (meter ON, real repo sources) but with a populated
-# lessons store, so the nodrop invariant is verified with a lesson present beside the proven blocks.
-run_hook_real_lesson() {
-  local agent="${1}" lessons="${2}"
-  run bash -c '
-    agent="$1"; hook="$2"; comment="$3"; styleref="$4"; naming="$5"; budget="$6"; agents="$7"; droplog="$8"; lessons="$9"
-    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
-    printf "%s" "${payload}" | env \
-      INJECT_SCOPE_RULES_SRC="${comment}" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC="${styleref}" \
-      INJECT_SCOPE_RULES_NAMING_SRC="${naming}" \
-      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
-      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_AGENTS_DIR="${agents}" \
-      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
-      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
-      bash "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${BUDGET_SRC}" \
-    "${AGENTS_DIR}" "${BATS_TEST_TMPDIR}/inject-drop-realL.log" "${lessons}"
-}
-
-# Emit-only base byte count for an agent (meter OFF, no scope, no lesson). The hermetic lesson
-# residual = ceiling - this base - 2 (the join separator), so tests compute ceilings from it.
-measure_base_bytes() {
-  local agent="${1}" out
-  out="$(printf '%s' "$(jq -nc --arg a "${agent}" '{agent_type:$a}')" | env \
-    SUBAGENT_BUDGET_METER_OFF=1 \
-    INJECT_SCOPE_RULES_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+# The additionalContext text one hook run emits for $1 under the extra env assignments in $2..; no
+# lesson store, a sandboxed drop log. stdout: the context, no trailing newline.
+emit_ctx() {
+  local agent="${1}"
+  shift
+  printf '%s' "$(jq -nc --arg a "${agent}" '{agent_type:$a}')" | env -u SUBAGENT_BUDGET_METER_OFF "$@" \
     INJECT_SCOPE_RULES_DROP_LOG="${BATS_TEST_TMPDIR}/measure-drop.log" \
     INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_CTX_MAX_BYTES=20000 \
-    bash "${HOOK_SH}" 2>/dev/null)"
-  printf '%s' "${out}" | python3 -c '
-import sys, json
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        d = json.loads(line)
-    except ValueError:
-        continue
-    sys.stdout.write(d.get("hookSpecificOutput", {}).get("additionalContext", ""))
-    break
-' 2>/dev/null | wc -c | tr -cd '0-9'
+    bash "${HOOK_SH}" 2>/dev/null | jq -j '.hookSpecificOutput.additionalContext // empty'
+}
+
+# Emit-only context (meter OFF, no block source, no lesson).
+emit_base_ctx() {
+  emit_ctx "${1}" SUBAGENT_BUDGET_METER_OFF=1 \
+    INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent INJECT_SCOPE_RULES_CTX_MAX_BYTES=20000
+}
+
+# Emit + separator + meter context (real maxTurns frontmatter, no block source).
+emit_meter_ctx() {
+  emit_ctx "${1}" \
+    INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_AGENTS_DIR="${AGENTS_DIR}" INJECT_SCOPE_RULES_CTX_MAX_BYTES=20000
+}
+
+# Emit-only base byte count. The hermetic lesson residual = ceiling - this base - 2 (the join
+# separator), so tests compute ceilings from it.
+measure_base_bytes() {
+  emit_base_ctx "${1}" | wc -c | tr -cd '0-9'
+}
+
+measure_emit_meter_bytes() {
+  emit_meter_ctx "${1}" | wc -c | tr -cd '0-9'
+}
+
+# Extract the BUDGET-DEV block exactly as the hook's extract_block does (sed range + marker strip; the
+# command substitution drops the trailing newline, as the hook's own capture does). stdout: block text.
+extract_budget_dev_block() {
+  sed -n '/<!-- AGENT-INJECT:BUDGET-DEV:START -->/,/<!-- AGENT-INJECT:BUDGET-DEV:END -->/p' "${BUDGET_SRC}" \
+    | grep -vxF '<!-- AGENT-INJECT:BUDGET-DEV:START -->' \
+    | grep -vxF '<!-- AGENT-INJECT:BUDGET-DEV:END -->'
 }
 
 # Write a lessons.json fixture with a SHORT first CTM line (KEPTLINE_ONE_WHOLE) plus a long filler
@@ -272,7 +211,7 @@ for line in sys.stdin:
         d = json.loads(line)
     except ValueError:
         continue
-    print(d.get("hookSpecificOutput", {}).get("additionalContext", ""))
+    sys.stdout.write(d.get("hookSpecificOutput", {}).get("additionalContext", ""))
     break
 ' 2>/dev/null
 }
@@ -289,17 +228,25 @@ assert_ctx_not_contains() {
   local ctx; ctx="$(ctx_of)"
   [[ "${ctx}" != *"${1}"* ]] || { echo "expected additionalContext to NOT contain [${1}]" >&2; return 1; }
 }
+assert_no_retired_block() {
+  local needle
+  for needle in "${RETIRED_NEEDLES[@]}"; do
+    assert_ctx_not_contains "${needle}" || return 1
+  done
+}
 # Zero drop-loop iterations: the hook prints the drop diagnostic to stderr (merged into $output by
 # bats) ONLY when it sheds a block. Its ABSENCE proves no block was dropped.
 assert_no_drop() {
   [[ "${output}" != *"injected context exceeded"* ]] || { echo "a block was DROPPED (ceiling exceeded): ${output}" >&2; return 1; }
   [[ "${output}" != *"dropped "* ]] || { echo "a block was DROPPED: ${output}" >&2; return 1; }
 }
+ctx_bytes_of() {
+  printf '%s' "$(ctx_of)" | wc -c | tr -cd '0-9'
+}
 # The assembled context byte length must not exceed the ceiling (byte-accurate via wc -c, matching
 # the hook's own byte_len). Directly corroborates the fit.
 assert_ctx_within_ceiling() {
-  local ctx bytes; ctx="$(ctx_of)"
-  bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
+  local bytes; bytes="$(ctx_bytes_of)"
   [[ -n "${bytes}" && "${bytes}" -le "${CEILING}" ]] || { echo "ctx ${bytes}B exceeds ceiling ${CEILING}B" >&2; return 1; }
 }
 # The assembled context must decode as valid UTF-8. A mid-multibyte truncation would emit invalid
@@ -311,8 +258,7 @@ assert_ctx_valid_utf8() {
   printf '%s' "${ctx}" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' 2>/dev/null \
     || { echo "ctx is NOT valid UTF-8 (mid-codepoint truncation)" >&2; return 1; }
 }
-# The assembled context must fit the ENGINE persist cap, counted in the engine's own unit. The drop
-# marker is budgeted inside the hook's ceiling now, so nothing legitimately overflows into a margin.
+# The assembled context must fit the ENGINE persist cap, counted in the engine's own unit.
 assert_ctx_within_engine() {
   local ctx units; ctx="$(ctx_of)"
   units="$(printf '%s' "${ctx}" | python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le"))//2)')"
@@ -344,84 +290,74 @@ assert_ctx_no_replacement_char() {
     || { echo "ctx contains U+FFFD replacement char — mid-codepoint corruption leaked through jq" >&2; return 1; }
 }
 
-# (a) Every NAMING-roster DEV member: the six proven blocks present, budget-dev present for roster
-# members / ABSENT for the four daemon carriers, zero drops, within ceiling.
+# (a) Every DEV agent: slot 1 is exactly emit + meter (+ budget-dev for a roster member), zero drops.
+#     The sum is derived per agent from this run's own emits, so it holds on any host and any root.
 
-@test "worst-case DEV agents (real sources, meter ON) → all due blocks, ZERO drops, within ceiling" {
-  for agent in "${WORST_DEV_AGENTS[@]}"; do
+@test "every DEV agent (real sources, meter ON) → slot 1 == emit + 2 + meter [+ 2 + budget-dev], zero drops" {
+  local agent emit_meter_bytes budget_bytes expected actual budget_block
+  budget_block="$(extract_budget_dev_block)"
+  [[ "${budget_block}" == *"${BUDGET_DEV_NEEDLE}"* ]] || { echo "BUDGET-DEV extraction empty (markers moved?)" >&2; return 1; }
+  budget_bytes="$(printf '%s' "${budget_block}" | wc -c | tr -cd '0-9')"
+  for agent in "${DEV_AGENTS[@]}"; do
+    emit_meter_bytes="$(measure_emit_meter_bytes "${agent}")"
+    [[ -n "${emit_meter_bytes}" && "${emit_meter_bytes}" -gt "$(measure_base_bytes "${agent}")" ]] \
+      || { echo "FAIL agent=${agent} (meter did not add bytes: ${emit_meter_bytes})" >&2; return 1; }
     run_hook_real "${agent}"
-    assert_status 0                           || { echo "FAIL agent=${agent} (status)" >&2; return 1; }
-    assert_no_drop                            || { echo "FAIL agent=${agent} (drop)" >&2; return 1; }
-    assert_ctx_within_ceiling                 || { echo "FAIL agent=${agent} (ceiling)" >&2; return 1; }
-    assert_ctx_contains "${EMIT_NEEDLE}"      || { echo "FAIL agent=${agent} (emit)" >&2; return 1; }
-    assert_ctx_contains "${METER_NEEDLE}"     || { echo "FAIL agent=${agent} (meter)" >&2; return 1; }
-    assert_ctx_contains "${COMMENT_NEEDLE}"   || { echo "FAIL agent=${agent} (comment)" >&2; return 1; }
-    assert_ctx_contains "${STYLEREF_NEEDLE}"  || { echo "FAIL agent=${agent} (style_ref)" >&2; return 1; }
-    assert_ctx_contains "${MINIMALISM_NEEDLE}" || { echo "FAIL agent=${agent} (minimalism)" >&2; return 1; }
-    assert_ctx_contains "${NAMING_NEEDLE}"    || { echo "FAIL agent=${agent} (naming)" >&2; return 1; }
-    assert_ctx_contains "${PLAN_GATE_NEEDLE}" || { echo "FAIL agent=${agent} (plan-gate)" >&2; return 1; }
+    assert_status 0                         || { echo "FAIL agent=${agent} (status)" >&2; return 1; }
+    assert_no_drop                          || { echo "FAIL agent=${agent} (drop)" >&2; return 1; }
+    assert_ctx_contains "${EMIT_NEEDLE}"    || { echo "FAIL agent=${agent} (emit)" >&2; return 1; }
+    assert_ctx_contains "${METER_NEEDLE}"   || { echo "FAIL agent=${agent} (meter)" >&2; return 1; }
+    assert_no_retired_block                 || { echo "FAIL agent=${agent} (retired block present)" >&2; return 1; }
     if [[ "${BUDGET_DEV_CARRIERS}" == *" ${agent} "* ]]; then
       assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}" || { echo "FAIL agent=${agent} (budget-dev leaked to carrier)" >&2; return 1; }
+      expected="${emit_meter_bytes}"
     else
       assert_ctx_contains "${BUDGET_DEV_NEEDLE}"     || { echo "FAIL agent=${agent} (budget-dev)" >&2; return 1; }
+      expected=$((emit_meter_bytes + 2 + budget_bytes))
     fi
+    actual="$(ctx_bytes_of)"
+    [[ "${actual}" -eq "${expected}" ]] || {
+      echo "FAIL agent=${agent}: slot 1 is ${actual}B, the measured block sum is ${expected}B — an extra or missing block" >&2
+      return 1
+    }
   done
 }
 
-# (b) The canonical worst-case member (maxTurns=80 → largest meter; seven blocks incl. budget-dev)
-# as an explicit single case, numerically bounded at the D3 plan figure (tighter than the ceiling).
+# (b) The pin's own non-vacuity: the emit+meter measurement really is emit + 2 + meter, i.e. emit-only
+#     is a strict prefix of it. Without this, (a) could compare two equally wrong sums.
 
-@test "dev-front (maxTurns=80 worst case) → eight blocks incl. BUDGET-DEV + PLAN-GATE, zero drops, <= ${DEV_FRONT_MAX_BYTES}B" {
+@test "dev-front measurement chain: emit-only + separator opens emit + meter, which opens slot 1" {
+  emit_base_ctx glass-atrium-dev-front >"${BATS_TEST_TMPDIR}/emit.txt"
+  emit_meter_ctx glass-atrium-dev-front >"${BATS_TEST_TMPDIR}/emit-meter.txt"
   run_hook_real "glass-atrium-dev-front"
-  assert_status 0                             || return 1
-  assert_no_drop                              || return 1
-  assert_ctx_contains "${STYLEREF_NEEDLE}"    || return 1
-  assert_ctx_contains "${NAMING_NEEDLE}"      || return 1
-  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"  || return 1
-  assert_ctx_contains "${PLAN_GATE_NEEDLE}"   || return 1
-  assert_ctx_within_ceiling                   || return 1
-  local ctx bytes; ctx="$(ctx_of)"
-  bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
-  [[ -n "${bytes}" && "${bytes}" -le "${DEV_FRONT_MAX_BYTES}" ]] || {
-    echo "dev-front assembly ${bytes}B exceeds the D3 plan bound ${DEV_FRONT_MAX_BYTES}B" >&2
+  assert_status 0 || return 1
+  ctx_of >"${BATS_TEST_TMPDIR}/slot1.txt"
+  python3 -c '
+import sys
+emit, em, slot1 = (open(p, "rb").read() for p in sys.argv[1:4])
+meter_lead = b"\n\n**" + sys.argv[4].encode()
+sys.exit(0 if emit and em.startswith(emit + meter_lead) and slot1.startswith(em) else 1)
+' "${BATS_TEST_TMPDIR}/emit.txt" "${BATS_TEST_TMPDIR}/emit-meter.txt" "${BATS_TEST_TMPDIR}/slot1.txt" "${METER_NEEDLE}" || {
+    echo "measurement chain broken: emit + separator + meter lead does not open emit+meter, or emit+meter does not open slot 1" >&2
     return 1
   }
 }
 
-# (c) qa-code-reviewer (NAMING + BUDGET-ANALYSIS rosters, NOT style_ref/minimalism/budget-dev) →
-# five blocks (emit + meter + comment + naming + budget-analysis) survive, zero drops.
+# (c) qa-code-reviewer (BUDGET-ANALYSIS + wiki-untrusted rosters) → those two + emit + meter, zero drops.
 
-@test "qa-code-reviewer (real sources) → comment + naming + budget-analysis injected, zero drops" {
+@test "qa-code-reviewer (real sources) → budget-analysis + wiki-untrusted injected, no retired block, zero drops" {
   run_hook_real "glass-atrium-qa-code-reviewer"
-  assert_status 0                                  || return 1
-  assert_no_drop                                   || return 1
-  assert_ctx_contains "${COMMENT_NEEDLE}"          || return 1
-  assert_ctx_contains "${NAMING_NEEDLE}"           || return 1
-  assert_ctx_contains "${BUDGET_ANALYSIS_NEEDLE}"  || return 1
-  assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"   || return 1
-  # PLAN_GATE_AGENTS is DEV-only: the reviewer is the OTHER Stage-2 participant and reads its own
-  # duty from scope-qa.md, so a plan-gate block here would be a roster leak, not a courtesy copy.
-  assert_ctx_not_contains "${PLAN_GATE_NEEDLE}"    || return 1
-  assert_ctx_within_ceiling                        || return 1
-}
-
-# (c2) dev-swift — BUDGET_DEV_AGENTS member OUTSIDE the naming roster: budget-dev survives with
-# zero drops even though its block mix (no naming) differs from the 12-agent loop above.
-
-@test "dev-swift (real sources) → budget-dev injected without naming, zero drops" {
-  run_hook_real "glass-atrium-dev-swift"
   assert_status 0                                 || return 1
   assert_no_drop                                  || return 1
-  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"      || return 1
-  assert_ctx_not_contains "${NAMING_NEEDLE}"      || return 1
-  # dev-swift is OUT of the naming roster but IN the plan-gate roster — the two exclusions are
-  # independent, and a plan-gate roster copied from NAMING_AGENTS would silently lose it here.
-  assert_ctx_contains "${PLAN_GATE_NEEDLE}"       || return 1
+  assert_ctx_contains "${BUDGET_ANALYSIS_NEEDLE}" || return 1
+  assert_ctx_contains "${WIKI_UNTRUSTED_NEEDLE}"  || return 1
+  assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"  || return 1
+  assert_no_retired_block                         || return 1
   assert_ctx_within_ceiling                       || return 1
 }
 
-# (c3) intel-planner — BUDGET_ANALYSIS_AGENTS member outside every other scope roster: the
-# budget-analysis block reaches an analysis consumer whose assembly is otherwise emit + meter only.
+# (c2) intel-planner — BUDGET_ANALYSIS_AGENTS member: the budget-analysis block reaches an analysis
+# consumer, and no DEV-only block leaks to it.
 
 @test "intel-planner (real sources) → budget-analysis injected, zero drops" {
   run_hook_real "glass-atrium-intel-planner"
@@ -429,20 +365,16 @@ assert_ctx_no_replacement_char() {
   assert_no_drop                                   || return 1
   assert_ctx_contains "${BUDGET_ANALYSIS_NEEDLE}"  || return 1
   assert_ctx_not_contains "${BUDGET_DEV_NEEDLE}"   || return 1
-  assert_ctx_not_contains "${PLAN_GATE_NEEDLE}"    || return 1
+  assert_no_retired_block                          || return 1
   assert_ctx_within_ceiling                        || return 1
 }
 
-# (c4) Numeric source-contract pin (D3/AC9): the extracted BUDGET-DEV block MUST stay <=300B —
-# the ceiling math (9984 admits the seven-block worst case) relies on this bound, so growth past
-# it must fail HERE, at the source, before it silently erodes the engine margin. Extraction
-# mirrors the hook's extract_block (sed range + grep -vxF marker strip).
+# (c3) Numeric source-contract pin (D3/AC9): the extracted BUDGET-DEV block MUST stay <=300B, so its
+# growth fails HERE, at the source. Extraction mirrors the hook's extract_block.
 
 @test "BUDGET-DEV source block byte contract: extracted block non-empty and <= ${BUDGET_DEV_MAX_BYTES}B" {
   local block bytes
-  block="$(sed -n '/<!-- AGENT-INJECT:BUDGET-DEV:START -->/,/<!-- AGENT-INJECT:BUDGET-DEV:END -->/p' "${BUDGET_SRC}" \
-    | grep -vxF '<!-- AGENT-INJECT:BUDGET-DEV:START -->' \
-    | grep -vxF '<!-- AGENT-INJECT:BUDGET-DEV:END -->')"
+  block="$(extract_budget_dev_block)"
   [[ "${block}" == *"${BUDGET_DEV_NEEDLE}"* ]] || {
     echo "BUDGET-DEV extraction empty or needle missing (markers moved?): [${block}]" >&2
     return 1
@@ -450,27 +382,6 @@ assert_ctx_no_replacement_char() {
   bytes="$(printf '%s' "${block}" | wc -c | tr -cd '0-9')"
   [[ -n "${bytes}" && "${bytes}" -le "${BUDGET_DEV_MAX_BYTES}" ]] || {
     echo "BUDGET-DEV source block ${bytes}B exceeds the ${BUDGET_DEV_MAX_BYTES}B byte contract" >&2
-    return 1
-  }
-}
-
-# (c5) Numeric source-contract pin for PLAN-GATE. The bound sits below the MEASURED cliff, re-derived
-# by bisect rather than relayed (figures at PLAN_GATE_MAX_BYTES above). Growth past the bound must
-# fail HERE, at the source, rather than silently costing an agent the Stage-2 duty this block exists
-# to deliver.
-
-@test "PLAN-GATE source block byte contract: extracted block non-empty and <= ${PLAN_GATE_MAX_BYTES}B" {
-  local block bytes
-  block="$(sed -n '/<!-- AGENT-INJECT:PLAN-GATE:START -->/,/<!-- AGENT-INJECT:PLAN-GATE:END -->/p' "${STYLEREF_SRC}" \
-    | grep -vxF '<!-- AGENT-INJECT:PLAN-GATE:START -->' \
-    | grep -vxF '<!-- AGENT-INJECT:PLAN-GATE:END -->')"
-  [[ "${block}" == *"${PLAN_GATE_NEEDLE}"* ]] || {
-    echo "PLAN-GATE extraction empty or needle missing (markers moved?): [${block}]" >&2
-    return 1
-  }
-  bytes="$(printf '%s' "${block}" | wc -c | tr -cd '0-9')"
-  [[ -n "${bytes}" && "${bytes}" -le "${PLAN_GATE_MAX_BYTES}" ]] || {
-    echo "PLAN-GATE source block ${bytes}B exceeds the ${PLAN_GATE_MAX_BYTES}B byte contract" >&2
     return 1
   }
 }
@@ -485,8 +396,8 @@ assert_ctx_no_replacement_char() {
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # FIX #2 (inject-block-drop): a near-ceiling lesson is TRUNCATED-AND-KEPT (not fully shed), the
-# truncation is UTF-8-boundary-safe, a sub-floor residual full-drops, and the proven blocks never
-# shed beside a lesson. These pin the CTM/EPM signal-loss root cause + its 3 review-caught defects.
+# truncation is UTF-8-boundary-safe, and a sub-floor residual full-drops. These pin the CTM/EPM
+# signal-loss root cause + its 3 review-caught defects.
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 # (i)+(ii) TRUNCATE-AND-KEEP: with a residual well above the floor, the lesson is kept as a UTF-8-safe
@@ -506,7 +417,8 @@ assert_ctx_no_replacement_char() {
   assert_ctx_contains "${LESSON_HEADER_NEEDLE}" || return 1  # lesson PRESENT (not fully shed)
   assert_ctx_contains "${LESSON_KEPT_LINE}"    || return 1   # >=1 WHOLE CTM line, not just header
   assert_ctx_not_contains "${DROP_MARKER_NEEDLE}" || return 1 # kept ⇒ no post-loop drop marker
-  assert_ctx_within_ceiling                    || return 1   # bounded by base+2+residual = ceiling
+  local bytes; bytes="$(ctx_bytes_of)"
+  [[ "${bytes}" -le "${ceiling}" ]] || { echo "ctx ${bytes}B exceeds the dialled ceiling ${ceiling}B" >&2; return 1; }
   assert_ctx_valid_utf8                         || return 1
   [[ "${output}" != *"dropped lesson block"* ]] || { echo "lesson was shed, not kept: ${output}" >&2; return 1; }
   # A kept lesson records a PARTIAL sink row — never a DROP row (which would inflate the drop count).
@@ -528,9 +440,9 @@ assert_ctx_no_replacement_char() {
   assert_status 0                                 || return 1
   assert_ctx_not_contains "${LESSON_HEADER_NEEDLE}" || return 1  # lesson fully dropped
   assert_ctx_not_contains "${LESSON_KEPT_LINE}"   || return 1
-  # A genuine shed is never silent. The marker is budgeted INSIDE the ceiling now, and this case
-  # pins a deliberately tiny one (base + 102B) with no room for it, so the recorded omission is the
-  # only channel left — asserted as that one branch, not as either.
+  # A genuine shed is never silent. The marker is budgeted INSIDE the ceiling, and this case pins a
+  # deliberately tiny one (base + 102B) with no room for it, so the recorded omission is the only
+  # channel left — asserted as that one branch, not as either.
   assert_marker_lost "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" || return 1
   # And the branch is DERIVED, not assumed: the MARKERLOST row's pre_drop_bytes is base + 2 + the
   # rendered marker, so the marker's own size falls out of it — and it must exceed the residual the
@@ -578,49 +490,47 @@ open('${BATS_TEST_TMPDIR}/lessons-utf8.json', 'w').write(json.dumps({
   assert_ctx_contains "${EMIT_NEEDLE}"           || return 1   # whole injection survived (no fail-open)
 }
 
-# (v) NODROP INVARIANT beside a lesson (REAL sources, meter ON): dev-front's proven blocks AND the
-# plan-gate block all survive even when a lesson is present — the marker-budget cascade into
-# budget-dev is prevented, and the emitted assembly stays under the engine cap.
-#
-# MEASURED TRADE, recorded here because the pin below would otherwise hide it (2026-09-13, this same
-# 400-char lesson, dev-front): the lesson-free base is 9871B, so the lesson residual is 111B — below
-# the 150B LESSON_FLOOR — and the lesson FULL-DROPS rather than truncate-keeping. That is the
-# sanctioned direction (lesson recall is the explicitly best-effort, first-shed block and a shed
-# lesson is logged, marked in-context and recovers on re-spawn) but it is a real per-spawn cost on
-# the heaviest DEV agents, not a free addition. The marker is the second thing to yield here: at
-# 9871B the one-entry marker (167B) does not fit under the ceiling either, so it is omitted and a
-# MARKERLOST row records the omission — the drop-log keeps the shed visible when the in-context
-# marker cannot, and that omission is asserted as the single possible branch rather than as one of two.
+# (v) REAL sources, meter ON, a one-entry lesson store: dev-front's lesson block arrives WHOLE beside
+# emit + meter + budget-dev, nothing sheds, and the drop sink stays empty. Slot 1 = the lesson-free
+# assembly + 2 + the lesson block, so the lesson is neither truncated nor accompanied by anything else.
 
-@test "real dev-front + lesson: 7 proven blocks never shed, within engine threshold" {
+@test "real dev-front + one-entry lesson store → lesson kept whole, emit + meter + budget-dev kept, drop sink empty" {
+  local lesson_text lessons base_bytes lesson_block_bytes
+  lesson_text="$(python3 -c 'print("R" * 400)')"
+  lessons="${BATS_TEST_TMPDIR}/lessons-real.json"
   python3 -c "
-import json
-open('${BATS_TEST_TMPDIR}/lessons-real.json', 'w').write(json.dumps({
-    'ctm': [{'agent': 'glass-atrium-dev-front', 'task_type': 'bug-fix', 'text': 'R' * 400, 'score': 5, 'frequency': 9}],
+import json, sys
+open(sys.argv[1], 'w').write(json.dumps({
+    'ctm': [{'agent': 'glass-atrium-dev-front', 'task_type': 'bug-fix', 'text': sys.argv[2], 'score': 5, 'frequency': 9}],
     'epm': [],
 }))
-"
-  run_hook_real_lesson "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-real.json"
-  assert_status 0                              || return 1
-  assert_ctx_contains "${EMIT_NEEDLE}"         || return 1
-  assert_ctx_contains "${METER_NEEDLE}"        || return 1
-  assert_ctx_contains "${COMMENT_NEEDLE}"      || return 1
-  assert_ctx_contains "${STYLEREF_NEEDLE}"     || return 1
-  assert_ctx_contains "${MINIMALISM_NEEDLE}"   || return 1
-  assert_ctx_contains "${NAMING_NEEDLE}"       || return 1
-  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"   || return 1
-  assert_ctx_valid_utf8                         || return 1
-  assert_ctx_within_engine                      || return 1
-  assert_ctx_contains "${PLAN_GATE_NEEDLE}"    || return 1
-  # The lesson sheds here, and the 167B marker cannot fit the 111B the lesson was denied — the same
-  # arithmetic as the hermetic case above, so the sink is the channel and is asserted as that one
-  # branch. Nothing here is host-dependent: the assembly is built from repo sources, which carry no
-  # paths, and the lesson's marker entry carries no path either.
-  assert_marker_lost "${BATS_TEST_TMPDIR}/inject-drop-realL.log" || return 1
-  # NO proven block may appear in a drop diagnostic (the lesson itself MAY be dropped). plan-gate is
-  # listed too: it sits BELOW the proven four in shed order, so a cascade reaching it would be the
-  # first visible sign that the assembly no longer fits, one block before a proven block goes.
-  for proven in plan-gate budget-dev naming styleref minimalism comment; do
-    [[ "${output}" != *"dropped ${proven} block"* ]] || { echo "proven block '${proven}' was SHED beside a lesson: ${output}" >&2; return 1; }
-  done
+" "${lessons}" "${lesson_text}"
+
+  run_hook_real "glass-atrium-dev-front"
+  assert_status 0 || return 1
+  base_bytes="$(ctx_bytes_of)"
+
+  run_hook_real "glass-atrium-dev-front" "${lessons}" "${BATS_TEST_TMPDIR}/inject-drop-realL.log"
+  assert_status 0                                   || return 1
+  assert_no_drop                                    || return 1
+  assert_ctx_contains "${EMIT_NEEDLE}"              || return 1
+  assert_ctx_contains "${METER_NEEDLE}"             || return 1
+  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"        || return 1
+  assert_ctx_contains "${LESSON_HEADER_NEEDLE}"     || return 1
+  assert_ctx_contains "- [bug-fix] ${lesson_text}"  || return 1
+  assert_ctx_not_contains "${DROP_MARKER_NEEDLE}"   || return 1
+  assert_no_retired_block                           || return 1
+  assert_ctx_valid_utf8                             || return 1
+  assert_ctx_within_engine                          || return 1
+  [[ ! -s "${BATS_TEST_TMPDIR}/inject-drop-realL.log" ]] || {
+    echo "drop sink written beside a whole lesson: $(cat "${BATS_TEST_TMPDIR}/inject-drop-realL.log")" >&2
+    return 1
+  }
+  lesson_block_bytes="$(printf '%s\nApply (worked before):\n- [bug-fix] %s' \
+    '**Prior-lesson recall (auto-injected · CTM success + EPM warnings, agent-matched)**' "${lesson_text}" \
+    | wc -c | tr -cd '0-9')"
+  [[ "$(ctx_bytes_of)" -eq $((base_bytes + 2 + lesson_block_bytes)) ]] || {
+    echo "slot 1 with lesson is $(ctx_bytes_of)B, expected ${base_bytes} + 2 + ${lesson_block_bytes}" >&2
+    return 1
+  }
 }

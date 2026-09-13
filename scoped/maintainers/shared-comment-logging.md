@@ -13,24 +13,26 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 DEV + QA agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Tier-3 inheritance. The authoritative membership lives on the registry row (`agent-registry.json` → each agent's `rules.shared`) and in the compliance matrix; the rule file states it nowhere.
 
-## Injected block — edit rules
+## Compressed core — edit rules
 
-- The `AGENT-INJECT` marker pair in `## Agent Injection Core` is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and delivered to the DEV/QA roster. Edit that text in the rule file only; nothing else in the file reaches an agent through the hook.
-- Each marker line must stay alone on its line with no surrounding whitespace — the extractor drops the markers by whole-line match — and no second copy of either marker string may appear in the file, which would restart the extraction range.
-- **Machine-checked**: `hooks/test/inject-scope-rules-nodrop.bats` drives the hook against the live rule file (not a fixture copy) and asserts that the block's opening bolded phrase reaches every roster member and that the assembled context stays inside the 9984-byte ceiling. `hooks/test/h2-untrusted-ingest.bats` re-asserts the ceiling against the same file. Rewording that opening phrase, or growing the block, turns both red.
-- Body text OUTSIDE the marker pair costs no injection bytes: the hook extracts only the marked range, so a restructure of the rest of the file cannot move the assembly figure.
+- **Delivery**: the whole rule file reaches every member through the part slots, selected by each agent's `agent-registry.json` → `rules.shared`. `hooks/inject-scope-rules.sh` extracts nothing from it, and the file carries no `AGENT-INJECT` marker.
+- **The core under `## Agent Injection Core` stays as ordinary content**: several rules are stated only there — `Mirror = code form only`, the TODO owner/ticket form, the history/narration prohibition, the stale-comment rule, the mid-sentence wrap rule. Deleting it as a duplicate loses them.
+- **Folding the core into its canonical sections is open work**: it needs a per-bullet audit, and it is the only way to remove the in-file restatement a member now reads twice within one part.
+- **Keep the heading `## Agent Injection Core`** until the fold above lands: retitling it belongs to that change, which decides what the section still holds.
+- **Keep the core's bold lead phrase** (the words before its parenthetical): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it ABSENT from slot 1, and the check proves nothing once the phrase no longer exists in the source.
+- **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every member. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
 
 ## Restructure + diet pass (this wave)
 
-Dropped as already delivered to the receiving agent through the injected block:
+Dropped as already stated in the core under `## Agent Injection Core` ("the block" below):
 
 - the why-over-what / stale-comment opener (the block carries the stale-comment rule; the restating-code prohibition survives in `## Comments That MUST NOT Be Written`)
 - the long-form docblock-escalation paragraph, including its demotion guards and its `/** */`-bearing-language enumeration — the block carries both, and the worked BAD/GOOD example stayed as the only calibration of the one-essence-line form
 - the standalone mid-sentence-line-wrap rule; its worked example stayed, reattached to the style rule it calibrates
-- the standalone density-gate bullet — dropped, then RESTORED in compressed form under `## Comment Principles` in the follow-up fix pass, because three prose sites invoke "the density gate" by name (the one-line sufficiency gate · the step-numbers / branch-labels bullet · the over-narration entry under `## Comments That MUST NOT Be Written`) and a non-roster reader of the prose has no other definition. One in-file definition closes all three; the injected block keeps its own copy
+- the standalone density-gate bullet — dropped, then RESTORED in compressed form under `## Comment Principles` in the follow-up fix pass, because three prose sites invoke "the density gate" by name (the one-line sufficiency gate · the step-numbers / branch-labels bullet · the over-narration entry under `## Comments That MUST NOT Be Written`) and a non-roster reader of the prose has no other definition. One in-file definition closes all three; the block keeps its own copy
 - the convention-mirror precedence paragraph, whose mirror rule and two carve-outs the block carries compressed — the Justified-header test it referred to remains defined under `## File / Module Header Comments`
 - the history / changelog / attribution prohibition and the TODO owner+ticket format
-- the `console.*` production prohibition at all THREE sites it held: the `Logger` bullet under `## Log Message Composition`, the entry under `## Prohibitions`, and the NestJS bullet under `## Platform-Specific Rules`. No duty was lost — the injected block carries the ban with its test-file exemption — and the three surviving bullets keep their non-`console.*` content
+- the `console.*` production prohibition at all THREE sites it held: the `Logger` bullet under `## Log Message Composition`, the entry under `## Prohibitions`, and the NestJS bullet under `## Platform-Specific Rules`. No duty was lost — the block carries the ban with its test-file exemption — and the three surviving bullets keep their non-`console.*` content
 
 Also dropped: the applies-to membership line (above) and the two maintainer blockquotes now held in this note.
 
@@ -43,7 +45,7 @@ Three sections the diet pass did not reach were restructured, with no rule added
 - `## Comments That MUST NOT Be Written` — the standalone bolded `**Positive rule**` paragraph became the section's closing bullet, so no bold lead stands in for a heading.
 - Plus the density-gate definition restored under `## Comment Principles`, recorded in the drop list above.
 
-Every edit sits OUTSIDE the `AGENT-INJECT` marker pair, so the injected block is unchanged and the assembly byte figures do not move.
+Every edit sat outside the core under `## Agent Injection Core`, so the core text is unchanged by this pass.
 
 ## Platform-Specific Rules — kept, with the reason
 

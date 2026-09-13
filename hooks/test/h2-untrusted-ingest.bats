@@ -31,9 +31,6 @@ INJECT_HOOK="${HOOKS_DIR}/inject-scope-rules.sh"
 READ_HOOK="${HOOKS_DIR}/advisory-raw-store-read.sh"
 
 # Real repo sources for the injection assembly (single source of truth for the injected blocks).
-COMMENT_SRC="${REPO_ROOT}/scoped/shared-comment-logging.md"
-STYLEREF_SRC="${REPO_ROOT}/scoped/scope-dev.md"
-NAMING_SRC="${REPO_ROOT}/scoped/shared-naming.md"
 BUDGET_SRC="${REPO_ROOT}/scoped/shared-turn-budget.md"
 WIKI_UNTRUSTED_SRC="${REPO_ROOT}/rules/glass-atrium/core-wiki-reference.md"
 AGENTS_DIR="${REPO_ROOT}/agents"
@@ -87,9 +84,6 @@ raw_write_payload() {
 inject_ctx() {
   local agent="${1}"
   printf '%s' "$(jq -nc --arg a "${agent}" '{agent_type:$a}')" | env \
-    INJECT_SCOPE_RULES_SRC="${COMMENT_SRC}" \
-    INJECT_SCOPE_RULES_STYLEREF_SRC="${STYLEREF_SRC}" \
-    INJECT_SCOPE_RULES_NAMING_SRC="${NAMING_SRC}" \
     INJECT_SCOPE_RULES_BUDGET_SRC="${BUDGET_SRC}" \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${WIKI_UNTRUSTED_SRC}" \
     INJECT_SCOPE_RULES_AGENTS_DIR="${AGENTS_DIR}" \
@@ -207,7 +201,7 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${ctx}" == *"untrusted by the SAME rule"* ]] || { echo "clause missing legacy-untrusted framing" >&2; return 1; }
 }
 
-# Byte-invariant guard (nodrop): a near-ceiling code-DEV agent is NOT in the wiki-untrusted roster,
+# Byte-invariant guard (nodrop): a code-DEV agent is NOT in the wiki-untrusted roster,
 # so it receives NO clause, drops NO block, and stays within the ceiling — the code-DEV nodrop
 # invariant is untouched by this change.
 @test "R2: code-DEV agent gets NO clause, ZERO drops, within ceiling (nodrop invariant intact)" {
@@ -216,14 +210,12 @@ bytelen() { wc -c | tr -cd '0-9'; }
     # Full run (stderr merged) to catch any drop diagnostic.
     run bash -c '
       printf "%s" "$(jq -nc --arg a "$1" '\''{agent_type:$a}'\'')" | env \
-        INJECT_SCOPE_RULES_SRC="$2" INJECT_SCOPE_RULES_STYLEREF_SRC="$3" \
-        INJECT_SCOPE_RULES_NAMING_SRC="$4" INJECT_SCOPE_RULES_BUDGET_SRC="$5" \
-        INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$6" INJECT_SCOPE_RULES_AGENTS_DIR="$7" \
-        INJECT_SCOPE_RULES_DROP_LOG="$8" INJECT_SCOPE_RULES_SPAWN_COUNTER="$9" \
-        INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent bash "${10}" 2>&1
-    ' _ "${agent}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${BUDGET_SRC}" \
-      "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" "${INJECT_SCOPE_RULES_DROP_LOG}" \
-      "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
+        INJECT_SCOPE_RULES_BUDGET_SRC="$2" INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$3" \
+        INJECT_SCOPE_RULES_AGENTS_DIR="$4" INJECT_SCOPE_RULES_DROP_LOG="$5" \
+        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+        bash "$7" 2>&1
+    ' _ "${agent}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" \
+      "${INJECT_SCOPE_RULES_DROP_LOG}" "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
     [[ "${output}" != *"injected context exceeded"* ]] || { echo "FAIL ${agent}: a block was DROPPED" >&2; return 1; }
     [[ "${output}" != *"${CLAUSE_NEEDLE}"* ]] || { echo "FAIL ${agent}: clause leaked to code-DEV roster" >&2; return 1; }
     local ctx bytes

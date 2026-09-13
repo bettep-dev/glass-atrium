@@ -4,7 +4,7 @@
 #   EPM warnings from the lesson store the learning-aggregator writes. This suite pins the AC:
 #   a MATCHED spawn gets <= K lessons within cap; a NO-MATCH spawn is unchanged.
 #
-#   Isolation: every other scope source is sandboxed to /nonexistent and the meter is off, so the
+#   Isolation: every other block source is sandboxed to /nonexistent and the meter is off, so the
 #   only variable block is the lesson block. The lesson store is a hermetic in-sandbox JSON fixture.
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
@@ -64,9 +64,8 @@ run_hook_lessons() {
     printf "%s" "${payload}" | env \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       SUBAGENT_BUDGET_METER_OFF=1 \
-      INJECT_SCOPE_RULES_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
       INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${lessons}"
@@ -184,9 +183,8 @@ json.dump({"ctm":[{"agent":"glass-atrium-dev-shell","task_type":"feature","text"
       HOME="${home}" \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       SUBAGENT_BUDGET_METER_OFF=1 \
-      INJECT_SCOPE_RULES_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
       bash "${hook}"
   ' _ "glass-atrium-dev-shell" "${HOOK_SH}" "${home}"
   assert_status 0

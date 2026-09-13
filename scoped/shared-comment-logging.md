@@ -2,8 +2,7 @@
 
 ## Agent Injection Core
 
-<!-- AGENT-INJECT:START -->
-**Comment-rule core (auto-injected DEV/QA · full: `~/.glass-atrium/scoped/shared-comment-logging.md`)**
+**Comment-rule core (the operative summary; the sections below carry the detail)**
 
 TOP PROHIBITIONS:
 - **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.
@@ -20,7 +19,6 @@ REMAINING RULES:
 - TODO: `// TODO(owner/TICKET): reason` — owner+ticket REQUIRED.
 - **File/module header = 1–3-sentence purpose limit** · prose-dump FORBIDDEN · complexity-proportional (self-evident module → omit).
 - **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density/header prose; sibling violates → author COMPLIANT comments. Carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, prettier-ignore / region / fold / codegen anchors) AND a header passing the Justified-header test (role / scope boundary / rejected alternative / usage contract).
-<!-- AGENT-INJECT:END -->
 
 ## Comment Principles
 

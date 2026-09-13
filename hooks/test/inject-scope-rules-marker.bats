@@ -35,10 +35,6 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 # Kept in sync with inject-scope-rules.sh (like nodrop.bats:CEILING). A source change to either
 # constant must update this test.
 CEILING_DEFAULT=9984
-# The engine cap the ceiling above is a conservative byte proxy for: 10,000 UTF-16 code units,
-# INCLUSIVE. Units are what the engine counts; bytes are never fewer, so the hook's byte budget is
-# conservative rather than wrong.
-ENGINE_MAX_UNITS=10000
 
 MARKER_NEEDLE='Injection shed'
 EMIT_NEEDLE='REQUIRED by the outcome recorder'
@@ -51,7 +47,8 @@ setup() {
 
   DROPLOG="${BATS_TEST_TMPDIR}/drop.log"
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
-  COMMENT="${BATS_TEST_TMPDIR}/comment.md"
+  BUDGET="${BATS_TEST_TMPDIR}/budget.md"
+  WIKI=/nonexistent
   LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
 
   # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
@@ -59,49 +56,48 @@ setup() {
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 }
 
-# Write a comment fixture whose EXTRACTED block is exactly $1 bytes (a single line of x's, no header
+# Write a marked fixture whose EXTRACTED block is exactly $1 bytes (a single line of x's, no header
 # so the block byte size is controllable). $1 == 0 → an empty block (isolates the emit block).
-make_comment() {
-  local n="${1}"
+# $2 = marker label (default BUDGET-DEV), $3 = output path (default ${BUDGET}).
+make_block() {
+  local n="${1}" label="${2:-BUDGET-DEV}" out="${3:-${BUDGET}}"
   {
-    printf '%s\n' 'pre' '<!-- AGENT-INJECT:START -->'
+    printf '%s\n' 'pre' "<!-- AGENT-INJECT:${label}:START -->"
     if [[ "${n}" -gt 0 ]]; then
       head -c "${n}" /dev/zero | tr '\0' 'x'
       printf '\n'
     fi
-    printf '%s\n' '<!-- AGENT-INJECT:END -->' 'post'
-  } >"${COMMENT}"
+    printf '%s\n' "<!-- AGENT-INJECT:${label}:END -->" 'post'
+  } >"${out}"
 }
 
-# Write a lesson store with one big CTM lesson for glass-atrium-dev-shell (present → shed candidate).
+# Write a lesson store with one big CTM lesson for glass-atrium-dev-front (present → shed candidate).
 make_lessons() {
   local text
   text="$(head -c 4000 /dev/zero | tr '\0' 'L')"
   jq -nc --arg t "${text}" \
-    '{ctm:[{agent:"glass-atrium-dev-shell",task_type:"bug-fix",text:$t,score:5,frequency:3}]}' \
+    '{ctm:[{agent:"glass-atrium-dev-front",task_type:"bug-fix",text:$t,score:5,frequency:3}]}' \
     >"${LESSONS}"
 }
 
-# Drive the hook's SubagentStart injection for $1 with the comment fixture, an overridable ceiling
-# $2, and an optional lesson store $3 (default absent). All other scope sources are /nonexistent and
-# the meter is off, isolating comment (+ lesson). The drop sink + counter go to the Bats tmpdir.
+# Drive the hook's SubagentStart injection for $1 with the ${BUDGET} + ${WIKI} fixtures, an overridable
+# ceiling $2, and an optional lesson store $3 (default absent). The meter is off, so a
+# BUDGET_DEV_AGENTS member sees budget-dev (+ lesson). The drop sink + counter go to the Bats tmpdir.
 run_marker() {
   local agent="${1}" ceiling="${2}" lessons="${3:-/nonexistent}"
   run bash -c '
-    agent="$1"; hook="$2"; comment="$3"; droplog="$4"; counter="$5"; ceiling="$6"; lessons="$7"
+    agent="$1"; hook="$2"; budget="$3"; droplog="$4"; counter="$5"; ceiling="$6"; lessons="$7"; wiki="$8"
     printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
       INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-      INJECT_SCOPE_RULES_SRC="${comment}" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki}" \
       INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${COMMENT}" "${DROPLOG}" "${COUNTER}" "${ceiling}" "${lessons}"
+  ' _ "${agent}" "${HOOK_SH}" "${BUDGET}" "${DROPLOG}" "${COUNTER}" "${ceiling}" "${lessons}" "${WIKI}"
 }
 
 # additionalContext string from the hook's JSON stdout (the JSON line is the only one starting '{';
@@ -163,33 +159,11 @@ ctx_units() {
   ctx_of | python3 -c 'import sys; print(len(sys.stdin.read().rstrip("\n").encode("utf-16-le"))//2)'
 }
 
-# Drive the injection for $1 against the REAL repo sources with an overridable ceiling $2 — the only
-# way to put four or more PRESENT droppable blocks under ceiling pressure (the fixture harness above
-# isolates comment + lesson, so it tops out at two sheds).
-run_marker_real() {
-  local agent="${1}" ceiling="${2}" repo="${BATS_TEST_DIRNAME}/../.."
-  run bash -c '
-    agent="$1"; hook="$2"; repo="$3"; droplog="$4"; counter="$5"; ceiling="$6"
-    printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
-      INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
-      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
-      INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
-      SUBAGENT_BUDGET_METER_OFF=1 \
-      INJECT_SCOPE_RULES_AGENTS_DIR="${repo}/agents" \
-      INJECT_SCOPE_RULES_SRC="${repo}/scoped/shared-comment-logging.md" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC="${repo}/scoped/scope-dev.md" \
-      INJECT_SCOPE_RULES_NAMING_SRC="${repo}/scoped/shared-naming.md" \
-      INJECT_SCOPE_RULES_BUDGET_SRC="${repo}/scoped/shared-turn-budget.md" \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
-      "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${repo}" "${DROPLOG}" "${COUNTER}" "${ceiling}"
-}
-
 # ── M1 / AM-T16 positive precondition — forced shed → exactly one marker naming each shed block ───
 
 @test "M1: a forced shed emits exactly one fixed-width marker naming the shed block (>=1 named)" {
-  make_comment 11000 # a block that alone blows the ceiling → forces the drop loop
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}"
+  make_block 11000 # a block that alone blows the ceiling → forces the drop loop
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}"
   assert_status 0
   # Exactly ONE marker line (T16 AC: "exactly one fixed-width marker line").
   [[ "$(marker_count)" -eq 1 ]] || {
@@ -198,20 +172,20 @@ run_marker_real() {
   }
   # AM-T16 positive-coupling precondition: the marker NAMES at least one block (fixed-width count).
   assert_ctx_contains "Injection shed 01"
-  assert_ctx_contains "comment: "
+  assert_ctx_contains "budget-dev: "
 }
 
 # ── AM-T16 A2 / A3 — a rule-doc-sourced named block carries a RESOLVABLE, EXISTING source path ────
 
 @test "A2/A3: a rule-doc-sourced shed block carries its resolvable, existing source path" {
-  make_comment 11000
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}"
+  make_block 11000
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}"
   assert_status 0
-  # The marker carries the ACTUAL source path the comment block was extracted from (the fixture).
-  assert_ctx_contains "comment: ${COMMENT}"
+  # The marker carries the ACTUAL source path the budget-dev block was extracted from (the fixture).
+  assert_ctx_contains "budget-dev: ${BUDGET}"
   # A3: that emitted path RESOLVES to an existing file.
-  [[ -f "${COMMENT}" ]] || {
-    echo "marker-carried path does not exist: ${COMMENT}" >&2
+  [[ -f "${BUDGET}" ]] || {
+    echo "marker-carried path does not exist: ${BUDGET}" >&2
     return 1
   }
 }
@@ -220,8 +194,8 @@ run_marker_real() {
 
 @test "A4: the lesson block is tagged 'runtime-derived, no source path' with zero path claimed" {
   make_lessons
-  make_comment 9000 # emit + lesson + comment all exceed the ceiling → lesson (lowest) sheds first
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}" "${LESSONS}"
+  make_block 9000 # emit + lesson + budget-dev all exceed the ceiling → lesson (lowest) sheds first
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}" "${LESSONS}"
   assert_status 0
   # The EXACT runtime-derived tag is present (AM-T16: "tag it exactly").
   assert_ctx_contains "${LESSON_TAG}"
@@ -238,15 +212,15 @@ run_marker_real() {
   # carry. This pins that conditionality: an assembly ABOVE the budgeted ceiling but at or under the
   # full one is kept whole. A small overridden ceiling makes the window cheap to hit precisely.
   local ceiling=4000 emit_bytes lowered target filler bytes
-  # 1) Measure the emit-only byte size (comment block empty).
-  make_comment 0
-  run_marker "glass-atrium-dev-shell" "${ceiling}"
+  # 1) Measure the emit-only byte size (budget-dev block empty).
+  make_block 0
+  run_marker "glass-atrium-dev-front" "${ceiling}"
   assert_status 0
   emit_bytes="$(ctx_bytes)"
   # 2) Derive the budgeted ceiling from the hook itself rather than a hardcoded reserve: force a shed
   #    at the same ceiling and read the value it reports.
-  make_comment 9000
-  run_marker "glass-atrium-dev-shell" "${ceiling}"
+  make_block 9000
+  run_marker "glass-atrium-dev-front" "${ceiling}"
   assert_status 0
   lowered="$(printf '%s\n' "${output}" | sed -n 's/.*injection ceiling lowered to \([0-9][0-9]*\) bytes.*/\1/p' | head -1)"
   [[ -n "${lowered}" ]] || {
@@ -269,13 +243,13 @@ run_marker_real() {
     echo "hook reported a budgeted ceiling of ${lowered}; ceiling ${ceiling} - 2 - marker ${marker_bytes} = ${expected_lowered}" >&2
     return 1
   }
-  # 3) Size the comment block so the assembly lands in (lowered, full].
+  # 3) Size the budget-dev block so the assembly lands in (lowered, full].
   target=$((ceiling - 16))
   [[ "${target}" -gt "${lowered}" ]] || skip "marker budget leaves no window (lowered=${lowered})"
-  filler=$((target - emit_bytes - 2)) # 2 = the "\n\n" join between emit and comment
+  filler=$((target - emit_bytes - 2)) # 2 = the "\n\n" join between emit and budget-dev
   [[ "${filler}" -gt 0 ]] || skip "emit block larger than target window (emit=${emit_bytes})"
-  make_comment "${filler}"
-  run_marker "glass-atrium-dev-shell" "${ceiling}"
+  make_block "${filler}"
+  run_marker "glass-atrium-dev-front" "${ceiling}"
   assert_status 0
   # No block was shed → NO marker line at all.
   [[ "$(marker_count)" -eq 0 ]] || {
@@ -283,7 +257,7 @@ run_marker_real() {
     return 1
   }
   # The FULL ceiling was used: the assembly sits ABOVE the budgeted ceiling yet was kept (had the
-  # hook budgeted unconditionally, it would have shed the comment block and emitted a marker).
+  # hook budgeted unconditionally, it would have shed the budget-dev block and emitted a marker).
   bytes="$(ctx_bytes)"
   [[ "${bytes}" -gt "${lowered}" && "${bytes}" -le $((ceiling + 1)) ]] || {
     echo "assembly ${bytes}B not in the conditional window (${lowered}, ${ceiling}]" >&2
@@ -295,8 +269,8 @@ run_marker_real() {
 
 @test "M3: the ceiling-lowered diagnostic fires exactly once however many blocks shed" {
   make_lessons
-  make_comment 9000 # lesson + comment both shed under the default ceiling
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}" "${LESSONS}"
+  make_block 9000 # lesson + budget-dev both shed under the default ceiling
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}" "${LESSONS}"
   assert_status 0
   # The budgeted ceiling is re-derived on EVERY shed (the marker grows with each entry), but the
   # operator needs the fact once — so the "ceiling lowered" diagnostic (merged stderr) fires EXACTLY
@@ -310,7 +284,7 @@ run_marker_real() {
   # Both real sheds are named (2 present blocks): the fixed-width count reads 02.
   assert_ctx_contains "Injection shed 02"
   assert_ctx_contains "${LESSON_TAG}"
-  assert_ctx_contains "comment: ${COMMENT}"
+  assert_ctx_contains "budget-dev: ${BUDGET}"
 }
 
 # ── M4 — a ceiling under the non-droppable block → shed once, never loop, never shed silently ─────
@@ -326,10 +300,10 @@ run_marker_real() {
   # the ceiling, and every term is measurable here. So this pins the exact branch this host must
   # take. Accepting either channel would pass on a host where the marker silently stopped rendering.
   local ceiling=1300 emit_bytes marker_bytes needed
-  # 1) The non-droppable emit block alone (comment block empty). ctx_of's `jq -r` appends one
+  # 1) The non-droppable emit block alone (budget-dev block empty). ctx_of's `jq -r` appends one
   #    newline, so the reported count is one byte long.
-  make_comment 0
-  run_marker "glass-atrium-dev-shell" "${ceiling}"
+  make_block 0
+  run_marker "glass-atrium-dev-front" "${ceiling}"
   assert_status 0
   emit_bytes=$(($(ctx_bytes) - 1))
   [[ "${emit_bytes}" -gt 0 ]] || {
@@ -338,8 +312,8 @@ run_marker_real() {
   }
   # 2) The marker THIS shed renders, measured from a run of the same shed under a ceiling with room
   #    for it. Same fixture path, same shed set ⇒ byte-identical to the marker the real run builds.
-  make_comment 1500
-  run_marker "glass-atrium-dev-shell" $((emit_bytes + 1002))
+  make_block 1500
+  run_marker "glass-atrium-dev-front" $((emit_bytes + 1002))
   assert_status 0
   marker_bytes="$(measure_marker_bytes)"
   [[ -n "${marker_bytes}" && "${marker_bytes}" -gt 0 ]] || {
@@ -348,8 +322,8 @@ run_marker_real() {
   }
   # 3) The real run, against a sink cleared of the probe rows above.
   : >"${DROPLOG}"
-  make_comment 1500
-  run_marker "glass-atrium-dev-shell" "${ceiling}"
+  make_block 1500
+  run_marker "glass-atrium-dev-front" "${ceiling}"
   assert_status 0 # terminates (no infinite loop) and fails open to exit 0
   assert_ctx_contains "${EMIT_NEEDLE}"
   # At most one marker line — never re-appended by a loop.
@@ -378,8 +352,8 @@ run_marker_real() {
 # ── M5 — every present droppable block shed → non-droppable emit + marker survive, exit 0 ─────────
 
 @test "M5: with the only droppable block shed, the non-droppable emit and the marker still emit" {
-  make_comment 11000 # comment is the sole present droppable → shedding it leaves only emit + marker
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}"
+  make_block 11000 # budget-dev is the sole present droppable → shedding it leaves only emit + marker
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}"
   assert_status 0
   # The CTX-empty fail-open skip must NOT fire (emit is non-droppable) → a valid injection is emitted.
   local ctx
@@ -395,8 +369,8 @@ run_marker_real() {
 # ── AM-T16 A5 — the widened marker stays within the ceiling (byte accounting converges) ───────────
 
 @test "A5: the widened marker keeps total injected bytes within the ceiling, no unintended shed" {
-  make_comment 11000
-  run_marker "glass-atrium-dev-shell" "${CEILING_DEFAULT}"
+  make_block 11000
+  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}"
   assert_status 0
   # Total injected UTF-16 units (marker included) stay at or under the ceiling.
   local units
@@ -405,46 +379,68 @@ run_marker_real() {
     echo "widened assembly ${units} units exceeds the ceiling ${CEILING_DEFAULT}" >&2
     return 1
   }
-  # Exactly one real shed (comment) is named — the marker's own budget costs no additional block.
+  # Exactly one real shed (budget-dev) is named — the marker's own budget costs no additional block.
   assert_ctx_contains "Injection shed 01"
 }
 
-# ── A6 — four or more sheds: the marker is budgeted INSIDE the size check ─────────────────────────
+# ── A6 — a marker larger than a fixed reserve: the marker is budgeted INSIDE the size check ─────
 
-@test "A6: a marker naming four or more sheds keeps the emitted total within the ceiling" {
+@test "A6: a marker that outgrows a fixed 256B reserve still keeps the emitted total within the ceiling" {
   # The defect this pins: a fixed 256B reserve was appended-to AFTER the size check, so a marker
-  # naming four or more shed blocks outgrew the reserve and pushed the emit past the cap. At the 3975
-  # ceiling below, the retired model stops shedding the dev-front assembly at 3717B, appends a 261B
-  # marker and emits 3980B over a 3975B ceiling; the marker-budgeted model sheds once more and emits
-  # 1430B.
+  # longer than the reserve pushed the emit past the cap. The marker names each shed block by its
+  # ABSOLUTE source path, so a deep fixture path makes it outgrow the reserve with a single entry.
   #
-  # THE GOVERNING VARIABLE IS THE REPO CHECKOUT PATH LENGTH, not the source-block sizes: the marker
-  # names each shed block by its ABSOLUTE source path, so every entry grows one-for-one with the
-  # length of the checkout root this suite runs from. Measured on the retired model at three roots,
-  # the over-ceiling emit is 4004 units at a 19-character root, 4094 at the 38-character CI root and
-  # 4244 at this worktree's 68-character root — all of them above 3975, so the discrimination holds
-  # across the whole realistic range rather than in a narrow byte window. It fails only BELOW roughly
-  # a 13-character root, where the retired model's emit would drop under the ceiling and this test
-  # would pass on the defective code. Re-derive the ceiling if a source block size moves, and keep it
-  # low enough that the shortest plausible checkout still discriminates.
-  run_marker_real "glass-atrium-dev-front" 3975
+  # qa-code-reviewer carries two path-bearing droppable blocks: wiki-untrusted (shed first, oversized)
+  # and budget-analysis (sized to fit). The ceiling is DERIVED so the retired model stops right after
+  # the wiki shed — emit + budget-analysis sits exactly at ceiling - 258 — and then appends a marker
+  # over 256B, landing above the cap. The marker-budgeted model sees that the marker does not fit
+  # beside budget-analysis and sheds it too, so the marker names two blocks and the total fits.
+  local agent="glass-atrium-qa-code-reviewer" deep emit_bytes kept_bytes m1_bytes ceiling sheds units
+  deep="${BATS_TEST_TMPDIR}/$(printf 'd%.0s' {1..120})/$(printf 'e%.0s' {1..120})"
+  mkdir -p "${deep}"
+  # 1) The emit block alone.
+  make_block 0 BUDGET-ANALYSIS
+  run_marker "${agent}" 20000
   assert_status 0
-  local sheds units
+  emit_bytes=$(($(ctx_bytes) - 1))
+  # 2) emit + budget-analysis, measured, so the kept block's size is never a literal.
+  make_block 2000 BUDGET-ANALYSIS
+  run_marker "${agent}" 20000
+  assert_status 0
+  kept_bytes=$(($(ctx_bytes) - 1))
+  # 3) The one-entry marker for the deep wiki fixture, measured from a run that sheds only it.
+  WIKI="${deep}/wiki.md"
+  make_block 11000 WIKI-UNTRUSTED "${WIKI}"
+  make_block 0 BUDGET-ANALYSIS
+  run_marker "${agent}" "${CEILING_DEFAULT}"
+  assert_status 0
+  m1_bytes="$(measure_marker_bytes)"
+  [[ -n "${m1_bytes}" && "${m1_bytes}" -gt 256 ]] || {
+    echo "the deep-path marker (${m1_bytes}B) does not outgrow the 256B reserve — fixture cannot discriminate" >&2
+    return 1
+  }
+  # 4) The real run: the retired model would emit kept_bytes + 2 + m1_bytes > ceiling.
+  ceiling=$((kept_bytes + 258))
+  [[ "${emit_bytes}" -gt 0 && $((kept_bytes + 2 + m1_bytes)) -gt "${ceiling}" ]] || {
+    echo "derived ceiling does not reproduce the retired over-cap emit" >&2
+    return 1
+  }
+  : >"${DROPLOG}"
+  make_block 2000 BUDGET-ANALYSIS
+  run_marker "${agent}" "${ceiling}"
+  assert_status 0
   sheds="$(ctx_of | grep -o 'Injection shed [0-9][0-9]' | head -1 | tr -cd '0-9')"
-  [[ -n "${sheds}" && "$((10#${sheds}))" -ge 4 ]] || {
-    echo "fixture did not produce four or more sheds (got '${sheds}')" >&2
+  [[ "${sheds}" == "02" ]] || {
+    echo "expected budget-analysis to shed to make room for the marker (got '${sheds}')" >&2
     return 1
   }
   units="$(ctx_units)"
-  [[ -n "${units}" && "${units}" -le 3975 ]] || {
-    echo "assembly with a ${sheds}-shed marker is ${units} units, over the 3975 ceiling" >&2
+  [[ -n "${units}" && "${units}" -le "${ceiling}" ]] || {
+    echo "assembly with a ${sheds}-shed marker is ${units} units, over the ${ceiling} ceiling" >&2
     return 1
   }
   # The marker survived: the budget made room for it rather than the emit exceeding the cap.
   assert_ctx_contains "${MARKER_NEEDLE}"
-  # And the emitted total also sits under the engine cap the ceiling proxies for.
-  [[ "${units}" -le "${ENGINE_MAX_UNITS}" ]] || {
-    echo "assembly ${units} units exceeds the engine cap ${ENGINE_MAX_UNITS}" >&2
-    return 1
-  }
+  assert_ctx_contains "wiki-untrusted: ${WIKI}"
+  assert_ctx_contains "budget-analysis: ${BUDGET}"
 }

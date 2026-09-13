@@ -3,7 +3,7 @@ name: glass-atrium-dev-naming
 description: Naming conventions for DEV agents — 5 conciseness principles (no-stutter context removal + identifier-kind verb-form scoping nouns-on-data/verbs-on-functions, with intention-revealing reduction floor), variables (scope-proportional, collections, maps), booleans (stative-first), functions (inverse-scope, layer-specific, 17-category verb taxonomy), classes/types, enums/constants, greppability, anti-pattern prohibition
 ---
 
-> Injected core: the compressed `AGENT-INJECT:NAMING` block the SubagentStart hook delivers is in `scoped/shared-naming.md` → `## Agent Injection Core`. This file is the on-demand detail that block defers to.
+> Core rules: the compressed non-inferable naming rules are in `scoped/shared-naming.md` → `## Agent Injection Core`, a rule file DEV agents and glass-atrium-qa-code-reviewer receive through registry membership. This file is the on-demand detail those rules defer to.
 
 ## When to Use
 

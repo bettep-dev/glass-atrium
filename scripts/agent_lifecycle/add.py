@@ -220,23 +220,22 @@ def _run_add_locked(
     # dev-note 5: scope-rule membership needs no follow-up — build_entry wrote the
     # `rules` object this ADD just committed, so the registry carries the new
     # agent's Tier-2 and Tier-3 files already. What still needs the NAME is the
-    # tracked-roster set that gates the INJECTED BLOCKS: a freshly-ADDed DEV
-    # agent stays inject-list-mismatch until the five tracked arrays are
-    # reconciled, and until then it receives no comment-logging core, no
-    # minimalism reflex, no naming delta-core and no BUDGET-DEV sizing block.
+    # two tracked rosters: a freshly-ADDed DEV agent stays inject-list-mismatch
+    # until BUDGET_DEV_AGENTS and STYLEREF_AGENTS are reconciled, and until then
+    # it receives no BUDGET-DEV sizing block and the style_ref omission flag does
+    # not hold it responsible.
     # Surface that, and keep the two claims apart — a note conflating them sends
     # an operator to the wrong CLI in either direction. The reconcile is
     # executable now (skill glass-atrium-ops-reconcile-inject → sync-inject CLI
     # verb), no longer a manual hand-edit. The manual-curated governance rosters
-    # (BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS, PLAN_GATE_AGENTS) are
-    # untracked by design, and the Scope Legend row plus the matrix cells stay a
-    # manual follow-up the updater does not preserve.
+    # (BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS) are untracked by design,
+    # and the Scope Legend row plus the matrix cells stay a manual follow-up the
+    # updater does not preserve.
     note = ""
     if is_dev:
         note = (
-            " NOTE: inject-scope-rules.sh INJECT_AGENTS/MINIMALISM_AGENTS/"
-            "NAMING_AGENTS/BUDGET_DEV_AGENTS and lib/styleref-roster.sh "
-            "STYLEREF_AGENTS still need this NAME — run skill "
+            " NOTE: inject-scope-rules.sh BUDGET_DEV_AGENTS and "
+            "lib/styleref-roster.sh STYLEREF_AGENTS still need this NAME — run skill "
             "glass-atrium-ops-reconcile-inject (orphan-scan will report this). "
             "Rule membership is already on the registry row; the Scope Legend "
             "row is a separate manual edit."

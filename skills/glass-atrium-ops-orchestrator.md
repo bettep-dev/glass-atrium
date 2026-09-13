@@ -1083,11 +1083,11 @@ Steps 1-2 run on either branch — step 2 is where a "no" routes to EXTEND (step
    - So the commit carries both protections: `run_in_background: false` is MANDATORY (Foreground Probe) AND the user must OK the specific path/change (⏸ step 5).
 5. **⏸ Foreground-commit approval (HUMAN PAUSE)** — Harness Path Protection Rule 1: user explicitly OKs the path + change before the commit runs.
    - Rule 2: the Bash invocation runs foreground (`run_in_background: false`), so the user sees the diff in real time.
-6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject`) to fill the tracked `inject-scope-rules.sh` arrays: INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV (the tracked set is declared in `scripts/agent_lifecycle/inject_sync.py` — read it there rather than from a count in prose).
+6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject`) to fill the tracked roster arrays: `BUDGET_DEV_AGENTS` in `hooks/inject-scope-rules.sh` and `STYLEREF_AGENTS` in `hooks/lib/styleref-roster.sh` (the tracked set is declared in `scripts/agent_lifecycle/readers.py` → `_TRACKED_INJECT_ARRAYS` — read it there rather than from prose).
    - `sync-inject` is the write path that fills the arrays; `orphan-scan --mode reconcile` writes NOTHING — it only LISTS failed-rollback recovery markers.
-   - Two of those rosters are narrower than DEV: NAMING = DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger · BUDGET_DEV = DEV minus the daemon-carrier agents holding in-body budget bullets.
-   - **Every OTHER roster in that hook is manual-curated and reconcile leaves it untouched** — `PLAN_GATE_AGENTS`, `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS`. An agent that belongs in one is added BY HAND or it silently receives no such block (membership: `core-compliance-matrix.md` → Tier 3).
-   - Until reconciled, the new agent silently loads NO scope-injection blocks.
+   - BUDGET_DEV is narrower than DEV: DEV minus the daemon-carrier agents holding in-body budget bullets. STYLEREF is the whole DEV roster and gates the `style_ref` `review_flag` predicate, not an injected block.
+   - **Every OTHER roster in that hook is manual-curated and reconcile leaves it untouched** — `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS`. An agent that belongs in one is added BY HAND or it silently receives no such block (curation: `core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`).
+   - Until reconciled, the new agent receives no BUDGET-DEV sizing block and escapes the `style_ref` omission flag. Its scope and Tier-3 rules need no reconcile: the part slots deliver them from the registry row step 4 wrote.
 7. **Verify-arch (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-verify-arch` to update arch-invariants + team diagrams after reconcile; until it runs, those invariants and diagrams stay stale.
 
 #### EXTEND path (step 3-alt — the DEFAULT branch)

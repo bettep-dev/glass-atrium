@@ -2,8 +2,7 @@
 
 Responsibilities:
     Reconcile the tracked space-padded bash arrays — STYLEREF_AGENTS in the
-    roster lib, INJECT_AGENTS / MINIMALISM_AGENTS / NAMING_AGENTS /
-    BUDGET_DEV_AGENTS in the inject hook — with the DEV roster (per-array
+    roster lib, BUDGET_DEV_AGENTS in the inject hook — with the DEV roster (per-array
     predicate), bidirectionally: INSERT every missing roster member AND REMOVE
     every stale array name absent from the expected membership (a deleted
     agent). The write is transactional: back the live file up to `.bak`, rebuild
@@ -16,8 +15,7 @@ scope RULES. Per-agent rule membership is recorded on the registry row
 (`rules`), which `registry_ops.build_entry` writes at ADD time, so the
 new-agent rule-membership gap is closed by construction rather than by a run of
 this module. What an unreconciled array still costs is the INJECTED BLOCK it
-gates — the comment-logging core, the minimalism reflex, the naming delta-core
-and the BUDGET-DEV sizing block, each silently absent from a new agent's
+gates — the BUDGET-DEV sizing block, silently absent from a new agent's
 assembly — plus the style_ref review_flag predicate, which
 hooks/lib/style-ref-consts.sh reads from STYLEREF_AGENTS directly, independently
 of any injected block.
@@ -49,23 +47,10 @@ from .readers import (
 )
 from .paths import StorePaths
 
-# QA names INJECT_AGENTS carries over the DEV roster (the same split orphan_scan
-# models). Kept local so inject_sync owns its own expected-membership rule.
-_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"})
-
-# NAMING_AGENTS carries qa-code-reviewer ONLY (the review-enforcement surface),
-# NEVER qa-debugger. Dedicated single-name set so the naming predicate cannot
-# reuse _QA_NAMES (which includes qa-debugger).
-_NAMING_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer"})
-
-# dev-swift is the one DEV roster member NAMING_AGENTS excludes (native SwiftUI,
-# not the web naming-convention surface the delta-core targets).
-_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"glass-atrium-dev-swift"})
-
 # BUDGET_DEV_AGENTS exclusions: these DEV agents carry a daemon-evolved in-body
 # budget bullet, so the hook must NOT double-deliver the BUDGET-DEV block to
 # them. Edited ONLY when the daemon adds/removes an in-body budget bullet — a
-# manual governance change, like NAMING's exclusions. SHARED with
+# manual governance change. SHARED with
 # orphan_scan._check_inject_list_mismatch (a second hardcoded carrier list is
 # FORBIDDEN — one owner, two call sites).
 _BUDGET_DAEMON_CARRIERS: frozenset[str] = frozenset(
@@ -134,30 +119,15 @@ class SyncResult:
         return "\n".join(lines)
 
 
-def _expected_naming_membership(dev_roster: set[str]) -> set[str]:
-    """NAMING_AGENTS expected set: DEV − {dev-swift} ∪ {qa-code-reviewer}.
-
-    DEDICATED predicate — it CANNOT reuse _QA_NAMES (which includes qa-debugger)
-    nor the plain dev_roster (which includes dev-swift). The naming delta-core
-    injects to every DEV agent except dev-swift, plus the qa-code-reviewer
-    enforcement surface, and NEVER to qa-debugger.
-    """
-    return (dev_roster - _NAMING_EXCLUDED_DEV) | _NAMING_QA_NAMES
-
-
 def _expected_membership(dev_roster: set[str]) -> dict[str, set[str]]:
     """The expected name set per tracked array given the DEV roster.
 
-    INJECT carries DEV + QA; STYLEREF + MINIMALISM are DEV-only; NAMING carries
-    the narrower DEV − {dev-swift} + qa-code-reviewer set; BUDGET_DEV carries
-    DEV minus the daemon-carrier exclusions. Mirrors
+    STYLEREF carries the DEV roster; BUDGET_DEV carries DEV minus the
+    daemon-carrier exclusions. Mirrors
     orphan_scan._check_inject_list_mismatch so detection and the fix agree.
     """
     return {
-        "INJECT_AGENTS": dev_roster | _QA_NAMES,
         "STYLEREF_AGENTS": set(dev_roster),
-        "MINIMALISM_AGENTS": set(dev_roster),
-        "NAMING_AGENTS": _expected_naming_membership(dev_roster),
         "BUDGET_DEV_AGENTS": dev_roster - _BUDGET_DAEMON_CARRIERS,
     }
 
@@ -264,7 +234,7 @@ def plan_removes(text: str, dev_roster: set[str]) -> dict[str, list[str]]:
 
     The remove half of the bidirectional plan: for each array, the
     actual-minus-expected difference (names in the array but absent from the
-    roster + QA — a deleted/stale agent). Keys on the SAME roster as
+    roster — a deleted/stale agent). Keys on the SAME roster as
     plan_inserts, so the delete-side scope-dev.md prune (which drops the deleted
     name from the roster) makes the stale name surface here.
     """

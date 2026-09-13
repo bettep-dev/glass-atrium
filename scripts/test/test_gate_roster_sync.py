@@ -18,9 +18,9 @@ Covers `agent_lifecycle.gate_roster_sync` (the 3-gate-site transactional rebuild
   - detection mode: orphan-scan gate-roster-mismatch reports drift, writes nothing.
   - auto-wire e2e: a fixture run_add of a DEV agent makes its name appear in all 3
     sites (the T6 integration proof).
-  - inject 5-tuple widening: parse_inject_text returns the 5-tracked-array tuple
-    (BUDGET_DEV_AGENTS 5th) and loud-fails when it is absent; orphan_scan's
-    inject drift-lint keys BUDGET_DEV on the SHARED
+  - inject tracked set: parse_inject_text returns a dict keyed by the tracked
+    arrays (BUDGET_DEV_AGENTS, STYLEREF_AGENTS) and loud-fails when one is
+    absent; orphan_scan's inject drift-lint keys BUDGET_DEV on the SHARED
     inject_sync._BUDGET_DAEMON_CARRIERS predicate (readers/orphan_scan
     consumption paths).
 
@@ -574,20 +574,13 @@ def _array_line(var: str, names: list[str]) -> str:
 
 
 def _inject_hook_text(budget_dev: list[str]) -> str:
-    """A minimal inject-scope-rules.sh: the 4 hook-resident tracked arrays in-sync
-    for the 13-name roster except a caller-driven BUDGET_DEV_AGENTS membership.
+    """A minimal inject-scope-rules.sh carrying the one hook-resident tracked array,
+    BUDGET_DEV_AGENTS, with a caller-driven membership.
     STYLEREF_AGENTS lives in the roster lib (_styleref_roster_text)."""
-    qa = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
-    naming = [n for n in _DEV_ROSTER if n != "glass-atrium-dev-swift"] + [
-        "glass-atrium-qa-code-reviewer"
-    ]
     return (
         "\n".join(
             [
                 "#!/usr/bin/env bash",
-                _array_line("INJECT_AGENTS", _DEV_ROSTER + qa),
-                _array_line("MINIMALISM_AGENTS", _DEV_ROSTER),
-                _array_line("NAMING_AGENTS", naming),
                 _array_line("BUDGET_DEV_AGENTS", budget_dev),
                 # an UNTRACKED governance roster, present so a parse that reached
                 # past its own set would be visible rather than merely unmodelled.
@@ -599,7 +592,7 @@ def _inject_hook_text(budget_dev: list[str]) -> str:
 
 
 def _styleref_roster_text() -> str:
-    """The declaration-only roster lib holding the 5th tracked array."""
+    """The declaration-only roster lib holding the STYLEREF_AGENTS tracked array."""
     return (
         "#!/usr/bin/env bash\n"
         f"{_array_line('STYLEREF_AGENTS', _DEV_ROSTER)}\n"
@@ -621,14 +614,7 @@ def test_parse_inject_text_is_keyed_by_array_name_over_the_tracked_set() -> None
     arrays = parse_inject_text(text)
 
     assert set(arrays) == set(readers._TRACKED_INJECT_ARRAYS)
-    assert arrays["INJECT_AGENTS"] == _DEV_ROSTER + [
-        "glass-atrium-qa-code-reviewer",
-        "glass-atrium-qa-debugger",
-    ]
     assert arrays["STYLEREF_AGENTS"] == _DEV_ROSTER
-    assert arrays["MINIMALISM_AGENTS"] == _DEV_ROSTER
-    assert arrays["NAMING_AGENTS"][-1] == "glass-atrium-qa-code-reviewer"
-    assert "glass-atrium-dev-swift" not in arrays["NAMING_AGENTS"]
     assert arrays["BUDGET_DEV_AGENTS"] == expected_budget
     # the untracked governance roster sits in the same text and is deliberately unparsed.
     assert "BUDGET_ANALYSIS_AGENTS" in text

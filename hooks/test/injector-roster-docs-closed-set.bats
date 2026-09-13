@@ -47,17 +47,14 @@ roster_prefixes() {
 # vanishes from code names itself in the failure. Retiring a roster is a deliberate edit HERE, in
 # the same change that retires its injected block — never a silent shrink of the declaration set.
 # Adding a roster does not belong here: C3 already binds a new one to the matrix.
-EXPECTED_ROSTERS='INJECT
-MINIMALISM
-NAMING
-PLAN_GATE
-BUDGET_DEV
+EXPECTED_ROSTERS='BUDGET_DEV
 BUDGET_ANALYSIS
 WIKI_UNTRUSTED
 STYLEREF'
 
-# The AGENT-INJECT block name owned by a roster, read from its marker constant. The
-# comment-logging roster owns the plain marker (no prefix), every other roster a distinct one.
+# The AGENT-INJECT block name owned by a roster, read from its `<PREFIX>_MARKER_START` constant.
+# STYLEREF owns no block (it is the style_ref review_flag roster), so it resolves by variable name
+# alone; the unprefixed fallback matches only a hook that still declares the plain marker pair.
 get_marker_block() {
   local prefix="$1" name
   name="$(sed -n "s/^readonly ${prefix}_MARKER_START='<!-- \\(AGENT-INJECT[A-Z:-]*\\):START -->'.*/\\1/p" "${INJECTOR}")"

@@ -295,7 +295,7 @@ def _handle_orphan_scan(args: argparse.Namespace) -> int:
 
 
 def _handle_sync_inject(args: argparse.Namespace) -> int:
-    """Reconcile the 5 tracked inject-scope-rules.sh arrays with the DEV roster.
+    """Reconcile the 2 tracked roster arrays with the DEV roster.
 
     Reuses orphan-scan's inject-list-mismatch detection to report the diff, then
     delegates the transactional write to inject_sync.apply (`.bak` backup +
@@ -524,8 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync = sub.add_parser(
         "sync-inject",
         help=(
-            "reconcile the 5 tracked inject-scope-rules.sh arrays with the DEV "
-            "roster (transactional: .bak backup + atomic write + rollback)"
+            "reconcile the 2 tracked roster arrays (BUDGET_DEV_AGENTS, "
+            "STYLEREF_AGENTS) with the DEV roster "
+            "(transactional: .bak backup + atomic write + rollback)"
         ),
     )
     p_sync.set_defaults(func=_handle_sync_inject)

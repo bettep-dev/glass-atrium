@@ -1,29 +1,31 @@
-"""Behavioral tests for the inject-scope-rules.sh 5-tracked-array sync (plan T4 / AC1-AC4).
+"""Behavioral tests for the inject-scope-rules.sh 2-tracked-array sync (plan T4 / AC1-AC4).
 
 Covers the `agent_lifecycle.inject_sync` transactional reconcile + the
 `sync-inject` CLI verb against a disposable `--ga-root` temp fixture (never the
 live ~/.glass-atrium tree):
 
-  - insert-when-missing, per scope: a missing DEV name lands in every tracked
-    array its predicate covers, a missing QA name lands in INJECT only (AC1).
-  - BUDGET_DEV_AGENTS (5th tracked array): reconciles to DEV roster − the shared
+  - insert-when-missing: a missing DEV name lands in every tracked array its
+    predicate covers (AC1).
+  - BUDGET_DEV_AGENTS: reconciles to DEV roster − the shared
     _BUDGET_DAEMON_CARRIERS exclusions; a carrier is never inserted and is
     pruned when present. The untracked BUDGET_ANALYSIS_AGENTS line stays
     byte-identical across a reconcile run.
   - idempotent no-op: a clean tree leaves the hook file byte- AND mtime-identical
     (AC2).
-  - MINIMALISM specifically: the previously-unparsed third array is detected AND
-    fixed (AC4 — verified 0-hit unparsed before this revision).
+  - STYLEREF specifically: a single-array drift is detected AND fixed in
+    isolation (AC4).
+  - retired arrays: a stale live hook still carrying a retired roster line is
+    neither parsed nor rewritten, so it cannot break the reconcile.
   - round-trip rejects a corrupting edit: an insert that would drop a prior member
     raises rather than landing a lossy write.
   - rollback restores from .bak: a forced mid-transaction failure leaves the live
     file byte-identical to the pre-run original (AC3) and exits non-zero.
   - bidirectional reconcile: plan_removes flags stale names, apply() removes a
-    stale name from all 3 arrays + inserts and removes in one tx, the no-op
+    stale name from every tracked array + inserts and removes in one tx, the no-op
     short-circuit covers "no inserts AND no removes", remove-rollback restores
     byte-identical, and the round-trip rejects a write keeping a removed name (AC7/AC8).
   - delete-side stanza prune: run_delete drops the DEV name from the scope-dev.md
-    roster (AC11) so the bidirectional sync then prunes all 3 arrays (AC12). Both
+    roster (AC11) so the bidirectional sync then prunes every tracked array (AC12). Both
     real-`run_delete` tests redirect ~/.Trash into their tmp dir and assert the
     .md landed there, so the shipped mv-to-Trash step is exercised and asserted
     without depositing a file in the operator's Trash on every suite run.
@@ -62,8 +64,8 @@ from agent_lifecycle.readers import (  # noqa: E402
     parse_sql_in_list_text,
 )
 
-# The DEV roster the live scope-dev.md brace list carries; INJECT also
-# carries the two QA names. The fixture builder appends extra names per test.
+# The DEV roster the live scope-dev.md brace list carries. The fixture builder
+# appends extra names per test.
 _DEV_ROSTER = [
     "glass-atrium-dev-front",
     "glass-atrium-dev-react",
@@ -78,13 +80,6 @@ _DEV_ROSTER = [
     "glass-atrium-dev-animator",
     "glass-atrium-dev-shell",
 ]
-_QA_NAMES = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
-# NAMING_AGENTS is the narrower 4th array: the DEV roster MINUS glass-atrium-dev-swift, PLUS
-# glass-atrium-qa-code-reviewer, and EXCLUDING glass-atrium-qa-debugger. The fixture _DEV_ROSTER above does
-# NOT include glass-atrium-dev-swift, so the in-sync naming list is just _DEV_ROSTER plus the
-# review name. Tests append extra names per scenario.
-_NAMING_QA_NAME = "glass-atrium-qa-code-reviewer"
-
 # The untracked, manual-curated analysis roster — written into every fixture so
 # tests can prove the reconcile leaves it byte-identical (D5: not roster-derivable).
 _BUDGET_ANALYSIS = [
@@ -115,18 +110,15 @@ def _array_line(var: str, names: list[str]) -> str:
 def _write_fixture(
     root: Path,
     *,
-    inject: list[str],
     styleref: list[str],
-    minimalism: list[str],
-    naming: list[str],
     roster: list[str],
     budget_dev: list[str] | None = None,
 ) -> StorePaths:
     """Build a minimal but valid GA store under `root` (disposable temp tree).
 
     Writes the stores `run_scan(['inject-list-mismatch'])` + inject_sync touch:
-    the inject hook (the tracked INJECT/MINIMALISM/NAMING/BUDGET_DEV arrays plus
-    the untracked BUDGET_ANALYSIS line), the roster lib (the tracked STYLEREF
+    the inject hook (the tracked BUDGET_DEV array plus the untracked
+    BUDGET_ANALYSIS line), the roster lib (the tracked STYLEREF
     array), scope-dev.md (roster brace list), and the registry + manifest JSON
     (load_json raises on a missing manifest). `budget_dev=None` defaults to the
     in-sync roster − carriers set.
@@ -144,9 +136,6 @@ def _write_fixture(
     hook.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        f"{_array_line('INJECT_AGENTS', inject)}\n"
-        f"{_array_line('MINIMALISM_AGENTS', minimalism)}\n"
-        f"{_array_line('NAMING_AGENTS', naming)}\n"
         f"{_array_line('BUDGET_DEV_AGENTS', budget_dev)}\n"
         f"{_array_line('BUDGET_ANALYSIS_AGENTS', _BUDGET_ANALYSIS)}\n",
         encoding="utf-8",
@@ -260,19 +249,16 @@ def _assert_trashed(trash: Path, paths: StorePaths, name: str) -> None:
 
 
 def test_insert_when_missing_dev_lands_in_every_tracked_array(tmp_path: Path) -> None:
-    """A roster DEV name absent from every array is inserted into all 5 (AC1).
+    """A roster DEV name absent from every array is inserted into each tracked one (AC1).
 
-    glass-atrium-dev-newkid is neither dev-swift nor a daemon carrier, so it is
-    expected in NAMING_AGENTS and BUDGET_DEV_AGENTS too. The untracked
+    glass-atrium-dev-newkid is not a daemon carrier, so it is expected in
+    BUDGET_DEV_AGENTS as well as STYLEREF_AGENTS. The untracked
     governance roster is equally short of the name and MUST stay that way — the
     reconcile's reach is its tracked set, not every array it can see.
     """
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         budget_dev=_budget_dev_expected(_DEV_ROSTER),
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
@@ -288,40 +274,11 @@ def test_insert_when_missing_dev_lands_in_every_tracked_array(tmp_path: Path) ->
     assert "glass-atrium-dev-newkid" not in _raw_members(hook, "BUDGET_ANALYSIS_AGENTS")
 
 
-def test_insert_when_missing_qa_lands_in_inject_only(tmp_path: Path) -> None:
-    """A missing QA name goes into INJECT only (AC1).
-
-    STYLEREF / MINIMALISM / NAMING / BUDGET_DEV never take
-    glass-atrium-qa-debugger — NAMING carries glass-atrium-qa-code-reviewer
-    alone, and the other three are DEV-derived.
-    """
-    paths = _write_fixture(
-        tmp_path,
-        inject=_DEV_ROSTER + ["glass-atrium-qa-code-reviewer"],  # glass-atrium-qa-debugger missing from INJECT
-        styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
-        roster=_DEV_ROSTER,
-    )
-
-    result = inject_sync.apply(paths)
-
-    hook = paths.inject_scope_rules
-    assert "glass-atrium-qa-debugger" in _members(hook, "INJECT_AGENTS")
-    assert result.inserted["INJECT_AGENTS"] == ["glass-atrium-qa-debugger"]
-    for dev_derived in ("STYLEREF_AGENTS", "MINIMALISM_AGENTS", "NAMING_AGENTS", "BUDGET_DEV_AGENTS"):
-        assert "glass-atrium-qa-debugger" not in _members(hook, dev_derived)
-        assert result.inserted[dev_derived] == []
-
-
 def test_idempotent_noop_leaves_file_unchanged(tmp_path: Path) -> None:
     """A clean tree is a no-op: same bytes AND same mtime, no .bak written (AC2)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -338,37 +295,65 @@ def test_idempotent_noop_leaves_file_unchanged(tmp_path: Path) -> None:
     assert not backup.exists()
 
 
-def test_minimalism_specifically_detected_and_fixed(tmp_path: Path) -> None:
-    """MINIMALISM drift is detected AND fixed in isolation, the other four intact (AC4).
+def test_styleref_specifically_detected_and_fixed(tmp_path: Path) -> None:
+    """STYLEREF drift is detected AND fixed in isolation, the other one intact (AC4).
 
-    MINIMALISM_AGENTS gates the minimalism reflex block, so a DEV name missing
-    from it is a silently absent block — the scan reports that name specifically
-    and the write repairs only that array.
+    STYLEREF_AGENTS is the roster the style_ref omission flag holds responsible,
+    so a DEV name missing from it escapes that flag — the scan reports that name
+    specifically and the write repairs only that array.
     """
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
-        styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER[:-1],  # only MINIMALISM is missing glass-atrium-dev-shell
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        styleref=_DEV_ROSTER[:-1],  # only STYLEREF is missing glass-atrium-dev-shell
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
 
-    # Detection: the read-only scan reports the MINIMALISM-specific miss.
+    # Detection: the read-only scan reports the STYLEREF-specific miss.
     findings = run_scan(paths, ["inject-list-mismatch"]).by_mode("inject-list-mismatch")
     assert any(
-        f.name == "glass-atrium-dev-shell" and "MINIMALISM_AGENTS" in f.detail for f in findings
+        f.name == "glass-atrium-dev-shell" and "STYLEREF_AGENTS" in f.detail for f in findings
     ), (
-        f"expected a MINIMALISM glass-atrium-dev-shell miss, got {[(f.name, f.detail) for f in findings]}"
+        f"expected a STYLEREF glass-atrium-dev-shell miss, got {[(f.name, f.detail) for f in findings]}"
     )
 
-    # Fix: only MINIMALISM changes; the other four were already in sync.
+    # Fix: only STYLEREF changes; the other one was already in sync.
     result = inject_sync.apply(paths)
-    assert result.inserted["MINIMALISM_AGENTS"] == ["glass-atrium-dev-shell"]
-    for in_sync in ("INJECT_AGENTS", "STYLEREF_AGENTS", "NAMING_AGENTS", "BUDGET_DEV_AGENTS"):
-        assert result.inserted[in_sync] == []
-    assert "glass-atrium-dev-shell" in _members(hook, "MINIMALISM_AGENTS")
+    assert result.inserted["STYLEREF_AGENTS"] == ["glass-atrium-dev-shell"]
+    assert result.inserted["BUDGET_DEV_AGENTS"] == []
+    assert result.removed["BUDGET_DEV_AGENTS"] == []
+    assert "glass-atrium-dev-shell" in _members(hook, "STYLEREF_AGENTS")
+
+
+def test_retired_array_line_is_neither_parsed_nor_rewritten(tmp_path: Path) -> None:
+    """A stale hook still carrying a retired roster line cannot break the reconcile.
+
+    The retired INJECT_AGENTS line is written out of sync with the roster on
+    purpose (a stale name, a missing DEV name): a reconcile that still parsed it
+    would report or rewrite it. A real rewrite of the tracked arrays must leave
+    that line byte-identical and name it in no plan entry.
+    """
+    paths = _write_fixture(
+        tmp_path,
+        styleref=_DEV_ROSTER,
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],  # forces a real rewrite
+    )
+    hook = paths.inject_scope_rules
+    retired_line = _array_line(
+        "INJECT_AGENTS", _DEV_ROSTER[:-1] + ["glass-atrium-dev-gone"]
+    )
+    hook.write_text(hook.read_text(encoding="utf-8") + retired_line + "\n", encoding="utf-8")
+
+    parsed = inject_sync.parse_inject_text(_declaration_text(hook))
+    assert set(parsed) == set(readers._TRACKED_INJECT_ARRAYS)
+    assert "INJECT_AGENTS" not in parsed
+
+    result = inject_sync.apply(paths)
+
+    assert result.changed
+    assert retired_line in hook.read_text(encoding="utf-8").splitlines()
+    assert "INJECT_AGENTS" not in result.inserted
+    assert "INJECT_AGENTS" not in result.removed
 
 
 def test_round_trip_rejects_when_array_missing() -> None:
@@ -376,7 +361,7 @@ def test_round_trip_rejects_when_array_missing() -> None:
     # Documented round-trip guard: an array assignment the regex cannot locate
     # after the edit is a hard InjectSyncError, never a silent skip.
     with pytest.raises(inject_sync.InjectSyncError):
-        inject_sync.insert_name_in_array("# no arrays here\n", "INJECT_AGENTS", "dev-x")
+        inject_sync.insert_name_in_array("# no arrays here\n", "STYLEREF_AGENTS", "dev-x")
     with pytest.raises(inject_sync.InjectSyncError):
         inject_sync.insert_name_in_array("anything", "BOGUS_AGENTS", "dev-x")
 
@@ -387,10 +372,7 @@ def test_round_trip_rejects_a_corrupting_write(
     """apply()'s post-write round-trip rejects a write that dropped a planned name (AC3)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     hook = paths.inject_scope_rules
@@ -420,10 +402,7 @@ def test_rollback_restores_from_bak(
     """A forced mid-transaction failure restores the file byte-identically + exits 5 (AC3)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     hook = paths.inject_scope_rules
@@ -449,10 +428,7 @@ def test_rollback_maps_to_exit_tx_failed(
     """The CLI maps a cleanly-rolled-back sync failure to EXIT_TX_FAILED=5 (AC3)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
@@ -469,12 +445,9 @@ def test_plan_removes_flags_stale_array_names(tmp_path: Path) -> None:
     """plan_removes returns names present in an array but absent from the roster."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
-        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in all 5 arrays
+        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in every tracked array
     )
     text = (
         paths.inject_scope_rules.read_text(encoding="utf-8")
@@ -494,10 +467,7 @@ def test_apply_removes_stale_dev_name_from_every_tracked_array(tmp_path: Path) -
     """A name absent from the roster is pruned from every TRACKED array (AC7/AC12)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
@@ -518,10 +488,7 @@ def test_apply_inserts_and_removes_in_one_transaction(tmp_path: Path) -> None:
     paths = _write_fixture(
         tmp_path,
         # glass-atrium-dev-newkid missing everywhere; glass-atrium-dev-gone stale everywhere.
-        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
@@ -567,10 +534,7 @@ def test_budget_dev_carrier_never_inserted_and_pruned_when_present(
     ]
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         budget_dev=drifted + ["glass-atrium-dev-react"],
         roster=_DEV_ROSTER,
     )
@@ -595,10 +559,7 @@ def test_budget_analysis_untracked_stays_byte_identical(tmp_path: Path) -> None:
     plan entry for it (D5 regression pin)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         budget_dev=_budget_dev_expected(_DEV_ROSTER),
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],  # forces a real rewrite
     )
@@ -620,10 +581,7 @@ def test_apply_noop_when_nothing_to_insert_or_remove(tmp_path: Path) -> None:
     """A clean tree (no inserts AND no removes) is byte+mtime identical, no .bak (AC8)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -645,10 +603,7 @@ def test_apply_remove_rollback_restores_byte_identical(
     """A forced failure on a remove-only plan restores the file byte-identically (AC7)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -671,10 +626,7 @@ def test_revalidate_rejects_a_write_that_kept_a_removed_name(
     """apply()'s round-trip rejects a write where a planned-removed name lingers (AC7)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -708,10 +660,7 @@ def test_run_delete_prunes_scope_dev_roster_stanza(
     roster = _DEV_ROSTER + [target]
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + [target],
         styleref=_DEV_ROSTER + [target],
-        minimalism=_DEV_ROSTER + [target],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, target],
         roster=roster,
     )
     # run_delete now auto-syncs the 3 gate sites after the stanza prune — seed them
@@ -761,10 +710,7 @@ def test_orphan_scan_is_lint_only_no_write(tmp_path: Path) -> None:
     """orphan-scan detects the mismatch but writes nothing — only sync-inject mutates."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
-        styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER[:-1],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        styleref=_DEV_ROSTER[:-1],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -802,10 +748,7 @@ def test_run_delete_auto_wires_gate_roster_sync(
     roster = _DEV_ROSTER + [target]
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + [target],
         styleref=_DEV_ROSTER + [target],
-        minimalism=_DEV_ROSTER + [target],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, target],
         roster=roster,
     )
     # Seed the 3 gate sites with the pre-delete roster so gate-roster-sync can
@@ -899,10 +842,7 @@ def _clean_fixture(tmp_path: Path) -> StorePaths:
     post-commit roster assertion can produce output."""
     return _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER,
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER,
     )
 

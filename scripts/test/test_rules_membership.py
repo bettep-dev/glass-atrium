@@ -316,9 +316,8 @@ def test_brace_roster_name_without_a_dev_registry_row_is_reported(
 def test_qa_add_records_a_qa_rules_object() -> None:
     """A QA ADD records QA membership, so the row is reconcilable from the start.
 
-    Complements the INJECT_AGENTS QA-insert test, which covers the other half:
-    that array still carries the QA names and gates the comment-logging block,
-    while rule MEMBERSHIP is what the registry row has to get right.
+    No inject roster carries a QA name, so rule MEMBERSHIP on the registry row
+    is the only record through which a QA agent's scope text reaches it.
     """
     rules = get_rules_for_scope("QA")
 

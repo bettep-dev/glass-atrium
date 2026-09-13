@@ -42,33 +42,17 @@ def _array_re(var_name: str) -> re.Pattern[str]:
     )
 
 
-# The tracked arrays, declared ONCE. A tracked array is one whose membership is
-# DERIVABLE from the DEV roster, so a reconcile can write it without a second
-# copy of the list. Three arrays are absent, for two DIFFERENT reasons.
-# BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are governance memberships no
-# predicate reproduces, so tracking them would mean declaring them twice.
-# PLAN_GATE_AGENTS IS derivable — it is the plain DEV roster, the predicate
-# MINIMALISM_AGENTS already carries in _expected_membership — and is absent for
-# the other reason: it is a declaration deliberately SEPARATE from
-# MINIMALISM_AGENTS, byte-identical today but answering a gate-eligibility
-# question rather than a minimalism-reflex one, so narrowing either must not
-# silently narrow the other. Until it gains a tracked entry of its own, a newly
-# registered DEV agent is added to it by hand.
-#
-# An array is tracked while the hook still READS it. INJECT_AGENTS,
-# MINIMALISM_AGENTS and NAMING_AGENTS still gate COMMENT_BLOCK, MINIMALISM_BLOCK
-# and NAMING_BLOCK, so an untracked one would mean a newly added DEV agent
-# silently receiving none of the three with nothing to report it. They are
-# retired from here in the same change that retires their blocks, never ahead of
-# it. STYLEREF_AGENTS additionally gates the style_ref review_flag predicate
-# (hooks/lib/style-ref-consts.sh reads it), so it stays tracked whatever happens
-# to its block; BUDGET_DEV_AGENTS gates the BUDGET-DEV sizing block against the
-# daemon-carrier exclusions.
+# The tracked arrays, declared ONCE. An array is tracked while the block it gates
+# still ships and its membership is DERIVABLE from the DEV roster, so a reconcile
+# can write it without a second copy of the list. Arrays whose blocks are retired
+# are gone with those blocks, and a stale copy left in a live hook is neither
+# parsed nor rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are
+# governance memberships no predicate reproduces, so tracking them would mean
+# declaring them twice. STYLEREF_AGENTS gates the style_ref review_flag predicate
+# (hooks/lib/style-ref-consts.sh reads it); BUDGET_DEV_AGENTS gates the BUDGET-DEV
+# sizing block against the daemon-carrier exclusions.
 _TRACKED_INJECT_ARRAYS: tuple[str, ...] = (
-    "INJECT_AGENTS",
     "STYLEREF_AGENTS",
-    "MINIMALISM_AGENTS",
-    "NAMING_AGENTS",
     "BUDGET_DEV_AGENTS",
 )
 

@@ -10,8 +10,8 @@ if [[ -n "${_STYLE_REF_CONSTS_LOADED:-}" ]]; then
 fi
 readonly _STYLE_REF_CONSTS_LOADED=1
 
-# The reason-token registry + channel sets, and the roster of agents the probe block is delivered
-# to. Sourced here (not assumed from the caller) so the Bats test and the hook load one predicate.
+# The reason-token registry + channel sets, and the roster of agents that receive the Project
+# Convention Probe through scope-dev.md membership. Sourced here (not assumed from the caller) so the Bats test and the hook load one predicate.
 # shellcheck source=lib/review-flag-reasons.sh
 source "${BASH_SOURCE%/*}/review-flag-reasons.sh"
 # shellcheck source=lib/styleref-roster.sh
@@ -21,7 +21,7 @@ source "${BASH_SOURCE%/*}/styleref-roster.sh"
 # Caller-scope: reads STYLE_REF / TASK_TYPE / ATTRIBUTION_SOURCE / AGENT_TYPE, writes REVIEW_FLAG.
 # Exempt (REVIEW_FLAG unchanged): STYLE_REF non-empty (Probe ran) · task_type ∉ the 3 code types ·
 #   ATTRIBUTION_SOURCE outside WRITER_ATTRIBUTION_SOURCES (no writer emission to hold responsible) ·
-#   a registered agent outside STYLEREF_AGENTS (the probe instruction was never delivered to it).
+#   a registered agent outside STYLEREF_AGENTS (scope-dev.md, the probe's source, is not its scope).
 # An UNREGISTERED agent flags under its own reason instead of the omission one: the ephemeral name
 # is an orchestration defect, and charging it as a probe omission mis-attributes it to the writer.
 # OPTIONAL — no result escalation, review_flag only (Gaming-the-Judge avoidance).

@@ -2,7 +2,7 @@
 
 Companion to `scoped/scope-dev.md`, which now carries DEV-agent-facing duties only. Everything here addresses a maintainer, the orchestrator, glass-atrium-meta-prompt-engineer, or the `agent_lifecycle` CLI operator — no running DEV agent is obliged by any of it.
 
-Deliberately absent from this file: the injected blocks' marker strings, their lead-line needles, and the first-link sentence literal. Each is asserted unique or machine-extracted out of the rule file itself, and `scoped/` is a recursive grep root — a copy here is a second hit, never a convenience.
+Deliberately absent from this file: the compressed cores' lead-line needles and the first-link sentence literal. Each is counted or machine-extracted out of the rule file itself, and `scoped/` is a recursive grep root — a copy here is a second hit, never a convenience.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -17,7 +17,7 @@ Deliberately absent from this file: the injected blocks' marker strings, their l
 |---|---|---|
 | the Tier-2 loading stanza's brace-delimited DEV roster | `scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster` (re-parsed on every edit by `stanza.py`) | an `agent_scope`-anchored brace list; absent → `ReaderError`/`StanzaError` aborts the lifecycle add/delete |
 | the same brace list | `autoagent/lib/roster_merge.py` → `_get_markdown_slots` | EXACTLY ONE brace-delimited membership list FILE-WIDE — its regex does not require the `agent_scope` prefix, so a second brace list of that shape anywhere in the file makes the updater refuse the whole file at deploy and strand every unrelated edit in it |
-| three marker-pair blocks (style-ref · minimalism · plan-gate) | `hooks/inject-scope-rules.sh` → `extract_block`, source constant `STYLEREF_SRC_FILE` | `sed` range + whole-line `grep -vxF` on each marker, so every marker line stays ALONE on its line with no surrounding whitespace, and no second copy of a marker string may appear anywhere in the file |
+| the whole file, as rule text for DEV spawns | `hooks/lib/inject_chunk.py`, selected by each DEV agent's `agent-registry.json` → `rules.scope` | heading boundaries — the chunker splits at headings and packs whole sections into capped parts, so a section too large for one part is named in an oversize marker instead of delivered; no `AGENT-INJECT` marker or extraction range applies |
 | the first-link question's quoted sentence | `hooks/test/enforce-workflow-verify-stage-firstlink.bats`, cross-read against `FIRST_LINK_LITERAL` in `hooks/enforce-workflow-verify-stage.sh` | see Extraction constraints below |
 | the whole file, as a rule excerpt | `autoagent/daemon_cycle.py` verify prompt (char cap 120,000, no heading anchor) | nothing — restructure freely |
 | the file's basename | `hooks/validate-compliance-matrix.sh` (Layer A, `find -maxdepth 1` over `scoped/`) | a Compliance Matrix row for `scope-dev.md`. That scan is depth-1, which is why this companion sits in a SUBDIRECTORY and needs no matrix row of its own |
@@ -33,21 +33,15 @@ The suite runs a `sed` line RANGE over the rule file and then pulls the backtick
 
 Every other mention of that question in the rule file is deliberately lower-case for the first property. Keep it that way.
 
-### Injected blocks — byte contract
+### Retired slot-1 blocks — what remains in the rule file
 
-- The three blocks are injected into DEV spawns under a whole-assembly ceiling, and one byte over costs TWO blocks: the budget block sheds first but frees less than the marker reserve that shed subtracts from the ceiling, so the plan-gate block goes with it.
-- Both bounds are pinned numerically in `hooks/test/inject-scope-rules-nodrop.bats` and are deliberately not restated here (the line this replaces carried two inline figures, both wrong when written). The per-block cap is not the limit a rewording hits first — the whole dev-front assembly bound bites earlier.
-- Re-run that suite on any rewording of a block; it fails at the source rather than in a spawn.
-- The style-ref block is a self-contained restatement of the rule file's Project Convention Probe, and the plan-gate block of its Plan Direction Verification Gate. Sync is MANUAL in both directions — the rule file is the source of truth for the block's content.
-
-### Plan-gate block — what is in it and what is not
-
-- **In**: the verdict shape · the load-bearing test · the refuted-premise consequence · the non-waiver clause.
-- **Out, because another carrier already holds it**: the premise-audit question, the revision-cycle question and the report vocabulary, all carried by the ultracode verify-stage goal text.
-- **Out, because it belongs to another role**: the ultracode authoring note (below).
-- **CUT for the byte contract, and the item to add back FIRST if that contract is ever raised**: the three-part answer shape for the revision-cycle earliest-decision question, readable only in the rule file's own bullet. A recorded cut, not a breach of the ceiling.
-- **Why the non-waiver clause is stated in the block and never reduced to a pointer**: an agent under a narrowing instruction is the least likely to follow a pointer to the rule saying narrowing does not apply.
-- **Why the injector and not a per-body mirror**: one mirror per DEV body would become that many unpinned copies of a sentence a suite reads byte-for-byte out of the rule file — the same drift the gate exists downstream of.
+- The rule file carries no `AGENT-INJECT` marker. `hooks/inject-scope-rules.sh` extracts nothing from it; DEV agents receive the whole file through the part slots by `rules.scope` membership.
+- **Kept as ordinary content**: the style_ref core (after `### Project Convention Probe`) and the minimalism core (closing `## Complexity Proportionality`). Several rules in the minimalism core — the `ponytail:` corner-cut mark, the heavy-machinery rule, the ≤3-line output rule — are stated nowhere else in the file, so the core cannot be deleted as a duplicate.
+- **Deleted outright**: the plan-gate core. Every clause it carried is stated in `## Plan Direction Verification Gate [DEV+QA]`, including the three-part first-link answer shape the byte cap had cut from it.
+- **Folding each kept core into its canonical section is open work**: it needs a per-bullet audit, and it is the only way to remove the in-file restatement a DEV agent now reads twice within one part.
+- **Keep each kept core's bold lead phrase** (the words before its parenthetical): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts them ABSENT from slot 1, and the check proves nothing once a phrase no longer exists in the source.
+- **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every DEV agent. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
+- **Degraded installs**: an install with no runnable python3 or an unreadable registry delivers none of this file's rules; `lib/ga-doctor.sh` MUST warn on that state.
 
 ### Removed from the premise check, said once so it is not re-derived
 
@@ -108,8 +102,8 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 
 A successful `add` writes some of the sites a new name must appear in, and not others.
 
-- **Auto-written**: the agent file · the `agent-registry.json` entry · (via the post-commit reconcile gate) the reconcile-tracked `inject-scope-rules.sh` arrays INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV.
-- **Deliberately UNTRACKED by that gate**: the manual-curated rosters `BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS` and `PLAN_GATE_AGENTS`. Their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair.
+- **Auto-written**: the agent file · the `agent-registry.json` entry (whose `rules` object selects the scope and Tier-3 files the part slots deliver) · (via the post-commit reconcile gate) the reconcile-tracked arrays `BUDGET_DEV_AGENTS` in `hooks/inject-scope-rules.sh` and `STYLEREF_AGENTS` in `hooks/lib/styleref-roster.sh`.
+- **Deliberately UNTRACKED by that gate**: the manual-curated rosters `BUDGET_ANALYSIS_AGENTS` and `WIKI_UNTRUSTED_AGENTS`. Their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair.
 - **NOT written at all**: the `core-compliance-matrix.md` **Scope Legend** DEV row and the **Compliance Matrix** rows — a SEPARATE post-creation doc update for the new agent name.
 - **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-orchestrator.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
 
@@ -181,8 +175,8 @@ Open items a later pass owns, both outside this wave's file set:
 
 - The maintainer preamble pointing here was removed, and so was the companion pointer in the first-link LITERAL bullet: neither sat under an externally-cited stub heading, so neither is sanctioned by the companion-citation convention in this note's header. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — stated without the pointer.
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.
-- The three `<!-- … Detail: scoped/maintainers/scope-dev.md -->` comments beside the marker blocks STAY. They address whoever edits a machine-extracted block, are never rendered and never injected, and deleting them would strip the nodrop-suite guard's own detail link.
-- `**Project Convention Probe**` was promoted from a bold lead to `### Project Convention Probe`, with its trigger as the first bullet. The promotion sits outside every marker range, so no injected byte moves.
+- The three `<!-- … Detail: scoped/maintainers/scope-dev.md -->` comments that sat beside the marker blocks went with the markers when the slot-1 blocks retired (`### Retired slot-1 blocks — what remains in the rule file`); no machine-extracted block remains for them to address.
+- `**Project Convention Probe**` was promoted from a bold lead to `### Project Convention Probe`, with its trigger as the first bullet.
 - The loading stanza regained its `> **Inherits**:` and `> **See**:` lines for parity with the other scope files. Neither line contains a brace, so the single-brace-list invariant both stanza parsers depend on is untouched.
 
 ## Sections dropped in this pass
@@ -190,9 +184,9 @@ Open items a later pass owns, both outside this wave's file set:
 Removed from the rule file, recorded so they are not re-derived as omissions:
 
 - The delivery-status preamble and the four "Readers (NOT UNUSED)" retention paragraphs: each justified a section by naming a `> scope-dev pointers:` line in twelve DEV bodies, and that line was deleted from every body in this branch. The sections they protected are kept on their own duty content or on the citations tabled above.
-- Three pointer-only sections — naming conventions, code structure/function/type design, and the iron-law escalation pointer. Their skills load globally at session start and the naming rules additionally reach DEV agents through an injected block, so each line obliged nothing and was cited by nothing.
+- Three pointer-only sections — naming conventions, code structure/function/type design, and the iron-law escalation pointer. Their skills load globally at session start and the naming rules additionally reach DEV agents through `scoped/shared-naming.md` membership, so each line obliged nothing and was cited by nothing.
 - The package-provenance bullet: `core-security.md` → Dependency Auditing states it, is Tier 1, and measurably reaches every agent.
-- The reuse-order ladder bullet under vendor routing: the injected minimalism block carries the ladder and the never-hand-roll-crypto carve-out verbatim.
+- The reuse-order ladder bullet under vendor routing: the minimalism core carries the ladder and the never-hand-roll-crypto carve-out verbatim.
 
 ## Pre-Edit Facts Disclosure — restored, and the record corrected
 
@@ -200,9 +194,9 @@ An earlier open-item bullet here filed the dangling `hooks/advisory-preedit-fact
 
 - **Provenance, measured**: `git log --oneline -S "Pre-Edit Facts Disclosure" -- scoped/scope-dev.md` returns exactly `3cdeb07` (added, initial commit) and `32a0685` (deleted). `32a0685` — one of this wave's own two cut commits — is what orphaned the citation; `2dbac77` never touched the literal.
 - **What kept citing it meanwhile**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory (binding SoT `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row), names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
-- **Disposition taken**: the section is restored to the rule file verbatim from `32a0685^`, placed after the style-ref marker block and before `## Context Engineering [DEV]`, so it opens a clean sibling section under `## Pre-Execution Verification [DEV]` and moves no injected byte.
+- **Disposition taken**: the section is restored to the rule file verbatim from `32a0685^`, placed after the style_ref core and before `## Context Engineering [DEV]`, so it opens a clean sibling section under `## Pre-Execution Verification [DEV]`.
 - **Why restore rather than retire the hook**: the restore costs no extra file, makes the operator-visible citation resolve today, and holds under either branch of the delivery direction this epic is still deciding.
-- **The delivery half stays OPEN, and a new marker block is NOT how to close it**: the DEV assembly's slack is under one block against the ceiling `hooks/test/inject-scope-rules-nodrop.bats` pins, and the marker blocks are themselves being retired. Should split injection fail AND the skills-preload fallback be rejected, this duty's operative destination becomes the DEV agent bodies.
+- **Delivery rides the part slots, never a marker block**: the rule file reaches every DEV agent whole through `rules.scope` membership, and slot 1 carries no scope-file text. A new marker block is NOT a sanctioned route for this duty.
 - **The hook is not edited in this wave**: its citation resolves again, so no repoint is owed.
 
 ## Leave-deleted verdicts here are dated, not closed
