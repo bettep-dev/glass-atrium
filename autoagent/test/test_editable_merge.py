@@ -2563,6 +2563,393 @@ class ArbiterPartialRegionTest(unittest.TestCase):
         self.assertIn("second LOCAL", cand.resolution.candidate_text)
 
 
+_RESET_ID = "20260913T120000Z-a1b2c3"
+
+
+def _reset_body(front: str, regions: tuple[str, ...], bottom: str = "tail") -> str:
+    """Agent body with a byte-0 frontmatter block and one EDITABLE region per entry."""
+    parts = ["---\n", front, "---\n\n# title\n"]
+    for index, region in enumerate(regions):
+        parts.append(f"\n## section {index}\n<!-- EDITABLE:BEGIN -->\n{region}\n")
+        parts.append("<!-- EDITABLE:END -->\n")
+    parts.append(f"\n{bottom}\n")
+    return "".join(parts)
+
+
+def _seed_reset_request(
+    state: Path, targets: tuple[str, ...], request_id: str = _RESET_ID
+) -> Path:
+    """Write a pending reset request the way the operator record step stores one."""
+    request_dir = state / "editable-reset"
+    request_dir.mkdir(parents=True, exist_ok=True)
+    pending = request_dir / "pending.json"
+    pending.write_text(
+        json.dumps(
+            {
+                "request_id": request_id,
+                "recorded_utc": "2026-09-13T12:00:00Z",
+                "reason": "canonical dieted body wins",
+                "bodies": [
+                    {"target": target, "live_sha256": "0" * 64} for target in targets
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return pending
+
+
+class _RaisingArbiter:
+    """Arbiter stand-in whose any call fails the test — the reset path never judges."""
+
+    def get_gap_outcome(self, **_: object) -> None:
+        raise AssertionError("reset-to-release consulted the arbiter")
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResetToReleaseResolverTest(unittest.TestCase):
+    """A marked body's EDITABLE regions become the release's, whatever base says."""
+
+    _FRONT = "name: dev-x\ntools: Read\n"
+    _RELEASE_REGIONS = ("canonical one", "canonical two", "canonical three")
+    _LOCAL_REGIONS = ("canonical one\ndaemon line a", "canonical two", "daemon only")
+
+    def _resolve(self, base: str | None, local: str, release: str) -> object:
+        return em.resolve_file(
+            "agents/dev-x.md",
+            local,
+            release,
+            base,
+            arbiter=_RaisingArbiter(),  # type: ignore[arg-type]
+            reset_to_release=True,
+        )
+
+    def test_every_differing_region_takes_the_release_independent_of_base(
+        self,
+    ) -> None:
+        release = _reset_body(self._FRONT, self._RELEASE_REGIONS)
+        local = _reset_body(
+            f"{self._FRONT}model: claude-opus-5\n", self._LOCAL_REGIONS, bottom="old"
+        )
+        expected = _reset_body(
+            f"{self._FRONT}model: claude-opus-5\n", self._RELEASE_REGIONS
+        )
+        bases = {
+            "base equals release": release,
+            "base differs from both": _reset_body(self._FRONT, ("x", "y", "z")),
+            "base equals local": local,
+            "no base entry": None,
+        }
+        for label, base in bases.items():
+            with self.subTest(base=label):
+                res = self._resolve(base, local, release)
+
+                self.assertEqual(res.candidate_text, expected)
+                self.assertEqual(res.verdict, em.RESET_TO_RELEASE)
+                self.assertFalse(res.needs_llm)
+                self.assertFalse(res.has_conflict)
+                self.assertEqual(
+                    [r.verdict for r in res.regions],
+                    [em.RESET_TO_RELEASE, em.KEEP_LOCAL, em.RESET_TO_RELEASE],
+                )
+
+    def test_a_mixed_reset_and_keep_local_body_reports_reset_overall(self) -> None:
+        release = _reset_body(self._FRONT, ("same", "canonical"))
+        local = _reset_body(self._FRONT, ("same", "canonical\ndaemon"))
+
+        res = self._resolve(release, local, release)
+
+        self.assertEqual(
+            [r.verdict for r in res.regions], [em.KEEP_LOCAL, em.RESET_TO_RELEASE]
+        )
+        self.assertEqual(res.verdict, em.RESET_TO_RELEASE)
+
+    def test_the_landed_candidate_re_resolves_as_a_no_op_marked_or_not(self) -> None:
+        release = _reset_body(self._FRONT, self._RELEASE_REGIONS)
+        local = _reset_body(f"{self._FRONT}model: m\n", self._LOCAL_REGIONS)
+        landed = self._resolve(release, local, release).candidate_text
+
+        for marked in (True, False):
+            with self.subTest(marked=marked):
+                res = em.resolve_file(
+                    "agents/dev-x.md", landed, release, release, reset_to_release=marked
+                )
+                self.assertEqual(res.verdict, em.NO_OP)
+
+    def test_a_region_count_mismatch_still_routes_to_the_ceremony(self) -> None:
+        release = _reset_body(self._FRONT, ("one", "two"))
+        local = _reset_body(self._FRONT, ("one",))
+
+        res = self._resolve(release, local, release)
+
+        self.assertEqual(res.verdict, em.STRUCTURAL)
+
+    def test_an_unmarked_body_resolves_exactly_as_without_the_flag(self) -> None:
+        base = _reset_body(self._FRONT, ("base", "base", "base"))
+        release = _reset_body(self._FRONT, ("base", "vendor", "vendor"))
+        local = _reset_body(self._FRONT, ("learned", "base", "learned too"))
+
+        default = em.resolve_file("agents/dev-x.md", local, release, base)
+        unmarked = em.resolve_file(
+            "agents/dev-x.md", local, release, base, reset_to_release=False
+        )
+
+        self.assertEqual(unmarked, default)
+        self.assertNotIn(em.RESET_TO_RELEASE, {r.verdict for r in default.regions})
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResetFrontmatterPreservationTest(unittest.TestCase):
+    """The reset decides EDITABLE regions only; frontmatter keeps its real-base policy."""
+
+    _FRONT = "name: dev-x\n"
+
+    def _candidate(
+        self, local_front: str, release_front: str, base_front: str | None
+    ) -> str:
+        release = _reset_body(release_front, ("canonical",))
+        local = _reset_body(local_front, ("canonical\ndaemon",))
+        base = None if base_front is None else _reset_body(base_front, ("canonical",))
+        res = em.resolve_file(
+            "agents/dev-x.md", local, release, base, reset_to_release=True
+        )
+        self.assertEqual(res.verdict, em.RESET_TO_RELEASE)
+        self.assertNotIn("daemon", res.candidate_text)
+        return res.candidate_text
+
+    def test_the_operator_model_pin_survives(self) -> None:
+        text = self._candidate(
+            f"{self._FRONT}model: claude-opus-5\n", self._FRONT, self._FRONT
+        )
+
+        self.assertIn("model: claude-opus-5\n", text)
+
+    def test_effort_follows_the_base_aware_rule(self) -> None:
+        xhigh, high, medium = "effort: xhigh\n", "effort: high\n", "effort: medium\n"
+        # (case, live, release, base, expected)
+        cases = (
+            ("live differs from base", xhigh, high, high, xhigh),
+            ("live equals base", high, medium, high, medium),
+            ("no base entry", xhigh, high, None, xhigh),
+        )
+        for label, live, release, base, expected in cases:
+            with self.subTest(case=label):
+                text = self._candidate(
+                    self._FRONT + live,
+                    self._FRONT + release,
+                    None if base is None else self._FRONT + base,
+                )
+                self.assertIn(expected, text)
+                self.assertEqual(text.count("effort:"), 1)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class PendingResetRequestTest(unittest.TestCase):
+    """The operator request both the plan and the verify process read."""
+
+    def setUp(self) -> None:
+        import editable_reset  # a missing module must fail, not skip
+
+        self.er = editable_reset
+        self._tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self._tmp.name) / "state"
+        self.state.mkdir()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_no_pending_file_means_no_request(self) -> None:
+        self.assertIsNone(
+            self.er.get_pending_request("agents/dev-db.md", str(self.state))
+        )
+
+    def test_matches_only_the_full_logical_target(self) -> None:
+        _seed_reset_request(self.state, ("agents/dev-db.md",))
+        cases = {
+            "agents/dev-db.md": _RESET_ID,
+            "dev-db.md": None,
+            "hooks/dev-db.md": None,
+            "agents/dev-node.md": None,
+        }
+        for target, expected in cases.items():
+            with self.subTest(target=target):
+                self.assertEqual(
+                    self.er.get_pending_request(target, str(self.state)), expected
+                )
+
+    def test_a_missing_state_dir_resolves_through_state_root(self) -> None:
+        _seed_reset_request(self.state, ("agents/dev-db.md",))
+
+        with mock.patch.dict(os.environ, {em._STATE_DIR_ENV: str(self.state)}):
+            self.assertEqual(
+                em.state_root(None), str(self.state)
+            )  # precondition: the root both processes agree on
+            self.assertEqual(
+                self.er.get_pending_request("agents/dev-db.md", None), _RESET_ID
+            )
+
+    def test_an_unreadable_or_malformed_request_raises(self) -> None:
+        pending = self.state / "editable-reset" / "pending.json"
+        valid_body = {"target": "agents/dev-db.md", "live_sha256": "0" * 64}
+        malformed = {
+            "not json": "{",
+            "not an object": "[]",
+            "missing request_id": json.dumps({"bodies": [valid_body]}),
+            "request_id with a space": json.dumps(
+                {"request_id": "a b", "bodies": [valid_body]}
+            ),
+            "bodies not a list": json.dumps({"request_id": _RESET_ID, "bodies": {}}),
+            "body without target": json.dumps(
+                {"request_id": _RESET_ID, "bodies": [{"live_sha256": "0" * 64}]}
+            ),
+            "target outside agents/": json.dumps(
+                {
+                    "request_id": _RESET_ID,
+                    "bodies": [{"target": "dev-db.md", "live_sha256": "0" * 64}],
+                }
+            ),
+            "live_sha256 not a digest": json.dumps(
+                {
+                    "request_id": _RESET_ID,
+                    "bodies": [{"target": "agents/dev-db.md", "live_sha256": "abc"}],
+                }
+            ),
+        }
+        pending.parent.mkdir(parents=True)
+        for label, text in malformed.items():
+            with self.subTest(case=label):
+                pending.write_text(text, encoding="utf-8")
+                with self.assertRaises(self.er.ResetRequestError):
+                    self.er.get_pending_request("agents/dev-db.md", str(self.state))
+        pending.unlink()
+        pending.mkdir()  # a directory in the file's place cannot be read
+        with self.assertRaises(self.er.ResetRequestError):
+            self.er.get_pending_request("agents/dev-db.md", str(self.state))
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResetPlanCliTest(unittest.TestCase):
+    """Plan-line fields, sidecar, unmarked isolation and verify-process parity."""
+
+    _FRONT = "name: dev-db\n"
+    _TARGET = "agents/dev-db.md"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.state = self.root / "state"
+        self.release_text = _reset_body(self._FRONT, ("canonical", "kept"))
+        self.local_text = _reset_body(
+            f"{self._FRONT}model: claude-opus-5\n",
+            ("canonical\ndaemon one\ndaemon two", "kept"),
+        )
+        store = em.base_store_dir(str(self.state))
+        store.mkdir(parents=True)
+        (store / "dev-db.md").write_text(self.release_text, encoding="utf-8")
+        self.local_p = self.root / "local.md"
+        self.local_p.write_text(self.local_text, encoding="utf-8")
+        self.release_p = self.root / "release.md"
+        self.release_p.write_text(self.release_text, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _plan(self, target: str = _TARGET) -> tuple[int, str, str, Path]:
+        out = self.root / "candidate.md"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = em.main(
+                [
+                    "plan",
+                    "--target", target,
+                    "--local", str(self.local_p),
+                    "--release", str(self.release_p),
+                    "--out", str(out),
+                    "--state-dir", str(self.state),
+                ]
+            )
+        return rc, stdout.getvalue(), stderr.getvalue(), out
+
+    def test_an_unmarked_plan_line_reports_reset_none_before_out(self) -> None:
+        rc, line, _, _ = self._plan()
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertRegex(
+            line, r" reset=none reset_dropped_lines=0 reset_added_lines=0 out="
+        )
+
+    def test_a_request_for_another_body_leaves_this_plan_byte_identical(self) -> None:
+        _, before, _, out = self._plan()
+        before_candidate = out.read_text(encoding="utf-8")
+        _seed_reset_request(self.state, ("agents/dev-node.md",))
+
+        rc, after, _, _ = self._plan()
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertEqual(after, before)
+        self.assertEqual(out.read_text(encoding="utf-8"), before_candidate)
+        self.assertFalse(Path(f"{out}.reset.json").exists())
+
+    def test_a_marked_plan_reports_the_request_and_records_the_dropped_lines(
+        self,
+    ) -> None:
+        _seed_reset_request(self.state, (self._TARGET,))
+
+        rc, line, _, out = self._plan()
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertIn(f"verdict={em.RESET_TO_RELEASE} ", line)
+        self.assertRegex(
+            line,
+            rf" reset={_RESET_ID} reset_dropped_lines=2 reset_added_lines=0 out=",
+        )
+        sidecar = json.loads(Path(f"{out}.reset.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["request_id"], _RESET_ID)
+        self.assertEqual(sidecar["regions"], [0])
+        self.assertEqual(sidecar["dropped"], ["daemon one\n", "daemon two\n"])
+        self.assertEqual(sidecar["added_count"], 0)
+        self.assertEqual(
+            out.read_text(encoding="utf-8"),
+            _reset_body(f"{self._FRONT}model: claude-opus-5\n", ("canonical", "kept")),
+        )
+
+    def test_a_malformed_request_fails_the_plan_loudly(self) -> None:
+        pending = _seed_reset_request(self.state, (self._TARGET,))
+        pending.write_text("{", encoding="utf-8")
+
+        rc, line, err, out = self._plan()
+
+        self.assertEqual(rc, em.EXIT_RESET_INVALID)
+        self.assertEqual(line, "")
+        self.assertIn(str(pending), err)
+        self.assertFalse(out.exists())
+
+    def test_the_verify_shell_out_sees_the_request_through_state_root(self) -> None:
+        _seed_reset_request(self.state, (self._TARGET,))
+        rc, _, _, out = self._plan()
+        self.assertEqual(rc, em.EXIT_OK)
+        live = self.root / "dev-db.md"
+        live.write_text(out.read_text(encoding="utf-8"), encoding="utf-8")
+        env = {**os.environ, em._STATE_DIR_ENV: str(self.state)}
+
+        def run_verify() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable, "-c", _get_verify_shell_out(),
+                    str(_LIB_DIR), self._TARGET, str(self.local_p),
+                    str(self.release_p), "", "dev-db", "", str(live),
+                ],
+                capture_output=True, text=True, env=env, check=False,
+            )
+
+        landed = run_verify()
+        (self.state / "editable-reset" / "pending.json").unlink()
+        unmarked = run_verify()
+
+        self.assertEqual(landed.returncode, 0, landed.stderr)
+        self.assertEqual(unmarked.returncode, 1, unmarked.stderr)
+
+
 def _get_verify_shell_out() -> str:
     """Read the updater's verify shell-out source, the text the callback runs."""
     text = (_REPO_ROOT / "scripts" / "update.sh").read_text(encoding="utf-8")
