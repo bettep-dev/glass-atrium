@@ -42,11 +42,11 @@ def _array_re(var_name: str) -> re.Pattern[str]:
     )
 
 
-# The tracked arrays, declared ONCE. An array is tracked while the block it gates
-# still ships and its membership is DERIVABLE from the DEV roster, so a reconcile
-# can write it without a second copy of the list. Arrays whose blocks are retired
-# are gone with those blocks, and a stale copy left in a live hook is neither
-# parsed nor rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are
+# The tracked arrays, declared ONCE. An array is tracked while something still
+# reads it — a shipped block, or the style_ref review_flag predicate — and its
+# membership is DERIVABLE from the DEV roster, so a reconcile can write it without
+# a second copy of the list. An array nothing reads any more is untracked, and a
+# stale copy left in a live hook is neither parsed nor rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are
 # governance memberships no predicate reproduces, so tracking them would mean
 # declaring them twice. STYLEREF_AGENTS gates the style_ref review_flag predicate
 # (hooks/lib/style-ref-consts.sh reads it); BUDGET_DEV_AGENTS gates the BUDGET-DEV
@@ -200,9 +200,9 @@ def parse_inject_arrays(paths: StorePaths) -> dict[str, list[str]]:
     `_TRACKED_INJECT_ARRAYS`, so a caller iterates rather than destructures.
 
     BUDGET_DEV_AGENTS lives in the inject hook; STYLEREF_AGENTS lives in the
-    declaration-only roster lib the hook and the style-ref flag predicate both
-    source. Both texts are parsed as one surface — the array regexes are
-    line-anchored, so concatenation is safe.
+    declaration-only roster lib, which only style-ref-consts.sh (the style_ref
+    flag predicate) sources. Both texts are parsed as one surface — the array
+    regexes are line-anchored, so concatenation is safe.
     """
     return parse_inject_text(
         "\n".join(

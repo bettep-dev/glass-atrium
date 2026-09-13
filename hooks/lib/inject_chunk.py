@@ -33,7 +33,8 @@ import time
 # UTF-16 cap pair the corpus uses, a text's byte count is never FEWER than its unit count —
 # ASCII is 1:1, and every multibyte character costs more bytes than units (Korean: 3 bytes,
 # 1 unit). So a byte budget can only UNDER-spend the channel, never overflow it: slot 1's
-# byte-budgeted assembly measures 9871 bytes for 9712 units, leaving 159 units unused.
+# byte-budgeted assembly measured 9871 bytes for 9712 units before it stopped extracting the
+# scope blocks, leaving 159 units unused; slot 1 for dev-front is now 2275 bytes.
 # There is no multibyte overflow to find in the byte-budgeted path; on a Korean-heavy member
 # a byte budget would waste roughly two thirds of the channel, and that waste is the whole
 # reason this path measures units instead.

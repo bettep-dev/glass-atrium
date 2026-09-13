@@ -135,12 +135,10 @@ PY
 }
 
 @test "styleref-roster.sh survives because a non-injection consumer reads it" {
-  # WHEN the STYLE-REF injected block retires, this FILE must NOT retire with it —
-  # a requirement for a later wave, not a state of this tree: the injector still
-  # sources the lib and still assembles the block from scope-dev.md. The reason the
-  # file outlives its block is a second consumer: style-ref-consts.sh sources it and
-  # tests STYLEREF_AGENTS for the style_ref review_flag predicate. Deleting it would
-  # also drop a claimed path, which this cycle cannot do.
+  # The STYLE-REF injected block is retired and the injector no longer sources this
+  # lib, but the FILE must not retire with the block: style-ref-consts.sh still
+  # sources it and tests STYLEREF_AGENTS for the style_ref review_flag predicate.
+  # Deleting it would also drop a claimed path.
   [ -f "${GA}/hooks/lib/styleref-roster.sh" ]
   run grep -qF "styleref-roster.sh" "${GA}/hooks/lib/style-ref-consts.sh"
   [ "${status}" -eq 0 ]
