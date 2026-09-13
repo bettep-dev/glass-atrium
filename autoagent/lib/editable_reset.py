@@ -1,10 +1,15 @@
-"""Operator EDITABLE-reset request — the single owner of the request file format.
+"""Operator EDITABLE-reset request — the validating reader of the request file.
 
 An operator records which agent bodies must have their EDITABLE regions reset to
 the release; the next update's merge resolves exactly those bodies with the
 ``reset-to-release`` verdict. The plan and verify processes both read the request
 here, through the same state root, so neither can resolve a body the other does
 not.
+
+This module never writes the request. Its writers are inline in scripts/update.sh:
+the record mode of ``_UPDATE_RESET_OPERATOR_PY`` writes it, its cancel mode moves
+it into cancelled/, and ``_UPDATE_RESET_CONSUME_PY`` rewrites it to the retained
+bodies or moves it aside.
 """
 
 from __future__ import annotations

@@ -1603,8 +1603,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         )
     reset_regions, reset_dropped, reset_added = reset_region_changes(cand.resolution)
     if cand.reset_request_id is not None:
-        # The only copy of the removed daemon lines once the body lands; the
-        # updater's outcome record quotes this rather than re-deriving a diff.
+        # The only record of the removed daemon lines as a diff once the body lands;
+        # the updater's outcome record quotes this rather than re-deriving one.
         Path(f"{args.out}.reset.json").write_text(
             json.dumps(
                 {

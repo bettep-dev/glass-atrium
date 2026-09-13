@@ -126,7 +126,11 @@
 # The record subcommand also exits 16, writing nothing, for a pending request, an
 # invalid or non-merge-claimed name, an absent body, or a body without EDITABLE
 # regions; the reset restore exits 10 (the restore code) on any missing, refused or
-# failed body.
+# failed body. The reset consume step never changes the exit status — the bodies have
+# landed either way — and its helper's codes select the durable editable-resets.log row
+# instead: 3 outcome record not written (outcome=record-failed) · 4 request move or
+# rewrite failed · 5 unexpected exception (both outcome=consume-failed, carrying the rc
+# and reason).
 # A commit callback returns a plain non-zero on failure and its
 # caller maps that to the named code above. Code 13 is RETIRED (it belonged to
 # the deleted vendor-removal sweep) and is deliberately not reused, so an old log
@@ -666,23 +670,30 @@ update_reset_ledger_row() {
   return 1
 }
 
-# The sanctioned arm of the tripwire. The row is written whatever the delta, and with
-# `unmeasured` when either body cannot be counted: the id, not the shape, is what
-# makes the drop sanctioned, so a measurement failure must not skip the record.
+# The sanctioned arm of the tripwire. The row is written whatever the counts, and with
+# `unmeasured` when they cannot be taken: the id, not the shape, is what makes the drop
+# sanctioned, so a measurement failure must not skip the record. Deleted and added lines
+# come from the plan's <candidate>.reset.json, the source the landed row quotes; without
+# one, the net EDITABLE-region delta is split by sign.
 # $1 = install root, $2 = rel, $3 = local body, $4 = candidate, $5 = request id.
 update_record_sanctioned_reset() {
-  local root="$1" rel="$2" local_file="$3" candidate="$4" reset_id="$5" before after delta
-  if before="$(update_editable_region_lines "${local_file}")" \
+  local root="$1" rel="$2" local_file="$3" candidate="$4" reset_id="$5" before after counts
+  local deleted='unmeasured' added='unmeasured'
+  if [[ -f "${candidate}.reset.json" ]]; then
+    if counts="$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1], encoding="utf-8")); print(len(s["dropped"]), int(s["added_count"]), sep="\t")' \
+      "${candidate}.reset.json")"; then
+      IFS=$'\t' read -r deleted added <<<"${counts}"
+    fi
+  elif before="$(update_editable_region_lines "${local_file}")" \
     && after="$(update_editable_region_lines "${candidate}")"; then
-    delta=$((before - after))
-  else
-    delta='unmeasured'
+    deleted=$((before > after ? before - after : 0))
+    added=$((after > before ? after - before : 0))
   fi
-  update_log "sanctioned editable reset — ${rel} drops ${delta} EDITABLE-region line(s) (request ${reset_id})"
-  update_reset_ledger_row "${root}" "${rel}" 'outcome=queued' "deleted_lines=${delta}" "${reset_id}"
+  update_log "sanctioned editable reset — ${rel} drops ${deleted} EDITABLE-region line(s) (request ${reset_id}), adds ${added}"
+  update_reset_ledger_row "${root}" "${rel}" 'outcome=queued' "deleted_lines=${deleted} added_lines=${added}" "${reset_id}"
 }
 
-# Reads the pending request through the format owner. Exit 0 with no output = none
+# Reads the pending request through its validating reader. Exit 0 with no output = none
 # pending · 4 = malformed (reason on stderr). Output: `id<TAB>pending<TAB>reason`, then
 # one `target<TAB>live_sha256<TAB>base_sha256|-` row per body. argv: merge_lib state_dir.
 _UPDATE_RESET_READ_PY='
@@ -706,14 +717,48 @@ for body in request["bodies"]:
     print("\t".join([body["target"], body["live_sha256"], body.get("base_sha256") or "-"]))
 '
 
+# Is a moved body already at its reset target — the reset of its live text against the
+# new release, or against its base entry (the release it last landed at)? A body a
+# landed reset left behind a surviving request matches one of the two. Exit 0 at target,
+# printing the anchor that matched (`release`, else `base`) · 3 not at target · 4 check
+# failed (reason on stderr). argv: merge_lib state_dir target live_body release_body.
+_UPDATE_RESET_AT_TARGET_PY='
+import sys
+EXIT_AT_TARGET, EXIT_NOT_AT_TARGET, EXIT_CHECK_FAILED = 0, 3, 4
+merge_lib, state_dir, target, live, release = sys.argv[1:6]
+try:
+    sys.path.insert(0, merge_lib)
+    import editable_merge as em
+    live_text = open(live, encoding="utf-8").read()
+    base_text = em.load_base_text(target, state_dir)
+    anchors = [("release", open(release, encoding="utf-8").read())]
+    if base_text is not None:
+        anchors.append(("base", base_text))
+    matched = None
+    for label, anchor in anchors:
+        resolution = em.resolve_file(target, live_text, anchor, base_text, reset_to_release=True)
+        if resolution.verdict != em.STRUCTURAL and resolution.candidate_text == live_text:
+            matched = label
+            break
+except Exception as exc:
+    sys.stderr.write(f"[glass-atrium-update] editable reset: reset-target check failed for {target}: {type(exc).__name__}: {exc}\n")
+    sys.exit(EXIT_CHECK_FAILED)
+if matched is None:
+    sys.exit(EXIT_NOT_AT_TARGET)
+print(matched)
+sys.exit(EXIT_AT_TARGET)
+'
+
 # Run validation, before the roster gate and any swap. A malformed request or an already
-# consumed id is exit 16 — nothing has been applied. A stale BODY never blocks the update:
-# it is refused (WARN + outcome=refused row), retained in the request, and skipped by the
-# merge loop, because python still marks it from pending.json and a reset of content the
-# operator did not review must not land. $1 = install root, $2 = new-release tree.
+# consumed id is exit 16 — nothing has been applied. A body whose live hash moved but
+# whose content already equals its reset target is recorded already-at-release and
+# consumed. Any other stale BODY never blocks the update: it is refused (WARN +
+# outcome=refused row), retained in the request, and skipped by the merge loop, because
+# python still marks it from pending.json and a reset of content the operator did not
+# review must not land. $1 = install root, $2 = new-release tree.
 update_validate_editable_reset() {
   local root="$1" new_dir="$2" state_dir rows rc=0 header id pending reason
-  local target live_sha base_sha actual refusal names='' n=0 base_entry
+  local target live_sha base_sha actual refusal names='' n=0 base_entry check_rc anchor
   state_dir="$(spine_baseline_dir)"
   # No request is the normal state: no reader fork on every update.
   [[ -e "${state_dir}/editable-reset/pending.json" ]] || return 0 # GA-ABSORB[benign]: no pending request — every reset site stays a no-op.
@@ -748,7 +793,25 @@ update_validate_editable_reset() {
       refusal='body-not-in-release'
     else
       actual="$(spine_sha256_of "${root}/${target}")" || actual='unreadable'
-      [[ "${actual}" == "${live_sha}" ]] || refusal='live-moved'
+      if [[ "${actual}" != "${live_sha}" ]]; then
+        check_rc=0
+        anchor="$(python3 -c "${_UPDATE_RESET_AT_TARGET_PY}" "${_update_merge_lib_dir}" "${state_dir}" \
+          "${target}" "${root}/${target}" "${new_dir}/${target}")" || check_rc=$?
+        case "${check_rc}" in
+          0)
+            if [[ "${anchor}" == 'base' ]]; then
+              update_log "editable reset: ${target} moved since request ${id} was recorded but already equals its reset target against its base entry — marked again, so it re-lands as a reset against this release"
+            else
+              update_log "editable reset: ${target} moved since request ${id} was recorded but already equals its reset target — recorded already-at-release"
+            fi
+            _update_reset_marked="${_update_reset_marked}${target}"$'\n'
+            update_reset_record_outcome "${target}" already-at-release
+            continue
+            ;;
+          3) refusal='live-moved' ;;
+          *) refusal="reset-target-check-failed-rc${check_rc}" ;;
+        esac
+      fi
     fi
     if [[ -n "${refusal}" ]]; then
       update_log "WARN: editable reset: ${target} REFUSED (reason=${refusal}) — not reset this run and retained in request ${id}; cancel and re-record after reviewing the body"
@@ -791,82 +854,103 @@ update_reset_resolve_queued() {
   done <<<"${_update_reset_queued}"
 }
 
-# Consume step. Writes the per-run outcome JSON, prints the final ledger rows and a
-# summary, then moves a fully-served request to consumed/<id>.json or rewrites it to the
-# retained bodies. Exit 0 ok · 1 outcome JSON not written (consume still ran) · 2 consume
-# failed. argv: pending consumed_dir outcomes_tsv base_drift_list out_json.
+# Consume step. Writes the per-run outcome JSON, prints the final ledger rows and the
+# tally, then moves a fully-served request to consumed/<id>.json or rewrites it to the
+# retained bodies, and prints a summary on success. The consumed_utc stamp after the
+# move is best-effort: its failure prints a WARN summary and a stamp-failed row and
+# keeps the exit code. Exit 0 ok · 3 outcome JSON not written (consume still ran) · 4 the
+# request move or rewrite failed (not consumed) · 5 unexpected exception (consume
+# aborted). argv: pending consumed_dir outcomes_tsv base_drift_list out_json.
 _UPDATE_RESET_CONSUME_PY='
 import datetime, json, os, sys
-pending, consumed_dir, tsv, drift_list, out_json = sys.argv[1:6]
-now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-request = json.loads(open(pending, encoding="utf-8").read())
-rid = request["request_id"]
-final = {}
-for line in open(tsv, encoding="utf-8"):
-    cols = line.rstrip("\n").split("\t")
-    if len(cols) >= 2:
-        final[cols[0]] = (cols + ["-"] * 5)[:5]
-drift = {t.strip() for t in open(drift_list, encoding="utf-8") if t.strip()}
-bodies, retained, counts, rc = [], [], {}, 0
-for body in request["bodies"]:
-    target = body["target"]
-    _, outcome, reason, sidecar, sha = final.get(target, [target, "retained", "not-reached", "-", "-"])
-    entry = {"target": target, "outcome": outcome, "reason": None if reason == "-" else reason,
-             "base_drift": target in drift, "post_reset_sha256": None if sha == "-" else sha,
-             "deleted_lines": 0, "added_lines": 0, "dropped_text": []}
-    if sidecar != "-" and os.path.exists(sidecar):
-        side = json.loads(open(sidecar, encoding="utf-8").read())
-        entry.update(deleted_lines=len(side["dropped"]), added_lines=side["added_count"],
-                     dropped_text=side["dropped"], regions=side["regions"])
-    counts[outcome] = counts.get(outcome, 0) + 1
-    bodies.append(entry)
-    if outcome not in ("landed", "already-at-release"):
-        retained.append(body)
-    if outcome != "refused":  # refused rows were written at validation
-        detail = "deleted_lines=%d added_lines=%d" % (entry["deleted_lines"], entry["added_lines"])
-        if entry["reason"]:
-            detail += " reason=" + entry["reason"]
-        print(f"row\t{target}\toutcome={outcome}\t{detail}")
-try:
-    os.makedirs(os.path.dirname(out_json), exist_ok=True)
-    tmp = f"{out_json}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"request": request, "run_utc": now, "bodies": bodies}, fh, indent=2)
-    os.replace(tmp, out_json)
-except OSError as exc:
-    sys.stderr.write(f"outcome record not written ({out_json}): {exc}\n")
-    rc = 1
-tally = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-try:
-    if retained:
-        request["bodies"] = retained
-        tmp = f"{pending}.tmp"
+EXIT_OK, EXIT_RECORD_FAILED, EXIT_REQUEST_WRITE_FAILED, EXIT_CONSUME_FAILED = 0, 3, 4, 5
+
+def consume(pending, consumed_dir, tsv, drift_list, out_json):
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    request = json.loads(open(pending, encoding="utf-8").read())
+    rid = request["request_id"]
+    final = {}
+    for line in open(tsv, encoding="utf-8"):
+        cols = line.rstrip("\n").split("\t")
+        if len(cols) >= 2:
+            final[cols[0]] = (cols + ["-"] * 5)[:5]
+    drift = {t.strip() for t in open(drift_list, encoding="utf-8") if t.strip()}
+    bodies, retained, counts, rc = [], [], {}, EXIT_OK
+    for body in request["bodies"]:
+        target = body["target"]
+        _, outcome, reason, sidecar, sha = final.get(target, [target, "retained", "not-reached", "-", "-"])
+        entry = {"target": target, "outcome": outcome, "reason": None if reason == "-" else reason,
+                 "base_drift": target in drift, "post_reset_sha256": None if sha == "-" else sha,
+                 "deleted_lines": 0, "added_lines": 0, "dropped_text": []}
+        if sidecar != "-" and os.path.exists(sidecar):
+            side = json.loads(open(sidecar, encoding="utf-8").read())
+            entry.update(deleted_lines=len(side["dropped"]), added_lines=side["added_count"],
+                         dropped_text=side["dropped"], regions=side["regions"])
+        counts[outcome] = counts.get(outcome, 0) + 1
+        bodies.append(entry)
+        if outcome not in ("landed", "already-at-release"):
+            retained.append(body)
+        if outcome != "refused":  # refused rows were written at validation
+            detail = "deleted_lines=%d added_lines=%d" % (entry["deleted_lines"], entry["added_lines"])
+            if entry["reason"]:
+                detail += " reason=" + entry["reason"]
+            print(f"row\t{target}\toutcome={outcome}\t{detail}")
+    try:
+        os.makedirs(os.path.dirname(out_json), exist_ok=True)
+        tmp = f"{out_json}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(request, fh, indent=2)
-        os.replace(tmp, pending)
+            json.dump({"request": request, "run_utc": now, "bodies": bodies}, fh, indent=2)
+        os.replace(tmp, out_json)
+    except OSError as exc:
+        sys.stderr.write(f"outcome record not written ({out_json}): {exc}\n")
+        rc = EXIT_RECORD_FAILED
+    tally = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    print(f"tally\t{tally}", flush=True)
+    dest = os.path.join(consumed_dir, f"{rid}.json")
+    try:
+        if retained:
+            request["bodies"] = retained
+            tmp = f"{pending}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(request, fh, indent=2)
+            os.replace(tmp, pending)
+        else:
+            os.makedirs(consumed_dir, exist_ok=True)
+            os.replace(pending, dest)
+    except OSError as exc:
+        sys.stderr.write(f"consume failed for request {rid}: {exc}\n")
+        return EXIT_REQUEST_WRITE_FAILED
+    if retained:
         names = ", ".join(b["target"] for b in retained)
         print(f"summary\tWARN: editable reset: request {rid} RETAINED for {names} ({tally})")
-    else:
-        os.makedirs(consumed_dir, exist_ok=True)
-        dest = os.path.join(consumed_dir, f"{rid}.json")
-        os.replace(pending, dest)  # the move alone consumes; the stamp below is best-effort
+        return rc
+    print(f"summary\teditable reset: request {rid} CONSUMED ({tally})")
+    # The move alone consumes, so a failed stamp leaves rc unchanged; any exception
+    # is caught because a consumed request must never reach the NOT-consumed exits.
+    try:
         request["consumed_utc"] = now
         with open(f"{dest}.tmp", "w", encoding="utf-8") as fh:
             json.dump(request, fh, indent=2)
         os.replace(f"{dest}.tmp", dest)
-        print(f"summary\teditable reset: request {rid} CONSUMED ({tally})")
-except OSError as exc:
-    sys.stderr.write(f"consume failed for request {rid}: {exc}\n")
-    print(f"summary\tWARN: editable reset: request {rid} NOT consumed ({tally}) — a leftover request re-resolves already-at-release on the next run")
-    rc = 2
-sys.exit(rc)
+    except Exception as exc:
+        print(f"summary\tWARN: editable reset: request {rid} is consumed but its consumed_utc stamp was not written ({dest}): {type(exc).__name__}: {exc}")
+        print(f"row\t-\toutcome=stamp-failed\tpath={dest}")
+    return rc
+
+try:
+    sys.exit(consume(*sys.argv[1:6]))
+except Exception as exc:
+    sys.stderr.write(f"consume aborted by an unexpected {type(exc).__name__}: {exc}\n")
+    sys.exit(EXIT_CONSUME_FAILED)
 '
 
 # Runs after update_capture_base_content, so a landed body's base already equals the
-# release when its request is consumed. Never fatal: the bodies have landed either way,
-# and a leftover request re-resolves already-at-release next run. $1 = install root.
+# release when its request is consumed. Never fatal: the bodies have landed either way.
+# A request that survives a failed consume is resolved by the next run's validation,
+# which records a body already at its reset target as already-at-release and refuses
+# one that moved otherwise. $1 = install root.
 update_consume_editable_reset() {
-  local root="$1" state_dir out rc=0 kind rel outcome detail
+  local root="$1" state_dir out rc=0 kind rel outcome detail reason record tally='tally unknown'
   [[ -n "${_update_reset_id}" ]] || return 0 # GA-ABSORB[benign]: no request was pending this run — nothing to consume.
   state_dir="$(spine_baseline_dir)"
   out="$(update_declines_dir "${root}")/editable-resets/${_update_reset_id}/outcome-$(date -u +%Y%m%dT%H%M%SZ).json"
@@ -878,15 +962,27 @@ update_consume_editable_reset() {
     case "${kind}" in
       row) update_reset_ledger_row "${root}" "${rel}" "${outcome}" "${detail}" "${_update_reset_id}" || true ;; # GA-ABSORB[handled@update_reset_ledger_row]: the helper WARNed, and the outcome JSON carries the same row
       summary) update_log "${rel}" ;;
+      tally) tally="${rel}" ;;
       *) ;;
     esac
   done <<<"${lines}"
   case "${rc}" in
     0) update_log "editable reset: outcome recorded → ${out}" ;;
-    1) update_log "WARN: editable reset: the per-run outcome record was NOT written (${out}); editable-resets.log rows are the only record of this run" ;;
+    3)
+      update_log "WARN: editable reset: the per-run outcome record was NOT written (${out}); editable-resets.log rows are the only record of this run"
+      update_reset_ledger_row "${root}" '-' 'outcome=record-failed' "path=${out}" "${_update_reset_id}" || true # GA-ABSORB[handled@update_reset_ledger_row]: the WARN above already names the failure
+      ;;
     *)
-      update_log "WARN: editable reset: request ${_update_reset_id} consume failed (rc ${rc}) under ${state_dir}/editable-reset"
-      update_reset_ledger_row "${root}" '-' 'outcome=consume-failed' "rc=${rc}" "${_update_reset_id}" || true # GA-ABSORB[handled@update_reset_ledger_row]: the WARN above already names the failure
+      case "${rc}" in
+        4) reason='request-write-failed' ;;
+        5) reason='unexpected-exception' ;;
+        *) reason='helper-failed' ;;
+      esac
+      record='missing'
+      [[ ! -f "${out}" ]] || record="${out}"
+      update_log "WARN: editable reset: request ${_update_reset_id} NOT consumed (${tally}) — the next run records a body already at its reset target as already-at-release and refuses one that moved otherwise"
+      update_log "WARN: editable reset: request ${_update_reset_id} consume failed (rc ${rc}, reason=${reason}) under ${state_dir}/editable-reset — outcome record: ${record}"
+      update_reset_ledger_row "${root}" '-' 'outcome=consume-failed' "rc=${rc} reason=${reason} outcome_record=${record}" "${_update_reset_id}" || true # GA-ABSORB[handled@update_reset_ledger_row]: the WARN above already names the failure
       ;;
   esac
   return 0
@@ -898,23 +994,43 @@ update_consume_editable_reset() {
 # record / show / cancel / restore. Each runs under the apply-lock, so a request can
 # never appear between the plan and the verify process of a running update.
 
+# Copy one restore image from the resolved real path, so a symlinked source yields a
+# regular file holding its bytes rather than a link to the file the reset overwrites.
+# rc 1 unless the image is a regular file equal to the source. $1 = source, $2 = image.
+update_reset_copy_image() {
+  local real
+  real="$(update_realpath "$1")" \
+    && [[ -f "${real}" && ! -L "${real}" ]] \
+    && spine_atomic_swap "${real}" "$2" \
+    && [[ -f "$2" && ! -L "$2" ]] \
+    && cmp -s -- "${real}" "$2"
+}
+
 # Copy the live body and its base entry into the request's image dir before the
 # transaction. agents-bak cannot back a per-request restore: every same-day run of one
-# version shares its cycle dir, and it is pruned. rc 1 (after a WARN) on any failed or
-# mismatched copy. $1 = install root, $2 = rel, $3 = live body.
+# version shares its cycle dir, and it is pruned. Captured once per request: a regular
+# <name>.bak means the set is complete, and a leftover request landing again must not
+# replace its pre-reset images with the body it already reset. A failed capture removes
+# both images, so a lone <name>.bak never reads as a complete set. rc 1 (after a WARN) on
+# any failed, mismatched or non-regular image. $1 = install root, $2 = rel, $3 = live body.
 update_reset_capture_images() {
-  local root="$1" rel="$2" live="$3" dir name base_entry
+  local root="$1" rel="$2" live="$3" dir name base_entry image
   dir="$(update_declines_dir "${root}")/editable-resets/${_update_reset_id}"
   name="${rel#agents/}"
   base_entry="$(update_base_store_dir)/${name}"
-  if mkdir -p -- "${dir}" \
-    && spine_atomic_swap "${live}" "${dir}/${name}.bak" \
-    && cmp -s -- "${live}" "${dir}/${name}.bak" \
-    && { [[ ! -f "${base_entry}" ]] \
-      || { spine_atomic_swap "${base_entry}" "${dir}/${name}.base.bak" \
-        && cmp -s -- "${base_entry}" "${dir}/${name}.base.bak"; }; }; then
+  image="${dir}/${name}.bak"
+  if [[ -f "${image}" && ! -L "${image}" ]]; then
+    update_log "editable reset: keeping the restore images request ${_update_reset_id} already holds for ${rel}"
     return 0
   fi
+  if mkdir -p -- "${dir}" \
+    && update_reset_copy_image "${live}" "${image}" \
+    && { [[ ! -f "${base_entry}" ]] \
+      || update_reset_copy_image "${base_entry}" "${dir}/${name}.base.bak"; }; then
+    return 0
+  fi
+  rm -f -- "${image}" "${dir}/${name}.base.bak" \
+    || update_log "WARN: editable reset: could not remove the partial restore images of ${rel} from ${dir}"
   update_log "WARN: editable reset: could not write the restore images of ${rel} to ${dir}"
   return 1
 }
@@ -1177,6 +1293,13 @@ update_restore_editable_reset() {
     esac
     image="${dir}/${target#agents/}.bak"
     live="${root}/${target}"
+    # A link image would land the link itself over the body or base entry (the swap copies links as links).
+    if [[ -L "${image}" || -L "${dir}/${target#agents/}.base.bak" ]]; then
+      update_log "WARN: editable reset restore: ${target} REFUSED (reason=image-symlink) — a restore image under ${dir} is a symlink, not the captured copy"
+      update_reset_ledger_row "${root}" "${target}" 'outcome=restore-failed' 'reason=image-symlink' "${rid}" || true # GA-ABSORB[handled@update_reset_ledger_row]: the WARN above names the refusal and the run exits 10
+      fail=1
+      continue
+    fi
     if [[ ! -f "${image}" ]]; then
       update_log "WARN: editable reset restore: no before-image for ${target} (${image})"
       update_reset_ledger_row "${root}" "${target}" 'outcome=restore-failed' 'reason=image-absent' "${rid}" || true # GA-ABSORB[handled@update_reset_ledger_row]: the WARN above names the failure and the run exits 10
@@ -2106,7 +2229,7 @@ update_merge_agent_editable_regions() {
       continue
     fi
     if [[ "${is_reset}" -eq 1 ]]; then
-      # The sidecar holds the only copy of the dropped lines once the body lands, and
+      # The sidecar is the dropped-lines diff record the outcome JSON quotes, and
       # merge_dir is torn down before the consume step reads it.
       if [[ -f "${candidate}.reset.json" ]] \
         && ! cp -- "${candidate}.reset.json" "${_update_reset_run_dir}/${base}.reset.json"; then
@@ -4173,6 +4296,10 @@ update_run() {
   # gate below asks, off the same baseline.
   _update_prior_vendor_roster=$'\n'"$(update_roster_prior_vendor "${baseline_manifest}")"$'\n'
 
+  # Step 2.4 — operator EDITABLE-reset validation: a malformed or already-consumed
+  # request exits 16 here, before the roster gate and any swap.
+  update_validate_editable_reset "${root}" "${new_dir}"
+
   # Step 2.5 — roster-migration gate (T20 / gate G8). A release that ADDS or
   # REMOVES a VENDOR agent must route through the agent_lifecycle human-pause
   # ceremony, never the silent deterministic sync — so refuse/defer BEFORE any
@@ -4180,10 +4307,6 @@ update_run() {
   # is not a vendor roster change and passes through (agent md is handled by the E4
   # EDITABLE-region merge). The new-tree registry sits at the extracted bundle root
   # beside the manifest's agent files; the prior-vendor baseline scopes removals.
-  # Step 2.4 — operator EDITABLE-reset validation: a malformed or already-consumed
-  # request exits 16 here, before the roster gate and any swap.
-  update_validate_editable_reset "${root}" "${new_dir}"
-
   update_roster_gate "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}"
 
   # Step 2.5b — the REMOVE-direction orphan report (finding #16). The ADD direction

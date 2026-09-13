@@ -18,6 +18,16 @@
 #                   byte-identical, and retained in the request with an outcome=refused row.
 #   L5 malformed  — a malformed request exits 16 before anything is applied.
 #   L6 consumed   — a request id already in consumed/ exits 16 before anything is applied.
+#   L7 leftover   — a request surviving its own landing resolves the body already-at-release
+#                   (against the release, or its base entry, logged as a re-landing reset) and
+#                   consumes it, so the body keeps receiving release updates.
+#   L8 base drift — a base entry that moved since review WARNs and flags base_drift.
+#   L9 stale body — a body absent from the release is refused and retained; the rest land.
+#   L10 consume   — a failed request move and an unexpected exception each take their own
+#                   consume-failed code, print the NOT-consumed summary and write the ledger
+#                   row; a failed consumed_utc stamp after the move leaves the request consumed.
+#   L11 counts    — a release that adds region lines reports deleted and added lines
+#                   separately on the queued row, never a negative drop.
 #
 # And the OPERATOR surface:
 #   O1 record     — writes a request the next run consumes; the run keeps durable images.
@@ -30,6 +40,12 @@
 #   O7 restore    — puts the body and its base entry back to their pre-reset images.
 #   O8 stale      — a body edited after the reset is refused unless --allow-live-moved.
 #   O9 image fail — a before-image that cannot be written retains the body.
+#   O10 regions   — record refuses a body whose region count differs from its base entry.
+#   O11 symlink   — a symlinked body's before-image is a regular file, and restore brings the
+#                   content back through the link.
+#   O12 link image — restore refuses a restore image that is a symlink.
+#   O13 partial   — a failed base-image capture removes the body image too, so a clean rerun
+#                   captures both and restore recovers the body and its base entry.
 #
 # The landing cases seed pending.json directly in the format autoagent/lib/editable_reset.py
 # validates, so they do not depend on the record subcommand.
@@ -373,4 +389,223 @@ CASES
   [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${MARKED_LOCAL}" ]] || return 1
   [[ "$(jq -r '.bodies[0].target' "${REQ_DIR}/pending.json")" == 'agents/dev-r.md' ]] || return 1
   grep -q "agents/dev-r.md.*outcome=retained.*reason=before-image-failed" "${INSTALL}/update-declines/editable-resets.log" || return 1
+}
+
+# $1 = file holding the request JSON to put back as pending.json — the state a consume that
+# never moved the request leaves behind.
+restore_leftover_request() {
+  cp "$1" "${REQ_DIR}/pending.json"
+  rm -f "${REQ_DIR}/consumed/${REQUEST_ID}.json"
+}
+
+@test "L7 a request left behind after a landing resolves already-at-release and the body keeps updating" {
+  seed_request
+  cp "${REQ_DIR}/pending.json" "${WORK}/request.json"
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  local landed ledger="${INSTALL}/update-declines/editable-resets.log"
+  local images="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}"
+  landed="$(cat "${INSTALL}/agents/dev-r.md")"
+  cp "${images}/dev-r.md.bak" "${WORK}/first.bak"
+  cp "${images}/dev-r.md.base.bak" "${WORK}/first.base.bak"
+
+  # Same release: the moved body equals its reset target against the release.
+  restore_leftover_request "${WORK}/request.json"
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" != *"REFUSED"* ]] || return 1
+  [[ "${output}" == *"agents/dev-r.md moved since request ${REQUEST_ID} was recorded but already equals its reset target"* ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${landed}" ]] || return 1
+  [ -f "${REQ_DIR}/consumed/${REQUEST_ID}.json" ] || return 1
+  [ ! -e "${REQ_DIR}/pending.json" ] || return 1
+  grep -q "agents/dev-r.md.*outcome=already-at-release.*request=${REQUEST_ID}" "${ledger}" || return 1
+
+  # Next release: the body now equals its reset target only against its base entry, and
+  # still takes the new release.
+  restore_leftover_request "${WORK}/request.json"
+  printf '%s\n' "${MARKED_RELEASE/vendor goal/vendor goal v2}" >"${NEWSRC}/agents/dev-r.md"
+  write_manifest agents/dev-r.md agents/dev-u.md
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" != *"REFUSED"* ]] || return 1
+  [[ "${output}" == *"agents/dev-r.md moved since request ${REQUEST_ID} was recorded but already equals its reset target against its base entry — marked again, so it re-lands as a reset"* ]] || return 1
+  [[ "${output}" != *"recorded already-at-release"* ]] || return 1
+  [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "$(cat "${NEWSRC}/agents/dev-r.md")" ]] || return 1
+  grep -qx 'model: opus' "${INSTALL}/agents/dev-r.md" || return 1
+  [ -f "${REQ_DIR}/consumed/${REQUEST_ID}.json" ] || return 1
+  [ ! -e "${REQ_DIR}/pending.json" ] || return 1
+
+  # The second landing keeps the request's pre-reset images, so restore still recovers
+  # the daemon line.
+  cmp -s "${WORK}/first.bak" "${images}/dev-r.md.bak" || return 1
+  cmp -s "${WORK}/first.base.bak" "${images}/dev-r.md.base.bak" || return 1
+  run_update --restore-editable-reset "${REQUEST_ID}"
+  [ "${status}" -eq 0 ] || return 1
+  grep -qx -- '- MUST daemon-evolved line to drop' "${INSTALL}/agents/dev-r.md" || return 1
+  cmp -s "${WORK}/first.base.bak" "${STATE}/base-agents/dev-r.md" || return 1
+}
+
+@test "L8 a base entry that moved since the request was reviewed WARNs and flags base_drift" {
+  jq -n --arg id "${REQUEST_ID}" --arg sha "$(sha256_of "${INSTALL}/agents/dev-r.md")" \
+    --arg base "$(printf '0%.0s' {1..64})" \
+    '{request_id: $id, recorded_utc: "2026-09-13T00:00:00Z", reason: "r",
+      bodies: [{target: "agents/dev-r.md", live_sha256: $sha, base_sha256: $base}]}' >"${REQ_DIR}/pending.json"
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" == *"WARN: editable reset: the base entry for agents/dev-r.md moved since request ${REQUEST_ID} was reviewed"* ]] || return 1
+  local record
+  record="$(find "${INSTALL}/update-declines/editable-resets/${REQUEST_ID}" -name 'outcome-*.json')"
+  [[ "$(jq -r '.bodies[0].base_drift' "${record}")" == 'true' ]] || return 1
+  [[ "$(jq -r '.bodies[0].outcome' "${record}")" == 'landed' ]] || return 1
+}
+
+@test "L9 a stale body absent from the release is refused and retained while the rest land" {
+  printf '%s\n' "${UNMARKED_LOCAL//dev-u/dev-s}" >"${INSTALL}/agents/dev-s.md"
+  local stale
+  stale="$(cat "${INSTALL}/agents/dev-s.md")"
+  jq -n --arg id "${REQUEST_ID}" \
+    --arg r "$(sha256_of "${INSTALL}/agents/dev-r.md")" --arg s "$(sha256_of "${INSTALL}/agents/dev-s.md")" \
+    '{request_id: $id, recorded_utc: "2026-09-13T00:00:00Z", reason: "r",
+      bodies: [{target: "agents/dev-r.md", live_sha256: $r}, {target: "agents/dev-s.md", live_sha256: $s}]}' \
+    >"${REQ_DIR}/pending.json"
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" == *"agents/dev-s.md REFUSED (reason=body-not-in-release)"* ]] || return 1
+  [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "${MARKED_RELEASE}" ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-s.md")" == "${stale}" ]] || return 1
+  [[ "$(jq -c '[.bodies[].target]' "${REQ_DIR}/pending.json")" == '["agents/dev-s.md"]' ]] || return 1
+  grep -q "agents/dev-s.md.*outcome=refused.*reason=body-not-in-release.*request=${REQUEST_ID}" \
+    "${INSTALL}/update-declines/editable-resets.log" || return 1
+}
+
+@test "L10 a consume failure takes its consume-failed code and writes the ledger row" {
+  local ledger="${INSTALL}/update-declines/editable-resets.log"
+  seed_request
+  : >"${REQ_DIR}/consumed" # a file where the consumed dir must go
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "${MARKED_RELEASE}" ]] || return 1
+  [ -f "${REQ_DIR}/pending.json" ] || return 1
+  [[ "${output}" == *"request ${REQUEST_ID} NOT consumed (landed=1)"* ]] || return 1
+  grep -q "outcome=consume-failed.*rc=4 reason=request-write-failed.*request=${REQUEST_ID}" "${ledger}" || return 1
+
+  # An exception outside the designed OSError paths, raised at the consume move.
+  rm -f "${REQ_DIR}/consumed"
+  mkdir -p "${WORK}/pyhook"
+  printf '%s\n' 'import os' '_replace = os.replace' \
+    'def _raising_replace(src, dst, *a, **k):' \
+    '    if "/editable-reset/consumed/" in str(dst):' \
+    '        raise RuntimeError("injected consume fault")' \
+    '    return _replace(src, dst, *a, **k)' \
+    'os.replace = _raising_replace' >"${WORK}/pyhook/sitecustomize.py"
+  PYTHONPATH="${WORK}/pyhook" run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" == *"consume failed (rc 5, reason=unexpected-exception)"* ]] || return 1
+  [[ "${output}" == *"request ${REQUEST_ID} NOT consumed (already-at-release=1)"* ]] || return 1
+  [ -f "${REQ_DIR}/pending.json" ] || return 1
+  grep -q "outcome=consume-failed.*rc=5 reason=unexpected-exception.*request=${REQUEST_ID}" "${ledger}" || return 1
+
+  # A fault at the consumed_utc stamp, after the move already consumed the request.
+  printf '%s\n' 'import os' '_replace = os.replace' \
+    'def _raising_replace(src, dst, *a, **k):' \
+    '    if str(src).endswith(".json.tmp") and "/editable-reset/consumed/" in str(dst):' \
+    '        raise OSError("injected stamp fault")' \
+    '    return _replace(src, dst, *a, **k)' \
+    'os.replace = _raising_replace' >"${WORK}/pyhook/sitecustomize.py"
+  PYTHONPATH="${WORK}/pyhook" run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" == *"request ${REQUEST_ID} is consumed but its consumed_utc stamp was not written"* ]] || return 1
+  [[ "${output}" != *"NOT consumed"* && "${output}" != *"consume failed"* ]] || return 1
+  [ ! -e "${REQ_DIR}/pending.json" ] || return 1
+  [[ "$(jq -r '.request_id' "${REQ_DIR}/consumed/${REQUEST_ID}.json")" == "${REQUEST_ID}" ]] || return 1
+  grep -q "outcome=stamp-failed.*request=${REQUEST_ID}" "${ledger}" || return 1
+}
+
+@test "L11 a release that adds region lines reports deleted and added lines separately" {
+  printf '%s\n' "${MARKED_RELEASE/vendor goal/vendor goal
+vendor line two
+vendor line three}" >"${NEWSRC}/agents/dev-r.md"
+  cp "${NEWSRC}/agents/dev-r.md" "${STATE}/base-agents/dev-r.md"
+  write_manifest agents/dev-r.md agents/dev-u.md
+  seed_request
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "$(cat "${NEWSRC}/agents/dev-r.md")" ]] || return 1
+  local ledger="${INSTALL}/update-declines/editable-resets.log"
+  grep -q "agents/dev-r.md.*outcome=queued.*deleted_lines=1 added_lines=2.*request=${REQUEST_ID}" "${ledger}" || return 1
+  grep -q "agents/dev-r.md.*outcome=landed.*deleted_lines=1 added_lines=2.*request=${REQUEST_ID}" "${ledger}" || return 1
+  [[ "${output}" == *"agents/dev-r.md drops 1 EDITABLE-region line(s) (request ${REQUEST_ID}), adds 2"* ]] || return 1
+  if grep -qE '_lines=-' "${ledger}" || [[ "${output}" == *"drops -"* ]]; then return 1; fi
+}
+
+@test "O10 record refuses a body whose EDITABLE region count differs from its base entry" {
+  printf '%s\n' '<!-- EDITABLE:BEGIN -->' 'second region' '<!-- EDITABLE:END -->' >>"${STATE}/base-agents/dev-r.md"
+  run_update --record-editable-reset --reason 'r' dev-r
+  [ "${status}" -eq 16 ] || return 1
+  [[ "${output}" == *"reason=region-count-mismatch"* ]] || return 1
+  [ ! -e "${REQ_DIR}/pending.json" ] || return 1
+  [ ! -e "${INSTALL}/update-declines/editable-resets.log" ] || return 1
+}
+
+@test "O11 a symlinked body gets a regular-file before-image and restore brings the content back" {
+  mkdir -p "${WORK}/real"
+  mv "${INSTALL}/agents/dev-r.md" "${WORK}/real/dev-r.md"
+  ln -s "${WORK}/real/dev-r.md" "${INSTALL}/agents/dev-r.md"
+  seed_request
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  local image="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}/dev-r.md.bak"
+  [[ -f "${image}" && ! -L "${image}" ]] || return 1
+  [[ "$(cat "${image}")" == "${MARKED_LOCAL}" ]] || return 1
+  [[ "$(grep -v '^model: ' "${WORK}/real/dev-r.md")" == "${MARKED_RELEASE}" ]] || return 1
+
+  run_update --restore-editable-reset "${REQUEST_ID}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -L "${INSTALL}/agents/dev-r.md" ] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${MARKED_LOCAL}" ]] || return 1
+}
+
+@test "O12 restore refuses a restore image that is a symlink" {
+  seed_request
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  local images="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}" landed name
+  landed="$(cat "${INSTALL}/agents/dev-r.md")"
+  for name in dev-r.md.bak dev-r.md.base.bak; do
+    mv "${images}/${name}" "${WORK}/${name}"
+    ln -s "${WORK}/${name}" "${images}/${name}"
+    run_update --restore-editable-reset "${REQUEST_ID}"
+    [ "${status}" -eq 10 ] || return 1
+    [[ "${output}" == *"agents/dev-r.md REFUSED (reason=image-symlink)"* ]] || return 1
+    [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${landed}" ]] || return 1
+    [ ! -L "${INSTALL}/agents/dev-r.md" ] || return 1
+    rm -f "${images}/${name}"
+    mv "${WORK}/${name}" "${images}/${name}"
+  done
+  [[ "$(grep -c "agents/dev-r.md.*outcome=restore-failed.*reason=image-symlink.*request=${REQUEST_ID}" \
+    "${INSTALL}/update-declines/editable-resets.log")" == 2 ]] || return 1
+}
+
+@test "O13 a failed base-image capture leaves no lone body image, and a clean rerun captures both" {
+  printf '%s\n' '<!-- prior base -->' >>"${STATE}/base-agents/dev-r.md"
+  local prior_base images="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}"
+  prior_base="$(cat "${STATE}/base-agents/dev-r.md")"
+  seed_request
+  mkdir -p "${images}/dev-r.md.base.bak" # a directory where the base image must go
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "${output}" == *"agents/dev-r.md RETAINED — its restore images could not be written"* ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${MARKED_LOCAL}" ]] || return 1
+  [ ! -e "${images}/dev-r.md.bak" ] || return 1
+
+  rm -rf "${images}/dev-r.md.base.bak"
+  run_update
+  [ "${status}" -eq 0 ] || return 1
+  [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "${MARKED_RELEASE}" ]] || return 1
+  [[ -f "${images}/dev-r.md.bak" && -f "${images}/dev-r.md.base.bak" ]] || return 1
+
+  run_update --restore-editable-reset "${REQUEST_ID}"
+  [ "${status}" -eq 0 ] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${MARKED_LOCAL}" ]] || return 1
+  [[ "$(cat "${STATE}/base-agents/dev-r.md")" == "${prior_base}" ]] || return 1
 }
