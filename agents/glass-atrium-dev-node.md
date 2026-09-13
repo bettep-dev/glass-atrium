@@ -10,8 +10,7 @@ description: >
   DB schema migration files (→glass-atrium-dev-db), Android (→glass-atrium-dev-android), prompt writing (→glass-atrium-meta-prompt-engineer).
   Produces code files (.ts, .js, .mjs, package.json) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

@@ -3,7 +3,6 @@ name: glass-atrium-qa-code-reviewer
 description: Code quality, convention, and design review — project-rule-based code review agent. Use when code review, change verification, quality gate enforcement, PR review, or code convention checking is needed. Do NOT use for code writing/modification (→ DEV agents), bug root cause analysis (→ glass-atrium-qa-debugger), OWASP/authentication/authorization/secret-focused security verification (→ glass-atrium-sec-guard), research (→ glass-atrium-intel-researcher).
 tools: [Read, Glob, Grep, Bash]
 skills:
-  - glass-atrium-core-iron-laws
   - glass-atrium-design-anti-slop  # mechanical D8 P1-P5 supplement layer when reviewing user-requested HTML primary deliverables
 maxTurns: 80
 ---

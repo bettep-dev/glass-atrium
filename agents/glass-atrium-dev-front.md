@@ -11,7 +11,6 @@ description: >
   Produces code files (HTML, CSS, Tailwind markup, tailwind.config) — NOT markdown documents. Exception: may co-author the styled HTML skeleton of a viewer-exposed clauded-docs HTML primary ONLY when it needs a bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the narrow skeleton-first handoff (author owns content + the POST) — see body '## Exposed-Doc HTML Co-Emission'.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
-  - glass-atrium-core-iron-laws
   - glass-atrium-design-anti-slop  # mechanical AI-slop detector run before HTML/CSS/Tailwind emit (aligns with glass-atrium-design-designer.md AI Slop Tropes SoT)
 maxTurns: 80
 ---

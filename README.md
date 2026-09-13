@@ -124,7 +124,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 
 Skills in Glass Atrium are **not** user-invoked commands — they are an internal quality and governance layer.
 
-They load globally at session start, and Claude activates them on its own to suit the task at hand. They cover code and design conventions, safety invariants (the "iron laws"), ops and verification gates, and wiki and web tooling, and some fire in response to monitor signals (the System map drift badge, a Models & budgets save, and so on). You never need to know which skill is running — the harness picks and invokes them for you.
+They load globally at session start, and Claude activates them on its own to suit the task at hand. They cover code and design conventions, ops and verification gates, and wiki and web tooling, and some fire in response to monitor signals (the System map drift badge, a Models & budgets save, and so on). You never need to know which skill is running — the harness picks and invokes them for you.
 
 ## Quickstart
 

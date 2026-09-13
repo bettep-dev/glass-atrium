@@ -10,8 +10,7 @@ description: >
   RAG search optimization (→glass-atrium-dev-rag), Node.js CLI/MCP servers (→glass-atrium-dev-node), Android (→glass-atrium-dev-android).
   Produces code files (.ts, .spec.ts) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 

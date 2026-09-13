@@ -14,8 +14,7 @@ description: >
   CSS/Tailwind (→glass-atrium-dev-front).
   Produces code files (.py, test_*.py, pyproject.toml) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-skills:
-  - glass-atrium-core-iron-laws
+skills: []
 maxTurns: 80
 ---
 
