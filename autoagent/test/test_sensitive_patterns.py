@@ -388,6 +388,8 @@ _REFUSED_MANIFEST_ROWS: frozenset[str] = frozenset(
         "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
         "monitor/.env.example",
         "scoped/scope-security.md",
+        "scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md",
+        "scoped/maintainers/scope-security.md",
     }
 )
 
