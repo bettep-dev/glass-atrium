@@ -35,9 +35,13 @@ Writing a hex / rgb / oklch / px / dp literal without first checking whether a t
 
 ## Motion Tokens
 
-- **Declaration**: where the applied token's choice is NOT evident from its name in context, a code comment names the token and the reason for that choice — e.g. `// motion: effects-fast — the drawer is fixed-height, so a spatial family would overshoot its edge`. A self-evident choice needs no comment; the comment-density ceiling governs there.
+- **Declaration**: where the applied token's choice is NOT evident from its name in context, a code comment names the token and the reason for that choice. A self-evident choice needs no comment; the comment-density ceiling governs there.
+  - Example: `// motion: effects-fast — the drawer is fixed-height, so a spatial family would overshoot its edge`
 - **Source**: the spring families named in `motion-philosophy.md` (`spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`), per the M3 Expressive contract.
-- **`prefers-reduced-motion`**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — CSS auto-honors it, a JS animation requires an explicit check. The fallback is typically opacity-only, with no spatial overshoot.
+- **`prefers-reduced-motion`**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — in CSS through the media query, in a JS animation through an explicit check.
+  - Fallback: swap the element's Spatial family for the matching Effects family (overshoot removed), or go opacity-only.
+  - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN: keep a non-spatial cue.
+  - Concrete tokens come from the project's `motion-philosophy.md` reduced-motion contract.
 - **Mixing**: mixing the Spatial and Effects families on one element is FORBIDDEN — one element flow keeps one family.
 
 ## DTCG 2025.10 Awareness

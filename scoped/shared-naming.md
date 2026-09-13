@@ -4,7 +4,7 @@ Binds every identifier an agent authors or reviews — variable, property, field
 
 ## Agent Injection Core
 
-The delta-core below is the compressed non-inferable subset. It carries the rules an agent gets WRONG without them — a divergence from the model's default, or a closed vocabulary it cannot guess. The lookup half — the 17-category verb taxonomy the skill itself calls a fallback, the scope-proportional length table, the allowed abbreviations and the anti-pattern tables — is on-demand detail and stays in `skills/glass-atrium-dev-naming/SKILL.md` and its `references/`.
+The delta-core below is the compressed non-inferable subset. It carries the rules an agent gets WRONG without them — a divergence from the model's default, or a closed vocabulary it cannot guess. The lookup half is on-demand detail (`## On-demand detail`).
 
 **Naming delta-core — non-inferable subset; qa-code-reviewer = enforcement surface.**
 
@@ -21,7 +21,7 @@ Full skill: 17-category verb taxonomy, scope-proportional length table, abbrevia
 
 ## Core rules outside the delta-core
 
-Each of the three passes the same admission test the delta-core applies to itself: they are core rules, not on-demand detail, and bind exactly as the delta-core does.
+These pass the admission test the delta-core applies to itself: they are core rules, not on-demand detail, and bind exactly as the delta-core does.
 
 - **Booleans — stative-first** with `is`/`has`/`can`/`should`. The delta-core's closing line lists this among the full skill's contents; it is a core rule nonetheless, stated here.
 - **Class / type suffixes — a closed allowlist**: `*Repository` · `*Service` · `*Controller` · `*Builder` · `*Factory` · `*Provider` · `*Validator`. **`I`-prefixed interface names are FORBIDDEN** — the C#/Java default is the opposite, so the violation reads as idiomatic and passes review unremarked.
@@ -29,4 +29,6 @@ Each of the three passes the same admission test the delta-core applies to itsel
 
 ## On-demand detail
 
-`skills/glass-atrium-dev-naming/SKILL.md` keeps the User Dictionary's worked mapping rows, the five conciseness principles as prose, and the quick-rule summary; its `references/` keep the verb taxonomy, the length table, the abbreviation list and the anti-pattern tables. Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.
+- `skills/glass-atrium-dev-naming/SKILL.md` keeps the User Dictionary's worked rows the delta-core does not carry and the five conciseness principles as prose.
+- Its `references/` keep the 17-category verb taxonomy (a fallback beneath the canonical verb set), the scope-proportional length table, the abbreviation list and the anti-pattern tables.
+- Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.

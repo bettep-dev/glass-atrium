@@ -30,10 +30,11 @@ Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when working on
 
 ### Noun-only form (data identifiers)
 
-Variables, fields, properties, and parameters are **nouns / noun phrases** — a data name describes what the value IS, not an action.
+The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The cases below settle what counts as verb form.
 
 - Standalone verb form forbidden: `processedData` X → `output`/`normalized` O · `calculatedTotal` X → `total` O · gerunds (`computing`, `loading`) X as a standalone variable name
-- **Legitimate qualifier exception** (NOT verb padding): a past-participle adjective MODIFYING a noun answers "what kind" and is correct — `sortedList`·`cachedValue`·`parsedToken`·`activeUsers`. The smell is the verb form STANDING ALONE as the whole name, not an adjective qualifying a noun.
+- **Legitimate qualifier exception** (NOT verb padding): a past-participle adjective MODIFYING a noun answers "what kind" and is correct — `sortedList`·`cachedValue`·`parsedToken`·`activeUsers`.
+  - The smell is the verb form STANDING ALONE as the whole name, not an adjective qualifying a noun.
 - `handle`/`process` as a NOUN (file handle, OS handle) is correct; the anti-pattern is `handle*`/`process*` as a verb prefix on a method.
 
 ### Forbidden
@@ -41,11 +42,10 @@ Variables, fields, properties, and parameters are **nouns / noun phrases** — a
 - Letter-dropping abbreviation (`cstmrId` X)
 - Hungarian notation (`strName` X)
 - Single-char variables in 10+ line scope
-- Standalone verb form as a data name (`processedData` X — see Noun-only form above)
 
 ## Booleans
 
-**Stative-first principle**:
+**Which form follows the stative-first prefix** (the stative-first rule itself: `scoped/shared-naming.md` → `## Core rules outside the delta-core`):
 
 - result state → `is` + past participle
 - current state → `is` + adjective
@@ -64,11 +64,11 @@ Variables, fields, properties, and parameters are **nouns / noun phrases** — a
 
 ### Classes/Types
 
-- **Entity nouns**: class/type names are nouns naming the design intent — avoid verbified-noun fillers (`DataProcessor` → `Parser`/`Validator`/`Transformer`). Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, NOT the filler pattern.
-- **Allowed suffixes**: `*Repository`·`*Service`·`*Controller`·`*Builder`·`*Factory`·`*Provider`·`*Validator`
+- **Allowed-suffix allowlist and the `I`-prefix ban**: stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`. Worked case of the ban: `IUserService` X → `UserService` O
+- **Entity nouns**: class/type names are nouns naming the design intent — avoid verbified-noun fillers (`DataProcessor` → `Parser`/`Validator`/`Transformer`).
+  - Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, NOT the filler pattern.
 - **Forbidden suffixes**: `*Manager`·`*Helper`·`*Util`·`*Processor`·`*Wrapper`·`*Handler` (standalone)
 - **DTO**: class name = specify direction (`CreateUserRequest`·`UserResponse`) / filename = `.dto.ts` allowed
-- **I prefix forbidden**: `IUserService` X → `UserService` O
 
 ### Enums/Constants
 
@@ -78,7 +78,7 @@ Variables, fields, properties, and parameters are **nouns / noun phrases** — a
 
 ### Greppability
 
-- Public identifiers → must be greppable
+The greppability and scope non-redundancy rules are stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`. Worked detail:
+
 - Dynamic string concatenation for identifiers forbidden (`${prefix}Handler` X)
 - Internal variables: brevity first / public identifiers: searchability first
-- **Scope non-redundancy**: do not repeat information that the parent scope (class, module, namespace) already expresses
