@@ -6,64 +6,63 @@ when_to_use: Use when composing multi-agent teams, deciding execution patterns (
 
 ## Overview
 
-The per-stage acceptance detail behind `rules/glass-atrium/orchestrator-role.md`, read on demand: how the orchestrator composes teams, picks an execution pattern, sizes a delegation, and gates a deliverable. That rule file is the lifecycle SoT; this file details its stages rather than restating them, and where a digest is unavoidable it names the canonical beside it.
+The per-stage detail behind `rules/glass-atrium/orchestrator-role.md`, read on demand: how the orchestrator composes teams, picks an execution pattern, sizes a delegation, and gates a deliverable.
 
+- That rule file is the lifecycle SoT. This file details its stages; where a digest is unavoidable, it names the canonical beside it.
 - The orchestrator never implements directly — it routes, coordinates, and verifies (`orchestrator-role.md` → `## Orchestrator Identity`).
 
 ## When to Use
 
-Use for any task that delegates to sub-agents: team composition · execution-pattern choice (Router/Fan-out/Pipeline) · delegation-completeness verification · cost-tier routing · quality gates on deliverables.
-
-**Exclusions** (canonical: `orchestrator-role.md` → `## Delegation Criteria` "No delegation needed"):
-
-- simple Q&A (1-2 sentences)
-- file lookups (Read/Grep/Glob)
-- user conversation (confirmation/questions/status)
+- Use for any task that delegates to sub-agents.
+- Exclusions: `orchestrator-role.md` → `## Delegation Criteria` → **No delegation needed**.
 
 ## Core Process
 
-The standing rules that bind every delegation, ordered as a delegation moves — agent selection, team composition, the delegation itself, execution pattern, gates — then the standing policies consulted when they apply.
+The standing rules that bind every delegation, in the order a delegation moves: agent selection → team composition → the delegation itself → execution pattern → gates.
 
 ### Capability-Based Agent Selection [ORCHESTRATOR]
 
-- **Model**: LLM-led routing — the orchestrator session Claude judges directly.
-  - Keywords are **hints** only, not short-circuit forced branches.
-  - The registry's `domains` array and each agent's description are Claude's primary basis for judgment.
-- **Default output (team-first)**: Every routing decision returns the same team schema whether **single agent (array size 1)** or **compound team (array size ≥ 2)** — the single case is treated as the special form of array size 1, with no separate branch path.
+- **Model**: LLM-led routing — the orchestrator session judges directly.
+  - Keywords are **hints** only, never short-circuit forced branches.
+  - The registry's `domains` array and each agent's description are the primary basis for judgment.
+- **Output**: every routing decision returns the team schema in `#### Routing Return Schema` below.
 
 #### Selection procedure
 
 Each step consumes the previous step's output — run them in order.
 
-1. **Task Decomposition**: Decompose the request into sub-tasks.
-   - When verb/conjunction structure has 2+ elements (e.g., "do A and also B" / "find the cause and fix it" / "research and turn it into a report"), treat as compound and do not short-circuit to a single agent.
+1. **Task Decomposition**: decompose the request into sub-tasks.
+   - A verb/conjunction structure with 2+ elements ("do A and also B" / "find the cause and fix it" / "research and turn it into a report") is compound — never short-circuit it to a single agent.
    - **Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
 2. **Capability Consultation** (hints only, no forced match):
-   - **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
-   - **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment
-   - **Phase numbers**: `research(1) → analysis(2) → planning(3) → implementation(4) → review(5) → report(6)` — used only for ordering, not for matching
-   - **Task-type hints** (reference only, not enforced): analysis ≈ phase 2 · planning ≈ phase 3 · implementation ≈ phase 4 · document ≈ phase 6
-3. **Team Composition Decision**: Sort selected agent(s) by phase number ascending.
+   - **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list, compared semantically against each sub-task.
+   - **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment.
+   - **Phase numbers**: `research(1) → analysis(2) → planning(3) → implementation(4) → review(5) → report/document(6)` — ordering only, never matching.
+3. **Team Composition Decision**: sort the selected agents by phase number, ascending.
    - Independent tasks within the same phase MAY run in parallel (Fan-out).
-4. **Execution**: Execute sequentially in sorted order (or in parallel within the same phase).
-   - For DEV agents with `dual_phase: true`, the phase 2 vs 4 assignment is determined by the decomposition result (diagnosis-only vs includes implementation).
-     - Term SoT: `dual_phase` is defined per agent in `~/.glass-atrium/agent-registry.json` (top-level `dual_phase_definition`, written onto the registry entry at agent creation), and the phase 1-6 map is that file's `phases` key. Registry eligibility is NOT the phase assignment — the flag says an agent HAS a plan-then-execute split, while the phase-2-vs-4 choice stays the per-task decomposition call under **Execution**.
+4. **Execution**: run in sorted order, or in parallel within one phase.
+   - A DEV agent with `dual_phase: true` takes phase 2 or 4 from the decomposition result: diagnosis-only → 2, includes implementation → 4.
+     - Term SoT: `~/.glass-atrium/agent-registry.json` — top-level `dual_phase_definition` defines the flag, and the `phases` key holds the phase 1-6 map.
+     - The flag says an agent HAS a plan-then-execute split; it never assigns the phase, which stays the per-task decomposition call.
 
 #### Ordering caveat (ultracode verify-gate — reconciles pre-verify phase-2 DEV analysis with the declaration contract)
 
 Two clauses meet here, and they are NOT one predicate — read them separately.
 
-- **First clause — DESCRIPTIVE, and it grants nothing**: a `dual_phase` DEV assigned to phase-2 analysis sorts ahead of a phase-5 reviewer, so its `dev-*` token is spawned BEFORE any verify reviewer. That is what the phase sort produces; the permission itself is conferred by **Execution** above, and it is UNCHANGED by anything below.
-- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode `enforce-workflow-verify-stage.sh` checks the script against its `[AGENT-COMPOSITION]` declaration (contract stated ONCE at `### Pipeline Acceptance Criteria` → "In-script verify-stage"), and `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one.
+- **First clause — DESCRIPTIVE, and it grants nothing**: a `dual_phase` DEV assigned to phase-2 analysis sorts ahead of a phase-5 reviewer, so its `dev-*` token is spawned BEFORE any verify reviewer.
+  - The permission itself comes from **Execution** above, and nothing below changes it.
+- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode, `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one (`orchestrator-role.md` → `#### Ultracode declaration contract`).
   - `declared impl` is the load-bearing qualifier — spawn order alone is not the offence.
-- **The fix is compositional, never declarative** — either route the pre-verify analysis to a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`), or front-load a reviewer-first `{qa,dev}` Contract verify before it.
-  - No declaration key relabels the collision away: a directly-spawned pre-verify analysis DEV is truthfully declared under `impl:` (a literal dev spawn that is not the Stage-2 verify partner), which is exactly what makes it block — the gate working, not a false positive.
-  - Declaring it `impl-computed:` — a key defined for INDIRECTLY-spawned types — is a FALSE declaration and FORBIDDEN whether or not the gate accepts it (declaration truthfulness is honor-system: `orchestrator-role.md` → `#### Ultracode declaration contract`).
-- Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` · worked skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant · runtime remedy text: the `block-order` exit-2 message in `hooks/enforce-workflow-verify-stage.sh`, which carries the fuller remedy set including the plain reorder the prose routes omit (usually inapplicable here, the analysis having to precede).
+- **The fix is compositional, never declarative**: use either compliant route in that contract's pre-verify Discovery bullet — non-DEV Discovery, or a reviewer-first Contract phase.
+  - A directly-spawned pre-verify analysis DEV is truthfully an `impl:` spawn, and that is exactly what blocks — the gate working, not a false positive.
+  - Declaring it `impl-computed:` (a key for INDIRECTLY-spawned types) is a FALSE declaration and FORBIDDEN, whether or not the gate accepts it.
+- Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
+- Worked skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
+- Runtime remedy text: the `block-order` exit-2 message in `hooks/enforce-workflow-verify-stage.sh`. It also lists a plain reorder, usually inapplicable here because the analysis has to come first.
 
 #### Routing Return Schema
 
-Routing decisions are expressed as a team structure containing the 3 elements below. Schema is shared between single and compound cases.
+Every routing decision returns this team structure. A single agent is an `agents` array of size 1 — the same schema, not a separate branch.
 
 | Field | Meaning | Required |
 |-------|---------|----------|
@@ -84,37 +83,33 @@ Representative cases where a compound team return outperforms single matching.
 
 #### 3-Layer Non-Determinism Mitigation
 
-Due to LLM judgment characteristics, the same input may return different teams. **All** of the safeguards below MUST be applied — dropping any one increases team-composition instability:
+The same input may return different teams, so every routing decision applies all three layers of `scope-orchestrator.md` → `## LLM-led Routing` → **3-Layer Safety**. This file adds two deltas:
 
-- **Conservative deterministic selection**: stability-first routing — no speculative agent picks (determinism first, no creativity needed)
-- **Confidence threshold**: when routing-judgment self-confidence is **below 0.7**, automatic routing is halted (default; for adjustment see the [default, adjustable] policy)
-- **Clarification fallback**: when below threshold, present **2-3 candidates** to the user and request selection — execution by guessing is forbidden
+- The 0.7 confidence threshold is `[default, adjustable]` (`### Numeric Threshold Adjustment Policy`).
+- Below the threshold, executing on a guess is forbidden — present the 2-3 candidates and wait for the user's choice.
 
 #### Routing-Decision Record (observability convention)
 
-- The safeguards above are entirely LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact.
-- To make the decision auditable, the orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
-  - `route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>` — and when confidence < 0.7, append the action taken (`halt+clarify` with the 2-3 candidates presented).
-- This is a **RECOMMENDED self-logged audit trail, not a runtime-enforced gate**: the orchestrator is the main-loop LLM, so no hook can force or verify this emission (honor-system). It makes a questionable route reviewable post-hoc; it does not make routing "verified".
+- The three layers are LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact.
+- The orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
+  - `route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>`
+  - When confidence < 0.7, append the action taken: `halt+clarify` with the 2-3 candidates presented.
+- **Honest backing**: a RECOMMENDED self-logged audit trail, not a runtime gate. No hook can force or verify a main-loop emission, so the record makes a route reviewable afterwards — it never makes routing "verified".
 
 #### Routing Verification (LLM-as-Judge)
 
 Before emitting a delegation, self-check:
 
-- Is `agents[].domains` semantically matched to the sub-task? (semantic, not keyword)
-- Does `reason` field cite specific `domains` entries or description passages?
-- Is confidence ≥ 0.7? — if not → clarification fallback (present 2-3 candidates to user).
+- Is `agents[].domains` matched to the sub-task semantically, not by keyword?
+- Does the `reason` field cite specific `domains` entries or description passages?
+- Is confidence ≥ 0.7? If not → clarification fallback (the third layer).
 - Does the candidate agent declare a `compatibility` field?
-  - **Yes** → does the stated runtime precondition hold for the current sub-task? If not → halt delegation per Compatibility Probe (see `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe).
-  - **No `compatibility` field** → the agent passes through (backwards-compatible default — registry schema v1.1).
-
-Reuses the 0.7 threshold from "3-Layer Non-Determinism Mitigation"; this verification gate operationalises that threshold for routing specifically.
+  - **Yes** → does its runtime precondition hold for this sub-task? If not → halt delegation per `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe.
+  - **No `compatibility` field** → the agent passes through (backwards-compatible default).
 
 #### Team Size
 
-No fixed-number gate and no fixed-number user-confirmation trigger: the Workflow engine's runtime self-cap (core-derived, per-machine) bounds concurrency, so routine fan-out needs no special justification — a VERY large one is still reasoned about in the `reason` field (synthesis value · total-session token cost).
-
-- Canonical: `orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Team Size**.
+- No fixed-number gate: canonical `orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Team Size**.
 
 ### Team Composition Rules [ORCHESTRATOR]
 
@@ -137,20 +132,18 @@ Choose the delegation form:
 
 #### Team Constraints
 
-- Team size — no fixed-number gate; see `#### Team Size` above
-- 5-6 self-contained tasks per agent `[default, adjustable]`
-- Sub-agents cannot create sub-agents (nesting forbidden)
-- Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation
+- Team size: `#### Team Size` above.
+- 5-6 self-contained tasks per agent `[default, adjustable]`.
+- Sub-agents cannot create sub-agents (nesting forbidden).
+- Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation.
 - **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix.
-  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient — the shared index and whole-tree regeneration both defeat file disjointness, so the worktree is the isolation unit (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
+  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient: the worktree is the isolation unit (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
   - An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
 
 #### Worktree Isolation [ORCHESTRATOR]
 
-- `isolation: worktree` → Provides independent git worktree to sub-agent (physically prevents file conflicts)
-- Context isolation is already guaranteed by Agent tool default behavior — worktree adds **filesystem isolation**
-- `background: true` + `isolation: worktree` combination **FORBIDDEN** (Issue #33045 unresolved bug) — **scope: the manual Agent-tool path**.
-  - The workflow-runtime native isolation path is `opts.isolation:'worktree'` on an `agent()`/`parallel()` call; whether the runtime path is subject to the same #33045 background interaction is NOT yet verified — do NOT assume parity either way (verify before relying on background + worktree under ultracode).
+- The Agent tool already isolates context; a worktree adds **filesystem isolation**, physically preventing file conflicts between sub-agents.
+- The sanctioned isolation paths, including the `background: true` + `isolation: worktree` prohibition (Issue #33045) and the unverified ultracode parity: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) → **Three sanctioned isolation paths**.
 
 #### Declarative Team Definition
 
@@ -163,52 +156,58 @@ Choose the delegation form:
 
 Two directions of transfer, governed separately below:
 
-- **Delegation** = top-down distribution
-- **Handoff** = horizontal transfer between agents
+- **Delegation** = top-down distribution.
+- **Handoff** = stage-to-stage context transfer, carried by the orchestrator. Agent-to-agent control transfer is unsupported (`orchestrator-role.md` → `## Orchestrator Identity`).
 
 #### Delegation required elements
 
-Every delegation carries all six: **Goal · Target files/paths · Constraints · Completion criteria · Resource Budget · Ripple radius** — where **Ripple radius** is a one-line estimate of the downstream files/APIs/tests/integration points this change touches (scoping by surface alone is forbidden).
+Every delegation carries all six: **Goal · Target files/paths · Constraints · Completion criteria · Resource Budget · Ripple radius**.
 
+- **Ripple radius** = a one-line estimate of the downstream files/APIs/tests/integration points the change touches; scoping by surface alone is forbidden.
 - Target files/paths carry their read EXTENT, not only their identity → `#### Read-Extent Discipline` (this file).
-- Extent is written in the PROSE read instruction or the `READ ALLOWLIST` line — NEVER inside the `[SCOPE] files=` token, whose parser (`hooks/lib/scope-match.sh`) splits that field on commas AND whitespace and would shred an extent phrase into junk entries.
+- Write the extent in the PROSE read instruction or the `READ ALLOWLIST` line — NEVER inside the `[SCOPE] files=` token.
+  - Why: its parser (`hooks/lib/scope-match.sh`) splits that field on commas AND whitespace, shredding an extent phrase into junk entries.
 
 > Persist-intent research stage: a research delegation on a persist-worthy (reusable web) topic MUST grant the wiki-write role + instruct raw-save — never strip to "read/query only". SoT: `### Ultracode / Workflow-tool Mode` → Delegation-prompt content.
 
 #### Resource Budget
 
-Prevents sub-agent tool-chain saturation (synthesis never emitted after long tool chain). Every delegation prompt MUST declare these fields:
+Every delegation prompt MUST declare these fields, so a sub-agent never exhausts its tool chain before emitting a synthesis:
 
 | Field | Meaning | Default |
 |-------|---------|---------|
-| `tool_budget` | Max total tool uses; hitting ceiling → stop + emit status | glass-atrium-intel-researcher ~15, glass-atrium-intel-planner ~12, glass-atrium-qa-code-reviewer ~14, DEV: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin [default, adjustable]; reads not estimable (exploration-heavy/unfamiliar surface) → floor reads = 2×(files to edit); declare as tool_budget; est ≳40 or borderline-with-unknown-reads → SPLIT (→ orchestrator-role.md Spawn Budget → Delegation-size discipline) |
+| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: formula below |
 | `output_cap` | Max final-output size | 1500 KR chars or equivalent |
-| `reserved_output` | Reserve-then-check: `input_budget = context_window − reserved_output` — bound the read allowlist to fit `input_budget` so the reserved emit budget is NEVER spent on input (schema-mode analysis: the terminal StructuredOutput MUST have budget left) | reserve emit tail BEFORE work; gate the read scope against `input_budget`, never after |
+| `reserved_output` | Emit tail reserved before work starts | Reserve-then-check (below) |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
-| `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch reserved for structured/API pages < 8KB |
-| `spawn_budget` | Max sub-agent invocations per Wave; hitting ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3, glass-atrium-intel-planner ~2, glass-atrium-qa-code-reviewer ~1 — per-wave soft budgets; concurrency itself is bounded by the Workflow engine's runtime self-cap (core-derived, per-machine), not a fixed number (orchestrator-role.md `### Spawn Budget`) |
+| `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch for structured/API pages < 8KB |
+| `spawn_budget` | Max sub-agent invocations per Wave; hitting the ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3 · glass-atrium-intel-planner ~2 · glass-atrium-qa-code-reviewer ~1 (per-wave soft budgets) |
 
-- Hitting `tool_budget` without completion → emit `result: needs_context` + partial findings + a 1-line resume point, never silent exit (the value and the resume-point shape stated at `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`).
-- These defaults are a **FLOOR to size against, not advisory-only prose** — encode them into the analysis delegation skeleton (`#### Analysis-Track Right-Sizing (input-side)`) so a pasted schema-mode analysis workflow carries the read allowlist + effort ceiling + field cap + budget-guard idiom by construction, plus the analysis-mode `[SIZE-EST]` token.
-  - An exploration-heavy analysis read rounds the budget UP (under-estimate = DANGEROUS error, per `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` honesty framing) and, past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), SPLITS by domain up front rather than sizing one broad agent.
+- **DEV `tool_budget`** `[default, adjustable]`: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin.
+  - Reads not estimable (exploration-heavy or unfamiliar surface) → floor reads at 2×(files to edit).
+  - est ≳40, or borderline with unknown reads → SPLIT (`orchestrator-role.md` → Spawn Budget → Delegation-size discipline).
+- **`reserved_output`**: apply **Reserve-then-check** from `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — gate the read scope against `input_budget` before work, never after.
+- **`spawn_budget`** bounds invocations only; concurrency is bounded by the engine's runtime self-cap (`orchestrator-role.md` → `### Spawn Budget`).
+- Hitting `tool_budget` before completion → the graceful exit in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`, carrying partial findings; never a silent exit.
+- These defaults are a **FLOOR to size against, not advisory-only prose**: `#### Analysis-Track Right-Sizing (input-side)` encodes them into the analysis skeleton by construction.
+  - An exploration-heavy analysis rounds its estimate UP and, past the analysis-mode split trigger, SPLITS by domain up front (`orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode).
 
 #### Handoff rules
 
-- Free-text handoff forbidden → structured instructions only
-- 3+ step chains: propagate original requirements as immutable context through all stages
-- **Handoff payload**: Including API keys/secrets strictly forbidden → pass only environment variable references
+- Free-text handoff forbidden → structured instructions only.
+- 3+ step chains: propagate the original requirements as immutable context through all stages.
 
 #### Prompt-content aids
 
-Two prompt-content aids, both aimed at the sub-agent's self-anchoring — the TASK_TYPE hint is OPTIONAL, the English-keyword inclusion is RECOMMENDED (SHOULD).
+Both aids help the sub-agent self-anchor; neither is hook-enforced.
 
-- **TASK_TYPE delegation hint (optional)**: When task_type is ambiguous, the orchestrator MAY include a single line in the delegation prompt:
+- **TASK_TYPE delegation hint (optional)**: when task_type is ambiguous, the orchestrator MAY add one line to the delegation prompt:
   - `TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
-  - This is a **routing aid** that helps the sub-agent self-anchor, not hook-enforced — **recommended** when ambiguous rather than required, because prompt-level rules in glass-atrium-intel-planner/glass-atrium-intel-reporter/DEV descriptions suffice.
-  - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review) for consistency.
-- **English keywords recommended in prompts**: Agent invocation prompts SHOULD include the target agent's core English technical keywords (improves model self-routing accuracy).
-  - Task description + English technical keywords combination recommended (e.g., "Modify user auth logic — nestjs, jwt, guard")
-  - Keywords should match the agent's `domains` field in `agent-registry.json`
+  - Optional because the planner, reporter and DEV descriptions already carry prompt-level rules for it.
+  - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review).
+- **English keywords (SHOULD)**: an agent invocation prompt includes the target agent's core English technical keywords, which improves self-routing accuracy.
+  - Pair the task description with the keywords (e.g., "Modify user auth logic — nestjs, jwt, guard").
+  - Keywords match the agent's `domains` field in `agent-registry.json`.
 
 Recommended keywords per agent:
 
@@ -226,12 +225,13 @@ Recommended keywords per agent:
 
 A read allowlist bounds *which* artifacts a delegation may open; it says nothing about *how much* of each. Both halves belong in every delegation prompt — a two-entry allowlist of large artifacts passes a no-sweep rule and still charges the whole document to every member of the fan-out.
 
-- **Scope of this duty**: EVERY delegation that instructs a read — not only the schema-mode analysis spawns `#### Analysis-Track Right-Sizing (input-side)` sizes. The observed failure was a work-loop rewriter and judge, roles that section never reached.
+- **Scope of this duty**: EVERY delegation that instructs a read — not only the schema-mode analysis spawns `#### Analysis-Track Right-Sizing (input-side)` sizes.
 - **Bounds the CONTEXT consulted, never the ARTIFACT under work** — extent governs the supporting documents a role opens to do its job; the artifact it is reviewing, debugging, or rewriting is read at whatever depth the role's own body mandates.
   - **Artifact case** — where a role body mandates a full read of what it works ON (`glass-atrium-qa-code-reviewer` "Read changed files in full"), that body GOVERNS and this duty does not reach it: changed files ARE the artifact under review.
   - **Context case — a role body can override the extent duty on CONTEXT too, stated rather than implied**: `glass-atrium-qa-debugger` "Read related code in full" reaches supporting context, the half this duty otherwise bounds, and it still governs.
-    - Bounded where it governs: the override reaches only the context class that body itself names, for the work that body describes — every other entry in the same delegation's read scope still carries an extent, and it never widens into the open-ended latitude clause the **No open-ended latitude clause** bullet forbids.
-  - **Why both overrides above are stated rather than implied**: skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict — nothing else would resolve it.
+    - The override reaches only the context class that body names, for the work that body describes.
+    - Every other entry in the same read scope still carries an extent, and the override never widens into the clause the **No open-ended latitude clause** bullet forbids.
+  - Why both overrides are stated: skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict.
 
 ##### Authoring rules
 
@@ -243,27 +243,27 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
 
 - **Draft self-check — the tell is that it sounds prudent**: "read the contract in full first" reads as diligence, which is why it survives authoring and why no sweep rule catches it.
   - Ask of your own draft: is a role being sent to the whole of something when its work is a part of it? A read instruction that would be praised for thoroughness is the one to re-read.
-- **HONEST BACKING**: honor-system authoring discipline. No gate sees a read instruction's EXTENT — how much of a named path a prose instruction opens is in no gate's input, so every rule in this `#### Read-Extent Discipline` subsection is unbacked.
-  - Not because the gates are blind to prose: `enforce-verification-gate.sh` extracts the Agent tool's `prompt`, matches a plan reference through a five-alternation regex (`references_plan`), and parses the `[SCOPE] files=` CONTENT via `scope_decl_files`.
-  - That content check counts the declared paths against `DEEP_REVIEW_FILE_THRESHOLD` and prefix-matches them against `DEEP_REVIEW_SENSITIVE_PREFIXES` — membership is read and judged; extent is the half none of them sees.
+- **HONEST BACKING**: honor-system authoring discipline — every rule in this `#### Read-Extent Discipline` subsection is unbacked.
+  - The gates do read prompt prose: `enforce-verification-gate.sh` matches a plan reference (`references_plan`) and parses `[SCOPE] files=` membership (`scope_decl_files`), counting paths against `DEEP_REVIEW_FILE_THRESHOLD` and prefixes against `DEEP_REVIEW_SENSITIVE_PREFIXES`.
+  - Extent — how much of a named path an instruction opens — is in no gate's input.
 
 #### Delegation Information-Hiding [ORCHESTRATOR]
 
-- A DEV (or any implementation) sub-agent receives the VERIFIED PLAN — its work stream (direction + the files it touches) + acceptance criteria where the plan or the delegation states them + scoped files + binding constraints — NOT the raw user-request transcript.
-  - The orchestrator is the architect that translates intent into a plan; the DEV is the editor that executes it (Aider architect/editor split).
+- A DEV (or any implementation) sub-agent receives the VERIFIED PLAN, NOT the raw user-request transcript.
+  - The plan part it receives: its work stream (direction + the files it touches) · acceptance criteria where the plan or the delegation states them · scoped files · binding constraints.
+  - The orchestrator translates intent into a plan; the DEV executes it.
 
 Rules:
 
-- **Constraints MUST be preserved into the plan** — every constraint carried by the original request (behavior-changing → advisory-first, minimal diff, SQL parameterization, file-ownership bounds, etc.) is forwarded into the delegation; a DEV cannot honor a constraint it never received.
-  - Dropping a constraint in translation is the defect this rule prevents.
-- **Hide the ambiguity, not the requirements** — a raw user request carries off-task detail + unresolved ambiguity the DEV would have to re-interpret (and may re-interpret wrongly); the plan is the disambiguated, constraint-complete contract.
-  - This is the WHAT-to-build + the binding constraints, not the unstructured conversation.
-- Complements Context Handoff Size (summary only, no raw history) — that rule caps SIZE; this rule fixes the SHAPE (plan, not request).
+- **Constraints MUST be preserved into the plan** — every constraint the original request carries (behavior-changing → advisory-first, minimal diff, SQL parameterization, file-ownership bounds, etc.) is forwarded into the delegation.
+  - Why: a DEV cannot honor a constraint it never received.
+- **Hide the ambiguity, not the requirements** — the plan is the disambiguated, constraint-complete contract: what to build plus the binding constraints.
+  - Why: a raw request carries off-task detail and unresolved ambiguity the DEV would re-interpret, possibly wrongly.
+- Complements `orchestrator-role.md` → `### Context Handoff Size`: that rule caps SIZE (summary only, no raw history); this rule fixes the SHAPE (plan, not request).
 
 #### Forward-Relay Discipline [ORCHESTRATOR]
 
-- Final-consumable deliverable BODIES relay to the user VERBATIM; the `[COMPLETION]` record block stays machine-facing (summarized in prose, never printed raw).
-  - Full rule (scope, verify-first caveat): SoT `orchestrator-role.md` → `### Phase Notes` Verbatim forward-relay.
+- Final-consumable deliverable BODIES relay to the user VERBATIM; the `[COMPLETION]` record block stays machine-facing. Full rule: `orchestrator-role.md` → `### Phase Notes` → Verbatim forward-relay.
 
 ### Prompt Injection Gate [LLM01:2025]
 
@@ -274,43 +274,50 @@ Rules:
 
 ### Cost Optimization [ORCHESTRATOR]
 
-**Cost-Tier Routing details** live in the rule file, not here: `rules/glass-atrium/orchestrator-role.md` → `### Cost-Tier Selection` (Haiku / default / Opus assignment matrix + the `fail_rate` tier-escalation heuristic — an observability cue for LLM-judgment routing, NOT auto-promotion). This skill keeps the high-level optimization heuristics:
+Cost-tier assignment and the `fail_rate` escalation cue: `orchestrator-role.md` → `### Cost-Tier Selection`. This section keeps the optimization heuristics:
 
-- **Single agent preferred**: multi-agent conditions not met → single delegation
-- **Lazy activation**: Pipeline successors created only after predecessor completes
-- **Lower-cost sub-agent models**: consider `CLAUDE_CODE_SUBAGENT_MODEL`
-- **ROI assessment**: Team overhead (context transfer · coordination) > parallel benefit → keep single
+- **Single agent preferred**: multi-agent conditions not met → single delegation.
+- **Lazy activation**: Pipeline successors are created only after their predecessor completes.
+- **Lower-cost sub-agent models**: consider `CLAUDE_CODE_SUBAGENT_MODEL`.
+- **ROI assessment**: team overhead (context transfer · coordination) > parallel benefit → keep single.
 
-**Quality over cost (binds every heuristic above)**: MUST NOT reject a superior architecture/design solely due to cost increase — maintain cost awareness, but quality/extensibility outweighs cost
+**Quality over cost (binds every heuristic above)**: MUST NOT reject a superior architecture/design solely on cost — stay cost-aware, but quality and extensibility outweigh cost.
 
 #### Audit/Scan Routing Discipline (delegation-size, security lens) [ORCHESTRATOR]
 
 The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) applied to the security lens.
 
-- **NEVER route a large/exhaustive audit, whole-file scan, or multi-finding structured-output task to `glass-atrium-sec-guard`** (maxTurns: 3, verdict-only).
-  - Its 3-turn budget cannot both analyze a large surface AND emit a structured result, so it runs out before the StructuredOutput / `[COMPLETION]` emit — and the result is then LOST.
-  - Under ultracode the same non-emit also crashes the run: a schema-mode `agent()` that finishes without emitting THROWS (uncaught) with no engine-layer salvage — wrap it so the throw is caught; see `### Resilient Workflow Authoring`.
-- EARS: When a security task is a sized audit/scan or expects multi-finding structured output, the system shall route it to `glass-atrium-qa-code-reviewer` (normal turn budget, reliably emits structured output) or to `glass-atrium-dev-python` for code-level security work, and shall reserve `glass-atrium-sec-guard` for BOUNDED pre-action security verdicts only (single target, terse verdict).
+| Security task shape | Route to |
+|---|---|
+| sized audit / whole-file scan / multi-finding structured output | `glass-atrium-qa-code-reviewer` (normal turn budget, emits structured output reliably) |
+| code-level security work | `glass-atrium-dev-python` |
+| BOUNDED pre-action verdict (single target, terse verdict) | `glass-atrium-sec-guard` |
+
+- **NEVER route the first row to `glass-atrium-sec-guard`** (maxTurns: 3, verdict-only).
+  - Why: its 3-turn budget cannot both analyze a large surface AND emit a structured result, so the StructuredOutput / `[COMPLETION]` emit never happens and the result is LOST.
+  - Under ultracode that non-emit also crashes the run unless the spawn is wrapped per `#### Resilient Workflow Authoring`.
 
 ### Quality Gates [ORCHESTRATOR]
 
-- **Output verification**: Build success + existing tests passing required before accepting team deliverables
-  - Unit tests recommended alongside DEV implementations
-- **Writer/Reviewer separation**: Fresh session review recommended after complex implementations (reduces same-session self-bias — NeurIPS 2024)
+- **Output verification**: build success + existing tests passing, required before accepting team deliverables.
+  - Unit tests recommended alongside DEV implementations.
+- **Writer/Reviewer separation**: a fresh-session review is recommended after complex implementations, to reduce same-session self-bias.
 - **Confidence-based routing**:
   - confidence=low → automatic glass-atrium-qa-code-reviewer deployment
   - confidence=medium + security code → glass-atrium-qa-code-reviewer deployment
   - TDD absolute rules always apply regardless of confidence
-- **Orchestrator-forced Deep-review override (deterministic, independent of writer confidence — threshold + prefix list live ONCE here, the SoT)**: When a delegation's `[SCOPE] files=` lists ≥ 10 paths, or any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/` — the orchestrator shall compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review regardless of the writer's self-reported confidence.
+- **Orchestrator-forced Deep-review override (deterministic, independent of writer confidence — threshold + prefix list live ONCE here, the SoT)**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review regardless of the writer's self-reported confidence when either trigger holds:
+  - a delegation's `[SCOPE] files=` lists ≥ 10 paths;
+  - any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/`.
   - Applies to EVERY such delegation, not only the first in a cycle.
   - No doc-only skip tier exists: a rule-file change is reviewed, never exempted.
-  - Other prose files carry a pointer to this clause, never a copy of the threshold; the `hooks/enforce-verification-gate.sh` advisory leg holds the same value as a named constant (code, not prose) and reports counts + matched prefix only.
-  - Honest backing: the routing decision is orchestrator honor-system and the hook leg is advisory-only + presence-only (stderr, exit 0, silent without a `[SCOPE]` line) — describing this override as "enforced" is FORBIDDEN.
-  - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number out of this bullet's prose and compares it against the hook's own named constant, so the number stated here and the number in code must move together or that suite fails.
-- **Error recovery**: 3 failures → halt + report to user `[default, adjustable]` (infinite retry forbidden)
-  - checkpoint-based resumption
-- **Team termination**: complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**
-  - The retrospective's durable half is the Outcome Record's `lesson` field plus internal CTM/EPM accumulation. A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
+  - Other prose files carry a pointer to this clause, never a copy of the threshold; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
+  - Honest backing: the routing decision is orchestrator honor-system, and the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line) — describing this override as "enforced" is FORBIDDEN.
+  - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
+- **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop` (retry limits, escalation, circuit-breaker, checkpoint resumption); infinite retry forbidden.
+- **Team termination**: complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
+  - The retrospective's durable half is the Outcome Record's `lesson` field plus internal CTM/EPM accumulation.
+  - A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
 
 ### Architecture Patterns [ORCHESTRATOR]
 
@@ -332,29 +339,23 @@ Three patterns, selected by the dependency shape of the decomposed sub-tasks:
 
 #### Resilient Workflow Authoring [ORCHESTRATOR]
 
-The failure model comes first. The cap rules, the authoring idioms that answer it, and the JS parse-hazard remedies (a separate JavaScript syntax class, not a remedy for that failure model) are all MANDATORY when authoring any workflow; `##### Copyable helper (robustAgent)` is the reference implementation.
+MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and the JS parse-hazard remedies (a separate JavaScript syntax class, not a remedy for the failure model). `##### Copyable helper (robustAgent)` is the reference implementation.
 
 ##### The two failure modes
 
-A workflow `agent({schema})` fails in TWO ways that reject the promise IDENTICALLY — so the SAME `.catch(() => null)` in `robustAgent` handles both, no separate branch:
-
-- **(a) schema-non-emit** — the subagent finishes WITHOUT ever calling StructuredOutput (an uncaught throw → crashes the whole run).
-- **(b) invalid-emission / retry-cap-exceeded** — the subagent DID call StructuredOutput (up to the engine's internal retry cap) but every payload FAILED schema validation, so the engine exhausts its nudge-then-fail and rejects.
-
-Either rejection surfaces as **null** via `.catch` (a bare null also arises from user-skip / terminal-API-death). That is what makes `.catch(() => null)` the load-bearing element that makes the run survivable: it converts BOTH the non-emit throw and the cap-exceeded validation reject into a null the retry path handles.
-
-- **Signature of the invalid-emission mode**: told only "emit StructuredOutput", the model SHRINKS its prose on each internal retry instead of ADDING the validator-named keys it is missing — a summary-collapse loop that reproduces the identical validation error, which is why a verbatim retry cannot break it.
-- **The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap** — BOTH reproduce the IDENTICAL collapse loop.
-  - A SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema — but the cap-violation complaints themselves track cap AUTHORING alone, the uncapped-schema session logging zero of them.
-  - **SHAPE**: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output — the model must either invent an UNDECLARED key (rejected by `additionalProperties: false`) or NEST an object where a string is declared (type violation), so it keeps shrinking prose into the too-rigid fields and never resolves the error.
-  - **LENGTH**: a `maxLength`/`maxItems` cap set TOO TIGHT for the field's realistic content forces the SAME prose-shrink — the true output does not fit under the cap, so the model collapses it toward an ever-smaller string that violates nothing else yet never satisfies the impossible size, which is the observed shape of the retry-cap-exceeded loop.
+- Both modes — schema non-emit, and invalid-emission / retry-cap-exceeded with its summary-collapse signature — are defined at `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap`.
+  - Each rejects the `agent({schema})` promise identically, with no engine-layer salvage, so ONE `.catch(() => null)` converts both into a null the retry path handles.
+  - A bare null also arises from user-skip or terminal API death.
+- **The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap** — BOTH reproduce the IDENTICAL collapse loop, which is why a verbatim retry cannot break it.
+  - **SHAPE**: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output. The model must invent an UNDECLARED key (rejected) or NEST an object where a string is declared (type violation), so it keeps shrinking prose and never resolves the error.
+  - **LENGTH**: a `maxLength`/`maxItems` cap TOO TIGHT for the field's realistic content forces the same prose-shrink toward a string that never fits the impossible size.
+  - A SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema.
   - A permissive single-free-text schema re-run SUCCEEDS where the flat one repeatedly failed.
-- **A schema-mode workflow agent has NO engine-layer salvage**: the engine's nudge-then-fail is Claude-Code-internal (not editable), and — unlike the manual Agent-tool path, which is salvaged by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — nothing catches this one.
-- **Therefore the SCRIPT is the resilience layer**: it both PREVENTS the mismatch by construction (shape-tolerant schema, below) and REGAINS the manual-path salvage as a last resort (text-mode fallback, below).
+- **Therefore the SCRIPT is the resilience layer**: it PREVENTS the mismatch by construction (shape-tolerant schema, below) and REGAINS the manual-path salvage as a last resort (text-mode fallback, below).
 
 ##### Absolute schema-cap rules
 
-MANDATORY when authoring any workflow — these bind EVERY workflow output schema you author. They are stated first because the failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation.
+MANDATORY when authoring any workflow — these bind EVERY workflow output schema you author. The failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation.
 
 - **No caps** — no `maxLength` anywhere on a workflow output schema, and no per-element `maxItems`.
   - The failure tracks the AUTHOR, not the engine: on the same days, same engine and same models, the one session authoring UNCAPPED schemas logged ZERO cap-violation complaints while every capped sibling logged them in the thousands.
@@ -367,28 +368,30 @@ MANDATORY when authoring any workflow — these bind EVERY workflow output schem
 - **A retry must CHANGE STRATEGY** — loosen (or drop the caps outright), switch to file-handoff, or fall through to the text-mode fallback.
   - Re-sending the identical tight schema reproduces the identical cap-exceeded failure.
 
-A non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` backstops these rules (stderr-only — it never alters a verdict or an exit code). Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there; it is deliberately NOT restated here.
-
-Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` greps this live file for each rule phrase above, for the backstop hook's filename and for the promotion-condition pointer in the paragraph directly preceding this one; `hooks/test/schema-cap-authority-single-site.bats` additionally requires this section's heading, its parent section's heading and the no-`maxLength` phrase to survive here, as the target the charter and the META body point at. Rewording a rule out of existence turns both suites red rather than merely loosening guidance.
+- **Backstop**: a non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` (stderr-only — it never alters a verdict or an exit code).
+  - Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there; it is deliberately NOT restated here.
+- **Machine-checked repetition** — rewording a rule out of existence turns these suites red:
+  - `hooks/test/orchestrator-skill-schema-example.bats` greps this live file for each rule phrase above, the backstop hook's filename and the promotion-condition pointer in the **Backstop** bullet.
+  - `hooks/test/schema-cap-authority-single-site.bats` requires this section's heading, its parent section's heading and the no-`maxLength` phrase to survive here, as the target the charter and the META body point at.
 
 ##### Authoring idioms that implement those rules
 
 - **Retry on null (tightened re-prompt — NEVER verbatim)**: wrap every schema-mode `agent()` in a retry helper — on null, re-spawn ONCE with a tightened re-prompt (optionally a higher-turn `agentType`).
-  - The re-prompt MUST carry BOTH (a) reserve-budget + force-the-emit AND (b) the **validator contract** for the invalid-emission mode: *emit ONLY these keys `<list them>` and put ANY extra observation inside the declared free-text field (never invent a key); respect every `maxLength`/`maxItems` cap; on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates) — do NOT merely shorten (a verbatim shorten reproduces the identical failure)*.
-  - **The retry MUST CHANGE STRATEGY, not merely re-prompt the same tight schema** — a verbatim retry reproduces the identical failure (the summary-collapse loop above), and the tightened re-prompt is what breaks it.
-    - On the retry, do ONE of: (a) **LOOSEN the caps** (or drop to a SINGLE permissive free-text field); (b) **switch to FILE-HANDOFF** (return a path + compact summary, per Compact-schema (a) below); or (c) **fall through to the text-mode (schema-less) fallback** below.
+  - The re-prompt carries (a) reserve-budget + force-the-emit AND (b) the **validator contract** for the invalid-emission mode, quoted below.
+  - Validator contract: *emit ONLY these keys `<list them>` and put ANY extra observation inside the declared free-text field (never invent a key); respect any `maxLength`/`maxItems` cap the schema still carries.*
+  - Validator contract, continued: *on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates) — do NOT merely shorten.*
+  - The retry also applies one strategy change from **A retry must CHANGE STRATEGY** above — loosen or drop the caps, switch to file-handoff (Compact-schema (a) below), or fall through to the text-mode fallback below.
 - **Text-mode fallback (last-resort record salvage — regains the manual-path net schema-mode lacks)**: if the tightened retry ALSO returns null (2nd null), re-spawn the SAME task ONCE MORE WITHOUT a schema (text mode).
-  - A schema-less spawn cannot hit the invalid-emission validator at all; its printed multi-line `[COMPLETION]` block is then recorded by the SubagentStop recorder (`track-outcome.sh`) as a WRITER-emitted row (attribution `hook-input`) — the exact salvage the schema-mode path lacks. Synthesis is the fallback for an ABSENT block, not the capture path for a printed one.
+  - A schema-less spawn cannot hit the invalid-emission validator. The SubagentStop recorder (`track-outcome.sh`) records its printed multi-line `[COMPLETION]` block as a WRITER-emitted row (attribution `hook-input`).
+  - Synthesis is the fallback for an ABSENT block, not the capture path for a printed one.
   - The workflow join still treats the item as incomplete (no structured object to merge), but the WORK is recorded + re-delegable instead of silently lost.
 - **Compact-schema authoring (prevents the invalid-emission mode by construction)**: keep the StructuredOutput payload small enough to actually validate —
-  - **(a) File-handoff is the DEFAULT for rich / multi-item output, not merely an option**: ANY deliverable that is multi-finding, multi-row, or carries long evidence MUST write the BULK to a FILE (a path under the job tmp dir or the worktree) and return ONLY the PATH + a compact summary in the schema.
+  - **(a) File-handoff is the DEFAULT for rich / multi-item output, not merely an option**: a multi-finding, multi-row or long-evidence deliverable MUST write the BULK to a FILE (under the job tmp dir or the worktree) and return ONLY the PATH + a compact summary.
     - Reserve tiny INLINE schemas for genuinely TERSE verdicts (a verdict enum + one ≤1-line reason).
-    - (The file is ALSO where the deliverable actually lives — the edited artifact, not the schema echo.)
-  - **(b) Do NOT cap the fields at all — cap-SIZING is the trap, not the remedy**: there is no statically-knowable right number, and a cap set too tight forces the summary-collapse loop outright (the LENGTH root cause above).
+    - The file is also where the deliverable actually lives — the edited artifact, not the schema echo.
+  - **(b) Do NOT cap the fields at all — cap-SIZING is the trap, not the remedy**: no right number is knowable before the content exists, and a too-tight cap forces the collapse loop outright (the LENGTH root cause above).
     - Leave every property uncapped and move bulk to a file per (a).
-    - **WITHDRAWN — recorded as a failure mode, NOT as sizing guidance**: an earlier revision of this bullet told you to cap every field and size each cap generously, naming a per-row / per-item evidence-string floor of a few hundred characters and an array `maxItems` sized to the true expected item count.
-    - That advice is withdrawn and must not be reinstated: a per-element cap is exactly the multiplying shape that burns all five internal retries, and "generous enough" is unknowable before the content exists.
-    - Machine-checked ABSENCE: `hooks/test/orchestrator-skill-schema-example.bats` fails if the withdrawn floor's distinguishing character-count range reappears anywhere in this file, which is why the bullet above describes that range in words instead of retyping the digits — keep it that way when editing.
+    - Machine-checked ABSENCE: `hooks/test/orchestrator-skill-schema-example.bats` fails if the withdrawn per-item cap-sizing floor's character-count range reappears anywhere in this file — never write a per-item cap-size range here.
   - **(c)** enumerate ALL required keys explicitly in the delegation prompt so the model emits them up front rather than discovering them through validation errors.
 - **Shape-tolerant schema authoring (fixes the SHAPE mismatch — distinct from the SIZE caps above)**: for rich / open-ended / multi-faceted output do NOT force a flat, all-string `additionalProperties: false` object. Instead —
   - Prefer a SMALL number of FREE-TEXT string fields — or a single `analysis` free-text field — that ABSORB multi-facet prose, so the model never needs an undeclared key.
@@ -396,27 +399,24 @@ Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` 
     - A SINGLE top-level `maxItems` on that array is the one admitted cap — it does not multiply; caps on the properties INSIDE its `items` object stay forbidden.
   - Keep `required` MINIMAL (only always-present keys) and make every facet field OPTIONAL.
   - Together these prevent the invent-a-key (rejected) / nest-where-string-declared (type violation) → prose-shrink collapse loop above by construction.
-- **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure can NEVER reject/crash the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
-- **Self-recover, never hard-stop**: never terminate the run on a missing result — a mis-sized or failed delegation MUST self-recover (re-delegate / continue), never end the run with lost work.
-- **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: a schema-mode run's printed `[COMPLETION]` text turn does NOT survive — the engine consumes ONLY the StructuredOutput call (0/129 observed), so the printed block is never recorded.
-  - RELIABLE path: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block (contract SoT: `GLASS_ATRIUM_GLOBAL_RULES.md` → Emit-before-cap).
-    - Reference form — the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member.
-    - Prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`.
-    - Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` requires both of that example's properties to appear UNCAPPED in this file AND requires the reserved recorder property to be a declared member inside the Analysis-Track fenced example itself (a comment or a prose mention does not satisfy it), so neither the reference form here nor the fence further down may be paraphrased away.
-  - Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, parses it, and records the run as WRITER-emitted (attribution `structuredoutput-completion`, a healthy row).
-  - The text-mode fallback above is the exception — a schema-LESS re-spawn DOES print a text turn, captured by the `_last_assistant_text_from_transcript()` reverse-scan (which PREFERS the last `[COMPLETION]`-bearing assistant text).
-  - Without the `completion_block` field, the run falls to `structuredoutput-derived` synthesis (`result=done`, `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`), permanently losing the writer signal the self-improvement loop feeds on.
-
-EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-once on null, THEN text-mode-fallback (schema-less re-spawn) on a 2nd null, isolate each agent's failure via `.catch(() => null)` + `.filter(Boolean)`, self-recover rather than hard-stop, and shall reserve a `completion_block` string field + instruct the agent to fill it with the full `[COMPLETION]` block in every schema-mode delegation prompt.
+- **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure never rejects the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
+- **Self-recover, never hard-stop**: a mis-sized or failed delegation MUST self-recover (re-delegate / continue); never end the run on a missing result with lost work.
+- **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block.
+  - Why, and what the recorder does with each channel: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` — a schema-mode printed text turn is never recorded, and a run missing the property falls to lesson-less synthesis.
+  - Reference form — the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member.
+  - Prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`.
+  - Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` requires both properties UNCAPPED in this file, and the reserved property as a declared member inside the Analysis-Track fence itself — paraphrase neither away.
+  - The text-mode fallback above is the one schema-less exception: its printed text turn is captured by the recorder's reverse-scan.
 
 ##### JS parse hazards (a workflow script is plain JavaScript)
 
 TWO distinct forms break the Workflow parser, and the engine mislabels both as a "TypeScript syntax" error — so the message does not tell you which one you hit.
 
-- **Plain-JS script — escape bash `${...}` in template literals**: a workflow script is JavaScript; a bash `${VAR}`/`$(…)` or bash-operator form (`${#a[@]}`, `${a[@]}`, `${VAR:-x}`) pasted inside a backtick template literal is read as JS interpolation → Workflow parse error (the engine MISLABELS it a "TypeScript syntax" error, hiding the real cause).
-  - Put shell snippets in single/double-quoted JS strings, or escape the dollar (`\${…}`), or concatenate — so `${` never reaches the JS parser as interpolation (plain `${jsVar}` interpolation is fine; only bash forms break).
+- **Plain-JS script — escape bash `${...}` in template literals**: a bash `${VAR}`/`$(…)` or bash-operator form (`${#a[@]}`, `${a[@]}`, `${VAR:-x}`) inside a backtick template literal is read as JS interpolation → Workflow parse error.
+  - Put shell snippets in single/double-quoted JS strings, escape the dollar (`\${…}`), or concatenate — so `${` never reaches the JS parser as interpolation. Plain `${jsVar}` interpolation is fine; only bash forms break.
   - Backstopped by the `lint-workflow-template-literal.sh` `PreToolUse(Workflow)` hook (honor-system-primary).
-- **Second, DISTINCT parse-break form — a nested backtick template literal inside `${…}`**: a nested backtick template literal placed inside a `${…}` interpolation (e.g. a role-branch ternary) also trips the Workflow parser at the INNER backtick — VALID ES2015 JavaScript the parser nonetheless rejects, and NOT the bash-form case above (no shell syntax is involved).
+- **Second, DISTINCT parse-break form — a nested backtick template literal inside `${…}`**: a nested template literal inside a `${…}` interpolation (e.g. a role-branch ternary) trips the parser at the INNER backtick.
+  - It is VALID ES2015 JavaScript the parser nonetheless rejects, and no shell syntax is involved.
   - Remedy: precompute the branch value as a plain string variable, then interpolate the plain `${var}` so no nested backtick reaches the parser inside `${…}`:
 
   ```js
@@ -427,7 +427,7 @@ TWO distinct forms break the Workflow parser, and the engine mislabels both as a
   goal: `run: ${roleLine}`
   ```
 
-  - Extending `lint-workflow-template-literal.sh` to DETECT this nested form is DEFERRED (nested template literals are valid JS → any detector is heuristic/false-positive-prone, and no behavioral test net exists today); doc-guidance is the remedy for now.
+  - `lint-workflow-template-literal.sh` does NOT detect this nested form (valid JS, so any detector would be heuristic and false-positive-prone) — this remedy is the only guard.
 
 ##### Copyable helper (robustAgent)
 
@@ -481,28 +481,24 @@ if (nulls) log('[resilience] ' + nulls + '/' + results.length + ' agent(s) retur
 const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete items, re-delegable in a follow-up
 ```
 
-- **Prevention-by-construction + fail-open advisory backstop**: the copy-verbatim verify-stage skeletons in `#### Pipeline Acceptance Criteria` (and the entry-class skeleton) embed this `robustAgent` helper INLINE, route EVERY stage through it, and carry the `[AGENT-COMPOSITION]` declaration block + entry/`[SIZE-EST]` tokens — so a pasted DEV workflow clears the declaration gate and carries the resilience idiom by construction (do NOT strip either back out).
-  - As a secondary, fail-open backstop, `enforce-workflow-verify-stage.sh` emits a NON-blocking stderr advisory (exit 0 — NEVER exit 2) when ANY workflow script (DEV **or non-DEV** — the dev-gate was removed since the crashed runs were non-DEV researcher/reporter fan-outs) has at least ONE UNHANDLED schema-mode `agent()` spawn site — a site not `.catch`-chained, not inside a `try{}`, and not routed through a `robustAgent` or custom `.catch`-chained wrapper.
-    - This is a decidable PER-SITE check (it closes the former WHOLE-SCRIPT false-negative where one `catch`/`robustAgent` token ANYWHERE silenced N still-bare schema sites), with a false-positive guard: a bare `agent({schema})` inside a custom-named wrapper whose OWN invocation is `.catch`-chained at the join is HANDLED, not flagged.
-  - The present-by-construction skeleton is PRIMARY; the advisory only nudges when an unhandled site remains.
+- **Prevention-by-construction (PRIMARY)**: the copy-verbatim verify-stage skeletons in `#### Pipeline Acceptance Criteria` (and the entry-class skeleton) embed this `robustAgent` helper INLINE and route EVERY stage through it.
+  - They also carry the `[AGENT-COMPOSITION]` declaration block + entry/`[SIZE-EST]` tokens, so a pasted DEV workflow clears the declaration gate and carries the resilience idiom by construction — strip neither back out.
+- **Fail-open advisory backstop (secondary)**: `enforce-workflow-verify-stage.sh` emits a NON-blocking stderr advisory (exit 0, NEVER exit 2) when any workflow script, DEV or non-DEV, has at least ONE UNHANDLED schema-mode `agent()` spawn site.
+  - Unhandled = not `.catch`-chained, not inside a `try{}`, and not routed through `robustAgent` or a custom `.catch`-chained wrapper.
+  - The check is PER SITE, so one handled site never silences a bare one elsewhere.
+  - False-positive guard: a bare `agent({schema})` inside a custom-named wrapper whose OWN invocation is `.catch`-chained at the join is HANDLED, not flagged.
 
 #### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]
 
-The `robustAgent` layer in `#### Resilient Workflow Authoring` above hardens the OUTPUT side — a non-emit no longer crashes the run. This section removes the INPUT-side cause of that non-emit: a single schema-mode NON-DEV analysis/research/audit spawn with a BROAD read + `effort:high` + a 3-4-field schema exhausts the turn budget before the terminal StructuredOutput (the 6 non-emit incidents shared ALL FOUR of those attributes).
+The `robustAgent` layer in `#### Resilient Workflow Authoring` above hardens the OUTPUT side — a non-emit no longer crashes the run. This section removes the INPUT-side cause of that non-emit.
 
-Rule SoT: `orchestrator-role.md` → `### Spawn Budget` (`[SIZE-EST]` analysis mode + decompose-by-domain).
+- Rule SoT: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — its read allowlist (`scope`), **Effort matched to depth**, field cap and **Split trigger**, plus `#### Analysis fan-out and team cardinality` for decompose-by-domain.
+- Every schema-mode analysis delegation carries those bounds by construction, per track. This file adds three deltas:
+  - **Bounded read-scope** — each allowlist entry is a `{ path, extent }` pair the skeleton renders into the prompt; a bare-path entry is the defect. Extent follows `#### Read-Extent Discipline` (this file).
+  - **Output-field shape** — prefer a single free-text `analysis` field (`#### Resilient Workflow Authoring` → **Shape-tolerant schema authoring**).
+  - **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
 
-**Every schema-mode analysis delegation MUST carry all of the PER-TRACK bounds below by construction**:
-
-- **Bounded read-scope** — an explicit file/dir READ allowlist, NEVER a repo sweep.
-  - Membership is half of it: bound how much of each entry per `#### Read-Extent Discipline` (this file), whose duty binds every delegation, not only these analysis spawns.
-  - By construction here = each `READ_TRACKS` allowlist entry is a `{ path, extent }` pair the skeleton renders into the prompt; a bare-path entry is the defect, not the default.
-- **Effort matched to depth** — default `medium` for broad reads; `high` ONLY for narrow-scope deep reasoning.
-- **Output-field cap** — ≤2-3 required schema fields; a 4-field schema is itself a SPLIT signal (prefer a single free-text `analysis` field per `#### Resilient Workflow Authoring` → **Shape-tolerant schema authoring**).
-- **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
-- **Decompose-by-domain up front** — past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), fan an N-domain audit to N scoped agents at Decision time + one reduce phase; NEVER one broad agent then a reactive split.
-
-Copyable skeleton — every bound above rendered into one bounded fan-out:
+Copyable skeleton — every bound rendered into one bounded fan-out:
 
 ```js
 // [SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist — bounded per-track analysis spawn
@@ -552,9 +548,7 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 
 ##### When in the cycle this deploy runs (pointer, not a restatement)
 
-By DEFAULT this deploy is PRE-MERGE — the cycle's combined unmerged tree is deployed and empirically verified on the live install BEFORE the PR is opened; post-merge deploy is narrowly retained (release flow · no pre-merge deploy possible).
-
-- Order SoT: `orchestrator-role.md` → `## Document-Driven Workflow` step 6, which also names the live-suite verification instrument and its exit-0 threshold — read them there, not here.
+- Order SoT — pre-merge by default, the narrow post-merge cases, the live-suite instrument and its exit-0 threshold: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
 - This section covers only HOW the copy reaches its destination safely.
 
 ##### Reach the destination through a sanctioned flow FIRST
@@ -564,9 +558,10 @@ A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,
 Pick one of the three flows:
 
 - **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`).
-  - The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run, and the apply is unattended — no prompt stands between the staged tree and the live install.
+  - The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run.
+  - The apply is unattended — no prompt stands between the staged tree and the live install.
 - **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was LAUNCHED with.
-  - An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment, not the session shell's children), so this is a session-start decision, not something a delegation can arrange for itself.
+  - An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment), so this is a session-start decision a delegation cannot arrange for itself.
 - **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
 
 ##### The copy step — three anti-patterns, then the sanctioned idiom
@@ -574,11 +569,11 @@ Pick one of the three flows:
 The idiom is deploy-mechanism-agnostic: it applies to the copy step of whichever flow is chosen, with `DST` a staging tree rather than the live surface.
 
 - **cp-silent-fail** — a bare `cp` can partially or silently fail to update a target, so trusting its exit code alone hides drift.
-  - → Verify EACH copied file with `cmp -s` (byte-equality) AFTER the copy; a `cmp` mismatch is the deploy-failure signal (loud-fail, do not `|| true` it).
-- **IFS-word-split** — `for f in ${LIST}` mis-splits the file list under a strict `IFS=$'\n\t'` (the newline/tab split, or a path with an IFS char, breaks iteration).
+  - → Verify EACH copied file with `cmp -s` (byte-equality) AFTER the copy; a `cmp` mismatch is the deploy-failure signal (loud-fail, never `|| true` it).
+- **IFS-word-split** — `for f in ${LIST}` mis-splits the file list under a strict `IFS=$'\n\t'` (a path with an IFS char breaks iteration).
   - → Iterate with `while IFS= read -r f; do … done <<<"${LIST}"` so each line is exactly one path, unsplit.
-- **lookbehind blind-spot** — a grep negative-lookbehind authored to exclude one shape ALSO silently excluded the `/path/` form (a coverage hole that skips real matches).
-  - → Use a blind-spot-free POSITIVE match (or an explicit allowlist); avoid a negative-lookbehind exclusion that can swallow a legitimate `/path/` form.
+- **lookbehind blind-spot** — a grep negative-lookbehind authored to exclude one shape can silently exclude the `/path/` form too, skipping real matches.
+  - → Use a blind-spot-free POSITIVE match or an explicit allowlist instead.
 
 Sanctioned idiom (bash 3.2-safe):
 
