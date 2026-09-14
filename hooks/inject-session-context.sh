@@ -1,46 +1,36 @@
 #!/usr/bin/env bash
-# SessionStart — inject orchestrator behavior rules
-# stdout output is injected into the session context
+# SessionStart — inject orchestrator behavior rules; stdout is the injected session context
+# emit_error EXEMPT: context injection only, no error path — a failed progress-tracker source skips its block
 #
-# emit_error EXEMPT: this hook only injects context via stdout and has no error path.
-# Even if the progress-tracker source fails, silent fallback (skip the block itself).
-#
-# [INJECTION CANARY] the ORCHESTRATOR_INIT block emits one visible, printable, single-code-point
-# BMP glyph (never zero-width / bidi / variation-selector / combining / private-use — those are
-# Trojan-Source-class obfuscation vectors). It is an injection-PRESENCE signal only, never a
-# trust / auth / provenance token: a character anyone can type proves nothing about origin.
+# [INJECTION CANARY] ORCHESTRATOR_INIT emits one visible, printable, single-code-point BMP glyph
+#   · never zero-width / bidi / variation-selector / combining / private-use (Trojan-Source vectors)
+#   · injection-PRESENCE signal only — never a trust / auth / provenance token
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# [RESTATED SoT FIGURES] the turn-0 line restates figures owned elsewhere. Nothing ties a restated
-# figure to its source, so re-verify each on every edit — honor-system, no mechanical check:
-#   · delegation elements — skills/glass-atrium-ops-orchestrator.md -> "#### Delegation required
-#     elements" (six), plus the 7th [SCOPE] element at orchestrator-role.md -> "### Context Handoff
-#     Size", which is the grammar SoT and takes a pointer here, never a copy of its three fields.
-#   · split triggers — orchestrator-role.md -> "### Spawn Budget" / Delegation-size discipline: the
-#     46-52 truncation band belongs to the HARD SECONDARY (est. >~40 tool_uses); the ~30 is the
-#     SEPARATE `files x 4.5` sizing anchor. Fusing the two is undetectable to a reader and to grep.
-#   · reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language" -> the response-
-#     language rule and its children; the three "Reply language" heredoc lines restate it.
+# [RESTATED SoT FIGURES] the turn-0 lines restate figures owned elsewhere → re-verify each on every edit
+#   (honor-system, no mechanical check)
+#   · delegation elements — skills/glass-atrium-ops-orchestrator.md -> "#### Delegation required elements" (six)
+#     + the 7th [SCOPE] element at orchestrator-role.md -> "### Context Handoff Size" (grammar SoT — pointer only)
+#   · split triggers — orchestrator-role.md -> "### Spawn Budget" / Delegation-size discipline
+#     46-52 truncation band = HARD SECONDARY (est. >~40 tool_uses) · ~30 = SEPARATE `files x 4.5` anchor — never fuse
+#   · reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language"
+#     -> the response-language rule and its children, restated by the three "Reply language" heredoc lines
 #
-# Marker-extraction (the extract_block mechanism in hooks/inject-scope-rules.sh) is NOT usable here:
-#   1. audience — that hook feeds SUBAGENTS, which hold no Tier-3 body, whereas this main session
-#      already receives orchestrator-role.md IN FULL on the uncapped host project-instructions channel
-#      (core-compliance-matrix.md -> "### Membership vs. Delivery"), so an extracted block would
-#      re-deliver text the session already holds.
-#   2. shape — extract_block takes ONE contiguous marker range per block; this block is a compressed
-#      synthesis across two files and three sections, which no single range spans.
-#   3. fail-open — extract_block yields EMPTY on an absent file or renamed marker, and this block is
-#      the sole delivery path for the canary and the direct-handling boundary.
-# The protection that DOES apply is a cross-read pin: a test reading the SoT bullets and asserting
-# these figures (the hooks/test/inject-scope-rules-nodrop.bats pattern). Not present today.
+# Marker extraction (extract_block in hooks/inject-scope-rules.sh) is NOT usable here:
+#   1. audience — that hook feeds SUBAGENTS, not this main session
+#      this session already holds orchestrator-role.md IN FULL on the uncapped host channel
+#      (core-compliance-matrix.md -> "### Membership vs. Delivery") → an extracted block re-delivers held text
+#   2. shape — one contiguous marker range per block; this block synthesizes two files and three sections
+#   3. fail-open — EMPTY on an absent file or renamed marker; this block is the sole canary + direct-handling path
+# Protection that DOES apply: a cross-read pin asserting these figures against the SoT bullets
+#   (hooks/test/inject-scope-rules-nodrop.bats pattern) — absent today
 
-# [WORKFLOW PRE-FLIGHT] turn-0 line design decision (additive): the turn-0 line enumerates the
-# FOUR co-equal DEV-spawn requirements (entry token / [SIZE-EST] / verify-stage / [AGENT-COMPOSITION]
-# declaration). JS-authoring pitfalls (bash dollar-brace leak + nested backtick in a dollar-brace
-# interpolation) are DELIBERATELY kept OFF it for one-legible-line readability — they live on the
-# skill + SoT (skills/glass-atrium-ops-orchestrator.md -> ### Ultracode / Workflow-tool Mode). Clause ⑤ (offline --lint
-# PREVIEW) is appended as the SELF-CHECK step: a byte-conscious pointer to the same-code-path gate preview.
+# [WORKFLOW PRE-FLIGHT] the turn-0 line enumerates the FOUR co-equal DEV-spawn requirements
+#   (entry token / [SIZE-EST] / verify-stage / [AGENT-COMPOSITION] declaration)
+#   · JS-authoring pitfalls (bash dollar-brace leak, nested backtick in dollar-brace) kept OFF → one legible line
+#     their home: skills/glass-atrium-ops-orchestrator.md -> ### Ultracode / Workflow-tool Mode
+#   · clause ⑤ = the SELF-CHECK step: pointer to the offline --lint preview of the same gate code path
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
 Reply language: write every message to the user — status and progress notes in a long or background job, clarifying questions and the end-of-job results summary included — in the language of the user's own prose in their latest message.
@@ -58,13 +48,11 @@ Direct handling forbidden: writing code, writing documents, analysis/research an
 [INJECTION CANARY] ◈ — start the first line of your first tool-free reply with this glyph; it precedes the BLUF and is not part of it.
 ORCHESTRATOR_INIT
 
-# wiki search tool notice (for agents)
 echo '[WIKI] wiki search available: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
 
-# Cross-Session Continuity — surface up to 5 newest in_progress files so a new session
-# resumes incomplete work (GLOBAL_RULES); silent when none exist (no header line at all).
-# Store-root form: scripts/ is consumed in place from the store — the
-# ~/.claude/scripts farm is gone (hooks/ and scripts/ are sibling store dirs).
+# Cross-Session Continuity — up to 5 newest in_progress files → new session resumes them (GLOBAL_RULES)
+# silent when none exist — no header line at all
+# scripts/ is read in place from the store (hooks/ and scripts/ are sibling store dirs)
 _PROGRESS_TRACKER="${HOME}/.glass-atrium/scripts/progress-tracker.sh"
 if [[ -r "${_PROGRESS_TRACKER}" ]]; then
   # shellcheck source=/dev/null

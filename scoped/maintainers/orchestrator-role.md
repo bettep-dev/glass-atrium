@@ -27,24 +27,26 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`
 
-- The explicit format/share signal list under **Exposure Determination** restates the canonical at `scoped/scope-report.md` → `### HTML request test`, which reaches no authoring agent at spawn.
-- The authoring agents read their own copies: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+- The explicit format/share signal list under **Exposure Determination** restates the HTML request test. `scoped/scope-report.md` → `### HTML request test` states the rule and reaches glass-atrium-intel-reporter through its `rules.scope`.
+- The signal literals live in the author bodies: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
 - The rule-file copy is the only one reaching the orchestrator, which makes the exposure call. Edit the set together; never collapse it as redundant.
-- The T1-T5 thresholds in the **Visual-Weight Probe** restate `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`; `scoped/scope-planning.md` carries a pointer only. Neither scope file reaches its authoring agent at spawn.
-- Delivered copies: `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`; for the consulted designer, `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` plus `skills/glass-atrium-design-html-co-emission/SKILL.md`.
+- The T1-T5 thresholds in the **Visual-Weight Probe** restate `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, which reaches glass-atrium-intel-reporter through its `rules.scope`. `scoped/scope-planning.md` reaches glass-atrium-intel-planner but carries a pointer only.
+- Other counting sites:
+  - `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` references the scope-report canonical; `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` carries the planner's own threshold table.
+  - For the consulted designer, the stub `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` keeps the trigger, output fields and veto line; the preloaded `skills/glass-atrium-design-html-co-emission/SKILL.md` keeps the full consultative scope.
 - The probe is the orchestrator-side counting site, not a duplicate: edit it with those copies and never delete it as redundant.
 
 ### `#### Monitoring-phase notes`
 
 - The dev-front markup-exception judgment under `#### Monitoring-phase notes` is the orchestrator-side canonical for the JUDGMENT only.
-- The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (mirrored at `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`); neither scope file reaches its authoring agent at spawn.
+- The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`). Each scope file reaches its authoring agent through that agent's `rules.scope`.
 - Delivered halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
 - The rule-file copy also reaches every subagent through the parent's project-instruction set. That is a delivery accident and gives it no authority over the author-side canonical.
 
 ### `### Plan Direction Verification (Stage-2 gate)`
 
 - `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical. The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
-- Neither scope file reaches its actor at spawn today, and no dev-* or reviewer body mirrors either. The rule file does reach every subagent through the parent's project-instruction set, while telling subagents to ignore it.
+- `scoped/scope-qa.md` reaches the reviewer and `scoped/scope-dev.md` every DEV member, each through `rules.scope`, so no dev-* or reviewer body mirrors either. The rule file also reaches every subagent through the parent's project-instruction set, while telling subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.
 - Do not copy the first-link question literal into the rule file; the rule file points to it only.
   - The literal is cross-read between `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` and the ultracode gate's presence scan (`hooks/enforce-workflow-verify-stage.sh`, pinned by `hooks/test/enforce-workflow-verify-stage-firstlink.bats`); a further copy adds a drift surface no suite polices.
@@ -64,5 +66,5 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 ### `## Document-Driven Workflow (end-to-end lifecycle)`
 
 - `## Document-Driven Workflow` is the orchestrator-side lifecycle SoT. `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` mirrors its gate sequence as per-stage acceptance detail and carries the ultracode in-script verify-stage skeleton.
-  - The skill states the direction itself (step 4 "Procedure + honest backing (SoT)", step 6 "Order SoT"). Edit the two together; neither is a redundancy to delete.
+  - The skill cites the rule file as the SoT for step 4's procedure and step 6's order (`#### Pipeline Acceptance Criteria` and `#### Deploy-Safety Idiom`). Edit the two together; neither is a redundancy to delete.
 - Step 6's pointer to `scoped/shared-testing.md` → Destructive-Path Suite Safety keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-testing.md` quotes it as the reason that section stays single-sited. Reword both together or neither.

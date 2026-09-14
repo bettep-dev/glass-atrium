@@ -16,7 +16,8 @@ Corpus-maintenance companion to the Tier-1 system charter. Nothing here is deliv
 
 ## Status in the corpus
 
-- Tier-1, and it ARRIVES: the charter reaches every agent — main session and subagent alike — on the host project-instructions channel, which is unceilinged. It is the one tier whose delivery is measured rather than assumed, so a duty homed here is a duty an agent actually holds.
+- Tier-1, and it ARRIVES: the charter reaches every agent — main session and subagent alike — on the host project-instructions channel, which is unceilinged, so a duty homed here is a duty an agent actually holds.
+  - Its arrival is measured, and so is Tier-2 and unconditional Tier-3 arrival through the part slots (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`); what sets Tier 1 apart is the channel, not the evidence.
 - The file lives at `agents/` and is reached from `rules/glass-atrium/` through a symlink (git mode 120000 on the rules side, 100644 on the agents side). The charter must stay at `agents/`; the symlink target is pinned by `scripts/test/update-symlink-mode-row.bats`, the manifest `modes` key, and the census `symlink_drift` check.
 - It is EXCLUDED from the agent EDITABLE-region merge: `lib/ga-symlink.sh` → `is_merge_claimed_path` returns "no" for this basename, so the charter byte-swaps on update rather than merging. `scripts/test/deploy-coverage-partition.bats` pins that the merge loop skips it. There is therefore no EDITABLE-region count constraint on this file, and no `<!-- EDITABLE -->` markers belong in it.
 - The manifest carries TWO rows with the same content hash — one for the `agents/` path, one for the `rules/glass-atrium/` symlink — so any content edit invalidates both and requires a manifest regeneration.
@@ -46,18 +47,27 @@ The charter's head comment names the class of shape; what binds is below.
 
 Charter-specific instruction for the wave: restructure and diet, with **no rule removed**. Nothing below removes a duty.
 
-- **Topic fix — four sections reparented.** `### Context Compression Strategies`, `### Parallel Tool Invocation`, `### Token Budget Allocation` and `### Handoff Context` sat under `## Cross-Session Continuity (progress.md)`, which is not their topic. They now sit under `## Context Management [ALL]`, which was a one-line stub. `### Turn Budget & Graceful Exit` and `### Session-Start Continuity Header` stay under Cross-Session Continuity, where the checkpoint-to-progress-file duty genuinely lands.
-- **`## Absolute Rules [ALL]` gained three sub-headings** — `### Output Language`, `### Ambiguity`, `### Verified References` — with the short hard prohibitions (sensitive data, handoff payloads, log masking, Output Contract, Monitor address) left as plain bullets above them. No heading was renamed; three were added. Every external citation of the form "Absolute Rules → Output Language" still resolves, and now resolves to a heading rather than a bolded lead.
-- **Reply-language duplication collapsed (dup-in).** The charter stated the reply-language rule twice: a top-level bullet with eight sub-bullets, and again inside the Output Language block ("Replies: user-facing replies follow the user's question language, per the response-language rule above"). One statement now leads `### Output Language`. The phrase "the response-language rule" is retained inline because `hooks/inject-session-context.sh` cites it by that name twice.
+- **Topic fix — four sections reparented.** `### Context Compression Strategies`, `### Parallel Tool Invocation`, `### Token Budget Allocation` and `### Handoff Context` sat under `## Cross-Session Continuity (progress.md)`, which is not their topic.
+  - They now sit under `## Context Management [ALL]`, which was a one-line stub.
+  - `### Turn Budget & Graceful Exit` and `### Session-Start Continuity Header` stay under Cross-Session Continuity, where the checkpoint-to-progress-file duty genuinely lands.
+- **`## Absolute Rules [ALL]` gained three sub-headings** — `### Output Language`, `### Ambiguity`, `### Verified References`.
+  - The short hard prohibitions (sensitive data, handoff payloads, log masking, Output Contract, Monitor address) stay as plain bullets above them.
+  - No heading was renamed. Every external citation of the form "Absolute Rules → Output Language" still resolves, now to a heading rather than a bolded lead.
+- **Reply-language duplication collapsed (dup-in).** The charter stated the reply-language rule twice: a top-level bullet with eight sub-bullets, and again inside the Output Language block.
+  - One statement now leads `### Output Language`.
+  - The phrase "the response-language rule" is retained inline because `hooks/inject-session-context.sh` cites it by that name twice.
 - **`Literal data` split at its seam.** The bullet ran past the shape cap carrying two rules. It is now two siblings: `**Literal data**` keeps the class list with its FORBIDDEN clause, and `**Names and identifiers keep their original form**` carries proper nouns, project names, identifiers, API names and the report/plan prefixes.
   - The lead `**Literal data**` survives byte-identical, so every citation of it still resolves — but it now covers ONE of the two classes, and the split is what narrowed it.
   - **Both classes restated inline, so the narrowing strands neither reader**: `agents/glass-atrium-intel-reporter.md` → **Preservation exceptions** · `agents/glass-atrium-meta-prompt-engineer.md` → `## Body Language Policy`.
   - **Points at the clause without restating it, so it lands on the narrowed half**: `agents/glass-atrium-meta-agent.md` → "the canonical's Literal data clause". Repair when that body is next touched — cite `### Output Language` one level up, or name both leads.
-  - Not repaired here: agent bodies are outside this track's file set.
   - Co-edited in the same pass: the reply-language sub-bullet that read "per Literal data below" now reads "per Names and identifiers below", the half it actually needs.
 - **Machine-checked paragraphs moved here**, replaced by the one head comment: the Turn Budget position notice, the schema-cap suite notice, and the print-block-then-emit marker notice. Each described a test to a reader who is an agent, not an editor. The clauses the tests actually grep all stayed in the body.
-- **Dropped as pointer-only stubs to delivered Tier-1 files**: `## Outcome Record [ALL]` (two blockquote pointers into `core-outcome-record.md`, including its Emit Boundary pointer) and `## Wiki Reference (Knowledge Utilization) [ALL]` (one pointer into `core-wiki-reference.md`). Both targets are Tier-1 and arrive on the same host channel as the charter, and every subagent additionally receives the compressed emit-format block from `hooks/inject-scope-rules.sh`. No corpus site cites either heading — checked before deletion. The `## Learning Log & Correction Signal [ALL]` heading was NOT dropped: it carries the memory-persistence rule, which is a duty rather than a pointer.
-- **Dated and historical fragments dropped, claims kept**: "reversed from 4.8's adaptive/as-needed default", "accepted since 4.8", "128k max output unchanged", "Structured Outputs — now GA", and the "0/129 observed" count on the schema-mode caveat. Each stated how a fact came to be, not what to do about it; the rule each tailed is unchanged. The honest-backing note on daemon auto-clustering was KEPT (it tells the reader the prohibition has no runtime gate), with the `learning-aggregator.py` filename dropped as the detail `core-learning-log.md` already carries.
+- **Dropped as pointer-only stubs to delivered Tier-1 files**: `## Outcome Record [ALL]` (two blockquote pointers into `core-outcome-record.md`, including its Emit Boundary pointer) and `## Wiki Reference (Knowledge Utilization) [ALL]` (one pointer into `core-wiki-reference.md`).
+  - Both targets are Tier-1 and arrive on the same host channel as the charter; every subagent also receives the compressed emit-format block from `hooks/inject-scope-rules.sh`. No corpus site cited either heading.
+  - The `## Learning Log & Correction Signal [ALL]` heading was NOT dropped: it carries the memory-persistence rule, which is a duty rather than a pointer.
+- **Dated and historical fragments dropped, claims kept**: "reversed from 4.8's adaptive/as-needed default", "accepted since 4.8", "128k max output unchanged", "Structured Outputs — now GA", and the "0/129 observed" count on the schema-mode caveat.
+  - Each stated how a fact came to be, not what to do about it; the rule each tailed is unchanged.
+  - The honest-backing note on daemon auto-clustering was KEPT (it tells the reader the prohibition has no runtime gate); the `learning-aggregator.py` filename went, as detail `core-learning-log.md` already carries.
 - **Preamble merged**: the head "see bottom" sentence and the trailing per-scope-mapping blockquote were one pointer split across the file. They are now one line carrying both compliance-matrix anchors, so `rules/glass-atrium/core-compliance-matrix.md` → Headings stays true when it says the charter links to `## Scope Legend` and `## Compliance Matrix`.
 - **Not touched**: `## Rationalization Rejection [ALL]` (the charter is the home that names the five domain files, and `scoped/maintainers/shared-testing.md` cites it), the 3-Tier table, and the ETHOS bullet list.
 
@@ -74,7 +84,12 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
-Prose citations INTO charter anchors, all still resolving after this pass: `## Sub-Agent Spawn Policy` · `### Turn Budget & Graceful Exit` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `## System Prompt Protection` · `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy` · `Anchor by symbol` · `AI-Generated Anti-Pattern Prohibition` · `Emit-before-cap` · `Philosophy (ETHOS)` · `Thinking Budget Policy` · `## Absolute Rules [ALL]` · `Rationalization Rejection`.
+Prose citations INTO charter anchors, all still resolving after this pass:
+
+- `## Sub-Agent Spawn Policy` · `### Turn Budget & Graceful Exit` · `Emit-before-cap` · `Thinking Budget Policy`
+- `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
+- `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
+- `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
 
 ## Outstanding
 

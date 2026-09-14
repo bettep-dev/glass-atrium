@@ -1,22 +1,18 @@
-"""agents/<name>.md scaffold body + ADD pre-flight absence checks (§3.4).
+"""agents/<name>.md scaffold body + ADD pre-flight absence checks.
 
 Responsibilities:
     Render the minimal agent .md scaffold (frontmatter + body) and assert every
-    ADD target location is ABSENT before any write (clobber guard — a clean-tree
-    re-run is a no-op, one pre-existing location HALTs). The body is
-    intentionally minimal: the CLI creates a routable stub; prompt-content
-    authoring is out of scope (F1 territory).
+    ADD target location is ABSENT before any write — clobber guard: a clean-tree
+    re-run is a no-op, one pre-existing location HALTs. The body is a routable
+    stub; prompt-content authoring is out of scope.
 
-Per-agent rule membership is RECORDED on the registry row (`rules`) and nowhere
-in the body: no code ever read the former `> Rules:` header to load a rule, so a
-rendered body carries none and both authored-text gates REFUSE one (a stale
-header reused from an old --body-file would otherwise be baked into a new agent
-silently).
+Per-agent rule membership lives on the registry row (`rules`), never in the
+body: both authored-text gates REFUSE a `> Rules:` header, so a stale one reused
+from an old --body-file cannot be baked into a new agent.
 
-Recording is not delivery. The row is the input the SubagentStart selector MUST
-read once the split channel is bound; until then no code reads the `rules`
-object at all, so a created agent receives its rules through no channel and the
-row is a governance record.
+The row is also the delivery input: `hooks/lib/inject_chunk.py` reads it at
+SubagentStart, so a created agent receives its `scope` and `shared` bodies, and
+its `conditional` entries as path pointers, from the row alone.
 """
 
 from __future__ import annotations
@@ -288,7 +284,7 @@ def assert_section_no_smuggled_structure(section: str) -> None:
 
 
 def assert_add_targets_absent(paths: StorePaths, name: str, *, is_dev: bool) -> None:
-    """Assert the 3-4 ADD target locations are all absent before writing (§3.4).
+    """Assert the 3-4 ADD target locations are all absent before writing.
 
     Checks: agents/<name>.md absent · registry entry absent · (DEV only) the
     scope-dev roster does not already list NAME. Any present location raises
