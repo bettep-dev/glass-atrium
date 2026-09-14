@@ -20,16 +20,23 @@ The former `**Token versioning**: changes MUST be branch-isolated; rollback path
 
 ## Duplicates dropped, with the delivered copy that made them redundant
 
-Each counterpart was confirmed present in `agents/glass-atrium-design-designer.md` by grep this pass:
+Each counterpart is present in `agents/glass-atrium-design-designer.md`:
 
-- **`**No AI-generated aesthetics**` font list** → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` carries `Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts`, and `### Typography` additionally resolves the fallback-versus-primary subtlety the scope-file line lacked (a fallback face is a rendering substitute; selecting one as a primary is the trope).
+- **`**No AI-generated aesthetics**` font list** → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` carries `Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts`, and `### Typography` additionally resolves the fallback-versus-primary subtlety the scope-file line lacked.
+  - A fallback face is a rendering substitute; selecting one as a primary is the trope.
 - **Vendor-routing sane-default and cross-vendor-parity bullets** → `### Figma Make + MCP Integration Guardrails` carries `Vendor-Routing: Figma is the default design tool; do NOT assume Sketch / XD parity in design specs.` Only the routing-rationale bullet had no counterpart, so only it survives in the rule file.
-- **`Verify no prohibited fonts`** in the handoff checklist → the same AI Slop Tropes line, plus `### Red Flags` → `**Color & contrast**`.
-- **The WCAG AA ratios** → `### Output Contract` pins `WCAG AA (4.5:1 text · 3:1 large-text ≥18pt) verified · AAA (7:1) recommended`, `## Pre-Execution Verification` pins the same pair, and `### Red Flags` carries the derive-then-verify obligation. The rule file keeps a bare one-line contrast item with no numbers — see the next section for why the item itself stays.
+- **`Verify no prohibited fonts`** in the handoff checklist → the same AI Slop Tropes line.
+- **The WCAG AA ratios** → `## Pre-Execution Verification` pins `WCAG AA (4.5:1 text · 3:1 large-text ≥18pt) verified · AAA (7:1) recommended`, and `## Red Flags` → **Color & contrast** carries the derive-then-verify obligation. The rule file keeps a bare one-line contrast item with no numbers — see the next section for why the item itself stays.
 
 ## Why the contrast item was kept despite being a duplicate
 
-Three sites cite `## LLM Output Validation` by name, and one of them cites it specifically for contrast: `skills/glass-atrium-design-contrast-check/SKILL.md` describes it as the contrast verification gate before downstream DEV handoff, `skills/glass-atrium-design-md-lint/SKILL.md` as the pre-emit gate family it joins, and `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails` says LLM Output Validation applies to auto-generated layouts. Deleting the item would leave the first of those describing a section that no longer contains what it names. The numbers are gone, the anchor stays, and both skill files are outside this pass's declared `[SCOPE]`.
+The item's section, `## LLM Output Validation`, is cited by name, once specifically for contrast:
+
+- `skills/glass-atrium-design-contrast-check/SKILL.md` describes it as the contrast verification gate before downstream DEV handoff.
+- `skills/glass-atrium-design-md-lint/SKILL.md` describes it as the pre-emit gate family that lint joins.
+- `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails` says LLM Output Validation applies to auto-generated layouts.
+
+Deleting the item would leave the contrast-check skill describing a section that no longer contains what it names. The numbers are gone; the anchor stays.
 
 ## Headings and their citers
 
@@ -41,21 +48,18 @@ Three sites cite `## LLM Output Validation` by name, and one of them cites it sp
 | `Vendor-Routing Awareness` | nothing cites this file's copy — `scoped/scope-dev.md` carries a same-named section of its own, which is what `agents/glass-atrium-dev-db.md` cites |
 | `CQRS Exception` | nothing; this file is a citER of `scoped/scope-meta.md` → `## CQRS Exception`, not a citee |
 
-No heading was renamed in this pass.
-
 ## Stale material removed
 
 - **Loading stanza** (`> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-design-designer}` plus `> **Inherits**` and `> **See**`) and the `Rules specific to DESIGN agents` line. The stanza described a selection mechanism that does not select this file; no roster parser reads a brace list outside `scoped/scope-dev.md`, so removing it costs no machine reader.
 
 ## Delivery — what actually reads this file
 
-- No spawn path delivers it. `hooks/inject-scope-rules.sh` sources exactly three files under `scoped/` (`shared-comment-logging.md`, `scope-dev.md`, `shared-turn-budget.md`), and `scope-design.md` is not one of them.
-- The platform token policy is therefore the file's most exposed content: the three platform facts it carries (Material Web in maintenance mode, M3 Expressive via Compose, HIG semantic-role tokens) appear nowhere in the designer body, so a designer that never reads this file recommends a token system without them.
-- **Required follow-up, out of this pass's declared `[SCOPE]`** (`scoped/scope-meta.md`, `scoped/scope-design.md`, `scoped/maintainers/`): give `agents/glass-atrium-design-designer.md` a conditional-load line naming `~/.glass-atrium/scoped/scope-design.md` → `## Platform Design Token Policy [DESIGN]` and `## LLM Output Validation [DESIGN]`, triggered by a platform-token recommendation or a DEV handoff. Copy both literals verbatim — the bracketed suffix is part of the heading, and a prefix resolves to nothing. `agents/glass-atrium-intel-researcher.md` carries the precedent for that line.
+- `scoped/scope-design.md` is glass-atrium-design-designer's `rules.scope` in `agent-registry.json`, so the SubagentStart part slots (`hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py`) carry it whole to that agent. No other agent row names it.
+- The platform token policy is the file's most exposed content: its three platform facts (Material Web in maintenance mode, M3 Expressive via Compose, HIG semantic-role tokens) appear nowhere in the designer body, so this file is their only delivered copy.
 
 ## Readers, coupled tests, and operational constraints
 
 - **No test and no code reads this file's TEXT**; nothing in `test/`, `hooks/test/`, `scripts/test/` or `autoagent/test/` quotes a literal from it.
-- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit: `agent-registry.json` (`rules.scope`), `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, `scripts/agent_lifecycle/registry_ops.py`, `scripts/test/test_agent_lifecycle_overhaul.py`, and `manifest.json`.
-- **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `_read_sections` emits SCOPE-FILE-EMPTY and directs a `C3: FAIL` verdict on an empty scope file.
-- **Manifest**: this companion is a new file, so it must be `git add`-ed and the manifest regenerated before `scripts/generate-manifest.sh --check` is clean — the script's file list comes from `git ls-files`, so an untracked companion produces no row at all and the add must precede the regeneration.
+- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit: `agent-registry.json` (`rules.scope`), `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_RULE_FILES`, and `manifest.json`.
+- **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `SCOPE_EMPTY_SIGNAL` (`SCOPE-FILE-EMPTY`) directs a `C3: FAIL` verdict on an empty scope file.
+- **Manifest**: `manifest.json` carries a sha256 row for this note as well as for the rule file, so an edit to either needs a manifest regeneration — a whole-tree barrier step, not a content pin.
