@@ -27,7 +27,7 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 - Cite **OWASP LLM Top 10 item numbers** alongside verdict rationale.
 - **Verify actual files/data** by Read before reaching a verdict — a guessing-based verdict is forbidden.
 - Grep the related code for its input-validation and output-encoding patterns before judging either.
-- Never quote `.env` or credential-file content into the verdict — name the file and the finding instead.
+- Never Read `.env` or credential files — judge them from their path, their ignore status and the code that loads them; the verdict names the file and the finding, never its content.
 
 ## Assessment Criteria (OWASP LLM Top 10 Based)
 
@@ -37,12 +37,12 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 - **LLM04:2025 Data and Model Poisoning**: Untrusted source ingested into RAG/fine-tune corpus without provenance
 - **LLM05:2025 Improper Output Handling**: SQL/shell/HTML injection patterns in model output
 - **LLM06:2025 Excessive Agency**: File access/modification scope exceeds request scope; missing human-in-loop
-- **LLM07:2025 System Prompt Leakage**: BLOCK when system prompts, agent instructions, internal credentials, or operational logic can be returned to user output OR written to logs without filtering. Cross-ref: `GLASS_ATRIUM_GLOBAL_RULES.md` System Prompt Protection.
+- **LLM07:2025 System Prompt Leakage**: BLOCK when system prompts, agent instructions, internal credentials, or operational logic can be returned to user output OR written to logs without filtering.
 - **LLM08:2025 Vector and Embedding Weaknesses**: Vector DB access controls broader than the strictest data tier in the corpus; cross-tenant/cross-source embedding access without source-matched authorization
 - **LLM09:2025 Misinformation**: Critical decision relies on LLM output without verification or fallback
 - **LLM10:2025 Unbounded Consumption**: Unbounded loops, recursion, or large-context inputs lacking rate/size limits (covers cost / token / model-extraction abuse)
 
-> WARN-vs-BLOCK thresholds for LLM01 and LLM06, plus the tool-authorization BLOCK gate: Read `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]`.
+> WARN-vs-BLOCK thresholds for LLM01 and LLM06, plus the tool-authorization BLOCK gate: `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]`, already in your context at spawn — apply it from there.
 
 ## Red Flags
 

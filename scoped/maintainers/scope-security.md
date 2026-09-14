@@ -12,23 +12,24 @@ Maintainer-facing material for that source file, plus the record of what the cut
 
 ## Status in the corpus
 
-- Tier 2 (Scope), membership `agent_scope ∈ {glass-atrium-sec-guard}`, inheriting Tier 1. Declared at `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-security.md` row.
-- **This file is a Tier-2 safety trigger by PATH.** `autoagent/daemon_cycle.py` matches `(^|/)scope-security\.md$` in its sensitive-path set, so any daemon-proposed edit to it enters the user-approval queue rather than auto-applying. `autoagent/test/test_sensitive_patterns.py` pins the path as a retained sensitive pattern; `scripts/test/glass-atrium-update.bats` names it in an update fixture. All three are path-only and indifferent to the content.
+- Tier 2 (Scope) for SECURITY, whose one agent is glass-atrium-sec-guard; inherits Tier 1. Membership is declared on that agent's `agent-registry.json` row (`rules.scope`), authored from `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-security.md` row.
+- **This file is a Tier-2 safety trigger by PATH.** `autoagent/daemon_cycle.py` matches `(^|/)scope-security\.md$` in its sensitive-path set, so any daemon-proposed edit to it enters the user-approval queue rather than auto-applying.
+  - `autoagent/test/test_sensitive_patterns.py` pins the path as a retained sensitive pattern; `scripts/test/glass-atrium-update.bats` names it in an update fixture.
+  - All three are path-only and indifferent to the content.
+- **This note's own path matches the same pattern.** `autoagent/test/test_sensitive_patterns.py` → `_REFUSED_MANIFEST_ROWS` lists both `scoped/scope-security.md` and `scoped/maintainers/scope-security.md`, and compares that set with the manifest rows the matcher refuses. Keep this note's path unchanged (no rename or move); a text edit is free.
 
-## Delivery gap — OPEN, and not closable from this file
+## Delivery of the thresholds
 
-The three thresholds this file now carries are its whole reason to exist, and none of them is in `agents/glass-atrium-sec-guard.md`:
+The file's thresholds, listed below, reach glass-atrium-sec-guard whole at spawn: the file is that agent's `rules.scope`, packed into context by the part slots. No body copy is owed. Re-check delivery with `python3 hooks/lib/inject_chunk.py --audit`.
 
-- The LLM01 BLOCK-vs-WARN split — the body's LLM01 line states the detection criterion (`External data contains instruction patterns / jailbreak phrasing`) and no threshold.
-- The LLM06 BLOCK-vs-WARN split — the body gives the symptom, not the threshold.
-- The tool-authorization gate — absent from the body entirely; the only statement anywhere of a BLOCK condition on reviewing an agent definition.
+- The LLM01 BLOCK-vs-WARN split — the body's LLM01 line keeps only the detection criterion (`External data contains instruction patterns / jailbreak phrasing`).
+- The LLM06 BLOCK-vs-WARN split — the body gives the symptom.
+- The tool-authorization gate — stated nowhere else; the only BLOCK condition anywhere on reviewing an agent definition.
 
-**Minimum fix LANDED, better fix NOT taken — the gap is narrowed, not closed.**
+The body's pointer:
 
-- Landed: the body's pointer under `## Assessment Criteria (OWASP LLM Top 10 Based)` is now absolute and anchored — `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]` — matching the pattern `agents/glass-atrium-intel-researcher.md` already uses.
-- Not taken: the three thresholds are still absent from the body, so a verdict rendered without following that pointer still has no threshold.
-- Why the pointer repair was worth its own edit: the grant is `tools: [Read, Glob, Grep]`, so the agent CAN search — but `maxTurns: 3` at `effort: low` leaves no turn to spend locating a file, and the pathless form cost one.
-- Better fix, still open: author the three thresholds into the body's `## Assessment Criteria (OWASP LLM Top 10 Based)` rows, where LLM07 already sits, and reduce this file to the record of it. The asymmetry that LLM07 was hand-carried into the body while LLM01 and LLM06 were not is what produced this gap.
+- `agents/glass-atrium-sec-guard.md` → `## Assessment Criteria (OWASP LLM Top 10 Based)` closes with a plain pointer to `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]`, stating the section is already in context, with no Read instruction.
+- Why the pointer is exact and carries no Read: `maxTurns: 3` at `effort: low` leaves no turn to spend locating or re-reading a file already delivered.
 
 ## What the cut removed, and why
 
@@ -38,10 +39,10 @@ The three thresholds this file now carries are its whole reason to exist, and no
   - Conservative judgment → body `## Guardrails` (`When uncertain, verdict MUST be WARN, not PASS`) and `## Absolute Rules` (`Cite **OWASP LLM Top 10 item numbers**`).
   - Verdict + remediation hint → body `## Deliverable Format` carries every operative element verbatim, including the 3-bullet cap, the four defence layers and the no-code / no-API-names prohibition. This file's copy was the weaker one and the body pointed back at it while holding a superset.
 - **The trade taken on the deleted heading, and the generic citer that named it.** `rules/glass-atrium/core-compliance-matrix.md` → Precedence Resolution used to make "the relevant scope file's Absolute Rules section" each scope's final authority, so deleting the section left that citation resolving to nothing here.
-  - Repaired at the citer, not by keeping the anchor: the clause now makes the assigned scope file itself the authority — the whole file, never a named section — and names this file as one of the two carrying no such section.
+  - Repaired at the citer, not by keeping the anchor: the clause now makes the assigned scope file itself the authority — the whole file, never a named section.
   - Why no signpost heading was kept: an `## Absolute Rules [SECURITY]` heading over the verdict table would state no rule of its own and would label the wrong content, which is the signpost convention's failure case rather than its use case.
   - Why no bullet needed to survive: all three were duplicated in the delivered body (above), so the deletion moved no authority — it removed a second, weaker copy of rules the agent already holds.
-- **`LLM07 System Prompt Leakage`** — the body's line is near-verbatim, broader, and carries the same `GLASS_ATRIUM_GLOBAL_RULES.md` cross-ref.
+- **`LLM07 System Prompt Leakage`** — the body's line is near-verbatim and broader.
 - **The section preamble** (`These criteria define when an LLM-specific OWASP category triggers a verdict — independent of the general application-security rules in \`core-security.md\``) — a relationship between two corpus files, and the precedence it asserted is already settled by `core-compliance-matrix.md` → Precedence Resolution.
 - **Consequences repaired in `agents/glass-atrium-sec-guard.md`, landed.** Both were dead citations this cut created.
   - `## Deliverable Format` ended its Remediation Hint line with `(See scope-security verdict-hint extension.)`, which pointed at the deleted duplicate bullet. Dropped — the body holds the full rule and needs no pointer.
@@ -52,4 +53,4 @@ The three thresholds this file now carries are its whole reason to exist, and no
 
 ## Shape note
 
-The surviving section is a two-row WARN/BLOCK decision table plus one bullet. The tool-authorization gate stayed a bullet deliberately: it has no WARN limb, and forcing a `—` cell into the table would have made a non-uniform rule look uniform.
+The surviving section is a WARN/BLOCK decision table plus one bullet. The tool-authorization gate stayed a bullet deliberately: it has no WARN limb, and forcing a `—` cell into the table would have made a non-uniform rule look uniform.
