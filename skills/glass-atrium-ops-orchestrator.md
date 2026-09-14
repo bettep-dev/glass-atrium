@@ -592,20 +592,14 @@ done <<<"${FILE_LIST}"
 
 A Wave is one parallel fan-out batch of sub-tasks.
 
-- **Automatic Parallelization (standing default)**: file/resource NON-overlapping AND independent sub-tasks fan out in parallel BY DEFAULT — no per-task user request needed; skeleton `parallel()` blocks carry a per-track `// [OWNERSHIP]` attestation line.
-  - Guardrails + `[SIZE-EST]`/effort-scaling sizing + the over-fragmentation caveat: SoT `orchestrator-role.md` → `### Spawn Budget` Automatic Parallelization.
-
-- **Where that default lands in practice**: research/analysis fan-out is the routine case (independent domains investigate separately → aggregate results); concurrent DEV tracks carry the extra condition that disjoint files are the FLOOR — the isolation unit is the worktree (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
-
-- **Fan-out prohibition — STAGE-level only**: the prohibition covers the `glass-atrium-intel-researcher` → `glass-atrium-intel-planner` → domain agents → `glass-atrium-intel-reporter` Pipeline sequence (`#### Explicit Pipeline Combinations` below), where each stage must complete before the next begins.
-  - WITHIN the domain-agents stage, multiple domain agents MAY still run in parallel (Fan-out) when they work on independent sections.
-
-- **Commit strategy**: Agents within a Wave commit normally to their own branches via `isolation: worktree` (including hook passing) → orchestrator merges after Wave completion.
-  - `--no-verify` usage forbidden (core-git-workflow.md compliance)
-
-- **Workflow-mode mapping**: under ultracode, a Wave = a `parallel()` block (engine owns the fan-out + join).
-  - The Fan-out prohibition with its stage-level scope, and the commit strategy above, are POLICY and apply on both paths — the engine does not relax them.
-  - The orchestrator still decides which agents fan out vs stay sequential; it authors that decision into the script rather than hand-driving the Agent tool per stage.
+- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is single-sited at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
+  - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that section defines.
+  - Research/analysis fan-out is the routine case: independent domains investigate separately, then results aggregate.
+- **Fan-out prohibition — STAGE-level only**: stated once at `#### Explicit Pipeline Combinations` below.
+- **Commit strategy**: agents within a Wave commit their own work on their own branches from their own worktree, with hooks running → the orchestrator merges after Wave completion.
+- **Workflow-mode mapping**: under ultracode a Wave = a `parallel()` block; the engine owns the fan-out and the join.
+  - The stage-level fan-out prohibition and the commit strategy are policy on both paths — the engine does not relax them.
+  - The orchestrator still decides which agents fan out and which stay sequential, and authors that decision into the script.
 
 #### Explicit Pipeline Combinations [ORCHESTRATOR]
 
@@ -615,67 +609,54 @@ Combinations that meet the criterion:
 
 - `glass-atrium-intel-researcher` → `glass-atrium-intel-planner` → domain agents → `glass-atrium-intel-reporter` — research results → plan design → domain-expert section authoring → report synthesis.
   - Domain agents (DEV, glass-atrium-design-designer, etc.) are selected by content relevance.
-
-- For the combinations above, **stage-level Fan-out (parallel independent) is FORBIDDEN**.
-  - A successor stage is created only after its predecessor completes.
-  - What that prohibition does NOT cover: `#### Parallel Execution (Wave Execution)` above → Fan-out prohibition (within-stage domain-agent parallelism).
-
-- **Workflow-mode mapping**: under ultracode this combination = a `pipeline()` sequence (engine enforces stage ordering + passes each stage output → next input).
-  - The linear-dependency criterion and the stage-Fan-out prohibition are POLICY (preserved on both paths); the engine enforces the ordering mechanically once authored.
-  - Pipeline Acceptance Criteria (below) remain orchestrator-authored verify-stages — the engine does not infer them.
+- **Stage-level fan-out is FORBIDDEN** for these combinations: a successor stage is created only after its predecessor completes.
+  - Within the domain-agents stage, several domain agents MAY run in parallel on independent sections.
+- **Workflow-mode mapping**: under ultracode the combination = a `pipeline()` sequence; the engine enforces stage order and passes each stage's output to the next.
+  - The criterion and the stage-level prohibition are policy on both paths; the engine enforces the order once it is authored.
+  - The acceptance criteria below stay orchestrator-authored verify-stages — the engine does not infer them.
 
 #### Pipeline Acceptance Criteria [ORCHESTRATOR]
 
-Two families live here. The **stage gates** below bind every pipeline, on either execution path. The **ultracode authoring contract** — from "DEV-spawn 4-requirement pre-flight checklist" through "[SIZE-EST] token placement" — binds a DEV-spawning Workflow script before it is submitted. The final subsection, "[DOC-ROUTE] token placement", is NOT DEV-scoped: it binds ANY ultracode workflow whose deliverable has a user-requested local destination, including a reporter/planner workflow that spawns no `dev-*`.
+Two families live here:
+
+- **Stage gates** bind every pipeline, on either execution path.
+- **Ultracode authoring contract** — "DEV-spawn 4-requirement pre-flight checklist" through "[SIZE-EST] token placement" — binds a DEV-spawning Workflow script before it is submitted.
+  - The final subsection, "[DOC-ROUTE] token placement", is NOT DEV-scoped: it binds any ultracode workflow whose deliverable has a user-requested local destination, a reporter/planner workflow that spawns no `dev-*` included.
 
 ##### Stage gates
 
-- Verify prior output acceptance criteria before stage entry.
-  - If unmet, request revision from prior stage agent.
-
+- Verify the prior stage's output against its criteria below before the next stage enters; if unmet, request revision from the prior stage agent.
 - **Before glass-atrium-intel-planner entry (glass-atrium-intel-researcher output)**:
   - Research scope specified
   - 3+ key findings
   - Uncertain items marked
   - If unmet, re-invoke glass-atrium-intel-researcher (max 1 time)
-
 - **Before domain agents entry (glass-atrium-intel-planner output)** — 2-stage gate:
-  - **Stage 1 — format/completeness (existing)**: Goal · chosen direction and why · work streams in execution order, each naming the files it touches · Open Questions section included.
-    - Plans are brief and direction-only by default: a missing DAG, RICE score, EARS criteria, per-task acceptance criteria or executive summary is NOT a format miss. Check those structures only when the user asked for that kind of deliverable (spec · PRD · ADR · roadmap) or for that structure by name.
+  - **Stage 1 — format/completeness**: Goal · chosen direction and why · work streams in execution order, each naming the files it touches · Open Questions section included.
+    - Plans are brief and direction-only by default: a missing DAG, RICE score, EARS criteria, per-task acceptance criteria or executive summary is NOT a format miss.
+    - Check those structures only when the user asked for that kind of deliverable (spec · PRD · ADR · roadmap) or for that structure by name.
     - An EMPTY Open Questions section is a valid value and must be written as such — deleting the section is otherwise the cheapest way to pass this item.
     - If unmet, request glass-atrium-intel-planner revision (max 1 time).
-  - **Stage 2 — plan-direction verification (complex plans only)**: After Stage 1 passes, route the authored plan to a verification team of `glass-atrium-qa-code-reviewer` AND a mandatory `DEV` agent to check implementation-direction validity (DEV verdict is a hard gate — no pass without it).
-    - Fires for complex plans only — inherits the Sprint Contract Gate simple-task exemption (typo/import/config-class skip Stage 2).
-    - DEV specialist selection + team composition: see `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
-    - DEV-side participation duty canonical: `scope-dev.md` "Plan Direction Verification Gate".
-    - Both verdicts judge the plan's direction, not its completeness (`orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` → Direction, not completeness).
-      - The composer appends the direction-not-completeness rule to both verify members' goal text, because the verify-stage goal strings in the `In-script verify-stage` skeletons below do not carry it.
-    - Under ultracode this same gate is encoded INTO the workflow script — spec + copyable skeletons: `In-script verify-stage` below.
-  - **Stage-2 revision/escalation**: on a revise/infeasible verdict, request glass-atrium-intel-planner revision at most 1 time (count basis = this section's "max 1"); a 2nd mismatch escalates to orchestrator judgment via the `orchestrator-role.md` Failure Recovery Loop path (path only — its Retry max-2 count is a separate mechanism, not cited here).
-
+  - **Stage 2 — plan-direction verification (complex plans only)**: team composition, DEV hard gate, activation scope and the direction-not-completeness rule: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
+    - The skeleton goal strings under `In-script verify-stage` below do not carry the direction-not-completeness rule, so the composer appends it to both verify members' goal text.
+    - Under ultracode the gate is encoded into the workflow script: `In-script verify-stage` below.
+  - **Stage-2 revision/escalation**: a revise/infeasible verdict gets one glass-atrium-intel-planner revision (max 1 time); the escalation path: `orchestrator-role.md` → `#### Gate outcome and activation scope`.
 - **Before glass-atrium-intel-reporter entry (domain agents output)**:
   - Assigned sections completed
   - Domain-specific accuracy verified
   - No placeholder/TODO in content
   - If unmet, request domain agent revision (max 1 time)
-
-- **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**:
-  - **Coverage** — every plan work stream (or task-ID, where the plan was asked to decompose into tasks) maps to implemented work (the files it names actually changed) → report N/N.
-    - On any miss, re-delegate the dropped work BEFORE transitioning `doc_status → done`.
-    - An independent-entry stream with no dependency is the one that otherwise slips.
-  - **Excess** — nothing was built that the plan and the delegation's `[SCOPE] files=` never authorized; an excess routes through `### Scope-Expansion Approval Protocol` (this file), never absorbed silently.
-  - Both are DISTINCT from the correctness gates: Quality Gates verify the work that WAS built, these two verify what went unbuilt and what grew.
-  - Honor-system, NOT mechanically enforced. Procedure + honest backing (SoT): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.
-
+- **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**: coverage (every planned work stream built, N/N) and excess (nothing built that the plan and `[SCOPE] files=` never authorized) both clear before `doc_status → done`.
+  - Procedure, the distinction from the correctness gates, and the honest backing (honor-system): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.
+  - An excess routes through `### Scope-Expansion Approval Protocol` (this file).
 - **Revision request protocol**:
-  - Agents may request revisions on their own judgment without orchestrator intervention
-  - Max re-invocation count: 1 (default).
-    - 2+ → escalate to orchestrator judgment
-  - Revision requests MUST specify concrete unmet items
+  - A stage agent flags a revision need on its own judgment; the orchestrator or the workflow script routes the request, since agents do not hand off to each other.
+  - Max re-invocation count: 1 (default); 2+ → escalate to orchestrator judgment.
+  - Revision requests MUST specify concrete unmet items.
 
 ##### DEV-spawn 4-requirement pre-flight checklist
 
-**Consolidated SoT** — the SINGLE list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at, so no hand-maintained digest silently drops a requirement again. Every DEV-spawning Workflow script MUST carry ALL FOUR co-equal requirements before submission —
+**Consolidated SoT** — the single list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at. Every DEV-spawning Workflow script MUST carry all four co-equal requirements before submission, and a downstream digest never drops one:
 
 - **① entry token** — a plan-ref (sizable) OR `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`).
   - Backstop: entry-miss BLOCK (exit 2).
@@ -690,47 +671,27 @@ Two families live here. The **stage gates** below bind every pipeline, on either
   - Backstop: absence → `block-nodecl` · malformed → `block-grammar` · declaration↔code mismatch → `block-declspawn`/`block-undecl`/`block-computed`/`block-order`/`block-upstream` (all exit 2).
   - Detail: "In-script verify-stage" below (grammar + worked declaration blocks in the skeletons).
 
-These four are CO-EQUAL — dropping ANY one from a downstream digest is exactly the drift this consolidated list exists to prevent.
-Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 gate checks presence/grammar/code-consistency only — declaration truthfulness and estimate correctness are NEVER verified.
+Backing: authoring the tokens, the stage and the declaration is the primary obligation — every exit-2 gate checks presence, grammar and code-consistency only; declaration truthfulness and estimate correctness are never verified.
 
 ##### In-script verify-stage (ultracode)
 
-**MANDATORY authoring obligation — honor-system PRIMARY, mechanically backstopped by the declaration contract.** *Canonical declaration-contract statement + skeletons; `orchestrator-role.md` cross-links here.*
+**Authoring obligation — honor-system primary, mechanically backstopped by the declaration contract.** This subsection is the home of the copy-verbatim skeletons; the declaration contract itself is canonical at `orchestrator-role.md` → `#### Ultracode declaration contract`.
 
-- **What "MANDATORY" binds — the AUTHOR**: encode an explicit in-script verify-stage that PRECEDES the first DEV implementation stage, gate it on a combined `pass`+`feasible` verdict, and declare it honestly; the authoring obligation + the Missing-verify-stage Red Flag self-check (`## Red Flags`) remain the PRIMARY discipline.
+- **What the obligation binds — the AUTHOR**: encode an in-script verify-stage that PRECEDES the first DEV implementation stage, gate it on a combined `pass`+`feasible` verdict, and declare it honestly. The Missing-verify-stage self-check lives in `## Red Flags`.
 - **Why it falls to the author**: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook does NOT fire for engine `agent()` spawns (`### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms)).
-- **What backstops it**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`, wired in `settings.json`) checks the workflow `script` against the **`[AGENT-COMPOSITION]` declaration contract** — the author DECLARES the composition; the gate checks presence + grammar + declaration↔code consistency.
-  - This REPLACED the former layout inference (co-location window / parallel-group pairing / stage-adjacency): role information does not exist in code, so nothing is guessed from layout any more.
-- **HONEST SCOPE**: the gate verifies presence + grammar + consistency; it does NOT verify a `feasible` verdict was emitted or that a gating expression consumes it (the `feasible` value does not exist at static-scan time), and role TRUTHFULNESS is honor-system — a lying declaration passes (the documented, test-pinned accepted floor; identical trust model to `[ENTRY-CLASS]`/`[SIZE-EST]`).
+- **What backstops it**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`) checks the workflow `script` against the declaration contract — presence + grammar + declaration↔code consistency.
+- **Honest scope**: the `feasible` value does not exist at static-scan time, so the gate cannot verify that a `feasible` verdict was emitted or that a gating expression consumes it; role truthfulness is honor-system (contract → HONESTY bullet).
 
-**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment.
+**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment (contract → Block placement).
 
-- A sentinel inside a string literal is INERT — the worked examples below and in the gate's stderr can be quoted into delegation prompts without binding.
+- A bracketed sentinel in ANY comment, a `//` line included, binds the extractor; only a string-resident sentinel is inert — which is why the worked examples below and in the gate's stderr can be quoted into delegation prompts, and why the skeleton comments write the sentinel name unbracketed.
 - TYPE vs INSTANCE: the block declares agent TYPES and ROLES — a fan-out spawning N runtime instances from one token declares the TYPE once; cardinality is never checked.
 
-**Strict line grammar**: keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster + the reviewer literal, free text only after a spaced dash. A malformed block — unknown/duplicate key · unknown name · unterminated · 2+ blocks · 2+ verify dev types — is `block-grammar`, a decidable author error, NOT fail-open.
+**Grammar and verdicts**: the line grammar (`verify` team/upstream forms · `impl` · `impl-computed`), the exit-2 verdict table and the upstream waiver scope are canonical at the contract. Deltas the skeletons rely on:
 
-- `verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>` — **team form**: reviewer + exactly ONE dev-* type.
-  - The Stage-2 DEV hard-gate lives in this validator: a verify clause naming no dev-* → `block-noverifydev`.
-- `verify: upstream clauded-docs/<N>` — **upstream form**: this workflow EXECUTES an already-verified persisted plan.
-  - `<N>` must also be cited by a plan-ref token in the script body → else `block-upstream`.
-  - The upstream form waives the in-script pair-mapping + ordering ONLY — the zero-reviewer `block-norev` hard guarantee SURVIVES upstream.
-- `impl: <literal dev spawn type(s)>` | `impl: none`
-- `impl-computed: <dev type(s)>` — indirectly-spawned types (config array / ternary / wrapper indirection), checked via data-literal presence.
-  - **impl-computed NEGATIVE**: OMIT the `impl-computed` line entirely when there are NO computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is MALFORMED and blocks as `block-grammar` (unknown-name).
-
-**Consistency checks** — the declaration is falsified against code. An absent block on a DEV-spawning script is itself a block (`block-nodecl`, exit 2); the four inconsistencies below each exit 2 as well:
-
-| Declaration↔code inconsistency | Verdict |
-|--------------------------------|---------|
-| a declared role with no spawn-position token | `block-declspawn` |
-| a dev type present in the script but never declared | `block-undecl` |
-| a declared computed type absent from the data | `block-computed` |
-| a declared impl dev preceding every reviewer | `block-order` |
-
-- `block-declspawn` — a spawn-position token is an `agent('<type>', …)` first-arg or an `agentType: '<type>'` field value; a phantom verify team blocks, the one place this attestation is STRONGER than its siblings.
-- `block-undecl` — "present in the script" covers a real spawn, a config-array literal, or an exact-quoted dev-* prose mention (one-edit fix: declare the type, or de-quote the mention).
-- `block-order` — on the greedy-earliest same-type dual-role binding: the FIRST spawn token of a declared verify-dev type is the verify slot; remaining declared-impl-type tokens are impl slots; some reviewer must precede the first impl slot; computed spawns have no static position → declared-order honor-system.
+- Names are validated against the runtime DEV_SET roster plus the reviewer literal; free text is allowed only after a spaced dash.
+- **impl-computed NEGATIVE**: OMIT the `impl-computed` line entirely when there are NO computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is MALFORMED and blocks as `block-grammar` (unknown-name).
+- `block-order` slot binding (greedy-earliest, same-type dual-role): the FIRST spawn token of a declared verify-dev type is the verify slot, the remaining declared-impl-type tokens are impl slots, and some reviewer must precede the first impl slot.
 
 **Three scan surfaces — do not conflate them**:
 
@@ -738,14 +699,19 @@ Authoring the tokens/stage/declaration is the PRIMARY obligation; every exit-2 g
 - The attestation tokens (plan-ref · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[DOC-ROUTE]`) raw-scan, so any placement passes.
 - The `[AGENT-COMPOSITION]` declaration block is raw-but-not-inside-a-string: comment-RESIDENT, canonical `/* */` home.
 
-Machine-checked repetition (read before editing any skeleton in this file): every fenced `js` block here is harvested and replayed through the gate hook by `hooks/test/enforce-workflow-verify-stage.bats` and through the false-positive floors in `hooks/test/workflow-gate-advisory-trace.bats` and `hooks/test/workflow-gate-completion-channel.bats`, which also fail when fewer than three declaration-bearing fences remain — so deleting, merging or paraphrasing a skeleton changes what those suites execute, and an empty harvest is itself a failure.
+**Machine-checked skeletons** — read before editing any `js` fence in this file:
+
+- `hooks/test/enforce-workflow-verify-stage.bats` and `hooks/test/workflow-gate-advisory-trace.bats` replay every declaration-bearing `js` fence through the gate hook and fail when fewer than three remain.
+- `hooks/test/workflow-gate-completion-channel.bats` replays every `js` fence through its false-positive floors and fails when it harvests none.
+- Deleting, merging or paraphrasing a skeleton therefore changes what those suites execute.
 
 **Skeleton authoring notes** — both bind every skeleton below:
 
-- **AUTHORING NOTE (why the skeletons below carry an explicit `agentType:` literal)**: verify-team members and declared impl spawns must be STATICALLY VISIBLE — a type literal that exists only as a wrapper argument (e.g. `robustAgent('glass-atrium-dev-*', …)`) is NOT a spawn-position token, so a team-form declaration over wrapper-only literals trips `block-declspawn`; put the literal in the opts `agentType:` field (keep both literals identical), or — for a genuinely computed-heavy execution workflow — use the upstream form + `impl-computed:`.
+- Every verify/impl spawn carries an explicit opts `agentType:` literal identical to the `robustAgent` first argument: a wrapper-only literal has no spawn position and trips `block-declspawn` (contract → `block-declspawn` bullet).
+  - A genuinely computed-heavy execution workflow uses the upstream form + `impl-computed:` instead.
 - The DEV `agentType` in every skeleton of this section — the two below and the one under "Entry-class token placement" — is the plan's primary-domain DEV (selection rule per `orchestrator-role.md`); the `glass-atrium-dev-nestjs` / `glass-atrium-dev-python` literals in them are illustrative.
 
-**Copyable skeleton — 2-phase (verify → implement)**, in engine-agnostic vocabulary (`agent()`/`parallel()`/`pipeline()` are the Workflow primitives; do NOT hardcode preview-specific field names per the Non-brittleness caveat):
+**Copyable skeleton — 2-phase (verify → implement)**, in engine-agnostic vocabulary (`agent()`/`parallel()`/`pipeline()` are the Workflow primitives; no preview-specific field names, per the Non-brittleness caveat in `### Ultracode / Workflow-tool Mode`):
 
   ```js
   // HOOK-PASSING SHAPE — copy verbatim, do not paraphrase. Carries (1) the AGENT-COMPOSITION
@@ -832,21 +798,18 @@ Machine-checked repetition (read before editing any skeleton in this file): ever
   )
   ```
 
-- **Standing-question literals in the verify-stage goal text — and the schema-key option that was WITHDRAWN**: the two literals carry the Stage-2 standing jobs into the delegation text, quoted verbatim from the actors' own canonical (`scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`; the reviewer half of the load-bearing premise check is canonical in `scoped/scope-qa.md`) — one source, cross-read at review, no list maintained here.
+- **Standing-question literals in the verify-stage goal text**: the two consts carry the Stage-2 standing jobs into the delegation text, quoted verbatim from the actors' own canonicals (sources named in the fence comment above).
   - `PREMISE_AUDIT_Q` goes to BOTH verify members; `FIRST_LINK_Q` goes to the DEV member only and only on a revision cycle, because it is answered in the `feasible`/`infeasible` verdict the DEV emits.
-  - **This adds NO schema field, and none is proposed.**
-    - The earlier shape put both questions on the verify stage's output schema as required keys; that option is WITHDRAWN, and the reason sits here because this is where a future author would otherwise re-propose it: the canonical verify stage declares no schema BY DESIGN (a verify stage returns a prose verdict, and its printed `[COMPLETION]` is recorded on the SubagentStop channel as a WRITER-emitted row — `hook-input`; synthesis is the fallback for an ABSENT block, not the capture path for a printed one), so there is no required array to attach a key to — and converting the stage to schema mode purely to carry one would invert that design decision and drag in the completion-channel reservation duty the text-mode stage is exempt from.
-  - **Honest strength delta, named because it is a DOWNGRADE rather than a swap of equals**: a required key would have forced an ANSWER into the emitted payload; a goal-string literal forces only the QUESTION into the delegation text, and whether the actor answers it — or answers it honestly — is honor-system.
-    - What remains mechanical is narrower than the pair: `FIRST_LINK_Q`'s PRESENCE on the raw-script surface, the same observable the sibling attestation tokens already use.
-    - Nothing scans `PREMISE_AUDIT_Q` — its whole strength is that the audit runs from a different actor than the premise's author.
+  - **Do not carry either question as a schema key**: the verify stage is text-mode by design — it returns a prose verdict, and its printed `[COMPLETION]` is recorded on the SubagentStop channel as a writer-emitted row (`hook-input`).
+    - Converting the stage to schema mode to carry a key would invert that design and pull in the `completion_block` reservation duty the text-mode stage is exempt from.
+  - **Honest strength**: a goal-string literal forces only the QUESTION into the delegation text; whether the actor answers it, or answers it honestly, is honor-system.
+    - The only mechanical part is `FIRST_LINK_Q`'s PRESENCE on the raw-script surface, the observable the sibling attestation tokens use.
+    - Nothing scans `PREMISE_AUDIT_Q` — its strength is that the audit runs from a different actor than the premise's author.
 
-- **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage, but real sprints often need Discovery/Design analysis FIRST.
-  - Under the declaration contract a Discovery/Design `dev-*` spawn is a declared-impl-type token like any other (greedy-earliest binding reserves only the FIRST token of the declared verify-dev type as the verify slot) — so a Discovery `dev-*` that textually precedes every reviewer fires `BLOCK_ORDER` (`min(rev_starts) < min(impl positions)`).
-  - Two LAWFUL ways to do pre-verify Discovery/Design:
-    - **(a)** use a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) for the analysis (shown below);
-    - **(b)** front-load a GENUINE reviewer-first `{qa,dev}` "Contract" verify phase (a real verify, NOT a lone reviewer placed only to satisfy ordering) BEFORE any Discovery `dev-*`, so every later `dev-*` is preceded by a reviewer. This is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment: that Discovery `dev-*` then follows a reviewer and no longer reads as un-gated.
-  - Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
-  - The skeleton reuses the `robustAgent` helper and the two standing-question literals from the 2-phase skeleton above and carries the `[AGENT-COMPOSITION]` declaration + BOTH the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its PASS is EARNED by an honest declaration + correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
+- **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage; this one runs Discovery/Design analysis first.
+  - A Discovery/Design `dev-*` spawn is a declared-impl-type token like any other, so one that textually precedes every reviewer fires `block-order`.
+  - The two lawful routes — (a) NON-DEV Discovery, (b) a genuine reviewer-first Contract verify — are canonical at the contract's pre-verify Discovery/Design bullet. (a) is shown below; (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment.
+  - The skeleton reuses the `robustAgent` helper and both standing-question literals from the 2-phase skeleton, and carries the declaration plus the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its pass is earned by an honest declaration and correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
 
   ```js
   // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
@@ -880,16 +843,15 @@ Machine-checked repetition (read before editing any skeleton in this file): ever
   )
   ```
 
-- Both hatches keep the DEV hard-gate + honor-system-primary verify-stage discipline intact — they change only WHICH agent does pre-verify analysis, never the verify requirement itself.
+- Both routes keep the DEV hard gate and the verify requirement intact — they change only WHICH agent does pre-verify analysis.
 
 ##### Entry-class token placement (ultracode — DEV workflow)
 
-A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (and any plan-ref) in the token-family home (`orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement), which under ultracode is a top-of-script `log()` string or `meta.description` field.
+A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (or the plan-ref) in the token-family home (`orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement): under ultracode, a top-of-script `log()` string or the `meta.description` field.
 
-- This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes.
-- **ENTRY-CLASS NEGATIVE**: `simple-task` is the ONLY recognized `[ENTRY-CLASS]` literal — SIZABLE work has NO `[ENTRY-CLASS]` form; its entry signal is the **plan-ref token** (path 1).
-  - Any other `[ENTRY-CLASS]` variant (`[ENTRY-CLASS] sizable` / `complex` / `feature` …) is UNRECOGNIZED and does NOT clear the entry-miss gate.
-- CONTRAST: spawn tokens and the `[AGENT-COMPOSITION]` declaration block follow the OTHER TWO conventions — both stated once under `In-script verify-stage` above ("Three scan surfaces"). Do not conflate the three.
+- The home is a greppability convention, not a comment restriction — the gate raw-scans these tokens, so any placement passes.
+- `simple-task` is the only recognized `[ENTRY-CLASS]` literal; sizable work carries the plan-ref token instead (`orchestrator-role.md` → `#### Entry classification (DEV delegations)` → ENTRY-CLASS negative).
+- Spawn tokens and the declaration block follow the other two conventions under `In-script verify-stage` above ("Three scan surfaces").
 - **Independent gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` workflow STILL independently requires `[SIZE-EST]`, the verify-stage, and the declaration block (requirements ②-④ of the 4-requirement checklist above; a `dev-*` workflow missing the declaration is BLOCKED `block-nodecl`):
 
   ```js
@@ -915,15 +877,16 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 ##### [SIZE-EST] token placement (ultracode — DEV workflow)
 
-Sibling to `[ENTRY-CLASS]`, SAME canonical home + raw-scan convention, but an INDEPENDENT presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
+Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
 
-- Format + placement (both paths) + honesty framing: SoT `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet; structured sibling `[AGENT-COMPOSITION]` + consolidated list: the "DEV-spawn 4-requirement pre-flight checklist" above.
+- Format, placement on both paths and honesty framing: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` self-attestation token bullet.
 
 ##### [DOC-ROUTE] token placement (ultracode — user-requested local destination)
 
-When the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing"; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria).
+When the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the stamp `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`.
 
-- Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate).
+- The stamp is the one sanctioned carrier of the explicit-redirect exception to POST-only routing — carve-out: `orchestrator-role.md` → `## Delegation Criteria` authoring bullet; routing rule: `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
+- Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes). The stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping mechanics live in `enforce-workflow-verify-stage.sh`.
 - NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
 
 #### Agent Teams Hybrid [ORCHESTRATOR]
@@ -954,7 +917,7 @@ Agent Teams apply ONLY to parallelizable independent tasks; sequential dependent
 ##### Anti-patterns
 
 - Deploying teams for sequentially dependent tasks
-- Growing a pure Agent Teams unit past its 2-3 member cap — the global delegation team size has no fixed-number gate, but this pattern does
+- Growing a pure Agent Teams unit past its 2-3 member cap
 - Unspecified file ownership
 - Lead directly participating in implementation
 - Using Delegate Mode (bug: Teammate loses all tools)
@@ -963,16 +926,16 @@ Agent Teams apply ONLY to parallelizable independent tasks; sequential dependent
 
 Prohibition rules > Security > Quality gates > Cost limits > Team size
 
-- Quality outranks cost here because `### Cost Optimization` already binds it that way — a superior architecture is never rejected on cost alone — and because the charter orders Correctness → Safety → Quality → Speed.
+- Why quality outranks cost: `### Cost Optimization` never rejects a superior architecture on cost alone, and the charter orders Correctness → Safety → Quality → Speed.
 - Scope: this ordering resolves conflicts INSIDE the Agent Teams pattern. Cross-tier conflicts follow `core-compliance-matrix.md` → Precedence Resolution, where `core-security.md` overrides every other ALL-scope rule.
 
 ### Delegation Enforcement [ORCHESTRATOR]
 
-- The global agent (orchestrator) does not directly write code, documents, or prompts — Edit/Write are not invoked in the orchestrator session, and every write operation is delegated to an appropriate sub-agent
-- "Simple task" or "token savings" are not valid reasons to skip delegation
+- The orchestrator writes no code, documents or prompts itself; outside the exception below, every write is delegated to a sub-agent (`orchestrator-role.md` → `## Orchestrator Identity`).
+- "Simple task" or "token savings" are not valid reasons to skip delegation.
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
-  - The `enforce-delegation.sh` hook enforces this split (allows `memory/*`, keeps blocking `agents/*.md`).
+  - The `enforce-delegation.sh` hook enforces this split on Write/Edit (allows `memory/*`, keeps blocking `agents/*.md`).
   - This exception does not bypass Harness Path Protection: writes under `~/.claude/` still require the user-approval + foreground obligation (see `orchestrator-role.md` Harness Path Protection Rule 1-2).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
@@ -984,10 +947,8 @@ System hygiene checks — all READ-ONLY: each surfaces a candidate for the user 
 | agent instruction bloat (warn past ~300 lines) | `agents/*.md` |
 | stale `memory/` files (30+ days) — archival candidates | session-internal memory dir |
 | unprocessed learning-log items | `memory/core-learning-log.md` |
-| Outcome-Record generation gaps | PostgreSQL `core.outcomes` (per-outcome `.md` files are RETIRED) |
+| Outcome-Record generation gaps | PostgreSQL `core.outcomes` |
 | `MEMORY.md` item freshness | user-facing memory index — report a stale item, never rewrite it |
-
-- Retired-sink basis: `core-outcome-record.md` → Core. Memory-write boundary: `core-learning-log.md` → Long-Term Memory Write-Gate.
 
 ### Initializer Agent Pattern [ORCHESTRATOR]
 
@@ -1018,7 +979,6 @@ System hygiene checks — all READ-ONLY: each surfaces a candidate for the user 
 - **Independent investigation**: each agent investigates independently → submits deliverables
 - **Comparison**: orchestrator compares results → add debate round if discrepancies exist
 - Consensus reached → adopt the decision and proceed / Not reached → user escalation
-- Rationale: Deep Research "trap detection rate 51% → 74%" (log sharing effect)
 
 ### Experimental Features [ORCHESTRATOR]
 
@@ -1027,14 +987,14 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 #### Multi-Model Cross-Verification
 
 - Recommended for critical decisions (architecture, security): run the secondary review on a DIFFERENT model from the author's, for perspective diversity.
-- A per-agent model pin is a LIVE-ONLY operator override — repo `agents/*.md` carry no `model:` key, so a delegation never authors one (tier assignment: `orchestrator-role.md` → Cost-Tier Selection).
+- A delegation never authors a per-agent `model:` pin — pins are live-only operator overrides (`orchestrator-role.md` → Cost-Tier Selection).
 - Decide expansion on cost-effectiveness measurement.
 
 #### Skill Document Auto-Generation
 
 - Review standardization of common agent instruction sections (Guardrails, prohibitions, error recovery)
 - Mandatory reference to existing agent instruction patterns when adding new agents
-- **New DEV agent gate (formalized)**: this proto-gate is subsumed by `scope-dev.md` → `## DEV Agent Fleet Governance` → `### New-Agent Creation Gate`.
+- **New DEV agent gate**: canonical at `scoped/maintainers/scope-dev.md` → `### New-Agent Creation Gate`; the digest below is what binds before creating one.
   - Adding a new DEV agent is the EXCEPTION — the default is to extend the closest-concern existing agent.
   - Creation requires an affirmative answer to all three gate questions: Q1 concern novelty (all three Separation-Axis disjoint criteria) · Q2 extend test (can the closest agent absorb the knowledge instead?) · Q3 fleet-size cost (do `domains` arrays stay semantically distinct?).
   - "Reference existing patterns" alone does not authorize creation — pass the gate first.
@@ -1042,9 +1002,8 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 #### Bilevel Meta-Optimization Loop
 
 - Every 10 tasks, aggregate Outcome Records → pattern analysis → generate instruction improvement candidates
-- **Self-goal-setting autonomy absolutely forbidden** — an improvement candidate never becomes its own objective (anti-pattern)
-- **Which candidates need user approval is NOT decided here**: `core-learning-log.md` → Instruction Improvement Approval Tier is the canonical (Tier 1 auto-applies; only the safety tier queues), and the orchestrator's operational delta is `### Self-Improvement User-Approval Trigger` below
-- Rationale: Bilevel Autoresearch (arxiv:2603.23420) — 5x improvement with same LLM
+- **Self-goal-setting is forbidden** — an improvement candidate never becomes its own objective
+- **Which candidates need user approval is not decided here**: `core-learning-log.md` → Instruction Improvement Approval Tier is the canonical, and the orchestrator's operational delta is `### Self-Improvement User-Approval Trigger` below
 
 ## Orchestrator On-Demand Mechanisms
 
