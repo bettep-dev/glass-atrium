@@ -1,23 +1,7 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154,SC2312 # BATS_* vars are bats-provided; a failing payload builder surfaces as a failed assertion
-# validate-pre-write-raw.bats — raw-ingestion gate: V7 immutability (Edit coverage) and the V8
-# destination-state guard (symlinked destination or parent directory).
-#
-# P1-3 (clauded-docs/299): the gate was Write-only — an Edit on an existing wiki/raw/*.md bypassed
-# the V6 envelope check entirely (it could strip the UNTRUSTED-SOURCE envelope post-save). Chosen
-# mechanism = UNCONDITIONAL Edit block (V7/SCOPE-007), grounded in the store contract "1 URL = 1
-# immutable file" (hook header + core-wiki-reference.md "immutable after save"): no legitimate Edit
-# flow exists (legacy-envelope backfill is forbidden by the Unmarked-legacy rule), so EVERY Edit on
-# a raw trigger path blocks — INCLUDING an envelope-preserving Edit (immutability enforcement, not
-# envelope simulation). Correction path = delete + full-compliance Write re-save (V1-V6 re-run).
-#
-# Run via: bats hooks/test/validate-pre-write-raw.bats
-# Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
-#
-# BATS GATING NOTE: @test bodies run under errexit — but bash 3.2 (macOS) does not abort on a
-# failing bare mid-body `[[ ]]` while bash 5.3 (CI) does (measured, bats 1.13.0 on both legs —
-# bash is the variable, not bats), so every assertion below `return 1`s on mismatch and gates
-# on both platforms.
+# Raw-ingestion gate: V7 Edit immutability, V8 destination state, the V1-V6 floor and the SCOPE-009/010/011 advisories.
+# Every check `return 1`s on mismatch: bash 3.2 does not abort on a failing mid-body `[[ ]]`, bash 5.3 does.
 
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
 
@@ -110,7 +94,7 @@ conforming_doc() {
 
 # ================================ V7 — Edit on the raw store =====================================
 
-# Spec VERIFY (P1-3): an Edit stripping the envelope from an existing raw file is BLOCKED.
+# No legitimate Edit flow exists, so an Edit stripping the envelope from an existing raw file blocks.
 @test "V7: Edit removing the UNTRUSTED-SOURCE envelope from raw/*.md → blocked, exit 2 (SCOPE-007)" {
   run bash "${RAW_HOOK}" <<<"$(edit_payload "${WIKI_ROOT}/raw/page.md" \
     '<!-- UNTRUSTED-SOURCE -->' '')"
@@ -162,7 +146,7 @@ conforming_doc() {
   [[ "${output}" == *"SCOPE-007"* ]] || return 1
 }
 
-# Trigger scope unchanged: Edit outside the raw store passes untouched.
+# Trigger scope: an Edit outside the raw store passes untouched.
 @test "V7: Edit outside raw/ → exit 0, silent" {
   run bash "${RAW_HOOK}" <<<"$(edit_payload "/tmp/notes/x.md" 'a' 'b')"
   [[ "${status}" -eq 0 ]] || {
@@ -175,19 +159,17 @@ conforming_doc() {
   }
 }
 
-# Trigger scope unchanged: the gate stays *.md-scoped (a non-md raw path is out of scope).
+# Trigger scope: the gate is *.md-scoped, so a non-md raw path is out of scope.
 @test "V7: Edit on a raw non-.md path → exit 0, silent" {
   run bash "${RAW_HOOK}" <<<"$(edit_payload "${WIKI_ROOT}/raw/page.txt" 'a' 'b')"
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${output}" ]] || return 1
 }
 
-# ============================ Write behavior unchanged (V1-V6 floor) =============================
+# ================================== Write — V1-V6 floor ==========================================
 
-# A conforming Write (envelope + 3-field frontmatter) is still permitted. The preserved content
-# carries its own bibliography — a `## References` heading over bare-URL bullets — which is the
-# exact shape the retired V3 check blocked; the zero-output assertion below is therefore also the
-# retirement guard for SCOPE-003, on a single source correctly declared in the frontmatter.
+# The preserved content carries its own bibliography, the shape retired V3 blocked, so the zero-output assertion
+# also guards the SCOPE-003 retirement.
 @test "Write: conforming raw write (envelope + 3-field frontmatter) → permitted, exit 0" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
@@ -204,7 +186,7 @@ conforming_doc() {
   }
 }
 
-# V6 still fires on Write — the Edit branch did not weaken the envelope gate.
+# V6 fires on Write: the Edit branch leaves the envelope gate intact.
 @test "Write: raw write WITHOUT body envelope → blocked, exit 2 (SCOPE-006 — V6 intact)" {
   local content
   content="$(raw_doc 'Fetched content with no envelope wrapper.')"
@@ -220,17 +202,8 @@ conforming_doc() {
 }
 
 # =========== Bypass guard for the retired content checks (SCOPE-003 / SCOPE-004) ================
-#
-# Two body-content checks were retired. V4 blocked a Korean section heading, reading it as evidence
-# of translation — but a language signal cannot separate a translated source from a source WRITTEN
-# in that language. V3 blocked a `Sources:` line or a bare-URL bullet list, reading either as
-# evidence of multi-source aggregation — but the body is PRESERVED UNTRUSTED CONTENT, so a source's
-# own bibliography is byte-identical to an agent aggregating pages. Both blocked the preservation
-# they existed to enforce; the 1-URL-1-file rule stays enforced by V1/V2 on the frontmatter.
-#
-# This is the BYPASS guard for the removals: the envelope requirement must be untouched by them, so
-# a body carrying BOTH retired trip shapes still blocks on V6 — and neither retired code may fire
-# again, asserted here on NON-EMPTY output where the assertion has teeth.
+# A language signal or a bibliography cannot separate preserved content from aggregation or translation, so both
+# checks are retired. A body carrying both shapes still blocks on V6, asserted on non-empty output.
 @test "retired checks: Korean heading + bibliography, no envelope → still blocked (SCOPE-006, no SCOPE-003/004)" {
   local content
   content="$(raw_doc "$(printf '%s\n' '## 한국어 섹션 제목' '## References' \
@@ -255,13 +228,9 @@ conforming_doc() {
 }
 
 # ========================== V8 — destination-state guard (SCOPE-008) ============================
-#
-# The guard asserts destination state at check time; it is not a race control, and it resolves no
-# ancestor above the immediate parent. The cases below pin exactly that reach — both blocking arms,
-# the fall-through arms that keep the existing corpus green, and the V7-precedes-V8 ordering.
+# Check-time state only: no race control, and no ancestor above the immediate parent is resolved.
 
-# AC 1: a destination that already IS a symlink blocks — content is fully conforming, so the block
-# can only come from the destination-state guard.
+# Content is fully conforming, so the block can only come from the destination-state guard.
 @test "V8: Write onto a symlinked destination → blocked, exit 2 (SCOPE-008)" {
   mkdir -p "${WIKI_ROOT}/raw"
   ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${WIKI_ROOT}/raw/page.md"
@@ -276,8 +245,7 @@ conforming_doc() {
   }
 }
 
-# AC 2: a symlinked PARENT directory blocks on the same code — the destination itself does not
-# exist, so only the parent arm can fire.
+# The destination itself does not exist, so only the parent arm can fire.
 @test "V8: Write under a symlinked parent directory → blocked, exit 2 (SCOPE-008)" {
   mkdir -p "${WIKI_ROOT}" "${BATS_TEST_TMPDIR}/real-store"
   ln -s "${BATS_TEST_TMPDIR}/real-store" "${WIKI_ROOT}/raw"
@@ -292,28 +260,7 @@ conforming_doc() {
   }
 }
 
-# AC 3a: a plain regular-file destination under real directories falls through to the content
-# checks — the predicate is symlink-ness, never existence; the only output is the SCOPE-009 advisory.
-@test "V8: Write onto an existing regular file under real dirs → permitted, exit 0, no SCOPE-008" {
-  mkdir -p "${WIKI_ROOT}/raw"
-  : >"${WIKI_ROOT}/raw/page.md"
-  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
-  [[ "${status}" -eq 0 ]] || {
-    echo "expected exit 0 (permit), got ${status}: ${output}" >&2
-    return 1
-  }
-  [[ "${output}" != *"SCOPE-008"* ]] || {
-    echo "guard must not fire on a regular file: ${output}" >&2
-    return 1
-  }
-  [[ "${output}" == *"SCOPE-009"* ]] || {
-    echo "expected only the SCOPE-009 advisory: ${output}" >&2
-    return 1
-  }
-}
-
-# AC 3b: a non-existent destination under a real parent still reaches V6 — the guard neither
-# short-circuits the content checks nor substitutes for them.
+# The guard neither short-circuits the content checks nor substitutes for them.
 @test "V8: non-existent destination under real dirs still reaches V6 (SCOPE-006, not SCOPE-008)" {
   mkdir -p "${WIKI_ROOT}/raw"
   run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(raw_doc 'No envelope here.')")"
@@ -351,8 +298,7 @@ conforming_doc() {
   }
 }
 
-# Trigger scope unchanged: a symlinked destination OUTSIDE the raw store is none of the gate's
-# business.
+# Trigger scope: a symlinked destination outside the raw store is none of the gate's business.
 @test "V8: symlinked destination outside raw/ → exit 0, silent" {
   mkdir -p "${BATS_TEST_TMPDIR}/notes"
   ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${BATS_TEST_TMPDIR}/notes/x.md"
@@ -368,9 +314,8 @@ conforming_doc() {
 }
 
 # =================== S1 — physical containment of the trigger (inbound directions) ==============
-# The two literal trigger arms spell one path apiece: a write reaching the same store by a dot-dot
-# traversal or through a symlink pointing INTO raw/ matched neither and landed envelope-less. Both
-# directions are pinned here — the guard's own suite previously could not fail for them.
+# The literal trigger arms spell one path apiece; a dot-dot traversal or an inbound symlink reaches the store only
+# through physical containment.
 
 @test "S1: dot-dot traversal into raw/ is triggered → envelope-less write blocked (SCOPE-006)" {
   mkdir -p "${WIKI_ROOT}/raw" "${WIKI_ROOT}/notes"
@@ -385,8 +330,7 @@ conforming_doc() {
   }
 }
 
-# Inbound link: containment brings the write into scope, and V8 (whose remaining role is the
-# misconfiguration signal) is what refuses it — pre-fix this path exited 0 before V8 ever ran.
+# Containment brings the inbound link into scope, and V8 is what refuses it.
 @test "S1: symlink from outside pointing INTO raw/ is triggered → blocked (SCOPE-008)" {
   mkdir -p "${WIKI_ROOT}/raw"
   ln -s "${WIKI_ROOT}/raw" "${BATS_TEST_TMPDIR}/link-in"
@@ -492,8 +436,9 @@ conforming_doc() {
     }
 }
 
-# Hermetic pin for the log rule: no transcript_path → stderr only, the log file is never created.
-@test "SCOPE-009: overwrite without transcript_path → exit 0, advisory on stderr, log not created" {
+# Hermetic pin for the log rule: no transcript_path → stderr only, the log file is never created. An existing regular
+# file is no symlink, so V8 stays silent.
+@test "SCOPE-009: overwrite without transcript_path → exit 0, advisory on stderr, no SCOPE-008, log not created" {
   mkdir -p "${WIKI_ROOT}/raw"
   : >"${WIKI_ROOT}/raw/page.md"
   run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
@@ -501,8 +446,8 @@ conforming_doc() {
     echo "expected exit 0, got ${status}: ${output}" >&2
     return 1
   }
-  [[ "${output}" == *"SCOPE-009"* ]] || {
-    echo "expected SCOPE-009: ${output}" >&2
+  [[ "${output}" == *"SCOPE-009"* && "${output}" != *"SCOPE-008"* ]] || {
+    echo "expected SCOPE-009 and no SCOPE-008: ${output}" >&2
     return 1
   }
   [[ ! -e "${RAW_FETCH_LEDGER_FIRED_LOG}" ]] || {
@@ -654,18 +599,19 @@ conforming_doc() {
       return 1
     }
   done
+  # Control row doubles as the both-codes case: never-fetched source plus two other pages → one line, both codes.
   RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/control.log"
   run bash "${RAW_HOOK}" <<<"${payload}"
-  [[ "${status}" -eq 0 && "${output}" == *"SCOPE-010"* ]] || {
-    echo "control: expected exit 0 + SCOPE-010, got ${status}: ${output}" >&2
+  [[ "${status}" -eq 0 && "${output}" == *"SCOPE-010"* && "${output}" == *"SCOPE-011"* ]] || {
+    echo "control: expected exit 0 + SCOPE-010 + SCOPE-011, got ${status}: ${output}" >&2
     return 1
   }
   [[ "$(fired_log_lines)" -eq 1 ]] || {
     echo "control: expected exactly one log line, got $(fired_log_lines)" >&2
     return 1
   }
-  grep -q $'\tcodes=SCOPE-010\t.*\tledger=ok\treason=-$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
-    echo "control: log must carry codes=SCOPE-010 ledger=ok: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+  grep -q $'\tcodes=SCOPE-010,SCOPE-011\t.*\tledger=ok\treason=-$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+    echo "control: log must carry codes=SCOPE-010,SCOPE-011 ledger=ok: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
     return 1
   }
 }
@@ -785,7 +731,8 @@ conforming_doc() {
     RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
     tp="${BATS_TEST_TMPDIR}/${row}.jsonl"
     {
-      webfetch_lines t0 https://other.example/a 200
+      # A 404 is no page, so SCOPE-011 stays out of this case.
+      webfetch_lines t0 https://other.example/a 404
       case "${row}" in
         truncated-json) printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebFetch"' ;;
         non-object) printf '%s\n' '["WebFetch"]' ;;
@@ -807,6 +754,65 @@ conforming_doc() {
       echo "${row}: expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
       return 1
     }
+  done
+}
+
+# Two transcript lines: a Write tool_use and, unless $3 is none, its paired result. A real ok result carries
+# neither toolUseResult nor the tool name, so it can only be found by its id. Args: $1=tool_use id
+# $2=file_path $3=result (ok|error|none).
+write_lines() {
+  jq -nc --arg id "${1}" --arg fp "${2}" \
+    '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"Write", input:{file_path:$fp, content:"x"}}]}}'
+  case "${3}" in
+    ok) jq -nc --arg id "${1}" \
+      '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, content:"File created successfully"}]}}' ;;
+    error) jq -nc --arg id "${1}" \
+      '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, is_error:true}]}, toolUseResult:"Error: blocked"}' ;;
+    *) ;;
+  esac
+}
+
+# The page window opens at the last raw Write with a non-error result; every row ends on the in-flight Write,
+# as a real PreToolUse transcript does, and declares page B, so SCOPE-010 never fires.
+@test "SCOPE-011: two distinct successful pages since the last completed raw write → SCOPE-011, else silent" {
+  local row tp raw="${WIKI_ROOT}/raw" a=https://example.com/a b=https://example.com/page want
+  for row in session-start errored-write non-raw-write completed-write same-page failed-fetch; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    tp="${BATS_TEST_TMPDIR}/${row}.jsonl"
+    want=SCOPE-011
+    {
+      case "${row}" in
+        session-start) webfetch_lines f1 "${a}" 200 ;;
+        errored-write) webfetch_lines f1 "${a}" 200 && write_lines w1 "${raw}/a.md" error ;;
+        non-raw-write) webfetch_lines f1 "${a}" 200 && write_lines w1 "${BATS_TEST_TMPDIR}/notes/a.md" ok ;;
+        completed-write) webfetch_lines f1 "${a}" 200 && write_lines w1 "${raw}/a.md" ok && want='' ;;
+        same-page) webfetch_lines f1 'http://Example.com/page/' 200 && want='' ;;
+        failed-fetch) webfetch_lines f1 "${a}" 404 && want='' ;;
+        *) return 1 ;;
+      esac
+      webfetch_lines f2 "${b}" 200
+      write_lines w2 "${raw}/page.md" none
+    } >"${tp}"
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    if [[ -z "${want}" ]]; then
+      [[ -z "${output}" && "$(fired_log_lines)" -eq 0 ]] || {
+        echo "${row}: expected no output and no log line, got: ${output}" >&2
+        return 1
+      }
+    else
+      [[ "${output}" == *"SCOPE-011"* && "${output}" != *"SCOPE-010"* ]] || {
+        echo "${row}: expected SCOPE-011 alone: ${output}" >&2
+        return 1
+      }
+      grep -q $'\tcodes=SCOPE-011\t.*\tledger=ok\treason=-$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+        echo "${row}: log must carry codes=SCOPE-011 ledger=ok: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}" 2>&1)" >&2
+        return 1
+      }
+    fi
   done
 }
 

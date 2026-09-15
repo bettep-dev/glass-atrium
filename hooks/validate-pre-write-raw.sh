@@ -8,9 +8,11 @@
 # - V8 asserts destination state at check time, not a race control; only the destination and its immediate parent are tested.
 # - SCOPE-009 is advisory telemetry (exit 0): Write immutability is policy only, and delete-then-Write is silent by design.
 # - stderr on an exit-0 PreToolUse is not shown to be model-visible; the fired log, written only with transcript_path, is the record.
-# - SCOPE-010 (fetch ledger) is advisory telemetry and sees WebFetch only: Bash curl, MCP fetch tools and content handed in
-#   through a delegation prompt are invisible (the last raises a false SCOPE-010). It records URLs, never content.
+# - SCOPE-010/011 (fetch ledger) are advisory telemetry and see WebFetch only: Bash curl, MCP fetch tools and content handed
+#   in through a delegation prompt are invisible (the last raises a false SCOPE-010). They record URLs, never content.
 # - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
+# - SCOPE-011 is correlated only: false positive on fetch-all-then-save-all, false negative when the pasted pages were
+#   fetched before an earlier save.
 # - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver covers the parent and the own file.
 #   An unresolved transcript or a failed scanner is silent on stderr and logs ledger=unavailable, never a false code.
 # RAW_FETCH_LEDGER_PY: scanner-only interpreter (default python3); envelope parsing stays on PATH python3
@@ -132,12 +134,13 @@ if [[ -n "${SRC_LINE}" ]]; then
 fi
 
 BODY=$(printf '%s\n' "${CONTENT}" | awk '
-  BEGIN { cnt=0; started=0 }
+  BEGIN { cnt=0 }
   /^---[[:space:]]*$/ { cnt++; if (cnt<=2) next }
   cnt>=2 { print }
 ')
 
-# V3 vacant: a body pasting several pages under one declared URL is caught by no check; V1/V2 hold only the frontmatter half.
+# V3 vacant: a body pasting several pages under one declared URL is caught by no check; V1/V2 hold only the frontmatter
+# half, and SCOPE-011 is a weak correlated signal, not a replacement.
 # V4 vacant: no translation check — a language signal cannot tell a translated source from one written in that language.
 
 # V6: body-resident envelope, opening marker on an earlier line than the closing one; markers are HTML comments (non-rendering).
@@ -198,11 +201,13 @@ resolve_transcript() {
   find_subagent_transcript
 }
 
-# Prints match=1 when a WebFetch of the declared URL (input url, or result url after a redirect) has a 2xx, non-error
-# result, else match=0. URLs compare normalized: http→https, lowercase scheme + host, no fragment, no trailing `/`, query
-# kept. A malformed line is skipped, never fatal. Args: $1=transcript $2=declared URL.
+# Prints `match=<0|1>\tpages=<n>`. match=1: a WebFetch of the declared URL (input url, or result url after a redirect)
+# has a 2xx, non-error result. pages: distinct successfully fetched pages after the last raw Write with a non-error
+# result; an unpaired Write is the one in flight. URLs compare normalized: http→https, lowercase scheme + host, no
+# fragment, no trailing `/`, query kept. A malformed line is skipped, never fatal.
+# Args: $1=transcript $2=declared URL $3=raw dir.
 run_scanner() {
-  "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" <<'PY'
+  "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" "${3}" <<'PY'
 import json
 import sys
 from urllib.parse import urlsplit, urlunsplit
@@ -223,12 +228,27 @@ def normalize(url):
     return urlunsplit((scheme, parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
 
 
-transcript, declared = sys.argv[1], normalize(sys.argv[2])
+def is_raw(path, raw_dir):
+    return isinstance(path, str) and path.endswith(".md") and (
+        path.startswith(raw_dir + "/") or "/.glass-atrium/wiki/raw/" in path
+    )
+
+
+transcript, declared, raw_dir = sys.argv[1], normalize(sys.argv[2]), sys.argv[3]
 fetch_urls = {}
+pending_writes = {}
+pages = []
+window = -1
 matched = False
 with open(transcript, "rb") as lines:
-    for line in lines:
-        if b'"WebFetch"' not in line and b"toolUseResult" not in line:
+    for position, line in enumerate(lines):
+        # A successful Write result names neither the tool nor toolUseResult → matched by its pending id.
+        if (
+            b'"WebFetch"' not in line
+            and b'"Write"' not in line
+            and b"toolUseResult" not in line
+            and not any(write_id in line for write_id in pending_writes)
+        ):
             continue
         try:
             entry = json.loads(line)
@@ -238,32 +258,46 @@ with open(transcript, "rb") as lines:
         result = field(entry, "toolUseResult")
         code = field(result, "code")
         for item in content if isinstance(content, list) else []:
-            item_id = field(item, "id") if field(item, "type") == "tool_use" else field(item, "tool_use_id")
+            kind = field(item, "type")
+            item_id = field(item, "id") if kind == "tool_use" else field(item, "tool_use_id")
             if not isinstance(item_id, str):
                 continue
-            if field(item, "type") == "tool_use" and field(item, "name") == "WebFetch":
+            if kind == "tool_use" and field(item, "name") == "WebFetch":
                 fetch_urls[item_id] = normalize(field(field(item, "input"), "url"))
-            elif field(item, "type") == "tool_result" and item_id in fetch_urls:
+            elif kind == "tool_use" and field(item, "name") == "Write":
+                if is_raw(field(field(item, "input"), "file_path"), raw_dir):
+                    pending_writes[item_id.encode()] = position
+            elif kind == "tool_result" and item_id in fetch_urls:
                 ok = not field(item, "is_error") and isinstance(code, int) and 200 <= code < 300
                 urls = (fetch_urls[item_id], normalize(field(result, "url")))
                 matched = matched or (ok and declared is not None and declared in urls)
-print("match=%d" % matched)
+                if ok and fetch_urls[item_id] is not None:
+                    pages.append((position, fetch_urls[item_id]))
+            elif kind == "tool_result" and item_id.encode() in pending_writes:
+                started = pending_writes.pop(item_id.encode())
+                if not field(item, "is_error"):
+                    window = max(window, started)
+page_count = len({url for position, url in pages if position > window})
+print("match=%d\tpages=%d" % (matched, page_count))
 PY
 }
 
-# Scanner contract: exactly one `match=<0|1>` line and exit 0. Anything else is a failure (return 1), never a no-match,
-# because a misread failure would raise a false SCOPE-010. Prints 0 or 1. Args: $1=transcript $2=declared URL.
+# Scanner contract: exactly one `match=<0|1>\tpages=<n>` line and exit 0. Anything else is a failure (return 1), never a
+# no-match, because a misread failure would raise a false SCOPE-010/011. Sets SCAN_MATCH and SCAN_PAGES.
+# Args: $1=transcript $2=declared URL.
 scan_transcript() {
-  local out
+  local out contract=$'^match=([01])\tpages=([0-9]+)$'
   # shellcheck disable=SC2310
-  out=$(run_scanner "${1}" "${2}" 2>/dev/null) || return 1
-  [[ "${out}" == "match=0" || "${out}" == "match=1" ]] || return 1
-  printf '%s' "${out#match=}"
+  out=$(run_scanner "${1}" "${2}" "${WIKI_RAW_DIR}" 2>/dev/null) || return 1
+  [[ "${out}" =~ ${contract} ]] || return 1
+  SCAN_MATCH="${BASH_REMATCH[1]}"
+  SCAN_PAGES="${BASH_REMATCH[2]}"
 }
 
-# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES; emits SCOPE-010 when the scan finds no successful fetch.
+# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES; emits SCOPE-010 on no successful fetch of the declared URL and
+# SCOPE-011 on two or more pages fetched since the last completed raw write.
 run_ledger() {
-  local transcript url match
+  local transcript url
   LEDGER_STATE="unavailable"
   LEDGER_REASON="transcript"
   LEDGER_CODES=""
@@ -273,15 +307,23 @@ run_ledger() {
   url="${SRC_LINE#source_url:}"
   url="${url#"${url%%[![:space:]]*}"}"
   # shellcheck disable=SC2310
-  match=$(scan_transcript "${transcript}" "${url}") || return 0
+  scan_transcript "${transcript}" "${url}" || return 0
   LEDGER_STATE="ok"
   LEDGER_REASON="-"
-  [[ "${match}" == "0" ]] || return 0
-  emit_error "SCOPE-010" "warn" \
-    "Declared source_url was not fetched by WebFetch in this session — body provenance is unverified" \
-    "Fetch the declared source with WebFetch before saving, or declare the URL the content was fetched from" \
-    "{\"file\":\"${FILE_PATH}\"}"
-  LEDGER_CODES="SCOPE-010"
+  if [[ "${SCAN_MATCH}" == "0" ]]; then
+    emit_error "SCOPE-010" "warn" \
+      "Declared source_url was not fetched by WebFetch in this session — body provenance is unverified" \
+      "Fetch the declared source with WebFetch before saving, or declare the URL the content was fetched from" \
+      "{\"file\":\"${FILE_PATH}\"}"
+    LEDGER_CODES="SCOPE-010"
+  fi
+  if [[ "${SCAN_PAGES}" -ge 2 ]]; then
+    emit_error "SCOPE-011" "warn" \
+      "Several pages were fetched since the last raw save — a one-URL raw file may carry pasted content from more than one" \
+      "Save each fetched page as its own raw file under its own source_url" \
+      "{\"file\":\"${FILE_PATH}\"}"
+    LEDGER_CODES="${LEDGER_CODES}${LEDGER_CODES:+,}SCOPE-011"
+  fi
 }
 
 # Permit-path advisories: warn-severity stderr plus the fired log; the log is written only when the envelope carries
