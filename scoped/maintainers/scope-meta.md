@@ -26,10 +26,10 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 ## Decisions taken on review, with their reasoning
 
 - **The hygiene decisions moved with the rules.** The provenance carve-out under `No history-type content`, and the reasoning that accepted it, are recorded in `scoped/maintainers/shared-authoring-hygiene.md` → `## Decisions taken, with their reasoning`.
-- **`## Absolute Rules [DEV+META]` — the precedence line was realigned to its citee, not softened.**
+- **`## Absolute Rules [META]` — the precedence line was realigned to its citee, not softened.**
   - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the matrix anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
-- **Tag**: `Skills Array Order` carries `[META]` only — no DEV rule file holds a matching pointer.
+- **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
 - **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
 
 ## Heading-citation register — do not rename these
@@ -66,7 +66,7 @@ The composer-facing line stays in the rule file rather than moving here, because
 
 ## Open questions
 
-- `## Absolute Rules [DEV+META]` carries a dead DEV half — `scoped/scope-dev.md` holds no `## Absolute Rules` heading. Retag it to `[META]`, or record why it keeps DEV.
+None open.
 
 ## Readers, coupled tests, and operational constraints
 
