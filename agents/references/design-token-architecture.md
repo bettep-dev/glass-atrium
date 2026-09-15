@@ -1,16 +1,22 @@
 # Token Architecture — 3-Tier Model, Multi-Mode Matrix, DTCG Grammar, AI Model Guidelines
 
-> Reference for `design-designer` agent. By-hand design-token authoring contract: the base→semantic→component tier model, the multi-mode override matrix, DTCG cell grammar, and the structured AI Model Guidelines shape. The agent reproduces these tables in DESIGN.md by hand — they are reproducible spec templates, not build-tool plumbing (the agent runs no compiler).
+> Reference for `glass-atrium-design-designer`: the by-hand design-token authoring contract.
+> - Covers the base→semantic→component tier model, the multi-mode override matrix, DTCG cell grammar and the structured AI Model Guidelines shape.
+> - The agent reproduces these tables in DESIGN.md by hand — they are reproducible spec templates, not build-tool plumbing (the agent runs no compiler).
 
 ## Applicability (opt-in escalation, not a default mandate)
 
-The 3-tier architecture + multi-mode matrix below applies ONLY to a **full design-system deliverable** (DESIGN.md / MASTER.md). It does NOT gate a single-page philosophy doc, a canvas, or a one-off palette — those keep the existing flat shape. Multi-mode columns are opt-in escalation ("light+dark for system deliverables; add high-contrast when accessibility is in scope"), never a universal palette mandate.
+- The 3-tier architecture and the multi-mode matrix below apply ONLY to a **full design-system deliverable** (DESIGN.md / MASTER.md).
+- They do NOT gate a single-page philosophy doc, a canvas or a one-off palette — those keep the existing flat shape.
+- Multi-mode columns are opt-in escalation per the Mode floor below, never a universal palette mandate.
 
 ---
 
 ## 3-Tier Token Architecture
 
-Strict 3-tier separation where every consumable token is an *alias reference* up the chain, never a raw value at the consumption layer. The alias arrow (`→`) is written explicitly so the chain is auditable.
+- Strict 3-tier separation: every consumable token is an *alias reference* up the chain, never a raw value at the consumption layer.
+- The alias arrow (`→`) is written explicitly.
+  - Why: the chain stays auditable.
 
 | Tier | Holds | Aliases | Example |
 |------|-------|---------|---------|
@@ -20,23 +26,32 @@ Strict 3-tier separation where every consumable token is an *alias reference* up
 
 Full chain example: `button.bgColor.rest` → `{control.bgColor.rest}` → `{base.color.neutral.X}`.
 
-**Hard rules**: raw values are FORBIDDEN in the Semantic + Component tiers. Component / consumption examples reference semantic (or component) tokens, never base, never raw. DESIGN.md emits three labelled tables — a `Base Primitives` table (raw values, the only place they appear), a `Semantic Tokens` table (`token → base alias` + role), and a `Component Tokens` table (`token → semantic alias`).
+### Hard rules
+
+- Raw values are FORBIDDEN in the Semantic + Component tiers.
+- Component / consumption examples reference semantic (or component) tokens — never base, never raw.
+- DESIGN.md emits three labelled tables:
+  - a `Base Primitives` table (raw values, the only place they appear);
+  - a `Semantic Tokens` table (`token → base alias` + role);
+  - a `Component Tokens` table (`token → semantic alias`).
 
 ### Composite tokens
 
-Bundle correlated sub-properties into ONE composite token so they cannot desync:
+Bundle correlated sub-properties into one composite token so they cannot desync:
 
 - **Typography** → a single `--text-{role}-{size}` shorthand bundling font-size + line-height + weight + tracking.
 - **Shadow** → a single `--shadow-{level}` bundling offset + blur + color.
 - **Border** → a single composite bundling color + width + style.
 
-Rule: consumers use the **composite** token, never the loose sub-properties when a composite exists (prevents line-height / weight desync).
+Consumers use the **composite** token, never the loose sub-properties when a composite exists.
 
 ---
 
 ## Multi-Mode Override Matrix
 
-A single token source compiles to many themes. Semantic token NAMES are mode-invariant; each mode re-points the SAME semantic token to a DIFFERENT base primitive. Rows = semantic tokens, columns = modes, cells = the base primitive each token points to in that mode.
+- A single token source compiles to many themes.
+- Semantic token names are mode-invariant; each mode re-points the same semantic token to a different base primitive.
+- Rows = semantic tokens, columns = modes, cells = the base primitive each token points to in that mode.
 
 | Semantic token | light | dark | light-high-contrast | dark-high-contrast | colorblind (conditional) |
 |----------------|-------|------|---------------------|--------------------|--------------------------|
@@ -44,19 +59,22 @@ A single token source compiles to many themes. Semantic token NAMES are mode-inv
 | `fgColor-default` | `{base.neutral.900}` | `{base.neutral.50}` | `{base.neutral.950}` | `{base.neutral.0}` | … |
 | `borderColor-default` | `{base.neutral.200}` | `{base.neutral.700}` | `{base.neutral.500}` | `{base.neutral.400}` | … |
 
-**Mode floor**:
+### Mode floor
 
-- `light` + `dark` — mandatory for SYSTEM deliverables.
-- `*-high-contrast` (light + dark) — mandatory whenever accessibility is declared in scope; high-contrast columns raise the floor to **7:1 text / 4.5:1 UI** (vs 4.5:1 / 3:1 baseline).
+- `light` + `dark` — mandatory for system deliverables.
+- `*-high-contrast` (light + dark) — mandatory whenever accessibility is declared in scope.
+  - High-contrast columns raise the floor to **7:1 text / 4.5:1 UI** (vs 4.5:1 / 3:1 baseline).
 - `colorblind` / `tritanopia` — conditional, required only when status / data-viz colors exist.
-
-(The full 16-mode Primer matrix is over-spec for most projects — the *model* transfers, not the exhaustive count.)
+- The floor is the minimum; an exhaustive mode set (the full 16-mode Primer matrix) is over-spec for most projects — the *model* transfers, not the exhaustive count.
 
 ---
 
 ## DTCG Cell Grammar
 
-When DESIGN.md emits structured token definitions, use the W3C DTCG quartet as the cell vocabulary (tables stay primary; a full separate JSON artifact is explicitly NOT required):
+When DESIGN.md emits structured token definitions:
+
+- Use the W3C DTCG keys below as the cell vocabulary.
+- Tables stay primary; a full separate JSON artifact is explicitly NOT required.
 
 | Key | Holds |
 |-----|-------|
@@ -64,13 +82,14 @@ When DESIGN.md emits structured token definitions, use the W3C DTCG quartet as t
 | `$type` | the token category: `color` / `dimension` / `fontFamily` / `shadow` / `typography` / `duration` |
 | `$description` | one-line role |
 
-Aliases use `{tier.token.path}` curly-brace notation, **values-only**. This formalizes the 3-tier `→` arrows.
+- Aliases use `{tier.token.path}` curly-brace notation, **values-only** — the DTCG form of the 3-tier `→` arrows.
 
 ---
 
 ## AI Model Guidelines (structured form)
 
-The AI Model Guidelines section uses the structured shape below (not prose "2-3 Bad examples"). Each token's role is stated ONCE in the Semantic Key, not repeated per token.
+- The AI Model Guidelines section uses the structured shape below, not a prose list of Bad examples.
+- Each token's role is stated once in the Semantic Key, not repeated per token.
 
 ### Semantic Key table
 
@@ -103,4 +122,4 @@ Any token name NOT present in this spec MUST be flagged inline (e.g. suffix the 
 
 ### Golden reference component
 
-A single reference component rendered across ALL 5 interactive states (default / hover / active / focus / disabled), each state naming its tokens.
+A single reference component rendered in each of these interactive states — default / hover / active / focus / disabled — each state naming its tokens.
