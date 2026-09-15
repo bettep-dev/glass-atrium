@@ -8,13 +8,17 @@
 # - V8 asserts destination state at check time, not a race control; only the destination and its immediate parent are tested.
 # - SCOPE-009 is advisory telemetry (exit 0): Write immutability is policy only, and delete-then-Write is silent by design.
 # - stderr on an exit-0 PreToolUse is not shown to be model-visible; the fired log, written only with transcript_path, is the record.
-# - SCOPE-010/011 (fetch ledger) are advisory telemetry and see WebFetch only: Bash curl, MCP fetch tools and content handed
-#   in through a delegation prompt are invisible (the last raises a false SCOPE-010). They record URLs, never content.
+# - SCOPE-010/011 (fetch ledger) are advisory telemetry and see WebFetch only.
+# - Invisible to them: WebSearch snippets, Bash curl/gh and MCP fetch tools; the researcher holds WebSearch.
+# - Content handed in through a delegation prompt is invisible too, and raises a false SCOPE-010.
+# - The fired log records the source host only, never the full URL, query or content.
 # - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
-# - SCOPE-011 is correlated only: false positive on fetch-all-then-save-all, false negative when the pasted pages were
-#   fetched before an earlier save.
-# - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver covers the parent and the own file.
-#   An unresolved transcript or a failed scanner is silent on stderr and logs ledger=unavailable, never a false code.
+# - SCOPE-011 is correlated only: fetch-all-then-save-all raises a false positive.
+#   Pages fetched before an earlier save and pasted later raise nothing (false negative).
+# - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver accepts either parent or own file.
+# - For a subagent the ledger scans only the subagent's own transcript, never the parent.
+# - An unresolved transcript or a failed scanner is silent on stderr and logs ledger=unavailable, never a false code.
+#
 # RAW_FETCH_LEDGER_PY: scanner-only interpreter (default python3); envelope parsing stays on PATH python3
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -63,8 +67,8 @@ case "${FILE_PATH}" in
   "${WIKI_RAW_DIR}"/*.md) ;;
   */.glass-atrium/wiki/raw/*.md) ;;
   *)
-    # Deferred to this arm → non-matching writes pay no subshell. The `||` literal fallback is the intended
-    # set -e disabling (SC2310): an unresolvable span leaves the literal arms in charge, never aborts the gate.
+    # Deferred to this arm → non-matching writes pay no subshell.
+    # The `||` literal fallback disables set -e on purpose (SC2310): an unresolvable span never aborts the gate.
     # shellcheck disable=SC2310
     PHYS_FILE=$(canon_path "${FILE_PATH}" || printf '%s' "${FILE_PATH}")
     # shellcheck disable=SC2310
@@ -139,8 +143,8 @@ BODY=$(printf '%s\n' "${CONTENT}" | awk '
   cnt>=2 { print }
 ')
 
-# V3 vacant: a body pasting several pages under one declared URL is caught by no check; V1/V2 hold only the frontmatter
-# half, and SCOPE-011 is a weak correlated signal, not a replacement.
+# V3 vacant: a body pasting several pages under one declared URL is caught by no check.
+# V1/V2 hold only the frontmatter half of one-URL-per-file; SCOPE-011 is a weak correlated signal, not a replacement.
 # V4 vacant: no translation check — a language signal cannot tell a translated source from one written in that language.
 
 # V6: body-resident envelope, opening marker on an earlier line than the closing one; markers are HTML comments (non-rendering).
@@ -167,7 +171,7 @@ write_fired_log() {
     host="${host%%[/?#]*}"
     host="${host##*@}"
     ts=$(python3 -c 'import datetime as d; t=d.datetime.now(d.timezone.utc); print(t.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (t.microsecond // 1000))') \
-      || ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+      || ts=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
     mkdir -p -- "${RAW_FETCH_LEDGER_FIRED_LOG%/*}"
     printf '%s\tcodes=%s\thost=%s\tsession=%s\tledger=%s\treason=%s\n' \
       "${ts}" "${codes}" "${host}" "${SESSION_ID}" "${ledger}" "${reason}" >>"${RAW_FETCH_LEDGER_FIRED_LOG}"
@@ -201,11 +205,11 @@ resolve_transcript() {
   find_subagent_transcript
 }
 
-# Prints `match=<0|1>\tpages=<n>`. match=1: a WebFetch of the declared URL (input url, or result url after a redirect)
-# has a 2xx, non-error result. pages: distinct successfully fetched pages after the last raw Write with a non-error
-# result; an unpaired Write is the one in flight. URLs compare normalized: http→https, lowercase scheme + host, no
-# fragment, no trailing `/`, query kept. A malformed line is skipped, never fatal.
-# Args: $1=transcript $2=declared URL $3=raw dir.
+# match=1: a WebFetch of the declared URL (input url, or result url after a redirect) has a 2xx, non-error result.
+# pages: distinct successfully fetched pages after the last raw Write with a non-error result.
+# An unpaired raw Write is the one in flight.
+# URLs compare normalized: http→https, lowercase scheme + host, no fragment, no trailing `/`, query kept.
+# A malformed line is skipped, never fatal. Args: $1=transcript $2=declared URL $3=raw dir.
 run_scanner() {
   "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" "${3}" <<'PY'
 import json
@@ -282,8 +286,8 @@ print("match=%d\tpages=%d" % (matched, page_count))
 PY
 }
 
-# Scanner contract: exactly one `match=<0|1>\tpages=<n>` line and exit 0. Anything else is a failure (return 1), never a
-# no-match, because a misread failure would raise a false SCOPE-010/011. Sets SCAN_MATCH and SCAN_PAGES.
+# Scanner contract: exactly one `match=<0|1>\tpages=<n>` line and exit 0; sets SCAN_MATCH and SCAN_PAGES.
+# Anything else returns 1, never a no-match: a misread failure would raise a false SCOPE-010/011.
 # Args: $1=transcript $2=declared URL.
 scan_transcript() {
   local out contract=$'^match=([01])\tpages=([0-9]+)$'
@@ -294,8 +298,8 @@ scan_transcript() {
   SCAN_PAGES="${BASH_REMATCH[2]}"
 }
 
-# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES; emits SCOPE-010 on no successful fetch of the declared URL and
-# SCOPE-011 on two or more pages fetched since the last completed raw write.
+# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES.
+# SCOPE-010: no successful fetch of the declared URL. SCOPE-011: 2+ pages fetched since the last completed raw write.
 run_ledger() {
   local transcript url
   LEDGER_STATE="unavailable"
@@ -326,8 +330,7 @@ run_ledger() {
   fi
 }
 
-# Permit-path advisories: warn-severity stderr plus the fired log; the log is written only when the envelope carries
-# transcript_path, and only when a code fired or the ledger was unavailable.
+# Permit-path advisories: warn-severity stderr plus at most one fired-log line.
 run_advisories() {
   local codes="" fields
   if [[ -f "${FILE_PATH}" ]]; then

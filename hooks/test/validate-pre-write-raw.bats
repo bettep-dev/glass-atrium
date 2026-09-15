@@ -47,16 +47,15 @@ write_payload_at() {
     '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}'
 }
 
-# A Write-tool envelope for the raw page carrying session + transcript fields. Args: $1=content
-# $2=transcript_path.
+# A Write-tool envelope for the raw page carrying session + transcript fields. Args: $1=content $2=transcript_path.
 raw_write_payload_with_transcript() {
   jq -nc --arg fp "${WIKI_ROOT}/raw/page.md" --arg c "${1}" --arg tp "${2}" \
     '{tool_name:"Write", session_id:"sess-1", transcript_path:$tp, tool_input:{file_path:$fp, content:$c}}'
 }
 
-# Two transcript lines: a WebFetch tool_use and its paired result; is_error is written only when true, as
-# the harness does. Args: $1=tool_use id $2=url $3=HTTP code $4=is_error (true|false, default false)
-# $5=result url after a redirect (default $2).
+# Two transcript lines: a WebFetch tool_use and its paired result.
+# is_error is written only when true, as the harness does.
+# Args: $1=tool_use id $2=url $3=HTTP code $4=is_error (true|false, default false) $5=post-redirect url (default $2).
 webfetch_lines() {
   jq -nc --arg id "${1}" --arg u "${2}" \
     '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"WebFetch", input:{url:$u}}]}}'
@@ -85,8 +84,8 @@ fired_log_lines() {
   fi
 }
 
-# A fully conforming raw document (3-field frontmatter + body envelope) — V1-V6 all green, so any
-# block observed on it is attributable to the destination-state guard alone. Args: $1=source_url (optional).
+# A fully conforming raw document (3-field frontmatter + body envelope): V1-V6 all pass.
+# Any code observed on it comes from a non-content check (V7, V8 or an advisory). Args: $1=source_url (optional).
 conforming_doc() {
   raw_doc "$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
     '<!-- /UNTRUSTED-SOURCE -->')" "${1:-}"
@@ -168,8 +167,8 @@ conforming_doc() {
 
 # ================================== Write — V1-V6 floor ==========================================
 
-# The preserved content carries its own bibliography, the shape retired V3 blocked, so the zero-output assertion
-# also guards the SCOPE-003 retirement.
+# The preserved content carries its own bibliography, the shape retired V3 blocked.
+# The zero-output assertion therefore also guards the SCOPE-003 retirement.
 @test "Write: conforming raw write (envelope + 3-field frontmatter) → permitted, exit 0" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
@@ -202,8 +201,8 @@ conforming_doc() {
 }
 
 # =========== Bypass guard for the retired content checks (SCOPE-003 / SCOPE-004) ================
-# A language signal or a bibliography cannot separate preserved content from aggregation or translation, so both
-# checks are retired. A body carrying both shapes still blocks on V6, asserted on non-empty output.
+# A language signal or a bibliography cannot separate preserved content from aggregation or translation.
+# Both checks are retired; a body carrying both shapes still blocks on V6, asserted on non-empty output.
 @test "retired checks: Korean heading + bibliography, no envelope → still blocked (SCOPE-006, no SCOPE-003/004)" {
   local content
   content="$(raw_doc "$(printf '%s\n' '## 한국어 섹션 제목' '## References' \
@@ -278,8 +277,7 @@ conforming_doc() {
   }
 }
 
-# Reach pin: V7 precedes V8, so an Edit onto a symlinked destination reports immutability — the
-# guard is Write-only in practice, exactly as the hook header states.
+# Reach pin: V7 precedes V8, so an Edit onto a symlinked destination reports SCOPE-007; the guard is Write-only in practice.
 @test "V8: Edit onto a symlinked raw destination → SCOPE-007 (V7 precedes the guard)" {
   mkdir -p "${WIKI_ROOT}/raw"
   ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${WIKI_ROOT}/raw/page.md"
@@ -314,8 +312,8 @@ conforming_doc() {
 }
 
 # =================== S1 — physical containment of the trigger (inbound directions) ==============
-# The literal trigger arms spell one path apiece; a dot-dot traversal or an inbound symlink reaches the store only
-# through physical containment.
+# The literal trigger arms spell one path apiece.
+# A dot-dot traversal or an inbound symlink reaches the store only through physical containment.
 
 @test "S1: dot-dot traversal into raw/ is triggered → envelope-less write blocked (SCOPE-006)" {
   mkdir -p "${WIKI_ROOT}/raw" "${WIKI_ROOT}/notes"
@@ -398,8 +396,8 @@ conforming_doc() {
 
 # ====================== SCOPE-009 — overwrite advisory and the fired log ==========================
 #
-# Advisory only: exit status never changes. The fired log is written only when the envelope carries a
-# transcript_path, so the suites that drive this hook without one can never touch a real log.
+# Advisory only: exit status never changes.
+# The fired log needs a transcript_path in the envelope, so suites that send none never touch a real log.
 
 @test "SCOPE-009: overwrite with transcript_path → exit 0, advisory only, exactly one log line codes=SCOPE-009" {
   mkdir -p "${WIKI_ROOT}/raw"
@@ -419,25 +417,18 @@ conforming_doc() {
     echo "no blocking code may fire: ${output}" >&2
     return 1
   }
-  [[ -f "${RAW_FETCH_LEDGER_FIRED_LOG}" ]] || {
-    echo "expected a fired log" >&2
+  [[ "$(fired_log_lines)" -eq 1 ]] || {
+    echo "expected exactly one log line, got $(fired_log_lines)" >&2
     return 1
   }
-  local lines
-  lines="$(wc -l <"${RAW_FETCH_LEDGER_FIRED_LOG}" | tr -d ' ')"
-  [[ "${lines}" -eq 1 ]] || {
-    echo "expected exactly one log line, got ${lines}" >&2
+  grep -q $'\tcodes=SCOPE-009\t' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+    echo "log line must carry codes=SCOPE-009: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
     return 1
   }
-  grep -q $'\tcodes=SCOPE-009\t' "${RAW_FETCH_LEDGER_FIRED_LOG}" \
-    || {
-      echo "log line must carry codes=SCOPE-009: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
-      return 1
-    }
 }
 
-# Hermetic pin for the log rule: no transcript_path → stderr only, the log file is never created. An existing regular
-# file is no symlink, so V8 stays silent.
+# Hermetic pin for the log rule: no transcript_path → stderr only, the log file is never created.
+# An existing regular file is no symlink, so V8 stays silent.
 @test "SCOPE-009: overwrite without transcript_path → exit 0, advisory on stderr, no SCOPE-008, log not created" {
   mkdir -p "${WIKI_ROOT}/raw"
   : >"${WIKI_ROOT}/raw/page.md"
@@ -458,9 +449,9 @@ conforming_doc() {
 
 # ================== Fetch ledger (advisory) — SCOPE-010 and the unavailable path ===================
 #
-# On the permit path the ledger scans the writer's own transcript for a successful WebFetch of the
-# declared source_url. An unresolved transcript or a failed scanner is silent on stderr and leaves one
-# ledger=unavailable log line — never a false SCOPE-010, and never an exit-status change.
+# On the permit path the ledger scans the writer's own transcript for a successful WebFetch of the declared source_url.
+# An unresolved transcript or a failed scanner is silent on stderr and leaves one ledger=unavailable log line.
+# Neither raises a false SCOPE-010 or changes the exit status.
 
 @test "SCOPE-010: declared source has no successful WebFetch → exit 0 + SCOPE-010 on every row" {
   local row tp
@@ -484,8 +475,8 @@ conforming_doc() {
   done
 }
 
-# A subagent's parent transcript holds none of its fetches, so falling back to it would raise a false
-# SCOPE-010; the parent here carries only an unrelated fetch to make that fallback visible.
+# A subagent's parent transcript holds none of its fetches, so falling back to it would raise a false SCOPE-010.
+# The parent here carries only an unrelated fetch, which makes that fallback visible.
 @test "ledger: transcript does not resolve → exit 0, silent, one log line ledger=unavailable reason=transcript" {
   local row payload parent="${BATS_TEST_TMPDIR}/proj/sess-1.jsonl"
   mkdir -p "${parent%/*}"
@@ -519,8 +510,9 @@ conforming_doc() {
   done
 }
 
-# Whichever file the envelope names, the scan reads the subagent's OWN transcript: the parent-side file
-# of each row holds only an unrelated fetch, so a parent read raises SCOPE-010.
+# Whichever file the envelope names, the scan reads the subagent's OWN transcript.
+# Each parent-side file holds only an unrelated fetch, so a parent read raises SCOPE-010.
+# The envelope-names-own row has no parent file; a wrong route there shows as a ledger=unavailable log line.
 @test "ledger: subagent's own transcript holds the fetch → silent, no log line, on every resolution route" {
   local row own tp aid
   for row in flat workflow envelope-names-own home-fallback; do
@@ -548,7 +540,7 @@ conforming_doc() {
       *) return 1 ;;
     esac
     mkdir -p "${tp%/*}" "${own%/*}"
-    [[ -f "${tp}" ]] || webfetch_lines t0 https://other.example/a 200 >"${tp}"
+    [[ "${tp}" == "${own}" ]] || webfetch_lines t0 https://other.example/a 200 >"${tp}"
     webfetch_lines t1 https://example.com/page 200 >"${own}"
     run bash "${RAW_HOOK}" <<<"$(subagent_write_payload "$(conforming_doc)" "${tp}" "${aid}")"
     [[ "${status}" -eq 0 ]] || {
@@ -616,8 +608,8 @@ conforming_doc() {
   }
 }
 
-# Both sides are normalized: the fetched-side row varies the input URL, and its distinct result url keeps the
-# redirect arm from supplying the match.
+# Both sides are normalized: the fetched-side row varies the input URL.
+# Its distinct result url keeps the redirect arm from supplying the match.
 @test "ledger: declared URL matches its fetch after normalization → silent, no log line, on every row" {
   local row declared fetched result tp
   for row in http-upgrade host-case trailing-slash fragment fetched-side; do
@@ -757,9 +749,9 @@ conforming_doc() {
   done
 }
 
-# Two transcript lines: a Write tool_use and, unless $3 is none, its paired result. A real ok result carries
-# neither toolUseResult nor the tool name, so it can only be found by its id. Args: $1=tool_use id
-# $2=file_path $3=result (ok|error|none).
+# Two transcript lines: a Write tool_use and, unless $3 is none, its paired result.
+# A real ok result carries neither toolUseResult nor the tool name, so it can only be found by its id.
+# Args: $1=tool_use id $2=file_path $3=result (ok|error|none).
 write_lines() {
   jq -nc --arg id "${1}" --arg fp "${2}" \
     '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"Write", input:{file_path:$fp, content:"x"}}]}}'
@@ -772,8 +764,9 @@ write_lines() {
   esac
 }
 
-# The page window opens at the last raw Write with a non-error result; every row ends on the in-flight Write,
-# as a real PreToolUse transcript does, and declares page B, so SCOPE-010 never fires.
+# The page window opens at the last raw Write with a non-error result.
+# Every row ends on the in-flight Write, as a real PreToolUse transcript does.
+# Every row declares page B, so SCOPE-010 never fires.
 @test "SCOPE-011: two distinct successful pages since the last completed raw write → SCOPE-011, else silent" {
   local row tp raw="${WIKI_ROOT}/raw" a=https://example.com/a b=https://example.com/page want
   for row in session-start errored-write non-raw-write completed-write same-page failed-fetch; do
