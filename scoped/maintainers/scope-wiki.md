@@ -19,7 +19,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
 
 ## What the cut removed, and why
 
-- **The `> **Loading**: … auto-loads` stanza, `> **Inherits**`, the `> **See**` matrix link, and `Rules specific to WIKI agents: …`** — a membership restatement (the selector is the registry row's `rules.scope`, read at spawn by `hooks/lib/inject_chunk.py`), plus corpus bookkeeping addressed to an editor.
+- **The `> **Loading**: … auto-loads` stanza, `> **Inherits**`, the `> **See**` matrix link, and `Rules specific to WIKI agents: …`** — a membership restatement (the selector is the registry row's `rules.scope`), plus corpus bookkeeping addressed to an editor.
 - **The `> **Wiki store (canonical)**` blockquote** — Tier-1 `rules/glass-atrium/core-wiki-reference.md` opens with the same blockquote near-verbatim, and that file does arrive. The curator body states the same store description again in its own opening.
 - **`Sole writer of \`wiki/\``** — Tier-1 `core-wiki-reference.md` → `## Wiki Write Operations` states the rule and the identical researcher carve-out, and the curator body restates the ownership half under `## OWNS / DOES NOT OWN`.
   - It also binds OTHER agents, so for the receiving curator it was informational rather than a duty it could discharge.
@@ -37,7 +37,7 @@ The bullet ordered the curator to check `~/.claude/data/wiki-lock` for existence
   - `acquire <name> [timeout_sec]` WAITS and exits 2 on timeout — the opposite of `do NOT wait/spin`.
   - The sanctioned `wiki-lock.sh with <name> <timeout> -- <command>` wrapper releases its own token, so `remove the lock atomically` ordered a manual removal of something the agent does not own.
 - **The lock duty lives in `agents/glass-atrium-wiki-curator.md`**: the mandatory turn-0 acquire, the Guardrails lock pre-check, the all-writes-via-wiki-lock rule, and the extended-timeout reindex pattern. Restating it here would add another copy.
-- **Open, owned by whoever next changes the body's lock protocol — not changed in the restructure pass**:
+- **Open lock-protocol defects** — owned by whoever next changes the body's lock protocol:
   - The turn-0 acquire is written `wiki-lock.sh wiki-compile 30`, which names no subcommand; the helper answers any unknown subcommand with its usage text and exit 64 [measured: read of `scripts/wiki-lock.sh` → `usage` and the subcommand `case`].
   - The Guardrails pre-check names the `with` form before the first Write/Edit, but `with` wraps a shell command (`-- <command...>`), which a Write or Edit tool call is not [measured: same read, header Interface].
   - A bare `acquire` records the caller shell (`$PPID`) as holder; whether an agent's Bash tool call keeps that shell alive past the call is [hypothesis], unmeasured.

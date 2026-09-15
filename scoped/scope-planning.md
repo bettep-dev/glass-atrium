@@ -1,6 +1,6 @@
 # PLANNING Scope Rules
 
-Canonical rule text for the PLANNING scope (glass-atrium-intel-planner). The report-side emission, visual and diagram rules are canonical in `scoped/scope-report.md`, which is not among the planner's rule files; the planner applies the copies of those rules in `agents/glass-atrium-intel-planner.md`.
+Canonical rule text for the PLANNING scope (glass-atrium-intel-planner). The report-side emission, visual and diagram rules enter at `scoped/scope-report.md`, but not every one is canonical there. Each rule's canonical, and where the planner applies it: `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`.
 
 Maintainer material — co-edit rosters, delivery status and the machine-read pointer contract — is in `scoped/maintainers/scope-planning.md`.
 
@@ -15,7 +15,7 @@ Final authority on an ambiguous PLANNING rule is this file, whole; this section 
 
 ## Output Format Routing [PLANNING]
 
-The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — is canonical at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
+The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — enters at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`. Its rules are canonical at more than one site; `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names the canonical of each.
 
 The copy the planner applies, the `[DOC-ROUTE]` exception to the turn-0 routing gate included, is `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
 
@@ -27,7 +27,11 @@ The decision order it defines, applied before drawing any Mermaid block in a use
 
 ## Designer Co-Emission Trigger [PLANNING]
 
-Pointer only. The T1-T5 indicators and the 2-agent composition are canonical at `scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`; the planner applies that set through its body copy at `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`, the designer holds `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, and the orchestrator counts at `rules/glass-atrium/orchestrator-role.md` → Visual-Weight Probe.
+Pointer only. The T1-T5 indicators and the 2-agent composition are canonical at `scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`.
+
+- Planner copy: `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`.
+- Designer copy: `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`.
+- Orchestrator count: `rules/glass-atrium/orchestrator-role.md` → Visual-Weight Probe.
 
 ## Ambiguity Gate [PLANNING]
 
@@ -37,7 +41,11 @@ Pointer only. The T1-T5 indicators and the 2-agent composition are canonical at 
 
 ## Claim Marking & Consultation [PLANNING]
 
-Extends the Ambiguity Gate from axis granularity to claim granularity: the gate marks which AXIS is uncertain, this marks which CLAIM is, so the verification team receives a question list rather than a score. The two tag literals are canonical here. `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` holds the entry shape and which claims carry a tag; `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` quotes `[SELF-CHECKED:]` in the reviewer's marking judgment.
+Extends the Ambiguity Gate from axis granularity to claim granularity: the gate marks which AXIS is uncertain, this marks which CLAIM is, so the verification team receives a question list rather than a score.
+
+- The two tag literals are canonical here.
+- `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` holds the entry shape and which claims carry a tag.
+- `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` quotes `[SELF-CHECKED:]` in the reviewer's marking judgment.
 
 - `[SELF-CHECKED: <instrument you ran this turn>]` — names the INSTRUMENT, never the conclusion: the file Read, the pattern Grepped, the command run and what it returned. A tag naming no instrument is not a self-check.
 - `[UNCHECKED: <the question that would settle it>]` — carries a QUESTION, not a restated claim, because that string becomes another actor's work item verbatim.

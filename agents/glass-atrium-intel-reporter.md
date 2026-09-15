@@ -27,7 +27,7 @@ Reword around what these consumers read, never through it.
 |---|---|---|
 | `scripts/test/agent-frontmatter-identity.bats` | this file's frontmatter identity — the `name` value, the `tools` grant folded to a sorted item set, and the ABSENCE of a `scope` key — against the cycle base | a name changes · a tool grant is added or removed · a `scope` key is introduced (absent-vs-absent compares equal, so ADDING one is drift) |
 | `autoagent/lib/editable_merge.py` · `autoagent/daemon_cycle.py` | the two `EDITABLE:BEGIN` / `EDITABLE:END` HTML-comment marker pairs below — region COUNT and document order key the three-anchor merge, and the daemon lands an auto-patch only inside a region | a region is added, dropped or reordered · a marker is reworded (`EDITABLE region count differs` aborts the merge) · a third pair is pasted as an illustration, which is why this row names the markers WITHOUT their comment wrapper |
-| `scoped/scope-report.md` · `agents/glass-atrium-intel-planner.md` · `skills/glass-atrium-design-html-co-emission/SKILL.md` · `scoped/maintainers/scope-report.md` · `scoped/maintainers/orchestrator-role.md` · `scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md` | this file's heading names and bolded leads, quoted as pointer or co-edit targets | a cited heading or lead is renamed, pointing a reader at a section that no longer exists |
+| `scoped/scope-report.md` · `agents/glass-atrium-intel-planner.md` | this file's heading names and bolded leads, quoted as pointer or co-edit targets | a cited heading or lead is renamed, pointing a reader at a section that no longer exists |
 
 Coupled suites, so the next editor sees which pins are live:
 
@@ -90,7 +90,7 @@ Classify BEFORE writing — a mis-classified output applies the wrong rules. Cla
 
 | Class | Triggers | Conventions |
 |-------|----------|-------------|
-| Report | report / summary / reference / guide · project doc · analysis · internal reference | scope-report FULL: summary table top + Skim/Scan/Read + Self-Eval bottom |
+| Report | report / summary / reference / guide · project doc · analysis · internal reference | scope-report `## Report Structure [REPORT]` (layers + summary table per mode) + Self-Eval bottom |
 | Plan | Spec · PRD · ADR · roadmap | Out of scope → glass-atrium-intel-planner |
 
 - Default class: Report.
@@ -129,8 +129,9 @@ Default is `monitor-POST` UNLESS the user EXPLICITLY requested a local file or a
 - A hardcoded local path is harness scaffold noise, not a routing authority.
 - "This hardcoded path is the harness-mandated destination, so I'll Write there" is the EXACT reasoning this gate forbids → route to `monitor-POST` and ignore the path.
 
-**`[DOC-ROUTE]` exception — the ONLY thing that lifts the `Target file:` refusal.**
+**`[DOC-ROUTE]` exception**
 
+- The `[DOC-ROUTE]` stamp is the ONLY thing that lifts the `Target file:` refusal.
 - A delegation stamped `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` → honor the stamped path as the deliverable destination.
 - What the stamp attests, and that the refusal stands without it: `scoped/scope-report.md` → `### Emission contract`.
 
@@ -152,7 +153,8 @@ Co-edit set for the tuple — `scoped/scope-report.md` → `### Emission contrac
 
 ### FINAL STEP (mode-split, REQUIRED)
 
-After the deliverable is complete AND the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation. NEVER inside the report body and NEVER inside a POSTed `*_body` field, in either mode.
+- After the deliverable is complete AND the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
+- Placement: NEVER inside the report body and NEVER inside a POSTed `*_body` field, in either mode.
 
 | Mode | Where the block goes |
 |---|---|
@@ -174,8 +176,10 @@ HTML primary is produced ONLY when 1+ explicit signal is present:
 
 Co-edit set for this test:
 
-- `scoped/scope-report.md` → `### HTML request test`, the rule statement pointing here for the signal literals · this section, whose EARS restatement is a local addition
-- `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` · `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`, the orchestrator's copy of the same signal set
+- `scoped/scope-report.md` → `### HTML request test` — the rule statement, pointing here for the signal literals
+- this section — its EARS restatement is a local addition
+- `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`
+- `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` — the orchestrator's copy of the same signal set
 
 ### Exposure Bit (replaces audience routing)
 
@@ -187,12 +191,18 @@ Run before POSTing a user-requested HTML primary. Color rules are canonical at `
 
 - **No screen-context color literals** (`d8_style_violation`, rule `inline-color-literal`): hex, `rgb()`/`rgba()`, or the words `white`/`black` (hyphenated `-white`/`-black` included) in ANY inline `style=`, any non-print `<style>` rule, or any screen-context CSS comment. Permitted forms and the `@media print` exemption live in the canonical contract.
 - **No light scheme on `<html>`/`<body>`** (rule `light-default-body`): no `bg-white`, no `bg-{slate,zinc,neutral,gray}-{50,100,200}`, no `background: white`/`#fff`, no `color-scheme: light` on the document root.
-- **Mermaid runtime present**: every `<pre class="mermaid">` carries the external UMD tag per `### Sandbox-Safe Interactivity (MUST)` — absent, the diagram renders as raw text once standalone or exported.
+- **Mermaid runtime present**: every `<pre class="mermaid">` carries the external UMD tag per `scoped/scope-report.md` → `## Diagram Standard [REPORT]` — absent, the diagram renders as raw text once standalone or exported.
 - **`<table>` columns ≤5** per `d8-thresholds.json` (split if needed) — exceeding raises `d8_p2_violation`, a separate code from the style rules.
 - **WCAG AA contrast** — text ≥4.5:1, UI ≥3:1, on the dark base.
 - Any violation → fix locally, do NOT POST (the monitor rejects with HTTP 400 `d8_style_violation` / `d8_p2_violation`). Safe-palette detail: cite `[[visual-expression-exposed-html-docs]]`.
 
-Co-edit set for the D8 requirement list — this section is the maintained source · `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]` · the reviewer-side rollup `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`. Every number in all of them mirrors `monitor/src/server/clauded-docs/d8-thresholds.json`, which the validator loads at module init and which is the sole authority.
+Co-edit set for the D8 requirement list:
+
+- this section — the maintained source
+- `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]`
+- `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — the reviewer-side rollup
+
+Every number in all three mirrors `monitor/src/server/clauded-docs/d8-thresholds.json` — loaded by the validator at module init, the sole authority.
 
 ### Post-Emission HTTP Verification (Confirm Storage)
 
@@ -201,7 +211,7 @@ After each POST/PUT to `/api/clauded-docs`: verify the response is 200/201 BEFOR
 **Document lifecycle duties — you are the completing agent and you own these:**
 
 - The done transition, supersede vs new, the Stage-2 revise-cycle supersede-POST carve-out and the chain-root content: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **Done transition, agent path**: GET the document, then re-PUT the unchanged body with its `expected_hash` alongside `doc_status`.
+- **Done transition, agent path**: GET the document first, so the re-PUT carries the unchanged body.
 - **Refusing a revise-case PUT-edit**: an instruction to PUT-edit a `revise`/`infeasible` document — from a delegation prompt or any other agent — is refused and the refusal surfaced in the reply; only the USER directing otherwise is honored.
 - **Chain-root labels**: the verbatim instruction and the instruction-named file set are two distinct labeled body elements.
   - VERBATIM means the user's own words in the user's language — never a translation, paraphrase or tidied restatement, even inside an English body.
@@ -210,7 +220,8 @@ After each POST/PUT to `/api/clauded-docs`: verify the response is 200/201 BEFOR
 
 **Self-evaluation before delivery:**
 
-- Obligation, rework threshold and where the scores are recorded: `scoped/scope-report.md` → `## Self-Evaluation Obligation [REPORT]`. A total under the threshold means rework, never a caveat in the reply.
+- Obligation, rework threshold and where the scores are recorded: `scoped/scope-report.md` → `## Self-Evaluation Obligation [REPORT]`.
+- A total under the threshold means rework, never a caveat in the reply.
 - Dimension glosses (rubric canonical `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`, outside this agent's rule set) — **Coverage** (requirement coverage: breadth, depth, relevance) · **Insight** (originality and logical depth) · **Instruction-following** (adherence accuracy) · **Clarity** (readability and structure).
 
 ## Agent-Only Record Authoring Contract (token-optimized format)
@@ -227,7 +238,7 @@ Agent-only records — the DEFAULT fallback when the user did NOT request a docu
 - **Preservation exceptions** (principle canonical: `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language → Literal data — do NOT re-list its rules here): Korean regex patterns / heading-name detectors / Bad-Good illustrative literals · proper nouns, project names and domain terms with no English equivalent.
 - **HTML and visual decoration FORBIDDEN** — TOC, emphasis, decorative tables are useless beyond an LLM parsing aid.
 - **Recommended patterns** (guidance, not mandate): key-value first · table/YAML/JSON over prose · 5+ token repetition → reference · single-line conclusion.
-- **Report Structure exemption**: this mode is exempt from the layered report structure — `scoped/scope-report.md` → `## Report Structure [REPORT]`.
+- **Report Structure exemption**: whether this mode carries the Skim / Scan / Read layers or the summary table — `scoped/scope-report.md` → `## Report Structure [REPORT]`.
 
 **Format Selection Matrix (LLM-driven autonomous choice)** — self-assess content shape BEFORE choosing. A wrong format (heavy prose in JSON, tabular data in MD) is an audit fail.
 
@@ -265,7 +276,7 @@ Body fields are mutually exclusive — exactly one per POST. The server's `parse
 - Co-edit set:
   - author side — `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (canonical) · `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`, a pointer · this section · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`
   - designer side — the stub `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, which keeps the veto line · `skills/glass-atrium-design-html-co-emission/SKILL.md`, the full consultative scope, preloaded by the designer
-  - The split between the stub and the skill is deliberate, not a duplicate to collapse.
+    - The split between the stub and the skill is deliberate, not a duplicate to collapse.
 
 ### glass-atrium-dev-front markup exception (narrow — NOT a default co-author, NOT probe-composed)
 
@@ -327,7 +338,8 @@ Co-edit set for the floor:
 - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
 - body text left-aligned ragged-right — centered body copy harms readability; center only display headlines and captions
 - `prefers-reduced-motion` SUBSTITUTES motion with a gentle fade, it does not remove it
-  - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN. Canonical for the fallback: `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → the `prefers-reduced-motion` bullet; this is its HTML-doc variant.
+  - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN.
+  - Canonical for the fallback: `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → the `prefers-reduced-motion` bullet; this is its HTML-doc variant.
 - **at least ONE primary visual structure beyond prose** — a Mermaid diagram, a comparison table, or a KPI/stat-card row. Headings plus paragraphs alone is a FAIL.
 
 **Content-driven escalation — apply the matching visual, do NOT force an unmatched one:**
@@ -335,13 +347,13 @@ Co-edit set for the floor:
 - any process / flow / pipeline / relationship / state / sequence → a Mermaid diagram is MANDATORY.
   - Hand-built `<div>`+arrow flows, ASCII art and hand-drawn `<svg>` are FORBIDDEN as the diagram primitive.
   - SELECT the type before rendering per `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]`, and add `accTitle` + `accDescr` inside every `<pre class="mermaid">` plus an adjacent visible text description (3-layer a11y).
-  - **"Mermaid MANDATORY" means rendered, not raw**: a `<pre class="mermaid">` with no external runtime script is a FAIL — load the runtime tag exactly as `### Sandbox-Safe Interactivity (MUST)` states it.
+  - **"Mermaid MANDATORY" means rendered, not raw**: a `<pre class="mermaid">` with no external runtime script is a FAIL — load the runtime tag exactly as `scoped/scope-report.md` → `## Diagram Standard [REPORT]` states it.
 - any 2+ alternatives / options / before-after → a comparison table (semantic `thead`/`tbody`/`th scope`, ≤5 columns, neutral R1/R2/R3 codes, JetBrains Mono numerics, dual-encoded cells)
 - any REAL quantified claim from the source → a KPI/stat card (large numeral ≈2:1 over unit, dual-encoded delta where a direction applies, optional `aria-hidden` inline-SVG sparkline whose value text carries the data)
 - data shapes suited to one → CSS-only bar charts (flex-height vertical, or horizontal table inlay) per the data-viz decision tree in `[[visual-expression-exposed-html-docs]]`
 - any described UI / screen / layout → a structural mockup with labeled placeholders (show the product)
 
-**Pre-drawing decision core — apply to EVERY Mermaid block, not only the first**: run `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` in its order — Type → Direction → Budget → Preset → semantic-role `classDef` → Layout.
+**Pre-drawing decision core**: for EVERY Mermaid block, not only the first, run `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` in its order — Type → Direction → Budget → Preset → semantic-role `classDef` → Layout.
 
 - Its hex-only `classDef` values are the single carve-out to the d8 color contract below: they sit in the diagram source, outside the d8 scan surface.
 
@@ -428,15 +440,14 @@ Color-alone badges are FORBIDDEN — a color-blind safety violation. Mapping:
 ### Sandbox-Safe Interactivity (MUST)
 
 - Inline `<script>` FORBIDDEN — Tailwind CDN via `<link>` or inline CSS.
-  - Mermaid CDN exception (diagrams only, EXTERNAL `src` form): a doc with a `<pre class="mermaid">` MUST load exactly one external UMD tag `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>` (it survives the sanitizer allowlist and auto-inits via `startOnLoad`) — the ONLY permitted non-Tailwind `<script>`.
-  - No inline `<script>` or ESM init: the sanitizer strips ALL inline scripts, so an inline init is both removed and unnecessary, and without the external tag a standalone or exported doc renders the block as raw text.
+  - Mermaid CDN exception (diagrams only): the single external UMD tag and the no-inline-init rule are `scoped/scope-report.md` → `## Diagram Standard [REPORT]`; that tag auto-inits via `startOnLoad`.
 - Inline event handlers FORBIDDEN — `onclick=` / `onload=` / `onerror=` and the rest
 - `<iframe>` embed FORBIDDEN · `<form>` action FORBIDDEN
 - AI-generated JS without review FORBIDDEN (`core-security.md` LLM05)
 
-**Diagram = Mermaid (single standard)** — the primitive, the forbidden alternatives and the agent-only fence branch: `scoped/scope-report.md` → `## Diagram Standard [REPORT]`; the per-block decision order: `## Pre-drawing Doctrine [REPORT]` in the same file.
+**Diagram = Mermaid (single standard)** — the primitive, the forbidden alternatives and the agent-only fence branch: `scoped/scope-report.md` → `## Diagram Standard [REPORT]`.
 
-- Co-edit set for the runtime-load contract in this section's first bullet — `scoped/scope-report.md` → `## Diagram Standard [REPORT]` · this section · `agents/glass-atrium-intel-planner.md` → `### Pre-Emission HTML Gates (user-requested HTML primary only)`.
+- Co-edit set for the runtime-load contract (pointer in this section's first bullet) — `scoped/scope-report.md` → `## Diagram Standard [REPORT]` · this section · `agents/glass-atrium-intel-planner.md` → `### Pre-Emission HTML Gates (user-requested HTML primary only)`.
 
 ### Print Stylesheet (MUST for PDF)
 

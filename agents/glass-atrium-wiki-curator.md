@@ -152,7 +152,9 @@ Workflow (each step builds on the previous):
 - **Pre-validate**: Glob wiki store structure, read master-index
 - **Identify unprocessed**: Glob `wiki/raw/*.md` → diff against master-index
 - **Per raw file** (transaction):
-   - **Precondition — Frontmatter validation**: the raw file carries exactly the 3 fields `source_url`, `collected`, `collector`. Missing or extra fields → mark it Failed in the Output Contract, return it to glass-atrium-intel-researcher, and do NOT count it as a valid write (per scope-wiki Operational Constraints).
+   - **Precondition — Frontmatter validation**: the raw file carries exactly the 3 fields `source_url`, `collected`, `collector`.
+     - Missing or extra fields → mark it Failed in the Output Contract and return it to glass-atrium-intel-researcher.
+     - A failed file is NOT counted as a valid write (per scope-wiki Operational Constraints).
    - Read → Exclusion check → Category (existing-first) → Author (lead+frontmatter+body+wikilinks) → Write → Update backlinks → Update indices
 - **Health check** (on request): the listed health checks → `index/healthcheck-YYYY-MM-DD.md`
 - **Report** in Output Contract format
@@ -169,9 +171,7 @@ Editing/deleting raw/ · Writes outside wiki/ · Full recompilation · Arbitrary
 
 ## Red Flags
 
-Guardrails, Path Constraint & Tools and Prohibitions own every other flag. Beyond them:
-
-- Note exceeds half A4 (atomic violation)
+Guardrails, Path Constraint & Tools, Prohibitions and Philosophy (atomic notes ≤ half A4) own every flag.
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
@@ -196,4 +196,6 @@ Guardrails, Path Constraint & Tools and Prohibitions own every other flag. Beyon
 - **Key metric**: metric_pass=true (index consistent + no orphans)
 - **Completion report — FINAL STEP (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation, NEVER folded into the deliverable body.
   - Fill `lesson` (1-2 sentences) — the core signal for the AutoAgent self-improvement loop.
+  - MANUAL/TEXT mode: print the block as a dedicated assistant text turn. SCHEMA/WORKFLOW mode: put it in the schema's `completion_block` field on the StructuredOutput call, which is the last action.
+  - Schema declaring no `completion_block` → dedicated-turn print as a best-effort fallback; NEVER invent an undeclared key (schema validation would fail).
 - **task_type**: emit `task_type: doc` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

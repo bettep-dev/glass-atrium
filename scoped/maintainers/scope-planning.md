@@ -20,7 +20,8 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 ## What this file is, and is not
 
 - **Is**: the canonical for a narrow planning-only core — the Ambiguity Gate's planning-side axis statement, and the claim-marking tag literals.
-- **Is not**: the canonical for HTML emission, visual, diagram or document-lifecycle rules. `scoped/scope-report.md` is, and it says so at each of those headings. The rule file does not mirror them: the planner already applies its body copies of those rules, so a mirror would restate them to the same reader and add one more place to edit.
+- **Is not**: the canonical for HTML emission, visual, diagram or document-lifecycle rules. `scoped/scope-report.md` is where those rules enter; each rule's canonical — scope-report, the reporter body, or a monitor source — is named in `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`.
+  - The rule file does not mirror them: the planner already applies its body copies of those rules, so a mirror would restate them to the same reader and add one more place to edit.
 
 ## Coupled readers
 
@@ -40,19 +41,22 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 | Ambiguity Gate axes | axis canonical `scoped/scope-dev.md` → Ambiguity Gate — a weight changed there is hand-carried into the rule file; the planner body points at the rule file and restates no weight |
 | Claim-marking tag literals | reviewer-side consumer `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which quotes `[SELF-CHECKED:]` · `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` points at the rule file and carries `[UNCHECKED: …]` only inside its entry shape |
 | `[DOC-ROUTE]` stamp | delivered `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`, the exception clause inside the turn-0 gate · delegation-side canonical `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · the static gate `hooks/enforce-workflow-verify-stage.sh`, which scans workflow scripts and never this file |
-| Pre-drawing doctrine, designer trigger, emission routing | `scoped/scope-report.md` is canonical for all three; the planner's own copies are `## Visual Design Spec (applies to user-requested HTML primary)`, `## Designer Handoff Contract` and `## Output Format Routing` |
+| Pre-drawing doctrine, designer trigger | canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Designer Co-Emission Trigger [REPORT]`; the planner's own copies are `## Visual Design Spec (applies to user-requested HTML primary)` and `## Designer Handoff Contract` |
+| Emission routing | canonical per row of `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` (split across scope-report and the reporter body); the planner's own copy is `## Output Format Routing` |
 
 ## Restructure + diet pass (this wave)
 
 - **Kept as sole copies**: the self-settle-before-consult ordering, the `needs_domain_consult` route and the pre-commitment against the Open Questions mechanism's own growth. Each returns 0 hits in `agents/glass-atrium-intel-planner.md`.
 - **Kept because a named reader resolves into it**: the six weighted axes (asserted by `scoped/maintainers/scope-dev.md`), the two tag literals (the body's co-edit map), and the `## Pre-drawing Doctrine [PLANNING]` pointer (the parity suite).
 - **Kept because the heading names the content beneath it**: `## Absolute Rules [PLANNING]`. No citer forces that name; the rule file points at `core-compliance-matrix.md` → `## Precedence Resolution` for the precedence order, not the reverse.
-- **Dropped as duplicated in the planner body**: the score–evidence consistency rule, the EARS acceptance-criteria format with its worked Good/Bad pair, the confidence-tiered bands with the `[DRAFT: clarify before DEV]` literal, the Open-Questions entry shape, the empty-section rule, the self-settle tool list and the honest-backing bullet. Each is verbatim-equivalent or stronger in `agents/glass-atrium-intel-planner.md`.
+- **Dropped as duplicated in the planner body** — each verbatim-equivalent or stronger in `agents/glass-atrium-intel-planner.md`:
+  - the score–evidence consistency rule · the EARS acceptance-criteria format with its worked Good/Bad pair · the confidence-tiered bands with the `[DRAFT: clarify before DEV]` literal
+  - the Open-Questions entry shape · the empty-section rule · the self-settle tool list · the honest-backing bullet
 - **Dropped with no planner-body copy — the forbidden-self-spawn bullet** [measured: Grep `spawn` over the planner body → 0]. The prohibition is structural: the planner's frontmatter `tools:` grants no `Agent` tool.
 - **Dropped as a six-label skeleton**: the Pre-drawing decision steps, which carried the labels without the literals. The step names survive as one line; the literals live at `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and in the planner body.
 - **Moved here**: the delivery-status section, the coupled-reader list, the pointer apparatus of `## Output Format Routing [PLANNING]` and `## Designer Co-Emission Trigger [PLANNING]`, the co-edit rosters, and the machine-checked-pointer notices.
 - **Dropped as duplicated in the delivered body — the `[DOC-ROUTE]` exception**: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` carries the same `What the stamp attests` / `Absent the stamp` pair, states the exception as the stamped evidence for the gate's own default, and adds that delegation phrasing never substitutes for the stamp.
-  - When it was cut, the rule-file copy was the weaker of the two and reached no agent (delivery as measured 2026-09-10, before the part slots); what survives under `## Output Format Routing [PLANNING]` is the preamble pointer into that body.
+  - When it was cut, the rule-file copy was the weaker of the two and reached no agent (see `## Leave-deleted verdicts here are dated, not closed`); what survives under `## Output Format Routing [PLANNING]` is the preamble pointer into that body.
   - The stamp's full linkage — delivered copy, delegation-side canonical, static gate — is the `[DOC-ROUTE]` stamp row of `## Co-edit rosters (what moves together when a rule changes)` above, which never listed the rule file.
 
 ## `needs_domain_consult` — decision recorded

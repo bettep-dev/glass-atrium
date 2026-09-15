@@ -18,7 +18,9 @@ Agent-only record (default fallback) · user-requested HTML · user-requested no
 
 ### HTML request test
 
-HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent; visual richness and an LLM's own "this looks visual" judgment are not triggers, and a bare document request routes to non-HTML md. The signal literals — Korean included, where translating one disables the detector — are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
+- HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent.
+- Not triggers: visual richness, or an LLM's own "this looks visual" judgment. A bare document request routes to non-HTML md.
+- The signal literals — Korean included, where translating one disables the detector — are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
 
 ### Visual-Maximization Floor
 
@@ -60,7 +62,7 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 ### Document Lifecycle — completion + exposure routing
 
 - **Done transition**: the completing agent transitions `doc_status→done` through `PUT /api/clauded-docs/:id`, re-sending the document body plus the optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` is rejected `400 invalid_body`.
-- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
+- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` (the monitor auto-transitions the predecessor) · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
 - **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede POST even though the predecessor is still `progress`, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
 - **Chain-root content**: the first version carries the original user instruction VERBATIM plus the instruction-NAMED file set. An empty named set is the common shape and falls back to the instruction's named SUBJECT set, the file-count leg being skipped rather than measured against a zero baseline.
 - **Exposure routing**: viewer-exposed only on an explicit HTML/share signal; everything else is viewer default-hidden, and an ambiguous form defaults to non-HTML md.
@@ -129,9 +131,11 @@ Gated on "is this a user-requested HTML primary?" — an agent-only record never
 
 ## Report Structure [REPORT]
 
-Every report is navigable in skim-only mode. The layers are format-agnostic — a user-requested HTML primary carries them as `<section>` landmarks, an agent-only record as headings or another author-chosen structure.
+Every user-requested report is navigable in skim-only mode through the layers below — an HTML primary carries them as `<section>` landmarks, a non-HTML document as headings.
 
-- **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading. **Agent-only record exempt** — it keeps only the 1-line Pyramid conclusion.
+An agent-only record is not required to carry any layer or the summary table: add a layer or a table only where the record would otherwise be hard to understand.
+
+- **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
 - **Scan layer**: per-section digest + recommendation list.
 - **Read layer**: full analysis + complete source list.
 - Burying the conclusion in body paragraphs is FORBIDDEN.

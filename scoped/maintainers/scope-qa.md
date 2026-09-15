@@ -23,7 +23,7 @@ Companion to `scoped/scope-qa.md`, which carries QA-agent-facing duties only. Ev
 
 ## Retention ledger — who reads each section
 
-The rule file arrives whole for both QA agents (`rules.scope`), so a section stays when it obliges `glass-atrium-qa-code-reviewer`. This table records each section's reader and the outside sites that cite it by name.
+A section stays when it obliges `glass-atrium-qa-code-reviewer` (delivery: **How the reviewer reaches this file** below). This table records each section's reader and the outside sites that cite it by name.
 
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
@@ -87,7 +87,7 @@ The rule file is the `rules.scope` member of both QA registry rows, so `hooks/li
 
 ## What reads the rule file mechanically
 
-- **No reader pins a sentence inside it.** It carries no marker block, no extracted literal and no pinned needle, and slot 1 extracts nothing from it.
+- **Pins**: no reader pins a sentence inside it — it carries no marker block, no extracted literal and no pinned needle, and slot 1 extracts nothing from it.
 - Two readers take the whole body: `hooks/lib/inject_chunk.py` packs it into both QA agents' part slots at spawn, and `autoagent/daemon_cycle.py` excerpts it (below).
 - The remaining couplings are on the path spelling and the file's existence:
   - the `rules.scope` arrays in `agent-registry.json` — permitted values are the closed frozenset in `scripts/agent_lifecycle/registry_ops.py`, pinned by `scripts/test/test_agent_lifecycle_overhaul.py`.

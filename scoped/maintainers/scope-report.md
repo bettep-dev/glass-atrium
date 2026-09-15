@@ -38,7 +38,7 @@ Consequences a maintainer works from:
 - the Budget step must keep naming a `content-budget.ts` path — a section naming none fails the cap and band rows rather than reading as parity against nothing;
 - the preset class names are matched by prefix, so the section must not introduce a further token sharing `doc-diagram-`.
 
-The reporter body points at that section and restates no value. `agents/glass-atrium-intel-planner.md` → `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)` restates the caps and the parity suite does NOT read it, so a value changed in the doctrine must be changed there by hand.
+The reporter body points at that section and restates no value; the planner-body copy the suite does not read is the `Pre-drawing Doctrine numbers` co-edit row below.
 
 ## Server-enforced schema gates (they bind no agent; reader is the monitor maintainer)
 
@@ -73,7 +73,9 @@ Source: `monitor/src/server/clauded-docs/html-validator.ts`.
 
 - The planning-side visual copies compressed away the `light-default-body` prohibition list, the HTML-comment-dropped-pre-scan carve-out, the OKLCH 2-tier token requirement and the `oklch` background option. The drift sits between `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec (applies to user-requested HTML primary)` and the reporter body's authoring canonical.
 - The anti-slop SoT (`agents/glass-atrium-design-designer.md`) and its mechanical detector (`skills/glass-atrium-design-anti-slop/SKILL.md`) are drifted in both directions: the detector carries patterns the SoT never adopted, including a pure-white-on-dark numeric floor with no canonical home, and omits the SoT's mixed-radius and workflow entries.
-- The `prefers-reduced-motion` fallback is canonical at `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → the **`prefers-reduced-motion`** bullet, which forbids a hard cut. Copies and pointers spread across the UI-emitting DEV fleet, the design references and the DESIGN template, some copies omitting that prohibition; the reporter body carries an HTML-doc variant that points there. No roster is kept, because the set grows with the fleet.
+- The `prefers-reduced-motion` fallback is canonical at `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → the **`prefers-reduced-motion`** bullet, which forbids a hard cut.
+  - Copies and pointers spread across the UI-emitting DEV fleet, the design references and the DESIGN template; some omit that prohibition. The reporter body carries an HTML-doc variant that points there.
+  - No roster is kept, because the set grows with the fleet.
 
 ## Restructure + diet pass (this wave)
 
@@ -82,6 +84,8 @@ The rule file keeps the two rules no body carries, the sections a live suite or 
 - **Kept as sole copies**: the `URL + collected_at(YYYY-MM-DD)` citation format (`collected_at`: 0 hits across `agents/*.md`) and the residual anti-slop patterns (`background-clip`, `lavender`, `grid-cols-3`: 0 hits across `agents/*.md`, and self-declared absent from the designer SoT).
 - **Kept because a Tier-1 pointer lands there**: `### Emission contract` — `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → Monitor address sends every agent here for "what to POST and when", and `rules/glass-atrium/core-git-workflow.md` → Pull Requests sends a reviewer here for the single-HTML-no-MD-companion storage model.
 - **Kept because a live pointer calls this file the canonical for it**: `## Diagram Standard [REPORT]` ban/allow list, `## Report Structure [REPORT]`, `## Self-Evaluation Obligation [REPORT]`, `### Document Lifecycle`, `### Threshold SoT`, the T1-T5 table. Each was compressed to the operative statement; the rationale prose (R2/R3 rejection reasoning, the Mermaid rationale trio, the trigger-path steps) was dropped as duplicated in the bodies that act on it.
-- **Dropped as duplicated in the reporter body**: the BASELINE requirement list, the d8 validator-safe color rule, the content-driven escalation, the dark-base detail, the D8 requirement list, the agent-only record authoring guide, the HTML-primary requirement list, and the branching-order MUST. Each is verbatim-equivalent in `agents/glass-atrium-intel-reporter.md`, where its canonical lives.
-- **Dropped as a stated contradiction**: the unconditional "Summary table REQUIRED" absolute, which the same file contradicted further down with the agent-only exemption. The rule stands once, at `## Report Structure [REPORT]` → Skim layer, beside that exemption.
+- **Dropped as duplicated in the reporter body** — each verbatim-equivalent in `agents/glass-atrium-intel-reporter.md`, where its canonical lives:
+  - the BASELINE requirement list · the d8 validator-safe color rule · the content-driven escalation · the dark-base detail
+  - the D8 requirement list · the agent-only record authoring guide · the HTML-primary requirement list · the branching-order MUST
+- **Dropped as a stated contradiction**: the unconditional "Summary table REQUIRED" absolute, which the same file contradicted further down with the agent-only exemption. The rule stands once, at `## Report Structure [REPORT]`: the Skim layer carries the summary table, and the section intro exempts agent-only records from every layer and the table.
 - **Moved here**: the delivery-status section, the coupled-readers table, the `Copies of … all in agreement` rosters now held by `## Co-edit rosters (what moves together when a rule changes)`, the machine-checked notices, the server-400 gate list and the standing drift reports.

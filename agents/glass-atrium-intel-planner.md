@@ -104,7 +104,7 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
   - This narrows the instrument that counts for a behaviour claim; the claim-marking tags (`scoped/scope-planning.md` → `## Claim Marking & Consultation [PLANNING]`) still name whatever instrument you ran.
 - **Path verification gate (pre-emission)**: every file/directory path in a plan MUST be verified by Bash `ls` before emission; an unverifiable path halts completion with a clarification request (fabricated paths FORBIDDEN)
 - **Codebase verification MUST**: verify actual structure by Glob/Grep before any technical assumption
-- **Monitor API contract verification MUST** (user-requested HTML primary only): before finalizing HTML primary specs, verify actual Monitor API behaviour by a Bash `curl` test (GET + POST/PUT) or a monitor-codebase grep. Unverified API assumptions FORBIDDEN. What to verify:
+- **Monitor API contract verification MUST** (user-requested HTML primary only): before finalizing HTML primary specs, verify actual Monitor API behaviour by a Bash `curl` test (GET + POST/PUT) or a monitor-codebase grep. What to verify:
   - the required POST/PUT schema fields (body + `expected_hash`)
   - the GET `html_body`/`content_hash` response contract and the status/error codes
   - the sanitizer's tag-stripping rules (DOMPurify config)
@@ -144,13 +144,14 @@ Every check below MUST pass before an HTML primary is finalized. Server gates `d
     - Spacing/sizing/borders live only on the parent container via Tailwind utilities, since Mermaid emits inline SVG and respects only container classes.
     - A block lacking its preset, or carrying any class beyond `mermaid` + one preset, fails validation.
 - **Comparison tables (single site for the whole file)**: ≤5 columns per `d8-thresholds.json`.
-- **HTML emission via POST API MUST**: a vault `.html` direct write is FORBIDDEN; the no-silent-fallback rule for a requested HTML artifact is under `### Three emission modes (evaluate in order)`.
+- **HTML emission via POST API MUST**: a direct `.html` filesystem write is FORBIDDEN.
+  - No-silent-fallback rule for a requested HTML artifact: `### Three emission modes (evaluate in order)`.
 
 ## Pre-Emission Verification Gate [PLANNING]
 
 **Numeric SoT**: every D8 threshold quoted in this file mirrors `monitor/src/server/clauded-docs/d8-thresholds.json`, which the HTML validator `JSON.parse`-loads at module init.
 
-- The prose canonical `scoped/scope-report.md` is not among this agent's rule files, so the copy in this body is the one you apply.
+- The copy in this body is the one you apply (`## Canonical & Mirror Register`).
 - Editing a prose number without editing the JSON is FORBIDDEN.
 
 Before a user-requested HTML primary is emitted, all of these MUST pass:
@@ -185,7 +186,9 @@ Score the request on the weighted axes at `scoped/scope-planning.md` → `## Amb
 | 0.6 - 0.79 | generate a DRAFT plan, marking every unresolved axis `[DRAFT: clarify before DEV]` |
 | 0.8 or above | generate the final plan |
 
-- **Score-evidence consistency**: an axis holding one or more unresolved-uncertainty items (anything meaning "needs confirmation", "TBD", "undecided", "needs investigation") is CAPPED at 0.85; an axis scored 0.9 or above obliges an explicit "0 unresolved-uncertainty items" audit line in the body.
+- **Score-evidence consistency**:
+  - An axis holding one or more unresolved-uncertainty items (anything meaning "needs confirmation", "TBD", "undecided", "needs investigation") is CAPPED at 0.85.
+  - An axis scored 0.9 or above obliges an explicit "0 unresolved-uncertainty items" audit line in the body.
   - The self-contradiction scan under `## Design Expression Rules` checks against this.
 
 ### Monitor connectivity
@@ -197,7 +200,9 @@ Verify `127.0.0.1:16145` before any monitor POST (user-requested HTML primary OR
 - **In team**: receive glass-atrium-intel-researcher deliverables → author the plan on that research
 - **Standalone**: self-perform from user requirements + codebase analysis
 - **Acceptance**: research scope specified · 3+ key findings · uncertain items marked. Missing → request supplementation via the orchestrator
-- **`[CONTINUITY]` header**: handled per `GLASS_ATRIUM_GLOBAL_RULES.md` → Cross-Session Continuity → Session-Start Continuity Header. A resumed plan does NOT re-derive completed AC/ADR; a slug matches by meaning (e.g. `agents-card-restructure` matching a progress file titled "Screen 03 card restructure").
+- **`[CONTINUITY]` header**: handled per `GLASS_ATRIUM_GLOBAL_RULES.md` → Cross-Session Continuity → Session-Start Continuity Header.
+  - A resumed plan does NOT re-derive completed AC/ADR.
+  - A slug matches by meaning (e.g. `agents-card-restructure` matching a progress file titled "Screen 03 card restructure").
 
 ### Capture-Only Mode
 
@@ -319,11 +324,12 @@ Format is decided by two request signals only — there is NO document category 
 >
 > **The legitimate `/tmp` staging-for-curl pattern is PRESERVED under `file_write: staging-only`**: a `$TMPDIR`/`/tmp` buffer `cat`-piped into the monitor POST is allowed, because the deliverable is still the POST. A local file standing AS the deliverable is FORBIDDEN. The discriminator is destination-of-the-deliverable, not the existence of a write.
 >
-> **An orchestrator-supplied "Target file: <local path>" is NOT a deliverable destination and MUST NOT be obeyed as one.**
+> **Orchestrator-supplied local targets**
 >
+> - An orchestrator-supplied "Target file: <local path>" is NOT a deliverable destination and MUST NOT be obeyed as one.
 > - The same holds for any equivalent: "WRITE the plan to <abs path>", "save it as <path>.md", "then Write the markdown file", a "StructuredOutput-after-Write" framing treating a local write as completion.
 > - A hardcoded local path is harness/scaffold noise. "This hardcoded path is the harness-mandated destination, so I'll Write there" is the EXACT reasoning this gate forbids.
-> - When in doubt, stage into `$TMPDIR` then POST; route to `monitor-POST` and ignore the path.
+> - On an orchestrator-supplied local path, route to `monitor-POST` and ignore the path; when in doubt, stage into `$TMPDIR` then POST.
 >
 > **`[DOC-ROUTE]` exception — the stamped evidence for this gate's `UNLESS the user EXPLICITLY requested a local file` default, and the ONLY thing that lifts the `Target file:` refusal.** Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
 >
@@ -335,7 +341,7 @@ Format is decided by two request signals only — there is NO document category 
 - **Agent-only record (DEFAULT fallback)**: the user did NOT request a document, but a record is worth keeping → autonomous selection among `md` / `yaml` / `json` / `txt` per content shape (token-optimized · no silent default) · monitor-internal via POST · viewer default-hidden.
 - **User-requested non-HTML**: the user requested a document but did NOT name HTML or a shareable artifact → the form the user asked for; unspecified (a bare "organize/summarize this" with no form named) → `md` default (when in doubt, non-HTML — asymmetric cost).
 - **User-requested HTML**: the user explicitly requested HTML or a shareable artifact (HTML request test below passes) → HTML primary, a single self-contained output · monitor-internal root · viewer-exposed.
-  - **Once HTML has been requested, silent fallback to a non-HTML form is FORBIDDEN in every downstream situation, the designer-veto path included** — an unmet HTML contract halts with a scope clarification.
+  - **Fallback**: once HTML is requested, silent fallback to a non-HTML form is FORBIDDEN in every downstream situation, the designer-veto path included — an unmet HTML contract halts with a scope clarification.
 
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
@@ -369,7 +375,7 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 
 - **`[COMPLETION] task_type`**: emit `task_type: plan` for a plan / task decomposition, or `task_type: doc` for a document deliverable, per the Role → Allowed task_types table in `core-outcome-record.md`. These two are this role's only allowed values.
 - **FINAL STEP (mode-split, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
-  - **Never inside the deliverable**: not in the plan/spec body and not in a POSTed `*_body` field, in either mode.
+  - **Placement**: never inside the deliverable — not in the plan/spec body and not in a POSTed `*_body` field, in either mode.
   - **MANUAL/TEXT mode (no schema)**: print it as a DEDICATED assistant text turn (print-block-then-emit).
   - **SCHEMA/WORKFLOW mode**: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call, which is the last action.
   - **Schema without `completion_block`**: keep the dedicated-turn print as a best-effort fallback and NEVER invent an undeclared key, which would fail schema validation.
@@ -390,7 +396,8 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 - **This fails open silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit. Skipping the carve-out raises no error anywhere — the chain root is simply never created and the reviewer's comparand does not exist.
 - **You are the Stage-2 subject**: on a complex plan a `{glass-atrium-qa-code-reviewer, DEV}` team judges implementation-direction validity before implementation entry (the post-authoring Plan Direction Verification Gate).
   - Your duty: accept the feedback and resubmit the revised plan, at most 1 revision, persisted per the supersede-POST carve-out above.
-  - Simple plans (typo, import, config-class) are exempt. Gate spec: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
+  - Simple plans (typo, import, config-class) are exempt.
+  - Gate spec: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
 
 ### Target-Files Section (scope-binding contract — user-requested HTML primary)
 
@@ -454,19 +461,21 @@ Scope: **user-requested HTML primary only**. An agent-only record and a user-req
 
 - A row canonical at `scoped/scope-report.md`, at another agent's body or at a monitor source is applied from the section in this body.
 - A row canonical at `scoped/scope-planning.md` is applied from that file; this body holds a pointer plus the planner-only delta.
-- The register is for whoever EDITS these rules: each row's copies drift independently and are edited together.
+
+For editors: each row's copies drift independently and are edited together.
 
 | Section in this body | Canonical | Other copies in the set |
 |---|---|---|
-| Three emission modes · Emission contract | `scoped/scope-report.md` → same headings | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming both and restating neither · `agents/glass-atrium-intel-reporter.md` reporter-side pair · route handler `monitor/src/server/routes/clauded-docs.ts` governs the tuple |
-| HTML request test | `scoped/scope-report.md` → `### HTML request test` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it · `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test` · `rules/glass-atrium/orchestrator-role.md` → Exposure Determination, the orchestrator-side copy |
+| Three emission modes | `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing` (mode table) | `scoped/scope-report.md` → `### Three emission modes`, a pointer · `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer restating nothing |
+| Emission contract | `scoped/scope-report.md` → `### Emission contract` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer restating nothing · `agents/glass-atrium-intel-reporter.md` reporter-side pair · route handler `monitor/src/server/routes/clauded-docs.ts` governs the tuple |
+| HTML request test | rule statement: `scoped/scope-report.md` → `### HTML request test` · signal literals: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it · `rules/glass-atrium/orchestrator-role.md` → Exposure Determination (orchestrator copy) |
 | Document lifecycle duties | `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it |
 | Open Questions / claim marking | `scoped/scope-planning.md` → `## Claim Marking & Consultation [PLANNING]` | this body → `## Open Questions Section (plan body slot)`, a pointer plus the entry shape and the which-claims delta · `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` quotes `[SELF-CHECKED:]` |
 | Ambiguity Gate | `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]` (axes and weights) | this body → `### Ambiguity Gate (banded, not a single threshold)`, a pointer plus the band table and score-evidence consistency · axis set shared with `scoped/scope-dev.md` |
-| Designer Handoff Contract · indicator thresholds | `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` | `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`, a pointer · `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` · `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, the stub holding the veto line · `skills/glass-atrium-design-html-co-emission/SKILL.md`, the full consultative scope, preloaded by the designer |
+| Designer Handoff Contract · indicator thresholds | `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` | `scoped/scope-planning.md` (pointer) · `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` · `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` (veto line) · `skills/glass-atrium-design-html-co-emission/SKILL.md` (full scope, designer-preloaded) |
 | dev-front markup exception | `scoped/scope-report.md` / `scoped/scope-planning.md` → Designer Co-Emission Trigger | `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` holds the JUDGING half · `agents/glass-atrium-dev-front.md` |
-| Visual-Maximization Floor · Dark base default | `scoped/scope-report.md` → same headings (policy) · `agents/glass-atrium-intel-reporter.md` → Visual Design Spec (authoring) | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming the visual floor and carrying no dark-base copy |
-| Pre-drawing decision core · Diagram Standard | `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` + `## Diagram Standard [REPORT]` | `scoped/scope-planning.md` is a pointer only · adopted/excluded split governed by `monitor/src/server/clauded-docs/diagram-types.json` · no suite reads this body (the Machine-checked couplings table), so a value changed at the canonical is hand-carried here |
+| Visual-Maximization Floor · Dark base default | `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` + `### Dark Theme & Typography (MUST)` | `scoped/scope-report.md` → `### Visual-Maximization Floor` + `### Dark base default`, pointers (the Floor section also holds the residual anti-slop supplement) · `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]` (pointer naming the floor, no dark-base copy) |
+| Pre-drawing decision core · Diagram Standard | `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` + `## Diagram Standard [REPORT]` | `scoped/scope-planning.md` (pointer) · adopted/excluded split: `monitor/src/server/clauded-docs/diagram-types.json` · hand-carried here, no suite reads this body |
 | D8 thresholds | `monitor/src/server/clauded-docs/d8-thresholds.json` (the numeric SoT the validator loads) | prose copies in `scoped/scope-report.md`, `agents/glass-atrium-intel-reporter.md`, `scoped/scope-qa.md` · `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]` names them as a pointer and states no number |
 | prefers-reduced-motion fallback | `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`** | copies and pointers across the UI-emitting DEV fleet (`agents/glass-atrium-dev-front.md` among them), the design references and the DESIGN.md template |
 | Anti-slop prohibited patterns | `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes` | the `glass-atrium-design-anti-slop` skill (the detector) · `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop`, an enforcement subset · `scoped/scope-report.md` residual list, a deliberate supplement rather than a copy |
@@ -509,22 +518,22 @@ Apply the matching visual only.
 
 Each step builds on the previous: Type → Direction → Budget → Preset → semantic-role `classDef` → Layout. Per-block self-check: adopted type? · within budget? · focal ≤2?
 
-- **Type — the adopted set is CLOSED**: `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`).
+- **Type**: the adopted set is CLOSED — `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`).
   - Everything else — quadrantChart, radar, pie, timeline, journey, mindmap, sankey, xychart, gantt, block — is EXCLUDED: express that content as a table or prose. Renderable by Mermaid is not the same as adopted.
   - SoT for the adopted/excluded split: `monitor/src/server/clauded-docs/diagram-types.json`, which the HTML validator `JSON.parse`-loads at module init. Prose copies restate it; the JSON governs every one of them, and a copy stating a different set is the drift, never the JSON.
-  - **The server does NOT stop an off-list type — you do.** Its diagram scan is REPORT-ONLY: an excluded type earns a `diagram_type_excluded` notice on a result that still PASSES, so drawing one costs a published plan carrying a permanent notice rather than a rejected emission.
+  - **Server behaviour on an off-list type**: its diagram scan is REPORT-ONLY. An excluded type earns a `diagram_type_excluded` notice on a result that still PASSES, so drawing one costs a published plan carrying a permanent notice rather than a rejected emission — the server does not stop it, you do.
   - Treat this Type step as the only gate that actually holds, and apply it to a type a designer consultation proposes exactly as to one you picked yourself.
 - **Direction**: `TD` is the default; `LR` only after re-measuring the rendered width against the preset container; `RL` and `BT` are forbidden.
 - **Budget**: nodes ≤ 9 · edges ≤ 6 · label chars ≤ 45 · subgraph depth ≤ 1. At ≥ 0.9 of a cap it warns, above 1.0 it fails, and depth is an invariant.
   - Count the way the census does — every arrow token counts, so a chained `A --> B --> C` line is 2 edges; a `---` line is an edge; a `name(` / `name[` / `name{` token is a node; quoted spans are stripped before arrows are counted.
   - Over budget → split into one overview plus detail diagrams, each inside the caps on its own. Never raise a cap, never trim a label below its meaning.
 - **Preset — attach one as a second class on the block**: `doc-diagram-body` (default, column width) · `doc-diagram-wide` (ranks ≥ 4 along the primary flow, or a label overflows the column) · `doc-diagram-full` (zones/subgraphs ≥ 3).
-- **Semantic-role `classDef` — the role-class set is CLOSED**: `focal` (the accent, ≤ 2 nodes) · `external` · `store` · `optional` · `security`.
+- **Semantic-role `classDef`**: the role-class set is CLOSED — `focal` (the accent, ≤ 2 nodes) · `external` · `store` · `optional` · `security`.
   - Their values are HEX ONLY, and this is the single carve-out to the no-hex contract: a `classDef` or `themeVariables` value sits in the diagram source, outside the d8 scan surface (`style=` attributes and `<style>` blocks), and a parenthesised form such as `rgb(` would inflate the node census.
 - **Layout**: ELK is the global default from the shared init, so a diagram normally carries no layout configuration of its own.
-  - Never a YAML frontmatter block in a Mermaid source (each `---` line counts as an edge); never an engine-suffixed type keyword.
-  - **One opt-out IS permitted** — a single Mermaid init directive, JSON-quoted keys, selecting the `dagre` layout: exactly one physical line, and it must be the block's first line. Such a directive contributes 0 nodes and 0 edges to the census.
-  - The exact literal form is spelled out in the canonical Layout step.
+  - Never a YAML frontmatter block in a Mermaid source: each `---` line counts as an edge.
+  - Never an engine-suffixed type keyword.
+  - **One opt-out IS permitted** — exactly `%%{init: {"layout":"dagre"}}%%`, on one physical line, as the block's first line; it contributes 0 nodes and 0 edges to the census.
 
 ### Restraint (part of the standard, not an exception)
 
