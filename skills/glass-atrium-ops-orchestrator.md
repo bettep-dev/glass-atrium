@@ -717,7 +717,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   // declaration block (comment-resident — the declaration contract above; unbracketed in THIS
   // comment on purpose: a BRACKETED sentinel in any ordinary comment binds the extractor as an
   // opening sentinel → block-grammar — only string-resident sentinels are inert), (2) the entry (plan-ref)
-  // + [SIZE-EST] tokens, and (3) the robustAgent resilience wrapper (### Resilient Workflow
+  // + [SIZE-EST] tokens, and (3) the robustAgent resilience wrapper (#### Resilient Workflow
   // Authoring) INLINE, so a pasted DEV workflow clears the gate AND survives schema-non-emit BY
   // CONSTRUCTION — a bare agent({schema}) THROWS on schema-non-emit (uncaught → crashes the run);
   // .catch(() => null) is the load-bearing catcher that converts the throw to a null the retry
@@ -725,7 +725,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   // token the declaration is consistency-checked against (a literal that exists only as
   // robustAgent's first argument is invisible to the gate) — keep BOTH literals identical. Every
   // stage goal MUST also reserve a completion_block schema string field + instruct the agent to
-  // fill it with the full [COMPLETION] block (### Resilient Workflow Authoring) — the printed text
+  // fill it with the full [COMPLETION] block (#### Resilient Workflow Authoring) — the printed text
   // turn does NOT survive schema-mode; the recorder reads completion_block from the SO input.
   // TEXT-MODE BY DESIGN: the stages below declare NO schema — a verify stage returns a prose
   // verdict (pass|revise, feasible|infeasible), so its printed [COMPLETION] IS recorded by the
@@ -741,7 +741,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   log('[SIZE-EST] bundles=2 tool_uses~=25 — implement + its new tests');
 
   // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow. MANDATORY wrapper
-  // for every schema-mode agent() (rationale: ### Resilient Workflow Authoring). Copied inline here so
+  // for every schema-mode agent() (rationale: #### Resilient Workflow Authoring). Copied inline here so
   // the compliant idiom is present the moment this skeleton is pasted — do NOT strip it back to bare
   // agent() calls.
   async function robustAgent(agentType, opts) {
@@ -813,7 +813,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   ```js
   // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
   // NO dev-* token precedes the reviewer (Discovery/Design uses NON-DEV agents), so BLOCK_ORDER
-  // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (### Resilient
+  // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (#### Resilient
   // Workflow Authoring) plus its two standing-question literals: every schema-mode agent() stays
   // retry-once-on-null / isolated-failure, and any stage you convert to schema mode reserves a
   // completion_block field + instructs the agent to fill it.
@@ -857,7 +857,7 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
   // entry token in canonical home (raw-scanned — placement is convention). dev-* STILL needs the
   // [SIZE-EST] token, the verify-stage, and the AGENT-COMPOSITION declaration (co-equal requirements;
   // unbracketed in this comment — a bracketed sentinel in an ordinary comment binds the extractor).
-  // robustAgent = the retry-once-on-null / isolated-failure wrapper (### Resilient Workflow Authoring;
+  // robustAgent = the retry-once-on-null / isolated-failure wrapper (#### Resilient Workflow Authoring;
   // full helper inline in the verify-stage skeleton above) — mandatory for every schema-mode agent().
   /* [AGENT-COMPOSITION]
   verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-python
