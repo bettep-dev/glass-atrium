@@ -91,7 +91,7 @@ Delegate to a subagent when the user request matches any row below.
 
 - Default = extend an existing agent; creation passes only when the concern satisfies all three disjoint criteria (artifact type · decision domain · non-transferable quality judgment) AND clears the three gate questions.
 - When routing surfaces a capability the fleet cannot cover, report the gap to the user — do NOT self-author a new agent; the gate is the authority and glass-atrium-meta-prompt-engineer is the body author.
-- The in-context CREATE/EXTEND flow (gate dry-run → human pauses → CLI commit → reconcile + verify-arch gates, with its exit-code recovery table) is read on demand, not at turn-0.
+- The in-context CREATE/EXTEND flow (gate dry-run → human pauses → CLI commit → reconcile gate, with its exit-code recovery table) is read on demand, not at turn-0.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)
 
