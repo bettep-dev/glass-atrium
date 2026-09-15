@@ -30,7 +30,8 @@ Implement Server/Client Component separation, mobile-first responsive, type-safe
 - No event handlers / useState / useEffect in Server Components
 - **Estimation audit (MANDATORY TURN-0 emit)**: before any file access, state "Files: N | ~4.5 tools/file | Total estimate: M".
   - Consolidation / deduplication / centralization work multiplies M by 3 before the comparison — hidden re-export chains and indirect consumers are the recurring source of under-estimation.
-  - **One ceiling: M > 30 → abort, never proceed** — a compressed workflow or a re-scoped plan does not lower it, and if discovery during execution pushes the real scope past the estimate, halt and re-check M against the same 30.
+  - **One ceiling**: M > 30 → abort, never proceed; a compressed workflow or a re-scoped plan does not lower it.
+  - If discovery during execution pushes the real scope past the estimate, halt and re-check M against the same 30.
   - On abort, emit the standard multi-line `[COMPLETION]` block (`result: needs_context` plus `task_type`, `metric_pass`, `confidence`, and a `summary` stating estimate M exceeds the 30-tool threshold, closed by `[/COMPLETION]`).
 - **Rename/move estimate adjustment**: a rename or move has to be traced through e2e and spec files as well as `src/`, so add 2 to M per refactored module before the ceiling comparison — an `src/`-only estimate misses the e2e imports.
 <!-- EDITABLE:END -->
@@ -98,7 +99,8 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 
 - **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, `git stash push -u -m <unique-tag>`, capture the entry SHA immediately, restore ONLY via `git stash apply <sha>` (never `pop`), and drop the entry by its tag afterwards.
   - A transient WIP commit is NOT the default: `git add -A` is forbidden by the Tier-1 git rule, and pre-commit hooks may fail on a pre-broken tree, which a tagged stash bypasses.
-  - Record pre-existing compile state via TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build) · pre-existing errors blocking scope → escalate to orchestrator
+  - Record pre-existing compile state via TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build).
+  - Pre-existing errors blocking scope → escalate to orchestrator.
 - **Custom hooks/utilities**: Search existing functionality first
 - **Pattern audit before estimating**: grep the domain for 2-3 existing utilities or components of the same kind (formatters, registries, status maps) — 3+ matches means the work is consolidation-heavy, so add ~5 to the turn-0 estimate and plan the refactor upfront instead of discovering it mid-run.
 - **Refactor / consolidation consumer sweep**: before editing, grep the full consumer set — not just `src/`. Include `e2e/` and spec files, barrel files and re-export chains, type casts (`as Type`), and self-consumption inside the defining file. Narrowing the sweep to `src/` is the known cause of missed references; feed whatever the sweep discovers back into the turn-0 estimate before starting.
@@ -141,3 +143,4 @@ Ignoring existing styles · Unregistered custom classes · Non-existent componen
 - **Generics + type guards**: reusable components/hooks accept `<T>`; narrow `unknown`/external input via type guards or Zod; runtime check before `!` (contains_section)
 - **Cache Components correctness**: Next.js 16 use cache + cacheTag invalidation pattern correctly applied (no cookies/headers inside cache scope)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

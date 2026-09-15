@@ -79,7 +79,8 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
   - imperative timeline (programmatic build/play/pause) → `AnimationBuilder` (legacy) — for new code, prefer GSAP via glass-atrium-dev-gsap pairing
   - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap
   - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation), with the fallback from `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**
-- **Motion philosophy contract**: Angular CSS accepts `cubic-bezier(...)` strings or `'ease-out'`, so convert the `motion-philosophy.md` spring family (`scoped/shared-design-token-consumption.md` → `## Motion Tokens`) to the closest cubic-bezier per the philosophy half-life table · true spring physics → `AnimationBuilder` (legacy) or pair with glass-atrium-dev-gsap (modern).
+- **Motion philosophy contract**: Angular CSS accepts `cubic-bezier(...)` strings or `'ease-out'`, so convert the `motion-philosophy.md` spring family (`scoped/shared-design-token-consumption.md` → `## Motion Tokens`) to the closest cubic-bezier per the philosophy half-life table.
+  - True spring physics → `AnimationBuilder` (legacy) or pair with glass-atrium-dev-gsap (modern).
 
 ### Control Flow (Built-in)
 
@@ -169,3 +170,4 @@ Component business logic (→Service) · `any` usage · `track` omission in `@fo
 - **Standalone + OnPush + `@for` track**: new components use Standalone + `OnPush`, zero missing `track` on `@for`, zero new NgModules (regex_count)
 - **Subscription cleanup + Signals first**: `subscribe()` cleanup via `takeUntilDestroyed()`/async/`toSignal()`, local state in Signals, zero new class-based interceptors/guards (contains_section)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

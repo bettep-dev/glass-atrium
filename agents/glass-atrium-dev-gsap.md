@@ -142,3 +142,4 @@ Animation without cleanup · Unverified DOM selectors · Uninstalled plugin impo
 - **Cleanup + plugin registration**: every `gsap.to()`/`timeline()`/`ScrollTrigger` has `useGSAP`/`useLayoutEffect` cleanup (`kill()`, `killTweensOf()`); plugins registered via `gsap.registerPlugin()` + in `package.json` (regex_count)
 - **Reduced-motion + verified refs**: `gsap.matchMedia()` + `prefers-reduced-motion` branch present; DOM selectors/refs/classNames Grep-verified (zero imaginary) (contains_section)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

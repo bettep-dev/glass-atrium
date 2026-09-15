@@ -30,7 +30,7 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 <!-- EDITABLE:BEGIN -->
 - MUST NOT apply styles matching the anti-AI-slop list (Inter/Roboto, purple+white gradient, uniform card grids, etc.)
 - MUST NOT begin implementation until Design Thinking 4 stages (Purpose → Tone → Constraints → Differentiation) are complete
-- Theme/color changes MUST identify ALL visually interdependent CSS properties (background, borders, text, fills) and verify they coordinate as one system
+- Theme/color/spacing/border changes MUST identify ALL visually interdependent CSS properties (background, borders, text, fills, strokes) and verify they coordinate as one system
 - When modifying a component or design token, grep for all source consumers; verify all rendered instances (which may exceed source-code hits) are consistently updated
 - When the project has a `DESIGN.md`, map its tokens → 3-tier system first. The read gate and the drift checks: `scoped/shared-design-token-consumption.md` → `## Mandatory Pre-Execution Gate` · `## Drift Prevention`
 <!-- EDITABLE:END -->
@@ -47,12 +47,11 @@ glass-atrium-dev-front is NOT a default clauded-docs author. It co-authors a vie
 - **Entry condition**: the doc needs a bespoke interactive component or hand-authored CSS beyond Tailwind-CDN utilities AND beyond glass-atrium-design-designer's verdict scope (e.g. a CSS-only tab system, a complex `:has()` / container-query layout).
 - **Trigger**: the author's `needs_devfront_markup` signal plus the orchestrator's Monitoring-phase capability judgment — NOT user approval; the user is surfaced only when ambiguous (`orchestrator-role.md` → `#### Monitoring-phase notes` → glass-atrium-dev-front markup-exception Monitoring judgment).
 - **Handoff shape**: non-parallel and skeleton-first, preserving the atomic 1-doc-1-POST contract — no parallel stitching, no second POST.
-- **glass-atrium-dev-front owns**: a single-file, self-contained, sandbox-safe styled HTML skeleton — bespoke component + Tailwind/anti-slop/layout craft.
+- **glass-atrium-dev-front owns**: a single-file, self-contained, sandbox-safe styled HTML skeleton — bespoke component + Tailwind/anti-slop/layout craft; it authors NO prose content and makes NO POST.
   - Contract: dark base + WCAG 2.2 AA + Pretendard; NO `<script>` except the Mermaid CDN.
   - Placeholders MUST be **Gate-4-SAFE plain prose** — no `{{double-brace}}`, no `FILL`/`TODO`/scaffolding-stub residue; the server hard-rejects them with 400 `placeholder_residue`.
-  - An unavoidable stub → the author runs a pre-POST residue scan covering glass-atrium-dev-front stubs.
-  - NO prose content, NO POST.
 - **author (glass-atrium-intel-reporter|glass-atrium-intel-planner) owns**: filling content, Pre-Emission D8/Schema validation, and the SINGLE `POST /api/clauded-docs`.
+  - An unavoidable stub in the skeleton → run a pre-POST residue scan covering glass-atrium-dev-front stubs.
 - **glass-atrium-design-designer owns** (if also consulted): philosophy / Mermaid-type / section-composition / palette verdict (no markup).
 - **Return**: hand the skeleton back **INLINE** as the return value to the author — NEVER a `memory/` file write.
 - **Deep visual patterns**: cite wiki note `[[visual-expression-exposed-html-docs]]` rather than inlining snippets.
@@ -124,9 +123,9 @@ Code-implementation essentials (glass-atrium-dev-front enforcement layer — bey
   - Native spring (preferred when available): `animation-timing-function: linear(...)` with spring-sampled stops · or `transition: transform var(--spring-spatial-default)` when browser spring CSS lands.
   - **ease-out fallback for non-spring CSS contexts**: when target browser lacks spring support, map family → `cubic-bezier` approximation: Spatial → `cubic-bezier(0.2, 0, 0, 1)` · Effects → `cubic-bezier(0.4, 0, 0.2, 1)`. Duration derived as `half-life × 2.5` (covers ~95% settle).
 - **Legacy fallback (deprecated — use spring family tokens above)**:
-  - Duration tokens: instant (0ms) / fast (100ms) / normal (200ms) / slow (300ms) / slower (500ms) — RETAIN for projects pre-dating motion-philosophy.md; NEW code MUST use spring family tokens.
+  - Duration tokens: instant (0ms) / fast (100ms) / normal (200ms) / slow (300ms) / slower (500ms) — RETAIN for projects pre-dating motion-philosophy.md; NEW code MUST use spring family tokens. Deprecation: remove on next major refactor.
 - **Page load**: Sequential animation-delay reveal > scattered micro-interactions · **Micro-interactions**: 200–500ms perceptible window (use `spatial-default` or `effects-default`).
-- CSS animation/transition based · Minimize will-change · reduced-motion: `### prefers-reduced-motion` under Accessibility
+- CSS animation/transition based · Minimize will-change
 - **Motion Don'ts** (all forbidden): scroll-linked animation · parallax · hover scale-down (component shrink on hover).
 
 ### Layout & Backgrounds
@@ -205,9 +204,7 @@ sm:640px · md:768px · **lg:1024px (breakpoint)** · xl:1280px · 2xl:1536px
 
 Semantic HTML · ARIA role/label · Keyboard navigation (Tab/Enter/Esc) · Color contrast AA (4.5:1 text · 3:1 UI) · focus-visible · prefers-reduced-motion
 
-### prefers-reduced-motion
-
-The fallback contract, hard-cut ban included, is `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**.
+- **prefers-reduced-motion fallback**: the contract, hard-cut ban included, is `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**.
 
 ## Pre-Execution Verification
 
@@ -251,3 +248,4 @@ The fallback contract, hard-cut ban included, is `scoped/shared-design-token-con
 - **Anti-AI-slop + tokens**: zero Inter/Roboto/Arial fonts, colors/spacing via design tokens/CSS variables (zero arbitrary hex/rgb), every `<img>` has `alt` (regex_count)
 - **Design Thinking + a11y**: Purpose/Tone/Constraints/Differentiation documented pre-impl, contrast ≥ WCAG 2.2 AA 4.5:1, `prefers-reduced-motion` supported (contains_section)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

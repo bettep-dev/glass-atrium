@@ -440,13 +440,17 @@ Applies ONLY when the deliverable specs interactive widgets (menu/listbox/select
 
 Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not single-page philosophy, canvas, or one-off palettes.
 
-Which copy is canonical is UNRESOLVED — route that question to the rule owner rather than guessing. This section is the copy this agent reads; edit it together with whichever copy a change touches:
+Which copy is canonical is UNRESOLVED; route that question to the rule owner rather than guessing.
+
+This section is the copy this agent reads. Edit it together with whichever copy below a change touches:
 
 - `agents/glass-atrium-dev-front.md` → `### Design Token 3-Tier System` — its frontmatter claims the design-token SSoT; delivered to glass-atrium-dev-front
 - `agents/references/design-token-architecture.md` → `## 3-Tier Token Architecture` — holds the alias-chain hard rules; reaches this agent only when Read
 - `skills/glass-atrium-design-md-lint/SKILL.md` with its lint script — the mechanical checker
 - `agents/templates/DESIGN.md` — the emit template
 - `scoped/shared-design-token-consumption.md` → `## Token Lookup Order` — not in this agent's registry row
+
+Emit rules:
 
 - A full design-system DESIGN.md emits Base/Semantic/Component tiers with explicit `→` alias arrows (raw values live ONLY in Base) per `~/.claude/agents/references/design-token-architecture.md`.
 - **Multi-mode trigger**: light+dark for system deliverables; `*-high-contrast` (7:1 text / 4.5:1 UI) when accessibility in scope; colorblind/tritanopia when status/data-viz colors exist — override matrix template in the ref-doc.
@@ -487,7 +491,7 @@ This list is a shape contract, not prose: the `glass-atrium-design-md-lint` sect
 
 > **Purpose**: pre-emit gate — runs at Turn 3 BEFORE any canvas / motion-philosophy / DESIGN.md deliverable is emitted. Single-agent self-critique mode (glass-atrium-design-designer scores own work). Distinct from the post-emit Design Evaluation 4-Axis (next section), the final-quality rubric.
 
-> Pair: this section is the SoT and the only copy of the axes, band rubric, emit-gate rule and iteration protocol. The preloaded skill `glass-atrium-design-5-axis-critique` adds per-axis evaluation prompts and the critique output shape.
+> Pair: this section is the SoT for the axes, band rubric, emit-gate rule and iteration protocol. The preloaded skill `glass-atrium-design-5-axis-critique` adds per-axis evaluation prompts and the critique output shape.
 
 **5 axes** (each scored 0-10):
 
@@ -520,6 +524,8 @@ This list is a shape contract, not prose: the `glass-atrium-design-md-lint` sect
 - An HTML primary deliverable additionally gets the QA d8 visual sub-pass: `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`.
 - Both rubrics total 20 points with a <12 rework threshold, so their totals align in the outcome record.
 
+Axes (weighted):
+
 - **Identity (35%)**: Color/typo/layout integrate to uniqueness
 - **Originality (35%)**: Custom decisions vs defaults
 - **Craft (20%)**: Hierarchy, spacing, color harmony
@@ -540,7 +546,8 @@ Mirrors of this SoT (closed set — edit them together):
 - `skills/glass-atrium-design-anti-slop/SKILL.md` → `## Pattern Categories (mirror glass-atrium-design-designer.md SoT)` — the detector layer, preloaded by this agent
 - `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)` — pointer plus enforcement subset, delivered to glass-atrium-dev-front
 - `scoped/scope-report.md` → `### Visual-Maximization Floor` → **Residual anti-slop patterns** — a deliberate SUPPLEMENT of patterns this section does not carry, rather than a copy to fold in; delivered to glass-atrium-intel-reporter, not to this agent
-- DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit): the detector holds three colour patterns absent here, including a white-on-dark text floor whose hex has no canonical home, while this section holds the mixed-radius trope and the whole Workflow-tropes group the detector lacks.
+
+DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit): the detector holds three colour patterns absent here, including a white-on-dark text floor whose hex has no canonical home, while this section holds the mixed-radius trope and the whole Workflow-tropes group the detector lacks.
 
 **Canvas/color tropes**:
 

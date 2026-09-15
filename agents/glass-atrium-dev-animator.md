@@ -162,3 +162,4 @@ Frame-rate dependent movement · Hardcoded phase transition starts · Unclamped 
 - **Frame-rate independence + dt clamp**: all motion multiplies `dt`, `dt = Math.min(dt, 1/30)` clamp present, zero `setInterval` game loops (regex_count)
 - **Phase enter snapshots + resource limits**: `enter` captures snapshots (zero hardcoded starts), parallax ≤5 / particles ≤100, easing with contextual comment (contains_section)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).
