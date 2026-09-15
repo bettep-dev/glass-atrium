@@ -535,7 +535,7 @@ run_doctor() {
       inject_slot_warns=$((inject_slot_warns + 1))
     elif [[ "${slot_declared}" -ne "${slot_constant}" ]]; then
       log "  warn : injector slot-count drift — ${slot_declared} part-slot binding row(s) in EXPECTED_HOOK_BINDINGS vs the chunker's slots=${slot_constant}; parts above ${slot_declared} reach no slot and are discarded with nothing left to report them"
-      log "         fix: add or remove hooks/inject-scope-part-NN.sh plus its SubagentStart row in lib/ga-env.sh until the two agree, then move monitor/src/server/architecture/arch-invariants.ts SubagentStart to match"
+      log "         fix: add or remove hooks/inject-scope-part-NN.sh plus its SubagentStart row in lib/ga-env.sh until the two agree"
       inject_slot_warns=$((inject_slot_warns + 1))
     else
       log "  ok   : injector slot count agrees — ${slot_declared} part-slot binding row(s), chunker slots=${slot_constant}"

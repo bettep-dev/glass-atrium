@@ -606,8 +606,7 @@ function mapJobStatus(status: "in_progress" | "failed" | "completed"): UpdateJob
 
 // update.sh + launchctl invocation (fixed home-dir paths, env-seamed)
 
-// Live install root — ATRIUM_ROOT env override (mirrors update-status.ts /
-// compute-arch-drift.ts) → ~/.glass-atrium. Never request-derived.
+// Live install root — ATRIUM_ROOT env override (mirrors update-status.ts) → ~/.glass-atrium, never request-derived.
 function resolveAtriumRoot(): string {
   const override = process.env.ATRIUM_ROOT;
   if (typeof override === "string" && override.length > 0) {

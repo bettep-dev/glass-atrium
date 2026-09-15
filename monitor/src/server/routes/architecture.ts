@@ -7,7 +7,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getPrisma } from "../db.js";
 import { getArchitecture } from "../architecture/parser.js";
 import { getLiveOverlay } from "../architecture/live-overlay.js";
-import { computeArchDrift } from "../architecture/compute-arch-drift.js";
 import { computeGovernanceMembership } from "../architecture/governance-membership.js";
 import type {
 	ArchitectureErrorBody,
@@ -29,14 +28,9 @@ async function handleLive(
 	const start = Date.now();
 	const prisma = getPrisma();
 	try {
-		// computeArchDrift memoizes its FS scan behind a 30s TTL cache, collapsing the
-		// per-request full filesystem scan on this high-volume route. The badge still
-		// warns on un-audited counts — bounded ≤30s staleness is acceptable, since a
-		// file add/remove or a fresh audit surfaces within the TTL window. Runs in
-		// parallel with the PG/fs overlay (no data dependency).
-		const [overlay, drift, governance] = await Promise.all([
+		// Overlay + membership each sit behind a 30s TTL cache → bounded staleness on this high-volume route.
+		const [overlay, governance] = await Promise.all([
 			getLiveOverlay(prisma, request.log),
-			computeArchDrift(request.log),
 			computeGovernanceMembership(request.log),
 		]);
 		request.log.info(
@@ -45,13 +39,11 @@ async function handleLive(
 				durationMs: Date.now() - start,
 				daemonCount: overlay.daemons.length,
 				writerCount: overlay.writers.length,
-				stale: drift.stale,
-				diffCount: drift.diffs.length,
 				governanceAbsent: governance.absent,
 			},
 			"architecture live query complete",
 		);
-		return { ...overlay, stale: drift.stale, diffs: drift.diffs, governance };
+		return { ...overlay, governance };
 	} catch (error) {
 		// getLiveOverlay swallows per-signal failures via Promise.allSettled, so
 		// reaching this catch implies a synchronous wiring error — surface 503 so

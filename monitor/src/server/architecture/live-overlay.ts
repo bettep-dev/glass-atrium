@@ -135,18 +135,13 @@ interface WriterFailureRow {
 	cnt: bigint;
 }
 
-// Overlay = PG/fs runtime signals only. Drift (stale/diffs) is a separate concern
-// composed at the route from computeArchDrift(), governance from the membership
-// surface — keep this return free of both.
-type LiveOverlay = Omit<
-	ArchitectureLiveResponse,
-	"stale" | "diffs" | "governance"
->;
+// Overlay = PG/fs runtime signals only — governance is composed at the route from the membership surface.
+type LiveOverlay = Omit<ArchitectureLiveResponse, "governance">;
 
 // The overlay reruns a full PG fan-out + fs marker scan on every /api/architecture/live
 // call (high-volume), yet its inputs are quasi-static (daemon runs / hourly counters move
 // on the minute, the client refreshes manually). Cache behind a short TTL — shares the
-// createTtlCache helper with the computeArchDrift() drift cache. 30s bounds staleness so a
+// createTtlCache helper with the governance membership cache. 30s bounds staleness so a
 // fresh daemon run / activity burst surfaces within the window while collapsing the cost.
 const OVERLAY_CACHE_TTL_MS = 30_000;
 

@@ -20,7 +20,7 @@ let cachedVersion: string | null = null;
 // warn once — a missing/corrupt manifest must not flood stderr on every probe.
 let warnedOnce = false;
 
-// Defaults to `~/.glass-atrium/manifest.json` (live install root, matches compute-arch-drift.ts ATRIUM_ROOT).
+// Defaults to `~/.glass-atrium/manifest.json` (live install root).
 // env override ATRIUM_MANIFEST_PATH lets tests point at a fixture without touching the real install.
 function resolveManifestPath(): string {
   const override = process.env.ATRIUM_MANIFEST_PATH;
