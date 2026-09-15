@@ -6,21 +6,7 @@ triggers:
   - designer co-emission trigger
   - mermaid type mapping
   - section composition consult
-od:
-  mode: review
-  inputs:
-    - name: draft_outline
-      type: file_path
-      label: author draft outline for the user-requested HTML primary
-    - name: fired_triggers
-      type: string
-      label: Visual-Weight Probe indicators fired (T1-T5)
-  outputs:
-    primary: co_emission_spec.md
-  capabilities_required: [Read]
 ---
-
-<!-- The agent body retains a stub carrying the trigger, the output fields, and the veto line — the veto produces `result: blocked`, so it MUST stay reachable when this skill is not loaded. `scope-report.md` "Designer Co-Emission Trigger" remains canonical for the trigger spec. -->
 
 # HTML Primary Co-Emission
 
@@ -32,27 +18,14 @@ glass-atrium-design-designer supplies the judgment calls an author cannot make m
 - **Output**: verdict + spec only. glass-atrium-design-designer NEVER emits markup (prohibition stated at `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`).
 - **Composition and POST**: the author composes and POSTs; the atomic 1-doc-1-POST contract is never split.
 
-> Canonical trigger spec: `scope-report.md` "Designer Co-Emission Trigger" (mirrored in `scope-planning.md`). This file defines the designer-side consultative role and its scope.
-
-### Delivery
-
-A skill does NOT reach a reader the way an agent body does (measured 2026-09-10).
-
-- This body reaches glass-atrium-design-designer only when the skill is invoked; the frontmatter `description` is all that is present at the invocation decision, and at spawn the designer holds only the body stub.
-- The SubagentStart injector delivers marker-extracted blocks from rule files under `scoped/` and `rules/glass-atrium/`; it reads no skill file at all, so nothing delivers this body at spawn.
-- Closed set of copies for this contract — this file, plus:
-  - `scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` (policy canonical)
-  - `scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]` (mirror)
-  - both of those are read by the main session and by none of the three agents involved
-  - `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` (delivered author-side copies)
-  - `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` (delivered stub)
-
 ### Markup exception (glass-atrium-dev-front)
 
 An exposed doc needing a bespoke interactive component or hand-authored CSS beyond Tailwind-CDN utilities goes to glass-atrium-dev-front for the styled skeleton, through the narrow handoff — not to glass-atrium-design-designer.
 
 - Path: the author signals `needs_devfront_markup` → the orchestrator judges and composes.
-- Authority: `scope-report.md` → Designer Co-Emission Trigger (author-side protocol) · `orchestrator-role.md` → `#### Monitoring-phase notes` → the glass-atrium-dev-front markup-exception Monitoring judgment (orchestrator-side judgment canonical).
+- Authority:
+  - author-side protocol: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`;
+  - orchestrator-side judgment: `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` → the glass-atrium-dev-front markup-exception Monitoring judgment.
 - The exception changes nothing here: the philosophy, Mermaid-type, section-composition and palette calls below stay glass-atrium-design-designer's, and the markup prohibition is unchanged.
 
 ## Contribution Scope
@@ -66,7 +39,7 @@ An exposed doc needing a bespoke interactive component or hand-authored CSS beyo
 | EXCLUDED | canonical 4-badge palette application | hard-coded canonical set |
 | EXCLUDED | H1/H2/Body typography | D8 typography-levels rule is mechanical |
 | EXCLUDED | dark base default hue, within zinc-950 / slate-950 / neutral-950 | recommended set already fixed |
-| EXCLUDED | `prefers-reduced-motion` contract enforcement | glass-atrium-dev-front / Motion Philosophy SoT |
+| EXCLUDED | `prefers-reduced-motion` contract enforcement | `scoped/shared-design-token-consumption.md` → `## Motion Tokens` |
 
 ### Mermaid type mapping
 
@@ -82,15 +55,15 @@ Select from the adopted set the one type that fits the information shape. The se
 | `gitGraph` | branch and merge strategy |
 | C4 (`C4Context` / `C4Container` / `C4Component`) | system boundaries and component layers |
 
-- **SoT**: `monitor/src/server/clauded-docs/diagram-types.json`, parsed at module init by `html-validator.ts`, which throws on a malformed shape. The table above is derived from it, as are the prose copies in `scope-report.md`, `scope-planning.md` and the two author bodies. Correct any prose copy against the JSON, never the JSON against a prose copy.
+- **SoT**: `monitor/src/server/clauded-docs/diagram-types.json`, parsed at module init by `monitor/src/server/clauded-docs/html-validator.ts`, which throws on a malformed shape.
+  - The table above is derived from it, as are the prose copies in `scoped/scope-report.md` and `agents/glass-atrium-intel-planner.md`.
+  - Correct any prose copy against the JSON, never the JSON against a prose copy.
 - **Recommending an excluded type is REPORT-ONLY on the server, not a rejection.** The document still passes and carries a standing `diagram_type_excluded` notice.
-  - Read from the validator's terminal return, which is reached only on an otherwise-clean document and reports the diagram scan as notices on an OK result rather than as a failure code.
+  - The validator's terminal return, reached only on an otherwise-clean document, reports the diagram scan as notices on an OK result.
   - The cost is a published artifact permanently annotated, not a blocked emit.
   - So treat the set as binding on your own recommendation, and do NOT tell the author the server will catch it.
 
 ## Response Form
-
-Verdict and spec only; code or markup output is FORBIDDEN.
 
 | Declare | When | Content |
 |---|---|---|
@@ -110,23 +83,19 @@ Verdict and spec only; code or markup output is FORBIDDEN.
 | user-requested non-HTML document (MD or other) | NO — no visual surface to consult on |
 | standalone ADR | NO — MD-only |
 
-## Veto Authority
-
-On D8 P1-P5 invariant violation (color-blind safety / ≤5 col / sandbox-safe interactivity / WCAG AA / 3-level typography), declare verdict → glass-atrium-intel-reporter/glass-atrium-intel-planner emits `result: blocked` · silent fallback FORBIDDEN.
-
-> Kept byte-identical with `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, the delivered stub a designer holds when this skill is not loaded. No test pins the pair; the identity is the maintenance signal.
-
 ## Cross-References
 
-- `scope-report.md` "Designer Co-Emission Trigger" — canonical trigger spec (mirrored in `scope-planning.md`)
-- `orchestrator-role.md` Visual-Weight Probe — the T1-T5 indicator set that routes this consultation at Decision phase
-- `scope-qa.md` `## D8 Visual Decision Sub-Pass` — the invariants the veto line enforces
+- `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` — canonical trigger spec (mirror: `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`)
+- `rules/glass-atrium/orchestrator-role.md` → Visual-Weight Probe — the T1-T5 indicator set that routes this consultation at Decision phase
+- `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — the P1-P5 invariants the designer's veto enforces
 - `glass-atrium-design-contrast-check` — mechanical WCAG verification backing the contrast invariant
-- `agents/glass-atrium-design-designer.md` `## HTML Primary Co-Emission Role` — body stub (trigger + output fields + veto) and the markup-prohibition statement
+- `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` — the designer's copy of the trigger, output-field names and markup prohibition, and the sole copy of the veto line
 
 ## Coupled-Test Disposition
 
-No test in `test/`, `hooks/test/`, `scripts/test/` or `autoagent/test/` names this path, this skill name, or any literal unique to this file — searched for the path, the skill name, the four `declare` field names, `needs_devfront_markup`, and the adopted-type members. That emptiness is the disposition: nothing here is pinned, so nothing here can break a pin.
+No test in `test/`, `hooks/test/`, `scripts/test/` or `autoagent/test/` names this path, this skill name, or any literal unique to this file — searched for the path, the skill name, the `declare` field names, `needs_devfront_markup`, and the adopted-type members. Nothing here is pinned, so nothing here can break a pin.
 
 - **Indirectly coupled**: `scripts/test/manifest-check-clean.bats` runs `generate-manifest.sh --check`, which compares this file's sha256 against `manifest.json`. Any edit here requires a manifest regeneration — a whole-tree barrier operation, not a content pin.
-- **Pin worth adding (recommendation, not done here)**: nothing compares the prose copies of the adopted set against `diagram-types.json`. `monitor/test/clauded-docs.diagram-types.test.ts` validates the JSON's own invariants and mermaid's behaviour, never a prose copy — which is precisely the gap that let this file and its frontmatter drift from the JSON once already. A suite reading `diagram-types.json` and asserting each prose copy's member list matches would close it.
+- **Pin worth adding (recommendation, not done here)**: nothing compares the prose copies of the adopted set against `diagram-types.json`.
+  - `monitor/test/clauded-docs.diagram-types.test.ts` validates the JSON's own invariants and mermaid's behaviour, never a prose copy.
+  - A suite reading `diagram-types.json` and asserting each prose copy's member list matches would close the gap.

@@ -1,29 +1,22 @@
 ---
 name: glass-atrium-design-anti-slop
-description: Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per glass-atrium-design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing glass-atrium-design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ glass-atrium-qa-code-reviewer), motion/animation review (→ glass-atrium-dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).
+description: Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per the glass-atrium-design-designer.md AI Slop Tropes SoT plus community patterns. Use when reviewing glass-atrium-design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ glass-atrium-qa-code-reviewer), motion/animation review (→ glass-atrium-dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).
 triggers:
   - anti-slop check
   - AI slop audit
   - design originality review
   - anti-slop scan
-od:
-  mode: review
-  inputs:
-    - name: artifact
-      type: file_path
-      label: HTML / CSS / PNG / PDF / Excalidraw JSON to audit
-  outputs:
-    primary: review_report.md
-  capabilities_required: [Read, Grep]
 ---
 
-<!-- Anti-slop pattern categories mirror glass-atrium-design-designer.md `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` subsection of `## Red Flags` (which adapts nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` Apache 2.0 verbatim entries + 2026 community patterns). This skill is the detector layer only — glass-atrium-design-designer.md remains SoT. -->
+<!-- Pattern categories adapt nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` (Apache 2.0) entries plus community patterns. -->
 
 # Anti-Slop
 
 ## Overview
 
-Mechanical detector for AI-slop visual patterns. Surfaces hits per category with severity bands and remediation hints — does NOT override glass-atrium-design-designer creative judgment, does NOT prescribe replacement code. Designer.md `### AI Slop Tropes` (subsection of `## Red Flags`) is canonical source of truth; this skill applies it as an inspection pass.
+- Mechanical detector for AI-slop visual patterns: surfaces hits per category with a severity band and a remediation hint.
+- It never overrides glass-atrium-design-designer creative judgment and never prescribes replacement code.
+- It is the inspection pass over the pattern SoT, `agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
 
 ## When to Use
 
@@ -89,7 +82,7 @@ Mechanical detector for AI-slop visual patterns. Surfaces hits per category with
 
 ## Output Format
 
-`review_report.md`:
+Return inline in the response, in this shape:
 
 ```
 # Anti-Slop Audit: <artifact>
@@ -105,10 +98,10 @@ Mechanical detector for AI-slop visual patterns. Surfaces hits per category with
 ## Constraints
 
 - Hint stays at policy / defense-layer (e.g., "Replace generic font with brand-system primary"). No code, no specific API names, no concrete hex values.
-- Do NOT redefine patterns — glass-atrium-design-designer.md SoT controls additions. If a new pattern is observed, surface as `[NEW PATTERN candidate]` for glass-atrium-design-designer review, do not auto-canonize.
+- Never redefine or add a pattern here: surface a newly observed one as `[NEW PATTERN candidate]` for glass-atrium-design-designer review.
 
 ## Cross-References
 
-- Designer.md `### AI Slop Tropes` (subsection of `## Red Flags`) — single SoT for pattern definitions
-- Scope-qa.md `## D8 Visual Decision Sub-Pass` — complementary visual rubric for HTML primary
-- Contrast-check skill — mechanical WCAG verification (paired use)
+- `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — pattern SoT; additions land there
+- `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — complementary visual rubric for HTML primary
+- `glass-atrium-design-contrast-check` — mechanical WCAG verification (paired use)
