@@ -60,13 +60,13 @@ Return inline in the response, in this shape:
 | Large text | N.NN:1 | PASS / FAIL (≥3.0) | PASS / FAIL (≥4.5) |
 | UI / graphics | N.NN:1 | PASS / FAIL (≥3.0) | — |
 
-**Verdict (for declared text_size)**: PASS / FAIL
+**Verdict (for the pair's text size — normal or large, per the thresholds table)**: PASS / FAIL
 **Remediation hint** (if FAIL): darken text by ΔL ≈ X OR lighten background OR swap fg/bg pair
 ```
 
 ## Remediation Hint Policy
 
-- A hint names an adjustment direction only — the template's three, or "use a larger text size to meet the 3:1 threshold".
+- A hint names an adjustment direction only: darken the text, lighten the background, swap the fg/bg pair, or use a larger text size to meet the 3:1 threshold.
 - No hex values and no CSS: glass-atrium-design-designer chooses the replacement per brand palette.
 
 ## Cross-References

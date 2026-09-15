@@ -8,7 +8,7 @@ triggers:
   - 5-axis self-critique
 ---
 
-<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). Rubric SoT: glass-atrium-design-designer.md `## Pre-Emit 5-Axis Self-Critique`. -->
+<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). -->
 
 # Design 5-Axis Critique
 

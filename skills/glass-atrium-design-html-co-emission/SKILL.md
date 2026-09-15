@@ -55,11 +55,11 @@ Select from the adopted set the one type that fits the information shape. The se
 | `gitGraph` | branch and merge strategy |
 | C4 (`C4Context` / `C4Container` / `C4Component`) | system boundaries and component layers |
 
-- **SoT**: `monitor/src/server/clauded-docs/diagram-types.json`, parsed at module init by `html-validator.ts`, which throws on a malformed shape.
-  - The table above is derived from it, as are the prose copies in `scope-report.md`, `scope-planning.md` and the reporter and planner bodies.
+- **SoT**: `monitor/src/server/clauded-docs/diagram-types.json`, parsed at module init by `monitor/src/server/clauded-docs/html-validator.ts`, which throws on a malformed shape.
+  - The table above is derived from it, as are the prose copies in `scoped/scope-report.md` and `agents/glass-atrium-intel-planner.md`.
   - Correct any prose copy against the JSON, never the JSON against a prose copy.
 - **Recommending an excluded type is REPORT-ONLY on the server, not a rejection.** The document still passes and carries a standing `diagram_type_excluded` notice.
-  - The validator reports the diagram scan as notices on an OK result, reached only on an otherwise-clean document.
+  - The validator's terminal return, reached only on an otherwise-clean document, reports the diagram scan as notices on an OK result.
   - The cost is a published artifact permanently annotated, not a blocked emit.
   - So treat the set as binding on your own recommendation, and do NOT tell the author the server will catch it.
 

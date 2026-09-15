@@ -14,7 +14,7 @@ triggers:
 
 - Deterministic structural lint of a DESIGN.md token graph: parses the Base/Semantic/Component alias tiers (raw values live only at Base), `var(--token)` CSS custom properties and `{tier.token.path}` DTCG brace aliases, then runs the rules below.
 - No creative judgment — reference resolution and section order only.
-- Adapted from Google design.md's linter, rebased onto the token model named first in `## Cross-References`.
+- Adapted from Google design.md's linter, rebased onto the token model in `~/.claude/agents/references/design-token-architecture.md`.
 
 ## When to Use
 

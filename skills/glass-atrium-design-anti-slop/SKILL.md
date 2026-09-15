@@ -16,7 +16,7 @@ triggers:
 
 - Mechanical detector for AI-slop visual patterns: surfaces hits per category with a severity band and a remediation hint.
 - It never overrides glass-atrium-design-designer creative judgment and never prescribes replacement code.
-- It is the inspection pass over the pattern SoT named first in `## Cross-References`.
+- It is the inspection pass over the pattern SoT, `agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
 
 ## When to Use
 
