@@ -1,6 +1,6 @@
 # META Scope Rules
 
-## Absolute Rules [DEV+META]
+## Absolute Rules [META]
 
 Final authority on an ambiguous META rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution`.
 

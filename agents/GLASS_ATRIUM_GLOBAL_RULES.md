@@ -212,15 +212,16 @@ Prevent context bloat during long sessions (10+ turns).
   - This rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
   - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
   - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
-- **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any workflow output schema.
+- **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]` (Absolute schema-cap rules).
+  - Pointer duty: read them there before authoring any workflow output schema.
   - **Drift guard** — this charter prescribes no cap of its own, so any cap rule restated here is drift.
 - **Print-block-then-emit** (MANDATORY on the manual/text-channel path; schema-mode supersedes it with the completion_block field): the manual path prints a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE the StructuredOutput call.
   - The StructuredOutput call still terminates the run — this does not violate the never-end-on-prose rule, because the block turn precedes the final tool call.
 - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded.
-  - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`) carrying the full multi-line block.
+  - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`) carrying the full multi-line block.
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
 - Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
-- Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
+- Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`.
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 

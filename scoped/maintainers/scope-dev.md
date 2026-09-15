@@ -125,7 +125,11 @@ glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HT
 
 The rule file states what the gate obliges a DEV agent; the classification below is the orchestrator's and fires before the DEV agent exists.
 
-Pair note: reviewer- and orchestrator-side copies sit at `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` and `rules/glass-atrium/orchestrator-role.md` → `## Delegation Workflow` (Decision row, which condenses the sizable criteria inline rather than pointing only). Both cite the definition below as their SoT.
+Pair note — the QA-side and orchestrator-side sites of this gate:
+
+- `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` is a pointer and restates none of the definition below.
+- `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names that row as the copy.
+- How both reach the definition below: `## Open item`.
 
 ### Sizable-task definition (single SoT — the positive entry floor)
 
