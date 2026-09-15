@@ -8,26 +8,26 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# [RESTATED SoT FIGURES] the turn-0 lines restate figures owned elsewhere → re-verify each on every edit
-#   (honor-system, no mechanical check)
+# [RESTATED SoT FIGURES] turn-0 lines restate figures owned elsewhere → re-verify each on every edit
+#   · no mechanical check: the re-verify duty is honor-system
 #   · delegation elements — skills/glass-atrium-ops-orchestrator.md -> "#### Delegation required elements" (six)
-#     + the 7th [SCOPE] element at orchestrator-role.md -> "### Context Handoff Size" (grammar SoT — pointer only)
+#   · 7th element [SCOPE] — orchestrator-role.md -> "### Context Handoff Size" (grammar SoT, pointer only)
 #   · split triggers — orchestrator-role.md -> "### Spawn Budget" / Delegation-size discipline
 #     46-52 truncation band = HARD SECONDARY (est. >~40 tool_uses) · ~30 = SEPARATE `files x 4.5` anchor — never fuse
 #   · reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language"
-#     -> the response-language rule and its children, restated by the three "Reply language" heredoc lines
+#   · the response-language rule and its children are restated by the three "Reply language" heredoc lines
 #
 # Marker extraction (extract_block in hooks/inject-scope-rules.sh) is NOT usable here:
 #   1. audience — that hook feeds SUBAGENTS, not this main session
-#      this session already holds orchestrator-role.md IN FULL on the uncapped host channel
-#      (core-compliance-matrix.md -> "### Membership vs. Delivery") → an extracted block re-delivers held text
+#      main session holds orchestrator-role.md IN FULL (uncapped host channel) → extraction re-delivers held text
+#      host-channel delivery SoT: core-compliance-matrix.md -> "### Membership vs. Delivery"
 #   2. shape — one contiguous marker range per block; this block synthesizes two files and three sections
 #   3. fail-open — EMPTY on an absent file or renamed marker; this block is the sole canary + direct-handling path
-# Protection that DOES apply: a cross-read pin asserting these figures against the SoT bullets
-#   (hooks/test/inject-scope-rules-nodrop.bats pattern) — absent today
+# Protection that DOES apply, absent today: a cross-read pin of these figures against the SoT bullets
+#   pattern to copy: hooks/test/inject-scope-rules-nodrop.bats
 
 # [WORKFLOW PRE-FLIGHT] the turn-0 line enumerates the FOUR co-equal DEV-spawn requirements
-#   (entry token / [SIZE-EST] / verify-stage / [AGENT-COMPOSITION] declaration)
+#   · the four: entry token / [SIZE-EST] / verify-stage / [AGENT-COMPOSITION] declaration
 #   · JS-authoring pitfalls (bash dollar-brace leak, nested backtick in dollar-brace) kept OFF → one legible line
 #     their home: skills/glass-atrium-ops-orchestrator.md -> ### Ultracode / Workflow-tool Mode
 #   · clause ⑤ = the SELF-CHECK step: pointer to the offline --lint preview of the same gate code path

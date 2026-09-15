@@ -14,13 +14,14 @@ Maintainer-facing material for that source file, plus the record of what the cut
 
 - Tier 2 (Scope), membership `agent_scope ∈ {glass-atrium-intel-researcher}`, inheriting Tier 1. Declared at `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-research.md` row.
 - **Delivery is by the part slots.** This file is the researcher's `rules.scope` in `agent-registry.json`, so it arrives whole at spawn (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
-  - A researcher-body line saying this file does not reach the agent at spawn, or telling the agent to Read it itself, is false. Correct it at the body; it is never a reason to copy this file's text into the body.
-- **Reserved anchor**: `## Iterative Codebase Retrieval [RESEARCH]` is cited by full name, suffix included, from `agents/glass-atrium-intel-researcher.md` → `## Goal` → Codebase target. A rename here breaks that citation.
-- **No DEV body cites this file.** `agents/glass-atrium-dev-rag.md` → Codebase exploration points at `scoped/shared-search-first.md` → Pattern recognition → **Inconclusive probe**, which every DEV row holds; `scoped/maintainers/shared-search-first.md` records the same state.
+  - Never copy this file's text into the researcher body.
+- **Reserved anchors**: before renaming `## Retrieval Guidance [RESEARCH]` or `## Iterative Codebase Retrieval [RESEARCH]`, grep `agents/glass-atrium-intel-researcher.md` for it.
+  - The body cites `## Iterative Codebase Retrieval [RESEARCH]` by full name, suffix included, and a rename breaks a pointer the agent is told to follow.
+- **DEV citers**: none. dev-rag's codebase-exploration pointer targets `shared-search-first.md`, recorded at `scoped/maintainers/shared-search-first.md`.
 
 ## What the cut removed, and why
 
-- **The `> **Loading**: … auto-loads when agent_scope ∈ {…}` stanza** — the selector is the registry row's `rules.scope`, read at spawn by `hooks/lib/inject_chunk.py`, not a stanza inside the file. The membership fact it carried is recorded above.
+- **The `> **Loading**: … auto-loads when agent_scope ∈ {…}` stanza** — the selector lives on the registry row, not in the file (`## Status in the corpus`); the reader is `hooks/lib/inject_chunk.py`.
 - **`> **Inherits**` · `> **See**` matrix link · `Rules specific to RESEARCH agents: …`** — corpus bookkeeping addressed to an editor, not to the researcher.
 - **The whole `## Absolute Rules [RESEARCH]` section.**
   - Its cross-verification bullet is carried twice in the agent body: `## Absolute Rules` → Cross-verification, and `### Reference Numbering`.
@@ -33,8 +34,9 @@ Maintainer-facing material for that source file, plus the record of what the cut
 - **`Wiki false-negative handling`** — same unavailable instrument. `rules/glass-atrium/core-wiki-reference.md` → `## Search Failure Handling` states the retry-once-with-a-synonym procedure, and that Tier-1 file reaches the researcher on the host channel.
 - **`Corrective pass trigger`** — the body's `## Corrective Pass Decision Tree (Failure Prevention)` carries four triggers where this carried two, and `## Pre-Execution Checkpoint` already flags `[Single Source — Unverified]`.
 - **The `[Date Unknown]` half of the recency-label bullet** — body `### Single Source Verification Checklist` carries the date check, and the Tier-1 wiki rule carries the label.
-  - What survived is the residue neither carries: the `URL + collected_at(YYYY-MM-DD)` citation form (`collected_at`: zero hits in the body).
-  - And the 3-year trigger for `[Dated: YYYY]`: the body's `Recency` reliability row scores `3+yr +0` but sets no labelling trigger.
+  - What survived is the residue neither carries:
+    - the `URL + collected_at(YYYY-MM-DD)` citation form (`collected_at`: zero hits in the body);
+    - the 3-year trigger for `[Dated: YYYY]` (the body's `Recency` reliability row scores `3+yr +0` but sets no labelling trigger).
 - **The Stop-RAG cap rationale** (arxiv 2510.14337) — provenance of a decision, addressed to whoever might change the cap rather than to the agent applying it.
   - The finding: beyond 3 iterations the marginal precision gain falls below the additional token cost. That is why the cap is 3, and why the cap-reached fallback surfaces ambiguity to the caller instead of extending the loop.
 
@@ -44,8 +46,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
 - **The rubric's `Recency` row** anchored on `git status touched` and on 30-day / 1-year mtime windows. The researcher's frozen grant is `[Read, Glob, Grep, WebSearch, WebFetch, Write]`: no shell, and no mtime surface.
   - Rewritten against the one recency signal the agent does hold — `Glob` returns matching paths sorted by modification time — so the anchors are positions in that ordering rather than absolute ages.
   - The skip-a-dimension escape was widened past its greenfield-only example to cover a hit set obtained without an ordering.
-  - **Accepted by the orchestrator — the row stands, do not revert it.** The grant above was re-verified in the body frontmatter; the old anchors were a duty the rubric's own agent could never discharge.
-- Both edits change what the agent reads, because this file arrives whole through the researcher's `rules.scope`. `scope-wiki.md` and `scope-security.md` arrive the same way through their own agents' rows; the wiki daily-compile batch call, which passes the curator body as a system prompt, receives no scope file.
+  - **Orchestrator acceptance**: the row stands; do not revert it. The grant above was re-verified in the body frontmatter, and the old anchors were a duty the rubric's own agent could never discharge.
 
 ## Readers and coupled tests
 

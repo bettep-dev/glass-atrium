@@ -10,9 +10,12 @@ Per-agent rule membership lives on the registry row (`rules`), never in the
 body: both authored-text gates REFUSE a `> Rules:` header, so a stale one reused
 from an old --body-file cannot be baked into a new agent.
 
-The row is also the delivery input: `hooks/lib/inject_chunk.py` reads it at
-SubagentStart, so a created agent receives its `scope` and `shared` bodies, and
-its `conditional` entries as path pointers, from the row alone.
+The row is also the delivery input for its `scoped/` entries:
+`hooks/lib/inject_chunk.py` reads it at SubagentStart, so a created agent
+receives its `scoped/` `scope` and `shared` bodies, and its `scoped/`
+`conditional` entries as path pointers, from the row alone. A
+`rules/glass-atrium/` entry gets neither from the row; it arrives on the host
+project-instructions channel.
 """
 
 from __future__ import annotations
@@ -239,14 +242,9 @@ def assert_body_no_smuggled_structure(body: str) -> None:
         in either the bare or a quoted (`"tools":`) spelling, OR
       - carries the retired `> Rules:` header line.
 
-    The key scan covers the WHOLE body deliberately. It used to stop at the
-    `> Rules:` anchor and tolerate the same token below it; with the anchor
-    retired an anchorless body would have made that slice the whole body anyway
-    — i.e. the position-dependent tolerance could no longer be expressed, so the
-    strictest of the two former behaviours is the one kept. Measured cost: 0 of
-    the 23 live agent bodies carries a line-start guarded key, so nothing
-    legitimate is refused today; a future body documenting frontmatter in a
-    fenced yaml block WOULD be — a loud HALT naming the key, never silent.
+    The key scan covers the WHOLE body, with no position-dependent tolerance.
+    A body documenting frontmatter in a fenced yaml block is refused with a
+    loud HALT naming the key, never silently.
     """
     if _FENCE_RE.match(body.lstrip()):
         raise BodyFrontmatterError(
@@ -320,7 +318,7 @@ def assert_add_targets_absent(paths: StorePaths, name: str, *, is_dev: bool) -> 
 def require_dev_scope_for_stanza(scope: str) -> bool:
     """Return True when `scope` is DEV (gets the scope-dev stanza step), else False.
 
-    NON-DEV agents skip the stanza step (B4). Scope comparison is case-insensitive
+    NON-DEV agents skip the stanza step. Scope comparison is case-insensitive
     but the canonical token is upper-case 'DEV'.
     """
     if not scope:
