@@ -48,7 +48,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
   - Process verify gates (Stage-2 plan verification, reviewer verify-stages) are workflow contracts — untouched.
 - **Schema-mode output-shape scoping (this agent states a pointer, not a schema rule)**
   - Pre-draft duty: scope the output shape a schema-mode prompt actually needs BEFORE draft.
-  - Then author that schema per the binding rules that live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any schema.
+  - Then author that schema per the binding rules that live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]` (Absolute schema-cap rules) — read them there before authoring any schema.
   - Drift guard: this agent prescribes no schema constraint of its own, so any constraint restated here is drift.
   - Machine-checked: `hooks/test/schema-cap-authority-single-site.bats` greps this body directly for the pointer clauses and the pre-draft scoping duty above AND for the ABSENCE of any schema-constraint key name.
     - So re-prescribing a constraint here — or deleting the scoping duty along with it — reddens that suite by design.
