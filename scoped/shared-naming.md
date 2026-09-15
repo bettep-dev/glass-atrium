@@ -30,5 +30,5 @@ These pass the admission test the delta-core applies to itself: they are core ru
 ## On-demand detail
 
 - `skills/glass-atrium-dev-naming/SKILL.md` keeps the User Dictionary's worked rows the delta-core does not carry and the five conciseness principles as prose.
-- Its `references/` keep the 17-category verb taxonomy (a fallback beneath the canonical verb set), the scope-proportional length table, the abbreviation list and the anti-pattern tables.
+- Its `references/` keep the lookup tables the delta-core's closing `Full skill:` line names; the verb taxonomy is a fallback beneath the canonical verb set.
 - Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.

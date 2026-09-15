@@ -21,27 +21,35 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - The skill's quick rule read `Type safety: any/dynamic/Object forbidden · nested generics ≤ 2 levels · extract when reused 2+ times or 3+ properties`. The rule file keeps the two thresholds and names `scoped/shared-type-safety.md` as the owner of the escape-hatch ban instead of restating it.
 - Why: `scoped/shared-type-safety.md` → `## Core Principles` already carries the `any` prohibition as its first rule. Carrying it a second time in a peer Tier-3 file is the two-copies-drift shape, and both copies would bind the same agents.
 - Deliberately not done: the thresholds were not absorbed INTO `scoped/shared-type-safety.md` — that is a content change to that file, not a relocation.
-- `scoped/shared-type-safety.md` needs no repoint. Its line cites "the `glass-atrium-dev-patterns` skill" for the ban, and `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` still states `any/dynamic/Object forbidden`, so the citation stays true. Its companion's "Why the `any` prohibition is not restated in full" section cites `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]`, which states the ban and carries both thresholds as its own bullets.
+- `scoped/shared-type-safety.md` needs no repoint: its line cites "the `glass-atrium-dev-patterns` skill" for the ban, and `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` still states `any/dynamic/Object forbidden`.
+- The companion of `scoped/shared-type-safety.md` needs none either: its "Why the `any` prohibition is not restated in full" section cites `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]`, which states the ban and carries both thresholds as its own bullets.
 
 ## Membership
 
 - Every DEV agent unconditionally, plus `glass-atrium-qa-code-reviewer` as the review surface. `glass-atrium-qa-debugger` is excluded: it authors no code, so a structural authoring rule is inapplicable to it.
 - Declared on each agent's `agent-registry.json` row (`rules.shared`) and summarized in `rules/glass-atrium/core-compliance-matrix.md`.
 - DEV membership is a scope default (`SCOPE_SHARED_RULE_FILES["DEV"]` in `scripts/agent_lifecycle/registry_ops.py`); the `glass-atrium-qa-code-reviewer` half is a per-AGENT hand-add, exactly like `shared-design-token-consumption.md`, because no scope label can derive a one-agent subset.
-- The Compliance Matrix QA cell is a plain `✓` with NO footnote marker, following the precedent `scoped/shared-naming.md` sets: the Tier-3 row names the single agent outright, which is more precise than a marker glyph and costs no edit to `readonly FOOTNOTE_MARKERS` in `hooks/validate-compliance-matrix.sh`. An unlisted glyph would not fail check B2 — it would go unchecked, which is worse than a false failure.
+- The Compliance Matrix QA cell is a plain `✓` with no footnote marker, following `scoped/shared-naming.md`: the Tier-3 row names the single agent outright, which is more precise than a marker glyph, and no edit to `readonly FOOTNOTE_MARKERS` in `hooks/validate-compliance-matrix.sh` is needed.
+  - Why not a new glyph: an unlisted glyph would not fail check B2. It would go unchecked, which is worse than a false failure.
 
 ## Delivery — how the rule reaches its agents
 
-- Every DEV agent and `glass-atrium-qa-code-reviewer` receive the file whole at spawn: each of those `agent-registry.json` rows lists it in `rules.shared`, and the part-slot channel (`hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py`) packs each `rules.scope` and `.shared` member into context.
-- No agent preloads `glass-atrium-dev-patterns` in frontmatter `skills:`, so the rule file is the only delivered copy of the core; the skill's `references/` are reached by on-demand Read through the rule file's path pointer.
+- Every DEV agent and `glass-atrium-qa-code-reviewer` receive the file whole at spawn: each of those `agent-registry.json` rows lists it in `rules.shared`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`).
+- No agent preloads `glass-atrium-dev-patterns` in frontmatter `skills:`, so the rule file is the only delivered copy of the core.
 
 ## Readers and coupled tests
 
-- No code reads this file's TEXT. The path is pinned in `SCOPE_SHARED_RULE_FILES["DEV"]` (and therefore `RULE_FILES`) in `scripts/agent_lifecycle/registry_ops.py`, asserted by exact list equality in `scripts/test/test_agent_lifecycle_overhaul.py`, cited by every DEV row and the reviewer row of `agent-registry.json` (the delivery selector), and listed and hashed in `manifest.json`. Renaming the file edits every one of those sites.
+- No code reads this file's TEXT. Renaming the file edits every site that pins its path:
+  - `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_SHARED_RULE_FILES["DEV"]` (and therefore `RULE_FILES`)
+  - `scripts/test/test_agent_lifecycle_overhaul.py`, by exact list equality
+  - every DEV row and the reviewer row of `agent-registry.json` (the delivery selector)
+  - `manifest.json`, which lists and hashes the path
 - `hooks/validate-compliance-matrix.sh` Layer A reconciles `scoped/` basenames against matrix rows, so the file and its row must land together or it reports a governance gap in one direction or a broken pointer in the other.
 - `monitor/src/server/architecture/governance-membership.ts` treats every inline-code `scoped/…md` path in the matrix as a declared document and reports it absent when no such file exists.
 
 ## Open
 
-- The rule file's closing paragraph says the skill's `references/` keep the lookup half. The Read route is settled: the rule file's path pointer reaches every holder. Whether a subagent can INVOKE the skill stays unsettled — no agent grants `Skill` and no probe spawn has run — and neither the rule file nor this note asserts it either way.
+- The rule file's closing paragraph says the skill's `references/` keep the lookup half.
+  - **Read route**: settled — the rule file's path pointer reaches every holder.
+  - **Invocation route**: unsettled — no agent grants `Skill` and no probe spawn has run; neither the rule file nor this note asserts it either way.
 - Filename: `shared-code-structure.md` was chosen over `shared-patterns.md`. "Patterns" reads as a catch-all and collides with design patterns, and the matrix's Layer A check puts these basenames in front of a reader as bare filenames.

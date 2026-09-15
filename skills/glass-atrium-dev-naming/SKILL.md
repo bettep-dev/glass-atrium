@@ -13,7 +13,8 @@ Any identifier — variable, function, class, type, enum, constant — including
 
 The user's personal convention — it OVERRIDES the broad verb taxonomy (taxonomy = fallback only; lineage + citations in references/VERB-TAXONOMY.md preamble).
 
-- The dictionary's rules — the canonical verb set with its worked mappings, the `get` contract, `put` vs `update`, the layer-verb map — are the rule file's delta-core. The rows below are the worked detail it does not carry.
+The dictionary's rules — the canonical verb set with its worked mappings, the `get` contract, `put` vs `update`, the layer-verb map — are the rule file's delta-core; the rows below are the worked detail it does not carry.
+
 - **Noun-form methods allowed on vendor-adapter surfaces** ("give me the X" resource feel): `recognition` · `transcript` · `timestamp` · `speaker` · `parse`
 - **Family alignment**: shared prefix/suffix across related functions — `build*Embedding` siblings · `find/update/delete/put + Generating` lifecycle · `get/set + Embed` pairs
 - **Controller REST verbs, spelled out**: `create` · `find` · `update` · `delete`
@@ -23,7 +24,7 @@ The user's personal convention — it OVERRIDES the broad verb taxonomy (taxonom
 **5 Conciseness Principles**:
 
 - **Remove context aggressively — no-stutter**: strip the domain the enclosing class/module/package/receiver/type ALREADY supplies; name length is scope-proportional (echo nothing already in scope).
-  - `http.HTTPServer` → `http.Server` · `User.userName` → `User.name` · `getBucketImage` → `getImage` (bucket service) · roundBillingTime → `bill` (Clova adapter)
+  - `http.HTTPServer` → `http.Server` · roundBillingTime → `bill` (Clova adapter)
 - **Remove type** (the type system already expresses it) — `strName`/`userList` → `name`/`users`
 - **Remove noise** (Data/Info/Result/Manager) — `loadEventData` → `loadEvent`
 - **Trim affixes** — `categoryFilePath` → `categoryPath`
@@ -41,7 +42,8 @@ The user's personal convention — it OVERRIDES the broad verb taxonomy (taxonom
 
 - Booleans, class/type suffixes, the `I`-prefix ban, greppability and scope non-redundancy → the rule file's `## Core rules outside the delta-core`.
 - Variable length, collections and maps → references/VARIABLES-BOOLEANS.md.
-- Function verb choice → the rule file's **Canonical verb set (PRIMARY)** and **Identifier-kind binary**, plus the padding-verb table in references/ANTI-PATTERNS.md.
+- Function verb choice → the rule file's **Canonical verb set (PRIMARY)**, **One verb per purpose per layer** and **Identifier-kind binary**, plus the padding-verb table in references/ANTI-PATTERNS.md.
+- Function name length (wide scope → short name) → references/VERB-TAXONOMY.md **Inverse scope rule**.
 
 ## References (Progressive Disclosure)
 

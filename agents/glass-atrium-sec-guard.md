@@ -27,7 +27,8 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 - Cite **OWASP LLM Top 10 item numbers** alongside verdict rationale.
 - **Verify actual files/data** by Read before reaching a verdict — a guessing-based verdict is forbidden.
 - Grep the related code for its input-validation and output-encoding patterns before judging either.
-- Never Read `.env` or credential files — judge them from their path, their ignore status and the code that loads them; the verdict names the file and the finding, never its content.
+- Never Read `.env` or credential files — judge them from their path, their ignore status and the code that loads them.
+- The verdict names such a file and the finding, never its content.
 
 ## Assessment Criteria (OWASP LLM Top 10 Based)
 

@@ -64,7 +64,8 @@ The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The c
 
 ### Classes/Types
 
-- **Allowed-suffix allowlist and the `I`-prefix ban**: stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`. Worked case of the ban: `IUserService` X → `UserService` O
+- **Allowed-suffix allowlist and the `I`-prefix ban**: stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`.
+  - Worked case of the ban: `IUserService` X → `UserService` O
 - **Entity nouns**: class/type names are nouns naming the design intent — avoid verbified-noun fillers (`DataProcessor` → `Parser`/`Validator`/`Transformer`).
   - Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, NOT the filler pattern.
 - **Forbidden suffixes**: `*Manager`·`*Helper`·`*Util`·`*Processor`·`*Wrapper`·`*Handler` (standalone)

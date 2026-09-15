@@ -15,7 +15,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
 - Tier 2 (Scope) for SECURITY, whose one agent is glass-atrium-sec-guard; inherits Tier 1. Membership is declared on that agent's `agent-registry.json` row (`rules.scope`), authored from `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-security.md` row.
 - **This file is a Tier-2 safety trigger by PATH.** `autoagent/daemon_cycle.py` matches `(^|/)scope-security\.md$` in its sensitive-path set, so any daemon-proposed edit to it enters the user-approval queue rather than auto-applying.
   - `autoagent/test/test_sensitive_patterns.py` pins the path as a retained sensitive pattern; `scripts/test/glass-atrium-update.bats` names it in an update fixture.
-  - All three are path-only and indifferent to the content.
+  - The matcher and both suites are path-only and indifferent to the content.
 - **This note's own path matches the same pattern.** `autoagent/test/test_sensitive_patterns.py` → `_REFUSED_MANIFEST_ROWS` lists both `scoped/scope-security.md` and `scoped/maintainers/scope-security.md`, and compares that set with the manifest rows the matcher refuses. Keep this note's path unchanged (no rename or move); a text edit is free.
 
 ## Delivery of the thresholds
@@ -28,8 +28,7 @@ The file's thresholds, listed below, reach glass-atrium-sec-guard whole at spawn
 
 The body's pointer:
 
-- `agents/glass-atrium-sec-guard.md` → `## Assessment Criteria (OWASP LLM Top 10 Based)` closes with a plain pointer to `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]`, stating the section is already in context, with no Read instruction.
-- Why the pointer is exact and carries no Read: `maxTurns: 3` at `effort: low` leaves no turn to spend locating or re-reading a file already delivered.
+- `agents/glass-atrium-sec-guard.md` → `## Assessment Criteria (OWASP LLM Top 10 Based)` closes with an exact pointer to `~/.glass-atrium/scoped/scope-security.md` → `## LLM-Specific Verdict Criteria [SECURITY]` and no Read instruction: `maxTurns: 3` at `effort: low` leaves no turn to locate or re-read a file already delivered.
 
 ## What the cut removed, and why
 

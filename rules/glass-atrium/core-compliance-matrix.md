@@ -18,7 +18,7 @@ Reserved beyond that table:
 
 - **Headings**:
   - `## Loading Tiers`, `## Scope Legend` and `## Compliance Matrix` carry anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to; `### Tier 1` is a parse prefix.
-  - `### Membership vs. Delivery (per tier)` is cited in full by `agents/glass-atrium-intel-researcher.md` and by maintainer notes under `scoped/maintainers/`.
+  - `### Membership vs. Delivery (per tier)` is cited in full by maintainer notes under `scoped/maintainers/` and can be cited by agent bodies under `agents/`. The citing set changes as those files are edited, so it is named as a group: grep the corpus for the heading before renaming it.
   - `hooks/inject-scope-rules.sh` and `hooks/inject-session-context.sh` cite that same heading by its `Membership vs. Delivery` prefix.
 - **Literals**: the matrix header cell `Rule File`, the `✓` glyph, the footnote markers †‡§¶, and the Scope Legend's `~~DATA~~` strikethrough row.
 - **Row shape**: a table row anywhere in this file whose first cell is a bare `name.md` is read as a declared rule file by the drift scan — only Compliance Matrix rows may take that shape.
@@ -58,8 +58,8 @@ One scope file per scope; ORCHESTRATOR is the one exception, a tightly coupled f
 | `rules/glass-atrium/scope-orchestrator.md` + `rules/glass-atrium/orchestrator-role.md` | ORCHESTRATOR |
 | `scoped/scope-wiki.md` | WIKI |
 
-- **What resolves a row to a file at spawn** is the agent's `agent-registry.json` row: the part slots (`hooks/lib/inject_chunk.py`) read `rules.scope` (the one Tier-2 file) and `rules.shared`, and deliver those files whole.
-- This table is the AUTHORING input for those rows, never a runtime input. No `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
+- **What resolves a row to a file at spawn** is the agent's `agent-registry.json` row (`rules.scope`), never this table.
+  - No `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
 - `autoagent/daemon_cycle.py` holds a second agent→scope-file map, used only to excerpt a scope file into the daemon's rule-improvement verify prompt; no spawn path reads it.
 
 ### Tier 3 — Cross-cutting (conditional inheritance)
@@ -95,7 +95,10 @@ Each file below is inherited on its OWN condition. DEV is the common carrier, bu
 
 ### Injected Blocks (SubagentStart allowlist)
 
-Tier MEMBERSHIP is DECLARED on each agent's registry row — `agents.<name>.rules.scope` (the one Tier-2 file) · `.shared` (unconditional Tier-3) · `.conditional` (task-conditional Tier-3, each entry carrying its own `when`) in `agent-registry.json`. Tier 1 is universal and therefore sits in the ALL column below rather than on any row. A `> Rules:` body header is not a declaration site; the lifecycle CLI refuses one.
+Tier MEMBERSHIP is DECLARED on each agent's registry row — `agents.<name>.rules.scope` (the one Tier-2 file) · `.shared` (unconditional Tier-3) · `.conditional` (task-conditional Tier-3, each entry carrying its own `when`) in `agent-registry.json`.
+
+- Tier 1 is universal, so it sits in the ALL column below rather than on any row.
+- A `> Rules:` body header is not a declaration site; the lifecycle CLI refuses one.
 
 Two SubagentStart channels carry text, and they divide the work by kind:
 
@@ -146,13 +149,14 @@ Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIV
 - **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there is the set the MAIN SESSION holds — the Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope.
   - Measured by reading a spawned subagent's received project-instructions directly.
 - **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat WHAT arrives as established and WHY as open.
-- **Membership MUST be read from the registry row, not from this file**; this matrix stays the governance SoT the rows are authored from. The reconcile that binds the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, which runs off the delivery path, where a fail-open matrix parser is the right instrument.
+- **Membership source**: membership MUST be read from the registry row, not from this file; this matrix stays the governance SoT the rows are authored from.
+  - The reconcile binding the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, run off the delivery path, where a fail-open matrix parser is the right instrument.
   - That reconcile reads the **Tier-2 and Tier-3 DECLARATION ROWS, never the Compliance Matrix table cell**, which is a coarser summary of them.
-    - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger: the `shared-naming.md` and `shared-code-structure.md` QA cells tick both QA agents, while their declaration rows name glass-atrium-qa-code-reviewer alone.
+    - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on the `shared-naming.md` and `shared-code-structure.md` QA cells (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
 - **Standing consequence**: a duty that binds an agent may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
   - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of those three.
-- **The part slots pack against a per-chunk budget, not slot 1's block ceiling.** Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer.
+- **Chunk budget**: the part slots pack against a per-chunk budget, not slot 1's block ceiling. Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer.
   - A membership entry resolving to a file absent on the live install takes the same loud-and-degrade path.
 
 Net: an agent holds its Tier-1 bodies and the ORCHESTRATOR pair through the unceilinged HOST channel, and its own Tier-2 and unconditional Tier-3 bodies through the part slots.
@@ -224,15 +228,19 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 
 > † META column = `glass-atrium-meta-prompt-engineer` ONLY, never `glass-atrium-meta-agent`. Which files it inherits, and why: `### Tier 3 — Cross-cutting (conditional inheritance)` above.
 
-> ‡ DEV column = the UI-emitting subset: glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator. The other DEV agents emit no web CSS/Tailwind token markup (glass-atrium-dev-swift emits native SwiftUI), so this web design-token rule is inapplicable to them. The file's header states the task condition it binds on (a turn that emits UI markup, styling or animation), not this roster.
+> ‡ DEV column = the UI-emitting subset: glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator. The other DEV agents emit no web token markup (glass-atrium-dev-swift emits native SwiftUI). The file's header binds on a turn emitting UI markup, styling or animation, not on this roster.
 
 > § DEV column = the autoagent-touching subset: a DEV agent whose change scope includes `~/.glass-atrium/autoagent/` paths or the self-improvement launchd configuration (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node). ORCHESTRATOR loads it unconditionally. Scope declaration: `rules/glass-atrium/shared-self-improve-hygiene.md` header.
 
-> ¶ DEV + QA columns = hook authoring and hook review only: DEV agents that write or modify hooks under `~/.glass-atrium/hooks/` (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node), plus glass-atrium-qa-code-reviewer reviewing hook changes and glass-atrium-qa-debugger analysing hook failures. NOT loaded by ALL or ORCHESTRATOR — the orchestrator delegates hook work rather than authoring it. Scope declaration: `scoped/shared-hook-capability-contract.md` header.
+> ¶ DEV + QA columns = hook authoring and hook review only: DEV agents that write or modify hooks under `~/.glass-atrium/hooks/`, plus glass-atrium-qa-code-reviewer reviewing hook changes and glass-atrium-qa-debugger analysing hook failures. ALL and ORCHESTRATOR do not load it; the orchestrator delegates hook work. Scope declaration: `scoped/shared-hook-capability-contract.md` header.
 
 ## Skills Registry (Reference)
 
-SKILL.md files under `~/.claude/skills/` are outside this matrix's jurisdiction and carry no tier membership: a skill reaches an agent only when that agent's frontmatter `skills:` preloads it or the skill is invoked. Adding or removing a skill does NOT require a matrix update. Where a specific scope must restrict skill usage, record it in that scope's file under a "Prohibited Skills" section; no scope declares one today.
+SKILL.md files under `~/.claude/skills/` are outside this matrix's jurisdiction and carry no tier membership.
+
+- A skill reaches an agent only when that agent's frontmatter `skills:` preloads it or the skill is invoked.
+- Adding or removing a skill does NOT require a matrix update.
+- A scope that must restrict skill usage records it in its own file under a "Prohibited Skills" section; no scope declares one today.
 
 ## Archived Agents
 

@@ -4,7 +4,7 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when writing 
 
 The principles — SRP, the size/complexity function cap, SLAP with its And-Then test, and CQS's void-vs-T split with no mixing — are in `scoped/shared-code-structure.md` → `## Core Principles`. This file keeps the lookup detail.
 
-## Guard Clause and Parameters
+## Function Shape
 
 | Principle | Description |
 |-----------|-------------|
