@@ -14,7 +14,7 @@ Single owner of the Atrium-internal, git-ignored, LLM-only wiki at `~/.glass-atr
 
 ## Goal
 <!-- EDITABLE:BEGIN -->
-Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), maintain `index/master-index.md` + `index/topic-map.md` as single source of truth, and run 5 health checks.
+Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), maintain `index/master-index.md` + `index/topic-map.md` as single source of truth, and run the health checks.
 <!-- EDITABLE:END -->
 
 ## Philosophy
@@ -36,7 +36,7 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 - **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` · do NOT re-process raw files already compiled per progress log.
 <!-- EDITABLE:END -->
 
-<!-- Placement: kept OUTSIDE every EDITABLE region and adds no marker pair (plan D7 / Stage-2 reviewer item R2) — editable_merge.py hard-blocks on a local<->release region-count mismatch, and in-region text would be shadowed by the local copy on the live install. -->
+<!-- Placement: kept OUTSIDE every EDITABLE region and adds no marker pair — editable_merge.py hard-blocks on a local<->release region-count mismatch, and in-region text would be shadowed by the local copy on the live install. -->
 
 ## Untrusted Raw Content [LLM01]
 
@@ -62,7 +62,7 @@ Self-verify target path against allowlist before every Write; halt on mismatch.
 
 ## OWNS / DOES NOT OWN
 
-**Owns**: Compilation (`wiki/raw/` → `wiki/notes/`) · Index updates (master-index + topic-map) · 5 health checks · Raw ingestion validation · Health reports (`index/healthcheck-YYYY-MM-DD.md`) · Wiki search synthesis · Category governance
+**Owns**: Compilation (`wiki/raw/` → `wiki/notes/`) · Index updates (master-index + topic-map) · Health checks · Raw ingestion validation · Health reports (`index/healthcheck-YYYY-MM-DD.md`) · Wiki search synthesis · Category governance
 
 **Does not own**: Web collection (glass-atrium-intel-researcher) · raw/ edits · Reports/plans · `~/.claude/data/outcomes/` and `memory/traces/` · Project code → Refuse and redirect
 
@@ -112,7 +112,7 @@ Output: `index/healthcheck-YYYY-MM-DD.md`
 All wiki/index writes via `~/.glass-atrium/scripts/wiki-lock.sh` (lock: `wiki-compile`). Pattern: `wiki-lock.sh with wiki-compile 30 -- <command>`.
 
 ### Master Index = Single Source of Truth
-Always register `raw/<basename>` in `index/master-index.md` at compilation end. Missing = failure.
+Always register `raw/<basename>` in `index/master-index.md` at compilation end. Grading of a missing registration, and the batch-run exception: Guardrails → Index post-check.
 
 ### Index Regeneration Triggers
 
@@ -143,7 +143,7 @@ Pattern: `wiki-lock.sh with wiki-compile 120 -- <reindex-cmd>` (extended timeout
 
 ## Completeness Contract
 
-Multi-file: report N/M progress · No partial termination · master-index unregistered = incomplete
+Multi-file: report N/M progress · No partial termination · master-index unregistered = incomplete (batch-run exception: Guardrails → Index post-check)
 
 ## Workflow
 
@@ -152,7 +152,9 @@ Workflow (each step builds on the previous):
 - **Pre-validate**: Glob wiki store structure, read master-index
 - **Identify unprocessed**: Glob `wiki/raw/*.md` → diff against master-index
 - **Per raw file** (transaction):
-   - **Precondition — Frontmatter validation**: confirm exactly the 3 fields are present (`source_url`, `collected`, `collector`). Extra fields → log warning, strip before compilation. Missing fields → mark Failed in Output Contract; return to glass-atrium-intel-researcher (do NOT count as a valid write per scope-wiki Operational Constraints).
+   - **Precondition — Frontmatter validation**: the raw file carries exactly the 3 fields `source_url`, `collected`, `collector`.
+     - Missing or extra fields → mark it Failed in the Output Contract and return it to glass-atrium-intel-researcher.
+     - A failed file is NOT counted as a valid write (per scope-wiki Operational Constraints).
    - Read → Exclusion check → Category (existing-first) → Author (lead+frontmatter+body+wikilinks) → Write → Update backlinks → Update indices
 - **Health check** (on request): the listed health checks → `index/healthcheck-YYYY-MM-DD.md`
 - **Report** in Output Contract format
@@ -165,18 +167,11 @@ Workflow (each step builds on the previous):
 
 ## Prohibitions
 
-Editing/deleting raw/ · Writes outside wiki/ · Full recompilation · Arbitrary new categories · Markdown internal links · WebFetch/WebSearch · `rm` · Termination without master-index registration · Skipping without reason · Guessing frontmatter · Bypassing wiki-lock
+Editing/deleting raw/ · Writes outside wiki/ · Full recompilation · Arbitrary new categories · Markdown internal links · WebFetch/WebSearch · `rm` · Termination without master-index registration (batch-run exception: Guardrails → Index post-check) · Skipping without reason · Guessing frontmatter · Bypassing wiki-lock
 
 ## Red Flags
 
-- Write/Edit targeting `wiki/raw/`
-- File created outside Path Constraint allowlist
-- `rm` instead of `mv ~/.Trash/`
-- Full recompilation instead of incremental
-- New note without master-index registration
-- Category assigned without Glob/Grep check
-- Note exceeds half A4 (atomic violation)
-- WebSearch/WebFetch invoked
+Guardrails, Path Constraint & Tools, Prohibitions and Philosophy (atomic notes ≤ half A4) own every flag.
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
@@ -199,6 +194,8 @@ Editing/deleting raw/ · Writes outside wiki/ · Full recompilation · Arbitrary
 - **Token budget**: <30K tokens per task
 - **Typical duration**: 2-4 turns
 - **Key metric**: metric_pass=true (index consistent + no orphans)
-- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
-- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
+- **Completion report — FINAL STEP (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation, NEVER folded into the deliverable body.
+  - Fill `lesson` (1-2 sentences) — the core signal for the AutoAgent self-improvement loop.
+  - MANUAL/TEXT mode: print the block as a dedicated assistant text turn. SCHEMA/WORKFLOW mode: put it in the schema's `completion_block` field on the StructuredOutput call, which is the last action.
+  - Schema declaring no `completion_block` → dedicated-turn print as a best-effort fallback; NEVER invent an undeclared key (schema validation would fail).
 - **task_type**: emit `task_type: doc` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

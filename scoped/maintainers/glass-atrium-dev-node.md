@@ -16,30 +16,40 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it |
 | `hooks/enforce-harness-critical.sh` | live-install frontmatter identity keys (name, tools, scope) and the fence-line count | a live edit touching either is blocked for every caller (LLM06) |
 
-## Correction landed in this pass
+## `## Prohibitions` is not a required heading
 
-The `## Prohibitions` section carried a justification for restating Guardrails: that `autoagent/autoagents-eval.sh` scores every body on "Required sections present exactly: Goal, Guardrails, Prohibitions". **That is false against the live script.** Its eval prompt evaluates five checks (global-rules consistency, role boundaries, frontmatter name + description, `skills:` list shape, English body) and states the opposite of the quoted rule: body section headings are a ceiling, not a floor, and no heading may be required. The quoted string appears nowhere in the script. The justification was removed with the restatement it defended; `## Prohibitions` survives as a section because it now carries items Guardrails does not.
+- `autoagent/autoagents-eval.sh` requires no body heading: its eval prompt states that body section headings are a ceiling, not a floor.
+- Its five checks are global-rules consistency, role boundaries, frontmatter name + description, `skills:` list shape, and English body.
+- `## Prohibitions` stays in this body only because it carries an item Guardrails does not.
+  - Once it carries none, delete the section rather than justify it.
 
 ## What moved out of the body, and why
 
-- **Effort/thinking blockquote** — duplicate of `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that measurably reaches every subagent.
-- **Self line budget ("keep this file ≤180 lines, largest DEV body, compress before appending")** — a maintenance constraint on whoever edits the body plus its recurrence-prevention provenance, neither of which changes what the agent does on a Node task. It is recorded here instead: this body is the longest DEV body in the corpus, its length is carried almost entirely by the Guardrails list, and an addition should replace or merge rather than append.
+- **Effort/thinking blockquote** — duplicate of `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that reaches every subagent.
+- **Self line budget** — a constraint on whoever edits the body, not a duty on a Node task. The body's length is carried almost entirely by the Guardrails list, so an addition should replace or merge rather than append.
 - **"Measurable pass conditions only (binding guardrail rules live in the Guardrails section)"** — framing for the editor, not a duty.
-- **The `acceptance_criteria.md` Guardrails bullet** ("MUST read `acceptance_criteria.md` (if present in repo) or plan's `## Acceptance Criteria` section before starting…") — DELETED, not rewritten, together with the `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` branch it mirrored.
-  - Ground: no `acceptance_criteria*` file exists anywhere in the tree (globbed this pass), and a plan carries an acceptance-criteria section only on request (`scoped/scope-planning.md`; `rules/glass-atrium/core-outcome-record.md` → `metric_pass`, the `plan` bar).
-  - What stands in its place: the gate's surviving table routes the DEV to the delegation's criteria or to its own turn-0 `Assumptions:` line, and this body keeps its feature-side duty ("MUST verify implementation against acceptance criteria (not just unit-test passage)").
-  - The `## Machine constraints on the body` row telling an editor to keep the bullet went with it — it was the only thing standing on that bullet.
-    - That row also asserted that `scoped/scope-dev.md` → Sprint Contract Gate *cites* this body's `## Guardrails`. It does not: grep over that rule file returns only the Tier-2 loading roster naming this agent.
-- **Guardrails items re-listed under Red Flags and Prohibitions** — both sections now name Guardrails as the owner and list only what has no Guardrails entry, the shape `agents/glass-atrium-dev-shell.md` already uses.
+- **The `acceptance_criteria.md` Guardrails bullet** — deleted together with the `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` branch it mirrored.
+  - Ground: no `acceptance_criteria*` file exists in the tree, and a plan carries an acceptance-criteria section only on request (`scoped/scope-planning.md`; `rules/glass-atrium/core-outcome-record.md` → `metric_pass`, the `plan` bar).
+  - In its place: the gate's table routes the DEV to the delegation's criteria or to its own turn-0 `Assumptions:` line, and the body keeps its feature-side duty ("MUST verify implementation against acceptance criteria (not just unit-test passage)").
+- **Guardrails items re-listed under Red Flags and Prohibitions** — both sections name Guardrails as the owner and list only what has no Guardrails entry, the shape `agents/glass-atrium-dev-shell.md` uses.
+- **Restatements of rules the agent already receives** — do not re-add them:
+
+  | Removed from the body | Canonical that reaches the agent |
+  |---|---|
+  | Guardrails "MUST NOT hardcode secrets or credentials" | `rules/glass-atrium/core-security.md` → Secret Management (host) |
+  | Guardrails Project Convention Probe bullet | `scoped/scope-dev.md` → Pre-Execution Verification → Project Convention Probe (`rules.scope`) |
+  | Prohibitions "npm package added without an `npm audit` / provenance check" | `rules/glass-atrium/core-security.md` → Dependency Auditing (host) |
+  | Comments & Logs clauses (why-only, TODO format, `console.*` ban, empty catch, log+rethrow) and the matching Red Flags | `scoped/shared-comment-logging.md` (`rules.shared`) |
+  | FINAL STEP emit-mode table, except the no-`completion_block` fallback, which stays in the body under the pointer line | `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation (host) plus the slot-1 emit-format block |
 
 ## Decisions worth keeping
 
-- **Naming subordination (this wave)**: the one site naming a naming axis is the Project Convention Probe bullet, and it sits INSIDE the Guardrails editable region. The change there was held to the minimum the disposition needs — the probe now mirrors import order and error+log patterns and subordinates identifier naming to the `scoped/shared-naming.md` canon; the rest of the bullet, including the greenfield branch, is unchanged. A live install with local edits resolves that region through a merge, which is why nothing else in it was touched.
-- **The `### Comments & Logs` block under Work Rules duplicates the injected comment-rule core** (why-only, TODO owner/ticket, no production `console.*`). It was left in place because it sits inside an editable region and no disposition covers it; the Node-only clause about CLI `console` on stdout/stderr is genuine residue. A later pass owning that region should cut the duplicated clauses and keep the CLI carve-out.
+- **Completion-verification Guardrail**: its task-type item points at `core-outcome-record.md` → `metric_pass` rather than restating a bar, since a restated bar drifts from the per-type canonical. The refactor, multi-site and removal checks stay as body deltas.
+- **`### Comments & Logs` under Work Rules** carries only the Node CLI carve-out: `console` on stdout/stderr is the output channel by design. Everything else it once held is in the table above.
 
 ## Daemon-evolved `## Guardrails` lines — all dropped
 
-The live body carries five EDITABLE lines this release body lacks. Each was judged against this body plus the rules the agent receives; none is valid, so none is integrated.
+Five daemon-evolved EDITABLE lines were judged against this body plus the rules the agent receives. None is valid, so none is integrated; a proposal re-adding one fails on the same ground.
 
 | Quote | Proposal | Class | Reason |
 |---|---|---|---|
@@ -48,8 +58,3 @@ The live body carries five EDITABLE lines this release body lacks. Each was judg
 | "confirm all Grep/Read is complete and documented before first Write/Edit" | 6790 | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
 | "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | 3386 | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |
 | "On effort=medium qualification: straightforward literal edits/moves with known targets only" | 3386 | contradicts | same effort conflict as the first row |
-
-- **Requirement, not fact**: the redeploy MUST remove these five lines from the live body.
-  - Mechanism: the owner-approved reset-to-release updater mechanism — an operator-recorded reset of EDITABLE regions to the release, applied by the next seam deploy. A hand edit of the live install is FORBIDDEN.
-  - Verification: after that deploy, the release-versus-live diff for this body MUST be the operator `model:` line only.
-  - Why a plain redeploy is not enough: the EDITABLE three-way merge resolves a region KEEP_LOCAL when the release equals the base, so a live-only insertion in a region the release leaves unchanged survives it.

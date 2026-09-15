@@ -36,7 +36,8 @@ Every other mention of that question in the rule file is deliberately lower-case
 ### Retired slot-1 blocks — what remains in the rule file
 
 - The rule file carries no `AGENT-INJECT` marker. `hooks/inject-scope-rules.sh` extracts nothing from it; DEV agents receive the whole file through the part slots by `rules.scope` membership.
-- **Kept as ordinary content**: the style_ref core (after `### Project Convention Probe`) and the minimalism core (closing `## Complexity Proportionality`). Several rules in the minimalism core — the `ponytail:` corner-cut mark, the heavy-machinery rule, the ≤3-line output rule — are stated nowhere else in the file, so the core cannot be deleted as a duplicate.
+- **Kept as ordinary content**: the style_ref core (after `### Project Convention Probe`) and the minimalism core (closing `## Complexity Proportionality`).
+  - Several rules in the minimalism core — the `ponytail:` corner-cut mark, the heavy-machinery rule, the ≤3-line output rule — are stated nowhere else in the file, so the core cannot be deleted as a duplicate.
 - **Deleted outright**: the plan-gate core. Every clause it carried is stated in `## Plan Direction Verification Gate [DEV+QA]`, including the three-part first-link answer shape the byte cap had cut from it.
 - **Folding each kept core into its canonical section is open work**: it needs a per-bullet audit, and it is the only way to remove the in-file restatement a DEV agent now reads twice within one part.
 - **Keep each kept core's bold lead phrase** (the words before its parenthetical): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts them ABSENT from slot 1, and the check proves nothing once a phrase no longer exists in the source.
@@ -109,12 +110,16 @@ A successful `add` writes some of the sites a new name must appear in, and not o
 
 ### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation
 
-glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HTML primaries — bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the skeleton-first non-parallel handoff in `scope-report.md` / `scope-planning.md` Designer Co-Emission Trigger — is an EXTEND of the existing glass-atrium-dev-front concern (Creation-Gate Q2 = yes: markup craft already belongs to it), NOT a new agent.
+glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HTML primaries — bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the skeleton-first non-parallel handoff — is an EXTEND of the existing glass-atrium-dev-front concern (Creation-Gate Q2 = yes: markup craft already belongs to it), NOT a new agent.
 
 - **Disjoint concern boundary**: glass-atrium-design-designer = philosophy / Mermaid-type / section-composition / palette verdict (consultative, no markup) · glass-atrium-intel-reporter | glass-atrium-intel-planner = content + the single POST · glass-atrium-dev-front = the bespoke styled-skeleton markup only.
-- **glass-atrium-dev-front is NOT a default co-author** (default = `{author, glass-atrium-design-designer}`); the entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment.
+- **glass-atrium-dev-front is NOT a default co-author** (default = `{author, glass-atrium-design-designer}`).
+  - The entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment.
 - **`shared-design-token-consumption.md` does NOT gate this** — a self-contained Tailwind-CDN exposed doc is a markup-craft surface, not a token-consumption one, but markup craft is still glass-atrium-dev-front's concern.
-- Pair note: this verdict restates the dev-front markup exception whose other copies are enumerated as a closed set at `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` and mirrored at `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, and that enumeration does not name this passage — reported, not reconciled.
+- **Pair note**: this passage holds the EXTEND verdict only; the exception itself is stated per actor at:
+  - `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` → **Markup exception (narrow)** — author side;
+  - `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` — the judgment canonical, which cites the rule file's `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` stub for the EXTEND verdict;
+  - `agents/glass-atrium-dev-front.md` → `## Exposed-Doc HTML Co-Emission (narrow exception)` — the dev-front side.
 
 ## Sprint Contract Gate (orchestrator side)
 
@@ -139,69 +144,90 @@ A DEV implementation spawn carrying NEITHER a plan reference NOR an `[ENTRY-CLAS
 
 - **Both delegation paths are covered**: the manual path via the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook (which reads `subagent_type` from the spawn payload), and the ultracode path via the `enforce-workflow-verify-stage.sh` static scan of the workflow script.
 - **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work — a spawn judged simple/exempt emits it to pass the gate (per `orchestrator-role.md` Decision phase classify-always rule).
-- **Ultracode placement**: on that path the token is recorded IN the workflow script (canonical home: a `log()` string or `meta.description`) rather than in a delegation prompt — a greppability convention, NOT a comment prohibition (the gate raw-scans, so any placement passes); the plan-ref token shares this. See `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode` (Workflow pre-flight item 1) and its Pipeline Acceptance Criteria "Entry-class token placement".
+- **Ultracode placement**: on that path the token is recorded IN the workflow script (canonical home: a `log()` string or `meta.description`) rather than in a delegation prompt.
+  - This is a greppability convention, NOT a comment prohibition — the gate raw-scans, so any placement passes; the plan-ref token shares it.
+  - See `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode` (Workflow pre-flight item 1) and its Pipeline Acceptance Criteria "Entry-class token placement".
 - **Recommended reason form** (honor-system AUDIT CONVENTION — the gate's prefix match is unchanged): `[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line>` (each key = one sizable criterion honestly negated; any key not honestly negatable → the task is SIZABLE, author a plan).
-- **Honest caveat — the gate enforces signal ABSENCE, not size**: it blocks only the "no plan-ref AND no token" case and never computes whether a task is genuinely sizable. The token is self-emitted, so a gamed token (a sizable task mislabeled simple) still passes — the gate stops the unsignalled entry, not the misclassified one. Fail-open is preserved (internal error / missing tooling → exit 0).
-- **Not-gaming clarification (honesty, not bias)**: emitting the simple-task token after an HONEST judgment that NONE of the four criteria hold is the CORRECT use of it. Gaming is ONLY the dishonest inverse. Error-direction asymmetry: under-classifying sizable work as simple is the DANGEROUS error (it skips the plan + Stage-2 the work actually needed); over-escalating a genuinely simple task is the SAFE error — on a borderline case prefer SIZABLE.
-- **Sibling token — `[SIZE-EST]`**: this gate answers "is this DEV spawn classified?"; `[SIZE-EST]` is a separate self-attestation answering "how big is THIS delegation?" (bundle count + rough tool_use estimate, gating per-delegation packing split vs no split) — contract SoT `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline (do not restate the format here). BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only), ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
+- **Honest caveat**: the gate enforces signal ABSENCE, not size — it blocks only the "no plan-ref AND no token" case and never computes whether a task is genuinely sizable.
+  - The token is self-emitted, so a gamed token (a sizable task mislabeled simple) still passes — the gate stops the unsignalled entry, not the misclassified one.
+  - Fail-open is preserved (internal error / missing tooling → exit 0).
+- **Not-gaming clarification (honesty, not bias)**: emitting the simple-task token after an HONEST judgment that NONE of the four criteria hold is the CORRECT use of it.
+  - Gaming is ONLY the dishonest inverse.
+  - Error-direction asymmetry: under-classifying sizable work as simple is the DANGEROUS error (it skips the plan + Stage-2 the work actually needed); over-escalating a genuinely simple task is the SAFE error — on a borderline case prefer SIZABLE.
+- **Sibling token — `[SIZE-EST]`**: this gate answers "is this DEV spawn classified?"; `[SIZE-EST]` is a separate self-attestation answering "how big is THIS delegation?" (bundle count + rough tool_use estimate, gating per-delegation packing split vs no split).
+  - Contract SoT: `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline (do not restate the format here).
+  - BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only), ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
 
 Cross-ref: the `core-outcome-record.md` Field Input Guide `metric_pass` row's per-task-type check matrix operates as the Code-Based grader tier (author-side outcomes only); the Sprint Contract Gate pass/fail record applies that tier's acceptance-criteria branch.
 
 ## Ambiguity Gate — pair note
 
-The six weighted axes in the rule file are restated at `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]` and again in the delivered planner copy at `agents/glass-atrium-intel-planner.md` → `## Pre-Execution Verification [PLANNING]`, with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]` pointing at the rule file for the Assumptions Disclosure obligation. A weight changed in one changes by hand in two others.
+- The six weighted axes in the rule file are restated at `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]`.
+  - A weight changed in one file changes by hand in the other.
+- `agents/glass-atrium-intel-planner.md` → `### Ambiguity Gate (banded, not a single threshold)` points at the planning copy rather than restating the axes.
+- `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]` points at the rule file for the Assumptions Disclosure obligation.
 
 ## Inbound citations to the rule file
 
-Headings other files resolve to — renaming or deleting one dangles a live reference:
+Headings other files resolve to — renaming or deleting one dangles a live reference. Instrument for a fresh set: grep the heading name over `rules skills scoped agents hooks`.
 
 | Heading in `scoped/scope-dev.md` | Cited from |
 |---|---|
-| `## DEV Agent Fleet Governance` / New-Agent Creation Gate | `rules/glass-atrium/orchestrator-role.md` · `rules/glass-atrium/core-compliance-matrix.md` · `skills/glass-atrium-ops-orchestrator.md` · `scoped/scope-report.md` |
-| `## Sprint Contract Gate [DEV+QA]` (Sizable-task definition · Spawn-time entry gate) | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `skills/glass-atrium-ops-orchestrator.md` |
-| `## Plan Direction Verification Gate [DEV+QA]` | `scoped/scope-qa.md` · `skills/glass-atrium-ops-orchestrator.md` · `hooks/enforce-workflow-verify-stage.sh` (comment) |
-| `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `agents/glass-atrium-intel-planner.md` |
-| `## Pre-Execution Verification` → `### Project Convention Probe` (promoted from a bold lead to a heading in the follow-up fix pass; the cited name is unchanged) | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `scoped/shared-search-first.md` |
-| `## Vendor-Routing Awareness` | `agents/glass-atrium-dev-db.md` |
+| `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `rules/glass-atrium/orchestrator-role.md` |
+| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
+| `## Plan Direction Verification Gate [DEV+QA]` | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
+| `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md` |
+| `## Pre-Execution Verification` → `### Project Convention Probe` | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-shell.md` · `agents/glass-atrium-dev-swift.md` |
+| `### Pre-Edit Facts Disclosure` | `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message) |
 | `## Agent-Level Tool Exceptions` | `agents/glass-atrium-dev-rag.md` (frontmatter NOTE, itself a fixture in `hooks/test/enforce-harness-critical-frontmatter.bats`) |
 | `### Dead Code Non-Touch Principle` | `scoped/shared-comment-logging.md` (disambiguates itself against it by name) |
 
-Open items a later pass owns, both outside this wave's file set:
+- `## Vendor-Routing Awareness [DEV]` has no external citer; the `Vendor-Routing` hits in `scoped/scope-design.md` and the designer body are their own sections.
 
-- The two moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) are now reached in one hop through the stubs left in the rule file. Repointing the citing sites in `orchestrator-role.md`, `core-compliance-matrix.md`, `scope-qa.md`, `scope-report.md` and `skills/glass-atrium-ops-orchestrator.md` at this companion would remove that hop.
-- `rules/glass-atrium/core-compliance-matrix.md` footnote ‡ points at the `scoped/shared-design-token-consumption.md` header for the UI-emitting agent ROSTER, and that header now declares a task trigger instead (the roster moved to `scoped/maintainers/shared-design-token-consumption.md`). The footnote needs rewording to drop the header pointer — it is neither a moved-subheading repoint nor an in-wave file, so it falls outside both halves of this wave and is booked here so it is not lost between them.
+## Inbound citations to this note
+
+| Heading in this note | Cited from |
+|---|---|
+| `## DEV Agent Fleet Governance` | `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator.md` |
+| `### New-Agent Creation Gate` | `skills/glass-atrium-ops-orchestrator.md` |
+| `### Doc-sync note (CLI auto-writes vs. manual matrix update)` | `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note |
+| `## Sprint Contract Gate (orchestrator side)` · `### Sizable-task definition (single SoT — the positive entry floor)` | `scoped/scope-dev.md` (stub) |
+| `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` | `scoped/maintainers/shared-design-token-consumption.md` → `## Readers, coupled tests, and one stale citation` |
+
+## Open item
+
+Owned by a later pass, outside this wave's file set:
+
+- `rules/glass-atrium/orchestrator-role.md` and `scoped/scope-qa.md` still reach the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing them at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
 ## Follow-up fix pass — what changed in the rule file
 
 - The maintainer preamble pointing here was removed, and so was the companion pointer in the first-link LITERAL bullet: neither sat under an externally-cited stub heading, so neither is sanctioned by the companion-citation convention in this note's header. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — stated without the pointer.
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.
 - The three `<!-- … Detail: scoped/maintainers/scope-dev.md -->` comments that sat beside the marker blocks went with the markers when the slot-1 blocks retired (`### Retired slot-1 blocks — what remains in the rule file`); no machine-extracted block remains for them to address.
-- `**Project Convention Probe**` was promoted from a bold lead to `### Project Convention Probe`, with its trigger as the first bullet.
 - The loading stanza regained its `> **Inherits**:` and `> **See**:` lines for parity with the other scope files. Neither line contains a brace, so the single-brace-list invariant both stanza parsers depend on is untouched.
 
 ## Sections dropped in this pass
 
 Removed from the rule file, recorded so they are not re-derived as omissions:
 
-- The delivery-status preamble and the four "Readers (NOT UNUSED)" retention paragraphs: each justified a section by naming a `> scope-dev pointers:` line in twelve DEV bodies, and that line was deleted from every body in this branch. The sections they protected are kept on their own duty content or on the citations tabled above.
-- Three pointer-only sections — naming conventions, code structure/function/type design, and the iron-law escalation pointer. Their skills load globally at session start and the naming rules additionally reach DEV agents through `scoped/shared-naming.md` membership, so each line obliged nothing and was cited by nothing.
+- The delivery-status preamble and the four "Readers (NOT UNUSED)" retention paragraphs: each justified a section by naming a `> scope-dev pointers:` line in the DEV bodies, and that line was deleted from every body. The sections they protected are kept on their own duty content or on the citations tabled above.
+- The pointer-only sections for naming conventions, code structure/function/type design, and the iron-law escalation pointer.
+  - Their skills load globally at session start and the naming rules additionally reach DEV agents through `scoped/shared-naming.md` membership, so each line obliged nothing and was cited by nothing.
 - The package-provenance bullet: `core-security.md` → Dependency Auditing states it, is Tier 1, and measurably reaches every agent.
 - The reuse-order ladder bullet under vendor routing: the minimalism core carries the ladder and the never-hand-roll-crypto carve-out verbatim.
 
-## Pre-Edit Facts Disclosure — restored, and the record corrected
+## Pre-Edit Facts Disclosure — restored
 
-An earlier open-item bullet here filed the dangling `hooks/advisory-preedit-facts.sh` citation as one that "predates this pass". That is false, and the correction matters: a companion recording the wave's own deletion as an inherited defect hides it from the next reader.
-
-- **Provenance, measured**: `git log --oneline -S "Pre-Edit Facts Disclosure" -- scoped/scope-dev.md` returns exactly `3cdeb07` (added, initial commit) and `32a0685` (deleted). `32a0685` — one of this wave's own two cut commits — is what orphaned the citation; `2dbac77` never touched the literal.
-- **What kept citing it meanwhile**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory (binding SoT `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row), names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
+- **Citers**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory, names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
+  - Binding SoT: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row.
 - **Disposition taken**: the section is restored to the rule file verbatim from `32a0685^`, placed after the style_ref core and before `## Context Engineering [DEV]`, so it opens a clean sibling section under `## Pre-Execution Verification [DEV]`.
-- **Why restore rather than retire the hook**: the restore costs no extra file, makes the operator-visible citation resolve today, and holds under either branch of the delivery direction this epic is still deciding.
+- **Why restore rather than retire the hook**: the restore costs no extra file and makes the operator-visible citation resolve.
 - **Delivery rides the part slots, never a marker block**: the rule file reaches every DEV agent whole through `rules.scope` membership, and slot 1 carries no scope-file text. A new marker block is NOT a sanctioned route for this duty.
-- **The hook is not edited in this wave**: its citation resolves again, so no repoint is owed.
 
 ## Leave-deleted verdicts here are dated, not closed
 
-Every leave-deleted verdict in this companion, and in the audits behind it, reasons from the measured fact that a `scoped/` body reaches no agent at spawn (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`, measured 2026-09-10). That premise is scheduled to go false when split injection lands.
+Every leave-deleted verdict in this companion, and in the audits behind it, was reasoned under a delivery regime in which a `scoped/` body reached no agent at spawn. That regime has ended: the part slots deliver this rule file whole to every DEV agent (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
 
-- Read the leave-deleted set as decided under the CURRENT delivery regime and re-litigable once the regime changes — never as settled.
-- Relocating a duty into an agent body to route around the premise stays FORBIDDEN: it manufactures the body-versus-rule-file drift this epic exists to end.
+- Re-examine a leave-deleted verdict against current delivery before relying on it; the retired premise settles none of them.
+- Relocating a duty into an agent body to route around a delivery gap stays FORBIDDEN: it manufactures body-versus-rule-file drift.

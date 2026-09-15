@@ -50,7 +50,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT write a recursive-force deletion (`rm` carrying its recursive and force flags) without explicit path validation
 - MUST NOT use `for f in $(ls ...)` — use glob directly
 - MUST NOT use `printf "$user_input"` — use `printf '%s\n' "$var"`
-- MUST NOT use `grep -c ... || echo 0` (produces `"0\n0"`) — see Key Patterns `grep -c` zero-match trap for the correct form
+- MUST NOT use `grep -c ... || echo 0` — see Key Patterns `grep -c` zero-match trap for why and the correct form
 - MUST use a non-whitespace `IFS` when parsing records whose fields may be empty (`IFS=$'\x1f' read -r a b c`)
   - Why: the strict-mode `IFS=$'\n\t'` is whitespace, so consecutive delimiters collapse and an empty field vanishes on read-back.
   - `read -r -d ''` is for NUL-delimited *records* (`find -print0`) — a separate concern from field splitting.
@@ -80,13 +80,14 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 ### Budget sizing
 
 - MUST size the task at intake — `tool_uses ~= files x 4.5`, plus ~5 for each comprehensive Bats suite run; above ~30, decline and report for decomposition rather than discovering the shortfall mid-work
-- MUST checkpoint token budget after each work-unit (file-group / test-pass); below 20% remaining, halt complex work and report status to the user before accepting new tasks
+- MUST check remaining budget at each work-unit checkpoint (`GLASS_ATRIUM_GLOBAL_RULES.md` → Work-unit checkpoint dimension)
+- MUST halt complex work below 20% remaining budget and report status to the orchestrator before accepting new tasks
 
-> The two bullets above are this agent's ONLY copy of the sizing rule — no injection delivers it, so deleting them as a mirror deletes the rule.
+> The size-the-task-at-intake bullet is this agent's ONLY copy of the sizing rule — no injection delivers it, so deleting it as a mirror deletes the rule.
 
 ### Concurrent-worktree contract
 
-Both rules below are conditional on the worktree contract the delegation states (`core-git-workflow.md` → Commits). Where the delegation states no contract, treat the worktree as SHARED and ask.
+Both rules below are conditional on the worktree contract the delegation states; the permission and the no-contract default are `core-git-workflow.md` → Commits → Concurrent worktree.
 
 | Contract stated in the delegation | Incremental commit per file-group | Whole-tree manifest regeneration |
 |---|---|---|
@@ -129,7 +130,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 ### Key Patterns
 
 - **`set -e` exceptions**: `if`/`while` conditions, `&&`/`||` chains, `!` negation suppress `-e` · `(( var++ ))` → use `(( var++, 1 ))` or `|| true`
-- **Quoting**: Every expansion quoted `"${var}"` · `"$(cmd)"` (never backticks) · `[[ ]]` (never `[ ]`)
+- **Quoting**: `"$(cmd)"` (never backticks) · `[[ ]]` (never `[ ]`)
 - **Separated declaration**: `local var; var="$(cmd)"` (SC2155 — masks exit code)
 - **Subshell scope**: `cmd | while read` loses vars → use `while read ...; done < <(cmd)`
 - **Temp files**: `mktemp` / `mktemp -d` · Register `trap` cleanup before creation
@@ -174,8 +175,10 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 |---|---|
 | Input | JSON on stdin → parse with `jq` (verify via `command -v jq`) |
 | Output | stdout for decisions, stderr for user errors |
-| Exit codes | 0 default · 2 blocking · document any non-zero |
-| Performance | <1s typical · `timeout` wrapper for external calls |
+| Exit codes | 2 blocking · document any non-zero |
+| Performance | `timeout` wrapper for external calls |
+
+- Exit 0 by default and the ~1s completion target: `GLASS_ATRIUM_GLOBAL_RULES.md` → Hook Operation Policy.
 
 ### Health Check Design
 
@@ -185,11 +188,8 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
-- **Search first**: Grep existing `~/.glass-atrium/scripts/*.sh` before writing new
-- **Match existing style**: indentation and logging conventions of sibling scripts — identifier naming follows the naming canon in `scoped/shared-naming.md` (shell adds `snake_case` function casing below), never a sibling's naming style
-- **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code
-- **Logging**: English · stderr for errors · no secrets · masked identifiers
-- **Comments**: "why" only · step numbers for 3+ sequential ops · `# SECURITY:` for suspicious areas
+- **Match existing style**: sibling mirror per `scoped/scope-dev.md` → Project Convention Probe; the shell naming delta is the `snake_case` function casing under **Functions**
+- **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code, error messages → stderr
 - **Infrastructure decommissioning (atomic)**: when retiring a script or hook, update every layer below in a SINGLE task — omitting any one causes false-positive monitoring failures or stale rule pollution in the learning log
   - move the data/script files to archive or trash
   - remove the hook entry from `settings.json`
@@ -230,7 +230,7 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 
 - GNU-only flags without a macOS BSD portability check
 - Missing `trap` cleanup for temp files (→ Key Patterns, Temp files)
-- Plain `rm` on non-regenerable files — use `mv ~/.Trash/`; the Guardrails entry on recursive-force deletion covers only its path validation, not the choice between `rm` and Trash
+- Plain `rm` on non-regenerable files (`GLASS_ATRIUM_GLOBAL_RULES.md` → File Deletion Policy) — the Guardrails entry on recursive-force deletion covers only its path validation, not the choice between `rm` and Trash
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
@@ -255,13 +255,5 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 
 - **Completion**: every check in `## Quality Gate (Mechanical)` green
 - **Key metric**: metric_pass=true (condition defined at `## Quality Gate (Mechanical)`)
-- **FINAL STEP — emit (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` — the tag alone on its line, one field per line, closed by `[/COMPLETION]` alone on its line.
-- `lesson` (1-2 sentences) rides that block as the self-improvement signal, NEVER folded into the deliverable body.
-
-| Emit mode | Where the block goes |
-|---|---|
-| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
-| SCHEMA / WORKFLOW | the schema's `completion_block` field on the `StructuredOutput` call, which stays the LAST action |
-
-- Why the table splits: the engine consumes only the StructuredOutput call, so a printed text turn is never recorded on the schema path.
-- Schema declaring no `completion_block` → keep the dedicated-turn print as best-effort fallback; NEVER invent an undeclared key (schema validation fails).
+- **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

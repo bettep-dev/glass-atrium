@@ -18,10 +18,6 @@ Two placement facts, both deliberate:
 - **The insertion anchors on the `maxTurns:` line, never on `tools:`.** `hooks/enforce-harness-critical.sh` blocks any live-install write that touches an `agents/*.md` frontmatter identity key — name, tools, scope — for every caller, agent-id-independent (LLM06; `core-security.md` → Agent Tool Authorization → Enforcement boundary). An edit whose anchor string overlaps the `tools:` line risks tripping it. `skills:` is not a frozen identity key. The same hook also reacts to a change in the frontmatter fence-line count, which stays at two.
 - **`skills:` is not local-only.** `autoagent/lib/editable_merge.py` keeps `model` as the local-only frontmatter key and treats `effort` as base-aware; `skills:` is in neither set, so a repo-added key propagates to live installs through the ordinary update path.
 
-## Roster work this body does NOT carry
-
-Membership in the naming INJECTION roster is separate from `scoped/shared-naming.md` membership. Adding this agent to that roster is a multi-file change owned by another track of this wave: the injector's roster array and header comments, `scripts/agent_lifecycle/inject_sync.py`'s naming-exclusion set and docstrings, the second functional exclusion set in `orphan_scan.py`, `readers.py` docstrings, the lifecycle roster comment in `add.py`, the roster prose in `rules/glass-atrium/core-compliance-matrix.md` (corrected, never deleted — a suite enumerates roster declarations from code and requires each to be named in the live matrix), and four absence-asserting suites that must be inverted together with their comments. Byte headroom is the binding constraint there, not here: this body is not injected, so its length costs install bytes only.
-
 ## Machine constraints on the body
 
 | Reader | What it reads | Consequence |
@@ -33,11 +29,17 @@ Membership in the naming INJECTION roster is separate from `scoped/shared-naming
 ## What moved out of the body, and why
 
 - **Tech Stack prose run** — became a table; no fact dropped, the reader no longer parses one long middot chain.
-- **"Never hardcode secrets or signing credentials" under `## Security`** — stated twice in one file; the Guardrails bullet owns it.
-- **Comment / TODO restatements in Self-Review** — the comment-rule core is injected into every DEV subagent. The Swift residue (the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged) stayed.
-- **Red Flags and Prohibitions items already stated as Guardrails MUST NOTs** — both sections now name Guardrails as the owner and list only the residue, the shape `agents/glass-atrium-dev-shell.md` already uses.
+- **Secrets and signing credentials** — the no-hardcoding rule is `core-security.md` → Secret Management (host-delivered). The Guardrails bullet keeps only the Keychain / env delta and names that canonical; `## Security` carries no copy.
+- **Comment / TODO restatements in Self-Review** — the comment-rule core is delivered to every DEV subagent through `scoped/shared-comment-logging.md` membership (part slots). The Swift residue (the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged) stayed.
+- **Red Flags and Prohibitions items already stated as Guardrails MUST NOTs** — both sections name Guardrails as the owner and list only the residue, the same shape as the dev-shell body.
+- **Emit instructions under Success Criteria** — the emit-mode table and its notes restated `core-outcome-record.md` → Completion Report Output Obligation, which is host-delivered and also compressed into the slot-1 emit-format block. One pointer line remains; no suite reads a DEV body's emit text.
+  - Kept in the body under that pointer: the fallback for a schema declaring no `completion_block`, which neither canonical states.
+- **In-file repeats in the editable regions** — the Work Rules Concurrency and SPM bullets, the `@Published` / main-actor / `[weak self]` repeats under Design Principles, and "keep `body` small" each restated a Guardrails bullet or a Design Principles line that stays; the SPM bullet's package-provenance clause is `core-security.md` → Dependency Auditing (host).
+- **SPM confirmation under Pre-Execution Verification** — the Guardrails bullet owns it; the line keeps the `Package.swift` + `Package.resolved` check.
 
 ## Decisions worth keeping
 
-- **Naming subordination (this wave)**: the Project Convention Probe line under Pre-Execution Verification is the single site naming a naming axis. It mirrors import order, isolation style and error handling from the sibling and subordinates identifier naming to the `scoped/shared-naming.md` canon. Both that line and the body's other edits sit outside every editable region, so no merge seam is involved.
+- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes (import order, error+log, layout) and subordinates identifier naming to the naming canon.
+  - The line adds only the Swift isolation-style axis.
+  - It sits outside every editable region.
 - **`@unchecked Sendable` added to Red Flags** — the Error Recovery region already forbade silencing a strict-concurrency diagnostic with it, but nothing listed it as a scan target.

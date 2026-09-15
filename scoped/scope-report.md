@@ -1,14 +1,12 @@
 # REPORT Scope Rules
 
-Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). The copy the reporter applies is its own body, `agents/glass-atrium-intel-reporter.md`; the sections below are the maintained source those copies derive from, plus the rules no body carries.
+Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A section that names `agents/glass-atrium-intel-reporter.md` as canonical states the rule's shape here and leaves its detail in that body.
 
-Maintainer material — co-edit rosters, drift reports, the machine-read byte contract, the server-400 gate list and the mirrors this pass removed together with the pointers still naming them — is in `scoped/maintainers/scope-report.md`.
+Maintainer material — co-edit rosters, drift reports, the machine-read byte contract and the server-400 gate list — is in `scoped/maintainers/scope-report.md`.
 
 ## Absolute Rules [REPORT]
 
 - **Citation format**: cite every external source as `URL + collected_at(YYYY-MM-DD)`; label a date-unknown source `[Date Unknown]` and never treat it as current.
-  - Sole copy: `collected_at` appears in no agent body, and Tier-1 `rules/glass-atrium/core-wiki-reference.md` carries the `[Date Unknown]` half for wiki documents only.
-- **Summary table** and **monitor-POST save location**: delivered at `agents/glass-atrium-intel-reporter.md` → `## Deliverable Class Detection` and `### Storage is ALWAYS the monitor POST (self-enforcing, delegation-phrasing-proof — MUST)`. Stated there rather than here, because the summary-table rule reads unconditional away from the agent-only exemption that qualifies it.
 
 ## Output Format Routing [REPORT]
 
@@ -16,23 +14,25 @@ Format follows two request signals — did the user request a document, and did 
 
 ### Three emission modes
 
-Agent-only record (default fallback) · user-requested HTML · user-requested non-HTML. The trigger/format/storage triple, and the branching order that applies the HTML request test before body composition, are delivered at `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+Agent-only record (default fallback) · user-requested HTML · user-requested non-HTML. The trigger/format/storage triple and the evaluation order are canonical at `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`; declaring the mode before body composition is `### Turn-0 Format Guard` in the same body.
 
 ### HTML request test
 
-HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent; visual richness and an LLM's own "this looks visual" judgment are not triggers, and a bare document request routes to non-HTML md. The signal literals — Korean included, where translating one disables the detector — are delivered at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test` and `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`.
+- HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent.
+- Not triggers: visual richness, or an LLM's own "this looks visual" judgment. A bare document request routes to non-HTML md.
+- The signal literals — Korean included, where translating one disables the detector — are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
 
 ### Visual-Maximization Floor
 
-The baseline requirement list, the d8 validator-safe color rule and the content-driven escalation are delivered at `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor`.
+The baseline requirement list, the d8 validator-safe color rule and the content-driven escalation are canonical at `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor`.
 
 - **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max · decoration stacking (one treatment per element).
-  - Sole copy: none of these six is carried by an agent body or by the prohibited-pattern SoT at `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
+  - The SoT, which carries none of these six: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
   - Glassmorphism is not on this list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
 
-The dark canvas, light text, the dual-encoded semantic badge palette and the print-branch carve-out are delivered at `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)`.
+The dark canvas, light text, the dual-encoded semantic badge palette and the print-branch carve-out are canonical at `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)`.
 
 ### Threshold SoT
 
@@ -57,17 +57,16 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
   - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is FORBIDDEN.
   - The report is count + category + locator only — never the flagged text, in the narrative, the `[COMPLETION]`, `concerns` or any log, so the scanner cannot become the leak path.
-  - Honor-system semantic judgment: no hook reads it. Delivered at `agents/glass-atrium-intel-reporter.md` → `### Schema Gates (Server-Enforced)`.
+  - Honor-system semantic judgment: no hook reads it.
 
 ### Document Lifecycle — completion + exposure routing
 
 - **Done transition**: the completing agent transitions `doc_status→done` through `PUT /api/clauded-docs/:id`, re-sending the document body plus the optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` is rejected `400 invalid_body`.
-- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
+- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` (the monitor auto-transitions the predecessor) · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
 - **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede POST even though the predecessor is still `progress`, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
 - **Chain-root content**: the first version carries the original user instruction VERBATIM plus the instruction-NAMED file set. An empty named set is the common shape and falls back to the instruction's named SUBJECT set, the file-count leg being skipped rather than measured against a zero baseline.
 - **Exposure routing**: viewer-exposed only on an explicit HTML/share signal; everything else is viewer default-hidden, and an ambiguous form defaults to non-HTML md.
 - An agent-only record follows the same done-transition and supersede rules — exposure is a routing choice, not a lifecycle exemption.
-- Delivered at `agents/glass-atrium-intel-reporter.md` → the bolded lead `**Document lifecycle duties — you are the completing agent and you own these:**`, and at `agents/glass-atrium-intel-planner.md` → `### Document lifecycle duties (delivered copy — the completing agent owns these)`.
 - The reviewer-side consumer of the chain root is `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
 
 ## Diagram Standard [REPORT]
@@ -128,13 +127,15 @@ Gated on "is this a user-requested HTML primary?" — an agent-only record never
 - **Designer contribution scope**: Mermaid type mapping and section composition are primary; non-canonical badge palette expansion (T4) and table-splitting axis selection are conditional; typography levels and the canonical 4-badge palette are mechanical and excluded.
 - **glass-atrium-dev-front is never probe-composed**: an exposed HTML primary is self-contained Tailwind CDN, not a design-token-consumption surface.
 - **Markup exception (narrow)**: markup genuinely beyond Tailwind-CDN utilities AND beyond the designer's verdict scope routes through the author's `needs_devfront_markup: true` signal and the orchestrator's Monitoring-phase judgment, at `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`.
-- The indicators are counted by three actors from their own copies: the author bodies' `## Designer Handoff Contract`, the designer's `## HTML Primary Co-Emission Role`, and the orchestrator's Visual-Weight Probe.
+- **Who counts against this table**: glass-atrium-intel-reporter, declaring the result per `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract`. The planner counts against its own body copy, the designer holds `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, and the orchestrator counts at the Visual-Weight Probe.
 
 ## Report Structure [REPORT]
 
-Every report is navigable in skim-only mode. The layers are format-agnostic — a user-requested HTML primary carries them as `<section>` landmarks, an agent-only record as headings or another author-chosen structure.
+Every user-requested report is navigable in skim-only mode through the layers below — an HTML primary carries them as `<section>` landmarks, a non-HTML document as headings.
 
-- **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading. **Agent-only record exempt** — it keeps only the 1-line Pyramid conclusion.
+An agent-only record is not required to carry any layer or the summary table: add a layer or a table only where the record would otherwise be hard to understand.
+
+- **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
 - **Scan layer**: per-section digest + recommendation list.
 - **Read layer**: full analysis + complete source list.
 - Burying the conclusion in body paragraphs is FORBIDDEN.

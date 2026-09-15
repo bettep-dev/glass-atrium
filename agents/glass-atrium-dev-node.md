@@ -27,17 +27,19 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 <!-- EDITABLE:BEGIN -->
 - MUST NOT use synchronous fs APIs outside initialization (use `node:fs/promises`)
 - MUST NOT use `Buffer()` constructor (use `Buffer.alloc()` / `Buffer.from()`)
-- MUST NOT hardcode secrets or credentials
 - MUST NOT process MCP server Tool inputs without Zod schema validation
 - MUST NOT apply speculative fixes — before any bug fix, Grep for the exact user-reported symptom string (error string / log token); zero matches → surface the Grep evidence and ask the user to re-confirm the target file/symbol, never proceed on a guess (single canonical statement of the symptom-string rule — other sections point here)
 - MUST NOT rename a symbol/property/field at the definition only — Grep all references and patch every usage site in the same change
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
 - MUST NOT assume spawn-time env can override `~/.claude/settings.json` env block (plan post-process stdout filtering instead)
-- MUST execute Project Convention Probe before first Write/Edit (Glob same-directory `.ts/.js` → Read most-recent → mirror its import order and error+log patterns; identifier naming follows the naming canon in `scoped/shared-naming.md`, never the sibling; zero siblings + no AGENTS.md → declare `convention: greenfield` in Assumptions)
 - MUST verify library behavior assumptions via grep patterns or test case before production code (e.g., Prisma `$queryRaw`, Promise.allSettled vs. Promise.all for optional deps).
 - MUST NOT use `url.parse()` — runtime-deprecated in Node 24. Use the WHATWG `new URL()` API instead.
 - MCP server Tool output used as a shell command: MUST sandbox / validate before execution (LLM05 Improper Output Handling).
-- MUST execute completion verification before declaring done: (1) feature/bug-fix must pass test suite with exit 0, (2) refactor must preserve behavior across all callers, (3) multi-site changes must Grep-verify consistency, (4) removals must detect orphaned code. Declare metric_pass='true' only when verification confirms it
+- MUST run completion verification before declaring done, and declare `metric_pass: true` only when it confirms every check that applies:
+  - the task type's bar in `core-outcome-record.md` → `metric_pass`
+  - a refactor preserves behavior across all callers
+  - a multi-site change is Grep-verified consistent
+  - a removal leaves no orphaned code
 - For features: MUST verify implementation against acceptance criteria (not just unit-test passage) — check for non-tested behaviors (fan-out/concurrency, error handling strategy, fallback/seam patterns)
 - MUST NOT change a literal-typed field's value (enum, const assertion) without syncing its type declaration in the same change — value vs type divergence silently breaks contracts or causes false-positive typecheck errors
 - MUST update test oracles when changing algorithmic boundaries (day-windows, bucketing, discriminated-union branches) — hardcoded assertions become false-positives after boundary shifts
@@ -120,7 +122,7 @@ POSIX args · Auto `--help`/`--version` · Exit 0/1/2 · stdin/stdout piping · 
 
 ### Comments & Logs
 
-Why-only comments (no restating code) · TODO(owner/TICKET) format · `console.*` FORBIDDEN in production (use Pino/Winston/structured logger) · CLI tools `console` allowed only on stdout/stderr by design · No empty catch · No log+rethrow in same catch
+CLI tools: `console` on stdout/stderr is the output channel by design, the one exception to the production `console.*` ban (structured logger — Pino/Winston — everywhere else)
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
@@ -135,7 +137,6 @@ Why-only comments (no restating code) · TODO(owner/TICKET) format · `console.*
 Every `MUST NOT` in `## Guardrails` is a prohibition, owned and stated once there. These have no Guardrails entry:
 
 - Introducing an unverified pattern into production code
-- npm package added without an `npm audit` / provenance check (LLM03 Supply Chain)
 
 ## Red Flags
 
@@ -143,8 +144,7 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 
 - `require()` in ESM without `createRequire` · package imported but missing from `package.json`
 - Hardcoded path separator instead of `node:path.join()`
-- `process.exit()` without cleanup/logging · unhandled promise rejection · empty catch or log+rethrow in the same catch
-- `console.log` on a production path (structured logger instead)
+- `process.exit()` without cleanup/logging · unhandled promise rejection
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
@@ -168,13 +168,5 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 - **ESM + non-blocking I/O + Buffer safety**: `node:` prefix imports, zero sync fs outside init, zero `new Buffer()`, MCP Tool inputs Zod-validated (regex_count)
 - **Edit safety**: multi-position splices applied bottom-up + `node --check` pass after each batch (contains_section)
 - **Local test pass**: full test suite (node:test / Vitest / Jest) green with exit code 0 before `[COMPLETION]`
-- **FINAL STEP — emit (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` — the tag alone on its line, one field per line, closed by `[/COMPLETION]` alone on its line.
-- `lesson` (1-2 sentences) rides that block as the self-improvement signal, NEVER folded into the deliverable body.
-
-| Emit mode | Where the block goes |
-|---|---|
-| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
-| SCHEMA / WORKFLOW | the schema's `completion_block` field on the `StructuredOutput` call, which stays the LAST action |
-
-- Why the table splits: the engine consumes only the StructuredOutput call, so a printed text turn is never recorded on the schema path.
-- Schema declaring no `completion_block` → keep the dedicated-turn print as best-effort fallback; NEVER invent an undeclared key (schema validation fails).
+- **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

@@ -8,7 +8,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
-- Applied here: the rule file's `## Agent Injection Core` heading IS externally cited — `skills/glass-atrium-dev-naming/SKILL.md` points at it — so the heading is load-bearing and carries no companion pointer beside it.
+- Applied here: two rule-file headings are externally cited — `## Agent Injection Core` and `## Core rules outside the delta-core` — so both are load-bearing and carry no companion pointer beside them. Every cited heading and bold lead, with its citers, is listed in `## Readers and coupled tests`.
 
 ## Membership
 
@@ -28,7 +28,12 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 - `hooks/lib/inject_chunk.py` reads the file by registry membership and packs it at heading boundaries.
 - `hooks/test/inject-scope-rules.bats` → the retired naming case plants a synthetic `AGENT-INJECT:NAMING` pair at the old default path and asserts slot 1 never extracts it; it never reads this file.
-- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail and carries one pointer line to this rule file. Its `references/` are untouched.
+- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail; it and `skills/glass-atrium-dev-naming/references/VARIABLES-BOOLEANS.md` cite the rule file by heading and bold lead. Each literal below is load-bearing — rename one and fix its citers in the same pass:
+  - `## Agent Injection Core` — `SKILL.md`
+  - `## Core rules outside the delta-core` — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
+  - **Canonical verb set (PRIMARY)** — `SKILL.md`
+  - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
+  - **Reduction-floor guardrail** (the bold lead's opening words) — `SKILL.md`
 
 ## Manifest-regeneration preconditions
 

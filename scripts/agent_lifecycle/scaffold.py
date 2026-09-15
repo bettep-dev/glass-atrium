@@ -1,22 +1,21 @@
-"""agents/<name>.md scaffold body + ADD pre-flight absence checks (§3.4).
+"""agents/<name>.md scaffold body + ADD pre-flight absence checks.
 
 Responsibilities:
     Render the minimal agent .md scaffold (frontmatter + body) and assert every
-    ADD target location is ABSENT before any write (clobber guard — a clean-tree
-    re-run is a no-op, one pre-existing location HALTs). The body is
-    intentionally minimal: the CLI creates a routable stub; prompt-content
-    authoring is out of scope (F1 territory).
+    ADD target location is ABSENT before any write — clobber guard: a clean-tree
+    re-run is a no-op, one pre-existing location HALTs. The body is a routable
+    stub; prompt-content authoring is out of scope.
 
-Per-agent rule membership is RECORDED on the registry row (`rules`) and nowhere
-in the body: no code ever read the former `> Rules:` header to load a rule, so a
-rendered body carries none and both authored-text gates REFUSE one (a stale
-header reused from an old --body-file would otherwise be baked into a new agent
-silently).
+Per-agent rule membership lives on the registry row (`rules`), never in the
+body: both authored-text gates REFUSE a `> Rules:` header, so a stale one reused
+from an old --body-file cannot be baked into a new agent.
 
-Recording is not delivery. The row is the input the SubagentStart selector MUST
-read once the split channel is bound; until then no code reads the `rules`
-object at all, so a created agent receives its rules through no channel and the
-row is a governance record.
+The row is also the delivery input for its `scoped/` entries:
+`hooks/lib/inject_chunk.py` reads it at SubagentStart, so a created agent
+receives its `scoped/` `scope` and `shared` bodies, and its `scoped/`
+`conditional` entries as path pointers, from the row alone. A
+`rules/glass-atrium/` entry gets neither from the row; it arrives on the host
+project-instructions channel.
 """
 
 from __future__ import annotations
@@ -243,14 +242,9 @@ def assert_body_no_smuggled_structure(body: str) -> None:
         in either the bare or a quoted (`"tools":`) spelling, OR
       - carries the retired `> Rules:` header line.
 
-    The key scan covers the WHOLE body deliberately. It used to stop at the
-    `> Rules:` anchor and tolerate the same token below it; with the anchor
-    retired an anchorless body would have made that slice the whole body anyway
-    — i.e. the position-dependent tolerance could no longer be expressed, so the
-    strictest of the two former behaviours is the one kept. Measured cost: 0 of
-    the 23 live agent bodies carries a line-start guarded key, so nothing
-    legitimate is refused today; a future body documenting frontmatter in a
-    fenced yaml block WOULD be — a loud HALT naming the key, never silent.
+    The key scan covers the WHOLE body, with no position-dependent tolerance.
+    A body documenting frontmatter in a fenced yaml block is refused with a
+    loud HALT naming the key, never silently.
     """
     if _FENCE_RE.match(body.lstrip()):
         raise BodyFrontmatterError(
@@ -288,7 +282,7 @@ def assert_section_no_smuggled_structure(section: str) -> None:
 
 
 def assert_add_targets_absent(paths: StorePaths, name: str, *, is_dev: bool) -> None:
-    """Assert the 3-4 ADD target locations are all absent before writing (§3.4).
+    """Assert the 3-4 ADD target locations are all absent before writing.
 
     Checks: agents/<name>.md absent · registry entry absent · (DEV only) the
     scope-dev roster does not already list NAME. Any present location raises
@@ -324,7 +318,7 @@ def assert_add_targets_absent(paths: StorePaths, name: str, *, is_dev: bool) -> 
 def require_dev_scope_for_stanza(scope: str) -> bool:
     """Return True when `scope` is DEV (gets the scope-dev stanza step), else False.
 
-    NON-DEV agents skip the stanza step (B4). Scope comparison is case-insensitive
+    NON-DEV agents skip the stanza step. Scope comparison is case-insensitive
     but the canonical token is upper-case 'DEV'.
     """
     if not scope:
