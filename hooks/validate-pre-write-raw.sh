@@ -13,9 +13,9 @@
 # - Content handed in through a delegation prompt is invisible too, and raises a false SCOPE-010.
 # - The fired log records the source host only, never the full URL, query or content.
 # - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
-# - Most real results carry no toolUseResult, hence no HTTP code.
+# - A result without toolUseResult carries no HTTP code.
 #   Such a non-error result is a page unless its text opens with a harness failure prefix (HTTP status, redirect).
-#   The prefix set is closed, taken from real transcripts; a new harness failure wording counts as a page.
+#   The prefix set is closed: a harness failure wording outside it counts as a page.
 # - The redirect arm needs toolUseResult.url: without it a followed redirect leaves no final URL.
 #   Declaring that final URL then raises SCOPE-010.
 # - SCOPE-011 is correlated only: fetch-all-then-save-all raises a false positive.
@@ -244,7 +244,7 @@ def is_raw(path, raw_dir):
     )
 
 
-# Harness-written text a non-error result carries instead of a page (HTTP 4xx/5xx, a redirect not followed).
+# Harness-written text a non-error result carries instead of a page (an HTTP error status, a redirect not followed).
 HARNESS_FAILURE_PREFIXES = ("The server returned HTTP ", "REDIRECT DETECTED: ")
 
 
@@ -266,7 +266,7 @@ window = -1
 matched = False
 with open(transcript, "rb") as lines:
     for position, line in enumerate(lines):
-        # A result line names no tool → admitted by its pending id; a paired id is dropped so later mentions skip.
+        # A result line names no tool → admitted by its pending id; a paired id is dropped and admits nothing more.
         if (
             b'"WebFetch"' not in line
             and b'"Write"' not in line

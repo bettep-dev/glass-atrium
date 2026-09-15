@@ -53,10 +53,11 @@ raw_write_payload_with_transcript() {
     '{tool_name:"Write", session_id:"sess-1", transcript_path:$tp, tool_input:{file_path:$fp, content:$c}}'
 }
 
-# A WebFetch tool_use line and its paired result line, in the real result shapes of the transcript census.
+# A WebFetch tool_use line and its paired result line, in the result shapes real transcripts carry.
 # FETCH_SHAPE=lean (default): no toolUseResult and no tool name — a non-2xx outcome shows only as harness text.
 # FETCH_SHAPE=full: toolUseResult object carrying url and code.
-# An error result is the one real error shape in either mode: is_error plus a string toolUseResult.
+# FETCH_TEXT: result text in place of the code-derived text, to pin a code the text does not signal.
+# $4=true emits the error shape in either mode: is_error plus a string toolUseResult.
 # Args: $1=tool_use id $2=url $3=HTTP code, or none for no result $4=is_error (true|false, default false)
 #       $5=post-redirect url (default $2).
 webfetch_lines() {
@@ -64,10 +65,11 @@ webfetch_lines() {
     '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"WebFetch", input:{url:$u}}]}}'
   [[ "${3}" != none ]] || return 0
   jq -nc --arg id "${1}" --arg in "${2}" --arg u "${5:-${2}}" --argjson code "${3}" --argjson err "${4:-false}" \
-    --arg shape "${FETCH_SHAPE:-lean}" '
+    --arg shape "${FETCH_SHAPE:-lean}" --arg override "${FETCH_TEXT:-}" '
     (if $code >= 300 and $code < 400 then "REDIRECT DETECTED: The URL redirects to a different host.\n\nOriginal URL: \($in)"
      elif $code >= 400 then "The server returned HTTP \($code).\n\nThe response body was not retrieved."
      else "FETCHED-SUMMARY" end) as $text
+    | (if $override != "" then $override else $text end) as $text
     | if $err then
         {type:"user", message:{role:"user", content:[{type:"tool_result", tool_use_id:$id, is_error:true, content:"Invalid URL"}]},
          toolUseResult:"Error: Invalid URL"}
@@ -471,13 +473,22 @@ conforming_doc() {
   local shape row tp FETCH_SHAPE
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
-    for row in never-fetched http-404 cross-host-redirect is-error; do
+    for row in never-fetched http-404 cross-host-redirect is-error code-only-403; do
       tp="${BATS_TEST_TMPDIR}/${shape}-${row}.jsonl"
       case "${row}" in
         never-fetched) webfetch_lines t1 https://other.example/a 200 >"${tp}" ;;
         http-404) webfetch_lines t1 https://example.com/page 404 >"${tp}" ;;
         cross-host-redirect) webfetch_lines t1 https://example.com/page 301 >"${tp}" ;;
-        is-error) webfetch_lines t1 https://example.com/page 200 true >"${tp}" ;;
+        # The error shape does not vary with FETCH_SHAPE.
+        is-error)
+          [[ "${shape}" == lean ]] || continue
+          webfetch_lines t1 https://example.com/page 200 true >"${tp}"
+          ;;
+        # Page text with a 403 code: only the code check rejects it.
+        code-only-403)
+          [[ "${shape}" == full ]] || continue
+          FETCH_TEXT=FETCHED-SUMMARY webfetch_lines t1 https://example.com/page 403 >"${tp}"
+          ;;
         *) return 1 ;;
       esac
       run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
@@ -531,7 +542,7 @@ conforming_doc() {
 # Whichever file the envelope names, the scan reads the subagent's OWN transcript.
 # Each parent-side file holds only an unrelated fetch, so a parent read raises SCOPE-010.
 # The envelope-names-own row has no parent file; a wrong route there shows as a ledger=unavailable log line.
-@test "ledger: subagent's own transcript holds the fetch → silent, no log line, on every resolution route and result shape" {
+@test "ledger: subagent's own transcript holds the fetch → silent, no log line, every route and result shape" {
   local shape row own tp aid FETCH_SHAPE
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
@@ -586,6 +597,34 @@ conforming_doc() {
   printf '#!/bin/sh\nexit 3\n' >"${BATS_TEST_TMPDIR}/py-exit3"
   printf '#!/bin/sh\necho not-a-contract-line\n' >"${BATS_TEST_TMPDIR}/py-garbage"
   chmod +x "${BATS_TEST_TMPDIR}/py-exit3" "${BATS_TEST_TMPDIR}/py-garbage"
+  tp="${BATS_TEST_TMPDIR}/session.jsonl"
+  {
+    webfetch_lines t1 https://other.example/a 200
+    webfetch_lines t2 https://other.example/b 200
+  } >"${tp}"
+  payload="$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+  for row in no-such-python3 py-exit3 py-garbage; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    py="${BATS_TEST_TMPDIR}/${row}"
+    RAW_FETCH_LEDGER_PY="${py}" run bash "${RAW_HOOK}" <<<"${payload}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output (no SCOPE-010, scanner stderr contained): ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 1 ]] || {
+      echo "${row}: expected exactly one log line, got $(fired_log_lines)" >&2
+      return 1
+    }
+    grep -q $'\tledger=unavailable\treason=scanner$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+      echo "${row}: log must carry ledger=unavailable reason=scanner: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
+  # The failure rows never run a working scanner, so only the control row varies the result shape.
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
     tp="${BATS_TEST_TMPDIR}/${shape}-session.jsonl"
@@ -594,27 +633,6 @@ conforming_doc() {
       webfetch_lines t2 https://other.example/b 200
     } >"${tp}"
     payload="$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
-    for row in no-such-python3 py-exit3 py-garbage; do
-      RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${shape}-${row}.log"
-      py="${BATS_TEST_TMPDIR}/${row}"
-      RAW_FETCH_LEDGER_PY="${py}" run bash "${RAW_HOOK}" <<<"${payload}"
-      [[ "${status}" -eq 0 ]] || {
-        echo "${shape}/${row}: expected exit 0, got ${status}: ${output}" >&2
-        return 1
-      }
-      [[ -z "${output}" ]] || {
-        echo "${shape}/${row}: expected no output (no SCOPE-010, scanner stderr contained): ${output}" >&2
-        return 1
-      }
-      [[ "$(fired_log_lines)" -eq 1 ]] || {
-        echo "${shape}/${row}: expected exactly one log line, got $(fired_log_lines)" >&2
-        return 1
-      }
-      grep -q $'\tledger=unavailable\treason=scanner$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
-        echo "${shape}/${row}: log must carry ledger=unavailable reason=scanner: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
-        return 1
-      }
-    done
     # Control row doubles as the both-codes case: never-fetched source plus two other pages → one line, both codes.
     RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${shape}-control.log"
     run bash "${RAW_HOOK}" <<<"${payload}"
@@ -635,7 +653,7 @@ conforming_doc() {
 
 # Both sides are normalized: the fetched-side row varies the input URL.
 # Its distinct result url keeps the redirect arm from supplying the match.
-@test "ledger: declared URL matches its fetch after normalization → silent, no log line, on every row and result shape" {
+@test "ledger: declared URL matches its fetch after normalization → silent, no log line, every row and shape" {
   local shape row declared fetched result tp FETCH_SHAPE
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
@@ -746,7 +764,7 @@ conforming_doc() {
 }
 
 # Each malformed line carries the prefilter's "WebFetch" substring, so it reaches the JSON parse instead of being skipped.
-@test "ledger: malformed transcript line before the fetch → silent, no log line, fetch still matched, in both result shapes" {
+@test "ledger: malformed line before the fetch → silent, no log line, fetch still matched, both result shapes" {
   local shape row tp FETCH_SHAPE
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
@@ -799,7 +817,7 @@ write_lines() {
 # The page window opens at the last raw Write with a non-error result.
 # Every row ends on the in-flight Write, as a real PreToolUse transcript does.
 # Every row declares page B, so SCOPE-010 never fires.
-@test "SCOPE-011: two distinct successful pages since the last completed raw write → SCOPE-011, else silent, in both result shapes" {
+@test "SCOPE-011: two distinct pages since the last completed raw write → SCOPE-011, else silent, both shapes" {
   local shape row tp raw="${WIKI_ROOT}/raw" a=https://example.com/a b=https://example.com/page want FETCH_SHAPE
   for shape in lean full; do
     FETCH_SHAPE="${shape}"
@@ -849,9 +867,9 @@ write_lines() {
   done
 }
 
-# Replays the failed live probe with census S1 skeleton lines (CLI 2.1.270) in the flat subagent layout.
+# A current-CLI success result in the flat subagent layout (lines in the real record shape).
 # The result line names no tool and carries no toolUseResult: only its tool_use_id ties it to the fetch.
-@test "ledger: census S1 fetch then the in-flight raw Write in a subagent transcript → no SCOPE-010, no log line" {
+@test "ledger: fetch result without toolUseResult, then the in-flight raw Write, in a subagent transcript → silent" {
   local tp="${BATS_TEST_TMPDIR}/proj/sess-1.jsonl"
   local own="${BATS_TEST_TMPDIR}/proj/sess-1/subagents/agent-a0000001.jsonl"
   RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/census-s1.log"
