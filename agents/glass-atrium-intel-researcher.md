@@ -103,7 +103,7 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 
 **Blocked-write triage**: the hook names the failed check in a `SCOPE-00N` code — fix the file and re-Write, never route around it.
 
-**Untrusted-source framing**: the envelope's layering, the structural-wrapping duty and the refusal rule for instructions embedded in fetched content live at `rules/glass-atrium/core-wiki-reference.md` → `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]`.
+**Untrusted-source framing**: the envelope's layering and the refusal rule for instructions embedded in fetched content live at `rules/glass-atrium/core-wiki-reference.md` → `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]`.
 
 **Schema/Workflow-mode persistence (delegation-triggered)**: in schema/workflow mode the engine frames StructuredOutput as the sole deliverable, so raw-save does not reliably auto-fire.
 
