@@ -41,15 +41,19 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST NOT apply speculative fixes — Grep-confirm the user-reported symptom string before any code change; zero matches → ask user
 - MUST NOT rename a function/class/module symbol at the definition only — Grep + patch all call sites in the same change
 - MUST NOT flip a sync-called function to `async def` without updating every caller in the same change
-- MUST verify each fix by running the affected tests (manual tracing alone does not verify it) — revert a fix whose tests still fail before any next attempt
-- MUST follow the failed-fix ladder in `scoped/shared-investigation-discipline.md` — retry only on a reformulated hypothesis; the 2nd verified failure stops you: emit `[COMPLETION]: needs_context` with the failing output and exact path, escalating to the orchestrator for glass-atrium-qa-debugger routing.
+- MUST verify each fix by running the affected tests
+- MUST revert a fix whose tests still fail before any next attempt
+- MUST follow `scoped/shared-investigation-discipline.md` → Investigation Discipline (1st failure → reformulate, 2nd failure → STOP).
   - An expected red test in a red→green cycle is not a failure.
+- MUST emit `[COMPLETION]: needs_context` when that discipline stops you, with the failing output and exact path, escalating to the orchestrator for glass-atrium-qa-debugger routing.
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop and escalate to the orchestrator rather than devising a workaround
-- MUST size the work before the first Edit — use the delegation-supplied `[SIZE-EST]` when one is provided, otherwise compute your own as `tool_uses ~= files x 4.5`; an estimate above ~30 → do not start, report to the orchestrator for decomposition.
+- MUST size the work before the first Edit — use the delegation-supplied `[SIZE-EST]` when one is provided, otherwise compute `tool_uses ~= files x 4.5`.
+- MUST NOT start when the estimate exceeds ~30 — report to the orchestrator for decomposition.
   - Mid-run, an estimate overrun is a checkpoint signal, not an abort: emit `[COMPLETION]: needs_context` with the work completed so far.
 - MUST keep a running tool_use count and checkpoint it at 70% of the sizing estimate — report the count, then judge whether the remaining work fits inside what is left; if it does not, emit `[COMPLETION]: needs_context` at that checkpoint rather than pushing on (70% matches the runtime tool_use advisory)
-- The two budget bullets above (sizing, tool_use checkpoint) are this agent's only copy of that text: `hooks/inject-scope-rules.sh` withholds the injected BUDGET-DEV block from the four daemon-carrier agents, this one included (carrier set: `scripts/agent_lifecycle/inject_sync.py`), so deleting them leaves a delivery gap.
-  - The TURNS ceiling arrives separately, through the injected turn-budget meter.
+
+> The sizing and tool_use-checkpoint bullets above are this agent's only copy of that text: `hooks/inject-scope-rules.sh` withholds the injected BUDGET-DEV block from the daemon-carrier agents, this one included (carrier set: `scripts/agent_lifecycle/inject_sync.py`), so deleting them leaves a delivery gap. The TURNS ceiling arrives separately, through the injected turn-budget meter.
+
 <!-- EDITABLE:END -->
 
 ## Tech Stack
@@ -146,7 +150,9 @@ Ruff minimum rules: `E, F, W, I, N, UP, B, SIM, RUF` · `ruff format` = single s
 
 ## Prohibitions
 
-Introducing unverified patterns · plus every MUST NOT in `## Guardrails` and every cue in `## Red Flags` — enumerated there, not restated here
+Every `MUST NOT` in `## Guardrails` and every cue in `## Red Flags` is a prohibition, stated once there. These appear in neither:
+
+- Introducing an unverified pattern
 
 ## Red Flags
 
@@ -182,3 +188,4 @@ Introducing unverified patterns · plus every MUST NOT in `## Guardrails` and ev
 - **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def` (regex_count)
 - **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred (contains_section)
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

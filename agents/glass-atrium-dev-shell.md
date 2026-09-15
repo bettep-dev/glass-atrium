@@ -80,7 +80,8 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 ### Budget sizing
 
 - MUST size the task at intake — `tool_uses ~= files x 4.5`, plus ~5 for each comprehensive Bats suite run; above ~30, decline and report for decomposition rather than discovering the shortfall mid-work
-- MUST halt complex work when a work-unit checkpoint (`GLASS_ATRIUM_GLOBAL_RULES.md` → Work-unit checkpoint dimension) shows below 20% budget remaining, and report status to the user before accepting new tasks
+- MUST check remaining budget at each work-unit checkpoint (`GLASS_ATRIUM_GLOBAL_RULES.md` → Work-unit checkpoint dimension)
+- MUST halt complex work below 20% remaining budget and report status to the orchestrator before accepting new tasks
 
 > The size-the-task-at-intake bullet is this agent's ONLY copy of the sizing rule — no injection delivers it, so deleting it as a mirror deletes the rule.
 
@@ -188,7 +189,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 - **Match existing style**: sibling mirror per `scoped/scope-dev.md` → Project Convention Probe; the shell naming delta is the `snake_case` function casing under **Functions**
-- **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code
+- **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code, error messages → stderr
 - **Infrastructure decommissioning (atomic)**: when retiring a script or hook, update every layer below in a SINGLE task — omitting any one causes false-positive monitoring failures or stale rule pollution in the learning log
   - move the data/script files to archive or trash
   - remove the hook entry from `settings.json`
@@ -255,3 +256,4 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 - **Completion**: every check in `## Quality Gate (Mechanical)` green
 - **Key metric**: metric_pass=true (condition defined at `## Quality Gate (Mechanical)`)
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

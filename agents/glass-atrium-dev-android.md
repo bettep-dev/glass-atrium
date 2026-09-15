@@ -132,7 +132,7 @@ Implement Android apps using Kotlin/Jetpack Compose with Clean Architecture + MV
 - **Dependencies**: a new library needs user confirmation, declared through the `build.gradle.kts` version catalog.
 - **Manifest + resources**: check permission and component registration; prefer reusing existing `res/` entries.
 - **Structure**: Glob the target module before writing, then run `scoped/scope-dev.md` → Project Convention Probe on a sibling `.kt` file.
-- **Motion**: express the spring families `scoped/shared-design-token-consumption.md` → Motion Tokens selects as Compose `spring(stiffness, dampingRatio)` — never ad-hoc `tween` / `spring` constants.
+- **Motion** (only when the project carries `motion-philosophy.md` — `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate): express the spring families that file's Motion Tokens section selects as Compose `spring(stiffness, dampingRatio)` — never ad-hoc `tween` / `spring` constants.
 - **Anti-slop (on demand — the file is not in your context, Read it)**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes and reject output matching any of them.
 
 ## Red Flags
@@ -169,3 +169,4 @@ Every `MUST NOT` in `## Guardrails` is a prohibition, owned and stated once ther
 - **Layer separation + UDF**: zero business logic in Activity/Fragment, unidirectional ViewModel→UseCase→Repository, zero `GlobalScope`/`runBlocking` (regex_count)
 - **Compose stability + null safety**: `key` on `LazyColumn`/`LazyRow`, zero `!!`, unstable types marked `@Stable`/`@Immutable` (contains_section)
 - **Completion report (LAST action)**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

@@ -20,7 +20,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 - `autoagent/autoagents-eval.sh` requires no body heading: its eval prompt states that body section headings are a ceiling, not a floor.
 - Its five checks are global-rules consistency, role boundaries, frontmatter name + description, `skills:` list shape, and English body.
-- `## Prohibitions` stays in this body only because it carries an item Guardrails does not. Once it carries none, delete the section rather than justify it.
+- `## Prohibitions` stays in this body only because it carries an item Guardrails does not.
+  - Once it carries none, delete the section rather than justify it.
 
 ## What moved out of the body, and why
 
@@ -39,11 +40,11 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
   | Guardrails Project Convention Probe bullet | `scoped/scope-dev.md` → Pre-Execution Verification → Project Convention Probe (`rules.scope`) |
   | Prohibitions "npm package added without an `npm audit` / provenance check" | `rules/glass-atrium/core-security.md` → Dependency Auditing (host) |
   | Comments & Logs clauses (why-only, TODO format, `console.*` ban, empty catch, log+rethrow) and the matching Red Flags | `scoped/shared-comment-logging.md` (`rules.shared`) |
-  | FINAL STEP emit-mode table | `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation (host) plus the slot-1 emit-format block |
+  | FINAL STEP emit-mode table, except the no-`completion_block` fallback, which stays in the body under the pointer line | `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation (host) plus the slot-1 emit-format block |
 
 ## Decisions worth keeping
 
-- **Completion-verification Guardrail**: its task-type item points at `core-outcome-record.md` → `metric_pass` instead of restating a bar — the restated "must pass test suite with exit 0" understated the `feature` bar. The refactor, multi-site and removal checks stay as body deltas.
+- **Completion-verification Guardrail**: its task-type item points at `core-outcome-record.md` → `metric_pass` rather than restating a bar, since a restated bar drifts from the per-type canonical. The refactor, multi-site and removal checks stay as body deltas.
 - **`### Comments & Logs` under Work Rules** carries only the Node CLI carve-out: `console` on stdout/stderr is the output channel by design. Everything else it once held is in the table above.
 
 ## Daemon-evolved `## Guardrails` lines — all dropped

@@ -33,10 +33,13 @@ Two placement facts, both deliberate:
 - **Comment / TODO restatements in Self-Review** — the comment-rule core is delivered to every DEV subagent through `scoped/shared-comment-logging.md` membership (part slots). The Swift residue (the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged) stayed.
 - **Red Flags and Prohibitions items already stated as Guardrails MUST NOTs** — both sections name Guardrails as the owner and list only the residue, the same shape as the dev-shell body.
 - **Emit instructions under Success Criteria** — the emit-mode table and its notes restated `core-outcome-record.md` → Completion Report Output Obligation, which is host-delivered and also compressed into the slot-1 emit-format block. One pointer line remains; no suite reads a DEV body's emit text.
-- **In-file repeats in the editable regions** — the Work Rules Concurrency and SPM bullets, the `@Published` / main-actor / `[weak self]` repeats under Design Principles, and "keep `body` small" each restated a Guardrails bullet or a Design Principles line that stays.
+  - Kept in the body under that pointer: the fallback for a schema declaring no `completion_block`, which neither canonical states.
+- **In-file repeats in the editable regions** — the Work Rules Concurrency and SPM bullets, the `@Published` / main-actor / `[weak self]` repeats under Design Principles, and "keep `body` small" each restated a Guardrails bullet or a Design Principles line that stays; the SPM bullet's package-provenance clause is `core-security.md` → Dependency Auditing (host).
 - **SPM confirmation under Pre-Execution Verification** — the Guardrails bullet owns it; the line keeps the `Package.swift` + `Package.resolved` check.
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes (import order, error+log, layout) and subordinates identifier naming to the naming canon. The line adds only the Swift isolation-style axis. It sits outside every editable region.
+- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes (import order, error+log, layout) and subordinates identifier naming to the naming canon.
+  - The line adds only the Swift isolation-style axis.
+  - It sits outside every editable region.
 - **`@unchecked Sendable` added to Red Flags** — the Error Recovery region already forbade silencing a strict-concurrency diagnostic with it, but nothing listed it as a scan target.

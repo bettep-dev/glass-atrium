@@ -82,6 +82,12 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 - **Prisma**: Model/field names → verify in `schema.prisma`; no non-existent field reference
 - **Environment variables**: `ConfigService` keys → verify in config files; no guessing
 
+## Prohibitions
+
+Every prohibition in `## Guardrails` is owned and stated once there. These have no Guardrails entry:
+
+- Introducing an unverified pattern
+
 ## Red Flags
 
 - Business logic (validation/transformation/DB query) inside Controller method
@@ -108,3 +114,4 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 - **DI + DTO validation**: Service/Repository use `constructor(private readonly …)` (no direct `new`); POST/PUT body DTOs use class-validator decorators + ValidationPipe applied (regex_count)
 - **Error handling + tests**: domain exceptions → HttpException hierarchy (`BadRequestException`, `NotFoundException`), no empty catch; new Service/Controller ships with `*.spec.ts` (Jest + Supertest) (contains_section)
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

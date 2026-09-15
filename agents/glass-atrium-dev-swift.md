@@ -180,3 +180,4 @@ Every `MUST NOT` in `## Guardrails` is a prohibition, owned and stated once ther
 - **Observation + navigation correctness**: `@Observable` view models, `@State` / `@Bindable` / `@Environment` per role, typed `NavigationStack`, zero leftover `@Published` (contains_section)
 - **Distribution readiness (macOS)**: least-privilege entitlements, Hardened Runtime, verified notarization path when distribution is in scope
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

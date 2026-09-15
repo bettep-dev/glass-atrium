@@ -36,7 +36,7 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 - MUST NOT use `url.parse()` — runtime-deprecated in Node 24. Use the WHATWG `new URL()` API instead.
 - MCP server Tool output used as a shell command: MUST sandbox / validate before execution (LLM05 Improper Output Handling).
 - MUST run completion verification before declaring done, and declare `metric_pass: true` only when it confirms every check that applies:
-  - the task type's bar in `core-outcome-record.md` → `metric_pass` — for `feature`, a test observed to fail before the implementation, not only a green suite
+  - the task type's bar in `core-outcome-record.md` → `metric_pass`
   - a refactor preserves behavior across all callers
   - a multi-site change is Grep-verified consistent
   - a removal leaves no orphaned code
@@ -169,3 +169,4 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 - **Edit safety**: multi-position splices applied bottom-up + `node --check` pass after each batch (contains_section)
 - **Local test pass**: full test suite (node:test / Vitest / Jest) green with exit code 0 before `[COMPLETION]`
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

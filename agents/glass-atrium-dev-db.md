@@ -49,17 +49,19 @@ PostgreSQL 17 · MySQL 9 · Prisma 6 (TypedSQL) · pgvector 0.8 (halfvec / spars
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
 
-- **Schema**: OLTP → 3NF · OLAP → denormalize · snake_case · FK `{table}_id` · `created_at`/`updated_at` · Persistence ≠ Domain Entity
+- **Schema**:
+  - OLTP → 3NF · OLAP → denormalize · Persistence ≠ Domain Entity
+  - snake_case · FK `{table}_id` · `created_at`/`updated_at` · PK types bigint/text/timestamptz
 - **Index**: B-tree (equality/range) · GIN (FTS/array/JSONB) · GiST (spatial/range) · BRIN (sorted large) · composite order = equality → range → sort · Partial Index · no duplicates
 - **Advanced PG**:
   - RLS per-user (partitioned root only) · JSONB+GIN (`@>`/`?`/`?|`) · tsvector+GIN · Materialized View + `REFRESH CONCURRENTLY`
   - pgvector 0.8: cosine / L2 / inner · `ivfflat` / `hnsw` · `halfvec` — 50% storage savings with comparable quality · `sparsevec` — native BM25-style sparse vectors · `bit` — binary quantization for fast index builds
   - Advisory Lock (session/tx scope, pool caution) · Partitioning RANGE/LIST/HASH (1M+ rows, verify pruning, per-partition index)
-- Vector store selection: pgvector (default; same DB as relational data) vs Qdrant / Weaviate / Pinecone (when scale > 10M vectors OR multi-tenant isolation needed).
+- **Vector store**: pgvector (default; same DB as relational data) vs Qdrant / Weaviate / Pinecone (when scale > 10M vectors OR multi-tenant isolation needed).
 - **Query**:
   - EXPLAIN (ANALYZE, BUFFERS, MEMORY) — `MEMORY` requires PostgreSQL 17+ and reports memory used during execution · rolled-back tx for DML · VACUUM/ANALYZE · CTE/Window Functions · pg_stat_statements
   - Covering Index (INCLUDE) · FK columns indexed · RLS index policy cols + `(SELECT auth.uid())` · SKIP LOCKED (10x queue throughput)
-  - types: PK bigint/text/timestamptz · cursor pagination only (no OFFSET) · PgBouncer prepared-stmt caution
+  - cursor pagination only (no OFFSET) · PgBouncer prepared-stmt caution
 - **Transactions**: PG Read Committed / MySQL Repeatable Read · Deadlock: consistent lock order + short tx + sort by PK + retry · Serializable = strong consistency + deadlock risk
 - **Migration**: State-based vs Migration-based · CDC for zero-downtime · 3-stage verify: Technical (counts/checksum) → Business (samples) → Process (workflows)
 - **PostgreSQL 17 incremental backup**: `pg_basebackup --incremental` + `pg_combinebackup` reduces restore time by ~95% (78 min → 4 min in EDB benchmarks).
@@ -114,3 +116,4 @@ Every `## Guardrails` entry and every red flag above is a prohibition, stated on
 - **EXPLAIN ANALYZE + explicit SELECT + migration files**: claims attach plan output, zero `SELECT *`, DDL only in migration files (regex_count)
 - **Schema + parameter binding**: tables/columns exist in schema.prisma/DDL, raw SQL uses `Prisma.sql` binding, indexes match FK/query patterns (contains_section)
 - **Completion report (LAST action)**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
+  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).
