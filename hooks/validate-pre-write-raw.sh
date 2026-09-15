@@ -198,33 +198,55 @@ resolve_transcript() {
   find_subagent_transcript
 }
 
-# Prints match=1 when the declared URL has a WebFetch whose paired result is 2xx and not is_error, else match=0.
-# Args: $1=transcript $2=declared URL.
+# Prints match=1 when a WebFetch of the declared URL (input url, or result url after a redirect) has a 2xx, non-error
+# result, else match=0. URLs compare normalized: http→https, lowercase scheme + host, no fragment, no trailing `/`, query
+# kept. A malformed line is skipped, never fatal. Args: $1=transcript $2=declared URL.
 run_scanner() {
   "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" <<'PY'
 import json
 import sys
+from urllib.parse import urlsplit, urlunsplit
 
-transcript, declared = sys.argv[1], sys.argv[2]
-fetch_ids = set()
+
+def field(obj, key):
+    return obj.get(key) if isinstance(obj, dict) else None
+
+
+def normalize(url):
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    scheme = "https" if parts.scheme.lower() == "http" else parts.scheme.lower()
+    return urlunsplit((scheme, parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
+
+
+transcript, declared = sys.argv[1], normalize(sys.argv[2])
+fetch_urls = {}
 matched = False
 with open(transcript, "rb") as lines:
     for line in lines:
         if b'"WebFetch"' not in line and b"toolUseResult" not in line:
             continue
-        entry = json.loads(line)
-        content = (entry.get("message") or {}).get("content")
-        result = entry.get("toolUseResult")
-        code = result.get("code") if isinstance(result, dict) else None
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        content = field(field(entry, "message"), "content")
+        result = field(entry, "toolUseResult")
+        code = field(result, "code")
         for item in content if isinstance(content, list) else []:
-            if not isinstance(item, dict):
+            item_id = field(item, "id") if field(item, "type") == "tool_use" else field(item, "tool_use_id")
+            if not isinstance(item_id, str):
                 continue
-            if item.get("type") == "tool_use" and item.get("name") == "WebFetch":
-                if (item.get("input") or {}).get("url") == declared:
-                    fetch_ids.add(item.get("id"))
-            elif item.get("type") == "tool_result" and item.get("tool_use_id") in fetch_ids:
-                if not item.get("is_error") and isinstance(code, int) and 200 <= code < 300:
-                    matched = True
+            if field(item, "type") == "tool_use" and field(item, "name") == "WebFetch":
+                fetch_urls[item_id] = normalize(field(field(item, "input"), "url"))
+            elif field(item, "type") == "tool_result" and item_id in fetch_urls:
+                ok = not field(item, "is_error") and isinstance(code, int) and 200 <= code < 300
+                urls = (fetch_urls[item_id], normalize(field(result, "url")))
+                matched = matched or (ok and declared is not None and declared in urls)
 print("match=%d" % matched)
 PY
 }

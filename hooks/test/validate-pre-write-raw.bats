@@ -33,11 +33,11 @@ setup() {
   unset RAW_FETCH_LEDGER_PY
 }
 
-# Valid 3-field frontmatter followed by $1 (body). Args: $1=body.
+# Valid 3-field frontmatter followed by $1 (body). Args: $1=body $2=source_url (default https://example.com/page).
 raw_doc() {
   printf '%s\n' \
     '---' \
-    'source_url: https://example.com/page' \
+    "source_url: ${2:-https://example.com/page}" \
     'collected: 2026-07-22' \
     'collector: glass-atrium-intel-researcher' \
     '---' \
@@ -71,11 +71,12 @@ raw_write_payload_with_transcript() {
 }
 
 # Two transcript lines: a WebFetch tool_use and its paired result; is_error is written only when true, as
-# the harness does. Args: $1=tool_use id $2=url $3=HTTP code $4=is_error (true|false, default false).
+# the harness does. Args: $1=tool_use id $2=url $3=HTTP code $4=is_error (true|false, default false)
+# $5=result url after a redirect (default $2).
 webfetch_lines() {
   jq -nc --arg id "${1}" --arg u "${2}" \
     '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"WebFetch", input:{url:$u}}]}}'
-  jq -nc --arg id "${1}" --arg u "${2}" --argjson code "${3}" --argjson err "${4:-false}" \
+  jq -nc --arg id "${1}" --arg u "${5:-${2}}" --argjson code "${3}" --argjson err "${4:-false}" \
     '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id} + (if $err then {is_error:true} else {} end)]},
       toolUseResult:{url:$u, code:$code}}'
 }
@@ -101,10 +102,10 @@ fired_log_lines() {
 }
 
 # A fully conforming raw document (3-field frontmatter + body envelope) — V1-V6 all green, so any
-# block observed on it is attributable to the destination-state guard alone.
+# block observed on it is attributable to the destination-state guard alone. Args: $1=source_url (optional).
 conforming_doc() {
   raw_doc "$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
-    '<!-- /UNTRUSTED-SOURCE -->')"
+    '<!-- /UNTRUSTED-SOURCE -->')" "${1:-}"
 }
 
 # ================================ V7 — Edit on the raw store =====================================
@@ -667,6 +668,146 @@ conforming_doc() {
     echo "control: log must carry codes=SCOPE-010 ledger=ok: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
     return 1
   }
+}
+
+# Both sides are normalized: the fetched-side row varies the input URL, and its distinct result url keeps the
+# redirect arm from supplying the match.
+@test "ledger: declared URL matches its fetch after normalization → silent, no log line, on every row" {
+  local row declared fetched result tp
+  for row in http-upgrade host-case trailing-slash fragment fetched-side; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    tp="${BATS_TEST_TMPDIR}/${row}.jsonl"
+    declared='https://example.com/page'
+    fetched='https://example.com/page'
+    result=''
+    case "${row}" in
+      http-upgrade) declared='http://example.com/page' ;;
+      host-case) declared='https://Example.COM/page' ;;
+      trailing-slash) declared='https://example.com/page/' ;;
+      fragment) declared='https://example.com/page#intro' ;;
+      fetched-side)
+        fetched='HTTP://EXAMPLE.com/page/#top'
+        result='https://example.com/landing'
+        ;;
+      *) return 1 ;;
+    esac
+    webfetch_lines t1 "${fetched}" 200 false "${result}" >"${tp}"
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc "${declared}")" "${tp}")"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output: ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 0 ]] || {
+      echo "${row}: expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
+}
+
+# The query stays in the match key (so this write fires SCOPE-010) but never reaches stderr or the log: it can carry a token.
+@test "ledger: SCOPE-010 log line carries code and host, never the query string" {
+  local tp="${BATS_TEST_TMPDIR}/session.jsonl" line
+  RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/query.log"
+  webfetch_lines t1 https://example.com/page 200 >"${tp}"
+  run bash "${RAW_HOOK}" \
+    <<<"$(raw_write_payload_with_transcript "$(conforming_doc 'https://example.com/page?token=s3cret')" "${tp}")"
+  [[ "${status}" -eq 0 && "${output}" == *"SCOPE-010"* ]] || {
+    echo "expected exit 0 + SCOPE-010 (the query is part of the match), got ${status}: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"s3cret"* ]] || {
+    echo "stderr must not echo the query: ${output}" >&2
+    return 1
+  }
+  [[ "$(fired_log_lines)" -eq 1 ]] || {
+    echo "expected exactly one log line, got $(fired_log_lines)" >&2
+    return 1
+  }
+  line="$(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")"
+  [[ "${line}" == *$'\tcodes=SCOPE-010\thost=example.com\t'* ]] || {
+    echo "log line must carry codes=SCOPE-010 and host=example.com: ${line}" >&2
+    return 1
+  }
+  [[ "${line}" != *"s3cret"* && "${line}" != *"?"* ]] || {
+    echo "log line must carry no query string: ${line}" >&2
+    return 1
+  }
+}
+
+# WebFetch reports the post-redirect address in toolUseResult.url, which differs from input.url.
+@test "ledger: redirect whose result url is the declared URL → silent, no log line" {
+  local tp="${BATS_TEST_TMPDIR}/session.jsonl"
+  RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/redirect.log"
+  webfetch_lines t1 https://example.com/old-page 200 false https://example.com/page >"${tp}"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+  [[ "${status}" -eq 0 ]] || {
+    echo "expected exit 0, got ${status}: ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "expected no output: ${output}" >&2
+    return 1
+  }
+  [[ "$(fired_log_lines)" -eq 0 ]] || {
+    echo "expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+    return 1
+  }
+}
+
+# Advisories belong to landing writes: a blocked write never reaches the ledger.
+@test "ledger: envelope-less write with an unfetched URL → exit 2 + SCOPE-006, no SCOPE-010, no log line" {
+  local tp="${BATS_TEST_TMPDIR}/session.jsonl"
+  RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/blocked.log"
+  webfetch_lines t1 https://other.example/a 200 >"${tp}"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(raw_doc 'No envelope here.')" "${tp}")"
+  [[ "${status}" -eq 2 && "${output}" == *"SCOPE-006"* ]] || {
+    echo "expected exit 2 + SCOPE-006, got ${status}: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"SCOPE-010"* ]] || {
+    echo "a blocked write must not draw SCOPE-010: ${output}" >&2
+    return 1
+  }
+  [[ "$(fired_log_lines)" -eq 0 ]] || {
+    echo "expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+    return 1
+  }
+}
+
+# Each malformed line carries the prefilter's "WebFetch" substring, so it reaches the JSON parse instead of being skipped.
+@test "ledger: malformed transcript line before the fetch → silent, no log line, fetch still matched" {
+  local row tp
+  for row in truncated-json non-object string-message; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    tp="${BATS_TEST_TMPDIR}/${row}.jsonl"
+    {
+      webfetch_lines t0 https://other.example/a 200
+      case "${row}" in
+        truncated-json) printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebFetch"' ;;
+        non-object) printf '%s\n' '["WebFetch"]' ;;
+        string-message) printf '%s\n' '{"type":"assistant","message":"WebFetch"}' ;;
+        *) return 1 ;;
+      esac
+      webfetch_lines t1 https://example.com/page 200
+    } >"${tp}"
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output: ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 0 ]] || {
+      echo "${row}: expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
 }
 
 # Tool gate: a non-Write/Edit tool on a raw path stays out of scope.
