@@ -13,6 +13,11 @@
 # - Content handed in through a delegation prompt is invisible too, and raises a false SCOPE-010.
 # - The fired log records the source host only, never the full URL, query or content.
 # - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
+# - Most real results carry no toolUseResult, hence no HTTP code.
+#   Such a non-error result is a page unless its text opens with a harness failure prefix (HTTP status, redirect).
+#   The prefix set is closed, taken from real transcripts; a new harness failure wording counts as a page.
+# - The redirect arm needs toolUseResult.url: without it a followed redirect leaves no final URL.
+#   Declaring that final URL then raises SCOPE-010.
 # - SCOPE-011 is correlated only: fetch-all-then-save-all raises a false positive.
 #   Pages fetched before an earlier save and pasted later raise nothing (false negative).
 # - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver accepts either parent or own file.
@@ -205,9 +210,10 @@ resolve_transcript() {
   find_subagent_transcript
 }
 
-# match=1: a WebFetch of the declared URL (input url, or result url after a redirect) has a 2xx, non-error result.
-# pages: distinct successfully fetched pages after the last raw Write with a non-error result.
-# An unpaired raw Write is the one in flight.
+# match=1: a WebFetch of the declared URL (input url, or result url after a redirect) has a page result.
+# Page result: not an error, no harness failure text, and a 2xx code where toolUseResult records one.
+# pages: distinct pages fetched after the last raw Write with a non-error result.
+# Results pair with their tool_use by id alone: a result line names no tool. An unpaired raw Write is the one in flight.
 # URLs compare normalized: http→https, lowercase scheme + host, no fragment, no trailing `/`, query kept.
 # A malformed line is skipped, never fatal. Args: $1=transcript $2=declared URL $3=raw dir.
 run_scanner() {
@@ -238,19 +244,33 @@ def is_raw(path, raw_dir):
     )
 
 
+# Harness-written text a non-error result carries instead of a page (HTTP 4xx/5xx, a redirect not followed).
+HARNESS_FAILURE_PREFIXES = ("The server returned HTTP ", "REDIRECT DETECTED: ")
+
+
+def is_page(item, result):
+    if field(item, "is_error"):
+        return False
+    body = field(item, "content")
+    if isinstance(body, str) and body.startswith(HARNESS_FAILURE_PREFIXES):
+        return False
+    code = field(result, "code")
+    return code is None or (isinstance(code, int) and 200 <= code < 300)
+
+
 transcript, declared, raw_dir = sys.argv[1], normalize(sys.argv[2]), sys.argv[3]
-fetch_urls = {}
+pending_fetches = {}
 pending_writes = {}
 pages = []
 window = -1
 matched = False
 with open(transcript, "rb") as lines:
     for position, line in enumerate(lines):
-        # A successful Write result names neither the tool nor toolUseResult → matched by its pending id.
+        # A result line names no tool → admitted by its pending id; a paired id is dropped so later mentions skip.
         if (
             b'"WebFetch"' not in line
             and b'"Write"' not in line
-            and b"toolUseResult" not in line
+            and not any(fetch_id in line for fetch_id in pending_fetches)
             and not any(write_id in line for write_id in pending_writes)
         ):
             continue
@@ -260,23 +280,23 @@ with open(transcript, "rb") as lines:
             continue
         content = field(field(entry, "message"), "content")
         result = field(entry, "toolUseResult")
-        code = field(result, "code")
         for item in content if isinstance(content, list) else []:
             kind = field(item, "type")
             item_id = field(item, "id") if kind == "tool_use" else field(item, "tool_use_id")
             if not isinstance(item_id, str):
                 continue
             if kind == "tool_use" and field(item, "name") == "WebFetch":
-                fetch_urls[item_id] = normalize(field(field(item, "input"), "url"))
+                pending_fetches[item_id.encode()] = normalize(field(field(item, "input"), "url"))
             elif kind == "tool_use" and field(item, "name") == "Write":
                 if is_raw(field(field(item, "input"), "file_path"), raw_dir):
                     pending_writes[item_id.encode()] = position
-            elif kind == "tool_result" and item_id in fetch_urls:
-                ok = not field(item, "is_error") and isinstance(code, int) and 200 <= code < 300
-                urls = (fetch_urls[item_id], normalize(field(result, "url")))
+            elif kind == "tool_result" and item_id.encode() in pending_fetches:
+                fetched = pending_fetches.pop(item_id.encode())
+                ok = is_page(item, result)
+                urls = (fetched, normalize(field(result, "url")))
                 matched = matched or (ok and declared is not None and declared in urls)
-                if ok and fetch_urls[item_id] is not None:
-                    pages.append((position, fetch_urls[item_id]))
+                if ok and fetched is not None:
+                    pages.append((position, fetched))
             elif kind == "tool_result" and item_id.encode() in pending_writes:
                 started = pending_writes.pop(item_id.encode())
                 if not field(item, "is_error"):
