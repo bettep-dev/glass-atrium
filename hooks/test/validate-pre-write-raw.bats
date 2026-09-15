@@ -29,6 +29,8 @@ setup() {
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
   export HOME="${BATS_TEST_TMPDIR}/home"
   export RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/raw-fetch-ledger-fired.log"
+  # An inherited scanner interpreter would move the ledger control rows.
+  unset RAW_FETCH_LEDGER_PY
 }
 
 # Valid 3-field frontmatter followed by $1 (body). Args: $1=body.
@@ -68,12 +70,34 @@ raw_write_payload_with_transcript() {
     '{tool_name:"Write", session_id:"sess-1", transcript_path:$tp, tool_input:{file_path:$fp, content:$c}}'
 }
 
+# Two transcript lines: a WebFetch tool_use and its paired result; is_error is written only when true, as
+# the harness does. Args: $1=tool_use id $2=url $3=HTTP code $4=is_error (true|false, default false).
+webfetch_lines() {
+  jq -nc --arg id "${1}" --arg u "${2}" \
+    '{type:"assistant", message:{content:[{type:"tool_use", id:$id, name:"WebFetch", input:{url:$u}}]}}'
+  jq -nc --arg id "${1}" --arg u "${2}" --argjson code "${3}" --argjson err "${4:-false}" \
+    '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id} + (if $err then {is_error:true} else {} end)]},
+      toolUseResult:{url:$u, code:$code}}'
+}
+
 # A transcript that fetched the raw_doc source URL. Args: $1=destination file.
 fetched_transcript() {
-  printf '%s\n' \
-    '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"WebFetch","input":{"url":"https://example.com/page"}}]}}' \
-    '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]},"toolUseResult":{"url":"https://example.com/page","code":200}}' \
-    >"${1}"
+  webfetch_lines t1 https://example.com/page 200 >"${1}"
+}
+
+# A raw-page Write envelope sent by a subagent. Args: $1=content $2=transcript_path $3=agent_id.
+subagent_write_payload() {
+  jq -nc --arg fp "${WIKI_ROOT}/raw/page.md" --arg c "${1}" --arg tp "${2}" --arg aid "${3}" \
+    '{tool_name:"Write", session_id:"sess-1", agent_id:$aid, transcript_path:$tp, tool_input:{file_path:$fp, content:$c}}'
+}
+
+# Line count of the fired log; 0 when the log does not exist.
+fired_log_lines() {
+  if [[ -f "${RAW_FETCH_LEDGER_FIRED_LOG}" ]]; then
+    wc -l <"${RAW_FETCH_LEDGER_FIRED_LOG}" | tr -d ' '
+  else
+    echo 0
+  fi
 }
 
 # A fully conforming raw document (3-field frontmatter + body envelope) — V1-V6 all green, so any
@@ -482,6 +506,165 @@ conforming_doc() {
   }
   [[ ! -e "${RAW_FETCH_LEDGER_FIRED_LOG}" ]] || {
     echo "log must not be created without transcript_path" >&2
+    return 1
+  }
+}
+
+# ================== Fetch ledger (advisory) — SCOPE-010 and the unavailable path ===================
+#
+# On the permit path the ledger scans the writer's own transcript for a successful WebFetch of the
+# declared source_url. An unresolved transcript or a failed scanner is silent on stderr and leaves one
+# ledger=unavailable log line — never a false SCOPE-010, and never an exit-status change.
+
+@test "SCOPE-010: declared source has no successful WebFetch → exit 0 + SCOPE-010 on every row" {
+  local row tp
+  for row in never-fetched http-404 is-error; do
+    tp="${BATS_TEST_TMPDIR}/${row}.jsonl"
+    case "${row}" in
+      never-fetched) webfetch_lines t1 https://other.example/a 200 >"${tp}" ;;
+      http-404) webfetch_lines t1 https://example.com/page 404 >"${tp}" ;;
+      is-error) webfetch_lines t1 https://example.com/page 200 true >"${tp}" ;;
+      *) return 1 ;;
+    esac
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ "${output}" == *"SCOPE-010"* ]] || {
+      echo "${row}: expected SCOPE-010: ${output}" >&2
+      return 1
+    }
+  done
+}
+
+# A subagent's parent transcript holds none of its fetches, so falling back to it would raise a false
+# SCOPE-010; the parent here carries only an unrelated fetch to make that fallback visible.
+@test "ledger: transcript does not resolve → exit 0, silent, one log line ledger=unavailable reason=transcript" {
+  local row payload parent="${BATS_TEST_TMPDIR}/proj/sess-1.jsonl"
+  mkdir -p "${parent%/*}"
+  webfetch_lines t1 https://other.example/a 200 >"${parent}"
+  for row in subagent-own-missing main-session-missing-file; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    case "${row}" in
+      subagent-own-missing) payload="$(subagent_write_payload "$(conforming_doc)" "${parent}" a1)" ;;
+      main-session-missing-file)
+        payload="$(raw_write_payload_with_transcript "$(conforming_doc)" "${BATS_TEST_TMPDIR}/no-such.jsonl")"
+        ;;
+      *) return 1 ;;
+    esac
+    run bash "${RAW_HOOK}" <<<"${payload}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output: ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 1 ]] || {
+      echo "${row}: expected exactly one log line, got $(fired_log_lines)" >&2
+      return 1
+    }
+    grep -q $'\tledger=unavailable\treason=transcript$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+      echo "${row}: log must carry ledger=unavailable reason=transcript: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
+}
+
+# Whichever file the envelope names, the scan reads the subagent's OWN transcript: the parent-side file
+# of each row holds only an unrelated fetch, so a parent read raises SCOPE-010.
+@test "ledger: subagent's own transcript holds the fetch → silent, no log line, on every resolution route" {
+  local row own tp aid
+  for row in flat workflow envelope-names-own home-fallback; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    tp="${BATS_TEST_TMPDIR}/proj/sess-1.jsonl"
+    case "${row}" in
+      flat)
+        aid=a1
+        own="${BATS_TEST_TMPDIR}/proj/sess-1/subagents/agent-a1.jsonl"
+        ;;
+      workflow)
+        aid=a2
+        own="${BATS_TEST_TMPDIR}/proj/sess-1/subagents/workflows/wf_1/agent-a2.jsonl"
+        ;;
+      envelope-names-own)
+        aid=a3
+        own="${BATS_TEST_TMPDIR}/detached/agent-a3.jsonl"
+        tp="${own}"
+        ;;
+      home-fallback)
+        aid=a4
+        tp="${BATS_TEST_TMPDIR}/elsewhere/sess-1.jsonl"
+        own="${HOME}/.claude/projects/p/sess-1/subagents/agent-a4.jsonl"
+        ;;
+      *) return 1 ;;
+    esac
+    mkdir -p "${tp%/*}" "${own%/*}"
+    [[ -f "${tp}" ]] || webfetch_lines t0 https://other.example/a 200 >"${tp}"
+    webfetch_lines t1 https://example.com/page 200 >"${own}"
+    run bash "${RAW_HOOK}" <<<"$(subagent_write_payload "$(conforming_doc)" "${tp}" "${aid}")"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output: ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 0 ]] || {
+      echo "${row}: expected no log line: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
+}
+
+# A scanner failure misread as no-match would raise SCOPE-010, which is what lets each failure row fail.
+# Only RAW_FETCH_LEDGER_PY varies, so PATH python3 still parses the envelope and the hook reaches the ledger.
+@test "ledger: scanner failure → exit 0, silent, one log line ledger=unavailable reason=scanner; control row → SCOPE-010" {
+  local row py tp="${BATS_TEST_TMPDIR}/session.jsonl" payload
+  {
+    webfetch_lines t1 https://other.example/a 200
+    webfetch_lines t2 https://other.example/b 200
+  } >"${tp}"
+  printf '#!/bin/sh\nexit 3\n' >"${BATS_TEST_TMPDIR}/py-exit3"
+  printf '#!/bin/sh\necho not-a-contract-line\n' >"${BATS_TEST_TMPDIR}/py-garbage"
+  chmod +x "${BATS_TEST_TMPDIR}/py-exit3" "${BATS_TEST_TMPDIR}/py-garbage"
+  payload="$(raw_write_payload_with_transcript "$(conforming_doc)" "${tp}")"
+  for row in no-such-python3 py-exit3 py-garbage; do
+    RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/${row}.log"
+    py="${BATS_TEST_TMPDIR}/${row}"
+    RAW_FETCH_LEDGER_PY="${py}" run bash "${RAW_HOOK}" <<<"${payload}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected exit 0, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ -z "${output}" ]] || {
+      echo "${row}: expected no output (no SCOPE-010, scanner stderr contained): ${output}" >&2
+      return 1
+    }
+    [[ "$(fired_log_lines)" -eq 1 ]] || {
+      echo "${row}: expected exactly one log line, got $(fired_log_lines)" >&2
+      return 1
+    }
+    grep -q $'\tledger=unavailable\treason=scanner$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+      echo "${row}: log must carry ledger=unavailable reason=scanner: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
+      return 1
+    }
+  done
+  RAW_FETCH_LEDGER_FIRED_LOG="${BATS_TEST_TMPDIR}/ledger/control.log"
+  run bash "${RAW_HOOK}" <<<"${payload}"
+  [[ "${status}" -eq 0 && "${output}" == *"SCOPE-010"* ]] || {
+    echo "control: expected exit 0 + SCOPE-010, got ${status}: ${output}" >&2
+    return 1
+  }
+  [[ "$(fired_log_lines)" -eq 1 ]] || {
+    echo "control: expected exactly one log line, got $(fired_log_lines)" >&2
+    return 1
+  }
+  grep -q $'\tcodes=SCOPE-010\t.*\tledger=ok\treason=-$' "${RAW_FETCH_LEDGER_FIRED_LOG}" || {
+    echo "control: log must carry codes=SCOPE-010 ledger=ok: $(cat "${RAW_FETCH_LEDGER_FIRED_LOG}")" >&2
     return 1
   }
 }

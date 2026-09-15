@@ -8,6 +8,12 @@
 # - V8 asserts destination state at check time, not a race control; only the destination and its immediate parent are tested.
 # - SCOPE-009 is advisory telemetry (exit 0): Write immutability is policy only, and delete-then-Write is silent by design.
 # - stderr on an exit-0 PreToolUse is not shown to be model-visible; the fired log, written only with transcript_path, is the record.
+# - SCOPE-010 (fetch ledger) is advisory telemetry and sees WebFetch only: Bash curl, MCP fetch tools and content handed in
+#   through a delegation prompt are invisible (the last raises a false SCOPE-010). It records URLs, never content.
+# - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
+# - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver covers the parent and the own file.
+#   An unresolved transcript or a failed scanner is silent on stderr and logs ledger=unavailable, never a false code.
+# RAW_FETCH_LEDGER_PY: scanner-only interpreter (default python3); envelope parsing stays on PATH python3
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -148,26 +154,118 @@ else
   fi
 fi
 
-# One fired-log TSV line; the subshell contains every failure, so an unwritable log degrades to silence. Args: $1=codes.
+# One fired-log TSV line; the subshell contains every failure, so an unwritable log degrades to silence.
+# Args: $1=codes $2=ledger state $3=reason.
 write_fired_log() {
-  local codes="${1}"
+  local codes="${1}" ledger="${2}" reason="${3}"
   (
-    local session host ts
-    session=$(printf '%s' "${INPUT}" | jq -r '.session_id // ""')
+    local host ts
     host="${SRC_LINE#*://}"
     host="${host%%[/?#]*}"
     host="${host##*@}"
     ts=$(python3 -c 'import datetime as d; t=d.datetime.now(d.timezone.utc); print(t.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (t.microsecond // 1000))') \
       || ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     mkdir -p -- "${RAW_FETCH_LEDGER_FIRED_LOG%/*}"
-    printf '%s\tcodes=%s\thost=%s\tsession=%s\tledger=-\treason=-\n' "${ts}" "${codes}" "${host}" "${session}" \
-      >>"${RAW_FETCH_LEDGER_FIRED_LOG}"
+    printf '%s\tcodes=%s\thost=%s\tsession=%s\tledger=%s\treason=%s\n' \
+      "${ts}" "${codes}" "${host}" "${SESSION_ID}" "${ledger}" "${reason}" >>"${RAW_FETCH_LEDGER_FIRED_LOG}"
   ) 2>/dev/null || true
 }
 
-# Permit-path advisories: warn-severity stderr plus the fired log; the log is written only when the envelope carries transcript_path.
+# Subagent's own transcript under both layouts (flat, workflows/wf_*), envelope project dir first, then ~/.claude/projects.
+# Never the parent transcript: it holds none of the subagent's fetches, so reading it raises a false SCOPE-010.
+find_subagent_transcript() {
+  local name="agent-${AGENT_ID}.jsonl" root candidate
+  local -a roots=("${HOME}/.claude/projects/"*)
+  [[ "${AGENT_ID}" =~ ^[A-Za-z0-9_-]+$ && "${SESSION_ID}" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+  [[ -z "${TRANSCRIPT_PATH}" ]] || roots=("${TRANSCRIPT_PATH%/*}" "${roots[@]}")
+  for root in "${roots[@]}"; do
+    for candidate in "${root}/${SESSION_ID}/subagents/${name}" "${root}/${SESSION_ID}/subagents/workflows/"wf_*"/${name}"; do
+      [[ -f "${candidate}" ]] || continue
+      printf '%s' "${candidate}"
+      return 0
+    done
+  done
+  return 1
+}
+
+# Transcript the ledger scans: the envelope file for the main session or when it already names agent-<id>.jsonl.
+resolve_transcript() {
+  if [[ -z "${AGENT_ID}" ]] || [[ "${TRANSCRIPT_PATH##*/}" == "agent-${AGENT_ID}.jsonl" ]]; then
+    [[ -n "${TRANSCRIPT_PATH}" && -f "${TRANSCRIPT_PATH}" ]] || return 1
+    printf '%s' "${TRANSCRIPT_PATH}"
+    return 0
+  fi
+  find_subagent_transcript
+}
+
+# Prints match=1 when the declared URL has a WebFetch whose paired result is 2xx and not is_error, else match=0.
+# Args: $1=transcript $2=declared URL.
+run_scanner() {
+  "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" <<'PY'
+import json
+import sys
+
+transcript, declared = sys.argv[1], sys.argv[2]
+fetch_ids = set()
+matched = False
+with open(transcript, "rb") as lines:
+    for line in lines:
+        if b'"WebFetch"' not in line and b"toolUseResult" not in line:
+            continue
+        entry = json.loads(line)
+        content = (entry.get("message") or {}).get("content")
+        result = entry.get("toolUseResult")
+        code = result.get("code") if isinstance(result, dict) else None
+        for item in content if isinstance(content, list) else []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "tool_use" and item.get("name") == "WebFetch":
+                if (item.get("input") or {}).get("url") == declared:
+                    fetch_ids.add(item.get("id"))
+            elif item.get("type") == "tool_result" and item.get("tool_use_id") in fetch_ids:
+                if not item.get("is_error") and isinstance(code, int) and 200 <= code < 300:
+                    matched = True
+print("match=%d" % matched)
+PY
+}
+
+# Scanner contract: exactly one `match=<0|1>` line and exit 0. Anything else is a failure (return 1), never a no-match,
+# because a misread failure would raise a false SCOPE-010. Prints 0 or 1. Args: $1=transcript $2=declared URL.
+scan_transcript() {
+  local out
+  # shellcheck disable=SC2310
+  out=$(run_scanner "${1}" "${2}" 2>/dev/null) || return 1
+  [[ "${out}" == "match=0" || "${out}" == "match=1" ]] || return 1
+  printf '%s' "${out#match=}"
+}
+
+# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES; emits SCOPE-010 when the scan finds no successful fetch.
+run_ledger() {
+  local transcript url match
+  LEDGER_STATE="unavailable"
+  LEDGER_REASON="transcript"
+  LEDGER_CODES=""
+  # shellcheck disable=SC2310
+  transcript=$(resolve_transcript) || return 0
+  LEDGER_REASON="scanner"
+  url="${SRC_LINE#source_url:}"
+  url="${url#"${url%%[![:space:]]*}"}"
+  # shellcheck disable=SC2310
+  match=$(scan_transcript "${transcript}" "${url}") || return 0
+  LEDGER_STATE="ok"
+  LEDGER_REASON="-"
+  [[ "${match}" == "0" ]] || return 0
+  emit_error "SCOPE-010" "warn" \
+    "Declared source_url was not fetched by WebFetch in this session — body provenance is unverified" \
+    "Fetch the declared source with WebFetch before saving, or declare the URL the content was fetched from" \
+    "{\"file\":\"${FILE_PATH}\"}"
+  LEDGER_CODES="SCOPE-010"
+}
+
+# Permit-path advisories: warn-severity stderr plus the fired log; the log is written only when the envelope carries
+# transcript_path, and only when a code fired or the ledger was unavailable.
 run_advisories() {
-  local codes="" transcript_path
+  local codes="" fields
   if [[ -f "${FILE_PATH}" ]]; then
     emit_error "SCOPE-009" "warn" \
       "Raw file already exists — raw files are immutable after save; this Write replaces an existing source file" \
@@ -175,10 +273,15 @@ run_advisories() {
       "{\"file\":\"${FILE_PATH}\"}"
     codes="SCOPE-009"
   fi
-  [[ -n "${codes}" ]] || return 0
-  transcript_path=$(printf '%s' "${INPUT}" | jq -r '.transcript_path // ""' 2>/dev/null) || return 0
-  [[ -n "${transcript_path}" ]] || return 0
-  write_fired_log "${codes}"
+  # Unit separator, not whitespace: an empty field must survive the split.
+  fields=$(printf '%s' "${INPUT}" | jq -r '[.transcript_path, .agent_id, .session_id] | map(. // "" | tostring) | join("")') \
+    || return 0
+  IFS=$'\x1f' read -r TRANSCRIPT_PATH AGENT_ID SESSION_ID <<<"${fields}"
+  run_ledger
+  codes="${codes}${codes:+${LEDGER_CODES:+,}}${LEDGER_CODES}"
+  [[ -n "${TRANSCRIPT_PATH}" ]] || return 0
+  [[ -n "${codes}" || "${LEDGER_STATE}" == "unavailable" ]] || return 0
+  write_fired_log "${codes:--}" "${LEDGER_STATE}" "${LEDGER_REASON}"
 }
 
 if [[ ${#VIOLATIONS[@]} -eq 0 ]]; then
