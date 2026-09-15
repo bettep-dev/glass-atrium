@@ -1023,9 +1023,9 @@ Trigger: Decision-phase routing finds no matching DEV agent at `confidence < 0.7
 - **The orchestrator never self-authors a body** — glass-atrium-meta-prompt-engineer is the body author.
 - **Two human pauses are MANDATORY** — ⏸ step 2 (create-vs-extend, on either branch) and ⏸ step 5 (foreground commit, CREATE only).
 
-#### The 7 steps, each building on the previous
+#### The 6 steps, each building on the previous
 
-Steps 1-2 run on either branch; a "no" at step 2 routes to EXTEND (step 3-alt). Steps 3-5 are the CREATE branch; steps 6-7 are the post-commit gates EXTEND re-enters per `#### EXTEND path` below.
+Steps 1-2 run on either branch; a "no" at step 2 routes to EXTEND (step 3-alt). Steps 3-5 are the CREATE branch; step 6 is the post-commit gate EXTEND re-enters per `#### EXTEND path` below.
 
 1. **Gate dry-run (write-free, before any authoring spend)** — `python -m agent_lifecycle add --dry-run --scope DEV --domains "a,b" --description "…" --gate-q1 <pass|fail> --gate-q2 <pass|fail>` runs `evaluate_add_gate` (incl. the Q3 domain-overlap `>= 50%` hard-block via `overlap.py`) + target-absence pre-flight, printing JSON `{allowed, preflight_clear, reasons, q3_conflicts}`.
    - `allowed:false` → STOP (EXTEND or report gap), no spend.
@@ -1043,12 +1043,11 @@ Steps 1-2 run on either branch; a "no" at step 2 routes to EXTEND (step 3-alt). 
    - **Every other roster in that hook is manual-curated, and reconcile leaves it untouched** (`BUDGET_ANALYSIS_AGENTS`, `WIKI_UNTRUSTED_AGENTS`): an agent that belongs in one is added by hand, or it silently receives no such block.
      - Curation: `core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`.
    - Until reconciled, the new agent receives no BUDGET-DEV sizing block and escapes the `style_ref` omission flag. Its scope and Tier-3 rules need no reconcile: the part slots deliver them from the registry row step 4 wrote.
-7. **Verify-arch (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-verify-arch` after reconcile; until it runs, arch-invariants and team diagrams stay stale.
 
 #### EXTEND path (step 3-alt — the DEFAULT branch)
 
 - `python -m agent_lifecycle extend --add-domain <token>` / `--append-section <file>` — additive, append-only; HALTs on any value mutation.
-- EXTEND still ends with the reconcile + verify-arch gates (steps 6-7) when it alters the roster.
+- EXTEND still ends with the reconcile gate (step 6) when it alters the roster.
 
 #### Failure recovery (exit code → action)
 

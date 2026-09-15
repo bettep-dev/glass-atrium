@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-ops-reconcile-inject
-description: Reconcile the tracked roster arrays with the DEV roster by running the agent_lifecycle sync-inject CLI — BUDGET_DEV_AGENTS in hooks/inject-scope-rules.sh and STYLEREF_AGENTS in hooks/lib/styleref-roster.sh — inserting every newly registered DEV agent and removing every deleted agent's stale name; the manual-curated rosters BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are never written. Use when you just registered OR deleted a DEV agent, when an agent-delete result names this skill in skill_to_run or the add CLI prints a NOTE naming it, when finishing integrating or removing an agent, when asked to sync the roster arrays, when a registered DEV agent gets no BUDGET-DEV sizing block or its style_ref omission flag never fires, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or an agent whose scope-RULE membership looks wrong (a registry or selector problem).
+description: Reconcile the tracked roster arrays with the DEV roster by running the agent_lifecycle sync-inject CLI — BUDGET_DEV_AGENTS in hooks/inject-scope-rules.sh and STYLEREF_AGENTS in hooks/lib/styleref-roster.sh — inserting every newly registered DEV agent and removing every deleted agent's stale name; the manual-curated rosters BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are never written. Use when you just registered OR deleted a DEV agent, when an agent-delete result names this skill in skill_to_run or the add CLI prints a NOTE naming it, when finishing integrating or removing an agent, when asked to sync the roster arrays, when a registered DEV agent gets no BUDGET-DEV sizing block or its style_ref omission flag never fires, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for model/budget config or an agent whose scope-RULE membership looks wrong (a registry or selector problem).
 ---
 
 # Reconcile the tracked roster arrays
@@ -18,7 +18,6 @@ Reconcile the tracked roster arrays with the live DEV roster through the tested 
 
 ### Exclusions
 
-- Architecture-diagram drift / the `최신화 필요` badge → `glass-atrium-ops-verify-arch`; this skill does NOT chain it (see Prohibitions).
 - Model / token-budget configuration → the monitor Models & budgets screen.
 - An agent whose scope-RULE membership looks wrong → NOT this skill; start with `python3 -m agent_lifecycle orphan-scan --mode rules-membership-mismatch` (why: `## The gap this closes` → **Not the scope-RULE gap.**).
 
@@ -92,8 +91,6 @@ Backup: <each .bak path>                                              # omit if 
 - **No in-session array edit** — never edit `hooks/inject-scope-rules.sh` or `hooks/lib/styleref-roster.sh` via in-session Edit/Write/sed. The only sanctioned mutation path is the CLI subprocess (`.bak` backup + atomic write + rollback).
   - Backing: `hooks/enforce-harness-critical.sh` blocks in-session writes under the live `~/.glass-atrium/hooks/`.
 - **DEV agents only** — the tracked arrays populate from the DEV roster; do not attempt to insert an agent outside it.
-- **Does NOT chain verify-arch** — this skill is a fast array sync only and MUST NOT trigger `glass-atrium-ops-verify-arch` (the heavy build + launchctl restart).
-  - Why: keeping the two skills decoupled avoids `execFile` timeout coupling.
 
 ## Red Flags
 
@@ -101,7 +98,6 @@ Backup: <each .bak path>                                              # omit if 
 - `--ga-root` placed after `sync-inject` → wrong order, the CLI exits 2; the global flag precedes the subcommand.
 - An agent outside the DEV roster offered for insertion → out of scope.
 - "The new agent's scope-RULE membership is wrong" offered as the reason to run this → wrong CLI (see Exclusions).
-- This skill kicking off an architecture-diagram build/restart → boundary violation; that is verify-arch's job.
 
 ## Verification
 
@@ -110,4 +106,3 @@ Backup: <each .bak path>                                              # omit if 
 - [ ] Reported the inserted and removed names (or "already in sync"), every `.bak` path, and the exit code.
 - [ ] Did not present the run as having fixed an agent's scope-RULE membership — what it fixes is the BUDGET-DEV roster and the `style_ref` flag roster.
 - [ ] No in-session edit of either declaration file occurred — mutation happened only inside the CLI subprocess.
-- [ ] verify-arch was NOT triggered.

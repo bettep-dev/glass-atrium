@@ -51,10 +51,9 @@ CHUNK_BUDGET = CHUNK_MAX_UNITS - CHUNK_RESERVE
 # marker blocks and no chunk, leaving eleven parts bound to
 # hooks/inject-scope-part-01.sh .. -11.sh.
 #
-# This is the count of slots the channel is BUILT for, and three other declarations must agree with
-# it: the wrapper files on disk, the SubagentStart rows of EXPECTED_HOOK_BINDINGS (lib/ga-env.sh)
-# and monitor/src/server/architecture/arch-invariants.ts -> `SubagentStart`. Nothing here can see
-# the other three, so the comparison is the doctor's (lib/ga-doctor.sh 10b, which reads this
+# This is the count of slots the channel is BUILT for, and two other declarations must agree with
+# it: the wrapper files on disk and the SubagentStart rows of EXPECTED_HOOK_BINDINGS (lib/ga-env.sh).
+# Nothing here can see the other two, so the comparison is the doctor's (lib/ga-doctor.sh 10b, which reads this
 # constant through --audit) and inject-scope-chunker.bats T-SLOT-1's.
 CHUNK_SLOTS = 11
 

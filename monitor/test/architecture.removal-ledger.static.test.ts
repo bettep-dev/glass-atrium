@@ -111,6 +111,19 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "truncateText", kind: "identifier", ac: "AC-12" },
   { name: "TAB_PURPOSE", kind: "identifier", ac: "AC-12" },
   { name: "diagramPurposeAR", kind: "identifier", ac: "AC-12" },
+
+  // 39739 R1 이 지운 고정 카운트 흐름 — 불변값 표 · 계산 코어와 그 캐시 · 결과/차이 타입 ·
+  // 드리프트 배너와 그 두 상태 · 하네스의 차이 픽스처. 식별자만 올림: 경로·스킬 이름은
+  // manifest.json 의 retired 항목이 정당하게 들고 있어 영원히 0 이 되지 않음(ADR-13 판별성).
+  { name: "ARCH_INVARIANTS", kind: "identifier", ac: "39739-R1" },
+  { name: "computeArchDrift", kind: "identifier", ac: "39739-R1" },
+  { name: "resetArchDriftCache", kind: "identifier", ac: "39739-R1" },
+  { name: "ArchDriftResult", kind: "identifier", ac: "39739-R1" },
+  { name: "ArchDriftDiff", kind: "identifier", ac: "39739-R1" },
+  { name: "DriftBannerAR", kind: "identifier", ac: "39739-R1" },
+  { name: "driftStale", kind: "identifier", ac: "39739-R1" },
+  { name: "driftDiffs", kind: "identifier", ac: "39739-R1" },
+  { name: "getDriftDiff", kind: "identifier", ac: "39739-R1" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -154,6 +167,11 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   { name: "arch-part-drill", kind: "attribute", ac: "ADR-20" },
   // 표 안에 서 있던 경보가 페이지로 올라간 자리 — 이 클래스가 그 이사 자체임.
   { name: "arch-health-alert-wrap", kind: "attribute", ac: "ADR-20" },
+
+  // 드리프트 배너만 죽었음 — 같은 셸을 쓰던 두 배너와 셸 자체는 남아 AC-T5 · AC-T18(c) · AC-B2-6a 가 잼.
+  { name: "AlertBannerAR", kind: "identifier", ac: "39739-R1" },
+  { name: "MembershipBannerAR", kind: "identifier", ac: "39739-R1" },
+  { name: "DualWriteBannerAR", kind: "identifier", ac: "39739-R1" },
 ];
 
 // 경계 문자 집합 — 식별자와 CSS 이름이 서로 다름. 하이픈이 갈림길임.
@@ -258,17 +276,17 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 
 // 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외는 판별성의 근거를, 생존은 넘치게 지워지지 않았음을 잼.
 // 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽음 → 순회는 하나로 두고, 실패 메시지가 깨진 토큰을 담음.
-test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12)", () => {
+test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1)", () => {
   // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
   const ledgerCountByAc: Record<string, number> = {};
   for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
   assert.deepEqual(
     ledgerCountByAc,
-    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3 },
+    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3, "39739-R1": 9 },
     "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
   assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
-  assert.equal(SURVIVING_TOKENS.length, 20, "survivor list membership changed");
+  assert.equal(SURVIVING_TOKENS.length, 23, "survivor list membership changed");
 
   const allNames = [...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS].map((t) => t.name);
   assert.equal(

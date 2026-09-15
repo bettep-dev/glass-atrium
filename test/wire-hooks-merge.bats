@@ -131,8 +131,10 @@ count_bound_matcher() {
 
 @test "Workflow matcher -> BOTH Workflow hooks EMITTED by the wire loop as independent leaves" {
   # EMISSION axis — the one property no other suite owns. Three axes are in play.
-  # roster MEMBERSHIP is owned: hook-bindings-complete.bats :: per-event leaf count
-  # (it splits the roster's matcher column into a field it never asserts).
+  # roster MEMBERSHIP is owned: doctor-hook-bindings.bats :: write_full_settings is the general
+  # guard (it names every roster leaf), and the hook-bindings-complete.bats membership test pins
+  # the security-critical subset (it splits the roster's matcher column into a field it never
+  # asserts); no per-event leaf count is asserted anywhere.
   # roster MATCHER VALUE is owned only for OTHER matchers — doctor-hook-bindings.bats
   # still pins per-tuple matcher reporting for Bash / Agent / Write|Edit|MultiEdit /
   # <none>, but it carries no Workflow-matcher case, so the jq select and the

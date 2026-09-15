@@ -143,7 +143,7 @@ function build(
 
 // source-dev detection
 
-// ATRIUM_ROOT env override (test hook) → ~/.glass-atrium default install root (matches compute-arch-drift.ts ATRIUM_ROOT).
+// ATRIUM_ROOT env override (test hook) → ~/.glass-atrium default install root.
 function resolveAtriumRoot(): string {
   const override = process.env.ATRIUM_ROOT;
   if (typeof override === "string" && override.length > 0) {

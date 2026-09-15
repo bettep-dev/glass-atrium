@@ -18,12 +18,10 @@ import { getHtmlBodyRoot, resetDocsRootCache } from "../src/server/clauded-docs/
 const SERVER_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "server");
 const LEGACY_ROOT = ".claude";
 
-// The only reads that legitimately stay on ~/.claude: settings.json is the file the Claude
-// Code CLI itself owns, and compute-arch-drift additionally keeps the dropped hook-farm dir
-// as a documented fail-open fallback (absent → 0 count). Values = matching source lines.
+// The only read that legitimately stays on ~/.claude: settings.json, the file the Claude Code CLI itself owns.
+// Values = matching source lines.
 const LEGACY_ALLOWLIST: ReadonlyMap<string, number> = new Map([
   [path.join("routes", "health-detail.ts"), 1],
-  [path.join("architecture", "compute-arch-drift.ts"), 2],
 ]);
 
 // undefined restores the "unset" state so a saved-absent seam is cleared, not blanked to "".

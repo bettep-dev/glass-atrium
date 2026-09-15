@@ -386,7 +386,7 @@ test("SoT parity: 다이어그램별 edge_type/node type/layer role 히스토그
   }
 });
 
-// canonical 슬러그의 source 계측 — 위 payload 오라클 행은 drawn 을 재므로, verify-arch Stage-4 가 쓰는
+// canonical 슬러그의 source 계측 — 위 payload 오라클 행은 drawn 을 재므로
 // mermaid_source 쪽 라벨/키워드 재분류 감시망이 비어 있음. 이 행이 그 구간을 메움.
 // 세 축 모두 실음 — edge 만 재면 canonical 의 mermaid_source node type/layer role 재분류가 무계측으로 남음.
 const CANONICAL_SOURCE_ORACLE: {

@@ -27,13 +27,6 @@ export interface RecentActivity {
 	last_outcome_at: string | null;
 }
 
-// Single claimed-vs-actual count mismatch from computeArchDrift().
-export interface ArchDriftDiff {
-	key: string;
-	claimed: number;
-	actual: number;
-}
-
 // Governance membership — documents the compliance matrix names by path, checked for existence.
 // A named-absence list, deliberately not a total: a vanished scope file must fail by name.
 export interface GovernanceMembershipStatus {
@@ -46,10 +39,6 @@ export interface ArchitectureLiveResponse {
 	daemons: DaemonLiveStatus[];
 	writers: WriterLiveStatus[];
 	recent_activity: RecentActivity;
-	// Drift signal — diagram-claimed counts (ARCH_INVARIANTS) vs live filesystem.
-	// Computed LIVE per /live call (never cached) → badge warns on un-audited drift.
-	stale: boolean;
-	diffs: ArchDriftDiff[];
 	governance: GovernanceMembershipStatus;
 	// Health part id -> drawn mermaid node ids (PART_NODE_BINDINGS) — the ring/table binding
 	// the client reads beside the per-daemon node_ids above. Static per build, carried here
