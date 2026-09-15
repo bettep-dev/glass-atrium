@@ -93,9 +93,9 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 
 | Constraint | Rule |
 |---|---|
-| One source per file | 1 URL = 1 file, no merged sources; only the frontmatter half is structural (SCOPE-001, SCOPE-002) |
+| One source per file | 1 URL = 1 file, no merged sources in the body — the single-`source_url` half is the hook-enforced row above |
 | Body fidelity | extraction output as-is — no opinions, summaries, translations or restructuring |
-| Original language | preserved; language is never a violation |
+| Original language | preserved — translating breaks body fidelity; no hook checks language, so a source in any language passes the write |
 | Write overwrite | not blocked; immutability after save is policy for Write |
 | Correction path | delete the file, then Write the full corrected content; there is no in-place fix |
 | Compilation | wiki compilation belongs to glass-atrium-wiki-curator alone |
@@ -251,8 +251,10 @@ Run a corrective pass — never skip to synthesis — when any of these occur:
 No test pins this body's prose — the searched suites reference this agent by name as a roster or fixture literal, so its wording is free. What is not free is its agreement with two mechanisms:
 
 - **The raw-store write gate owns the hook-enforced table above.** `hooks/validate-pre-write-raw.sh` is the enforcing surface.
-  - `hooks/test/validate-pre-write-raw.bats` pins SCOPE-006, SCOPE-007 and SCOPE-008; `hooks/test/h2-untrusted-ingest.bats` pins SCOPE-001 and SCOPE-006 and reads the live `core-wiki-reference.md` clause; `hooks/test/wiring-only-smoke.bats` pins SCOPE-001.
+  - `hooks/test/validate-pre-write-raw.bats` pins SCOPE-006, SCOPE-007 and SCOPE-008, plus the advisory SCOPE-009, SCOPE-010 and SCOPE-011, and asserts the retired SCOPE-003 and SCOPE-004 never fire.
+  - `hooks/test/h2-untrusted-ingest.bats` pins SCOPE-001 and SCOPE-006, asserts the retired SCOPE-004 never fires, and reads the live `core-wiki-reference.md` clause.
+  - `hooks/test/wiring-only-smoke.bats` pins SCOPE-001.
   - No suite pins SCOPE-002 or SCOPE-005 by code.
-  - Listing a code in that table the hook does not emit, or dropping one it does, makes this body wrong while every suite stays green.
+  - Listing a code in that table the hook does not block on, or dropping a blocking code it emits, makes this body wrong while every suite stays green; its warn codes (SCOPE-009, SCOPE-010, SCOPE-011) are advisories and stay out of the table.
 - **The turn-budget text under `### Tool Budget & Curation-First` is this agent's only copy.** `hooks/inject-scope-rules.sh` excludes glass-atrium-intel-researcher from `BUDGET_ANALYSIS_AGENTS` as a daemon carrier.
   - `hooks/test/inject-scope-rules.bats` asserts that no budget block is injected here, so deleting the in-body bullet leaves no budget instruction at all and no suite goes red.
