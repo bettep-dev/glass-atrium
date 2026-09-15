@@ -6,25 +6,15 @@ triggers:
   - token graph check
   - broken token reference
   - design token alias verify
-od:
-  mode: review
-  inputs:
-    - name: design_md
-      type: file_path
-      label: path to the DESIGN.md to lint
-    - name: design_tokens_json
-      type: file_path
-      label: optional design_tokens.json (DTCG token export) alongside the DESIGN.md
-  outputs:
-    primary: lint_report.txt
-  capabilities_required: [Bash, Read]
 ---
 
 # DESIGN.md Token-Graph Lint
 
 ## Overview
 
-Deterministic structural lint of a DESIGN.md token graph. Parses the Base/Semantic/Component alias tiers (raw values live only at Base) plus `var(--token)` CSS custom properties and `{tier.token.path}` DTCG brace aliases, then runs three rules. No creative judgment — mechanical reference-resolution + section-order checks only. Adapted from Google design.md's linter, rebased onto Atrium's real token model (see `~/.claude/agents/references/design-token-architecture.md`).
+- Deterministic structural lint of a DESIGN.md token graph: parses the Base/Semantic/Component alias tiers (raw values live only at Base), `var(--token)` CSS custom properties and `{tier.token.path}` DTCG brace aliases, then runs the rules below.
+- No creative judgment — reference resolution and section order only.
+- Adapted from Google design.md's linter, rebased onto the token model named first in `## Cross-References`.
 
 ## When to Use
 
@@ -34,15 +24,20 @@ Deterministic structural lint of a DESIGN.md token graph. Parses the Base/Semant
 
 ## Rules
 
-| # | Rule | Severity | Exit impact |
-|---|------|----------|-------------|
-| 1 | **broken-ref** | error (BLOCKING) | exit 1 |
-| 2 | **orphaned-token** | warning | exit 0 |
-| 3 | **section-order** | warning | exit 0 |
+| Rule | Severity | Exit impact |
+|------|----------|-------------|
+| **broken-ref** | error (BLOCKING) | exit 1 |
+| **orphaned-token** | warning | exit 0 |
+| **section-order** | warning | exit 0 |
 
-1. **broken-ref [error]** — every Semantic/Component alias (a `var(--x)` reference or a `{tier.token.path}` brace alias) MUST resolve to a defined token. A raw color literal (`#rgb`, `rgba(...)`) sitting at the Component tier where an alias belongs is also a broken-ref — raw values are allowed ONLY at the Base tier.
-2. **orphaned-token [warning]** — a Base token referenced by no alias. Multi-mode tokens (`*-dark`, `*-high-contrast`, colorblind variants) are NOT orphans: they are re-points of a semantic name consumed by mode switching (MD3 multi-mode aware), so they are excluded.
-3. **section-order [warning]** — the canonical DESIGN.md section order (Visual Theme → Color → Typography → Spacing → Layout → Components → Motion → Voice → Anti-Patterns) is preserved. Unrecognized sections are kept, never flagged (Consumers MUST preserve unrecognized sections per glass-atrium-design-designer.md §section minimalism). Heading aliases bind the agent-body section names to their canonical slot — `UI Copy Rules` / `Copy Rules` → §8 Voice, `Do's/Don'ts` → §9 Anti-Patterns; these alias tokens are multi-word or apostrophe-bearing on purpose, so no generic prefix (`do`, `copy`) can substring-match an unrelated heading.
+- **broken-ref** — every Semantic/Component alias (a `var(--x)` reference or a `{tier.token.path}` brace alias) MUST resolve to a defined token.
+  - A raw color literal (`#rgb`, `rgba(...)`) at the Component tier, where an alias belongs, is also a broken-ref — raw values are allowed ONLY at the Base tier.
+- **orphaned-token** — a Base token referenced by no alias.
+  - Multi-mode tokens (`*-dark`, `*-high-contrast`, colorblind variants) are NOT orphans: they re-point a semantic name consumed by mode switching (MD3 multi-mode aware), so they are excluded.
+- **section-order** — the canonical DESIGN.md section order is preserved: Visual Theme → Color → Typography → Spacing → Layout → Components → Motion → Voice → Anti-Patterns.
+  - Unrecognized sections are kept, never flagged — consumers MUST preserve them (`agents/glass-atrium-design-designer.md` → **Section minimalism**).
+  - Heading aliases bind agent-body section names to their canonical slot: `UI Copy Rules` / `Copy Rules` → §8 Voice, `Do's/Don'ts` → §9 Anti-Patterns.
+  - The alias tokens are multi-word or apostrophe-bearing on purpose, so no generic prefix (`do`, `copy`) substring-matches an unrelated heading.
 
 ## Usage
 
@@ -86,4 +81,4 @@ Verdict: 1 error(s), 1 warning(s)
 - `~/.claude/agents/references/design-token-architecture.md` — the 3-tier alias model + multi-mode matrix this lint enforces (SoT)
 - `~/.claude/agents/templates/DESIGN.md` — canonical section order (§1-§9) the section-order rule checks
 - `glass-atrium-design-contrast-check` — paired pre-emit gate (this lints structure, contrast-check verifies color ratios)
-- Scope-design.md `## LLM Output Validation` — pre-emit gate family this lint joins
+- `scoped/scope-design.md` → `## LLM Output Validation [DESIGN]` — pre-emit gate family this lint joins

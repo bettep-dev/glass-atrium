@@ -6,35 +6,18 @@ triggers:
   - color contrast check
   - AA contrast verify
   - contrast ratio
-od:
-  mode: review
-  inputs:
-    - name: fg_color
-      type: color
-      label: foreground color (hex / rgb / rgba)
-    - name: bg_color
-      type: color
-      label: background color (hex / rgb / rgba)
-    - name: text_size
-      type: enum
-      values: [normal, large]
-      default: normal
-      label: normal (<18pt or <14pt bold) or large (≥18pt or ≥14pt bold)
-  outputs:
-    primary: contrast_report.md
-  capabilities_required: [Bash, Read]
 ---
 
 # Contrast Check
 
 ## Overview
 
-Mechanical WCAG 2.2 contrast verification. Computes relative luminance per sRGB algorithm, derives contrast ratio, returns AA / AAA pass-fail with remediation hint. Public-domain methodology — no creative judgment.
+Mechanical WCAG 2.2 contrast verification: compute relative luminance per the sRGB algorithm, derive the contrast ratio, return AA / AAA pass-fail with a remediation hint. No creative judgment.
 
 ## When to Use
 
 - DESIGN.md palette emit — every fg/bg pair MUST be verified
-- User-requested HTML primary documents per Wave 44 dark base policy — text ≥ 4.5:1, AAA ≥ 7:1 preferred
+- User-requested HTML primary documents on the dark canvas (`scoped/scope-report.md` → `### Dark base default`) — text ≥ 4.5:1
 - Code review when color pair is introduced or modified
 
 ## WCAG 2.2 Thresholds
@@ -53,7 +36,7 @@ Per WCAG 2.2 (sRGB to linear, weighted RGB):
 2. Relative luminance: `L = 0.2126·R_linear + 0.7152·G_linear + 0.0722·B_linear`
 3. Contrast ratio: `(L1 + 0.05) / (L2 + 0.05)` where L1 = lighter, L2 = darker
 
-## Computation Tool (2026)
+## Computation Tool
 
 Recommended CLI: `accessible-color-contrast` (WCAG 2.2 AA/AAA support):
 
@@ -61,11 +44,12 @@ Recommended CLI: `accessible-color-contrast` (WCAG 2.2 AA/AAA support):
 npx accessible-color-contrast <fg_hex> <bg_hex>
 ```
 
-Alternative npm packages: `colour-contrast-cli`, `color-contrast-checker`, `wcag-contrast`, `@mdhnpm/wcag-contrast-checker`. Pick per project lock-file presence. If no Node runtime, fall back to manual formula application or WebAIM contrast checker URL.
+- Alternatives: `colour-contrast-cli`, `color-contrast-checker`, `wcag-contrast`, `@mdhnpm/wcag-contrast-checker` — pick per the project's lock file.
+- No Node runtime → apply the formula above by hand or use the WebAIM contrast checker.
 
 ## Output Format
 
-`contrast_report.md`:
+Return inline in the response, in this shape:
 
 ```
 # Contrast Check: <fg> on <bg>
@@ -82,18 +66,13 @@ Alternative npm packages: `colour-contrast-cli`, `color-contrast-checker`, `wcag
 
 ## Remediation Hint Policy
 
-Hint stays at adjustment-direction level (policy):
-- "Darken text by ΔL ≈ X for AA pass"
-- "Lighten background"
-- "Swap fg/bg pair"
-- "Use larger text size to meet 3:1 threshold"
-
-No specific hex values, no concrete CSS — glass-atrium-design-designer chooses replacement per brand palette.
+- A hint names an adjustment direction only — the template's three, or "use a larger text size to meet the 3:1 threshold".
+- No hex values and no CSS: glass-atrium-design-designer chooses the replacement per brand palette.
 
 ## Cross-References
 
-- Scope-design.md `## LLM Output Validation` — contrast verification gate before downstream DEV handoff
-- Designer.md `## Red Flags` — WCAG AA not verified = flag
-- Scope-report.md `### Dark base default` — AAA contrast (≥ 7:1) recommended for HTML primary body
-- Scope-qa.md `## D8 Visual Decision Sub-Pass` — d8 axis P4 (WCAG AA contrast 4.5:1 text / 3:1 UI)
+- `scoped/scope-design.md` → `## LLM Output Validation [DESIGN]` — contrast verification gate before downstream DEV handoff
+- `agents/glass-atrium-design-designer.md` → `## Red Flags` — WCAG AA not verified = flag
+- `scoped/scope-report.md` → `### Dark base default` — dark-canvas contract for HTML primary body text
+- `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — d8 axis P4 (WCAG AA contrast)
 - `glass-atrium-design-5-axis-critique` Execution axis — paired use for spacing / contrast evidence
