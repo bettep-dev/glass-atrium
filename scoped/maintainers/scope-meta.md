@@ -12,7 +12,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 ## Delivery — what actually reads this file
 
-- Both META agents receive the file whole at spawn. Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, and the part-slot channel (`hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py`) packs every `rules.scope` and `.shared` member into the agent's context. `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
+- Both META agents receive the file whole at spawn. Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`). `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
 - A second reader, not a delivery channel: `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch.
 - **Consequence for authors**: a duty stated in the rule file binds both META agents; no conditional-load line in a body is needed.
 - **Consequence for editors**: a passage in either META body that mirrors the rule file is a duplicate of delivered text. The rule file is the site that survives; the body keeps only its agent-specific delta.
@@ -20,7 +20,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 ## Authoring hygiene — where the rules live
 
 - The rules bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`. `## Prompt Authoring Hygiene [META]` in the rule file is the pointer that keeps that heading resolving; maintainer material for the rules is in `scoped/maintainers/shared-authoring-hygiene.md`.
-- Both META rows carry the file in `rules.shared`, so it arrives whole at spawn. No body copy is owed — do not copy the bullets into an agent body.
+- Both META rows carry the file in `rules.shared`. Delivery and the no-body-copy rule: `scoped/maintainers/shared-authoring-hygiene.md` → `## Delivery — how the rules reach their agents`.
 - No hook checks authored text against these rules; adherence is honor-system.
 
 ## Decisions taken on review, with their reasoning
@@ -29,6 +29,8 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 - **`## Absolute Rules [DEV+META]` — the precedence line was realigned to its citee, not softened.**
   - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the matrix anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
+- **Tag**: `Skills Array Order` carries `[META]` only — no DEV rule file holds a matching pointer.
+- **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
 
 ## Heading-citation register — do not rename these
 
@@ -41,15 +43,14 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
 - `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
-- **`Skills Array Order` carries `[META]` only**: no DEV rule file holds a matching pointer. No suite pins the heading or its tag.
-- **Open: `## Absolute Rules [DEV+META]` carries a dead DEV half** — `scoped/scope-dev.md` holds no `## Absolute Rules` heading. Retag it to `[META]`, or record why it keeps DEV.
-- **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
 
-## Stale material removed — do not restore
+## Stale material removed
+
+Do not restore any item below.
 
 - **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
 - **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md` — that file carries neither heading, so there is no pair to maintain.
-- **`Skills Array Order` evidence claim** — the surviving line is a plain preference with no evidence attached.
+- **`Skills Array Order` evidence claim** (what survives: `## Decisions taken on review, with their reasoning` → **Judgement recorded, not acted on**).
 - **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant
@@ -62,6 +63,10 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
 The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer. If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
+
+## Open questions
+
+- `## Absolute Rules [DEV+META]` carries a dead DEV half — `scoped/scope-dev.md` holds no `## Absolute Rules` heading. Retag it to `[META]`, or record why it keeps DEV.
 
 ## Readers, coupled tests, and operational constraints
 

@@ -237,7 +237,8 @@ The rules:
 
 Binding prohibitions sit in `## Absolute Rules`, tier limits in `## Tier Matrix`, 5-family bans in `## Claude 5-Family Techniques`, pass/fail items in `## Agent Verification Checklist`. Red flags none of those carry:
 
-- **Content**: critical instruction in mid-prompt (dead zone) · file/tool referenced that is not in the agent's tool list
+- Critical instruction in mid-prompt (dead zone).
+- A file or tool referenced that is not in the agent's tool list.
 
 ## Tool Usage
 
@@ -266,8 +267,8 @@ Binding prohibitions sit in `## Absolute Rules`, tier limits in `## Tier Matrix`
 - **Token + duration (this agent's OWN spend, not the designed prompt's tier budget)**: <30K tokens/task · 2-4 turns typical
 - **Key metric**: metric_pass=true (structure valid + compression documented)
 - **task_type**: self-select within this agent's row of `core-outcome-record.md` → Role → Allowed task_types
-- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation — `lesson` = discovered pattern (1-2 sentences) — NEVER folded into the deliverable body
-  - Schema mode whose schema declares no `completion_block`: never invent an undeclared key (schema validation fails).
+- **FINAL STEP**: as the last action, emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation, with `lesson` = the discovered pattern (1-2 sentences). Never fold it into the deliverable body.
+  - Schema mode whose schema declares no `completion_block`: print the block in a dedicated text turn as a best-effort fallback, and never invent an undeclared key (schema validation fails).
 
 ## Sources
 
