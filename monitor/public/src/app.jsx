@@ -119,6 +119,16 @@ function fetchJson(url) {
 	);
 }
 
+// harness 스토어 초기값 — 'loading' 은 '아직 모름'이고 0 이 아니다(가짜 정상 차단).
+const HARNESS_STORE_INITIAL = { status: "loading", data: null };
+
+// allSettled 결과 → harness 스토어 상태. rejected 는 error 로 남겨 fold 가 미수신을 구분한다.
+function toStoreState(settled) {
+	return settled.status === "fulfilled"
+		? { status: "ready", data: settled.value }
+		: { status: "error", data: null };
+}
+
 // 실패 카운트 목적지는 architecture(System map) 슬롯 — 맵이 health 판독을 흡수했음.
 function kpiToBadges(kpi) {
 	const fails = Number(kpi.last_1h_fail_count) || 0;
@@ -133,9 +143,8 @@ function kpiToBadges(kpi) {
 // 데몬 다운(effective_status≠ok) → architecture(System map) 슬롯 warn 카운트, KPI 배지와 소스 태그로 공존.
 // 계수 근거는 effective_status — 전환용 status 중복이 아니라 판정 필드가 기록의 근거임.
 function liveToBadge(live) {
-	const badDaemons = (live?.daemons || []).filter(
-		(d) => d.effective_status !== "ok",
-	).length;
+	// 계수는 HealthModel 단일 출처 — nav 숫자와 harness fold 가 같은 수를 읽는다.
+	const badDaemons = window.HealthModel.countDaemonsDown(live);
 	const daemonDown =
 		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
 
@@ -175,6 +184,12 @@ function App() {
 	// id → badge 오버라이드. 키 존재 = polled (count=0 도 정적 fallback 차단)
 	const [navBadges, setNavBadges] = useS({});
 
+	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
+	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 풋터와 어긋난다.
+	const [kpiState, setKpiState] = useS(HARNESS_STORE_INITIAL);
+	const [liveState, setLiveState] = useS(HARNESS_STORE_INITIAL);
+	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
+
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
 		document.documentElement.setAttribute("data-theme", tweaks.theme);
@@ -209,7 +224,11 @@ function App() {
 		const fetchBadges = async () => {
 			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
 			if (cancelled) return;
-			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
+			if (kpiR[0].status !== "fulfilled") {
+				setKpiState({ status: "error", data: null });
+				return; // 배지는 직전 동기화 시각 보존 — fold 만 미수신으로 내려간다
+			}
+			setKpiState({ status: "ready", data: kpiR[0].value });
 			setNavBadges((prev) => {
 				const kpi = kpiToBadges(kpiR[0].value);
 				// architecture 는 데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
@@ -232,23 +251,30 @@ function App() {
 		};
 	}, []);
 
-	// architecture/live 배지 — 마운트 시 1회. 데이터가 서비스 부팅 간 준정적이라 폴링 불요
+	// harness wave — architecture/live + health 를 KPI 와 같은 cadence 로 폴링.
+	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
 	useE(() => {
 		let cancelled = false;
-		fetchJson("/api/architecture/live")
-			.then((live) => {
-				if (cancelled) return;
-				const { daemonDown } = liveToBadge(live);
-				setNavBadges((prev) => ({
-					...prev,
-					architecture: mergeHealthBadge(prev.architecture, "daemon", daemonDown),
-				}));
-			})
-			.catch(() => {
-				// 무시 — 직전 navBadges/동기화 시각 보존
-			});
+		const pollHarness = async () => {
+			const [live, health] = await Promise.allSettled([
+				fetchJson("/api/architecture/live"),
+				fetchJson("/api/health"),
+			]);
+			if (cancelled) return;
+			setHealthState(toStoreState(health));
+			setLiveState(toStoreState(live));
+			if (live.status !== "fulfilled") return; // 배지는 직전 값 보존
+			const { daemonDown } = liveToBadge(live.value);
+			setNavBadges((prev) => ({
+				...prev,
+				architecture: mergeHealthBadge(prev.architecture, "daemon", daemonDown),
+			}));
+		};
+		pollHarness();
+		const id = setInterval(pollHarness, NAV_BADGE_POLL_MS);
 		return () => {
 			cancelled = true;
+			clearInterval(id);
 		};
 	}, []);
 
@@ -262,6 +288,9 @@ function App() {
 			window.history.replaceState(null, "", `#${id}`);
 		}
 	};
+
+	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
+	const harness = window.HealthModel.foldHarness({ kpiState, liveState, healthState });
 
 	const Screen = Screens[active];
 	const activeNav = NAV.find((n) => n.id === active);
@@ -282,7 +311,7 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main className="flex-1 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} />
+						<Screen onNav={onNavClick} harness={harness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}

@@ -119,6 +119,56 @@ function toPayloadRows(payload) {
   });
 }
 
+// 셸이 폴링한 harness 스토어 → 단일 harness 상태. 풋터 롤업 · System map nav 숫자 ·
+// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 세 표면이 어긋날 수 없음.
+// 파트 분모는 '셸이 실제로 관측한' 파트뿐 — 미관측 파트를 ok 로 세지 않는다.
+
+// 스토어가 ready 일 때만 값 추출 — 미수신을 0/빈값으로 꾸미지 않음 (unknown → null).
+function readReady(state, pick) {
+  return state && state.status === 'ready' ? pick(state.data) : null;
+}
+
+// 데몬 다운 = effective_status ≠ ok. nav 배지와 fold 가 같은 수를 읽도록 여기가 단일 출처.
+function countDaemonsDown(livePayload) {
+  return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
+}
+
+// 파트 kind → 관측 결과 (true ok · false down · null unchecked).
+// hook chain 은 셸이 폴링하지 않는다(집계 엔드포인트는 System map 소유) → 항상 unchecked.
+const HARNESS_PART_PROBES = {
+  pg: (_def, { healthState }) =>
+    readReady(healthState, (d) => d?.status === 'ok' && d?.db === 'open'),
+  browser: (_def, { healthState }) =>
+    readReady(healthState, (d) => (d?.browser || 'unprobed') !== 'failed'),
+  daemon: (def, { liveState }) =>
+    readReady(liveState, (d) => {
+      const row = (d?.daemons || []).find((r) => r.daemon_name === def.daemonName);
+      return row ? row.effective_status === 'ok' : false;
+    }),
+  hook: () => null,
+};
+
+function foldHarness(states = {}) {
+  const parts = HEALTH_CARD_DEFS.map((def) => {
+    const probe = HARNESS_PART_PROBES[def.kind];
+    return { id: def.id, name: def.name, ok: probe ? probe(def, states) : null };
+  });
+  const checked = parts.filter((p) => p.ok !== null);
+  const down = checked.filter((p) => p.ok === false);
+
+  return {
+    status: checked.length === 0 ? 'unavailable' : 'ready',
+    partsOk: checked.length - down.length,
+    partsChecked: checked.length,
+    partsTotal: parts.length,
+    downNames: down.map((p) => p.name),
+    uncheckedNames: parts.filter((p) => p.ok === null).map((p) => p.name),
+    daemonsDown: readReady(states.liveState, countDaemonsDown),
+    failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
+    version: readReady(states.healthState, (d) => d?.version || null),
+  };
+}
+
 window.HealthModel = {
   HEALTH_CARD_DEFS,
   isDaemonStale,
@@ -127,4 +177,6 @@ window.HealthModel = {
   humanizePayloadKey,
   formatPayloadValue,
   toPayloadRows,
+  countDaemonsDown,
+  foldHarness,
 };

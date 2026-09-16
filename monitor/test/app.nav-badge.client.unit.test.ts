@@ -20,9 +20,13 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
+import { readFile } from "node:fs/promises";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_SRC = resolve(__dirname, "../public/src/app.jsx");
+// The REAL health model is evaluated into the same context: the shell derives the nav
+// numeral and the harness fold from it, so a stub here would assert an echo of itself.
+const HEALTH_MODEL_SRC = resolve(__dirname, "../public/src/data/health-model.js");
 
 interface Badge {
   badge: string;
@@ -45,8 +49,20 @@ interface AppHelpers {
   systemsRollup: (dynamicBadges: unknown) => Rollup;
   parseHashScreen: () => string;
 }
+interface HarnessFold {
+  status: string;
+  partsOk: number;
+  partsChecked: number;
+  partsTotal: number;
+  downNames: string[];
+  uncheckedNames: string[];
+  daemonsDown: number | null;
+  failCount1h: number | null;
+  version: string | null;
+}
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
+  foldHarness: (states: unknown) => HarnessFold;
 }
 
 async function loadApp(): Promise<AppSurface> {
@@ -87,6 +103,8 @@ async function loadApp(): Promise<AppSurface> {
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
+  // health-model.js is plain JS and self-registers on window — load it first, as the browser does.
+  vm.runInContext(await readFile(HEALTH_MODEL_SRC, "utf8"), ctx);
   vm.runInContext(code, ctx);
 
   const h = ctx as unknown as AppHelpers;
@@ -101,10 +119,13 @@ async function loadApp(): Promise<AppSurface> {
     "function",
     "systemsRollup must be reachable",
   );
+  const healthModel = (ctx.window as { HealthModel: { foldHarness: AppSurface["foldHarness"] } })
+    .HealthModel;
   return Object.assign(h as AppSurface, {
     setHash: (hash: string) => {
       location.hash = hash;
     },
+    foldHarness: healthModel.foldHarness,
   });
 }
 
@@ -244,4 +265,75 @@ test("effect composition: KPI and daemon badges share the map slot", () => {
 
   // Both warns — the footer reads the slot the map now owns.
   assert.strictEqual(app.systemsRollup({ architecture: slot }).label, "ISSUES DETECTED");
+});
+
+// --- Harness fold: the ONE reading the nav numeral, the footer and the Dashboard lane share ---
+// The point of the fold is that three surfaces cannot disagree about a harness fact, so the
+// relationship asserted is agreement across an input class, not one hand-picked payload.
+
+function daemonPayload(down: number): { daemons: { daemon_name: string; effective_status: string }[] } {
+  const names = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+  return {
+    daemons: names.map((daemon_name, i) => ({
+      daemon_name,
+      effective_status: i < down ? "error" : "ok",
+    })),
+  };
+}
+
+test("fold daemonsDown equals the nav slot's daemon badge for every down count", async () => {
+  const app = await loadApp();
+  for (const down of [0, 1, 2, 3, 4]) {
+    const live = daemonPayload(down);
+    const fold = app.foldHarness({ liveState: { status: "ready", data: live } });
+    const badge = app.liveToBadge(live).daemonDown;
+    assert.equal(fold.daemonsDown, down, `fold must count ${down} down`);
+    assert.equal(
+      badge === null ? 0 : Number(badge.badge),
+      fold.daemonsDown,
+      "nav numeral and fold must report the same count",
+    );
+  }
+});
+
+test("an unpolled harness store leaves its parts unchecked rather than counted healthy", async () => {
+  const app = await loadApp();
+  const fold = app.foldHarness({});
+  assert.equal(fold.status, "unavailable", "nothing polled = unavailable, never a healthy zero");
+  assert.equal(fold.partsChecked, 0);
+  assert.equal(fold.partsOk, 0);
+  assert.equal(fold.uncheckedNames.length, fold.partsTotal);
+  assert.equal(fold.daemonsDown, null, "an unpolled count is null, not 0");
+  assert.equal(fold.failCount1h, null);
+});
+
+test("partsOk counts only observed-healthy parts and never exceeds partsChecked", async () => {
+  const app = await loadApp();
+  for (const down of [0, 2, 4]) {
+    const fold = app.foldHarness({
+      liveState: { status: "ready", data: daemonPayload(down) },
+      healthState: { status: "ready", data: { status: "ok", db: "open", browser: "ok", version: "1.0.0" } },
+    });
+    assert.equal(fold.partsChecked, 6, "4 daemons + pg + browser are the shell-polled parts");
+    assert.equal(fold.partsOk, 6 - down);
+    assert.ok(fold.partsOk <= fold.partsChecked);
+    assert.equal(fold.downNames.length, down);
+    assert.equal(fold.version, "1.0.0");
+    assert.equal(
+      fold.uncheckedNames.join(","),
+      "Hook Chain",
+      "the hook chain is the System map's store",
+    );
+  }
+});
+
+test("a rejected harness store is unavailable, not a zero reading", async () => {
+  const app = await loadApp();
+  const fold = app.foldHarness({
+    liveState: { status: "error", data: null },
+    healthState: { status: "ready", data: { status: "ok", db: "open", browser: "ok" } },
+  });
+  assert.equal(fold.daemonsDown, null, "a failed poll reports unknown, never 0 down");
+  assert.equal(fold.partsChecked, 2, "only the parts that answered are in the denominator");
+  assert.equal(fold.version, null);
 });
