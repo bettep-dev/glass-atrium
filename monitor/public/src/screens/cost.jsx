@@ -176,12 +176,9 @@ function ScreenCost({ onNav }) {
       {/* 3. 토큰 누적 영역 차트 (input/output 분할 — magnitude 상이 → 누적 정당) — full-width */}
       <TokenStackedCard state={tokenState} days={days} onRetry={triggerRefresh}/>
 
-      {/* 4. 토큰 카테고리 단가 테이블 (BP-TokenCategoryTable) — full-width 5컬럼 */}
-      <TokenCategoryCard state={modelState} days={days} onRetry={triggerRefresh}/>
-
       {/* 4. 모델별 비용 — full-width (AgentMiniBar 카드 제거 후 단독 row) */}
       <div className="mb-4">
-        <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh}/>
+        <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} onNav={onNav}/>
       </div>
 
       {/* 5. 보조 모니터 고유 카드 — 캐시 적중률 + 세션 분포 + parse_error.
@@ -758,123 +755,73 @@ function TokenTooltipC({ active, payload }) {
   );
 }
 
-// 3. TokenCategoryCard — 4컬럼 테이블 (카테고리·토큰·비용·비중).
-// 비용·비중 = /api/cost/by-model cost_usd 를 카테고리 단가·토큰 가중(tokens × rate/1M)으로 분배 → KPI '월 비용' 과 동일 출처 (Σ = cost_usd 합계 일치).
-// 단순 토큰 COUNT 비율은 카테고리간 단가차 무시 → 고단가·저COUNT인 output 과소표시 → 단가 가중으로 교정 (단가 미상 모델은 COUNT 비율 폴백).
-// 단가/1M 컬럼 미노출 — 빌링과 무관한 Sonnet 단일 대표값이라 오해 유발 → 단가는 ModelCostCard 귀속.
-function TokenCategoryCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Cost by token type"
-      />
-      <div className="card-body flush">
-        <TokenCategoryBody state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
+// Token-category cost split — the ledger's row 0. Each model's authoritative cost_usd is distributed
+// across the four categories by price weight (tokens x rate/1M), so the split sums back to the ledger
+// total. A token-COUNT ratio would ignore the ~50x price gap between output and cache_read and
+// under-report output; a model with no catalog price falls back to that count ratio deliberately.
+function getCategoryWeights(modelRow, categoryRates) {
+  const rates = window.getTokenRate(modelRow.model);
+  const weight = {};
+  let sum = 0;
+  for (const cat of categoryRates) {
+    const w = (Number(modelRow[cat.key]) || 0) * (rates ? (Number(rates[cat.rateKey]) || 0) : 1);
+    weight[cat.key] = w;
+    sum += w;
+  }
+  return { weight, sum };
 }
 
-function TokenCategoryBody({ state, days, onRetry }) {
-  const { Bar } = window.UI;
-  if (state.status === 'loading') {
-    return <div className="p-4"><ChartSkeletonC height={180} aria-label="Loading price table"/></div>;
-  }
-  if (state.status === 'error') {
-    return <div className="p-4"><ErrorBannerC title="Couldn't load cost by model" detail={state.error} onRetry={onRetry}/></div>;
-  }
-
-  const modelRows = state.data?.rows ?? [];
-  if (modelRows.length === 0) {
-    return <div className="p-4"><EmptyStateC message={`No cost events in the last ${days} days.`}/></div>;
-  }
-
+function computeCategoryCostRows(modelRows) {
   const categoryRates = window.TOKEN_CATEGORY_RATES || [];
-
-  // 모델별 카테고리 가중치 — 단가 가중(tokens × rate/1M) 분배의 분모.
-  // 토큰 COUNT 비율은 카테고리간 단가차(Opus output $75 vs cache_read $1.5 = 50배) 무시 → 고단가·저COUNT output 을 ~8배 과소표시 → 단가 가중으로 교정.
-  // 단가 미상 모델(카탈로그 키 부재) → tokens × 1 = 순수 COUNT 비율 폴백 (비용 0/누락 없이 기존 거동 유지).
-  // getTokenRate = exact + family-prefix — date-suffixed id 도 family 단가로 해소 (silent COUNT 폴백 방지).
-  const modelWeights = (m) => {
-    const rates = window.getTokenRate(m.model);
-    const weight = {};
-    let sum = 0;
-    for (const cat of categoryRates) {
-      const tk = Number(m[cat.key]) || 0;
-      const rate = rates ? (Number(rates[cat.rateKey]) || 0) : 1;
-      const w = tk * rate;
-      weight[cat.key] = w;
-      sum += w;
-    }
-    return { weight, sum };
-  };
-
-  // 카테고리별 집계 — tokens = 전 모델 raw 합 · cost = Σ_models(cost_usd × 단가가중 share).
-  // 권위 출처(API cost_usd)를 단가·토큰 가중으로 분배 → Σ category cost = cost_usd 불변 → 테이블 합계 = KPI '월 비용' 일치.
-  // Σ weight === 0(전 토큰 0) → 해당 모델 0 기여, 0 나눗셈 회피.
   const acc = new Map(categoryRates.map((cat) => [cat.key, { tokens: 0, cost: 0 }]));
+
   for (const m of modelRows) {
     const costUsd = Number(m.cost_usd) || 0;
-    const { weight, sum } = modelWeights(m);
+    const { weight, sum } = getCategoryWeights(m, categoryRates);
     for (const cat of categoryRates) {
       const bucket = acc.get(cat.key);
       bucket.tokens += Number(m[cat.key]) || 0;
-      if (sum > 0) {
-        bucket.cost += (costUsd * weight[cat.key]) / sum;
-      }
+      if (sum > 0) bucket.cost += (costUsd * weight[cat.key]) / sum;
     }
   }
 
-  const rows = categoryRates.map((cat) => ({
+  const totalCost = categoryRates.reduce((s, cat) => s + acc.get(cat.key).cost, 0);
+  return categoryRates.map((cat) => ({
     key: cat.key,
     label: cat.label,
     colorVar: cat.colorVar,
     tokens: acc.get(cat.key).tokens,
     cost: acc.get(cat.key).cost,
+    pct: totalCost > 0 ? acc.get(cat.key).cost / totalCost : 0,
   }));
+}
 
-  const totalCost = rows.reduce((s, r) => s + r.cost, 0);
-  const finalRows = rows.map((r) => ({
-    ...r,
-    pct: totalCost > 0 ? (r.cost / totalCost) : 0,
-  }));
+// Row 0 of the ledger — where the money goes by token category, as one 100% bar plus its legend.
+function CategoryShareRowC({ rows }) {
+  const total = rows.reduce((s, r) => s + r.cost, 0);
+  if (total <= 0) {
+    return <div className="cost-foot mb-3">No priced token cost in this window — category split unavailable.</div>;
+  }
 
   return (
-    <table className="tbl cost-tbl">
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th className="num">Tokens</th>
-          <th className="num">Cost</th>
-          <th className="num">Share</th>
-        </tr>
-      </thead>
-      <tbody>
-        {finalRows.map((r) => (
-          <tr key={r.key}>
-            <td>
-              <span
-                className="inline-block w-[3px] h-3 rounded-sm mr-3 align-middle"
-                style={{ background: `rgb(var(${r.colorVar}))` }}
-              />
-              {r.label}
-            </td>
-            <td className="num">{formatTokenCompactC(r.tokens)}</td>
-            <td className="num">{formatUsdC(r.cost)}</td>
-            {/* per-row share% — 행 자체 비중을 비례막대로 (100% 누적 단일막대 아님) · 텍스트 %가 정확수치, 막대는 길이로 비교 보조. */}
-            <td className="num">
-              <div className="flex items-center justify-end gap-2">
-                <div className="w-20 shrink-0">
-                  <Bar value={r.pct} tone="info" ariaLabel={`${r.label} share ${(r.pct * 100).toFixed(1)}%`}/>
-                </div>
-                <span className="text-dim">{(r.pct * 100).toFixed(1)}%</span>
-              </div>
-            </td>
-          </tr>
+    <div className="mb-3">
+      <div
+        className="flex h-2 rounded-sm overflow-hidden bg-sunken"
+        role="img"
+        aria-label={rows.map((r) => `${r.label} ${(r.pct * 100).toFixed(0)}%`).join(', ')}>
+        {rows.map((r) => (
+          <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
-      </tbody>
-    </table>
+      </div>
+      <div className="flex items-center gap-3 flex-wrap mt-1.5">
+        {rows.map((r) => (
+          <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
+            {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -889,7 +836,7 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, onRetry }) {
+function ModelCostCard({ state, days, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -905,13 +852,18 @@ function ModelCostCard({ state, days, onRetry }) {
     <div className="card">
       <CardHead
         title="Cost by model"
-        right={fallbackCount > 0
-          ? (
-            <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-              <Pill tone="warn">{fallbackCount} est. rate</Pill>
-            </span>
-          )
-          : null}
+        right={
+          <div className="flex items-center gap-2">
+            {fallbackCount > 0 && (
+              <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
+                <Pill tone="warn">{fallbackCount} est. rate</Pill>
+              </span>
+            )}
+            <button className="btn ghost sm" onClick={() => onNav('model-config')}>
+              Models &amp; budgets
+            </button>
+          </div>
+        }
       />
       <div className="card-body">
         <ModelCostBody state={state} days={days} onRetry={onRetry}/>
@@ -961,79 +913,97 @@ function ModelCostBody({ state, days, onRetry }) {
 
   const modelRows = buildModelCostRows(rows);
   const { top, other } = rollupModelRows(modelRows, MODEL_TOPN);
-
-  // 합계 footer — Top + Other 전부 포함 (전 모델 합).
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const totalIn = modelRows.reduce((s, r) => s + r.input_tokens, 0);
-  const totalOut = modelRows.reduce((s, r) => s + r.output_tokens, 0);
   const totalSessions = modelRows.reduce((s, r) => s + r.session_count, 0);
 
   return (
-    <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-      <table className="tbl cost-tbl">
-        <thead>
-          <tr>
-            <th style={STICKY_TH_STYLE}>Model</th>
-            <th className="num" style={STICKY_TH_STYLE}>Cost</th>
-            <th className="num" style={STICKY_TH_STYLE}>Tokens in</th>
-            <th className="num" style={STICKY_TH_STYLE}>Tokens out</th>
-            <th className="num" style={STICKY_TH_STYLE}>Sessions</th>
-            <th className="num" style={STICKY_TH_STYLE}>Avg / session</th>
-          </tr>
-        </thead>
-        <tbody>
-          {top.map((r) => (
-            <ModelCostRow key={r.fullModel} r={r}/>
-          ))}
-          {other && (
+    <>
+      <CategoryShareRowC rows={computeCategoryCostRows(rows)}/>
+      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        <table className="tbl cost-tbl">
+          <thead>
             <tr>
-              <td>
-                <span className="text-dim" title={`${other.count} more models rolled up`}>Other</span>
-              </td>
-              <td className="num">{formatUsdC(other.cost_usd)}</td>
-              <td className="num">{formatTokenCompactC(other.input_tokens)}</td>
-              <td className="num">{formatTokenCompactC(other.output_tokens)}</td>
-              <td className="num">{formatIntC(other.session_count)}</td>
-              <td className="num text-dim">
-                {other.session_count > 0 ? formatUsdC(other.cost_usd / other.session_count) : '—'}
+              <th style={STICKY_TH_STYLE}>Model</th>
+              <th className="num" style={STICKY_TH_STYLE}>Cost</th>
+              <th className="num" style={STICKY_TH_STYLE}>Sessions</th>
+              <th className="num" style={STICKY_TH_STYLE}>Avg / session</th>
+            </tr>
+          </thead>
+          <tbody>
+            {top.map((r) => (
+              <ModelCostRow key={r.fullModel} r={r}/>
+            ))}
+            {other && (
+              <tr>
+                <td>
+                  <span className="text-dim">Other · {other.count} more models</span>
+                </td>
+                <td className="num">{formatUsdC(other.cost_usd)}</td>
+                <td className="num">{formatIntC(other.session_count)}</td>
+                <td className="num text-dim">
+                  {other.session_count > 0 ? formatUsdC(other.cost_usd / other.session_count) : '—'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
+              <td className="font-semibold">Total</td>
+              <td className="num font-semibold">{formatUsdC(totalCost)}</td>
+              <td className="num font-semibold">{formatIntC(totalSessions)}</td>
+              <td className="num font-semibold">
+                {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
               </td>
             </tr>
-          )}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
-            <td className="font-semibold">Total</td>
-            <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-            <td className="num font-semibold">{formatTokenCompactC(totalIn)}</td>
-            <td className="num font-semibold">{formatTokenCompactC(totalOut)}</td>
-            <td className="num font-semibold">{formatIntC(totalSessions)}</td>
-            <td className="num font-semibold">
-              {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
-            </td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          </tfoot>
+        </table>
+      </div>
+      {/* Named gap, never proxied: cost_events carry a model, not an agent, so per-agent cost
+          cannot be derived here — a session-to-agent guess would read as a measurement. */}
+      <div className="cost-foot mt-2">
+        Cost per agent is not available — cost events carry a model, not an agent.
+      </div>
+    </>
   );
 }
 
+// One ledger row; the token columns live behind the row's own expand so the default table stays
+// at the four columns a spend decision needs.
 function ModelCostRow({ r }) {
+  const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
+
   return (
-    <tr>
-      <td>
-        <span className="font-mono" title={r.fullModel}>{r.model}</span>
-      </td>
-      <td className="num">{formatUsdC(r.cost_usd)}</td>
-      <td className="num">{formatTokenCompactC(r.input_tokens)}</td>
-      <td className="num">{formatTokenCompactC(r.output_tokens)}</td>
-      <td className="num">{formatIntC(r.session_count)}</td>
-      <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
-    </tr>
+    <>
+      <tr>
+        <td>
+          <button
+            type="button"
+            className="flex items-center gap-2 font-mono text-left"
+            aria-expanded={expanded}
+            title={r.fullModel}
+            onClick={() => setExpanded((v) => !v)}>
+            <span className="text-faint" aria-hidden="true">{expanded ? '−' : '+'}</span>
+            {r.model}
+          </button>
+        </td>
+        <td className="num">{formatUsdC(r.cost_usd)}</td>
+        <td className="num">{formatIntC(r.session_count)}</td>
+        <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={4} className="fs-meta text-dim font-mono">
+            in {formatTokenCompactC(r.input_tokens)} · out {formatTokenCompactC(r.output_tokens)} ·
+            cache read {formatTokenCompactC(r.cache_read_tokens)} · cache write {formatTokenCompactC(r.cache_creation_tokens)}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
-// 모델별 카테고리 USD 기여도 (sub-bar) — TokenCategoryCard 와 동일한 단가 가중(tokens × rate/1M) 분배.
+// 모델별 카테고리 USD 기여도 (sub-bar) — computeCategoryCostRows 와 동일한 단가 가중(tokens × rate/1M) 분배.
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
@@ -1216,7 +1186,22 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. SessionDistributionCard — 세션 비용 히스토그램 + bin 클릭 모달.
+// 5c. Most expensive sessions — top five plus a rolled-up Other row. The histogram answers the
+// distribution question only when it is asked, so it sits behind the Other row in the drawer.
+const SESSION_TOPN = 5;
+
+// Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
+function rollupSessionRows(sessions, topN) {
+  const sorted = sessions
+    .slice()
+    .sort((a, b) => (Number(b.total_cost_usd) || 0) - (Number(a.total_cost_usd) || 0));
+  const rest = sorted.slice(topN);
+  const other = rest.length === 0
+    ? null
+    : { count: rest.length, cost_usd: rest.reduce((s, r) => s + (Number(r.total_cost_usd) || 0), 0) };
+  return { top: sorted.slice(0, topN), other, total: sorted.length };
+}
+
 function SessionDistributionCard({ state, days, onRetry }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
@@ -1226,10 +1211,12 @@ function SessionDistributionCard({ state, days, onRetry }) {
   return (
     <div className="card">
       <CardHead
-        title="Cost per session"
-        sub={`${visibleCount.toLocaleString('en-US')} sessions`}
+        title="Most expensive sessions"
+        sub={state.status === 'ready'
+          ? `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
+          : undefined}
         right={truncated
-          ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill tone="warn">Truncated</Pill></span>
+          ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill>{`${visibleCount} of ${totalCount} loaded`}</Pill></span>
           : null}
       />
       <div className="card-body">
@@ -1240,18 +1227,18 @@ function SessionDistributionCard({ state, days, onRetry }) {
 }
 
 function SessionDistributionBody({ state, days, onRetry }) {
-  const [activeBin, setActiveBin] = useStateC(null);
+  const [histogramOpen, setHistogramOpen] = useStateC(false);
 
-  // Hooks 는 early-return 전에 호출 — 데이터 미준비 시 빈 배열로 안전 처리.
+  // Hooks run before any early return — an unready payload reduces to an empty list.
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
-
-  const binData = useMemoC(() => computeSessionBins(sessions), [sessions]);
+  const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
+  const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading session distribution"/>;
+    return <ChartSkeletonC height={220} aria-label="Loading session costs"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load session distribution" detail={state.error} onRetry={onRetry}/>;
+    return <ErrorBannerC title="Couldn't load session costs" detail={state.error} onRetry={onRetry}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -1259,34 +1246,65 @@ function SessionDistributionBody({ state, days, onRetry }) {
 
   return (
     <>
-      <div style={{ width: '100%', height: 220 }}>
-        <SessionDistributionChart bins={binData} onBinClick={setActiveBin}/>
+      <div className="space-y-1.5">
+        {rollup.top.map((s) => <SessionRowC key={s.session_id} session={s}/>)}
+        {rollup.other && (
+          <button
+            type="button"
+            className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+            onClick={() => setHistogramOpen(true)}>
+            <span className="text-dim flex-1">
+              Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
+            </span>
+            <span className="text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</span>
+            <span className="text-faint">distribution</span>
+          </button>
+        )}
       </div>
-      {activeBin && (
-        <SessionBinModal
-          bin={activeBin}
-          sessions={sessions}
-          onClose={() => setActiveBin(null)}
-        />
+      {histogramOpen && (
+        <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
     </>
   );
 }
 
-function SessionDistributionChart({ bins, onBinClick }) {
+function SessionRowC({ session }) {
+  const { formatRelativeTime, formatKstFull } = window.UI;
+
+  return (
+    <div className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
+      <span className="text-dim truncate flex-1" title={session.session_id}>{session.session_id}</span>
+      <span className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</span>
+      <span className="text-faint w-20 text-right">{formatTokenCompactC(session.total_tokens)}</span>
+      {/* last_event_at is a real UTC ISO instant — relative label, absolute day-bucket time on hover. */}
+      <span
+        className="text-dim w-32 text-right"
+        title={session.last_event_at ? formatKstFull(session.last_event_at) : undefined}>
+        {session.last_event_at ? formatRelativeTime(session.last_event_at) : '—'}
+      </span>
+    </div>
+  );
+}
+
+function SessionHistogramDrawerC({ bins, total, onClose }) {
+  const { DetailSurface } = window.UI;
+
+  return (
+    <DetailSurface open onClose={onClose} variant="drawer"
+      title={`Cost distribution — ${formatIntC(total)} sessions`}>
+      <div style={{ width: '100%', height: 260 }}>
+        <SessionDistributionChart bins={bins}/>
+      </div>
+    </DetailSurface>
+  );
+}
+
+function SessionDistributionChart({ bins }) {
   const { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart
-        data={bins}
-        margin={{ top: 6, right: 8, left: 0, bottom: 0 }}
-        onClick={(e) => {
-          if (e?.activePayload?.[0]?.payload) {
-            const bin = e.activePayload[0].payload;
-            if (bin.count > 0) onBinClick(bin);
-          }
-        }}>
+      <BarChart data={bins} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="label"
@@ -1306,12 +1324,9 @@ function SessionDistributionChart({ bins, onBinClick }) {
           width={36}
         />
         <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
-        <Bar dataKey="count" isAnimationActive={false} cursor="pointer">
+        <Bar dataKey="count" isAnimationActive={false}>
           {bins.map((b, i) => (
-            <Cell
-              key={i}
-              fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}
-            />
+            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}/>
           ))}
         </Bar>
       </BarChart>
@@ -1329,57 +1344,6 @@ function SessionBinTooltipC({ active, payload }) {
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{bin.label}</div>
       <div style={{ color: 'rgb(var(--dim))' }}>{bin.count.toLocaleString('en-US')} sessions</div>
     </div>
-  );
-}
-
-function SessionBinModal({ bin, sessions, onClose }) {
-  const { DetailSurface, formatRelativeTime, formatKstFull } = window.UI;
-
-  // 본 bin 내 비용 desc 상위 20개 (drawer density cap).
-  const matched = sessions
-    .filter((s) => {
-      const cost = Number(s.total_cost_usd) || 0;
-      return cost >= bin.min && cost < bin.max;
-    })
-    .sort((a, b) => (Number(b.total_cost_usd) || 0) - (Number(a.total_cost_usd) || 0))
-    .slice(0, 20);
-
-  return (
-    <DetailSurface open onClose={onClose} variant="drawer"
-      title={`${bin.label} bucket — top ${matched.length}`}>
-      {matched.length === 0
-        ? <div className="fs-body text-dim">No sessions to show.</div>
-        : (
-          <div className="space-y-1.5">
-            {matched.map((s) => (
-              // 행 텍스트 text-[11.5px]→fs-meta(11px) 최근접 (11.5↔11 차 0.5 < 11.5↔12 차 0.5 동률 → 보조 meta 콘텐츠라 meta 채택).
-              <div
-                key={s.session_id}
-                className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
-                <span className="text-dim truncate flex-1" title={s.session_id}>
-                  {s.session_id}
-                </span>
-                <span className="text-ink font-semibold">
-                  {formatUsdC(s.total_cost_usd)}
-                </span>
-                <span className="text-faint w-20 text-right">
-                  {formatTokenCompactC(s.total_tokens)}
-                </span>
-                <span className="text-faint w-16 text-right">
-                  {formatIntC(s.event_count)} events
-                </span>
-                {/* last_event_at = 실 UTC ISO 시각 → 상대표시 + hover 절대시각 KST 명시 (브라우저 로컬 tz 비의존). */}
-                <span
-                  className="text-dim w-32 text-right"
-                  title={s.last_event_at ? formatKstFull(s.last_event_at) : undefined}>
-                  {s.last_event_at ? formatRelativeTime(s.last_event_at) : '—'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )
-      }
-    </DetailSurface>
   );
 }
 
