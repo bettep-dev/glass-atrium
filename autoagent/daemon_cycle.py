@@ -1047,6 +1047,172 @@ def _get_target_path(target_file: str) -> Path | None:
     return candidate
 
 
+# -- injected turn-budget text (the pre-verify source the 4 C-slots cannot reach) --
+#
+# The four compliance slots resolve the matrix, GLOBAL_RULES, one scope-*.md and
+# the target body. None of them can reach the turn-budget text the SubagentStart
+# injector delivers: _AGENT_SCOPE_MAP resolves ONLY to scope-*.md files, and no
+# slot resolves hooks/inject-scope-rules.sh. So a patch duplicating an already
+# injected budget bullet reads to C4 as "a NEW rule consistent with the existing
+# ones" — a clean PASS. This section attaches that text, budget-family only, so a
+# non-budget prompt pays none of its tokens.
+
+# Marker literals — verbatim copies of BUDGET_DEV_MARKER_START/END and
+# BUDGET_ANALYSIS_MARKER_START/END in hooks/inject-scope-rules.sh, which
+# daemon_cycle.py cannot source (shell). Same keep-in-sync convention as the
+# learning-aggregator label literals above; drift fails OPEN — an extraction that
+# matches nothing is loud and attaches no block, never a wrong one.
+BUDGET_BLOCK_MARKERS: tuple[tuple[str, str, str], ...] = (
+    (
+        "BUDGET-DEV",
+        "<!-- AGENT-INJECT:BUDGET-DEV:START -->",
+        "<!-- AGENT-INJECT:BUDGET-DEV:END -->",
+    ),
+    (
+        "BUDGET-ANALYSIS",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->",
+    ),
+)
+TURN_BUDGET_SRC_NAME = "shared-turn-budget.md"
+
+# Named signal for an unreadable injected-text source, carried on BOTH channels —
+# the reason C3/C4 each carry one: a silently empty slot reads to the verifier as
+# "nothing is injected", which is the misjudgement this source exists to prevent.
+TURN_BUDGET_UNREADABLE_SIGNAL = "TURN-BUDGET-TEXT-UNREADABLE"
+
+# Attached to every non-budget-family prompt, so the slot always states whether
+# the harness looked rather than leaving an unexplained empty block.
+TURN_BUDGET_NOT_APPLICABLE = (
+    "(not a budget-family patch — no injected turn-budget text is attached for it)"
+)
+
+# LABEL leg. Membership is containment against the STABLE pattern_signature core,
+# never the free-text label tail: learning-aggregator.py emits
+# "size-est under-estimate concentration (avg overrun +N tool_uses)", so equality
+# (the NON_PROMPTABLE_LABELS shape) would miss every live row, and a display remap
+# or a multi-signal "(a / b)" join moves the core off position 0, so startswith
+# (the _FAIL_COUNT_LABEL_PREFIXES shape) would miss those. Copied verbatim from
+# SIZE_EST_UNDER_LABEL there (daemon_cycle.py does not import the aggregator).
+#
+# BUDGET_OVERAGE_LABEL is deliberately NOT a member. It reports a different axis —
+# an operational counter — and it is already a NON_PROMPTABLE_LABELS member, i.e.
+# an exclusion set that drops the row BEFORE proposal generation; a row carrying
+# it therefore never reaches pre-verify at all, so naming it here could only
+# suppress the very patterns this source exists to serve.
+BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
+
+# SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
+# against the declared target AND the diff's own file headers.
+#
+# GLASS_ATRIUM_GLOBAL_RULES.md is deliberately absent: its Turn Budget section
+# already reaches the verifier WHOLE in the C2 slot, so a row for it would attach
+# these blocks to every GLOBAL_RULES patch and buy nothing.
+_TURN_BUDGET_SITE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(^|/)shared-turn-budget\.md$"),
+    re.compile(r"(^|/)inject-scope-rules\.sh$"),
+)
+# Unified-diff file headers, a/ and b/ prefixes stripped.
+_DIFF_FILE_HEADER_RE = re.compile(r"^(?:---|\+\+\+) (?:[ab]/)?(\S+)", re.MULTILINE)
+
+
+def _get_turn_budget_src() -> Path:
+    """Resolve the injected turn-budget source (``<base>/scoped/shared-turn-budget.md``).
+
+    Through the C3/C4 ga_paths seam, never a HOME-hardcoded constant like the C1/C2
+    file constants: the source is then cwd-independent and follows a redirected
+    base root, the same guarantee _get_target_path documents.
+    """
+    return _get_scoped_dir() / TURN_BUDGET_SRC_NAME
+
+
+def _read_marker_block(path: Path, start: str, end: str) -> str:
+    """Return the lines BETWEEN a marker pair in ``path``, or "" on any miss.
+
+    Deliberately mirrors hooks/inject-scope-rules.sh ``extract_block``, so two
+    readers of one marker contract cannot drift apart unnoticed:
+      - range selection is CONTAINMENT on a line (its ``sed -n /start/,/end/p``);
+      - marker lines are dropped by WHOLE-LINE equality (its ``grep -vxF``);
+      - a start with no end runs to EOF, as a sed range does;
+      - absent file, unreadable file, or absent start marker → "" (fail-open).
+
+    ONE divergence, stated rather than silent: a sed range RESTARTS, so a repeated
+    marker pair yields every occurrence there and only the FIRST here. The source
+    carries one pair per name, and a second pair is a corpus defect rather than a
+    shape worth mirroring.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+
+    opened = False
+    kept: list[str] = []
+    for line in lines:
+        if not opened:
+            opened = start in line
+            continue
+        if end in line:
+            break
+        kept.append(line)
+    if not opened:
+        return ""
+    return "\n".join(line for line in kept if line not in (start, end))
+
+
+def _injected_budget_excerpt() -> str:
+    """Compose the injected BUDGET blocks, each labelled by its marker name."""
+    src = _get_turn_budget_src()
+    parts: list[str] = []
+    for name, start, end in BUDGET_BLOCK_MARKERS:
+        block = _read_marker_block(src, start, end)
+        if not block.strip():
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: {TURN_BUDGET_UNREADABLE_SIGNAL} — {name} block "
+                f"empty or markers absent in {src}\n"
+            )
+            continue
+        parts.append(f"[{name} — injected at every spawn by the SubagentStart hook]\n{block}")
+
+    if not parts:
+        return (
+            f"{TURN_BUDGET_UNREADABLE_SIGNAL}: no injected turn-budget block resolved "
+            f"from {src}, so this prompt cannot show what the target agent already "
+            "receives at spawn."
+        )
+    return "\n\n".join(parts)
+
+
+def match_turn_budget_site(target_file: str, diff: str) -> str | None:
+    """Return the source of the first turn-budget site pattern the patch touches.
+
+    The declared target AND the diff's own file headers are both inspected — a
+    patch can be filed against one path and carry hunks against another.
+    """
+    candidates = [target_file or ""]
+    candidates.extend(_DIFF_FILE_HEADER_RE.findall(diff or ""))
+    for candidate in candidates:
+        for pat in _TURN_BUDGET_SITE_PATTERNS:
+            if pat.search(candidate):
+                return pat.pattern
+    return None
+
+
+def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str | None:
+    """Return the leg identifying a budget-family proposal, else ``None``.
+
+    An OR of two legs, each covering the other's blind spot: the LABEL leg misses
+    a patch editing budget text under an unrelated label, and the SITE leg misses
+    a budget-family label patching an agent body.
+    """
+    label = pattern_label or ""
+    for core in sorted(BUDGET_FAMILY_SIGNATURE_CORES):
+        if core in label:
+            return f"label:{core}"
+    site = match_turn_budget_site(target_file, diff)
+    return f"site:{site}" if site else None
+
+
 # -- Promotion ladder config ------------------------------------------------
 #
 # Confidence-weighted learning loop — a Beta-Binomial posterior gate atop the
@@ -5931,6 +6097,17 @@ recall but cannot find there IS a ground for FAIL — name it in the RATIONALE.
 This gate applies edits unattended, so err that way. With no such marker the
 excerpt is COMPLETE.
 
+[INJECTED TURN-BUDGET TEXT — delivered at every spawn, present in NO excerpt above]
+---
+{turn_budget_excerpt}
+---
+
+NOTE ON THE INJECTED TEXT: the block above is attached only for a budget-family
+patch; otherwise it says exactly that and carries no text. When it DOES carry
+text, that text already reaches the target agent on every spawn through the
+SubagentStart injector and so appears in NONE of the four excerpts above — which
+is why a patch restating it looks like a clean addition and is not one.
+
 VERIFICATION TASK:
 
 For each of the 4 axes, decide PASS or FAIL:
@@ -5951,7 +6128,9 @@ For each of the 4 axes, decide PASS or FAIL:
       file above ALREADY states? Judge on the rules that excerpt carries,
       under whatever heading they sit and under none.
       (Adding a NEW rule consistent with the existing ones = PASS.
-       Reversing or weakening an existing rule = FAIL.)
+       Reversing or weakening an existing rule = FAIL.
+       Restating text the INJECTED TURN-BUDGET TEXT block already carries = FAIL
+       — the agent already receives it, so that is a duplicate, not a new rule.)
 
 OUTPUT STRICT FORMAT (no preamble, no markdown fences, exactly these lines):
 C1: PASS|FAIL
@@ -6162,7 +6341,20 @@ def _build_pre_verify_prompt(
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
         target_agent_excerpt=target_agent_excerpt,
+        turn_budget_excerpt=_turn_budget_excerpt_for(patch, pattern),
     )
+
+
+def _turn_budget_excerpt_for(patch: PatchProposal, pattern: Pattern) -> str:
+    """Attach the injected turn-budget blocks for a budget-family patch only.
+
+    Every other prompt gets the not-applicable line instead: the blocks are only
+    ever relevant to a patch that could duplicate them, and attaching them to all
+    prompts would spend the excerpt budget on text no axis would use.
+    """
+    if match_budget_family(pattern.label, patch.target_file, patch.proposed_diff) is None:
+        return TURN_BUDGET_NOT_APPLICABLE
+    return _injected_budget_excerpt()
 
 
 def _parse_pre_verify_response(stdout: str) -> tuple[dict[str, bool], bool, str]:

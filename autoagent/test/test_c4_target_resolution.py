@@ -13,7 +13,10 @@ of the process cwd. Covered here:
   (d) an unresolvable target surfaces the named failure signal on stderr AND
       inside the prompt rather than the neutral not-available placeholder, and
       directs the C4 verdict to FAIL;
-  (e) a resolvable target leaves the target channel on stderr silent.
+  (e) a resolvable target leaves the target channel on stderr silent;
+  (f) the injected turn-budget source, which resolves through the SAME seam,
+      inherits that cwd-independence — both the path it composes and the text
+      that reaches the assembled prompt.
 
 Both roots are temporary: the "live" root is bound through ``GA_DATA_ROOT`` (the
 ga_paths seam) and the "repo" root is a cwd carrying its own agents/ copy, so no
@@ -205,6 +208,71 @@ class TargetFileResolutionTest(unittest.TestCase):
         c4_block = _c4_block(prompt)
         self.assertNotIn(_PLACEHOLDER, c4_block)
         self.assertIn("C4: FAIL", c4_block)
+
+
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class TurnBudgetSourceResolutionTest(unittest.TestCase):
+    """(f) the new source inherits the seam's cwd-independence guarantee."""
+
+    @staticmethod
+    def _write_budget_source(root: Path, sentinel: str) -> Path:
+        src = root / "scoped" / dc.TURN_BUDGET_SRC_NAME
+        src.parent.mkdir(parents=True, exist_ok=True)
+        # Every declared pair, so an absent block is a real miss rather than a
+        # fixture gap — the unreadable signal then means what it says.
+        src.write_text(
+            "".join(
+                f"{start}\n{name} {sentinel}\n{end}\n"
+                for name, start, end in dc.BUDGET_BLOCK_MARKERS
+            ),
+            encoding="utf-8",
+        )
+        return src
+
+    def test_when_seam_bound_then_source_resolution_is_cwd_independent(self):
+        with tempfile.TemporaryDirectory() as live, tempfile.TemporaryDirectory() as repo:
+            live_root, repo_root = Path(live), Path(repo)
+            live_src = self._write_budget_source(live_root, _LIVE_MARKER)
+            self._write_budget_source(repo_root, _RELEASE_MARKER)
+
+            with _base_root(live_root):
+                with _in_dir(repo_root):
+                    from_repo = dc._get_turn_budget_src()
+                with _in_dir(Path(tempfile.gettempdir())):
+                    from_elsewhere = dc._get_turn_budget_src()
+
+            # Derived equality on both sides: the live path the seam composes.
+            self.assertEqual(from_repo, live_src)
+            self.assertEqual(from_elsewhere, live_src)
+
+    def test_when_invoked_from_repo_root_then_injected_text_is_not_the_release_copy(self):
+        budget_label = f"{sorted(dc.BUDGET_FAMILY_SIGNATURE_CORES)[0]} (avg overrun +7)"
+        with tempfile.TemporaryDirectory() as live, tempfile.TemporaryDirectory() as repo:
+            live_root, repo_root = Path(live), Path(repo)
+            _write_agent(live_root, _LIVE_MARKER)
+            self._write_budget_source(live_root, _LIVE_MARKER)
+            _write_agent(repo_root, _RELEASE_MARKER)
+            self._write_budget_source(repo_root, _RELEASE_MARKER)
+
+            captured = io.StringIO()
+            with _base_root(live_root), _in_dir(repo_root):
+                with contextlib.redirect_stderr(captured):
+                    prompt = dc._build_pre_verify_prompt(
+                        _patch_proposal(_RELATIVE_TARGET),
+                        dc.Pattern(
+                            date="2026-09-16",
+                            label=budget_label,
+                            frequency="3/5",
+                            agent=_AGENT,
+                            status="identified",
+                            tier="user-pending",
+                            raw_line=f"pg:learning_log:1:{budget_label}|{_AGENT}",
+                        ),
+                    )
+
+        self.assertIn(_LIVE_MARKER, prompt)
+        self.assertNotIn(_RELEASE_MARKER, prompt)
+        self.assertNotIn(dc.TURN_BUDGET_UNREADABLE_SIGNAL, captured.getvalue())
 
 
 if __name__ == "__main__":

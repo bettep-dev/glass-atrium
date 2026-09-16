@@ -13,7 +13,10 @@ slice reaches the verifier intact. Covered here:
   (c) the extractor drops WHOLE blocks when its bound is crossed, so no excerpt
       ends on an arbitrary character;
   (d) an empty file still yields an empty excerpt, preserving the caller's
-      directed-FAIL emptiness path.
+      directed-FAIL emptiness path;
+  (e) both C2 routes above still hold under a budget-family label — the context
+      that attaches the injected turn-budget blocks — since the meter's policy
+      half is left unsourced precisely BECAUSE C2 already carries it.
 
 The former cap position (6000) is a fixed historical offset, never read from the
 implementation's current bound — a fixture sized from the bound under test can
@@ -71,10 +74,10 @@ def _base_root(path: Path):
     return mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(path)})
 
 
-def _pattern(agent: str = _AGENT):
+def _pattern(agent: str = _AGENT, label: str = "test signal"):
     return dc.Pattern(
         date="2026-08-17",
-        label="test signal",
+        label=label,
         frequency="3",
         agent=agent,
         status="identified",
@@ -94,12 +97,19 @@ def _patch_proposal(target_file: str):
     )
 
 
-def _get_prompt(target_file: str) -> tuple[str, str]:
+def _get_prompt(target_file: str, label: str = "test signal") -> tuple[str, str]:
     """Assemble the pre-verify prompt for `target_file`; return (prompt, stderr)."""
     captured = io.StringIO()
     with contextlib.redirect_stderr(captured):
-        prompt = dc._build_pre_verify_prompt(_patch_proposal(target_file), _pattern())
+        prompt = dc._build_pre_verify_prompt(
+            _patch_proposal(target_file), _pattern(label=label)
+        )
     return prompt, captured.getvalue()
+
+
+def _budget_family_label() -> str:
+    """A live-shaped budget-family label — stable signature core plus its tail."""
+    return f"{sorted(dc.BUDGET_FAMILY_SIGNATURE_CORES)[0]} (avg overrun +7 tool_uses)"
 
 
 def _write_agent(root: Path, body: str) -> Path:
@@ -277,6 +287,62 @@ class SectionExtractorTest(unittest.TestCase):
             self.assertEqual(
                 dc._read_sections(Path(tmp) / "absent.md", 900), "(file not available)"
             )
+
+
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class BudgetFamilyContextTest(unittest.TestCase):
+    """(e) the C2 route survives the budget-family judging context.
+
+    The meter's POLICY half is deliberately not re-sourced into the prompt: it
+    already arrives whole through the C2 slot. That is the load-bearing premise
+    of leaving the meter text out, so it is asserted where it matters — under a
+    label that now attaches the injected blocks — never assumed.
+    """
+
+    def test_when_label_is_budget_family_then_sections_past_the_cap_still_reach_c2(self):
+        body = _rules_body()
+        with tempfile.TemporaryDirectory() as live:
+            live_root = Path(live)
+            _write_agent(live_root, f"# {_AGENT}\n\nbody line\n")
+            rules = live_root / "GLASS_ATRIUM_GLOBAL_RULES.md"
+            rules.write_text(body, encoding="utf-8")
+
+            with _base_root(live_root), mock.patch.object(dc, "GLOBAL_RULES_FILE", rules):
+                plain, _ = _get_prompt(_RELATIVE_TARGET)
+                budget, _ = _get_prompt(_RELATIVE_TARGET, _budget_family_label())
+
+        for heading, terminal in (
+            (_RULES_HEADING_A, _RULES_TERMINAL_A),
+            (_RULES_HEADING_B, _RULES_TERMINAL_B),
+        ):
+            self.assertIn(heading, budget)
+            self.assertIn(terminal, budget)
+        # Relationship, not a literal: the budget-family context ADDS a slot and
+        # subtracts nothing, so it can never be shorter than the plain one.
+        self.assertGreater(len(budget), len(plain))
+
+    def test_when_label_is_budget_family_then_live_turn_budget_section_is_whole(self):
+        rules = dc.GLOBAL_RULES_FILE
+        if rules is None or not rules.exists():
+            self.skipTest(f"live GLOBAL_RULES file unreadable: {rules}")
+        text = rules.read_text(encoding="utf-8", errors="replace")
+        if text.find(_TURN_BUDGET_HEADING) < 0:
+            self.skipTest("canonical Turn Budget section absent from the live file")
+
+        block = next(
+            b for b in dc._split_heading_blocks(text) if b.startswith(_TURN_BUDGET_HEADING)
+        )
+        lines = [line for line in block.splitlines() if line.strip()]
+
+        with tempfile.TemporaryDirectory() as live:
+            live_root = Path(live)
+            _write_agent(live_root, f"# {_AGENT}\n\nbody line\n")
+            with _base_root(live_root):
+                prompt, _ = _get_prompt(_RELATIVE_TARGET, _budget_family_label())
+
+        # Derived on both sides: the section's own first and last lines.
+        self.assertIn(lines[0], prompt)
+        self.assertIn(lines[-1], prompt)
 
 
 if __name__ == "__main__":
