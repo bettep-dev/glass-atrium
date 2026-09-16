@@ -15,15 +15,9 @@ const {
 // budget-truncation attribution_source 리터럴 — track-outcome.sh + 서버 3파일과 byte-identical (rename 금지).
 const ATTRIBUTION_SOURCE_BUDGET_TRUNCATION = 'budget-truncation';
 
-// 기간 선택 — 전체 칩은 wire sentinel 'all' 전송 (route parseDaysParam 가 {7,30,90,'all'} 만 허용).
+// 북마크된 'all' 창은 wire sentinel 로 보존 (route parseDaysParam 가 {7,30,90,'all'} 만 허용).
 // filter.days 는 number {7,30,90} | 'all' 의 tri-state → buildSearchUrlO 의 String(filter.days) 가 그대로 직렬화.
 const OUTCOME_ALL_PERIOD = 'all';
-const OUTCOME_PERIODS = [
-  { value: 7,                 label: '7d'  },
-  { value: 30,                label: '30d' },
-  { value: 90,                label: '90d' },
-  { value: OUTCOME_ALL_PERIOD, label: 'All' },
-];
 
 // task_type — core-outcome-record.md enum (9 values). 백엔드 축당 단일값 → FE single-select.
 const TASK_TYPE_OPTIONS = [
@@ -321,12 +315,17 @@ const HEATMAP_FILTER_OPTIONS = [
   { value: 'done',   label: 'Done only',    tone: 'ok'   },
 ];
 
-// 분석 섹션 기간 (KPI/Heatmap/AgentStack 만 영향, 탐색기 days 와 독립).
+// 헤더의 단일 window 컨트롤 — band · ledger · 분석이 같은 창을 읽는다 (사이드바 period 병합).
 const ANALYTICS_PERIOD_OPTIONS = [
   { value: 7,  label: '7d'  },
   { value: 30, label: '30d' },
   { value: 90, label: '90d' },
 ];
+
+// 분석 라우트는 {7,30,90} 만 받는다 → 그 밖의 ledger 창(북마크된 'all')은 드롭 대신 최대 창으로 해소.
+function analyticsDaysO(days) {
+  return ANALYTICS_PERIOD_OPTIONS.some((o) => o.value === days) ? days : 90;
+}
 
 // Postgres EXTRACT(DOW) 0=Sun → 6=Sat (outcomes.ts handleHeatmap).
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -424,8 +423,8 @@ function ScreenOutcomes({ onNav }) {
 
   const [searchState, setSearchState] = useStateO({ status: 'loading', data: null, error: null });
 
-  // 분석 섹션 상태 (탐색기 필터와 독립) — period 는 KPI/Heatmap/AgentStack 공통 기간.
-  const [analyticsPeriod, setAnalyticsPeriod] = useStateO(30);
+  // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
+  const analyticsPeriod = analyticsDaysO(filter.days);
   const [heatmapFilter,   setHeatmapFilter]   = useStateO('all');
   const [analyticsState,  setAnalyticsState]  = useStateO({ status: 'loading', data: null, error: null });
   const [heatmapState,    setHeatmapState]    = useStateO({ status: 'loading', data: null, error: null });
@@ -445,6 +444,10 @@ function ScreenOutcomes({ onNav }) {
   const [detailState, setDetailState] = useStateO({ status: 'idle', data: null, error: null });
 
   const [refreshTick, setRefreshTick] = useStateO(0);
+
+  // as-of = 마지막으로 성공한 fetch 의 수신 시각 (요청 시각 아님) — 화면 전체에 하나만 둔다.
+  const [asOfAt, setAsOfAt] = useStateO(null);
+  const markFreshO = useCallbackO(() => setAsOfAt(new Date().toISOString()), []);
 
   // T13 (O2) — canonical agent facet 소스 (registry 게이트된 /api/agents/summary).
   const [canonicalAgentsState, setCanonicalAgentsState] = useStateO({ status: 'loading', data: null, error: null });
@@ -494,6 +497,11 @@ function ScreenOutcomes({ onNav }) {
 
   const triggerRefresh = useCallbackO(() => setRefreshTick((t) => t + 1), []);
 
+  const setWindowDays = useCallbackO((days) => {
+    setFilter((prev) => ({ ...prev, days }));
+    setPage(0);
+  }, []);
+
   const resetFilter = useCallbackO(() => {
     setFilter(defaultFilterO());
     setKeywordInput('');
@@ -515,6 +523,7 @@ function ScreenOutcomes({ onNav }) {
     fetchJsonO(searchUrl, ctrl.signal)
       .then((data) => {
         firstFailAtRef.current = null;
+        markFreshO();
         setSearchState({ status: 'ready', data, error: null });
       })
       .catch((err) => handleSearchErrorO(err, setSearchState, firstFailAtRef));
@@ -546,6 +555,7 @@ function ScreenOutcomes({ onNav }) {
         // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
         const needsContextCount = extractResultCountO(overall.by_result, 'needs_context');
         const crosstab          = buildCrosstabO(overall.cells);
+        markFreshO();
         setAnalyticsState({
           status: 'ready',
           data: { overall, byResultCount, byResultReconstructed, agentStack, needsContextCount, crosstab },
@@ -568,7 +578,7 @@ function ScreenOutcomes({ onNav }) {
     setAttributionState({ status: 'loading', data: null, error: null });
 
     fetchJsonO(`/api/outcomes/attribution-daily?days=${analyticsPeriod}`, ctrl.signal)
-      .then((data) => setAttributionState({ status: 'ready', data, error: null }))
+      .then((data) => { markFreshO(); setAttributionState({ status: 'ready', data, error: null }); })
       .catch((err) => handleErrorO(err, setAttributionState));
 
     return () => ctrl.abort();
@@ -581,7 +591,7 @@ function ScreenOutcomes({ onNav }) {
     setChannelLivenessState({ status: 'loading', data: null, error: null });
 
     fetchJsonO('/api/outcomes/channel-liveness', ctrl.signal)
-      .then((data) => setChannelLivenessState({ status: 'ready', data, error: null }))
+      .then((data) => { markFreshO(); setChannelLivenessState({ status: 'ready', data, error: null }); })
       .catch((err) => handleErrorO(err, setChannelLivenessState));
 
     return () => ctrl.abort();
@@ -593,7 +603,7 @@ function ScreenOutcomes({ onNav }) {
     setLoopEventsState({ status: 'loading', data: null, error: null });
 
     fetchJsonO(LOOP_EVENTS_URL, ctrl.signal)
-      .then((data) => setLoopEventsState({ status: 'ready', data, error: null }))
+      .then((data) => { markFreshO(); setLoopEventsState({ status: 'ready', data, error: null }); })
       .catch((err) => handleErrorO(err, setLoopEventsState));
 
     return () => ctrl.abort();
@@ -671,7 +681,8 @@ function ScreenOutcomes({ onNav }) {
           sub="Agent task outcomes"
           right={
             <>
-              <AnalyticsPeriodSeg value={analyticsPeriod} onChange={setAnalyticsPeriod}/>
+              <AsOfStampO at={asOfAt}/>
+              <WindowSeg value={filter.days} onChange={setWindowDays}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh task results">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -680,6 +691,15 @@ function ScreenOutcomes({ onNav }) {
           }
         />
       </div>
+
+      <AlarmLaneO
+        channelLivenessState={channelLivenessState}
+        payloadGroups={[
+          { key: 'ledger',   label: 'the record ledger', state: searchState },
+          { key: 'analytics', label: 'the status band',  state: analyticsState },
+        ]}
+        onRetry={triggerRefresh}
+      />
 
       <AnalyticsSection
         analyticsState={analyticsState}
@@ -745,11 +765,69 @@ function ScreenOutcomes({ onNav }) {
   );
 }
 
+// 예약 레인 — 문제가 없으면 아무것도 렌더하지 않는다. 침묵한 기록 채널과 payload 실패만 레인 행이 되고,
+// 나머지 등급은 status band 글리프가 운반한다 (39573 §4 admission).
+function AlarmLaneO({ channelLivenessState, payloadGroups, onRetry }) {
+  const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
+  const groups = Array.isArray(payloadGroups) ? payloadGroups : [];
+  const blocked = groups.filter((g) => g.state.status === 'blocked');
+  const failed  = groups.filter((g) => g.state.status === 'error');
+
+  if (silent.length === 0 && blocked.length === 0 && failed.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-2 mb-4 flex-shrink-0" role="region" aria-label="Alarms">
+      {blocked.map((g) => <BlockedBannerO key={g.key} detail={g.state.error}/>)}
+      {silent.length > 0 && <SilentChannelRowO channels={silent}/>}
+      {failed.map((g) => (
+        <ErrorBannerO
+          key={g.key}
+          title={`Couldn't load ${g.label}`}
+          detail={g.state.error}
+          onRetry={onRetry}/>
+      ))}
+    </div>
+  );
+}
+
+// 고volume 채널의 침묵은 다른 모든 카드에서 '품질 변화' 로 위장한다 → 레인 행 자격.
+function SilentChannelRowO({ channels }) {
+  const { Icon } = window.UI;
+  return (
+    <div
+      role="alert"
+      className="rounded-md border p-3 flex items-start gap-3 mx-3"
+      style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
+      <Icon name="x" size={16} className="text-crit mt-0.5"/>
+      <div className="flex-1 min-w-0">
+        <div className="fs-body font-medium text-ink">Recording stopped: {channels.join(', ')}</div>
+        <div className="fs-meta text-dim mt-1">
+          A channel that was writing daily has recorded nothing — every count below is understated until it resumes.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 분석 섹션 — 차트는 inline SVG / .heat-cell / Tailwind flex 비례 바 (Recharts 미사용).
 
-function AnalyticsPeriodSeg({ value, onChange }) {
+// 한 번도 적재되지 않은 값은 em-dash — 0 으로 읽히면 안 된다 (39578 §D).
+function AsOfStampO({ at }) {
+  const { tzShortLabel, formatKstTime, formatKstFull, getDisplayTimezone } = window.UI;
+  const zone = tzShortLabel(getDisplayTimezone());
+
   return (
-    <div className="seg" role="radiogroup" aria-label="Analytics time range">
+    <span
+      className="fs-micro font-mono text-faint"
+      title={at ? `Last successful load ${formatKstFull(at)} (${zone})` : 'Nothing has loaded yet'}>
+      As of {at ? `${formatKstTime(at)} ${zone}` : '—'}
+    </span>
+  );
+}
+
+function WindowSeg({ value, onChange }) {
+  return (
+    <div className="seg" role="radiogroup" aria-label="Time range">
       {ANALYTICS_PERIOD_OPTIONS.map((opt) => (
         <button
           key={opt.value}
@@ -1869,12 +1947,16 @@ function LoopEventsBody({ state, onRetry }) {
 // ----- Panel 1: Filter sidebar -----------------------------------------------
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
+// 상시 노출 축 — Agent · Keyword 와 합쳐 5 그룹. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더가 소유).
 const CHIP_FILTER_AXES = [
-  { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
+  { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
+  { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
+];
+
+const MORE_FILTER_AXES = [
   { axis: 'confidence',  label: 'Confidence',  options: CONFIDENCE_OPTIONS  },
   { axis: 'metric_pass', label: 'Self-check',  options: METRIC_PASS_OPTIONS },
-  { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
   { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
 
@@ -1900,15 +1982,6 @@ function FilterSidebar({
         }
       />
       <div className="card-body" style={{ padding: 14, flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
-        <FilterAxisGroup label="Period">
-          <ChipGroup
-            options={OUTCOME_PERIODS.map((p) => ({ value: String(p.value), label: p.label }))}
-            value={String(filter.days)}
-            onChange={(v) => onPatchFilter({ days: normalizeDaysO(v) })}
-            ariaLabel="Time range"
-          />
-        </FilterAxisGroup>
-
         <FilterAxisGroup label="Agent">
           <select
             className="field field-select"
@@ -1920,20 +1993,6 @@ function FilterSidebar({
               <option key={a} value={a}>{a}</option>
             ))}
           </select>
-        </FilterAxisGroup>
-
-        {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제 (비-registry / de-registered 노출). */}
-        <FilterAxisGroup label="Record scope">
-          <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={includeAll}
-              onChange={(e) => onToggleIncludeAll(e.target.checked)}
-              aria-label="Show all records including non-registry and de-registered agents"/>
-            <span className={includeAll ? 'text-ink' : 'text-dim'}>
-              Show all (incl. non-registry)
-            </span>
-          </label>
         </FilterAxisGroup>
 
         {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
@@ -1958,14 +2017,46 @@ function FilterSidebar({
           />
         </FilterAxisGroup>
 
-        <FilterAxisGroup label="Sort">
-          <ChipGroup
-            options={SORT_OPTIONS}
-            value={sort}
-            onChange={onSortChange}
-            ariaLabel="Sort order"
-          />
-        </FilterAxisGroup>
+        <details className="mb-3">
+          <summary className="fs-micro font-mono text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
+            More filters
+          </summary>
+          <div className="pt-2">
+            {MORE_FILTER_AXES.map(({ axis, label, options }) => (
+              <FilterAxisGroup key={axis} label={label}>
+                <ChipGroup
+                  options={options}
+                  value={filter[axis] || ''}
+                  onChange={(v) => onPatchFilter({ [axis]: v })}
+                  ariaLabel={`${label} filter`}
+                />
+              </FilterAxisGroup>
+            ))}
+
+            <FilterAxisGroup label="Sort">
+              <ChipGroup
+                options={SORT_OPTIONS}
+                value={sort}
+                onChange={onSortChange}
+                ariaLabel="Sort order"
+              />
+            </FilterAxisGroup>
+
+            {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
+            <FilterAxisGroup label="Record scope">
+              <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeAll}
+                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                  aria-label="Show all records including non-registry and de-registered agents"/>
+                <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                  Show all (incl. non-registry)
+                </span>
+              </label>
+            </FilterAxisGroup>
+          </div>
+        </details>
 
         <div className="mt-3 pt-3 border-t border-line">
           <button
@@ -2115,11 +2206,8 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
-  if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load search results" detail={state.error} onRetry={onRetry}/>;
-  }
-  if (state.status === 'blocked') {
-    return <BlockedBannerO detail={state.error}/>;
+  if (state.status === 'error' || state.status === 'blocked') {
+    return <PayloadUnavailableO label="Records"/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -2770,6 +2858,15 @@ function ErrorBannerO({ title, detail, onRetry }) {
   );
 }
 
+// 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
+function PayloadUnavailableO({ label }) {
+  return (
+    <div className="p-4 fs-meta text-dim" role="status">
+      {label} unavailable — see the alarm above.
+    </div>
+  );
+}
+
 // blocked banner — shown when 30s+ of repeated backend failures suggest an outage rather than a
 // transient network blip. User can still trigger refresh manually via the page header.
 function BlockedBannerO({ detail }) {
@@ -2817,14 +2914,6 @@ function ChartSkeletonO({ height = 220 }) {
 }
 
 // ----- Pure helpers ---------------------------------------------------------
-
-// 기간 칩 값 정규화 — 'all' sentinel 보존 + 숫자 칩은 Number 로 환원 (route wire format 일치).
-// Number('all') = NaN 좌절 회피: 'all' 직접 통과, 그 외 유효 숫자만 number, 미해석 → 30 fallback.
-function normalizeDaysO(value) {
-  if (value === OUTCOME_ALL_PERIOD) return OUTCOME_ALL_PERIOD;
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : 30;
-}
 
 // URL hash days 복원 — 'all' 문자열 보존 (북마크/새로고침 시 전체 기간 뷰 유지).
 function normalizeDaysFromHashO(raw, fallback) {
