@@ -26,9 +26,7 @@ setup() {
 #
 # It stands for scripts/run-bats-parallel.sh's stage-1 `env` wrapper, since a .bats file is
 # reached through that stage alone; stage 3's copy of the scrub is pinned separately, by
-# scripts/test/run-bats-parallel.bats. This REPLACES a detector the same change removes:
-# until now an unscrubbed AUTOAGENT_GIT_ROOT surfaced only by reddening the discover probe
-# below, and widening that probe's `env -u` in lockstep with the runner silences it.
+# scripts/test/run-bats-parallel.bats.
 #
 # `env` lists exported variables only, which is exactly the class here — daemon-cycle.sh
 # exports every one of them.

@@ -83,8 +83,8 @@ readonly TOOLCHAIN_PRECONDITION_RC=17
 #
 # The two claude-binary names generalize the scrub stage 3 already carried alone. It is NOT
 # a model-seam closure: CLAUDE_BIN defaults to a bare name, so dropping an absolute-path pin
-# leaves PATH resolution intact. What closes that seam is a PATH stub, which the per-root
-# hermeticity probes install and this runner does not.
+# leaves PATH resolution intact. What closes that seam is a PATH stub, which
+# autoagent/test/suite-hermeticity.bats installs and this runner does not.
 readonly DAEMON_ENV_SCRUB=(
   -u AUTOAGENT_GIT_ROOT
   -u AUTOAGENT_GIT_PATHSPEC
@@ -225,8 +225,8 @@ main() {
   # Guarding it the way stage 4 guards pytest would convert a broken install into a
   # silent pass, which is the failure this stage exists to close.
   #
-  # Its env now differs from stage 2's in the sandbox HOME alone: AUTOAGENT_CLAUDE_BIN,
-  # once this stage's own extra scrub, sits in DAEMON_ENV_SCRUB and reaches all four.
+  # Its env differs from stage 2's in the sandbox HOME alone — every scrubbed name,
+  # AUTOAGENT_CLAUDE_BIN included, sits in DAEMON_ENV_SCRUB and reaches all four stages.
   # autoagent/test/suite-hermeticity.bats scrubs the same set on the identical discover
   # run, so the probe cannot read green under conditions this stage does not share.
   run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \
