@@ -742,6 +742,66 @@ function resolveResultMeta(result, closedAt) {
 // 비율 표본 임계 (A5) — n < 30 이면 muted/italic + '(n=N)' 표기 대상.
 const LOW_N_MIN = 30;
 
+// severity 우선순위 — worst-of 축약 기준. 높을수록 위험 (crit 최상위).
+// neutral/info 는 "위험 아님" 동급(0) — 둘 다 정상 신호로 rollup 톤을 끌어올리지 않음.
+const SEVERITY_RANK = { crit: 3, warn: 2, ok: 1, info: 0, neutral: 0 };
+
+// 두 톤 중 더 위험한 쪽 반환 — enum SoT 톤만 입력(로컬 색맵 없음).
+function worstTone(a, b) {
+  return (SEVERITY_RANK[b] || 0) > (SEVERITY_RANK[a] || 0) ? b : a;
+}
+
+// Outcome quality thresholds — the share a fact must reach before it carries a tone.
+const OUTCOME_BREAKAGE_CRIT_SHARE = 0.05;
+const OUTCOME_OPEN_CAVEAT_WARN_SHARE = 0.1;
+
+// Per-fact tone SoT — every screen reads one fact's share against one population here,
+// so a bare "greater than zero" never becomes a second rule. Population <= 0 → null
+// (an absent denominator is not a risk); below the share → null; at or above it → tone.
+// The low-N guard stays at the call site: the rollup applies it and the card hint does
+// not, and that split is a contract, not an accident.
+function outcomeShareTone(count, population, minShare, tone) {
+  const den = Number(population);
+  if (!Number.isFinite(den) || den <= 0) return null;
+  return (Number(count) || 0) / den >= minShare ? tone : null;
+}
+
+// by_result / by_agent row → 총 건수. row 부재(응답 누락 키)·비수치 모두 0.
+function getOutcomeCount(row) {
+  return Number(row?.count) || 0;
+}
+
+// by_result row → 미종결 건수. closed_count 부재(구 응답)는 0 종결 · 계약 어긋난 초과 종결도 음수 금지.
+function getOutcomeOpenCount(row) {
+  const closed = Number(row?.closed_count) || 0;
+  return Math.max(0, getOutcomeCount(row) - closed);
+}
+
+// 품질 신호 모집단 — 합성행 제외. 합성행의 result 는 recorder 가 고른 값이라 품질 정보가 없다.
+// reconstructed_total 부재(구 응답) → 종전 total 유지(하위호환).
+//
+// 이중 모집단 계약(여기가 그 seam) — 이 값은 임계 hint · severity rollup 전용이고, 분포
+// 막대·범례는 total(전수)을 쓴다. 불일치는 버그가 아니라 계약이므로 어느 한쪽으로 통일하지
+// 말 것: 막대를 writer 기준으로 바꾸면 합성 기록이 화면에서 사라지고, hint 를 전수로
+// 되돌리면 기록 누락이 품질 저하로 읽힌다.
+function getWriterTotal(data) {
+  const total = Number(data?.total) || 0;
+  const reconstructed = Number(data?.reconstructed_total) || 0;
+  return Math.max(0, total - reconstructed);
+}
+
+// row → writer 발신 미종결 건수(품질 분자). writer_open_count 부재(구 응답) → 종전 미종결 건수.
+function getWriterOpenCount(row) {
+  const writerOpen = Number(row?.writer_open_count);
+  return Number.isFinite(writerOpen) ? Math.max(0, writerOpen) : getOutcomeOpenCount(row);
+}
+
+// row → writer 발신 건수(종결 무관 — 실패/차단 임계는 종결에 반응하지 않는 계약 유지).
+function getWriterCount(row) {
+  const reconstructed = Number(row?.reconstructed_count) || 0;
+  return Math.max(0, getOutcomeCount(row) - reconstructed);
+}
+
 // 비율 headline SoT (A5) — 'N.N% (x/y)'. 분모 0/음수 → '—' (fabricated 0% 차단).
 function formatPctWithDenominator(numerator, denominator) {
   const den = Number(denominator);
@@ -823,4 +883,6 @@ window.UI = {
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  SEVERITY_RANK, worstTone, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
+  getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
 };

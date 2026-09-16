@@ -1,6 +1,6 @@
 // Unit tests for the synthesized-row exclusion in the Task-results quality signal
-// (public/src/screens/dashboard.jsx — getWriterTotal / getWriterOpenCount /
-// computeOutcomeHint / computeWorstRollup). A recorder-synthesized row's `result` is
+// (public/src/ui.jsx — getWriterTotal / getWriterOpenCount; public/src/screens/dashboard.jsx
+// — buildPopulationDisclosure / computeOutcomeHint / computeWorstRollup). A recorder-synthesized row's `result` is
 // chosen by the recorder, not the writer, so it carries no quality information: it
 // leaves BOTH the DWC-share numerator and its denominator.
 //
@@ -17,6 +17,7 @@ import { buildScreenSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 interface ByResultRow {
   result: string;
@@ -35,14 +36,20 @@ interface Hint {
   text: string;
 }
 interface DashHelpers {
-  getWriterTotal: (data: CrossAnalysisData | undefined) => number;
-  getWriterOpenCount: (row: ByResultRow | undefined) => number;
   buildPopulationDisclosure: (total: number, writerTotal: number) => string | null;
   computeOutcomeHint: (byResultMap: Map<string, ByResultRow>, writerTotal: number) => Hint | null;
   computeWorstRollup: (args: { outcomesState: unknown }) => string | null;
 }
 
-const helpers = await buildScreenSandbox<DashHelpers>(DASH_SRC);
+interface UiHelpers {
+  getWriterTotal: (data: CrossAnalysisData | undefined) => number;
+  getWriterOpenCount: (row: ByResultRow | undefined) => number;
+}
+
+// withUi — the dashboard now reads the shared derivations through window.UI, so the
+// screen sandbox needs the real bundle rather than the formatter stub.
+const helpers = await buildScreenSandbox<DashHelpers>(DASH_SRC, { withUi: true });
+const ui = (await buildScreenSandbox<{ window: { UI: UiHelpers } }>(UI_SRC)).window.UI;
 
 function buildMap(rows: ByResultRow[]): Map<string, ByResultRow> {
   return new Map(rows.map((r) => [r.result, r]));
@@ -54,18 +61,18 @@ function buildRollupState(data: CrossAnalysisData): { outcomesState: unknown } {
 // --- the two derivations ---
 
 test("getWriterTotal subtracts the synthesized population from the denominator", () => {
-  assert.strictEqual(helpers.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }), 60);
+  assert.strictEqual(ui.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }), 60);
 });
 
 test("getWriterTotal keeps the legacy denominator when the field is absent", () => {
-  assert.strictEqual(helpers.getWriterTotal({ total: 100, by_result: [] }), 100);
-  assert.strictEqual(helpers.getWriterTotal(undefined), 0);
+  assert.strictEqual(ui.getWriterTotal({ total: 100, by_result: [] }), 100);
+  assert.strictEqual(ui.getWriterTotal(undefined), 0);
 });
 
 test("getWriterOpenCount falls back to the closure-only open count on a legacy row", () => {
   const legacy = { result: "done_with_concerns", count: 10, closed_count: 4 };
-  assert.strictEqual(helpers.getWriterOpenCount(legacy), 6);
-  assert.strictEqual(helpers.getWriterOpenCount(undefined), 0);
+  assert.strictEqual(ui.getWriterOpenCount(legacy), 6);
+  assert.strictEqual(ui.getWriterOpenCount(undefined), 0);
 });
 
 // --- the split between the two populations is disclosed on the card ---
@@ -91,7 +98,7 @@ test("a DWC population that is entirely synthesized raises no norm warning", () 
       { result: "done", count: 60, reconstructed_count: 0, writer_open_count: 60 },
       { result: "done_with_concerns", count: 40, reconstructed_count: 40, writer_open_count: 0 },
     ]),
-    helpers.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
+    ui.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
   );
   assert.strictEqual(hint, null, "the recording artifact no longer reads as a quality downgrade");
 });
@@ -102,7 +109,7 @@ test("writer-emitted DWC still warns, and its share is taken against the writer-
       { result: "done", count: 50, reconstructed_count: 0, writer_open_count: 50 },
       { result: "done_with_concerns", count: 50, reconstructed_count: 40, writer_open_count: 10 },
     ]),
-    helpers.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
+    ui.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
   );
   assert.strictEqual(hint?.tone, "warn");
   assert.match(hint?.text ?? "", /\(10\/60\)/, "denominator excludes the synthesized rows too");
@@ -115,7 +122,7 @@ test("synthesized done rows (the structuredoutput-derived shape) leave the denom
       { result: "done", count: 94, reconstructed_count: 40, writer_open_count: 54 },
       { result: "done_with_concerns", count: 6, reconstructed_count: 0, writer_open_count: 6 },
     ]),
-    helpers.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
+    ui.getWriterTotal({ total: 100, reconstructed_total: 40, by_result: [] }),
   );
   assert.strictEqual(hint?.tone, "warn", "6 open of a 60-row writer population is at the threshold");
   assert.match(hint?.text ?? "", /\(6\/60\)/);
