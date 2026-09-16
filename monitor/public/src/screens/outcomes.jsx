@@ -984,13 +984,23 @@ function BandTileO({ tile, windowLabel }) {
 
 // registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
 // 행 자체가 조치 대상이므로 tone 은 글리프가 아니라 숫자의 존재로 운반된다(0 행은 아예 렌더하지 않음).
-function buildAgentFailureRowsO(agentStack) {
+// by_agent_top_10 → per-agent open-caveat lookup. The stack rows (by_agent_result) carry no
+// such field, so it joins on the agent key — absent (legacy response) → 0.
+function buildAgentOpenCaveatMapO(byAgentTop) {
+  const { getWriterOpenCount } = window.UI;
+  const rows = Array.isArray(byAgentTop) ? byAgentTop : [];
+  return new Map(rows.map((row) => [row?.agent, getWriterOpenCount(row)]));
+}
+
+function buildAgentFailureRowsO(agentStack, byAgentTop) {
   const rows = Array.isArray(agentStack) ? agentStack : [];
+  const openByAgent = buildAgentOpenCaveatMapO(byAgentTop);
   return rows
     .map((entry) => ({
       agent: entry.agent,
       failed: entry.byResult?.fail || 0,
       blocked: entry.byResult?.blocked || 0,
+      openCaveats: openByAgent.get(entry.agent) || 0,
       total: entry.total || 0,
     }))
     .filter((row) => row.failed + row.blocked > 0)
@@ -1016,7 +1026,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
     return <ErrorBannerO title="Couldn't load by-agent failures" detail={state.error} onRetry={onRetry}/>;
   }
 
-  const rows = buildAgentFailureRowsO(state.data?.agentStack);
+  const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
   if (rows.length === 0) {
     return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
   }
@@ -1029,6 +1039,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
             <th className="text-left text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Agent</th>
             <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Failed</th>
             <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Blocked</th>
+            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Open caveats</th>
             <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>of records</th>
           </tr>
         </thead>
@@ -1038,6 +1049,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
               <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}>{row.agent}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
+              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.openCaveats)}</td>
               <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
             </tr>
           ))}
@@ -1152,7 +1164,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
             <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
               <div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                <span style={{ color: `rgb(var(${meta.colorVar}))` }}>{meta.label}</span>
+                <span className="text-dim">{meta.label}</span>
               </div>
               <div className="fs-stat font-semibold text-ink mt-1 font-mono">
                 {formatRateO(rate)}
@@ -1166,7 +1178,8 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
         <div
           className="fs-micro font-mono text-dim mt-1.5 leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
-          <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-1">{omissionMeta.label}:</span>
+          <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-0.5" aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
+          <span className="mr-1">{omissionMeta.label}:</span>
           budget-kill {formatIntO(omissionBreakdown.budget)} · truncated {formatIntO(omissionBreakdown.truncated)} · missing {formatIntO(omissionBreakdown.missing)}
         </div>
       )}
@@ -1356,7 +1369,7 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
   return (
     <div className="flex items-center gap-2 fs-micro font-mono">
       <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} className="w-[6.5rem] flex-shrink-0">{meta.label}</span>
+      <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
       <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
       <span className="text-dim tabular-nums">
         {recentPeak}/day{recencyDays ? ` last ${recencyDays}d` : ''}
@@ -1428,8 +1441,8 @@ function GraderBreakdownBody({ state, onRetry }) {
                 background: `rgb(var(${meta.colorVar}) / 0.06)`,
               }}
               title={`${meta.label}: ${formatIntO(count)}${pct != null ? ` (${pct.toFixed(1)}%)` : ' (legacy — not in share denominator)'}`}>
-              <div className="inline-flex items-start gap-1 fs-micro uppercase tracking-wider min-h-[2.2em]" style={{ color: `rgb(var(${meta.colorVar}))` }}>
-                <GlyphO name={meta.icon}/>
+              <div className="inline-flex items-start gap-1 fs-micro uppercase tracking-wider min-h-[2.2em] text-dim">
+                <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
                 {meta.label}
               </div>
               <div className="mt-1 font-mono fs-title text-ink">{formatIntO(count)}</div>
@@ -1459,8 +1472,8 @@ function DowngradeBreakdownRowO({ breakdown }) {
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
         return (
-          <span key={key} className="inline-flex items-center gap-1" style={{ color: `rgb(var(${meta.colorVar}))` }} title={key}>
-            <GlyphO name={meta.icon}/>
+          <span key={key} className="inline-flex items-center gap-1 text-dim" title={key}>
+            <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
             {meta.label}: {formatIntO(count)}
           </span>
         );
