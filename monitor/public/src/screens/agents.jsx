@@ -1139,24 +1139,13 @@ function AgentDetailDrawer({
       ) : (
         <div className="space-cards">
           <AgentDrawerSection title="Overview">
+            <AgentCircuitBreakerLine agent={agent}/>
             <AgentOverviewSection
               agent={agent}
               drawerAgent={drawerAgent}
               summaryState={summaryState}
               revisionState={revisionState}
               reviewByAgentState={reviewByAgentState}
-              onRetry={onRetry}
-            />
-          </AgentDrawerSection>
-          <AgentDrawerSection title="Performance">
-            <AgentPerformanceSection
-              agent={agent}
-              drawerAgent={drawerAgent}
-              summaryState={summaryState}
-              latencyState={latencyState}
-              revisionState={revisionState}
-              reviewByAgentState={reviewByAgentState}
-              trendByAgent={trendByAgent}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1173,15 +1162,29 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
           </AgentDrawerSection>
-          <AgentDrawerSection title="Quality signals">
+          <AgentDrawerSection title="Performance">
+            <AgentPerformanceSection
+              agent={agent}
+              drawerAgent={drawerAgent}
+              summaryState={summaryState}
+              latencyState={latencyState}
+              revisionState={revisionState}
+              reviewByAgentState={reviewByAgentState}
+              trendByAgent={trendByAgent}
+              onRetry={onRetry}
+            />
+          </AgentDrawerSection>
+          <AgentDrawerSection title="Quality">
             <AgentQualitySignalsSection
               drawerAgent={drawerAgent}
               revisionState={revisionState}
               reviewByAgentState={reviewByAgentState}
               onRetry={onRetry}
             />
+            {/* The composite ranking lives on Learning, which owns the improvement answer. */}
+            <a className="btn ghost sm" href="#/improvement">Open in Learning</a>
           </AgentDrawerSection>
-          <AgentDrawerSection title="Recent activity">
+          <AgentDrawerSection title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
           </AgentDrawerSection>
         </div>
@@ -1238,6 +1241,35 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
 
 // 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
 // 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
+// Circuit-breaker line — absent state (an agent outside the loaded snapshot) is
+// rendered as unavailable, never as "not suspended".
+function AgentCircuitBreakerLine({ agent }) {
+  const { Badge } = window.UI;
+  const breaker = agent ? agent.circuit_breaker : null;
+
+  if (!breaker) {
+    return (
+      <div className="flex items-center gap-2 mb-2">
+        <Badge role="status" tone="warn">unavailable</Badge>
+        <span className="text-faint fs-micro">circuit-breaker state not loaded for this agent</span>
+      </div>
+    );
+  }
+
+  const tone = breaker.suspended ? 'crit' : breaker.consecutive_fails > 0 ? 'warn' : 'ok';
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <Badge role="status" tone={tone}>
+        {breaker.suspended ? 'suspended' : breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route'}
+      </Badge>
+      <span className="text-faint fs-micro">
+        {breaker.consecutive_fails} consecutive {breaker.consecutive_fails === 1 ? 'fail' : 'fails'}
+        {breaker.suspended_at ? ` · suspended ${breaker.suspended_at}` : ''}
+      </span>
+    </div>
+  );
+}
+
 function AgentDrawerSection({ title, children }) {
   const { SubCard } = window.UI;
   return (
