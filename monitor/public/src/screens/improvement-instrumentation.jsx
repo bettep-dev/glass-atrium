@@ -15,8 +15,75 @@ function SymI(props) {
 const confidenceBadgeMetaI = (value) =>
 	window.ImprovementShared.confidenceBadgeMetaI(value);
 
+function ReviewReasonSegmentsI(props) {
+	return React.createElement(
+		window.ImprovementShared.ReviewReasonSegmentsI,
+		props,
+	);
+}
+
+// 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
+// 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
+function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
+	const { CardHead, Icon } = window.UI;
+	const title = "Flagged results (7 days)";
+
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !state.data) {
+		return (
+			<div className="card">
+				<CardHead title={title} />
+				<div className="p-3">
+					<div
+						className="i-anim-skel"
+						style={{
+							height: 60,
+							borderRadius: 8,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+						}}
+					/>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="card">
+			<CardHead
+				title={title}
+				sub="Outcomes flagged in the last 7 days · quarantined excluded"
+				right={
+					<button
+						className="btn ghost sm"
+						onClick={() => {
+							if (typeof onNav === "function") onNav("outcomes");
+						}}
+						aria-label="Open the flagged rows on the Task results screen"
+					>
+						Task results <Icon name="arrow-right" size={14} />
+					</button>
+				}
+			/>
+			<div className="px-3 pb-3">
+				<div className="fs-body font-mono text-ink tnum">
+					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
+				</div>
+				{/* is-wrap 필수 — 사유 세그먼트가 잘리면 수만 남고 모집단이 사라진다. */}
+				<div className="card-sub is-wrap fs-micro mt-1">
+					<ReviewReasonSegmentsI
+						segments={reviewReasons}
+						fallback="Outcomes flagged in the last 7 days"
+					/>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // 계기판 뷰 — 패널 순서는 relocate 이전 화면 순서를 그대로 보존한다.
 function ImprovementInstrumentationViewI({
+	statsState,
 	listState,
 	loopEventsState,
 	loopAggregate,
@@ -26,10 +93,16 @@ function ImprovementInstrumentationViewI({
 	proseOnlyAdd,
 	tierBreakdown,
 	confidenceDist,
+	reviewReasons,
+	onNav,
 }) {
 	return (
 		<div className="space-sections">
-			<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
+			<FlaggedResultsCardI
+				state={statsState}
+				reviewReasons={reviewReasons}
+				onNav={onNav}
+			/>
 			<CorpusGrowthCardI state={corpusAuditState} />
 			<CorrectionSignalsCardI state={correctionState} />
 			<StyleRefCardI state={listState} styleRef={styleRef} />
@@ -737,12 +810,6 @@ function formatRateI(rate) {
 	return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
-// ----- Rolling trend card (T-IMP-4) ------------------------------------------
-//
-// loop-events 날짜별 verified(성공 → CTM 인접) vs reject 계열(실패 → EPM 인접) 2-시리즈.
-// 색 단독 인코딩 금지 — CTM=solid · EPM=dashed 선스타일이 비색 1차 신호 (Sparkline 은
-// dash 미지원 → 인라인 SVG 직접 path 2개). 윈도우 합계 텍스트 동반 (a11y).
-
 // correction_signals AGGREGATE 카드 — stage1(regex) vs stage2(agent-emit) 검출 일치율
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 카드 숨김 (loop-events 와 동일 degrade).
@@ -827,138 +894,6 @@ function CorrectionSignalsCardI({ state }) {
 				</div>
 			</div>
 		</div>
-	);
-}
-
-function TrendCardI({ state, aggregate }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !aggregate) {
-		return (
-			<div className="card">
-				<CardHead title="Verified vs rejected (trend)" />
-				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
-				</div>
-			</div>
-		);
-	}
-
-	const series = aggregate.trend || [];
-	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
-	if (series.length < 2) {
-		return (
-			<div className="card">
-				<CardHead title="Verified vs rejected (trend)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						Not enough days to plot a trend
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	const verified = series.map((d) => d.verified);
-	const reject = series.map((d) => d.reject);
-
-	return (
-		<div className="card">
-			<CardHead
-				title="Verified vs rejected (trend)"
-				sub={`Daily improvement cycles across ${formatIntI(series.length)} days`}
-			/>
-			<div className="px-3 pb-3">
-				<TrendSparkI verified={verified} reject={reject} />
-				<div className="flex items-center gap-4 mt-2 fs-micro font-mono text-faint flex-wrap">
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--ok))"
-								strokeWidth="1.6"
-							/>
-						</svg>
-						<span className="text-ok">Verified</span>{" "}
-						{formatIntI(aggregate.verifiedTotal)}
-					</span>
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--warn))"
-								strokeWidth="1.6"
-								strokeDasharray="3 2"
-							/>
-						</svg>
-						<span className="text-warn">Rejected</span>{" "}
-						{formatIntI(aggregate.rejectTotal)}
-					</span>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-// 2-시리즈 라인 스파크 — Sparkline atom 은 단일 시리즈/dash 미지원 → 인라인 SVG.
-// 공통 y-scale (두 시리즈 max 기준) — verified solid · reject dashed (비색 구분 1차 신호).
-function TrendSparkI({ verified, reject }) {
-	const w = 100,
-		h = 40;
-	const max = Math.max(1, ...verified, ...reject);
-	const toPath = (data) =>
-		data
-			.map((v, i) => {
-				const x = (i / (data.length - 1)) * w;
-				const y = h - (v / max) * h * 0.9 - 1;
-				return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-			})
-			.join(" ");
-	return (
-		<svg
-			width="100%"
-			height={h}
-			viewBox={`0 0 ${w} ${h}`}
-			preserveAspectRatio="none"
-			role="img"
-			aria-label={`Trend over ${verified.length} days — verified peak ${Math.max(...verified)}, rejected peak ${Math.max(...reject)} cycles per day`}
-		>
-			<path
-				d={toPath(verified)}
-				fill="none"
-				stroke="rgb(var(--ok))"
-				strokeWidth="1.4"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-			<path
-				d={toPath(reject)}
-				fill="none"
-				stroke="rgb(var(--warn))"
-				strokeWidth="1.4"
-				strokeDasharray="3 2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
 	);
 }
 

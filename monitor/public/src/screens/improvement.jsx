@@ -611,11 +611,14 @@ function ScreenImprovement({ onNav }) {
 						loopEventsState={loopEventsState}
 						loopAggregate={loopAggregate}
 						correctionState={correctionState}
+						statsState={statsState}
 						corpusAuditState={corpusAuditState}
 						styleRef={styleRef}
 						proseOnlyAdd={proseOnlyAdd}
 						tierBreakdown={tierBreakdown}
 						confidenceDist={confidenceDist}
+						reviewReasons={reviewReasonSegments}
+						onNav={onNav}
 					/>
 				) : (
 					<>
@@ -625,7 +628,6 @@ function ScreenImprovement({ onNav }) {
 							learningLogState={learningLogState}
 							suppression={loopSuppression}
 							awaiting={columnRows.safety.length}
-							reviewReasons={reviewReasonSegments}
 							onRetry={triggerRefresh}
 						/>
 						<div className="flex-1 min-h-0">
@@ -678,7 +680,6 @@ function StatusBandI({
 	learningLogState,
 	suppression,
 	awaiting,
-	reviewReasons,
 	onRetry,
 }) {
 	const s = statsState.data || {};
@@ -689,6 +690,14 @@ function StatusBandI({
 		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
 	);
 	const statsStatus = tileStatusI(statsState, statsState.data);
+	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
+	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
+	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const sumCounts = (list) =>
+		list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
+	const heldNeedingHuman = sumCounts(
+		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
+	);
 	return (
 		<div className="grid grid-cols-4 gap-3 mb-3">
 			<StatusTileI
@@ -719,17 +728,12 @@ function StatusBandI({
 				onRetry={onRetry}
 			/>
 			<StatusTileI
-				status={statsStatus}
+				status={tileStatusI(learningLogState, suppression)}
 				tone="text-info"
 				symbol="ℹ"
-				label="Flagged results (7 days)"
-				value={formatIntI(Number(s.review_flag_last_7d ?? 0))}
-				population={
-					<ReviewReasonSegmentsI
-						segments={reviewReasons}
-						fallback="Outcomes flagged in the last 7 days"
-					/>
-				}
+				label="Held, needs a human"
+				value={formatIntI(heldNeedingHuman)}
+				population={`of ${formatIntI(sumCounts(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
 				onRetry={onRetry}
 			/>
 		</div>
@@ -852,9 +856,147 @@ function ViewToggleI({ view, onChange }) {
 	);
 }
 
+// ----- Rolling trend card (T-IMP-4) ------------------------------------------
+//
+// loop-events 날짜별 verified(성공 → CTM 인접) vs reject 계열(실패 → EPM 인접) 2-시리즈.
+// 색 단독 인코딩 금지 — CTM=solid · EPM=dashed 선스타일이 비색 1차 신호 (Sparkline 은
+// dash 미지원 → 인라인 SVG 직접 path 2개). 윈도우 합계 텍스트 동반 (a11y).
+
 // 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
+function TrendCardI({ state, aggregate }) {
+	const { CardHead } = window.UI;
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !aggregate) {
+		return (
+			<div className="card">
+				<CardHead title="Verified vs rejected (trend)" />
+				<div className="p-3">
+					<div
+						className="i-anim-skel"
+						style={{
+							height: 60,
+							borderRadius: 8,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+						}}
+					/>
+				</div>
+			</div>
+		);
+	}
+
+	const series = aggregate.trend || [];
+	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
+	if (series.length < 2) {
+		return (
+			<div className="card">
+				<CardHead title="Verified vs rejected (trend)" />
+				<div className="px-3 pb-3">
+					<div
+						className="placeholder"
+					>
+						Not enough days to plot a trend
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	const verified = series.map((d) => d.verified);
+	const reject = series.map((d) => d.reject);
+
+	return (
+		<div className="card">
+			<CardHead
+				title="Verified vs rejected (trend)"
+				sub={`Daily improvement cycles across ${formatIntI(series.length)} days`}
+			/>
+			<div className="px-3 pb-3">
+				<TrendSparkI verified={verified} reject={reject} />
+				<div className="flex items-center gap-4 mt-2 fs-micro font-mono text-faint flex-wrap">
+					<span className="inline-flex items-center gap-1.5">
+						<svg width="22" height="8" aria-hidden="true">
+							<line
+								x1="0"
+								y1="4"
+								x2="22"
+								y2="4"
+								stroke="rgb(var(--ok))"
+								strokeWidth="1.6"
+							/>
+						</svg>
+						<span className="text-ok">Verified</span>{" "}
+						{formatIntI(aggregate.verifiedTotal)}
+					</span>
+					<span className="inline-flex items-center gap-1.5">
+						<svg width="22" height="8" aria-hidden="true">
+							<line
+								x1="0"
+								y1="4"
+								x2="22"
+								y2="4"
+								stroke="rgb(var(--warn))"
+								strokeWidth="1.6"
+								strokeDasharray="3 2"
+							/>
+						</svg>
+						<span className="text-warn">Rejected</span>{" "}
+						{formatIntI(aggregate.rejectTotal)}
+					</span>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// 2-시리즈 라인 스파크 — Sparkline atom 은 단일 시리즈/dash 미지원 → 인라인 SVG.
+// 공통 y-scale (두 시리즈 max 기준) — verified solid · reject dashed (비색 구분 1차 신호).
+function TrendSparkI({ verified, reject }) {
+	const w = 100,
+		h = 40;
+	const max = Math.max(1, ...verified, ...reject);
+	const toPath = (data) =>
+		data
+			.map((v, i) => {
+				const x = (i / (data.length - 1)) * w;
+				const y = h - (v / max) * h * 0.9 - 1;
+				return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+			})
+			.join(" ");
+	return (
+		<svg
+			width="100%"
+			height={h}
+			viewBox={`0 0 ${w} ${h}`}
+			preserveAspectRatio="none"
+			role="img"
+			aria-label={`Trend over ${verified.length} days — verified peak ${Math.max(...verified)}, rejected peak ${Math.max(...reject)} cycles per day`}
+		>
+			<path
+				d={toPath(verified)}
+				fill="none"
+				stroke="rgb(var(--ok))"
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				vectorEffect="non-scaling-stroke"
+			/>
+			<path
+				d={toPath(reject)}
+				fill="none"
+				stroke="rgb(var(--warn))"
+				strokeWidth="1.4"
+				strokeDasharray="3 2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				vectorEffect="non-scaling-stroke"
+			/>
+		</svg>
+	);
+}
+
 function LoopOutputGroupI({
 	statsState,
 	loopEventsState,
@@ -885,12 +1027,17 @@ function LoopOutputGroupI({
 			{statsState.status === "ready" && statsState.data ? (
 				<CycleDecompositionRowI stats={statsState.data} />
 			) : null}
-			<ChangeSummaryCardI
-				state={loopEventsState}
-				aggregate={loopAggregate}
-				onRetry={onRetry}
-			/>
-			<BucketRowI state={listState} buckets={buckets} />
+			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
+          첫 카드에만 걸린 것으로 읽힌다(와이어프레임 Tier 4 = 3-col). */}
+			<div className="grid grid-cols-3 gap-3 items-start">
+				<ChangeSummaryCardI
+					state={loopEventsState}
+					aggregate={loopAggregate}
+					onRetry={onRetry}
+				/>
+				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
+				<BucketRowI state={listState} buckets={buckets} />
+			</div>
 		</div>
 	);
 }
@@ -1785,14 +1932,23 @@ function SuppressionBucketRowsI({ buckets, unitLabel }) {
 
 // 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
 // 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
-const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
+// 반려 백로그는 별도의 공개 표면이 아니라 held 의 한 원인이다 — 사람이 이미 내린 결정이므로
+// 설계 결정 그룹과 같이 접힌 채로 시작하고, 원장의 종결 행 구조 안에서만 읽힌다.
+const DECLINED_HELD_CAUSE = "declined";
+
+const HELD_DESIGN_DECISION_CAUSES = new Set([
+	"non-promptable",
+	"other",
+	DECLINED_HELD_CAUSE,
+]);
 
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
-function LedgerHeldSectionI({ suppression }) {
+function LedgerHeldSectionI({ suppression, declined }) {
 	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
-	if (buckets.length === 0) return null;
-	const rows = Array.isArray(suppression.parked_patterns)
+	const declinedRows = Array.isArray(declined) ? declined : [];
+	if (buckets.length === 0 && declinedRows.length === 0) return null;
+	const rows = Array.isArray(suppression?.parked_patterns)
 		? suppression.parked_patterns
 		: [];
 	return (
@@ -1807,8 +1963,25 @@ function LedgerHeldSectionI({ suppression }) {
 					rows={rows.filter((r) => r.cause === b.cause)}
 				/>
 			))}
+			{declinedRows.length > 0 && (
+				<HeldCauseGroupI
+					bucket={declinedHeldBucketI(declinedRows)}
+					rows={declinedRows}
+				/>
+			)}
 		</div>
 	);
+}
+
+function declinedHeldBucketI(rows) {
+	const agents = new Set(rows.map((r) => r.agent).filter(Boolean));
+	return {
+		cause: DECLINED_HELD_CAUSE,
+		label: "Declined",
+		count: rows.length,
+		agents: agents.size,
+		hint: "A human rejected these — terminal unless the pattern is discovered again as a new row.",
+	};
 }
 
 // remedy 는 그룹 헤더에 한 번만 — 행마다 반복하면 원인 하나가 여러 원인으로 읽힌다.
@@ -2415,13 +2588,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 				onRowClick={onRowClick}
 			/>
 			<LedgerInertSectionI rows={inert} />
-			<LedgerHeldSectionI suppression={suppression} />
+			<LedgerHeldSectionI suppression={suppression} declined={declined} />
 			<LedgerRecurrenceDisclosureI suppression={suppression} />
-			<LedgerDeclinedBacklogI
-				rows={declined}
-				maxFreq={maxFreq}
-				onRowClick={onRowClick}
-			/>
 			<LedgerFooterI
 				total={total}
 				declined={declinedAllTime}
@@ -2455,29 +2623,6 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 				/>
 			))}
 		</div>
-	);
-}
-
-// T-IMP-5 — 반려 백로그(장기 누적) collapsible, 기본 접힘.
-function LedgerDeclinedBacklogI({ rows, maxFreq, onRowClick }) {
-	if (rows.length === 0) return null;
-	return (
-		<details className="px-3 pb-3">
-			<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
-				<SymI s="✕" size={11} /> Declined backlog ({formatIntI(rows.length)})
-			</summary>
-			<div className="flex flex-col gap-1.5 mt-2">
-				{rows.map((p, i) => (
-					<CandidateRowI
-						key={p.id}
-						rank={i + 1}
-						pattern={p}
-						maxFreq={maxFreq}
-						onClick={() => onRowClick({ ...p, kind: "pattern" })}
-					/>
-				))}
-			</div>
-		</details>
 	);
 }
 
@@ -2754,6 +2899,6 @@ function InstrumentationViewI(props) {
 }
 
 // 계기판 뷰가 소비하는 화면 공용 원자 — 두 번들이 한 화면을 이루므로 기호/배지 판정은 여기 하나뿐.
-window.ImprovementShared = { SymI, confidenceBadgeMetaI };
+window.ImprovementShared = { SymI, confidenceBadgeMetaI, ReviewReasonSegmentsI };
 
 window.ScreenImprovement = ScreenImprovement;
