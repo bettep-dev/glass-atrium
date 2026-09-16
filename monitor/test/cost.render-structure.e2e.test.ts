@@ -1,25 +1,12 @@
-// E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx).
+// E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx): DOM-structure facts
+// only — tier order, the alarm lane's presence, one decision-tier chart root — over two render
+// contexts (calm · hot), since one context can only measure one side of the lane. Values behind
+// those structures are pinned in cost.client.unit.test.ts.
+//
 // Runner: npx tsx --test test/cost.render-structure.e2e.test.ts
-//
-// Asserts DOM-structure facts only — the decision tier renders above the instrumentation
-// tier in priority order, the alarm lane occupies the DOM only when a trigger fires, and
-// the decision tier draws exactly one chart root. No value, colour or pixel assertion
-// lives here: the derivations behind those values are pinned in cost.client.unit.test.ts.
-//
-// TWO render contexts, one per fixture (calm · hot). The lane is a function of the
-// payloads, so a single context can only ever measure one side of it: absence in the calm
-// context means nothing unless the same screen renders the lane in the hot one.
-//
-// App: stripped Fastify (fastify-static + the cost screen's seven payload routes) on an
-// ephemeral port. registerCostRoutes is NOT called — it stands up Prisma-backed handlers
-// whose output depends on live data, which would make a structure assertion a data
-// assertion. A catch-all keeps the app shell's own polling quiet.
-// Browser: Playwright chromium headless, NO mocking.
-//
-// Page-level network prerequisite: the page pulls React and Recharts from CDN, so the run
-// REQUIRES outbound network and an installed chromium. An unmet prerequisite fails RED
-// (asserted in before) — no skip guard absorbs it. The shipped bundle under public/dist is
-// the artifact under test, so `npm run build:jsx` must precede the run.
+// Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
+// App: stripped Fastify serving the seven cost payloads; registerCostRoutes stays out, its
+// Prisma-backed output would make a structure assertion a data assertion.
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -85,8 +72,9 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   });
 
   const trendRows = fixture.trendCosts.map((cost, i) => ({
-    day: getDayKey(i),
+    date: getDayKey(i),
     cost_usd: cost,
+    session_count: 3,
     input_tokens: 1000,
     output_tokens: 500,
     cache_read_tokens: 4000,
@@ -94,7 +82,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   }));
 
   app.get("/api/cost/kpi", async () => fixture.kpi);
-  app.get("/api/dashboard/cost-timeseries", async () => ({ rows: trendRows }));
+  app.get("/api/dashboard/cost-timeseries", async () => ({
+    days: trendRows.length,
+    points: trendRows,
+    timezone: "UTC",
+  }));
   app.get("/api/cost/by-model", async () => ({
     rows: [
       {
@@ -109,7 +101,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     ],
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    rows: trendRows.map((r) => ({ day: r.day, cache_hit_ratio: 0.8 })),
+    rows: trendRows.map((r) => ({ day: r.date, cache_hit_ratio: 0.8 })),
   }));
   app.get("/api/cost/session-distribution", async () => ({
     rows: Array.from({ length: 8 }, (_, i) => ({
