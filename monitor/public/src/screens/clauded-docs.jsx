@@ -901,16 +901,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }
-        .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: 4px; font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
+        .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: var(--radius-badge); font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
         .doc-chip-badge[disabled] { cursor: default; }
-        .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
         /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
         .doc-empty { padding: 28px; border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
-        .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); }
+        .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
+        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
         .doc-editor-textarea:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history (T-DOC-3) — base.css .acked 는 .alert-row 스코프라 div 미적용 → predecessor 전용 dim 룰.
@@ -989,7 +989,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         .doc-group-action-bar .ml-auto-actions { margin-left: auto; display: flex; gap: 8px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: 4px; }
+        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle .chevron { transition: transform 160ms ease-out; }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
@@ -1001,7 +1001,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: 12px; line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: 3px; user-select: none; }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: 12px; line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-badge); user-select: none; }
         .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
@@ -1025,8 +1025,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
         .doc-stage-actor { font-size: var(--fs-micro); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .doc-stage-note { font-size: var(--fs-micro); color: rgb(var(--dim)); }
-        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
-        .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: 4px; color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
+        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
+        .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
         .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
         .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }
         .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); }
@@ -1435,7 +1435,7 @@ function DocListCardCD({
                     목록 모드 비-제목 합 613px → 제목이 나머지 397px(본문 상자 343px).
                     width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
                     min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
-								{/* 135px — 최장 라벨 "In progress" 배지가 들어가는 컬럼 하한. */}
+								{/* 135px — 최장 stage 라벨 pill 과 그 아래 모델 줄이 들어가는 컬럼 하한. */}
 								<th style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
@@ -1840,8 +1840,8 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	// column 구성: checkbox + status + id + title + tags + author + created_at (+ rank if search) = 7 or 8.
-	const colSpan = isSearchMode ? 8 : 7;
+	// column 구성: checkbox + status + id + title + tags + author + created_at = 7 (검색 모드도 동일 — relevance 컬럼 없음).
+	const colSpan = 7;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -4404,7 +4404,7 @@ function chipBadgeStyleCD(cssVar, active) {
 function skeletonBlockStyleCD(height) {
 	return {
 		height,
-		borderRadius: 6,
+		borderRadius: "var(--radius-badge)",
 		background: "rgb(var(--sunken))",
 		opacity: 0.7,
 		animation: "skelPulseCD 1.4s ease-in-out infinite",
