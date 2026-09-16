@@ -70,7 +70,6 @@ function ScreenCost({ onNav }) {
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
   const [kpiState,      setKpiState]      = useStateC({ status: 'loading', data: null, error: null }); // KPI band (고정 윈도우 — days 무관)
   const [tokenState,    setTokenState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [token7State,   setToken7State]   = useStateC({ status: 'loading', data: null, error: null }); // KPI sparkline source (7d 고정)
   const [modelState,    setModelState]    = useStateC({ status: 'loading', data: null, error: null });
   const [cacheState,    setCacheState]    = useStateC({ status: 'loading', data: null, error: null });
   const [sessionState,  setSessionState]  = useStateC({ status: 'loading', data: null, error: null });
@@ -89,7 +88,6 @@ function ScreenCost({ onNav }) {
 
     setKpiState({ status: 'loading', data: null, error: null });
     setTokenState({ status: 'loading', data: null, error: null });
-    setToken7State({ status: 'loading', data: null, error: null });
     setModelState({ status: 'loading', data: null, error: null });
     setCacheState({ status: 'loading', data: null, error: null });
     setSessionState({ status: 'loading', data: null, error: null });
@@ -101,7 +99,6 @@ function ScreenCost({ onNav }) {
     const tasks = [
       runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState),
       runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState),
-      runFetchC('/api/dashboard/cost-timeseries?days=7',       ctrl.signal, setToken7State),
       runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState),
       runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState),
       runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState),
@@ -164,18 +161,17 @@ function ScreenCost({ onNav }) {
         />
       </div>
 
-      {/* 1. KPI×4 (R09) — 오늘 비용 · 7일 비용 · 시간당 burn (3h) · 성공 작업당 비용 */}
+      {/* 1. KPI band — today vs. own normal · window total · cost per finished task · cache share. */}
       <KpiRowC
         kpiState={kpiState}
-        token7State={token7State}
+        trendState={tokenState}
+        modelState={modelState}
+        days={days}
         onRetry={triggerRefresh}
       />
 
       {/* 2. 비용 추이 라인 차트 (T-CST-1) — 단일 Y축 LINE, full-width */}
       <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh}/>
-
-      {/* 2b. 예산 대비 + burn-rate 투영 (T-CST-4) — BulletBar/텍스트 투영, full-width */}
-      <BudgetCard kpiState={kpiState} onRetry={triggerRefresh}/>
 
       {/* 3. 토큰 누적 영역 차트 (input/output 분할 — magnitude 상이 → 누적 정당) — full-width */}
       <TokenStackedCard state={tokenState} days={days} onRetry={triggerRefresh}/>
@@ -206,184 +202,217 @@ function ScreenCost({ onNav }) {
   );
 }
 
-// 1. KPI row × 4 (R09) — 오늘 비용 / 7일 비용 / 시간당 burn (3h) / 성공 작업당 비용.
-// 출처 = /api/cost/kpi (고정 윈도우 · KST 기준일). 7일 비용만 7d 일별 시리즈 sparkline 동반 —
-// 나머지는 단일 스칼라 → sparkline 없음 (A6).
-function KpiRowC({ kpiState, token7State, onRetry }) {
-  const { KPI } = window.UI;
+// 1. KPI band — the four decision-bearing facts, in priority order: today against the operator's own
+// 7-day normal · the window total and its trend · cost per finished task · cache share of cost.
+// Each tile reduces its OWN payload to one state, so a figure that never loaded never reads as a zero.
 
-  if (kpiState.status === 'loading') {
-    return (
-      <div className="grid grid-cols-3 gap-3 mb-4" aria-busy="true" aria-label="Loading KPIs">
-        {Array.from({ length: 3 }).map((_, i) => <KpiSkeletonC key={i}/>)}
-      </div>
-    );
-  }
-  if (kpiState.status === 'error') {
-    return (
-      <div className="mb-4">
-        <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>
-      </div>
-    );
-  }
+// "Running hot" cut — today at or above 1.25x the operator's own 7-day daily normal.
+// Defined once on this screen; the Dashboard inherits this value.
+const HOT_RATIO_CUT = 1.25;
 
-  const kpi = kpiState.data || {};
-  const todayCost = Number(kpi.today_cost_usd) || 0;
-  const week7Cost = Number(kpi.window_7d_cost_usd) || 0;
-  // null = 7일 내 done 0건 → '—' (가짜 0 금지).
-  const costPerDone = kpi.cost_per_done_usd === null || kpi.cost_per_done_usd === undefined
-    ? null
-    : Number(kpi.cost_per_done_usd) || 0;
-  const doneCount7d = Number(kpi.done_count_7d) || 0;
-
-  // 7일 비용 sparkline + delta — 7d 일별 시리즈 (token7State 재사용).
-  const cost7Points = token7State.status === 'ready' ? (token7State.data?.points ?? []) : [];
-  const costSpark = cost7Points.length > 0 ? cost7Points.map((p) => Number(p.cost_usd) || 0) : null;
-  const costDelta = computeSparkDeltaC(costSpark);
-
-  return (
-    <div className="grid grid-cols-3 gap-3 mb-4">
-      <KPI
-        label="Cost today"
-        value={formatUsdC(todayCost)}
-        hint={`${window.UI.tzShortLabel()} day`}
-      />
-      <KPI
-        label="Cost, 7 days"
-        value={formatUsdC(week7Cost)}
-        delta={costDelta}
-        deltaInverse={true}
-        sparkData={costSpark}
-        sparkColor="rgb(var(--crit))"
-        hint="last 7 days"
-      />
-      <KPI
-        label="Cost per finished task"
-        value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
-        hint={costPerDone === null ? 'no done tasks in 7 days' : `7-day cost / ${formatIntC(doneCount7d)} done`}
-      />
-    </div>
-  );
-}
-
-function KpiSkeletonC() {
-  return (
-    <div className="kpi" style={{ pointerEvents: 'none' }}>
-      <div className="kpi-label"><SkelC w={80} h={11}/></div>
-      <div className="kpi-value" style={{ marginTop: 10 }}><SkelC w={120} h={26}/></div>
-    </div>
-  );
-}
-
-// 2b. BudgetCard (T-CST-4) — 오늘 지출을 자기 7일 일평균 baseline 대비로 BulletBar 표현
-// + 3h burn-rate 의 일·월 run-rate TEXT 투영(radial 게이지 금지).
-// SLOP 가드: 시스템에 사용자 설정 예산값이 없음 → 예산 수치를 발명하지 않는다.
-//   target/zone 은 "자기 7일 일평균" 이라는 실측 baseline 으로만 도출 (lower-is-better=deltaInverse 의미).
-//   실 예산 config 소스가 생기면 target 을 그 값으로 교체 (shared_change_needed 로 보고).
-function BudgetCard({ kpiState, onRetry }) {
-  const { CardHead } = window.UI;
-
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Spend vs. baseline"
-      />
-      <div className="card-body">
-        <BudgetBody kpiState={kpiState} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function BudgetBody({ kpiState, onRetry }) {
-  const { BulletBar } = window.UI;
-
-  if (kpiState.status === 'loading') {
-    return <ChartSkeletonC height={120} aria-label="Loading budget projection"/>;
-  }
-  if (kpiState.status === 'error') {
-    return <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>;
-  }
-
-  const kpi = kpiState.data || {};
-  const todayCost = Number(kpi.today_cost_usd) || 0;
-  const week7Cost = Number(kpi.window_7d_cost_usd) || 0;
-  const burnRate = Number(kpi.burn_rate_3h_usd_per_hour) || 0;
-
-  // 7일 비용 / 7 = 일평균 baseline (실측, 발명 아님). 0 분모 → BulletBar 생략 (placeholder).
-  const avgDaily = week7Cost > 0 ? week7Cost / 7 : 0;
-  // baseline 대비 비율 — 1.0 = 일평균과 동일. zone 컷: <0.75 ok · <1.25 warn · ≥1.25 crit (lower-is-better).
-  // 정규화 분모 = baseline×2 (BulletBar 는 0-1 입력 → today/(avg×2) 로 0.5 가 baseline 위치).
-  const ratioNorm = avgDaily > 0 ? Math.min(todayCost / (avgDaily * 2), 1) : 0;
-  const targetNorm = avgDaily > 0 ? 0.5 : null;
-
-  // 실 데이터 투영(TEXT) — 3h burn 을 일/월 run-rate 로 외삽. 게이지/radial 아님.
-  const projectedDaily = burnRate * 24;
-  const projectedMonthly = burnRate * 24 * 30;
-
-  return (
-    <div className="flex flex-col gap-4">
-      {avgDaily > 0 ? (
-        <div>
-          <div className="flex items-baseline justify-end mb-1.5">
-            <span className="fs-meta font-mono text-dim">
-              {formatUsdC(todayCost)} <span className="text-faint">today</span> · {formatUsdC(avgDaily)} <span className="text-faint">7-day avg/day</span>
-            </span>
-          </div>
-          <BulletBar
-            value={ratioNorm}
-            target={targetNorm}
-            zones={BUDGET_ZONES}
-            ariaLabel={`Today ${formatUsdC(todayCost)} vs 7-day average ${formatUsdC(avgDaily)} (marker = average)`}
-            showValue={false}
-          />
-          {/* dual-encode: 막대 색 외 텍스트 verdict 도 동반 (색 단독 인코딩 금지). */}
-          <div className="cost-foot mt-1.5">
-            {budgetVerdictText(todayCost, avgDaily)}
-          </div>
-        </div>
-      ) : (
-        <div className="placeholder" style={{ padding: 16 }}>
-          No 7-day cost yet — daily-average baseline needs cost in the last 7 days.
-        </div>
-      )}
-
-      {/* burn-rate 투영 — TEXT only (T-CST-4: not radial). */}
-      <div className="grid grid-cols-3 gap-3 items-start">
-        <div>
-          <div className="fs-meta text-dim">Burn rate</div>
-          <div className="font-mono fs-stat font-semibold tracking-tight">
-            {formatUsdC(burnRate)}<span className="fs-meta text-dim font-normal ml-1">/h</span>
-          </div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim" title="3-hour burn rate extrapolated to 24 hours">Projected / day</div>
-          <div className="font-mono fs-stat text-dim tracking-tight">{formatUsdC(projectedDaily)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim" title="3-hour burn rate extrapolated to 30 days">Projected / 30 d</div>
-          <div className="font-mono fs-stat text-dim tracking-tight">{formatUsdC(projectedMonthly)}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// BulletBar zone cut-points (lower-is-better) — normalized to today/(avg×2):
-//   < 0.375 (= today < 0.75×avg) ok · < 0.625 (= today < 1.25×avg) warn · 이상 crit.
-const BUDGET_ZONES = [
-  { upTo: 0.375, tone: 'ok' },
-  { upTo: 0.625, tone: 'warn' },
-  { upTo: 1.0,   tone: 'crit' },
+// Bullet-bar zones over today / (normal x 2), so 0.5 sits exactly on the normal.
+// Colour is reserved for the alarm — only the hot band carries a tone.
+const HOT_BULLET_ZONES = [
+  { upTo: HOT_RATIO_CUT / 2, tone: 'neutral' },
+  { upTo: 1.0,               tone: 'crit'    },
 ];
 
-// 텍스트 verdict — 막대 색의 dual-encode 짝 (색 단독 금지). baseline 대비 배수로 서술.
-function budgetVerdictText(todayCost, avgDaily) {
-  if (avgDaily <= 0) return '';
-  const ratio = todayCost / avgDaily;
-  if (ratio < 0.75) return `Below baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average.`;
-  if (ratio < 1.25) return `Around baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average.`;
-  return `Above baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average (running hot).`;
+// Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
+function toFiniteOrNull(value) {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
+// unavailable (payload arrived, this measure is not derivable) · ready.
+function getTileStatus(state, value, isEmpty) {
+  if (state.status === 'loading') return 'loading';
+  if (state.status === 'error') return 'error';
+  if (isEmpty) return 'empty';
+  return value === null || value === undefined ? 'unavailable' : 'ready';
+}
+
+// Non-ready tiles say why in words; the value slot stays an em dash so it never reads as measured.
+function getTileNote(status, unavailableNote) {
+  if (status === 'error') return 'Unavailable — this payload failed to load.';
+  if (status === 'empty') return 'No cost recorded in this window.';
+  if (status === 'unavailable') return unavailableNote || 'Not available for this window.';
+  return '';
+}
+
+// Today so far against the operator's own 7-day daily normal.
+// Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+function computeHotVerdict(kpi) {
+  const todayCost = toFiniteOrNull(kpi.today_cost_usd);
+  const week7Cost = toFiniteOrNull(kpi.window_7d_cost_usd);
+  const burnRate = toFiniteOrNull(kpi.burn_rate_3h_usd_per_hour);
+  const normalDaily = week7Cost !== null && week7Cost > 0 ? week7Cost / 7 : null;
+
+  const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
+  // 3h burn extrapolated to a full day — where today lands if the current rate holds.
+  const paceRatio = normalDaily !== null && burnRate !== null ? (burnRate * 24) / normalDaily : null;
+
+  return {
+    todayCost,
+    normalDaily,
+    ratio,
+    paceRatio,
+    isHot: ratio !== null && ratio >= HOT_RATIO_CUT,
+    isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
+    verdict: getHotVerdictText(ratio, paceRatio),
+  };
+}
+
+// So-far clause always; the pace clause joins it only when a pace figure exists.
+function getHotVerdictText(ratio, paceRatio) {
+  if (ratio === null) return '';
+  const soFar = `${(ratio * 100).toFixed(0)}% of the 7-day daily normal so far`;
+  if (paceRatio === null) return `Today is ${soFar}.`;
+  const pace = paceRatio >= HOT_RATIO_CUT
+    ? `on pace for ${paceRatio.toFixed(1)}x it`
+    : `on pace for ${(paceRatio * 100).toFixed(0)}% of it`;
+  return `Today is ${soFar}, ${pace}.`;
+}
+
+// Window total + first-to-last trend over the period the toggle selects.
+function computeWindowTotal(trendState) {
+  const ready = trendState.status === 'ready';
+  const points = ready ? (trendState.data?.points ?? trendState.data?.rows ?? []) : [];
+  if (points.length === 0) {
+    return { total: null, delta: null, dayCount: 0, isEmpty: ready };
+  }
+  const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
+  return {
+    total: series.reduce((s, v) => s + v, 0),
+    delta: computeSparkDeltaC(series),
+    dayCount: points.length,
+    isEmpty: false,
+  };
+}
+
+// Cache share of cost — both cache categories over the window total, from the per-model price split.
+// A zero-cost window yields null: there is no share to state, and 0% would read as "cache is free".
+function computeCacheShare(modelState) {
+  const ready = modelState.status === 'ready';
+  const rows = ready ? (modelState.data?.rows ?? []) : [];
+  if (rows.length === 0) {
+    return { share: null, cacheCost: null, isEmpty: ready };
+  }
+  const split = buildModelCostRows(rows);
+  const totalCost = split.reduce((s, r) => s + r.cost_usd, 0);
+  const cacheCost = split.reduce((s, r) => s + r.cost_cache_read + r.cost_cache_creation, 0);
+  return {
+    share: totalCost > 0 ? cacheCost / totalCost : null,
+    cacheCost: totalCost > 0 ? cacheCost : null,
+    isEmpty: false,
+  };
+}
+
+function KpiRowC({ kpiState, trendState, modelState, days, onRetry }) {
+  const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
+  const hot = computeHotVerdict(kpi);
+  const windowTotal = computeWindowTotal(trendState);
+  const cacheShare = computeCacheShare(modelState);
+  const costPerDone = toFiniteOrNull(kpi.cost_per_done_usd);
+  const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
+
+  return (
+    <>
+      {/* Payload failure is a banner at the owning group — the KPI payload feeds tiles 1 and 3. */}
+      {kpiState.status === 'error' && (
+        <div className="mb-4">
+          <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>
+        </div>
+      )}
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <CostTileC
+          label="Today vs. normal"
+          status={getTileStatus(kpiState, hot.ratio, false)}
+          value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
+          hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
+          unavailableNote="No cost in the last 7 days — no normal to compare against.">
+          <HotBulletC hot={hot}/>
+        </CostTileC>
+
+        <CostTileC
+          label={`Cost, last ${days} days`}
+          status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
+          value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
+          hint={`${windowTotal.dayCount} days with cost`}
+          unavailableNote="Trend payload carries no cost figure.">
+          <TrendDeltaC delta={windowTotal.delta}/>
+        </CostTileC>
+
+        <CostTileC
+          label="Cost per finished task"
+          status={getTileStatus(kpiState, costPerDone, false)}
+          value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
+          hint={`7-day cost / ${formatIntC(doneCount)} finished`}
+          unavailableNote="No finished task in the last 7 days."/>
+
+        <CostTileC
+          label="Cache share of cost"
+          status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
+          value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
+          hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
+          unavailableNote="No priced model cost in this window."/>
+      </div>
+    </>
+  );
+}
+
+// Cost-local tile shell — the shared KPI atom is a single-value button, and tile 1 carries a bar and a
+// verdict, so all four tiles use this one shell rather than mixing two tile idioms in one band.
+function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+  const isReady = status === 'ready';
+  const note = getTileNote(status, unavailableNote);
+
+  return (
+    <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
+      <div className="kpi-label">{label}</div>
+      {isReady && hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+      <div className="kpi-value">
+        {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
+      </div>
+      {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
+    </div>
+  );
+}
+
+// Bullet bar carries the alarm tone; the sentence under it repeats the verdict in words, and the
+// pace figure lives in that sentence alone so it can never colour the bar.
+function HotBulletC({ hot }) {
+  const { BulletBar } = window.UI;
+  // today / (normal x 2) — the normal sits at 0.5, the 1.25x cut at 0.625, anything beyond clamps to 1.
+  const valueNorm = Math.min(hot.ratio / 2, 1);
+
+  return (
+    <div className="mt-2">
+      <BulletBar
+        value={valueNorm}
+        target={0.5}
+        zones={HOT_BULLET_ZONES}
+        ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
+        showValue={false}
+      />
+      <div className="cost-foot mt-1.5">{hot.verdict}</div>
+    </div>
+  );
+}
+
+// Window trend — direction rides on the glyph, never on the text colour.
+function TrendDeltaC({ delta }) {
+  if (typeof delta !== 'number' || !Number.isFinite(delta)) {
+    return <div className="cost-foot mt-1.5">No trend — a single day in the window.</div>;
+  }
+  const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
+  return (
+    <div className="cost-foot mt-1.5">
+      <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
+      {Math.abs(delta).toFixed(0)}% first day to last
+    </div>
+  );
 }
 
 // 2. CostTrendCard — 일별 비용 단일 Y축 LINE 차트 (T-CST-1).
