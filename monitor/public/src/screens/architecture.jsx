@@ -1347,7 +1347,7 @@ function HookChainDetail({ state }) {
  * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookFailureDetail({ state }) {
-	const { formatRelativeTime, formatKstFull } = window.UI;
+	const { StatusDot, formatRelativeTime, formatKstFull } = window.UI;
 	const rows = getHookFailureRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1401,8 +1401,10 @@ function HookFailureDetail({ state }) {
 							</time>
 							<span className="font-mono text-ink">{row.hookName}</span>
 							<span className="font-mono">{row.targetTable}</span>
-							{/* 라벨이 신호이고 색은 보조 — 색만으로 실패 종류를 가르지 않음 */}
-							<span className={TONE_TEXT_CLASS[row.kind.tone] || "text-dim"}>
+							{/* 라벨이 신호이고 tone 은 점이 실음 — meta 크기 글자에 심각도 색을
+							    얹으면 AA 대비에 못 미치고, 색만으로 실패 종류를 가르지도 않음 */}
+							<span className="inline-flex items-center">
+								<StatusDot status={row.kind.tone} />
 								{row.kind.label}
 							</span>
 							{row.retryAttempted && (
@@ -1804,7 +1806,7 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 				borderColor: "rgb(var(--crit) / 0.4)",
 			}}
 		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
+			<Icon name="warn" size={16} className={`${TONE_GLYPH_CLASS.crit} mt-0.5`} />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{title}</div>
 				{detail && (
@@ -1825,10 +1827,10 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 	);
 }
 
-// tone → 글자색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
-// 배너 아이콘과 실패 로그의 error_kind 라벨이 같은 표를 씀 — 둘째 표를 들이면 같은 tone 이
-// 화면 자리마다 다른 색으로 갈라짐.
-const TONE_TEXT_CLASS = {
+// tone → 글리프 색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
+// 읽는 쪽은 아이콘뿐임 — 글자에 얹으면 meta/micro 크기에서 AA 대비에 못 미침 (39578 §D).
+// 둘째 표를 들이면 같은 tone 이 화면 자리마다 다른 색으로 갈라짐.
+const TONE_GLYPH_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
@@ -1856,7 +1858,7 @@ function AlarmRowAR({ row, onRetry }) {
 			<Icon
 				name={row.icon}
 				size={16}
-				className={`${TONE_TEXT_CLASS[row.tone]} mt-0.5`}
+				className={`${TONE_GLYPH_CLASS[row.tone]} mt-0.5`}
 			/>
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{row.title}</div>
