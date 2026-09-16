@@ -530,6 +530,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
   const breakingCount = failureState.status === 'ready'
     ? Array.from(failureByAgent.values()).filter((row) => row.total_breakages > 0).length
     : null;
+  // budget_overages keys agent_type by per-run agent id → this counts runs, not registry agents.
   const overCapCount = overageState.status === 'ready'
     ? Array.from(overageByAgent.values()).filter((row) => row.overage_count > 0).length
     : null;
@@ -538,7 +539,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
     : null;
 
   return (
-    <div className="grid grid-cols-4 gap-4 mb-4 items-stretch">
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
       <AgentStatusTile
         label="Unsafe to route"
         sub={breaker && breaker.source === 'loaded' ? `of ${breaker.registry_agents} registered agents` : 'circuit-breaker state'}
@@ -560,7 +561,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Over tool-use cap"
-        sub="agents crossing their budget"
+        sub="runs that crossed their tool-use budget"
         status={overageState.status}
         value={overCapCount}
         tone={overCapCount ? 'warn' : 'ok'}
@@ -568,7 +569,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
         onRetry={onRetry}
       />
       <AgentStatusTile
-        label="No completion record"
+        label="Needs context"
         sub="needs_context outcomes — fix the delegation prompt"
         status={summaryState.status}
         value={needsContextCount}
@@ -2127,7 +2128,7 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
     <div className="card h-full flex flex-col min-h-0">
       <CardHead
         title="Most-failing pairs"
-        sub={`${failingPairs.length} of ${measuredPairs} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · last ${days} days · top ${TOPN_FAILING_LIMIT}`}
+        sub={getFailingPairsSub(state.status, failingPairs.length, measuredPairs, days)}
         right={state.status === 'ready' && failingPairs.length > 0
           ? <Pill tone="crit">{failingPairs.length}</Pill>
           : null}
@@ -2137,6 +2138,13 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
       </div>
     </div>
   );
+}
+
+// Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract.
+function getFailingPairsSub(status, failingCount, measuredCount, days) {
+  if (status === 'loading') return `last ${days} days`;
+  if (status !== 'ready') return 'Failing pairs unavailable — payload not loaded';
+  return `${failingCount} of ${measuredCount} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · last ${days} days · top ${TOPN_FAILING_LIMIT}`;
 }
 
 function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) {
