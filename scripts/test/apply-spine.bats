@@ -311,6 +311,87 @@ retired_live_map() {
   [[ -f "${LIVE}/scripts/lib/stale.sh" ]] || return 1
 }
 
+# Containment: a retired key naming a real, hash-matching file OUTSIDE the install root
+# must be refused, so every escape fixture below seeds that file with its real hash —
+# a fixture whose target is absent would pass without the refusal ever running.
+
+# Echo the one stderr row a refused retired key $1 produces.
+unsafe_row() {
+  printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped' "$1"
+}
+
+@test "#13 retired: an absolute key is refused with its UNSAFE row, never selected" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "x" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "/x")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "/x")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot key reaching a real file beside the install root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${STATE}" "editable-reset/pending.json" "operator-request"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "../state/editable-reset/pending.json")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/editable-reset/pending.json")"* ]] || return 1
+}
+
+@test "#13 retired: a key through a symlinked directory to a file outside the root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${WORK}" "elsewhere/secret.json" "outside-body"
+  ln -s -- "${WORK}/elsewhere" "${LIVE}/linked"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "linked/secret.json")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "linked/secret.json")"* ]] || return 1
+}
+
+@test "#13 retired: top-level and one-level keys stay selected under an aliased install root" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "top.txt" "top-body"
+  seed_file "${LIVE}" "scripts/one.sh" "one-body"
+  ln -s -- "${LIVE}" "${WORK}/live-alias"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(jq -n --argjson a "$(retired_live_map "top.txt")" \
+      --argjson b "$(retired_live_map "scripts/one.sh")" '$a + $b')" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${WORK}/live-alias"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = $'scripts/one.sh\ntop.txt' ] || return 1
+  [[ "${stderr}" != *"UNSAFE"* ]] || return 1
+}
+
+@test "#13 retired: a refused key does not stop a contained key in the same map" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${STATE}" "pending.json" "operator-request"
+  seed_file "${LIVE}" "scripts/lib/good.sh" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(jq -n --argjson a "$(retired_live_map "../state/pending.json")" \
+      --argjson b "$(retired_live_map "scripts/lib/good.sh")" '$a + $b')" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = "scripts/lib/good.sh" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/pending.json")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot inside a segment name is not an escape and is selected" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/foo..bar" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "scripts/foo..bar")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = "scripts/foo..bar" ] || return 1
+  [[ "${stderr}" != *"UNSAFE"* ]] || return 1
+}
+
 @test "#13 retired: the un-moved record path is the baseline state dir's own" {
   run spine spine_retired_unmoved_path
   [[ "${status}" -eq 0 ]] || return 1

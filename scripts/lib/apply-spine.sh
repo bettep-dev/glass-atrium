@@ -346,6 +346,11 @@ spine_find_removed_files() {
   new_files="$(jq -r '.files[]' -- "${manifest}")" || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_retired_key "${path}"; then
+      printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped\n' "${path}" >&2
+      continue
+    fi
     # Tripwire: the generator guarantees retired and files[] are disjoint, so a path
     # in both is a malformed manifest rather than a removal decision to act on.
     case $'\n'"${new_files}"$'\n' in
@@ -385,12 +390,44 @@ spine_find_removed_files() {
       printf 'apply-spine: retired skip, not a regular file — %s\n' "${path}" >&2
       continue
     fi
+    # shellcheck disable=SC2310
+    if spine_is_escaping_retired_target "${target}" "${install_root}"; then
+      printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped\n' "${path}" >&2
+      continue
+    fi
     live="$(spine_sha256_of "${target}")" || return 1
     case $'\n'"${hashes}"$'\n' in
       *$'\n'"${live}"$'\n'*) printf '%s\n' "${path}" ;;
       *) printf 'apply-spine: retired user-modified, preserved — %s\n' "${path}" >&2 ;;
     esac
   done < <(jq -r '.retired | keys[]' -- "${manifest}")
+}
+
+# True when retired key $1 leaves the install root by its spelling alone — absolute, or
+# carrying a `..` segment. Segment-exact: `foo..bar` is a name, not a traversal. Needs
+# no filesystem, so it runs for every key before any lookup.
+spine_is_escaping_retired_key() {
+  case "$1" in
+    /*) return 0 ;;
+    *) ;;
+  esac
+  case "/$1/" in
+    */../*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when existing target $1 physically sits outside install root $2 — the escape a
+# symlinked directory component makes, which spelling cannot show. Both sides resolve
+# physically, else an aliased root (/var -> /private/var) would refuse every key; an
+# unresolvable side counts as escaping. The final component is already known not to
+# be a symlink, so its parent is what resolves.
+spine_is_escaping_retired_target() {
+  local parent root
+  parent="$(CDPATH='' cd -P -- "$(dirname -- "$1")" && pwd -P)" || return 0
+  root="$(CDPATH='' cd -P -- "$2" && pwd -P)" || return 0
+  [[ "${parent}" == "${root}" || "${parent}" == "${root%/}/"* ]] && return 1
+  return 0
 }
 
 # T11 — staged apply + rollback

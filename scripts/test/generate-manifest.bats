@@ -440,6 +440,44 @@ ship_lib_a() {
   [[ "${status}" -eq 6 ]] || return 1
 }
 
+@test "--validate: rejects an absolute, a dot-dot-segment and an empty retired key" {
+  "${SCRIPT}"
+  local key
+  for key in "/scripts/lib/gone.sh" "../../.claude/data/update/pending.json" ""; do
+    jq --arg k "${key}" \
+      '.retired = {($k): ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+      "${MANIFEST}" >"${WORK}/bad.json"
+    run "${SCRIPT}" --validate "${WORK}/bad.json"
+    [ "${status}" -eq 6 ] || {
+      printf 'retired key accepted: "%s" (status %s)\n' "${key}" "${status}"
+      return 1
+    }
+  done
+}
+
+@test "--validate: accepts a dot-dot inside a retired key segment name" {
+  "${SCRIPT}"
+  jq '.retired = {"scripts/lib/foo..bar": ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${WORK}/ok.json"
+  run "${SCRIPT}" --validate "${WORK}/ok.json"
+  [ "${status}" -eq 0 ] || return 1
+}
+
+@test "generate: a committed dot-dot retired key stops regeneration and leaves the manifest unchanged" {
+  "${SCRIPT}"
+  jq '.retired = {"../../.claude/data/update/pending.json": ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  # a newly shipped file makes a swapped-in regeneration differ from the committed bytes
+  printf '# lib c\n' >"${WORK}/scripts/lib/c.sh"
+  git -C "${WORK}" add manifest.json scripts/lib/c.sh
+  git -C "${WORK}" commit -qm 'carry an escaping retired key'
+  cp -- "${MANIFEST}" "${WORK}/before.json"
+  run "${SCRIPT}"
+  [ "${status}" -eq 6 ] || return 1
+  cmp -s -- "${WORK}/before.json" "${MANIFEST}" || return 1
+}
+
 @test "--validate: accepts the manifest the generator just wrote" {
   "${SCRIPT}"
   run "${SCRIPT}" --validate "${MANIFEST}"

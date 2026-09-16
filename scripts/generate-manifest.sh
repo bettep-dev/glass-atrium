@@ -330,8 +330,9 @@ build_retired_json() {
 # Structural validation of a manifest FILE against the invariants a regeneration
 # must satisfy before its temp replaces the live manifest: version stamped, files
 # non-empty, one 64-hex hash and one octal mode per file, and a retired map that is
-# an object, disjoint from files[], free of barred migration paths, and whose every
-# value is a non-empty array of 64-hex strings.
+# an object, disjoint from files[], free of barred migration paths, whose every key is
+# a non-empty relative path with no `..` segment (the updater removes what a key names),
+# and whose every value is a non-empty array of 64-hex strings.
 validate_manifest_file() {
   jq -e '
     (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
@@ -347,6 +348,9 @@ validate_manifest_file() {
          | .retired | keys | all($shipped[.] == null))
     and (.retired | keys
          | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
+    and (.retired | keys | all(
+           . != "" and (startswith("/") | not)
+           and (any(split("/")[]; . == "..") | not)))
     and (.retired | to_entries | all(
            (.value | type == "array")
            and (.value | length > 0)
