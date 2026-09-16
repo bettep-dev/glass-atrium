@@ -570,6 +570,10 @@ function ScreenImprovement({ onNav }) {
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
         .board-terminal-grid { display:grid; grid-template-columns:2fr 1fr; gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
+        /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
+           운반하고 텍스트 색으로 심각도를 싣지 않는다(라이트 테마 AA 미달). */
+        .i-alarm-lane { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
+          background:rgb(var(--warn) / 0.06); padding:2px; }
         /* T2 — AWAITING 존. 0건 = 슬림 idle 스트립(amber 없음, --sunken/--line 중립).
            ≥1건 = 상단 full-width --warn 배너(populated-대기에만 amber 소비 · T7). */
         .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
@@ -624,11 +628,7 @@ function ScreenImprovement({ onNav }) {
           제안 허용/거절 행위 빈도가 KPI 조회보다 훨씬 높음 → 칸반 우선.
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
-				<ParkedLoopBannerI applyCap={applyCapState} />
-				<LoopSuppressionCardI
-					state={learningLogState}
-					suppression={loopSuppression}
-				/>
+				<AlarmLaneI applyCap={applyCapState} />
 				<div className="flex-1 min-h-0">
 					<KanbanCardI
 						state={listState}
@@ -651,13 +651,13 @@ function ScreenImprovement({ onNav }) {
 					onRetry={triggerRefresh}
 				/>
 				<BucketRowI state={listState} buckets={buckets} />
-				<RankedCandidateCardI
+				<PatternLedgerCardI
 					state={learningLogState}
+					suppression={loopSuppression}
 					onRowClick={setDrawerRow}
 					onRetry={triggerRefresh}
 				/>
 				<AttributionPointerCardI state={attributionState} onNav={onNav} />
-				<LearningLogCardI state={learningLogState} onRetry={triggerRefresh} />
 				<InstrumentationViewI
 					listState={listState}
 					loopEventsState={loopEventsState}
@@ -1663,7 +1663,20 @@ function attributionOmissionBadgeI(ratio) {
 	};
 }
 
-// 분해는 LoopSuppressionCardI 담당.
+// 알람 레인 — 알람이 하나도 없으면 레인 자체를 렌더하지 않는다. 비어 있는 레인은
+// "여기엔 볼 것이 없다"를 매일 학습시켜 실제 알람이 떴을 때도 건너뛰게 만든다.
+// 소속 판정은 admission test 4조건(상태 변화 · 지목된 주체 · 오늘 가능한 행동 ·
+// 멈추는 방법) 전부 — 지금 통과하는 사실은 repeat-apply cap 하나다.
+function AlarmLaneI({ applyCap }) {
+	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
+	return (
+		<div className="i-alarm-lane" role="region" aria-label="Alarms">
+			<ParkedLoopBannerI applyCap={applyCap} />
+		</div>
+	);
+}
+
+// 원인별 분해는 패턴 원장(PatternLedgerCardI)이 담당.
 //
 // 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없고, learning_log status 를
 // 되돌리는 방식으로도 풀리지 않는다(다음 사이클에 재정지 + park 이력 유실). apply evidence 를
@@ -1698,18 +1711,9 @@ function ParkedLoopBannerI({ applyCap }) {
 	);
 }
 
-// 루프 억제 분해 카드. 존재 이유는 배너가 답하지 못하는 질문 하나다: "루프의 얼마가, 왜
-// 억제되어 있나".
-//
-// 두 population(parked / per-cycle) 은 분리해 렌더하고 절대 더하지 않는다 — 종결 row 와
-// 재발 횟수라 합계는 둘 중 어느 것도 아니다(계약은 ImprovementLoopSuppressionState).
-//
-// pending split 이 먼저 오는 이유: status_distribution 의 identified 수는 처리 대기 backlog 로
-// 읽히는데, 그중 상당수는 intake 에서 매번 버려지는 라벨이라 제안이 나올 수 없다. 억제된
-// 패턴이 건강한 pending 처럼 보이는 지점이 정확히 여기다.
-//
-// K=0(전 항목 0) 이어도 카드는 남는다 — 0 은 "억제가 없다"는 판독이고, 카드 부재는
-// "측정하지 않는다"이다(ProseOnlyAddCardI 와 같은 규칙).
+// 억제 사실은 원장 바깥에 따로 살지 않는다 — 억제된 행과 그 행을 세는 숫자가 다른 카드에
+// 있으면 둘 중 하나만 읽힌다. 두 population(parked / per-cycle) 은 분리해 렌더하고 절대
+// 더하지 않는다: 종결 row 와 재발 횟수라 합계는 둘 중 어느 것도 아니다.
 function SuppressionBucketRowsI({ buckets, unitLabel }) {
 	if (!Array.isArray(buckets) || buckets.length === 0) {
 		return (
@@ -1747,248 +1751,148 @@ function SuppressionBucketRowsI({ buckets, unitLabel }) {
 	);
 }
 
-function LoopSuppressionCardI({ state, suppression }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !suppression) return null;
-	const pendingTotal = Number(suppression.pending_total ?? 0);
-	const pendingUnpromptable = Number(suppression.pending_unpromptable ?? 0);
-	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
-	const offRegistry = Number(suppression.off_registry_parked ?? 0);
-	return (
-		<div className="card" data-testid="loop-suppression-card">
-			<CardHead title="Loop suppression" />
-			<div className="px-3 pb-3 space-y-3">
-				<div>
-					<div className="fs-meta font-mono text-ink">
-						Pending patterns that can never propose —{" "}
-						<span className={pendingUnpromptable > 0 ? "text-warn" : ""}>
-							{formatIntI(pendingUnpromptable)}
-						</span>{" "}
-						of {formatIntI(pendingTotal)}
-					</div>
-					<div className="card-sub is-wrap fs-micro mt-1">
-						These rows sit at status='identified' and are counted as pending
-						backlog, but their label is one the daemon skips at intake every
-						cycle, so no proposal can be generated from them. Counted across
-						every agent — the intake skip reads the label, not
-						agent-registry.json, so unlike the parked buckets below this pair
-						is not registry-scoped.
-					</div>
-				</div>
-				<div>
-					<div className="fs-meta font-mono text-dim mb-1">
-						Parked patterns (terminal rows)
-					</div>
-					<SuppressionBucketRowsI
-						buckets={suppression.parked}
-						unitLabel="Patterns"
-					/>
-				</div>
-				<div>
-					<div className="fs-meta font-mono text-dim mb-1">
-						Per-cycle suppressions (last {formatIntI(windowDays)} days)
-					</div>
-					<SuppressionBucketRowsI
-						buckets={suppression.per_cycle}
-						unitLabel="Events"
-					/>
-					<div className="card-sub is-wrap fs-micro mt-1">
-						Recurrences, not distinct patterns — these mechanisms write no
-						lifecycle transition, so the same row is re-suppressed on every
-						cycle.
-					</div>
-				</div>
-				{offRegistry > 0 ? (
-					<div className="card-sub is-wrap fs-micro text-warn">
-						{formatIntI(offRegistry)} parked{" "}
-						{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from
-						every count on this card: the agent is not in agent-registry.json.
-						Still parked, still not proposing.
-					</div>
-				) : null}
-			</div>
-		</div>
-	);
-}
+// 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
+// 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
+const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
 
-// ----- LearningLog card (P2-B · learning-aggregator 원천) -------------------
-//
-// 화면이 proposals 에서 CTM/EPM 을 재유도하던 것의 실제 source — learning-aggregator
-// 패턴 테이블 직접 노출. status_distribution 요약 KPI 3-tile + 패턴 표(행=패턴 / 열=5).
-// status → dual-encoded 배지 (identified ℹ · proposed ⚠ · applied ✓ · rejected ✕).
-//
-// 데이터 부재 분기:
-//   - total_patterns === 0 → "데이터 부재" 회색 indicator
-//   - error 상태 → ErrorBanner (재시도 가능)
-
-function LearningLogCardI({ state, onRetry }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="p-4">
-					<ErrorBannerI
-						title="Couldn't load learned patterns"
-						detail={state.error}
-						onRetry={onRetry}
-					/>
-				</div>
-			</div>
-		);
-	}
-	if (state.status === "loading" || !state.data) {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
-				</div>
-			</div>
-		);
-	}
-
-	const total = Number(state.data.total_patterns ?? 0);
-	const patterns = Array.isArray(state.data.patterns)
-		? state.data.patterns
+// 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
+// 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
+function LedgerHeldSectionI({ suppression }) {
+	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	if (buckets.length === 0) return null;
+	const rows = Array.isArray(suppression.parked_patterns)
+		? suppression.parked_patterns
 		: [];
-	const dist = Array.isArray(state.data.status_distribution)
-		? state.data.status_distribution
-		: [];
-
-	if (total === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No learned patterns yet
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	// status 별 합산 (approval_tier 분해는 묶어서 status 단위 KPI 로 — skim 우선).
-	const statusSum = {};
-	for (const d of dist) {
-		const k = d.status || "unknown";
-		statusSum[k] = (statusSum[k] || 0) + Number(d.count ?? 0);
-	}
-	const identifiedCnt = statusSum.identified || 0;
-	const proposedCnt = statusSum.proposed || 0;
-	const rejectedCnt = statusSum.rejected || 0;
-
-	const cards = [
-		["ℹ", "text-info", "Spotted patterns", formatIntI(identifiedCnt), ""],
-		["⚠", "text-warn", "Proposed patterns", formatIntI(proposedCnt), ""],
-		[
-			"ℹ",
-			"text-info",
-			"All patterns",
-			formatIntI(total),
-			`${formatIntI(rejectedCnt)} declined`,
-		],
-	];
-
-	return (
-		<div className="card">
-			<CardHead title="Learned patterns" />
-			<div className="grid grid-cols-3 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-// 패턴 표 — 행=패턴 (가변) / 열=5 (패턴 · 에이전트 · 빈도 · 상태 · 발견일).
-// D8 P2 ≤5-col 정합. status → dual-encoded 배지 (색 + 기호 + 텍스트).
-// 리스트는 최근 7일 윈도우 → 빈 경우 KPI 카드는 유지한 채 표 영역만 안내.
-function LearningLogTableI({ patterns }) {
-	if (patterns.length === 0) {
-		return (
-			<div className="px-3 pb-3">
-				<div
-					className="placeholder"
-				>
-					No new patterns in the last 7 days
-				</div>
-			</div>
-		);
-	}
 	return (
 		<div className="px-3 pb-3">
-			<table className="w-full fs-meta font-mono">
-				<thead>
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Pattern</th>
-						<th className="text-left py-1.5">Agent</th>
-						<th className="text-right py-1.5">Seen</th>
-						<th className="text-left py-1.5 pl-3">Status</th>
-						<th className="text-right py-1.5 pr-1.5">First seen</th>
-					</tr>
-				</thead>
-				<tbody>
-					{patterns.map((p) => {
-						const badge = learningStatusBadgeI(p.status);
-						return (
-							<tr key={p.id} className="border-t border-line/50">
-								<td
-									className="text-left py-1.5 pl-1.5 text-ink i-sig-cell"
-									title={String(p.pattern_signature || "")}
-								>
-									<div className="i-sig-clamp">
-										{truncateI(p.pattern_signature, 120)}
-									</div>
-								</td>
-								<td className="text-left py-1.5 text-dim">{p.agent || "—"}</td>
-								<td className="text-right py-1.5 text-dim">
-									{formatIntI(Number(p.frequency ?? 0))}
-								</td>
-								<td className={`text-left py-1.5 pl-3 ${badge.tone}`}>
-									<SymI s={badge.symbol} size={11} /> {badge.label}
-								</td>
-								<td className="text-right py-1.5 pr-1.5 text-faint">
-									{formatDateFullI(p.discovered_date)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
+			<div className="fs-meta font-mono text-dim mb-1">
+				Held — terminal rows, all time
+			</div>
+			{buckets.map((b) => (
+				<HeldCauseGroupI
+					key={b.cause}
+					bucket={b}
+					rows={rows.filter((r) => r.cause === b.cause)}
+				/>
+			))}
+		</div>
+	);
+}
+
+// remedy 는 그룹 헤더에 한 번만 — 행마다 반복하면 원인 하나가 여러 원인으로 읽힌다.
+function HeldCauseGroupI({ bucket, rows }) {
+	const agents = Number(bucket.agents ?? 0);
+	return (
+		<details className="mt-1.5" open={!HELD_DESIGN_DECISION_CAUSES.has(bucket.cause)}>
+			<summary className="fs-meta font-mono text-ink cursor-pointer select-none">
+				{bucket.label} — {formatIntI(Number(bucket.count ?? 0))} held across{" "}
+				{formatIntI(agents)} {agents === 1 ? "agent" : "agents"}
+			</summary>
+			{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
+			<div className="card-sub is-wrap fs-micro mt-1">{bucket.hint}</div>
+			<LedgerPlainRowsI rows={rows} />
+		</details>
+	);
+}
+
+// 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).
+// 카운트가 read limit 을 넘어 행이 비면 0 이 아니라 절단이라고 말한다.
+function LedgerPlainRowsI({ rows }) {
+	if (rows.length === 0) {
+		return (
+			<div className="placeholder">
+				Counted, but no row came back within the read limit
+			</div>
+		);
+	}
+	return (
+		<ul className="mt-1.5 flex flex-col gap-1">
+			{rows.map((r) => (
+				<li key={r.id} className="flex items-center gap-2 fs-micro font-mono">
+					<span
+						className="text-ink truncate min-w-0"
+						title={String(r.pattern_signature || "")}
+					>
+						{truncateI(r.pattern_signature, 120)}
+					</span>
+					<span className="text-dim shrink-0">{r.agent || "—"}</span>
+					<span className="text-faint shrink-0 tnum">
+						{formatDateFullI(r.discovered_date)}
+					</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+// 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
+// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다.
+function LedgerInertSectionI({ rows }) {
+	if (rows.length === 0) return null;
+	return (
+		<div className="px-3 pb-3">
+			<div className="fs-meta font-mono text-dim mb-1">
+				Inert — the intake skips this label every cycle
+			</div>
+			<LedgerPlainRowsI rows={rows} />
+		</div>
+	);
+}
+
+// 재발률 공개 — 접어 둔다. 상태 변화가 아니라 비율이고(admission test 불통과), 이 기전들은
+// lifecycle transition 을 쓰지 않아 같은 행이 매 사이클 다시 세어진다.
+function LedgerRecurrenceDisclosureI({ suppression }) {
+	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	if (buckets.length === 0) return null;
+	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
+	return (
+		<details className="px-3 pb-3">
+			<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
+				Recurrence rates — last {formatIntI(windowDays)} days
+			</summary>
+			<div className="mt-2">
+				<SuppressionBucketRowsI buckets={buckets} unitLabel="Events" />
+				<div className="card-sub is-wrap fs-micro mt-1">
+					Recurrences, not distinct patterns — these mechanisms write no lifecycle
+					transition, so the same row is re-suppressed on every cycle.
+				</div>
+			</div>
+		</details>
+	);
+}
+
+// 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
+// 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
+// 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
+function LedgerFooterI({ total, declined, suppression }) {
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
+	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
+	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
+	return (
+		<div className="px-3 pb-3 flex flex-col gap-1">
+			<div className="card-sub is-wrap fs-micro">
+				{formatIntI(total)} patterns recorded all time · {formatIntI(declined)}{" "}
+				declined all time · the live and inert rows above are the last 7 days of
+				discovery
+			</div>
+			{suppression ? (
+				<div className="card-sub is-wrap fs-micro">
+					<span className={unpromptable > 0 ? "text-warn" : ""}>
+						{formatIntI(unpromptable)}
+					</span>{" "}
+					of {formatIntI(pendingTotal)} pending rows can never propose — counted
+					across every agent, because the intake skip reads the label. The held
+					figures above are narrower: agents in agent-registry.json only.
+				</div>
+			) : null}
+			{offRegistry > 0 ? (
+				<div className="card-sub is-wrap fs-micro text-warn">
+					{formatIntI(offRegistry)} parked{" "}
+					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
+					held figure: the agent is not in agent-registry.json. Still parked, still
+					not proposing.
+				</div>
+			) : null}
 		</div>
 	);
 }
@@ -2405,15 +2309,18 @@ function failTrendMetaI(before, after) {
 // severity(빈도 밴드) + 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
 // rejected 후보(반려 백로그)는 T-IMP-5 의 collapsible <details> 로 기본 접힘 분리.
 
-function RankedCandidateCardI({ state, onRowClick, onRetry }) {
+// 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
+// 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
+// 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
+function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 	const { CardHead } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
+				<CardHead title="Pattern ledger" />
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load candidate patterns"
+						title="Couldn't load the pattern ledger"
 						detail={state.error}
 						onRetry={onRetry}
 					/>
@@ -2424,8 +2331,8 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
-				<div className="p-3 flex flex-col gap-2">
+				<CardHead title="Pattern ledger" />
+				<div className="p-3 flex flex-col gap-2" aria-busy="true">
 					{Array.from({ length: 4 }).map((_, i) => (
 						<div
 							key={i}
@@ -2443,25 +2350,18 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 		);
 	}
 
-	const patterns = Array.isArray(state.data.patterns)
-		? state.data.patterns
+	const patterns = Array.isArray(state.data.patterns) ? state.data.patterns : [];
+	const dist = Array.isArray(state.data.status_distribution)
+		? state.data.status_distribution
 		: [];
-	if (patterns.length === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No candidate patterns in the last 7 days
-					</div>
-				</div>
-			</div>
-		);
-	}
+	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
+	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
+	const declinedAllTime = dist
+		.filter((d) => d.status === "rejected")
+		.reduce((sum, d) => sum + Number(d.count ?? 0), 0);
+	const total = Number(state.data.total_patterns ?? patterns.length);
 
-	// frequency 내림차순 정렬 (동률 → discovered_date 최신 우선) — 상위 N 활성, rejected 는 백로그.
+	// frequency 내림차순 (동률 → discovered_date 최신 우선).
 	const sorted = [...patterns].sort(
 		(a, b) =>
 			Number(b.frequency ?? 0) - Number(a.frequency ?? 0) ||
@@ -2469,55 +2369,85 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 				String(a.discovered_date || ""),
 			),
 	);
-	const active = sorted.filter((p) => p.status !== "rejected");
-	const rejected = sorted.filter((p) => p.status === "rejected");
+	const open = sorted.filter((p) => p.status !== "rejected");
+	const live = open.filter((p) => p.intake_skipped !== true);
+	const inert = open.filter((p) => p.intake_skipped === true);
+	const declined = sorted.filter((p) => p.status === "rejected");
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
 	return (
-		<div className="card">
-			<CardHead title="Top candidate patterns (ranked)" />
-			<div className="px-3 pb-3 flex flex-col gap-1.5">
-				{active.length === 0 ? (
-					<div
-						className="placeholder"
-					>
-						No active candidates — all declined (see
-						backlog)
-					</div>
-				) : (
-					active.map((p, i) => (
-						<CandidateRowI
-							key={p.id}
-							rank={i + 1}
-							pattern={p}
-							maxFreq={maxFreq}
-							onClick={() => onRowClick({ ...p, kind: "pattern" })}
-						/>
-					))
-				)}
-			</div>
-			{/* T-IMP-5 — 반려 백로그 (long-term accumulation) collapsible, 기본 접힘. */}
-			{rejected.length > 0 && (
-				<details className="px-3 pb-3">
-					<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
-						<SymI s="✕" size={11} /> Declined backlog (
-						{formatIntI(rejected.length)})
-					</summary>
-					<div className="flex flex-col gap-1.5 mt-2">
-						{rejected.map((p, i) => (
-							<CandidateRowI
-								key={p.id}
-								rank={i + 1}
-								pattern={p}
-								maxFreq={maxFreq}
-								onClick={() => onRowClick({ ...p, kind: "pattern" })}
-							/>
-						))}
-					</div>
-				</details>
-			)}
+		<div className="card" data-testid="pattern-ledger">
+			<CardHead title="Pattern ledger" />
+			<LedgerLiveSectionI
+				rows={live}
+				maxFreq={maxFreq}
+				onRowClick={onRowClick}
+			/>
+			<LedgerInertSectionI rows={inert} />
+			<LedgerHeldSectionI suppression={suppression} />
+			<LedgerRecurrenceDisclosureI suppression={suppression} />
+			<LedgerDeclinedBacklogI
+				rows={declined}
+				maxFreq={maxFreq}
+				onRowClick={onRowClick}
+			/>
+			<LedgerFooterI
+				total={total}
+				declined={declinedAllTime}
+				suppression={suppression}
+			/>
 		</div>
+	);
+}
+
+// 활성 구역 — 제안이 나올 수 있는 행만. 비어도 카드는 남는다: held 는 윈도우가 없어서
+// 활성이 0 이어도 읽을 것이 있다.
+function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
+	if (rows.length === 0) {
+		return (
+			<div className="px-3 pb-3">
+				<div className="placeholder">
+					No candidate patterns in the last 7 days
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="px-3 pb-3 flex flex-col gap-1.5">
+			{rows.map((p, i) => (
+				<CandidateRowI
+					key={p.id}
+					rank={i + 1}
+					pattern={p}
+					maxFreq={maxFreq}
+					onClick={() => onRowClick({ ...p, kind: "pattern" })}
+				/>
+			))}
+		</div>
+	);
+}
+
+// T-IMP-5 — 반려 백로그(장기 누적) collapsible, 기본 접힘.
+function LedgerDeclinedBacklogI({ rows, maxFreq, onRowClick }) {
+	if (rows.length === 0) return null;
+	return (
+		<details className="px-3 pb-3">
+			<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
+				<SymI s="✕" size={11} /> Declined backlog ({formatIntI(rows.length)})
+			</summary>
+			<div className="flex flex-col gap-1.5 mt-2">
+				{rows.map((p, i) => (
+					<CandidateRowI
+						key={p.id}
+						rank={i + 1}
+						pattern={p}
+						maxFreq={maxFreq}
+						onClick={() => onRowClick({ ...p, kind: "pattern" })}
+					/>
+				))}
+			</div>
+		</details>
 	);
 }
 
