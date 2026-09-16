@@ -333,13 +333,13 @@ unsafe_row() {
 
 @test "#13 retired: a dot-dot key reaching a real file beside the install root is refused" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
-  seed_file "${STATE}" "editable-reset/pending.json" "operator-request"
+  seed_file "${STATE}" "request/pending.json" "operator-request"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    "$(retired_live_map "../state/editable-reset/pending.json")" "hooks/keep.sh"
+    "$(retired_live_map "../state/request/pending.json")" "hooks/keep.sh"
   run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [ "${status}" -eq 0 ] || return 1
   [ -z "${output}" ] || return 1
-  [[ "${stderr}" == *"$(unsafe_row "../state/editable-reset/pending.json")"* ]] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/request/pending.json")"* ]] || return 1
 }
 
 @test "#13 retired: a key through a symlinked directory to a file outside the root is refused" {
