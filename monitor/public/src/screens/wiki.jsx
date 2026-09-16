@@ -10,7 +10,7 @@ const {
 // 사이클 기간 allowlist — server ALLOWED_WIKI_DAYS 와 정합 (routes/wiki.ts).
 const WIKI_CYCLE_DAYS = 30;
 
-// Run-table window allowlist — server allowlist 와 정합 (routes/health.ts).
+// 실행 표 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
 const WIKI_REPORT_DAYS_OPTIONS = [
 	{ value: 7, label: "7d" },
 	{ value: 30, label: "30d" },
