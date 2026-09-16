@@ -1,4 +1,4 @@
-// E2E Playwright test — Load More pagination + doc_status chip + folder grouping + cascade + column width floor on screens/clauded-docs.jsx.
+// E2E Playwright test — Load More pagination + stage chip + folder grouping + cascade + column width floor on screens/clauded-docs.jsx.
 // Runner: npx tsx --test test/clauded-docs.load-more.e2e.test.ts
 //
 // DB: real Postgres — every seeded row tagged `load-more-test-${uuid}` 마커, after() 가 LIKE 일괄 cleanup.
@@ -165,16 +165,17 @@ async function clickAndWaitForListResponse(
   await Promise.all([respPromise, action()]);
 }
 
-// doc_status chip 클릭 helper.
-//   · doc_status filter chip ('In progress' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
+// stage 필터 chip 클릭 helper.
+//   · stage filter chip ('열림' / '종료' / '전체') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
 //   · chip 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
 //   · 응답 path: managedData.groups[] 정규화 후 setLoadedRows.
 async function clickDocStatusChip(page: Page, label: string): Promise<void> {
   await clickAndWaitForListResponse(
     page,
     async () => {
-      const within = page.getByRole("radiogroup", { name: "Status filter" });
-      await within.getByRole("radio", { name: label, exact: true }).click();
+      const within = page.getByRole("radiogroup", { name: "Stage filter" });
+      // 칩 접근명은 라벨 + 그룹 단위 건수 → 부분 일치로 잡는다 (exact 는 건수 때문에 미스).
+      await within.getByRole("radio", { name: label }).click();
     },
     (url) => !url.includes("offset="),
   );
@@ -222,7 +223,7 @@ test("load-more: 60 seeds → initial 50 visible + Load More button → click �
     try {
       // 화면 진입 — hash router screen id 'clauded-docs' (app.jsx NAV 항목 id 와 동일 · '#clauded-docs' 패턴).
       // app.jsx parseHashScreen 가 raw hash 를 그대로 NAV.id 와 비교 — '#screen-clauded-docs' 같은 prefix 사용 시 fallback=dashboard.
-      // 기본 doc_status filter = 'progress' — 시드 60건이 progress 기본값 + created_at DESC 최신이라 첫 page 포함.
+      // 기본 stage filter = '열림' — 시드 60건이 doc_review 기본값 + created_at DESC 최신이라 첫 page 포함.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
       // 최초 fetch — limit=50 → 50 행 가시 (총 group ≥ 60 → first page 50).
@@ -264,7 +265,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 progress filter — 60 시드 (progress 기본값 · 최신) 가 첫 page 점유.
+      // 기본 '열림' filter — 60 시드 (doc_review 기본값 · 최신) 가 첫 page 점유.
       await waitForRowCountAtLeast(page, 50);
 
       // Load More click → 누적 ≥60. Promise.all 로 click + offset=50 응답 동기화.
@@ -279,10 +280,10 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
       const afterLoadMore = await countVisibleRows(page);
       assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
 
-      // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
+      // '전체' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
-      await clickDocStatusChip(page, "All");
+      await clickDocStatusChip(page, "전체");
       await waitForRowCountAtMost(page, 50);
       const afterReset = await countVisibleRows(page);
       assert.ok(afterReset <= 50,
@@ -319,7 +320,7 @@ test("superseded-drawer: supersedes_id 가진 doc 선택 → meta sidebar 'Versi
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
     try {
-      // 기본 progress filter — successor (progress · 최신 created_at) 가 첫 page 포함.
+      // 기본 '열림' filter — successor (doc_review · 최신 created_at) 가 첫 page 포함.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
@@ -370,7 +371,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
   //   4) PUT B { html_body=원본, expected_hash, doc_status=done } → server cascade SQL:
   //      WHERE id=B OR folder_id=(SELECT folder_id FROM target WHERE folder_id IS NOT NULL)
   //      → 같은 folder_id=A.id 의 B + C 일괄 갱신 (A 는 folder_id=NULL 이라 cascade 미포함).
-  //   5) UI refresh + doc_status chip='Done' → B + C 가시, A 는 미가시 (progress 유지) 확인.
+  //   5) UI refresh + stage chip='종료' → B + C 가시, A 는 미가시 (doc_review 유지) 확인.
   // PUT folder_id mutation 자체는 본 cycle scope 외 — server parseUpdateBody 가 folder_id 무시 (silent ignore).
 
   const aTitle = makeTitle("acc-anchor-A", 0);
@@ -427,17 +428,17 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
     assert.strictEqual(cDoc.doc_status, "done",
       "C (sibling) cascade 적용 — server SQL 이 folder_id=A.id 의 sibling 도 일괄 갱신");
 
-    // 6) UI 측 가시화 검증 — done chip 필터 적용 후 B + C 노출, A 는 progress 유지로 미가시.
+    // 6) UI 측 가시화 검증 — '종료' chip 필터 적용 후 B + C 노출, A 는 doc_review 유지로 미가시.
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 progress filter — 시드 행 (최신 created_at) 이 첫 page 가시.
+      // 기본 '열림' filter — 시드 행 (최신 created_at) 이 첫 page 가시.
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
-      // doc_status='Done' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
-      await clickDocStatusChip(page, "Done");
+      // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
+      await clickDocStatusChip(page, "종료");
 
       // B + C 가 done 필터에서 가시 — server cascade 의 UI 가시화 확인.
       // 단, B/C 는 folder_id 가 동일하므로 group 1개 (representative_id=B 또는 C — created_at DESC 기준) → 1 row 가시.
@@ -453,11 +454,11 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       assert.strictEqual(bVisible, 0,
         `B 는 group representative 가 아님 — 같은 folder 의 sibling 1개 representative 만 surface (DISTINCT ON folder_id)`);
 
-      // A 는 folder_id=NULL · cascade 미적용 → progress 유지 → done 필터에서 미가시.
+      // A 는 folder_id=NULL · cascade 미적용 → doc_review 유지 → done 필터에서 미가시.
       const aRow = page.locator("tr.doc-row", { hasText: aTitle });
       const aVisibleCount = await aRow.count();
       assert.strictEqual(aVisibleCount, 0,
-        `A (folder_id=NULL · cascade 미포함) 는 done 필터에서 미가시 — progress 유지`);
+        `A (folder_id=NULL · cascade 미포함) 는 done 필터에서 미가시 — doc_review 유지`);
     } finally {
       await context.close();
     }
@@ -939,10 +940,14 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
       );
       assert.ok(listBox.width >= 340, `목록 모드 제목 본문 상자 ≥340px (got ${listBox.width})`);
 
-      // 검색 모드 — Order 컬럼(width 56px)이 붙어 제목이 가장 좁아지는 경우.
-      // Order 헤더 등장 = 모드 전환 완료 신호.
+      // 검색 모드 — relevance 컬럼이 빠진 뒤로 컬럼 구성은 목록 모드와 같으나, 제목 하한은 따로 잰다.
+      // stage 섹션 머리 소멸 = 모드 전환 완료 신호 (섹션은 목록 모드 열림/전체 필터 전용).
       await page.locator("input.doc-search-input").fill("widthpin");
-      await page.getByRole("columnheader", { name: "Order" }).waitFor({ state: "visible" });
+      await page.waitForFunction(
+        () => document.querySelectorAll("tr.doc-stage-section").length === 0,
+        undefined,
+        { timeout: 10_000 },
+      );
       await page.locator("tr.doc-row", { hasText: "widthpin" }).first().waitFor({ state: "visible" });
 
       const searchBox = await measureTitleBox(page, "widthpin");
