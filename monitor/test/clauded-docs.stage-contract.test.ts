@@ -1,12 +1,12 @@
-// Pins the read/write split the stage vocabulary rests on: what the server ACCEPTS on a write,
-// what it ACCEPTS on a read filter, what a stored token READS AS, and when the group cascade
-// fires. The split is what lets the widened read deploy ahead of the migration — a read set
+// Pins the read/write split the stage vocabulary rests on: what a write accepts, what a read
+// filter accepts, what a stored token reads as, and when the group cascade fires. A read set
 // narrower than the stored set drops rows and empties the operator's open list.
 // Runner: npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.stage-contract.test.ts
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import type { DocStatusLiteral } from "../src/server/types/clauded-docs.js";
 import {
   DOC_STAGES,
   DOC_STATUS_READ_FILTERS,
@@ -15,7 +15,7 @@ import {
   normalizeStoredStage,
 } from "../src/server/routes/clauded-docs.js";
 
-const RETIRED_ALIAS = "progress";
+const RETIRED_ALIAS: DocStatusLiteral = "progress";
 
 test("every stored token reads as a stage, so no stored row is dropped", () => {
   for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
@@ -34,7 +34,7 @@ test("normalizing is idempotent on the stages themselves", () => {
   }
 });
 
-test("the write set is the stored set, and the read filter set adds the open pseudo-value", () => {
+test("the write set accepts the retired alias, and the read filter set adds the open pseudo-value", () => {
   for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
     assert.ok(WRITE_DOC_STATUSES.has(stored), `write must accept '${stored}'`);
     assert.ok(DOC_STATUS_READ_FILTERS.has(stored), `read filter must accept '${stored}'`);

@@ -402,8 +402,9 @@ test("DF-26 restoreHtmlBody: in-place (not swap) still restores previous bytes",
 function flattenValues(values: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const v of values) {
-    const nested = (v as { values?: unknown }).values;
-    if (v !== null && typeof v === "object" && Array.isArray(nested)) {
+    // Null-guard BEFORE the property read — a bound null value is not a fragment.
+    const nested = v !== null && typeof v === "object" ? (v as { values?: unknown }).values : undefined;
+    if (Array.isArray(nested)) {
       out.push(...flattenValues(nested));
     } else {
       out.push(v);
@@ -416,8 +417,8 @@ function flattenValues(values: unknown[]): unknown[] {
 function fragmentTexts(values: unknown[]): string[] {
   const out: string[] = [];
   for (const v of values) {
-    const strings = (v as { strings?: unknown }).strings;
-    if (v !== null && typeof v === "object" && Array.isArray(strings)) {
+    const strings = v !== null && typeof v === "object" ? (v as { strings?: unknown }).strings : undefined;
+    if (Array.isArray(strings)) {
       out.push(strings.join(""));
     }
   }
@@ -431,7 +432,9 @@ test("DF-26 cascadeUpdateDocStatus: expectedHash → target carries a bound cont
     return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
   });
 
-  await cascadeUpdateDocStatus(prisma, 1, "done", "EXPECTED_HASH_TOKEN");
+  await cascadeUpdateDocStatus(prisma, 1, "done", {
+    lastStatusModel: null, cascadeToGroup: true, expectedHash: "EXPECTED_HASH_TOKEN",
+  });
 
   // The guard fragment SQL text mentions content_hash …
   const guardText = fragmentTexts(capturedValues).join(" ");
@@ -448,7 +451,7 @@ test("DF-26 cascadeUpdateDocStatus: no expectedHash (body-changed path) → NO e
     return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
   });
 
-  await cascadeUpdateDocStatus(prisma, 1, "done");
+  await cascadeUpdateDocStatus(prisma, 1, "done", { lastStatusModel: null, cascadeToGroup: true });
 
   const guardText = fragmentTexts(capturedValues).join(" ");
   assert.ok(!/content_hash/.test(guardText), "omitting expectedHash embeds Prisma.empty (no CAS guard)");

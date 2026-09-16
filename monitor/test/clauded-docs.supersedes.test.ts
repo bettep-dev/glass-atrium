@@ -132,8 +132,8 @@ after(async () => {
 // ----- POST supersedes_id → predecessor auto-transition ----------------
 
 test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (CTE atomic)", async () => {
-  // Seed predecessor — doc_status default 는 'progress' (insertClaudedDocRow 기본값).
-  // doc_status='progress' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
+  // Seed predecessor — POST 의 은퇴 별칭 'progress' 는 첫 stage 'doc_review' 로 정규화돼 저장된다.
+  // doc_status='doc_review' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
   // doc_type 필드는 silent ignore (컬럼 부재).
   const predTitle = makeTitle("ac1-pred");
   const predHtml = makeHtmlBody(`${predTitle}-progress-body`);
@@ -146,7 +146,7 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
   });
   assert.strictEqual(predRes.status, 201, "predecessor POST 201");
   const pred = predRes.body as { id: number; doc_status: string; supersedes_id: number | null };
-  assert.strictEqual(pred.doc_status, "progress", "predecessor starts at doc_status=progress");
+  assert.strictEqual(pred.doc_status, "doc_review", "POSTed alias normalises — predecessor starts at doc_status=doc_review");
   assert.strictEqual(pred.supersedes_id, null, "predecessor is chain root (supersedes_id=null)");
 
   let succId: number | null = null;
@@ -168,7 +168,7 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
     succId = succ.id;
     // Successor row stores the predecessor id verbatim.
     assert.strictEqual(succ.supersedes_id, pred.id, "successor.supersedes_id = pred.id");
-    assert.strictEqual(succ.doc_status, "progress", "successor's own doc_status unaffected by CTE");
+    assert.strictEqual(succ.doc_status, "doc_review", "successor's own doc_status unaffected by CTE");
 
     // Re-fetch predecessor — its doc_status MUST now be 'done'.
     const refetched = await app.inject({
