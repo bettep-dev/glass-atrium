@@ -161,13 +161,6 @@ function ScreenImprovement({ onNav }) {
 		data: null,
 		error: null,
 	});
-	// Attribution Health 포인터 — Outcome 화면의 canonical 카드와 동일 endpoint 직접 fetch
-	// (single SoT).
-	const [attributionState, setAttributionState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
 	// orphan endpoint — 독립 fetch-state (loading/ready/error · 부분 실패 격리).
 	const [learningLogState, setLearningLogState] = useSI({
 		status: "loading",
@@ -204,9 +197,14 @@ function ScreenImprovement({ onNav }) {
 	// null = 진행 중 액션 없음 · row.id 일치 시 해당 카드 버튼 비활성 + 스피너.
 	const [pendingActionId, setPendingActionId] = useSI(null);
 	const [refreshTick, setRefreshTick] = useSI(0);
+	// 운영 뷰 ↔ 계기판 뷰 — nav 항목이 아니라 화면 안의 전환이다. 두 뷰가 같은 fetch-state 를
+	// 공유하므로 전환 자체는 재fetch 를 일으키지 않는다.
+	const [view, setView] = useSI("operator");
+	// 데이터 as-of — payload 가 착지한 순간에만 움직인다. 새로고침을 누른 순간으로 찍으면
+	// 실패한 새로고침이 최신 데이터처럼 보인다.
+	const [asOf, setAsOf] = useSI(null);
 
 	const listAbortRef = useRI(null);
-	const attributionAbortRef = useRI(null);
 	const orphanAbortRef = useRI(null);
 	const reviewReasonAbortRef = useRI(null);
 	const loopEventsAbortRef = useRI(null);
@@ -309,38 +307,6 @@ function ScreenImprovement({ onNav }) {
 		return () => ctrl.abort();
 	}, [refreshTick, showToast]);
 
-	// Attribution Health 포인터 fetch — Outcome 화면 canonical 카드와 동일 endpoint (single SoT).
-	// 7일 window 만 필요 (포인터 headline) → days=7. AbortController 는 unified 와 분리.
-	useEI(() => {
-		const ctrl = new AbortController();
-		attributionAbortRef.current?.abort();
-		attributionAbortRef.current = ctrl;
-		setAttributionState({ status: "loading", data: null, error: null });
-
-		fetch("/api/outcomes/attribution-daily?days=7", {
-			signal: ctrl.signal,
-			headers: { Accept: "application/json" },
-		})
-			.then((res) => {
-				if (!res.ok) throw new Error(`attribution-daily HTTP ${res.status}`);
-				return res.json();
-			})
-			.then((data) => {
-				if (ctrl.signal.aborted) return;
-				setAttributionState({ status: "ready", data, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				setAttributionState({
-					status: "error",
-					data: null,
-					error: err?.message || String(err),
-				});
-			});
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
 	// 검토 필요 사유 세그먼트 fetch (F12) — KPI 집계값의 행 단위 재분류용.
 	// 실패는 세그먼트만 생략 (부분 실패 격리 — KPI plain count 유지, 0 조작 금지).
 	useEI(() => {
@@ -423,6 +389,12 @@ function ScreenImprovement({ onNav }) {
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
+
+	// 스탬프는 목록 payload 가 ready 로 넘어간 순간에만 갱신된다.
+	useEI(() => {
+		if (listState.status !== "ready") return;
+		setAsOf(new Date().toISOString());
+	}, [listState]);
 
 	const columnRows = useMI(() => {
 		if (listState.status !== "ready" || !listState.data)
@@ -612,14 +584,18 @@ function ScreenImprovement({ onNav }) {
 					sub="Self-improvement loop"
 					title="Learning & self-improvement"
 					right={
-						<button
-							className="btn ghost sm"
-							onClick={triggerRefresh}
-							aria-label="Refresh learning data"
-						>
-							<Icon name="refresh" size={14} />
-							Refresh
-						</button>
+						<div className="flex items-center gap-2">
+							<AsOfStampI at={asOf} />
+							<ViewToggleI view={view} onChange={setView} />
+							<button
+								className="btn ghost sm"
+								onClick={triggerRefresh}
+								aria-label="Refresh learning data"
+							>
+								<Icon name="refresh" size={14} />
+								Refresh
+							</button>
+						</div>
 					}
 				/>
 			</div>
@@ -629,46 +605,57 @@ function ScreenImprovement({ onNav }) {
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
 				<AlarmLaneI applyCap={applyCapState} />
-				<div className="flex-1 min-h-0">
-					<KanbanCardI
-						state={listState}
-						columnRows={columnRows}
+				{view === "instrumentation" ? (
+					<InstrumentationViewI
+						listState={listState}
+						loopEventsState={loopEventsState}
 						loopAggregate={loopAggregate}
-						onRowClick={setDrawerRow}
-						onAction={runAction}
-						pendingActionId={pendingActionId}
-						onRetry={triggerRefresh}
+						correctionState={correctionState}
+						corpusAuditState={corpusAuditState}
+						styleRef={styleRef}
+						proseOnlyAdd={proseOnlyAdd}
+						tierBreakdown={tierBreakdown}
+						confidenceDist={confidenceDist}
 					/>
-				</div>
-				<KpiRowI
-					state={statsState}
-					reviewReasons={reviewReasonSegments}
-					onRetry={triggerRefresh}
-				/>
-				<ChangeSummaryCardI
-					state={loopEventsState}
-					aggregate={loopAggregate}
-					onRetry={triggerRefresh}
-				/>
-				<BucketRowI state={listState} buckets={buckets} />
-				<PatternLedgerCardI
-					state={learningLogState}
-					suppression={loopSuppression}
-					onRowClick={setDrawerRow}
-					onRetry={triggerRefresh}
-				/>
-				<AttributionPointerCardI state={attributionState} onNav={onNav} />
-				<InstrumentationViewI
-					listState={listState}
-					loopEventsState={loopEventsState}
-					loopAggregate={loopAggregate}
-					correctionState={correctionState}
-					corpusAuditState={corpusAuditState}
-					styleRef={styleRef}
-					proseOnlyAdd={proseOnlyAdd}
-					tierBreakdown={tierBreakdown}
-					confidenceDist={confidenceDist}
-				/>
+				) : (
+					<>
+						<StatusBandI
+							statsState={statsState}
+							listState={listState}
+							learningLogState={learningLogState}
+							suppression={loopSuppression}
+							awaiting={columnRows.safety.length}
+							reviewReasons={reviewReasonSegments}
+							onRetry={triggerRefresh}
+						/>
+						<div className="flex-1 min-h-0">
+							<KanbanCardI
+								state={listState}
+								columnRows={columnRows}
+								loopAggregate={loopAggregate}
+								onRowClick={setDrawerRow}
+								onAction={runAction}
+								pendingActionId={pendingActionId}
+								onRetry={triggerRefresh}
+							/>
+						</div>
+						<PatternLedgerCardI
+							state={learningLogState}
+							suppression={loopSuppression}
+							onRowClick={setDrawerRow}
+							onRetry={triggerRefresh}
+						/>
+						<LoopOutputGroupI
+							statsState={statsState}
+							loopEventsState={loopEventsState}
+							loopAggregate={loopAggregate}
+							listState={listState}
+							buckets={buckets}
+							onNav={onNav}
+							onRetry={triggerRefresh}
+						/>
+					</>
+				)}
 			</div>
 
 			{drawerRow && (
@@ -679,127 +666,231 @@ function ScreenImprovement({ onNav }) {
 	);
 }
 
-// ----- KPI row (Skim) — dual-encoding label (색상 + 기호). -----------
+// ----- Status band (Skim) — 화면을 여는 이유 네 가지에 타일 하나씩. --------
+//
+// 각 타일은 자기 payload 의 상태(loading / error / unavailable / ready)를 따로 렌더한다:
+// 한 payload 가 죽었을 때 나머지가 0 으로 읽히면 밴드 전체가 거짓말이 된다. 숫자는 항상
+// 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
 
-function KpiRowI({ state, reviewReasons, onRetry }) {
-	const { KPI } = window.UI;
-
-	if (state.status === "loading") {
-		return (
-			<div
-				className="grid grid-cols-4 gap-3 mb-3"
-				aria-busy="true"
-				aria-label="Loading KPIs"
-			>
-				{Array.from({ length: 4 }).map((_, i) => (
-					<div
-						key={i}
-						className="i-anim-skel"
-						style={{
-							height: 86,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
-				))}
-			</div>
-		);
-	}
-	if (state.status === "error") {
-		return (
-			<div className="mb-3">
-				<ErrorBannerI
-					title="Couldn't load KPI data"
-					detail={state.error}
-					onRetry={onRetry}
-				/>
-			</div>
-		);
-	}
-
-	const s = state.data || {};
-	const td = s.tier_distribution || {};
-	const autoCnt = Number(td.auto ?? 0),
-		safetyCnt = Number(td.safety ?? 0);
-	const applied7d = Number(s.applied_last_7d ?? 0);
-	const rejected7d = Number(s.rejected_last_7d ?? 0);
-	// 무윈도 lifetime 적용량 — 7d/30d 윈도가 구조적으로 숨기는 이력 적용 버스트를 노출.
-	// apply_rate = applied/(applied+rejected) → 분자·분모 모두 명시 (formatPctWithDenominator).
-	const appliedAllTime = Number(s.applied_all_time ?? 0);
-	const rejectedAllTime = Number(s.rejected_all_time ?? 0);
-	const applyRateLifetime = window.UI.formatPctWithDenominator(
-		appliedAllTime,
-		appliedAllTime + rejectedAllTime,
-	);
-	const reviewFlag = Number(s.review_flag_last_7d ?? 0);
-	// zero_apply_cycle_rate = 적용 0건 사이클 비율 — "제안 생성 실패" 아님 (생성은 성공했을 수 있음).
-	const zeroApplyRate = Number(
-		s.zero_apply_cycle_rate ?? s.haiku_skipped_rate ?? 0,
-	);
+function StatusBandI({
+	statsState,
+	listState,
+	learningLogState,
+	suppression,
+	awaiting,
+	reviewReasons,
+	onRetry,
+}) {
+	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
-	// 무적용 = 생성-미적용 + 무생성 (적용 0건 partition 합) → 'N.N% (x/y)' headline (A5).
-	// cycle_total_7d 미존재 (legacy payload) → 비율 단독 fallback.
-	const zeroApplyCycles =
-		Number(s.cycles_generated_not_applied_7d ?? 0) +
-		Number(s.cycles_nothing_generated_7d ?? 0);
-	const zeroApplyHeadline =
-		cycleTotal > 0
-			? window.UI.formatPctWithDenominator(zeroApplyCycles, cycleTotal)
-			: `${(zeroApplyRate * 100).toFixed(1)}%`;
-
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
+	const promptable = Math.max(
+		0,
+		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
+	);
+	const statsStatus = tileStatusI(statsState, statsState.data);
 	return (
-		<div className="mb-3">
-			{/* tier KPI = 전체 누적 — 칸반 배지의 '최근 30일 전수'와 윈도우가 다름 → 라벨에 명시. */}
-			<div className="grid grid-cols-4 gap-3">
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="✓" className="text-ok" size={12} />
-							Suggestions by track (all time)
-						</span>
-					}
-					value={`${formatIntI(autoCnt)} · ${formatIntI(safetyCnt)}`}
-					hint={`auto ${formatIntI(autoCnt)} · needs approval ${formatIntI(safetyCnt)}`}
+		<div className="grid grid-cols-4 gap-3 mb-3">
+			<StatusTileI
+				status={tileStatusI(listState, listState.data)}
+				tone="text-warn"
+				symbol="⚠"
+				label="Awaiting your decision"
+				value={formatIntI(awaiting)}
+				population="Safety-tier suggestions, pending or snoozed · no recency bound"
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={statsStatus}
+				tone="text-ok"
+				symbol="✓"
+				label="Applied (7 days)"
+				value={formatIntI(Number(s.applied_last_7d ?? 0))}
+				population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={tileStatusI(learningLogState, suppression)}
+				tone="text-info"
+				symbol="ℹ"
+				label="Backlog that can propose"
+				value={formatIntI(promptable)}
+				population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={statsStatus}
+				tone="text-info"
+				symbol="ℹ"
+				label="Flagged results (7 days)"
+				value={formatIntI(Number(s.review_flag_last_7d ?? 0))}
+				population={
+					<ReviewReasonSegmentsI
+						segments={reviewReasons}
+						fallback="Outcomes flagged in the last 7 days"
+					/>
+				}
+				onRetry={onRetry}
+			/>
+		</div>
+	);
+}
+
+// payload 상태 → 타일 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
+function tileStatusI(state, value) {
+	if (state.status === "loading") return "loading";
+	if (state.status === "error") return "error";
+	if (!value) return "unavailable";
+	return "ready";
+}
+
+function StatusTileI({ status, tone, symbol, label, value, population, onRetry }) {
+	const { KPI } = window.UI;
+	if (status !== "ready") {
+		return (
+			<TilePlaceholderI status={status} label={label} onRetry={onRetry} />
+		);
+	}
+	return (
+		<KPI
+			label={
+				<span className="inline-flex items-center gap-1.5">
+					<SymI s={symbol} className={tone} size={12} />
+					{label}
+				</span>
+			}
+			value={value}
+			hint={population}
+		/>
+	);
+}
+
+// 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
+// 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
+function TilePlaceholderI({ status, label, onRetry }) {
+	return (
+		<div
+			className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+			aria-busy={status === "loading" ? "true" : undefined}
+		>
+			<div className="fs-micro font-mono text-faint min-h-[2.4em]">{label}</div>
+			{status === "loading" ? (
+				<div
+					className="i-anim-skel mt-1"
+					style={{
+						height: 28,
+						borderRadius: 6,
+						background: "rgb(var(--sunken))",
+					}}
 				/>
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="✓" className="text-ok" size={12} />
-							Applied (7 days)
-						</span>
-					}
-					value={formatIntI(applied7d)}
-					hint={`apply rate ${applyRateLifetime}`}
-				/>
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="⚠" className="text-warn" size={12} />
-							Rejected (7 days)
-						</span>
-					}
-					value={formatIntI(rejected7d)}
-					hint="Auto-rejected by the loop"
-				/>
-				{/* 7d qualifier 를 label 에 명시 — 이 KPI=7d, BucketRow 검토필요=30d 가 한 화면 공존. */}
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="ℹ" className="text-info" size={12} />
-							Flagged results (7 days)
-						</span>
-					}
-					value={formatIntI(reviewFlag)}
-					hint={
-						<ReviewReasonSegmentsI
-							segments={reviewReasons}
-							fallback="Flagged outcomes"
-						/>
-					}
-				/>
-			</div>
-			<CycleDecompositionRowI stats={s} />
+			) : null}
+			{status === "error" ? (
+				<button
+					className="btn ghost sm mt-1"
+					onClick={onRetry}
+					aria-label={`Retry loading ${label}`}
+				>
+					Couldn't load — retry
+				</button>
+			) : null}
+			{status === "unavailable" ? (
+				<div className="card-sub is-wrap fs-meta mt-1">
+					Not measured — this payload carried no value for it
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+// 마지막 사이클 시각 — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
+function formatCycleStampI(iso) {
+	if (!iso) return "unknown";
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return "unknown";
+	return d.toLocaleString(undefined, {
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+}
+
+// as-of 스탬프 — payload 가 착지한 순간. 값이 없으면 시각을 지어내지 않는다.
+function AsOfStampI({ at }) {
+	return (
+		<span
+			className="fs-micro font-mono text-faint"
+			title="When this screen's payloads last landed"
+		>
+			as of {at ? formatCycleStampI(at) : "—"}
+		</span>
+	);
+}
+
+// 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
+// 함께 운반한다(색 단독 금지).
+function ViewToggleI({ view, onChange }) {
+	const options = [
+		["operator", "Operator"],
+		["instrumentation", "Instrumentation"],
+	];
+	return (
+		<div className="inline-flex" role="group" aria-label="Screen view">
+			{options.map(([key, label]) => (
+				<button
+					key={key}
+					type="button"
+					className={`btn ghost sm ${view === key ? "text-ink" : "text-faint"}`}
+					aria-pressed={view === key}
+					onClick={() => onChange(key)}
+				>
+					{view === key ? <SymI s="✓" size={11} /> : null}
+					{label}
+				</button>
+			))}
+		</div>
+	);
+}
+
+// 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
+// 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
+// reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
+function LoopOutputGroupI({
+	statsState,
+	loopEventsState,
+	loopAggregate,
+	listState,
+	buckets,
+	onNav,
+	onRetry,
+}) {
+	const { CardHead, Icon } = window.UI;
+	return (
+		<div className="space-y-3">
+			<CardHead
+				title="Loop output"
+				sub="Last 7 days of cycles unless a card names its own basis"
+				right={
+					<button
+						className="btn ghost sm"
+						onClick={() => {
+							if (typeof onNav === "function") onNav("outcomes");
+						}}
+						aria-label="Open the reporting-health card on the Task results screen"
+					>
+						Reporting health <Icon name="arrow-right" size={14} />
+					</button>
+				}
+			/>
+			{statsState.status === "ready" && statsState.data ? (
+				<CycleDecompositionRowI stats={statsState.data} />
+			) : null}
+			<ChangeSummaryCardI
+				state={loopEventsState}
+				aggregate={loopAggregate}
+				onRetry={onRetry}
+			/>
+			<BucketRowI state={listState} buckets={buckets} />
 		</div>
 	);
 }
@@ -1596,71 +1687,6 @@ function BucketRowI({ state, buckets }) {
 			</div>
 		</div>
 	);
-}
-
-// ----- Attribution Pointer card ----
-//
-// outcomes 화면의 canonical AttributionHealthCard 로 이동하는 순수 포인터 카드.
-// healthy_rate / literal_omission_rate / 전체 attribution 분해는 모두 outcomes 화면이 호스팅
-// (본 화면은 중복 타일 제거) → 헤더 + 이동 링크만 유지.
-
-function AttributionPointerCardI({ onNav }) {
-	const { CardHead, Icon } = window.UI;
-
-	const navLink = (
-		<button
-			className="btn ghost sm"
-			onClick={() => {
-				if (typeof onNav === "function") onNav("outcomes");
-			}}
-			aria-label="Open the reporting-health card on the Task results screen"
-		>
-			Task results <Icon name="arrow-right" size={14} />
-		</button>
-	);
-
-	return (
-		<div className="card">
-			<CardHead
-				title="Reporting health (summary)"
-				sub="How results were recorded"
-				right={navLink}
-			/>
-		</div>
-	);
-}
-
-// literal-omission 비율 → dual-encoded 심각도 배지 (낮을수록 좋음).
-// null/undefined → ℹ "—" 회색 (denominator 0 — 데이터 부재). 값 존재 시 구간별:
-//   < 3%  → ✓ ok (정상)  ·  3-8% → ⚠ warn (주의)  ·  ≥8% → ✕ crit (점검 필요)
-// 색상 + 기호 + 텍스트 3중 부호화 (color-blind safety).
-// Outcome 화면 attributionOmissionBadgeO 와 동일 밴드.
-function attributionOmissionBadgeI(ratio) {
-	if (ratio === null || ratio === undefined || Number.isNaN(Number(ratio))) {
-		return {
-			tone: "text-info",
-			symbol: "ℹ",
-			hint: "No data (no attributed runs in this period)",
-		};
-	}
-	const pct = Number(ratio) * 100;
-	if (pct < 3)
-		return {
-			tone: "text-ok",
-			symbol: "✓",
-			hint: `OK · ${pct.toFixed(2)}% (lower is better)`,
-		};
-	if (pct < 8)
-		return {
-			tone: "text-warn",
-			symbol: "⚠",
-			hint: `Watch · ${pct.toFixed(2)}% (check if rising)`,
-		};
-	return {
-		tone: "text-crit",
-		symbol: "✕",
-		hint: `Investigate · ${pct.toFixed(2)}%`,
-	};
 }
 
 // 알람 레인 — 알람이 하나도 없으면 레인 자체를 렌더하지 않는다. 비어 있는 레인은
