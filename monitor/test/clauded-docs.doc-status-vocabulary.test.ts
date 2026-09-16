@@ -1,9 +1,6 @@
-// Parity pin for the monitor.DocStatus stage vocabulary across the three artifacts that
-// together decide what a database can actually hold: the Prisma schema, the migration
-// chain and the shared response types. A token declared on one surface only is the
-// failure this suite exists to catch — a schema-only value never reaches a database, a
-// migration-only value is invisible to the client, and a types-only value narrows reads
-// against a token no row carries.
+// Parity pin for the monitor.DocStatus stage vocabulary across the three artifacts that together
+// decide what a database can hold: the Prisma schema, the migration chain and the shared response
+// types. A token declared on one surface only never reaches both the column and the client.
 // Runner: npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.doc-status-vocabulary.test.ts
 
 import test from "node:test";

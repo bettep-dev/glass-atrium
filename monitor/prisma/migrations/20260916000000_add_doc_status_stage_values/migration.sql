@@ -1,38 +1,15 @@
--- Extend monitor."DocStatus" with the four stage values the Documents screen needs. The enum
--- expressed one undifferentiated in-flight state, so "document verification" and "implementation
--- done" were the same token and the operator could neither read nor set a stage.
+-- Extend monitor."DocStatus" with the four stage values the Documents screen needs. 'done' is
+-- reused, so no stored terminal row changes meaning; the retired 'progress' stays in the type as
+-- an accepted write alias — PG has no ALTER TYPE DROP VALUE, and a row written by a
+-- not-yet-updated agent must still read rather than vanish from the operator's list.
 --
--- Stored tokens are English snake_case; the screen renders the operator's Korean labels
--- (doc_review 문서 검증 · implementing 구현중 · impl_review 구현 검증 · impl_done 구현 완료).
--- 'done' (종료) is deliberately NOT re-added: the terminal stage reuses the existing token, so
--- every stored terminal row keeps its meaning and no backfill touches it.
+-- ADD VALUE only: PostgreSQL refuses a value consumed in the transaction that added it and Prisma
+-- runs one file per transaction, so the default move and backfill are a separate later migration.
+-- Deploy order: the widened read acceptance ships BEFORE this migration; the reverse order hands
+-- the read paths values they narrow away.
 --
--- 'progress' — the retired in-flight token — stays in the type. PostgreSQL has no ALTER TYPE
--- DROP VALUE, and more importantly the read paths must keep accepting it: a row written by a
--- not-yet-updated agent between this deploy and the next would otherwise be dropped from the
--- operator's list rather than shown. It is an accepted write alias for 'doc_review', never a stage.
---
--- Transaction note: Prisma Migrate wraps each migration file in a single transaction on
--- PostgreSQL. ALTER TYPE ... ADD VALUE is allowed there since PG 12 PROVIDED the new value is
--- not consumed in the same transaction. This file therefore ONLY adds values — the default move
--- and the backfill that consume them are a separate, later migration, and splitting them is a
--- correctness requirement rather than tidiness. Same shape as
--- 20260802000000_add_daemon_status_apply_failed. No stored row changes value: ADD VALUE never
--- rewrites labels.
---
--- Deploy order: the widened read acceptance ships BEFORE this migration. Accepting tokens no row
--- yet carries is inert; the reverse order hands the read paths values they narrow away, which
--- empties the operator's list.
---
--- IF NOT EXISTS keeps a re-run — and a future pre-release re-squash folding the values into the
--- init CREATE TYPE — a no-op. The applied init_squashed migration stays untouched (migrate deploy
--- checksum-verifies applied migrations).
---
--- Reversal: PostgreSQL has no ALTER TYPE ... DROP VALUE, so this is not reversible in place; the
--- reversal is a type recreate, stated here because Prisma keeps no down file. Run inside one
--- transaction, and only after confirming no row carries any of the four
--- (SELECT count(*) FROM monitor.documents
---    WHERE doc_status IN ('doc_review','implementing','impl_review','impl_done') → must be 0):
+-- Reversal (Prisma keeps no down file): no DROP VALUE exists, so recreate the type in one
+-- transaction, only after confirming no row carries any of the four values:
 --   ALTER TYPE "monitor"."DocStatus" RENAME TO "DocStatus_old";
 --   CREATE TYPE "monitor"."DocStatus" AS ENUM ('progress','done');
 --   ALTER TABLE "monitor"."documents" ALTER COLUMN "doc_status" DROP DEFAULT;
