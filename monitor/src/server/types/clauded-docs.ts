@@ -23,6 +23,11 @@ export type DocStageLiteral =
 // (single-statement CTE), narrowed to the terminal transition.
 export type DocStatusLiteral = DocStageLiteral | "progress";
 
+// What the doc_status READ filter accepts — the stored tokens plus one pseudo-value. 'open' is
+// every stage but the terminal one, the set the operator's open chip selects; it is never
+// stored and is rejected on a write.
+export type DocStatusFilterLiteral = DocStatusLiteral | "open";
+
 // Model id that performed the last status action — null = unknown, a state the screen renders
 // as such rather than as an absent value. The operator's own action is written as a reserved
 // literal in the same column and rendered distinctly from a model id.
@@ -71,9 +76,11 @@ export interface CreateClaudedDocBody {
   // monitor.documents.id ON DELETE SET NULL) · FK violation / NaN / negative →
   // 400 invalid_body. Self-reference unchecked at POST time (new row has no id yet).
   folder_id?: number;
-  // workflow status (POST default 'progress', matching DB default; only
-  // 'progress' | 'done' allowed). chain-root / folder_id NULL rows = cascade scope 1.
+  // work stage (POST default 'doc_review'). The retired 'progress' is accepted and stored as
+  // 'doc_review'. chain-root / folder_id NULL rows = cascade scope 1.
   doc_status?: DocStatusLiteral;
+  // Model id performing this status write — see `LastStatusModel`. Omitted → null (unknown).
+  last_status_model?: LastStatusModel;
 }
 // Group display ordering excluded from create/update body — ordering SoT is the PATCH
 // /group/:rootId/reorder endpoint. Accepting it without a persistence path = silent-drop.
@@ -118,8 +125,10 @@ export interface ClaudedDocSummary {
   format: DocFormatToken;
   /** Prior version this row supersedes — null = chain root. Wire: bigint → number. */
   supersedes_id: number | null;
-  /** Group cascade target — surfaced for the UI's cascade-toggle decision. */
-  doc_status: DocStatusLiteral;
+  /** Work stage — a stored 'progress' already read as 'doc_review'. */
+  doc_status: DocStageLiteral;
+  /** Model id behind the last status action — see `LastStatusModel`. */
+  last_status_model: LastStatusModel;
   /**
    * group folder linkage — null = ungrouped (split as group_key=-id in list
    * responses) · set = root doc id (same folder_id = same group). FK ON DELETE
@@ -171,10 +180,12 @@ export interface ClaudedDocGroup {
   representative_title: string;
   /** representative row's author · doc_status · audience · format · created_at. */
   representative_author: string;
-  representative_doc_status: DocStatusLiteral;
+  representative_doc_status: DocStageLiteral;
   representative_audience: AudienceLiteral | null;
   representative_format: DocFormatToken;
   representative_created_at: string;
+  /** representative row's last-status model — see `LastStatusModel`. */
+  representative_last_status_model: LastStatusModel;
   /** representative row's predecessor FK — null = chain root. List-side revision-chain glyph source. */
   representative_supersedes_id: number | null;
   /** member count (NULL group = 1). */
@@ -190,8 +201,21 @@ export interface ListClaudedDocsGroupsResponse {
   /** filter-matched docs with effective audience 'hidden' — server total, page-independent. */
   hidden_doc_total: number;
   groups: ClaudedDocGroup[];
+  /**
+   * Corpus-scoped group-unit counts for the toolbar chips — deliberately NOT narrowed by the
+   * doc_status filter, so selecting one chip never zeroes its siblings. A group counts as open
+   * when any member is (its least-advanced stage is not terminal), and as hidden only when
+   * every member is. `total` is the group count of the same corpus.
+   */
+  group_counts: {
+    total: number;
+    open: number;
+    done: number;
+    hidden: number;
+    exposed: number;
+  };
   filter: {
-    doc_status: DocStatusLiteral | null;
+    doc_status: DocStatusFilterLiteral | null;
     author: string | null;
     limit: number;
     offset: number;
@@ -223,7 +247,9 @@ export interface GetClaudedDocResponse {
    */
   superseded_by_id: number | null;
   /** Same as `ClaudedDocSummary.doc_status` — list/detail parity. */
-  doc_status: DocStatusLiteral;
+  doc_status: DocStageLiteral;
+  /** Same as `ClaudedDocSummary.last_status_model` — list/detail parity. */
+  last_status_model: LastStatusModel;
   /** Same as `ClaudedDocSummary.folder_id` — list/detail parity. */
   folder_id: number | null;
   /** Same as `ClaudedDocSummary.display_order` — list/detail parity. */
@@ -249,10 +275,13 @@ export interface UpdateClaudedDocBody {
   title?: string;
   // audience re-classification. Unspecified → existing value preserved.
   audience?: AudienceLiteral;
-  // workflow status mutation (group cascade trigger). Unspecified → preserved (no
-  // cascade) · 'progress' | 'done' → single-statement cascade CTE: folder_id NULL →
-  // self only · folder_id set → all same-folder_id rows (cascade_count surfaced).
+  // work-stage mutation. Unspecified → preserved · a stage → written to this row alone,
+  // EXCEPT the terminal stage on a group member, which cascades to every same-folder_id row
+  // (single-statement CTE). A non-terminal move never touches a sibling.
   doc_status?: DocStatusLiteral;
+  // Model id performing this status write — see `LastStatusModel`. Written only alongside a
+  // doc_status change; omitted → the stored value is preserved.
+  last_status_model?: LastStatusModel;
   // Group display ordering excluded — persistence SoT is the reorder endpoint
   // (see CreateClaudedDocBody).
 }
@@ -359,7 +388,7 @@ export interface SearchClaudedDocHit {
   // ts_headline snippet around the matched terms; empty when no match span (very short docs).
   snippet: string;
   /** list-row parity — same as `ClaudedDocSummary.doc_status` (single-SELECT, avoids N+1). */
-  doc_status: DocStatusLiteral;
+  doc_status: DocStageLiteral;
   /** Same as `ClaudedDocSummary.audience`. */
   audience: AudienceLiteral | null;
   /** Same as `ClaudedDocSummary.format`. */
