@@ -1040,7 +1040,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Documents"
-						sub={asOf ? `as of ${formatDateTimeCD(asOf)}` : "loading…"}
+						sub={asOfSubCD(asOf, listState.status)}
 					right={headerRight}
 				/>
 			</div>
@@ -2656,7 +2656,7 @@ function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
 				))}
 			</span>
 			{isTerminal && <Icon name="check" size={11} />}
-			<span className="doc-stage-label">{isChanging ? "변경 중…" : entry.label}</span>
+			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 		</>
 	);
 
@@ -3131,14 +3131,22 @@ function DocListSkeletonCD() {
 }
 
 // S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
-//   · docStatus default 'progress' / audience default 'all' 기준으로 non-default 만 active 집계.
+//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
 //   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
 // 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
+// as-of 스탬프 — asOf 는 성공 fetch 만 갱신하므로 첫 fetch 가 실패하면 null 로 남는다.
+// 그 상태를 "loading…" 이라 말하면 에러 배너 옆에서 진행 중이라 거짓말하는 셈.
+function asOfSubCD(asOf, listStatus) {
+	if (asOf) return `as of ${formatDateTimeCD(asOf)}`;
+	return listStatus === "loading" ? "loading…" : "not loaded";
+}
+
 function emptyHeadlineCD(isSearchMode, docStatusFilter) {
-	if (isSearchMode) return "검색 결과 없음";
-	if (docStatusFilter === "open") return "열린 문서 없음";
-	if (docStatusFilter === TERMINAL_STAGE_CD) return "종료된 문서 없음";
-	return "문서 없음";
+	if (isSearchMode) return "No documents match this search";
+	// 칩의 한국어 stage 단어만 옮기고 문장은 화면 나머지와 같은 영어 — 한 면 안에서 언어가 갈리지 않게.
+	const option = DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter);
+	if (option && option.value) return `No ${option.label} documents`;
+	return "No documents";
 }
 
 function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
