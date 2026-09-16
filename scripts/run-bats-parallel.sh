@@ -93,6 +93,7 @@ readonly DAEMON_ENV_SCRUB=(
   -u AUTOAGENT_CLAUDE_BIN
   -u CLAUDE_BIN
 )
+readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR)
 
 # One parent scratch dir; each unittest stage gets its OWN sandbox HOME beneath it, so
 # stage 3 never inherits what stage 2's suites left behind. The cleanup trap still tracks
@@ -110,12 +111,12 @@ WORST_RC=0
 # SC2329: invoked indirectly by the EXIT trap below — not dead code.
 # shellcheck disable=SC2329
 cleanup() {
-  if [[ -n "${SANDBOX_ROOT}" && -d "${SANDBOX_ROOT}" ]]; then
-    rm -rf -- "${SANDBOX_ROOT}"
-  fi
-  if [[ -n "${GIT_PROBE_DIR}" && -d "${GIT_PROBE_DIR}" ]]; then
-    rm -rf -- "${GIT_PROBE_DIR}"
-  fi
+  local dir
+  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}"; do
+    if [[ -n "${dir}" && -d "${dir}" ]]; then
+      rm -rf -- "${dir}"
+    fi
+  done
 }
 trap cleanup EXIT
 
@@ -214,7 +215,7 @@ main() {
   mkdir -p "${SANDBOX_ROOT}/hooks" "${SANDBOX_ROOT}/autoagent"
 
   run_stage "stage 2/4 ${HOOKS_TEST_ROOT} unittest" \
-    env "${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
+    env "${PYTHON_STAGE_SCRUB[@]}" \
     "HOME=${SANDBOX_ROOT}/hooks" \
     python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
 
@@ -226,12 +227,12 @@ main() {
   # Guarding it the way stage 4 guards pytest would convert a broken install into a
   # silent pass, which is the failure this stage exists to close.
   #
-  # Its env differs from stage 2's in the sandbox HOME alone — every scrubbed name,
-  # AUTOAGENT_CLAUDE_BIN included, sits in DAEMON_ENV_SCRUB and reaches all four stages.
+  # Its env differs from stage 2's in the sandbox HOME alone — every scrubbed name
+  # sits in DAEMON_ENV_SCRUB and reaches all four stages.
   # autoagent/test/suite-hermeticity.bats scrubs the same set on the identical discover
   # run, so the probe cannot read green under conditions this stage does not share.
   run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \
-    env "${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
+    env "${PYTHON_STAGE_SCRUB[@]}" \
     "HOME=${SANDBOX_ROOT}/autoagent" \
     python3 -m unittest discover -s "${AUTOAGENT_TEST_ROOT}" -p 'test_*.py'
 
@@ -255,7 +256,7 @@ main() {
   # added later from writing under HOME, which is exactly what the sandbox would buy.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 4/4 ${SCRIPTS_TEST_ROOT} pytest" \
-      env "${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
+      env "${PYTHON_STAGE_SCRUB[@]}" \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
   else
     local python3_path

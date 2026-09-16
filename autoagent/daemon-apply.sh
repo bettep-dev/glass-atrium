@@ -808,7 +808,12 @@ verify_test_harness() {
     if [[ -n "${PROPOSAL_ID}" ]]; then
         return 0
     fi
+    verify_green_suite
+}
 
+# The batch-path green-suite run: toolchain presence, the full suite with one flaky
+# retry, then a fatal clause picked by the runner's exit VALUE.
+verify_green_suite() {
     # bats and GNU parallel are probed HERE rather than read off the runner's rc, so
     # their ABSENCE aborts on its own stderr line. The runner separately probes what
     # only it can see — a tool present but unusable — and reports that through the

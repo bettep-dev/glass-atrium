@@ -350,7 +350,7 @@ validate_manifest_file() {
          | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
     and (.retired | keys | all(
            . != "" and (startswith("/") | not)
-           and (any(split("/")[]; . == "..") | not)))
+           and all(split("/")[]; . != "..")))
     and (.retired | to_entries | all(
            (.value | type == "array")
            and (.value | length > 0)

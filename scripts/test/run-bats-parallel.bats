@@ -117,12 +117,14 @@ stage_env_field() {
   printf '%s\n' "${row}" | cut -f"${2}"
 }
 
-# Asserts one stage inherited NEITHER data-root variable, identifying the stage by a
-# substring of its argv. Call it as `assert_stage_scrubbed … || return 1`, matching the
+# Asserts one python stage recorded every named variable as unset, identifying the stage
+# by a substring of its argv. Call it as `assert_stage_unset … || return 1`, matching the
 # gating discipline of every other assertion here.
-# $1 = argv substring identifying the stage · $2 = human label for the failure message
-assert_stage_scrubbed() {
-  local pattern="${1}" label="${2}" row seen_data_root seen_update_dir
+# $1 = argv substring identifying the stage · $2 = human label for the failure message ·
+# $3.. = NAME:FIELD pairs, FIELD being the 1-based python3 env-log field NAME lands in
+assert_stage_unset() {
+  local pattern="${1}" label="${2}" row pair name seen
+  shift 2
   row="$(grep -m1 -- "${pattern}" "${STUB_LOG_DIR}/python3-env.log" || true)"
   [[ -n "${row}" ]] || {
     printf 'no %s row in the python3 env log:\n%s\n' "${label}" \
@@ -130,19 +132,20 @@ assert_stage_scrubbed() {
     return 1
   }
 
-  seen_data_root="$(printf '%s\n' "${row}" | cut -f2)"
-  [[ "${seen_data_root}" == "__UNSET__" ]] || {
-    printf '%s inherited GA_DATA_ROOT=%s; the scrub is missing\n' \
-      "${label}" "${seen_data_root}" >&2
-    return 1
-  }
+  for pair in "$@"; do
+    name="${pair%%:*}"
+    seen="$(printf '%s\n' "${row}" | cut -f"${pair##*:}")"
+    [[ "${seen}" == "__UNSET__" ]] || {
+      printf '%s inherited %s=%s; the scrub is missing\n' "${label}" "${name}" "${seen}" >&2
+      return 1
+    }
+  done
+}
 
-  seen_update_dir="$(printf '%s\n' "${row}" | cut -f3)"
-  [[ "${seen_update_dir}" == "__UNSET__" ]] || {
-    printf '%s inherited ATRIUM_UPDATE_STATE_DIR=%s; the scrub is missing\n' \
-      "${label}" "${seen_update_dir}" >&2
-    return 1
-  }
+# Asserts one stage inherited NEITHER data-root variable.
+# $1 = argv substring identifying the stage · $2 = human label for the failure message
+assert_stage_scrubbed() {
+  assert_stage_unset "${1}" "${2}" GA_DATA_ROOT:2 ATRIUM_UPDATE_STATE_DIR:3
 }
 
 # Gives every daemon-exported variable an ambient value, so a runner that scrubbed NOTHING
@@ -155,31 +158,19 @@ export_daemon_env() {
   export CLAUDE_BIN="${TMPROOT}/ambient-claude-bin"
 }
 
-# Asserts one PYTHON stage inherited none of DAEMON_ENV_NAMES, identifying the stage by a
-# substring of its argv. Call it as `assert_daemon_env_scrubbed … || return 1`, matching the
-# gating discipline of every other assertion here.
+# Asserts one PYTHON stage inherited none of DAEMON_ENV_NAMES.
 # $1 = argv substring identifying the stage · $2 = human label for the failure message
 assert_daemon_env_scrubbed() {
-  local pattern="${1}" label="${2}" i=0 name seen
-  [[ -n "$(grep -m1 -- "${pattern}" "${STUB_LOG_DIR}/python3-env.log" || true)" ]] || {
-    printf 'no %s row in the python3 env log:\n%s\n' "${label}" \
-      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
-    return 1
-  }
-
+  local pairs=() i=0
   while [[ "${i}" -lt "${#DAEMON_ENV_NAMES[@]}" ]]; do
-    name="${DAEMON_ENV_NAMES[${i}]}"
-    seen="$(stage_env_field "${pattern}" "${DAEMON_ENV_PY_FIELDS[${i}]}")"
-    [[ "${seen}" == "__UNSET__" ]] || {
-      printf '%s inherited %s=%s; the scrub is missing\n' "${label}" "${name}" "${seen}" >&2
-      return 1
-    }
+    pairs+=("${DAEMON_ENV_NAMES[${i}]}:${DAEMON_ENV_PY_FIELDS[${i}]}")
     i=$((i + 1))
   done
+  assert_stage_unset "${1}" "${2}" "${pairs[@]}"
 }
 
 # The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
-# all, which is also why the wrapper it asserts had to be introduced rather than extended.
+# all.
 assert_stage1_daemon_env_scrubbed() {
   local log="${STUB_LOG_DIR}/bats-daemon-env.log" name
   [[ -s "${log}" ]] || {
@@ -229,13 +220,9 @@ printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
 # Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
 # A separate log because scenario 1 asserts bats-env.log as a whole file.
-{
-  printf 'AUTOAGENT_GIT_ROOT=%s\n' "${AUTOAGENT_GIT_ROOT-__UNSET__}"
-  printf 'AUTOAGENT_GIT_PATHSPEC=%s\n' "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}"
-  printf 'AUTOAGENT_AGENTS_DIR=%s\n' "${AUTOAGENT_AGENTS_DIR-__UNSET__}"
-  printf 'AUTOAGENT_CLAUDE_BIN=%s\n' "${AUTOAGENT_CLAUDE_BIN-__UNSET__}"
-  printf 'CLAUDE_BIN=%s\n' "${CLAUDE_BIN-__UNSET__}"
-} >>"${STUB_LOG_DIR}/bats-daemon-env.log"
+for n in AUTOAGENT_GIT_ROOT AUTOAGENT_GIT_PATHSPEC AUTOAGENT_AGENTS_DIR AUTOAGENT_CLAUDE_BIN CLAUDE_BIN; do
+  printf '%s=%s\n' "${n}" "${!n-__UNSET__}"
+done >>"${STUB_LOG_DIR}/bats-daemon-env.log"
 if [[ -n "${STUB_BATS_IMPORT_PROBE:-}" ]]; then
   cd -- "${STUB_LOG_DIR}/pyprobe" && "${REAL_PYTHON3}" -c 'import ga_probe_mod'
 fi
@@ -566,9 +553,8 @@ teardown() {
   }
 }
 
-# Asserted per STAGE rather than once over the whole log: stage 1 was the stage with no
-# wrapper at all, so a check that any stage scrubbed the family would have read green on
-# exactly the leak this scenario exists to catch.
+# Asserted per STAGE rather than once over the whole log: stage 1 has its own env wrapper,
+# so a whole-log check could pass on a stage-1 leak.
 @test "(10) every stage runs with the daemon-exported env scrubbed" {
   export_daemon_env
   run_runner_expecting 0 || return 1

@@ -407,12 +407,8 @@ spine_find_removed_files() {
 # carrying a `..` segment. Segment-exact: `foo..bar` is a name, not a traversal. Needs
 # no filesystem, so it runs for every key before any lookup.
 spine_is_escaping_retired_key() {
-  case "$1" in
-    /*) return 0 ;;
-    *) ;;
-  esac
   case "/$1/" in
-    */../*) return 0 ;;
+    //?* | */../*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -426,8 +422,7 @@ spine_is_escaping_retired_target() {
   local parent root
   parent="$(CDPATH='' cd -P -- "$(dirname -- "$1")" && pwd -P)" || return 0
   root="$(CDPATH='' cd -P -- "$2" && pwd -P)" || return 0
-  [[ "${parent}" == "${root}" || "${parent}" == "${root%/}/"* ]] && return 1
-  return 0
+  [[ "${parent}" != "${root}" && "${parent}" != "${root%/}/"* ]]
 }
 
 # T11 — staged apply + rollback
