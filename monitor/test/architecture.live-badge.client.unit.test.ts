@@ -761,3 +761,152 @@ test("AC-B2-6a no model and no failure names nothing — the alert is not a perm
     "every headline store answered, so a reason here would call four live stores dead",
   );
 });
+
+// --- M1 (39731 S3·S4·S5): 행동을 바꾼 세 순수 함수에 절을 붙임 --------------------
+// 머리글 문장 · 레인 정렬 · 점선 링의 모집단은 화면의 유일한 harness health 사실인데
+// 어느 것도 절이 없었음. 셋 다 window/React 를 읽지 않는 순수 함수라 위 문맥에서 바로 잼.
+const archCtx = arch as unknown as Record<string, unknown>;
+// 값 읽기 — callInCtx 는 부르기만 함. 표(ALARM_TONE_RANK 등)는 함수가 아님.
+const readInCtx = <T,>(name: string): T => vm.runInContext(name, archCtx) as T;
+
+type PartRow = { tone: string | null };
+const partRows = (...tones: (string | null)[]): PartRow[] =>
+  tones.map((tone) => ({ tone }));
+
+// 상태 종류(비었음 · 오는 중 · 못 읽음 · 미판정 · 일부 판정 · 전부 정상)마다 문장이 갈려야 함.
+// 문장 하나를 통째로 박지 않고 '어느 낱말이 반드시 서는가' 로 잼 — 표현이 바뀌어도 사실은 남음.
+const CAPTION_CASES: {
+  name: string;
+  rows: PartRow[];
+  busy: boolean;
+  errored: number;
+  must: string[];
+}[] = [
+  { name: "model absent + still loading", rows: [], busy: true, errored: 0, must: ["Reading part health"] },
+  { name: "model absent", rows: [], busy: false, errored: 0, must: ["unavailable"] },
+  { name: "all four in flight", rows: partRows(null, null), busy: true, errored: 0, must: ["Reading", "2"] },
+  { name: "nothing judged, nothing failed", rows: partRows(null, null), busy: false, errored: 0, must: ["No verdict yet", "2"] },
+  { name: "nothing judged because stores failed", rows: partRows(null, null), busy: false, errored: 2, must: ["Couldn't read", "2"] },
+  { name: "some ok, rest not yet judged", rows: partRows("ok", null), busy: false, errored: 0, must: ["1 of 2", "not verified"] },
+  { name: "some ok, rest unreadable", rows: partRows("ok", null), busy: false, errored: 1, must: ["1 of 2", "unreadable"] },
+  { name: "attention outranks everything", rows: partRows("crit", null), busy: true, errored: 1, must: ["1 of 2", "need attention"] },
+  { name: "all judged ok", rows: partRows("ok", "ok"), busy: false, errored: 0, must: ["All 2 parts ok"] },
+];
+
+test("M1 every health state renders its own caption sentence", () => {
+  const read = new Map<string, string>();
+
+  for (const c of CAPTION_CASES) {
+    const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", c.rows, c.busy, c.errored);
+    for (const needle of c.must)
+      assert.ok(
+        caption.includes(needle),
+        `${c.name}: caption must carry "${needle}" — read: "${caption}"`,
+      );
+    read.set(c.name, caption);
+  }
+
+  // 낱말 단언만으로는 두 상태가 같은 문장으로 접히는 것을 못 잡음 — 접히면 안 읽힌 값이 0 으로 읽힘.
+  const distinct = new Set(read.values());
+  assert.strictEqual(
+    distinct.size,
+    CAPTION_CASES.length,
+    `each state must read differently — read: ${JSON.stringify([...read])}`,
+  );
+});
+
+test("M1 a zero never stands in for a reading that never arrived", () => {
+  const unread = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows(null, null, null), false, 3);
+  const clean = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows("ok", "ok", "ok"), false, 0);
+
+  assert.ok(!unread.includes("0 of"), `an unread map must not report a count — read: "${unread}"`);
+  assert.notStrictEqual(unread, clean, "an all-failed read must not render as an all-clear");
+});
+
+// --- 레인: 심각도 정렬과 live-overlay 행 (제거된 strip 의 유일한 대체 표면) ---------
+const alarmRows = (over: Record<string, unknown> = {}) =>
+  callInCtx<{ key: string; tone: string; note: string }[]>(archCtx, "getAlarmRows", {
+    offWriters: [],
+    healthStoreErrors: [],
+    liveState: { status: "ready", data: null, error: null },
+    governance: { absent: [], sourceMissing: false },
+    ...over,
+  });
+
+test("M1 the lane stands the worse fact first whatever order it was assembled in", () => {
+  // governance(warn) 가 먼저 조립되고 dual-write·health-store·live-overlay(crit) 가 뒤에 옴.
+  const rows = alarmRows({
+    offWriters: [{ writer_name: "track-outcome" }],
+    healthStoreErrors: ["PostgreSQL"],
+    liveState: { status: "error", data: null, error: "ECONNREFUSED" },
+    governance: { absent: ["scoped/scope-dev.md"], sourceMissing: false },
+  });
+
+  const tones = rows.map((r) => r.tone);
+  assert.deepStrictEqual(
+    [...tones].sort((a, b) => tones.indexOf(a) - tones.indexOf(b)),
+    [...tones],
+    "sort must be stable",
+  );
+  assert.ok(
+    tones.lastIndexOf("crit") < tones.indexOf("warn"),
+    `every crit must precede every warn — read: ${JSON.stringify(tones)}`,
+  );
+  assert.deepStrictEqual(
+    [...rows.map((r) => r.key)],
+    ["dual-write", "health-store", "live-overlay", "governance"],
+    "same-tone rows keep assembly order",
+  );
+});
+
+test("M1 a live-overlay failure is named in the lane and names its own reason", () => {
+  const quiet = alarmRows();
+  assert.deepStrictEqual([...quiet.map((r) => r.key)], [], "a healthy load must raise nothing");
+
+  const failed = alarmRows({ liveState: { status: "error", data: null, error: "ECONNREFUSED" } });
+  assert.deepStrictEqual([...failed.map((r) => r.key)], ["live-overlay"], "the failure must stand alone as a row");
+  assert.strictEqual(failed[0].tone, "crit");
+  assert.ok(
+    failed[0].note.includes("ECONNREFUSED"),
+    `the row must carry the endpoint's own reason — read: "${failed[0].note}"`,
+  );
+
+  // 이유 없는 실패도 조용히 지나가면 안 됨 — strip 이 사라진 뒤 이 행이 유일한 표면임.
+  const bare = alarmRows({ liveState: { status: "error", data: null, error: null } });
+  assert.ok(bare[0].note.length > 0, "a reasonless failure still needs a sentence");
+});
+
+test("M1 every tone the lane can paint has a rank, so no row sorts to nowhere", () => {
+  const ranks = readInCtx<Record<string, number>>("ALARM_TONE_RANK");
+  const glyphs = readInCtx<Record<string, string>>("TONE_GLYPH_CLASS");
+
+  for (const tone of Object.keys(glyphs))
+    assert.ok(
+      Number.isFinite(ranks[tone]),
+      `tone "${tone}" can be painted but has no rank — it would sort as NaN`,
+    );
+});
+
+// --- 점선 링의 모집단: 판정을 못 받은 부품의 노드 ---------------------------------
+test("M1 cutting a store can only add unverified nodes, never remove one", () => {
+  const defs = (arch as unknown as { window: { HealthModel: { HEALTH_CARD_DEFS: { id: string }[] } } })
+    .window.HealthModel.HEALTH_CARD_DEFS;
+  const bindings = Object.fromEntries(defs.map((d) => [d.id, [`n-${d.id}`]]));
+
+  const allAnswered = [
+    ...callInCtx<Set<string>>(archCtx, "buildUnverifiedNodeIds", bindings, healthStoreStates({
+      pgState: { status: "ready", data: { status: "ok" }, error: null },
+    })),
+  ];
+  const pgCut = [...callInCtx<Set<string>>(archCtx, "buildUnverifiedNodeIds", bindings, healthStoreStates())];
+
+  for (const id of allAnswered)
+    assert.ok(pgCut.includes(id), `cutting a store must not clear "${id}"`);
+  assert.ok(
+    pgCut.length > allAnswered.length,
+    `a store that did not answer must mark its parts unverified — read ${pgCut.length} vs ${allAnswered.length}`,
+  );
+
+  const unbound = [...callInCtx<Set<string>>(archCtx, "buildUnverifiedNodeIds", { "no-such-card": ["ghost"] }, healthStoreStates())];
+  assert.ok(!unbound.includes("ghost"), "a node bound to no card def must never be ringed");
+});
