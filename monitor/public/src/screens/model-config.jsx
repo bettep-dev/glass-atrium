@@ -155,11 +155,6 @@ const BUDGET_META_MC = {
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
-// 추천 preset — form 채움만 수행, 저장은 명시 Save 버튼 (spec P3).
-const PRESET_MODELS_MC = {
-	"model.dev": "claude-opus-4-8",
-};
-
 function ScreenModelConfig() {
 	const { PageHeader, Icon, TypeScaleStyle } = window.UI;
 
@@ -265,12 +260,6 @@ function ScreenModelConfig() {
 	const setBudget = (key, value) => {
 		setForm((f) => (f ? { ...f, budgets: { ...f.budgets, [key]: value } } : f));
 	};
-	const applyPreset = () => {
-		setForm((f) =>
-			f ? { ...f, models: { ...f.models, ...PRESET_MODELS_MC } } : f,
-		);
-	};
-
 	const save = async () => {
 		if (!payload || hasErrors || saving) return;
 		setSaving(true);
@@ -279,7 +268,12 @@ function ScreenModelConfig() {
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
 			const data = await putJsonMC("/api/model-config", payload);
-			setConfigState({ status: "ready", data, error: null });
+			setConfigState({
+				status: "ready",
+				data,
+				error: null,
+				receivedAt: Date.now(),
+			});
 			setForm(buildFormMC(data));
 			setSurfaceResults(extractSurfaceResultsMC(data));
 			showToast("ok", "Changes saved");
@@ -306,6 +300,12 @@ function ScreenModelConfig() {
 
 	const ready = configState.status === "ready" && form !== null;
 	const data = configState.data;
+	// 배너 트리거는 파일 sync 상태 하나가 아니라 행 드리프트 전체 — 행에서 걷어낸 처방을 배너가 대신 싣는다.
+	const showDrift =
+		ready && (data.daemon_config_sync !== "ok" || anyDriftMC(data));
+	const hasAlarm = Boolean(
+		configState.status === "error" || saveError || showDrift || surfaceResults,
+	);
 
 	return (
 		<div className="flex flex-col">
@@ -318,15 +318,11 @@ function ScreenModelConfig() {
 					sub="Models & per-call budget caps"
 					right={
 						<>
-							<button
-								className="btn ghost sm"
-								onClick={applyPreset}
-								disabled={!ready || saving}
-								title="Fills the recommended values into the form (dev agents claude-opus-4-8). Nothing is saved until you press Save in the banner below."
-								aria-label="Fill recommended preset"
-							>
-								Fill preset
-							</button>
+							<SyncTokenMC
+								state={configState.status}
+								sync={data?.daemon_config_sync}
+								receivedAt={configState.receivedAt}
+							/>
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
@@ -340,41 +336,38 @@ function ScreenModelConfig() {
 				/>
 			</div>
 
-			{saveError && (
-				<div className="mb-4">
-					<ErrorBannerMC
-						title="Couldn't save changes"
-						detail={saveError}
-						onRetry={save}
-					/>
+			{hasAlarm && (
+				<div
+					className="mb-4 flex flex-col gap-3"
+					role="region"
+					aria-label="Alerts">
+					{configState.status === "error" && (
+						<ErrorBannerMC
+							title="Couldn't load model config"
+							detail={configState.error}
+							onRetry={triggerRefresh}
+						/>
+					)}
+					{saveError && (
+						<ErrorBannerMC
+							title="Couldn't save changes"
+							detail={saveError}
+							onRetry={save}
+						/>
+					)}
+					{showDrift && <DriftBannerMC sync={data.daemon_config_sync} />}
+					{surfaceResults && (
+						<SurfaceResultsCardMC
+							results={surfaceResults}
+							onDismiss={() => setSurfaceResults(null)}
+						/>
+					)}
 				</div>
-			)}
-			{surfaceResults && (
-				<SurfaceResultsCardMC
-					results={surfaceResults}
-					onDismiss={() => setSurfaceResults(null)}
-				/>
 			)}
 
 			{configState.status === "loading" && <ModelConfigSkeletonMC />}
-			{configState.status === "error" && (
-				<ErrorBannerMC
-					title="Couldn't load model config"
-					detail={configState.error}
-					onRetry={triggerRefresh}
-				/>
-			)}
 			{ready && (
 				<>
-					{/* 드리프트 배너는 전체 sync 가 ok 가 아닐 때만 — In-sync 와 동시 노출 금지(W3-T2 IA-4).
-              per-domain drift 는 테이블 행 내 drift/in-sync 칩으로 이미 공시되므로 상단 배너는 top-level 신호 전용. */}
-					{data.daemon_config_sync !== "ok" && (
-						<DriftBannerMC
-							sync={data.daemon_config_sync}
-							domains={data.domains}
-						/>
-					)}
-					<SyncStatusRowMC sync={data.daemon_config_sync} />
 					<DomainsSectionMC
 						domains={data.domains}
 						knownModels={knownModels}
@@ -451,28 +444,40 @@ function ScreenModelConfig() {
 	);
 }
 
-// daemon-config.json 동기화 상태 — 표준 status Badge 1개로 공시 (W3-T2 (b): 26px KPI 값으로 띄우던
-// 거대 "In sync" 헤딩을 표준 status pill 로 강등 — 색+TONE_ICON 듀얼 인코딩). 지출/청구 KPI 는 없음
-// (OAuth 구독 = metered 청구 없음, GET 에 spend 데이터 없음 · per-call 캡이라 누적 소진 게이지 개념 없음).
-function SyncStatusRowMC({ sync }) {
-	const { Badge } = window.UI;
+// 헤더 sync 토큰 — "저장한 값이 실제로 도는가" 를 화면당 한 번만 답한다(행마다 반복 금지).
+// 톤은 glyph 가 싣고 텍스트는 평문 · as-of 는 클라이언트 수신 시각(루프백이라 payload 시각과 동치).
+function SyncTokenMC({ state, sync, receivedAt }) {
+	const { Icon } = window.UI;
 
-	const syncMeta = SYNC_META_MC[sync] || {
+	if (state === "loading") {
+		return <span className="fs-meta text-faint">Checking sync…</span>;
+	}
+	if (state !== "ready") {
+		return <span className="fs-meta text-faint">Sync state unavailable</span>;
+	}
+
+	const meta = SYNC_META_MC[sync] || {
 		label: sync || "—",
 		desc: "",
 		tone: "neutral",
 	};
 
 	return (
-		<div className="flex items-center gap-2 mb-4">
-			<span className="section-label">Config file sync</span>
-			<span title={syncMeta.desc}>
-				<Badge role="status" tone={syncMeta.tone} icon={true}>
-					{syncMeta.label}
-				</Badge>
-			</span>
-		</div>
+		<span
+			className="fs-meta text-dim flex items-center gap-1.5"
+			title={meta.desc}>
+			{sync !== "ok" && <Icon name="warn" size={12} className="text-warn" />}
+			<span>{meta.label}</span>
+			{receivedAt && (
+				<span className="text-faint">· as of {formatClockMC(receivedAt)}</span>
+			)}
+		</span>
 	);
+}
+
+// as-of 표기 — 초까지(분 단위면 방금 받은 응답이 오래돼 보인다).
+function formatClockMC(ms) {
+	return new Date(ms).toLocaleTimeString();
 }
 
 // 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.
@@ -931,22 +936,21 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 	);
 }
 
-// 설정 드리프트 배너 — daemon_config_sync 불일치 또는 도메인 drift 존재 시 노출.
+// 설정 드리프트 배너 — 파일 불일치 또는 행 드리프트 존재 시 노출. 처방은 여기 한 번만 실린다.
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
-function DriftBannerMC({ sync, domains }) {
+function DriftBannerMC({ sync }) {
 	const { Icon } = window.UI;
-	const driftedDomains = (domains || []).filter((d) => d.drift);
 	// 처방이 다르다 — drift/file-missing 은 Save 가, pending-migration 은 db-setup 이 고친다.
 	const pendingMigration = sync === "pending-migration";
+
 	return (
 		<div
 			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3 mb-4"
+			className="rounded-md border p-3 flex items-start gap-3"
 			style={{
 				background: "rgb(var(--warn) / 0.08)",
 				borderColor: "rgb(var(--warn) / 0.4)",
-			}}
-		>
+			}}>
 			<Icon name="git" size={16} className="text-warn mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">
@@ -954,19 +958,17 @@ function DriftBannerMC({ sync, domains }) {
 						? "Config rows still carry their pre-rename names"
 						: "Saved config not yet fully live"}
 				</div>
-				{pendingMigration && (
-					<div className="fs-meta text-dim mt-1">
-						Values below are read from the old rows. Run{" "}
-						<span className="font-mono">glass-atrium db-setup</span> to complete
-						the rename.
-					</div>
-				)}
-				{driftedDomains.length > 0 && (
-					<div className="fs-meta text-dim mt-2">
-						{driftedDomains.length} domain
-						{driftedDomains.length === 1 ? "" : "s"} out of sync.
-					</div>
-				)}
+				<div className="fs-meta text-dim mt-1">
+					{pendingMigration ? (
+						<>
+							Values below are read from the old rows. Run{" "}
+							<span className="font-mono">glass-atrium db-setup</span> to complete
+							the rename.
+						</>
+					) : (
+						"Save again to rewrite the surfaces that consume these values."
+					)}
+				</div>
 			</div>
 		</div>
 	);
@@ -1163,6 +1165,12 @@ function sortBudgetsMC(budgets) {
 		return i === -1 ? BUDGET_ORDER_MC.length : i;
 	};
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
+}
+
+// 행 드리프트 존재 여부 — 배너 트리거 (모델/예산 어느 쪽이든 1건이면 참).
+function anyDriftMC(data) {
+	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
+	return rows.some((r) => r.drift);
 }
 
 function extractSurfaceResultsMC(data) {
