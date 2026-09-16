@@ -338,8 +338,8 @@ function ScreenAgents() {
       <style>{AGENTS_INLINE_CSS}</style>
       <div className="flex-shrink-0">
         <PageHeader
-          title="Agent performance"
-          sub="Agent performance & reliability"
+          title="Agents"
+          sub="Triage — who is unsafe to route to, and what is breaking"
           right={
             <>
               <div className="seg" aria-label="Time range">
@@ -355,6 +355,9 @@ function ScreenAgents() {
                   </button>
                 ))}
               </div>
+              <span className="text-faint fs-micro" title="Summary payload timestamp">
+                {readyData(summaryState)?.fetched_at ? `as of ${readyData(summaryState).fetched_at}` : 'as of —'}
+              </span>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh agent data">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -363,6 +366,17 @@ function ScreenAgents() {
           }
         />
       </div>
+
+      <AgentAlarmLane state={summaryState} onRetry={triggerRefresh}/>
+
+      <AgentStatusBand
+        summaryState={summaryState}
+        failureState={failureState}
+        overageState={overageState}
+        failureByAgent={failureByAgent}
+        overageByAgent={overageByAgent}
+        onRetry={triggerRefresh}
+      />
 
       {/* Row 1 — 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
       <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
@@ -449,6 +463,164 @@ function ScreenAgents() {
 
 // AgentSummary (col-span-2) — 8 컬럼 · 행 클릭 → DetailPanel 갱신.
 // 추세 셀 = 50×20 MiniBars (success-rate 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
+
+// Alarm lane — one row per suspended or streaking agent, nothing when the fleet
+// is clear. An unreadable state dir renders unavailable; it is never a zero.
+function AgentAlarmLane({ state, onRetry }) {
+  const { Badge } = window.UI;
+
+  if (state.status === 'loading') {
+    return (
+      <div className="card mb-4" aria-busy="true">
+        <div className="card-body text-faint fs-micro">Checking circuit-breaker state…</div>
+      </div>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="card mb-4">
+        <div className="card-body">
+          <ErrorBannerAg title="Couldn't load circuit-breaker state" detail={state.error} onRetry={onRetry}/>
+        </div>
+      </div>
+    );
+  }
+
+  const breaker = readyData(state)?.meta?.circuit_breaker ?? null;
+  if (!breaker) return null;
+
+  if (breaker.source === 'unavailable') {
+    return (
+      <div className="card mb-4">
+        <div className="card-body flex items-center gap-2">
+          <Badge role="status" tone="warn">unavailable</Badge>
+          <span className="text-faint fs-micro">
+            circuit-breaker state unreadable — check permissions on the hook data dir
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (breaker.alarms.length === 0) return null;
+
+  return (
+    <div className="card mb-4" role="region" aria-label="Agent alarms">
+      <div className="card-body flex flex-col gap-2">
+        {breaker.alarms.map((alarm) => (
+          <AgentAlarmRow key={alarm.agent} alarm={alarm}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentAlarmRow({ alarm }) {
+  const { Badge } = window.UI;
+  const tone = alarm.suspended ? 'crit' : 'warn';
+
+  return (
+    <div className="flex items-center gap-2">
+      <Badge role="status" tone={tone}>{alarm.suspended ? 'suspended' : 'fail streak'}</Badge>
+      <span className="font-mono">{alarm.agent}</span>
+      <span className="text-faint fs-micro">
+        {alarm.consecutive_fails} consecutive {alarm.consecutive_fails === 1 ? 'fail' : 'fails'}
+        {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
+      </span>
+      <span className="text-faint fs-micro">
+        {alarm.suspended ? 'stop routing · clear the marker, then edit the body' : 'one more fail suspends it'}
+      </span>
+    </div>
+  );
+}
+
+// Status band — the four fleet questions the first screenful answers. Each tile
+// carries its own payload state so one unloaded source never reads as a zero.
+function AgentStatusBand({ summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
+  const summary = readyData(summaryState);
+  const breaker = summary?.meta?.circuit_breaker ?? null;
+
+  const unsafeStatus = summaryState.status !== 'ready'
+    ? summaryState.status
+    : breaker === null || breaker.source === 'unavailable' ? 'unavailable' : 'ready';
+  const unsafeCount = breaker && breaker.source === 'loaded'
+    ? breaker.suspended_count + breaker.streak_count
+    : null;
+
+  const breakingCount = failureState.status === 'ready'
+    ? Array.from(failureByAgent.values()).filter((row) => row.total_breakages > 0).length
+    : null;
+  const overCapCount = overageState.status === 'ready'
+    ? Array.from(overageByAgent.values()).filter((row) => row.overage_count > 0).length
+    : null;
+  const needsContextCount = summaryState.status === 'ready'
+    ? (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent.needs_context_count) || 0), 0)
+    : null;
+
+  return (
+    <div className="grid grid-cols-4 gap-4 mb-4 items-stretch">
+      <AgentStatusTile
+        label="Unsafe to route"
+        sub={breaker && breaker.source === 'loaded' ? `of ${breaker.registry_agents} registered agents` : 'circuit-breaker state'}
+        unavailableSub="circuit-breaker state unreadable — check permissions on the hook data dir"
+        status={unsafeStatus}
+        value={unsafeCount}
+        tone={unsafeCount ? (breaker?.suspended_count ? 'crit' : 'warn') : 'ok'}
+        error={summaryState.error}
+        onRetry={onRetry}
+      />
+      <AgentStatusTile
+        label="Failed or blocked"
+        sub="agents with breakages in the window"
+        status={failureState.status}
+        value={breakingCount}
+        tone={breakingCount ? 'crit' : 'ok'}
+        error={failureState.error}
+        onRetry={onRetry}
+      />
+      <AgentStatusTile
+        label="Over tool-use cap"
+        sub="agents crossing their budget"
+        status={overageState.status}
+        value={overCapCount}
+        tone={overCapCount ? 'warn' : 'ok'}
+        error={overageState.error}
+        onRetry={onRetry}
+      />
+      <AgentStatusTile
+        label="No completion record"
+        sub="needs_context outcomes — fix the delegation prompt"
+        status={summaryState.status}
+        value={needsContextCount}
+        tone={needsContextCount ? 'warn' : 'ok'}
+        error={summaryState.error}
+        onRetry={onRetry}
+      />
+    </div>
+  );
+}
+
+function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, onRetry }) {
+  const { Badge } = window.UI;
+
+  return (
+    <div className="card h-full flex flex-col min-h-0">
+      <div className="card-body flex flex-col gap-1">
+        <span className="text-faint fs-micro">{label}</span>
+        {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
+        {status === 'error' && (
+          <ErrorBannerAg title={`Couldn't load ${label.toLowerCase()}`} detail={error} onRetry={onRetry}/>
+        )}
+        {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
+        {status === 'ready' && (
+          <span className="fs-xl font-mono">
+            <Badge role="status" tone={tone} glyph={true}>{value}</Badge>
+          </span>
+        )}
+        <span className="text-faint fs-micro">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
+      </div>
+    </div>
+  );
+}
 
 const SUMMARY_SORT_OPTIONS = [
   { value: 'name',     label: 'Name (A–Z)' },
