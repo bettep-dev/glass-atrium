@@ -485,14 +485,18 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
-	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치.
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
-	const healthBusy = [daemonHealthState, hookState, pgState, hookFailState].some(
+	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
+	const healthBusy = Object.values(headlineHealthStates).some(
 		(state) => state.status === "loading",
 	);
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
-	const healthCaption = getHealthCaptionAR(healthPartRows, healthBusy);
+	const healthCaption = getHealthCaptionAR(
+		healthPartRows,
+		healthBusy,
+		healthStoreErrors.length,
+	);
 
 	const handleSelectNode = useCallbackAR(
 		(nodeId) => {
@@ -2052,7 +2056,7 @@ function buildLiveDaemonsByNodeId(daemons) {
  * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
  * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
  */
-function getHealthCaptionAR(partRows, busy) {
+function getHealthCaptionAR(partRows, busy, errored = 0) {
 	const total = partRows.length;
 	if (total === 0)
 		return busy ? "Reading part health…" : "Part health unavailable";
@@ -2060,21 +2064,28 @@ function getHealthCaptionAR(partRows, busy) {
 	const judged = partRows.filter((row) => row.tone);
 	const attention = judged.filter((row) => row.tone !== "ok");
 	const unverified = total - judged.length;
+	// 끊긴 저장소가 있으면 남은 빈칸은 '아직' 이 아니라 '못 읽음' 임 — 두 낱말이 그 둘을 가름.
+	const unjudgedWord = errored > 0 ? "unreadable" : "not verified";
 
 	if (attention.length > 0)
 		return `${attention.length} of ${total} parts need attention`;
-	if (judged.length === 0)
-		return busy
-			? `Reading ${total} parts…`
-			: `No verdict yet for ${total} parts`;
+	if (judged.length === 0) return getNoVerdictCaptionAR(total, busy, errored);
 	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} not verified`;
+		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
 
 	return `All ${total} parts ok`;
 }
 
+// 판정이 하나도 안 선 상태 — 오는 중 · 못 읽음 · 미판정이 저마다 다른 문장임.
+function getNoVerdictCaptionAR(total, busy, errored) {
+	if (busy) return `Reading ${total} parts…`;
+	if (errored > 0) return `Couldn't read health for ${total} parts`;
+	return `No verdict yet for ${total} parts`;
+}
+
 // 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
-const ALARM_TONE_RANK = { crit: 1, warn: 2 };
+// 글리프 색 표의 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
+const ALARM_TONE_RANK = { crit: 1, warn: 2, info: 3 };
 
 /**
  * 경보 레인의 행 — 네 사실을 한 목록으로 접고 심각도로 세움.
