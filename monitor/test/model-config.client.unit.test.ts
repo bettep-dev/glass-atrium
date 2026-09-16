@@ -58,8 +58,10 @@ interface McHelpers {
 // free-text regex + budget regex/bounds) is cross-checked against the server SoT
 // validators below.
 
-// Build once, evaluate in a sandbox — the real top-level helper declarations.
-async function loadMc(): Promise<McHelpers> {
+// Transpile once — both sandboxes (helper + render) evaluate the same emitted script.
+let mcCodeCache: string | null = null;
+async function buildMcCode(): Promise<string> {
+  if (mcCodeCache !== null) return mcCodeCache;
   const built = await esbuild.build({
     entryPoints: [MC_SRC],
     bundle: false,
@@ -73,7 +75,15 @@ async function loadMc(): Promise<McHelpers> {
     // become context-global properties, reachable for direct unit assertions.
     format: "esm",
   });
-  const code = built.outputFiles[0].text;
+  const output = built.outputFiles[0];
+  assert.ok(output, "esbuild emitted output for model-config.jsx");
+  mcCodeCache = output.text;
+  return mcCodeCache;
+}
+
+// Evaluate in a sandbox — the real top-level helper declarations.
+async function loadMc(): Promise<McHelpers> {
+  const code = await buildMcCode();
 
   // React stub — every hook returns a benign default; only the (uninvoked)
   // component bodies touch React, so the stubs never actually drive a render.
@@ -365,4 +375,167 @@ test("sortBudgetsMC: known order first, unknown budget appended (never dropped)"
   assert.strictEqual(sorted[0], "budget.worker_max_usd");
   assert.ok(sorted.includes("budget.future_unknown"));
   assert.strictEqual(sorted.length, 2);
+});
+
+
+// ---------------------------------------------------------------------------
+// Render harness — read a component's emitted tree without a DOM.
+//
+// The helper sandbox above returns `{}` from createElement, so no tree survives it. This second
+// sandbox evaluates the SAME shipped source with an element-factory React plus window.UI stubs and
+// deep-renders one exported-by-declaration component into plain tag/props/children nodes, which is
+// what makes layout-level claims (which columns exist, which banner fires, whether a section header
+// survives a failed load) assertable at all.
+// ---------------------------------------------------------------------------
+
+interface McElement {
+  type: unknown;
+  props: Record<string, unknown>;
+}
+interface McTag {
+  tag: string;
+  props: Record<string, unknown>;
+  children: McNode[];
+}
+type McNode = string | McTag;
+type McComponent = (props: Record<string, unknown>) => unknown;
+
+const MC_FRAGMENT = "mc-fragment";
+
+function hMc(
+  type: unknown,
+  props: Record<string, unknown> | null,
+  ...children: unknown[]
+): McElement {
+  const merged: Record<string, unknown> = { ...(props ?? {}) };
+  if (children.length > 0) merged.children = children.length === 1 ? children[0] : children;
+  return { type, props: merged };
+}
+
+function isElementMc(value: unknown): value is McElement {
+  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+}
+
+// Function components are invoked (hooks are stubbed) → the tree is fully expanded, not shallow.
+function renderMc(node: unknown): McNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap(renderMc);
+  if (!isElementMc(node)) return [];
+  if (typeof node.type === "function") return renderMc((node.type as McComponent)(node.props));
+  const { children, ...rest } = node.props;
+  if (node.type === MC_FRAGMENT) return renderMc(children);
+  return [{ tag: String(node.type), props: rest, children: renderMc(children) }];
+}
+
+function renderComponentMc(component: unknown, props: Record<string, unknown> = {}): McNode[] {
+  assert.strictEqual(typeof component, "function", "component reachable in the sandbox");
+  return renderMc(hMc(component, props));
+}
+
+// Visible text of a subtree, whitespace-collapsed — the reading an operator gets.
+function textMc(nodes: McNode[]): string {
+  return nodes
+    .map((n) => (typeof n === "string" ? n : textMc(n.children)))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findAllMc(nodes: McNode[], match: (node: McTag) => boolean): McTag[] {
+  const found: McTag[] = [];
+  for (const node of nodes) {
+    if (typeof node === "string") continue;
+    if (match(node)) found.push(node);
+    found.push(...findAllMc(node.children, match));
+  }
+  return found;
+}
+
+const tagsMc = (nodes: McNode[], tag: string): McTag[] => findAllMc(nodes, (n) => n.tag === tag);
+const textsMc = (nodes: McTag[]): string[] => nodes.map((n) => textMc(n.children));
+
+async function loadMcScreens(): Promise<Record<string, unknown>> {
+  const code = await buildMcCode();
+  const reactStub = {
+    createElement: hMc,
+    Fragment: MC_FRAGMENT,
+    // No re-render happens, so a setter is a no-op and state stays at its initial value.
+    useState: (init: unknown) => [typeof init === "function" ? (init as () => unknown)() : init, () => {}],
+    useEffect: () => {},
+    useRef: () => ({ current: null }),
+    useMemo: (fn: () => unknown) => fn(),
+    useCallback: (fn: unknown) => fn,
+  };
+  // ui.jsx atoms — rendered as tagged wrappers so their children stay readable in the tree.
+  const uiStub = {
+    PageHeader: (p: Record<string, unknown>) => hMc("header", { className: "page-header" }, p.sub, p.right),
+    Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name }),
+    TypeScaleStyle: () => null,
+    Badge: (p: Record<string, unknown>) =>
+      hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
+    CardHead: (p: Record<string, unknown>) => hMc("div", { className: "card-head" }, p.title, p.right),
+    DetailSurface: (p: Record<string, unknown>) =>
+      hMc("div", { role: "dialog" }, p.title, p.children, p.footer),
+    titleOf: (v: unknown) => v,
+  };
+  const ctx: Record<string, unknown> = {
+    window: { UI: uiStub, addEventListener: () => {}, removeEventListener: () => {} },
+    React: reactStub,
+    document: { documentElement: {} },
+    Intl,
+    console,
+    setTimeout,
+    clearTimeout,
+    AbortController,
+    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) }),
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  return ctx;
+}
+
+const screens = await loadMcScreens();
+
+const DOMAIN_ROW_FIXTURE_MC = [
+  {
+    domain: "model.dev",
+    desired: "claude-opus-4-8",
+    actual: "claude-opus-4-8",
+    drift: false,
+    apply_mode: "next-spawn",
+    editable: true,
+    pricing_known: true,
+  },
+];
+
+function domainsPropsMc(domains: unknown[] = DOMAIN_ROW_FIXTURE_MC): Record<string, unknown> {
+  const form = { models: { "model.dev": "claude-opus-4-8" }, budgets: {} };
+  return {
+    domains,
+    knownModels: KNOWN_MODELS_FIXTURE,
+    form,
+    baseline: { models: { ...form.models }, budgets: {} },
+    errors: {},
+    onModelChange: () => {},
+  };
+}
+
+test("render harness: a screen component's emitted tree is readable as tags and text", async () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+
+  // Structure: the harness expands nested function components, so the row's controls are reachable.
+  assert.ok(tagsMc(tree, "table").length === 1, "one ledger table emitted");
+  assert.ok(textsMc(tagsMc(tree, "th")).length > 0, "column headers readable");
+  assert.strictEqual(tagsMc(tree, "select").length, 1, "the editable row's select is reachable");
+  // Text: row content from the fixture, not from a copy of the component.
+  assert.ok(textMc(tree).includes("Dev agents"), "row label rendered from DOMAIN_META_MC");
+  assert.ok(textMc(tree).includes("claude-opus-4-8"), "the fixture value reaches the tree");
+});
+
+test("render harness: the tree tracks the props it was given, not a fixed snapshot", async () => {
+  const empty = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([]));
+  assert.strictEqual(tagsMc(empty, "select").length, 0, "no rows → no controls");
+  assert.ok(!textMc(empty).includes("Dev agents"), "no rows → no row label");
 });
