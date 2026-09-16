@@ -155,7 +155,7 @@ export function getGroupStage(
  * doc_status filter value → its WHERE fragment. 'open' is every stage but the terminal one;
  * the first stage also matches the stored alias, else those rows vanish from that chip.
  */
-function getDocStatusFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
+export function getDocStatusFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
   if (filter === "open") return Prisma.sql`doc_status::text <> ${TERMINAL_DOC_STAGE}`;
   if (filter === DOC_STAGES[0] || filter === "progress") {
     return Prisma.sql`doc_status::text IN (${DOC_STAGES[0]}, 'progress')`;
@@ -174,6 +174,30 @@ export function isCascadeTransition<T extends { folder_id: bigint | null; doc_st
   if (newStatus === undefined || existing.folder_id === null) return false;
   if (newStatus !== TERMINAL_DOC_STAGE) return false;
   return normalizeStoredStage(existing.doc_status) !== TERMINAL_DOC_STAGE;
+}
+
+/**
+ * Whether this write MOVES the row's stage — the one predicate the cascade radius and the actor
+ * attribution both key on. A PUT echoing the stored stage is a body re-emit, not a status action.
+ */
+export function isStatusAction(
+  newStatus: DocStatusLiteral | undefined,
+  existing: { doc_status: string },
+): boolean {
+  return newStatus !== undefined && newStatus !== normalizeStoredStage(existing.doc_status);
+}
+
+/**
+ * The actor stored for a write. The model is a property OF the status action — a move carrying
+ * none has an unknown actor (null), never the previous action's model; every non-moving write,
+ * a status-less body PUT and a status ECHO alike, keeps the stored one.
+ */
+export function getLastStatusModel(
+  parsed: { doc_status?: DocStatusLiteral; last_status_model?: string | null },
+  existing: { doc_status: string; last_status_model: string | null },
+): string | null {
+  if (!isStatusAction(parsed.doc_status, existing)) return existing.last_status_model;
+  return parsed.last_status_model ?? null;
 }
 
 // SQL mirror of computeResponseAudience + formatFromPath — hidden/agent-only explicit, or a
@@ -1686,9 +1710,7 @@ async function handleUpdateHtmlBody(
   // Standalone (folder_id=NULL) rows enter too — cascadeUpdateDocStatus CTE degrades to self-only.
   const sameAudience = normalizeAudience(existing.audience) === targetAudience;
   if (existing.content_hash === conversion.contentHash && sameAudience) {
-    const cascadeNeeded =
-      parsed.doc_status !== undefined &&
-      parsed.doc_status !== normalizeStoredStage(existing.doc_status);
+    const cascadeNeeded = isStatusAction(parsed.doc_status, existing);
     if (!cascadeNeeded) {
       return buildWriteResponse(await replyNoOpUpdate(request, reply, id, existing), notices);
     }
@@ -1822,9 +1844,7 @@ async function handleUpdatePlainBody(
   // Standalone (folder_id=NULL) rows enter too → CTE degrades to self-only.
   const sameAudience = normalizeAudience(existing.audience) === finalAudience;
   if (existing.content_hash === conversion.contentHash && sameAudience) {
-    const cascadeNeeded =
-      parsed.doc_status !== undefined &&
-      parsed.doc_status !== normalizeStoredStage(existing.doc_status);
+    const cascadeNeeded = isStatusAction(parsed.doc_status, existing);
     if (!cascadeNeeded) {
       return replyNoOpUpdatePlain(request, reply, id, existing, format);
     }
@@ -2747,10 +2767,7 @@ export async function updateClaudedDocRow(
   // doc_status unspecified → keep existing. This function handles body+meta only;
   // group cascade fires separately via cascadeUpdateDocStatus.
   const docStatusNew = parsed.doc_status ?? (existing.doc_status as DocStatusLiteral);
-  // The model is a property OF the status action — a status write carrying none has an unknown
-  // actor (null), never the previous action's model; a status-less write keeps the stored one.
-  const lastStatusModelNew =
-    parsed.doc_status === undefined ? existing.last_status_model : parsed.last_status_model ?? null;
+  const lastStatusModelNew = getLastStatusModel(parsed, existing);
   const rows = await prisma.$queryRaw<ClaudedDocDbRow[]>`
     UPDATE monitor.documents
     SET

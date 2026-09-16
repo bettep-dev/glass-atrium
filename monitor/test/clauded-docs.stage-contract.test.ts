@@ -12,7 +12,10 @@ import {
   getGroupStage,
   DOC_STATUS_READ_FILTERS,
   WRITE_DOC_STATUSES,
+  getDocStatusFilterSql,
+  getLastStatusModel,
   isCascadeTransition,
+  isStatusAction,
   normalizeStoredStage,
 } from "../src/server/routes/clauded-docs.js";
 
@@ -73,4 +76,72 @@ test("a group row takes its least-advanced member stage, and reports a spread as
   }
   // a rank no stage covers keeps the representative stage — an empty cell would read as unknown.
   assert.deepEqual(getGroupStage(0, 0, "implementing"), { stage: "implementing", uniform: true });
+});
+
+test("a write moves the stage only when its token differs from what the stored one reads as", () => {
+  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+    const existing = { doc_status: stored };
+    const storedStage = normalizeStoredStage(stored);
+
+    assert.equal(
+      isStatusAction(storedStage as DocStatusLiteral, existing), false,
+      `echoing '${stored}' is a body re-emit, not a status action`,
+    );
+    assert.equal(isStatusAction(undefined, existing), false);
+    for (const stage of DOC_STAGES.filter((s) => s !== storedStage)) {
+      assert.equal(
+        isStatusAction(stage, existing), true,
+        `'${stored}' → '${stage}' moves the row`,
+      );
+    }
+  }
+  // the retired alias echo is the case a presence check misses: stored 'progress', written first stage.
+  assert.equal(isStatusAction(DOC_STAGES[0], { doc_status: RETIRED_ALIAS }), false);
+});
+
+test("the stored actor survives every non-moving write and is replaced only by the move", () => {
+  const STORED_ACTOR = "claude-opus-5";
+  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+    const existing = { doc_status: stored, last_status_model: STORED_ACTOR };
+    const storedStage = normalizeStoredStage(stored) as DocStatusLiteral;
+
+    assert.equal(getLastStatusModel({}, existing), STORED_ACTOR, "status-less write keeps the actor");
+    assert.equal(
+      getLastStatusModel({ doc_status: storedStage }, existing), STORED_ACTOR,
+      `echoing '${stored}' must not wipe the actor`,
+    );
+    assert.equal(
+      getLastStatusModel({ doc_status: storedStage, last_status_model: "other" }, existing),
+      STORED_ACTOR,
+      "an echo is not a status action, so it cannot re-attribute either",
+    );
+
+    for (const stage of DOC_STAGES.filter((s) => s !== storedStage)) {
+      assert.equal(getLastStatusModel({ doc_status: stage, last_status_model: "operator" }, existing), "operator");
+      assert.equal(
+        getLastStatusModel({ doc_status: stage }, existing), null,
+        "a move carrying no model has an unknown actor, never the previous one",
+      );
+    }
+  }
+});
+
+test("the open filter is every stage but the terminal one, and the first stage also matches the alias", () => {
+  const open = getDocStatusFilterSql("open");
+  assert.deepEqual(open.values, [TERMINAL_STAGE], "open is defined against the terminal stage alone");
+  assert.match(open.strings.join("?"), /<>/);
+
+  const first = getDocStatusFilterSql(DOC_STAGES[0]);
+  assert.deepEqual(
+    first.values, [DOC_STAGES[0]],
+    "the first-stage chip must also match rows still stored as the alias",
+  );
+  assert.match(first.strings.join("?"), /IN \(\?, 'progress'\)/);
+  assert.deepEqual(getDocStatusFilterSql(RETIRED_ALIAS).strings, first.strings);
+
+  for (const stage of DOC_STAGES.slice(1)) {
+    const sql = getDocStatusFilterSql(stage);
+    assert.deepEqual(sql.values, [stage], `'${stage}' filters on itself`);
+    assert.match(sql.strings.join("?"), /=/);
+  }
 });
