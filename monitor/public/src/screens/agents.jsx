@@ -112,22 +112,15 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 }
 
 // 카드 본문 flex 컨테이너 + 스크롤 + skeleton pulse — inline style 으로 빼두면 JSX 노이즈가 큼.
-// .ag-density-compact = 행 패딩만 좁히는 밀도 토글 (T-AGT-2) — 정렬/색/sev-bar 는 그대로, padding 만 축소.
 const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opacity:.35} } '
   + '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.ag-chart-fill { flex: 1 1 auto; min-height: 0; width: 100%; } '
-  + '.ag-density-compact .tbl td { padding-top: 4px; padding-bottom: 4px; } '
-  + '.ag-density-compact .tbl th { padding-top: 5px; padding-bottom: 5px; } '
   + '.tbl td { vertical-align: top; }';
 
-// 행 밀도 토글 옵션 (T-AGT-2) — comfortable(기본 .tbl 패딩) / compact(좁은 패딩).
 // Sticky thead 셀 공통 스타일 — window.UI 의 단일 SoT 참조 (S1, cost/outcomes/health/wiki 미러용).
 // ui.js 가 screens 보다 먼저 로드(index.html 순서)되므로 module-eval 시점에 안전.
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
-
-// card-body flex 컨테이너 (스크롤 허용) — RadarPolygon/Latency/Detail 패널 공통.
-const CARD_BODY_FLEX_SCROLL_STYLE = { flex: '1 1 auto', minHeight: 0, overflowY: 'auto' };
 
 function ScreenAgents() {
   const { PageHeader, Icon, TypeScaleStyle } = window.UI;
@@ -430,7 +423,7 @@ function ScreenAgents() {
   );
 }
 
-// AgentSummary (col-span-2) — 8 컬럼 · 행 클릭 → DetailPanel 갱신.
+// AgentSummary — 5 기본 컬럼 · 행 클릭 → 드로어 · 확장 행이 Runs/Launches/no-record 흡수.
 // 추세 셀 = 50×20 MiniBars (success-rate 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
 // Closed-by-default disclosure — second-reader material stays off the first screenful.
@@ -1248,8 +1241,6 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
   );
 }
 
-// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
-// 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
 // Circuit-breaker line — absent state (an agent outside the loaded snapshot) is
 // rendered as unavailable, never as "not suspended".
 function AgentCircuitBreakerLine({ agent }) {
@@ -1279,6 +1270,8 @@ function AgentCircuitBreakerLine({ agent }) {
   );
 }
 
+// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
+// 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
 function AgentDrawerSection({ title, children }) {
   const { SubCard } = window.UI;
   return (
@@ -2272,8 +2265,6 @@ const QH_HEALTH_BULLET_ZONES = [
   { upTo: QH_HEALTH_WARN_MAX, tone: 'warn' },
   { upTo: 1, tone: 'ok' },
 ];
-const QH_TOP_N = 5;
-
 // review_flag timeline 좌축/우축 라벨 — re-render 마다 신규 객체 생성 회피 (Recharts 패턴).
 // 좌축 막대는 flag "사유"(empty_metric + polar_mismatch) 스택이지 총 flag 수가 아님 →
 // 'Flagged per day' 는 과대표시 (총 flagged 는 우측 rate 라인·툴팁이 담당). 라벨을 사유 기준으로 정정.
@@ -2571,18 +2562,6 @@ function LifecycleStatsRow({ row, onSelect }) {
     </tr>
   );
 }
-
-// SkillActivation (col-span-1) — 에이전트/스킬 활성화 (/api/telemetry/activations).
-// summary.false_positive_by_dimension(agent) = 서버 prebuilt per-agent 집계 → client 무집계 · rows = 최근 activation 이벤트 (source: subagent/orchestrator).
-
-const ACTIVATION_RECENT_LIMIT = 8;
-const ACTIVATION_TOP_AGENTS_LIMIT = 6;
-
-// source 별 dual-encoding — 색 + 약어(SA/OR)로 색맹 안전.
-const ACTIVATION_SOURCE_META = {
-  subagent:     { abbr: 'SA', label: 'subagent',     colorVar: '--info' },
-  orchestrator: { abbr: 'OR', label: 'orchestrator', colorVar: '--accent' },
-};
 
 // Shared chrome
 
@@ -3124,14 +3103,6 @@ function formatInvocationsTitle(count, days) {
     return `${count} spawns in the last ${days} days · below threshold ${threshold} (scaled from ${LOW_INVOCATION_PER_30D}/30d) — rarely used (informational)`;
   }
   return `${count} SubagentStart events in the last ${days} days`;
-}
-
-// Quality Health Index (0-1) → 톤 클래스 (낮을수록 우선 개선 대상).
-// cut point = named constant (QH_HEALTH_CRIT_MAX/WARN_MAX, post-R2 분포 재앵커).
-function qualityHealthTone(index) {
-  if (index < QH_HEALTH_CRIT_MAX) return 'text-crit';
-  if (index < QH_HEALTH_WARN_MAX) return 'text-warn';
-  return 'text-ok';
 }
 
 // Quality Health Index → verdict {tone, label} SoT — 3 consumer(Overview/Quality-signals/TopN) 공유.
