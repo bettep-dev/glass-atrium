@@ -81,9 +81,10 @@ readonly TOOLCHAIN_PRECONDITION_RC=17
 # are exported in ONE block, and scrubbing a single member leaves a half-seam the next one
 # comes through.
 #
-# The two claude-binary names generalize the scrub stage 3 already carried alone. It is NOT
-# a model-seam closure: CLAUDE_BIN defaults to a bare name, so dropping an absolute-path pin
-# leaves PATH resolution intact. What closes that seam is a PATH stub, which
+# The two claude-binary names are ONE exported pair — daemon-cycle.sh re-exports CLAUDE_BIN
+# as an alias of AUTOAGENT_CLAUDE_BIN — so scrubbing either alone leaves the other standing.
+# It is NOT a model-seam closure: CLAUDE_BIN defaults to a bare name, so dropping an
+# absolute-path pin leaves PATH resolution intact. What closes that seam is a PATH stub, which
 # autoagent/test/suite-hermeticity.bats installs and this runner does not.
 readonly DAEMON_ENV_SCRUB=(
   -u AUTOAGENT_GIT_ROOT
