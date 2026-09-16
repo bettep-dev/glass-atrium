@@ -35,6 +35,7 @@ interface RecordedElement {
 interface BannerSandbox {
   React: { createElement: unknown };
   ParkedLoopBannerI: (props: { applyCap: unknown }) => RecordedElement | null;
+  AlarmLaneI: (props: { applyCap: unknown }) => RecordedElement | null;
 }
 
 const HINT = "the reset does NOT re-arm the cap; it only overwrites the park timestamp";
@@ -90,4 +91,90 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
     undefined,
     "a title tooltip is not a substitute for showing the warning",
   );
+});
+
+// ----- Stream-5 reconciliation guards: the lane's tint contract and the spine order ---
+//
+// The plan's standing decision is that tone rides on a glyph, a severity bar or a
+// container tint and NEVER on text — severity hue as text fails AA on the light
+// theme. Nothing pinned it, and the banner headline carried `text-warn` while the
+// glyph beside it already carried the same tone. These two assertions pin the
+// contract at the one surface that is allowed a tint at all.
+
+const SEVERITY_TEXT_CLASS = /\btext-(warn|crit|ok)\b/;
+
+function collectElements(node: unknown, out: RecordedElement[]): RecordedElement[] {
+  if (!isElement(node)) return out;
+  out.push(node);
+  const children = node.props.children;
+  const list = Array.isArray(children) ? children : [children];
+  for (const child of list) collectElements(child, out);
+  return out;
+}
+
+test("severity hue rides on the glyph, never on a text node", () => {
+  const tinted = collectElements(rendered, []).filter((el) =>
+    SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")),
+  );
+  assert.ok(tinted.length > 0, "the banner must carry its tone somewhere");
+  for (const el of tinted) {
+    assert.notEqual(
+      el.props.s,
+      undefined,
+      `severity hue on a non-glyph node (${String(el.props.className)}) — tone must ride on the glyph or the container tint`,
+    );
+  }
+});
+
+test("the alarm lane carries the tint on its container", () => {
+  const lane = sandbox.AlarmLaneI({
+    applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: HINT },
+  });
+  assert.ok(isElement(lane), "a populated cap must render the lane");
+  assert.match(
+    String(lane.props.className ?? ""),
+    /\bi-alarm-lane\b/,
+    "the lane class is what carries the tint; a tinted child would put it on the wrong surface",
+  );
+});
+
+// Source-order pin, deliberately NOT a render assertion: the operator view is the
+// whole screen, and rendering it would mock more than it proves. Its limit is that
+// it pins the order the five surfaces are WRITTEN in, which is the order they
+// render in only because they are siblings in one block.
+test("the operator view keeps the five-surface spine order", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(IMPROVEMENT_SRC, "utf8");
+  const spine = [
+    "<AlarmLaneI",
+    "<StatusBandI",
+    "<KanbanCardI",
+    "<PatternLedgerCardI",
+    "<LoopOutputGroupI",
+  ];
+  const positions = spine.map((tag) => {
+    const at = src.indexOf(tag);
+    assert.notEqual(at, -1, `${tag} is missing from the operator view`);
+    return at;
+  });
+  for (let i = 1; i < positions.length; i += 1) {
+    assert.ok(
+      positions[i - 1] < positions[i],
+      `${spine[i - 1]} must precede ${spine[i]} — alarms above the band, the board above the ledger`,
+    );
+  }
+});
+
+// Colour reaches this screen through tokens only — `var(--name)` directly, or an
+// interpolated token name. The single exemption is a neutral drop shadow, which
+// encodes no severity and has no token.
+test("colour is consumed through design tokens, never a raw literal", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(IMPROVEMENT_SRC, "utf8");
+  const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+  assert.deepEqual(hex, [], "hex colour literals bypass the token layer");
+  const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter(
+    (decl) => !decl.includes("var(") && !/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*[,)]/.test(decl),
+  );
+  assert.deepEqual(rawFns, [], "only the neutral drop shadow may name a colour without a token");
 });

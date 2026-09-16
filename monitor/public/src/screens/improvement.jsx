@@ -600,8 +600,10 @@ function ScreenImprovement({ onNav }) {
 				/>
 			</div>
 
-			{/* 순서 — 1차 액션 surface 인 칸반을 최상단으로, KPI/통계 카드는 그 아래로.
-          제안 허용/거절 행위 빈도가 KPI 조회보다 훨씬 높음 → 칸반 우선.
+			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
+          지목된 주체가 있는 알람이 밴드보다 위 · 유일한 쓰기 표면인 보드가 읽기 전용
+          원장보다 위 · 루프 산출은 그 셋을 읽은 뒤에야 의미가 생기므로 마지막.
+          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다.
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
 				<AlarmLaneI applyCap={applyCapState} />
@@ -1720,7 +1722,7 @@ function ParkedLoopBannerI({ applyCap }) {
 			<div className="flex items-start gap-2 p-3">
 				<SymI s="⚠" className="text-warn" size={14} />
 				<div className="min-w-0">
-					<div className="fs-meta font-mono text-warn">
+					<div className="fs-meta font-mono">
 						Repeat-apply cap — {formatIntI(capped)} parked{" "}
 						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
 						{agents === 1 ? "agent" : "agents"}
