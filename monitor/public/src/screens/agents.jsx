@@ -378,6 +378,11 @@ function ScreenAgents() {
         onRetry={triggerRefresh}
       />
 
+      {/* Failing pairs — relocated directly under the band: which agent × task type to stop delegating. */}
+      <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
+        <TopNFailingAgentsCard state={successState} days={days} onRetry={triggerRefresh} failureByAgent={failureByAgent}/>
+      </div>
+
       {/* Row 1 — 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
       <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
         <AgentSummaryCard
@@ -401,14 +406,9 @@ function ScreenAgents() {
         <LatencyBarsCard state={latencyState} days={days} onRetry={triggerRefresh}/>
       </div>
 
-      {/* Row 3 — 오류 분포 (Errors 세분화). grid-cols-3: Matrix 2/3 + TopN 1/3. */}
-      <div className="grid grid-cols-3 gap-4 mb-4 items-stretch">
-        <div className="col-span-2 h-full">
-          <SuccessRateMatrixCard state={successState} days={days} onRetry={triggerRefresh}/>
-        </div>
-        <div className="col-span-1 h-full">
-          <TopNFailingAgentsCard state={successState} days={days} onRetry={triggerRefresh} failureByAgent={failureByAgent}/>
-        </div>
+      {/* Row 3 — 성공률 매트릭스 (failing-pairs 는 status band 아래로 이동). */}
+      <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
+        <SuccessRateMatrixCard state={successState} days={days} onRetry={triggerRefresh}/>
       </div>
 
       {/* Row 4 — 자가개선 신호 (Quality Health · 신규). col-span-full · 좌 60% timeline + 우 40% TOP5. */}
@@ -2139,11 +2139,14 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
     [state],
   );
 
+  // Denominator = the agent × task-type pairs actually measured in the window.
+  const measuredPairs = (readyData(state)?.rows ?? []).length;
+
   return (
     <div className="card h-full flex flex-col min-h-0">
       <CardHead
         title="Most-failing pairs"
-        sub={`Pooled success below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · last ${days} days · top ${TOPN_FAILING_LIMIT}`}
+        sub={`${failingPairs.length} of ${measuredPairs} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · last ${days} days · top ${TOPN_FAILING_LIMIT}`}
         right={state.status === 'ready' && failingPairs.length > 0
           ? <Pill tone="crit">{failingPairs.length}</Pill>
           : null}
