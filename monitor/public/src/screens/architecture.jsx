@@ -76,6 +76,13 @@ const ZONE_RING_CLASS = {
 const ZONE_RING_CLASSES = Object.values(ZONE_RING_CLASS);
 
 // 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
+const NODE_UNVERIFIED_CLASS = "arch-node-unverified";
+const ZONE_UNVERIFIED_CLASS = "arch-zone-unverified";
+
+// 모서리 글리프 — 링 색만으로 tone 을 내면 색각 이상에서 판정이 통째로 사라짐.
+const RING_GLYPH_CLASS = "arch-ring-glyph";
+const RING_GLYPH_MARK = { warn: "!", crit: "!!" };
+
 const RING_STATE_CLASS = "arch-ring-state";
 const RING_FOCUS_CLASS = "arch-ring-focus";
 
@@ -454,13 +461,27 @@ function ScreenArchitecture(
 	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
 	// 표 안에 서 있던 경보인데 표가 사라졌으므로 페이지로 올림: 노드를 눌러야 보이는 자리에 두면
 	// 헬스를 통째로 못 읽은 사실이 클릭 뒤에 숨음 — 그건 누르기 전에 알아야 하는 사실임.
-	const healthStoreErrors = getHealthStoreErrorsAR({
+	const headlineHealthStates = {
 		daemonState: daemonHealthState,
 		pgState,
 		hookState,
 		hookFailState,
-		payloadState,
-	});
+	};
+
+	const healthStoreErrors = getHealthStoreErrorsAR(headlineHealthStates);
+
+	// 판정을 못 받은 부품의 노드 — 링 tone 표와 반대 방향의 사실임. 그쪽은 판정이 온 노드만
+	// 담으므로 '아직 안 옴' 과 '정상' 이 같은 빈칸으로 읽힘. 점선 링이 그 둘을 가름.
+	const unverifiedNodeIds = useMemoAR(
+		() =>
+			buildUnverifiedNodeIds(liveState.data?.part_bindings, headlineHealthStates),
+		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
+	);
+
+	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
+	const healthBusy = [daemonHealthState, hookState, pgState, hookFailState].some(
+		(state) => state.status === "loading",
+	);
 
 	const handleSelectNode = useCallbackAR(
 		(nodeId) => {
@@ -578,7 +599,12 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} rect.arch-ring { display: none; fill: none !important; ` +
 					"stroke-width: 2.5 !important; stroke-dasharray: none !important; " +
 					"vector-effect: non-scaling-stroke; pointer-events: none; } " +
-					`#${ARCH_CANVAS_ID} .arch-node-live-ok > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-ok > rect.arch-ring-state { display: inline; stroke: rgb(var(--ok)) !important; } ` +
+					// ok 는 테두리를 그리지 않음 — 아홉 노드가 다 둘리면 손댈 곳이 테두리로 구별되지 않음.
+					// 클래스는 남김: 판정이 왔다는 사실의 유일한 표식이고, 링은 그 사실의 표현일 뿐임.
+					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 700; pointer-events: none; } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
@@ -658,6 +684,8 @@ function ScreenArchitecture(
 								activeDiagram={activeDiagram}
 								nodeByLabel={nodeByLabel}
 								ringToneByNodeId={ringToneByNodeId}
+								unverifiedNodeIds={unverifiedNodeIds}
+								healthBusy={healthBusy}
 								zoneRingPlan={zoneRingPlan}
 								onSelectNode={handleSelectNode}
 								onRetry={triggerRefresh}
@@ -699,6 +727,8 @@ function DiagramBody({
 	activeDiagram,
 	nodeByLabel,
 	ringToneByNodeId,
+	unverifiedNodeIds,
+	healthBusy,
 	zoneRingPlan,
 	onSelectNode,
 	onRetry,
@@ -751,6 +781,8 @@ function DiagramBody({
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
+			unverifiedNodeIds={unverifiedNodeIds}
+			healthBusy={healthBusy}
 			zoneRingPlan={zoneRingPlan}
 			onSelectNode={onSelectNode}
 		/>
@@ -766,6 +798,8 @@ function MermaidCanvas({
 	diagramTitle,
 	nodeByLabel,
 	ringToneByNodeId,
+	unverifiedNodeIds,
+	healthBusy,
 	zoneRingPlan,
 	onSelectNode,
 }) {
@@ -868,31 +902,44 @@ function MermaidCanvas({
 		if (!root) return;
 
 		root.querySelectorAll("g.node").forEach((el) => {
-			el.classList.remove(...LIVE_RING_CLASSES);
+			el.classList.remove(...LIVE_RING_CLASSES, NODE_UNVERIFIED_CLASS);
 			const nodeId = el.getAttribute("data-arch-node-id");
 			if (!nodeId) return;
 
 			const unscoped = unscopedNodeIdAR(nodeId);
 			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
 
-			const ringClass = LIVE_RING_CLASS[ringToneByNodeId.get(unscoped)];
+			const tone = ringToneByNodeId.get(unscoped);
+			const ringClass = LIVE_RING_CLASS[tone];
 			if (ringClass) el.classList.add(ringClass);
+			else if (unverifiedNodeIds.has(unscoped))
+				el.classList.add(NODE_UNVERIFIED_CLASS);
+
+			setCornerGlyphAR(el, tone);
 		});
 
 		root.querySelectorAll("g.cluster").forEach((el) => {
-			el.classList.remove(...ZONE_RING_CLASSES);
+			el.classList.remove(...ZONE_RING_CLASSES, ZONE_UNVERIFIED_CLASS);
 			const zoneId = matchZoneIdAR(el.id || "", zoneRingPlan.zoneIds);
 			if (!zoneId) return;
 
 			const nodeId = zoneRingPlan.nodeIdByZoneId.get(zoneId);
-			const ringClass = nodeId && ZONE_RING_CLASS[ringToneByNodeId.get(nodeId)];
+			if (!nodeId) return;
+
+			const tone = ringToneByNodeId.get(nodeId);
+			const ringClass = ZONE_RING_CLASS[tone];
 			if (ringClass) el.classList.add(ringClass);
+			else if (unverifiedNodeIds.has(nodeId))
+				el.classList.add(ZONE_UNVERIFIED_CLASS);
+
+			setCornerGlyphAR(el, tone);
 		});
 	}, [
 		renderState.status,
 		renderState.svgHtml,
 		nodeByLabel,
 		ringToneByNodeId,
+		unverifiedNodeIds,
 		zoneRingPlan,
 	]);
 
@@ -1120,6 +1167,7 @@ function MermaidCanvas({
 				id={ARCH_CANVAS_ID}
 				className="arch-mermaid-canvas"
 				role="group"
+				aria-busy={healthBusy || undefined}
 				aria-label={`${diagramTitle} — pan and zoom diagram`}
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
@@ -1242,8 +1290,12 @@ const HEALTH_STORE_LABELS_AR = {
 	hookFailState: "Hook failures",
 };
 
+// 머리글이 서 있는 응답 넷 — 레인과 링 어휘가 읽는 범위. 드릴다운 응답(payloadState)은
+// 노드 하나를 연 뒤의 사실이라 여기 들면 행을 펼쳤다는 이유로 지도 전체가 '못 읽음' 이 됨.
+const HEADLINE_HEALTH_KEYS = ["daemonState", "hookState", "pgState", "hookFailState"];
+
 function getHealthStoreErrorsAR(states) {
-	return Object.keys(HEALTH_STORE_LABELS_AR)
+	return HEADLINE_HEALTH_KEYS
 		.filter((key) => states[key] && states[key].status === "error")
 		.map((key) => HEALTH_STORE_LABELS_AR[key]);
 }
@@ -2130,6 +2182,23 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 //   폴링이 한 번 늦을 때마다 같은 사실이 존과 노드 사이를 오가며 깜빡임.
 //   subgraph 중첩은 다루지 않음 — content-budget 의 subgraphDepth 상한이 1 이라 중첩이 오면
 //   그쪽이 먼저 붉어짐.
+// 판정을 못 받은 부품의 바인딩 노드 — 머리글 넷 중 아직 답하지 않았거나 못 읽은 카드의 것.
+function buildUnverifiedNodeIds(partBindings, cardStates) {
+	const ids = new Set();
+
+	const model = window.HealthModel;
+	if (!model || typeof model.resolveCardFacts !== "function") return ids;
+
+	for (const def of model.HEALTH_CARD_DEFS || []) {
+		const facts = model.resolveCardFacts(def, cardStates);
+		if (facts.status === "ready") continue;
+
+		for (const nodeId of partBindings?.[def.id] || []) ids.add(nodeId);
+	}
+
+	return ids;
+}
+
 function buildZoneRingPlanAR(source, partBindings) {
 	const healthNodeIds = new Set();
 	for (const nodeIds of Object.values(partBindings || {}))
@@ -2210,6 +2279,44 @@ function ensureRingRectAR(groupEl, ringClass) {
 	ring.setAttribute("rx", String(RING_RADIUS));
 	ring.setAttribute("ry", String(RING_RADIUS));
 	return ring;
+}
+
+/**
+ * 모서리 글리프 — 링과 같은 g 안에 심어 한 좌표계를 씀. tone 이 없으면 지움:
+ * 남겨 두면 판정이 바뀐 노드가 옛 표식을 계속 실어 색과 글리프가 서로 다른 말을 함.
+ */
+function setCornerGlyphAR(groupEl, tone) {
+	const mark = RING_GLYPH_MARK[tone];
+	const existing = groupEl.querySelector(`:scope > text.${RING_GLYPH_CLASS}`);
+
+	if (!mark) {
+		if (existing) existing.remove();
+		return null;
+	}
+
+	const shape = groupEl.querySelector(
+		":scope > :is(rect, path, polygon, circle, ellipse):not(.arch-ring)",
+	);
+	if (!shape) return null;
+
+	let box = null;
+	try {
+		box = shape.getBBox();
+	} catch {
+		return null;
+	}
+	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+
+	const glyph =
+		existing || document.createElementNS("http://www.w3.org/2000/svg", "text");
+	if (!existing) {
+		glyph.setAttribute("class", RING_GLYPH_CLASS);
+		groupEl.appendChild(glyph);
+	}
+	glyph.setAttribute("x", String(box.x + box.width + RING_GAP));
+	glyph.setAttribute("y", String(box.y - RING_GAP));
+	glyph.textContent = mark;
+	return glyph;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).

@@ -722,6 +722,31 @@ test("AC-B2-6a a store that failed is still named when the health model never lo
   );
 });
 
+// 머리글의 범위 (39731 S2) — 드릴다운 응답은 노드 하나를 연 뒤의 사실이므로 레인에 서지 않음.
+// 서면 행 하나를 펼쳤다는 이유로 지도 전체가 '헬스를 못 읽음' 으로 떨어짐.
+test("39731-S2 the drill-down store's failure is not a headline health fact", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const reasons = callInCtx<string[]>(
+    ctx,
+    "getHealthStoreErrorsAR",
+    healthStoreStates({
+      pgState: { status: "ready", data: { status: "ok" }, error: null },
+      payloadState: { status: "error", data: null, error: "ECONNREFUSED" },
+    }),
+  );
+
+  assert.deepStrictEqual(
+    [...reasons],
+    [],
+    `the drill-down response is not a headline payload — read: ${JSON.stringify(reasons)}`,
+  );
+
+  // 대조군 — 머리글 하나를 끊으면 같은 호출이 그 이름을 부름. 없으면 위 빈 읽기는
+  // '무엇을 끊어도 조용한 함수' 의 산물일 수 있음.
+  const named = callInCtx<string[]>(ctx, "getHealthStoreErrorsAR", healthStoreStates());
+  assert.deepStrictEqual([...named], ["PostgreSQL"], "a headline store that failed must still be named");
+});
+
 test("AC-B2-6a no model and no failure names nothing — the alert is not a permanent fixture", () => {
   const ctx = loadArchWithoutHealthModel(archCode);
   const quiet = callInCtx<string[]>(
@@ -733,6 +758,6 @@ test("AC-B2-6a no model and no failure names nothing — the alert is not a perm
   assert.deepStrictEqual(
     [...quiet],
     [],
-    "every store answered, so a reason here would call five live stores dead",
+    "every headline store answered, so a reason here would call four live stores dead",
   );
 });

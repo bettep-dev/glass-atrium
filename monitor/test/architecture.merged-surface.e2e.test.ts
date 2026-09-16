@@ -866,6 +866,42 @@ async function assertZoneRing(
 	);
 }
 
+/**
+ * ok 존 — 판정 클래스는 들되 테두리를 그리지 않음 (39731 S2 링 규칙).
+ * 클래스와 그림을 함께 재야 '클래스가 사라짐' 과 '그리지 않음' 이 갈림: 앞만 재면 판정이
+ * 통째로 끊긴 지도도 초록이고, 뒤만 재면 링 규칙이 판정 자체를 지운 회귀가 지나감.
+ */
+async function assertZoneUnringed(
+	probe: ZoneRingProbe,
+	zoneId: string,
+	expectedClass: string,
+): Promise<void> {
+	assert.ok(
+		Object.hasOwn(probe.zoneClasses, zoneId),
+		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.deepEqual(
+		probe.zoneClasses[zoneId],
+		[expectedClass],
+		`zone '${zoneId}' must carry exactly ${expectedClass}`,
+	);
+
+	const display = await page.evaluate(
+		(args) => {
+			const el = document.querySelector(
+				`${args.canvas} svg .${args.cls} > rect.arch-ring-state`,
+			);
+			return el ? getComputedStyle(el).display : "<no ring rect>";
+		},
+		{ canvas: selectors.canvas, cls: expectedClass },
+	);
+	assert.equal(
+		display,
+		"none",
+		`zone '${zoneId}' must stay unringed — a painted ok verdict rings every healthy part, and then the ring marks nothing`,
+	);
+}
+
 // 존이 대표하는 노드에는 링이 남으면 안 됨 — 같은 판정이 두 겹으로 읽힘.
 function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): void {
 	const nodes = getRenderedPart(probe.rendered, partId);
@@ -995,7 +1031,7 @@ test("AC-B2-3d healthy part verdicts light the zone that represents them", async
 	const zoneProbe = await getZoneRingProbe();
 
 	for (const [partId, zoneId] of Object.entries(ZONE_REPRESENTED_PART_ZONE)) {
-		await assertZoneRing(zoneProbe, zoneId, ZONE_RING_OK_CLASS, "--ok");
+		await assertZoneUnringed(zoneProbe, zoneId, ZONE_RING_OK_CLASS);
 		assertNodeUnringed(nodeProbe, partId, zoneId);
 	}
 });
@@ -1054,7 +1090,7 @@ test("AC-B2-3f exactly the zones with a single health node carry the verdict", a
 test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
 	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	await assertZoneRing(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS, "--ok");
+	await assertZoneUnringed(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS);
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;

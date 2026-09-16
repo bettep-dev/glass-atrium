@@ -380,6 +380,28 @@ describe("healthy live fixture", () => {
 			`${LIVE_TONE_CLASS.ok} count vs bound rendered nodes ${expectedIds.join(", ")}`,
 		);
 
+		// 링 규칙 (39731 S2) — ok 는 판정 클래스를 달되 테두리를 그리지 않음. 클래스 수만 재면
+		// '판정이 왔음' 과 '테두리가 섰음' 이 한 값으로 접혀, 아홉 노드가 다 둘린 지도도 초록임.
+		// 링 사각형의 존재를 먼저 단언함 — 없으면 아래 읽기는 빈 목록 위의 공허한 초록임.
+		const okRingDisplays = await ctx.page.evaluate(
+			(sel) =>
+				Array.from(
+					document.querySelectorAll(
+						`${sel} svg .arch-node-live-ok > rect.arch-ring-state`,
+					),
+				).map((el) => getComputedStyle(el).display),
+			ctx.selectors.canvas,
+		);
+		assert.ok(
+			okRingDisplays.length > 0,
+			"an ok-toned node must still carry its ring rect, or the reading below measures nothing",
+		);
+		assert.deepStrictEqual(
+			[...new Set(okRingDisplays)],
+			["none"],
+			`an ok part must read unringed — displays: ${okRingDisplays.join(", ")}`,
+		);
+
 		for (const cls of [LIVE_TONE_CLASS.warn, LIVE_TONE_CLASS.crit]) {
 			const count = await countLiveToneClass(ctx.page, ctx.selectors.canvas, cls);
 			assert.equal(count, 0, `${cls} present under a healthy verdict`);
