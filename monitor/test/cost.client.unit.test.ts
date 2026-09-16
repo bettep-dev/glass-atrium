@@ -1,8 +1,6 @@
-// Unit pins for the PURE derivations behind the cost screen's decision tier
-// (public/src/screens/cost.jsx): the alarm-lane triggers, the tile-1 hot verdict, the
-// window-total delta rule and the session Other-row rollup. Each is a relationship the
-// composition rests on — the lane is zero-height unless a trigger fires, a figure that
-// never loaded never reads as a zero, and the Other row always closes the population.
+// Unit pins for the PURE derivations behind the cost screen's decision tier (screens/cost.jsx):
+// alarm-lane triggers, the tile-1 hot verdict, the window-total delta rule, the session Other-row
+// rollup. Each pins a relationship the composition rests on, not a sampled pair.
 //
 // Runner: npx tsx --test test/cost.client.unit.test.ts
 // Sandbox harness (esbuild + node:vm over the real shipped cost.jsx): client-sandbox.ts.
@@ -61,7 +59,7 @@ interface CostHelpers {
   computeAlarmRows: (input: {
     hot: HotVerdict;
     latestOutsideBand: boolean;
-    parseErrorCritDays: number;
+    parseError: { crit: number; total: number };
   }) => AlarmRow[];
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
   computeWindowTotal: (state: PanelState) => WindowTotal;
@@ -70,7 +68,7 @@ interface CostHelpers {
     cacheCost: number | null;
     isEmpty: boolean;
   };
-  countParseErrorCritDays: (state: PanelState) => number;
+  getParseErrorDayCounts: (state: PanelState) => { crit: number; total: number };
   isLatestOutsideBand: (state: PanelState) => boolean;
   rollupSessionRows: (
     sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
@@ -125,7 +123,8 @@ const CALM: HotVerdict = {
 
 test("the lane stays empty unless a trigger fires, and every trigger fires it alone", () => {
   assert.strictEqual(
-    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseErrorCritDays: 0 }).length,
+    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 } })
+      .length,
     0,
     "no trigger must render zero rows — the lane is structural and zero-height when calm",
   );
@@ -139,7 +138,7 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
     const rows = cost.computeAlarmRows({
       hot: { ...CALM, ...hotDelta },
       latestOutsideBand: outsideBand,
-      parseErrorCritDays: 0,
+      parseError: { crit: 0, total: 9 },
     });
     assert.deepStrictEqual(getKeys(rows), ["hot"], name);
     assert.ok(rows[0]!.text.length > 0, `${name} must state itself in words`);
@@ -148,22 +147,25 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
   const withParse = cost.computeAlarmRows({
     hot: { ...CALM, isHot: true },
     latestOutsideBand: false,
-    parseErrorCritDays: 3,
+    parseError: { crit: 3, total: 9 },
   });
   assert.deepStrictEqual(
     getKeys(withParse),
     ["hot", "parse-error"],
     "the parse-error row is conditional and follows the hot row",
   );
-  assert.ok(
-    withParse[1]!.text.includes("3"),
-    "the parse-error row states its day count, never a bare severity",
+  assert.match(
+    withParse[1]!.text,
+    /\b3 of 9\b/,
+    "the parse-error row states its count beside the population it came from — never a count alone",
   );
 });
 
 test("a payload that failed or never arrived contributes no lane trigger", () => {
   for (const state of [loading, failed]) {
-    assert.strictEqual(cost.countParseErrorCritDays(state), 0, state.status);
+    const counts = cost.getParseErrorDayCounts(state);
+    assert.strictEqual(counts.crit, 0, `${state.status} crit`);
+    assert.strictEqual(counts.total, 0, `${state.status} population`);
     assert.strictEqual(cost.isLatestOutsideBand(state), false, state.status);
   }
   // Below the rolling window the band has no answer, and no answer must not fire the lane.

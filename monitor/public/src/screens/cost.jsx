@@ -56,18 +56,12 @@ const PARSE_ERROR_CRIT_THRESHOLD = 0.05;
 const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
-// JSX inline-object 할당 회피용 hoist.
-const anomalyChartMargin = { top: 6, right: 8, left: 0, bottom: 0 };
-// Recharts <Legend wrapperStyle> = HTML DOM div → 공유 토큰 var(--fs-meta) 소비 (차트 SVG tick 과 달리 DOM 텍스트).
-const anomalyLegendStyle = { fontSize: 'var(--fs-meta)', paddingTop: 4 };
-
 function ScreenCost({ onNav }) {
   const { PageHeader, Icon, TypeScaleStyle } = window.UI;
 
   const [days, setDays] = useStateC(30);
   const [refreshTick, setRefreshTick] = useStateC(0);
-  // "As of" = client receive time of the LATEST successful fetch in the wave — one stamp for the
-  // whole screen, so a stale panel can never present itself as freshly measured.
+  // "As of" = client receive time of the wave's LATEST successful fetch → one stamp per screen.
   const [asOfMs, setAsOfMs] = useStateC(null);
 
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
@@ -89,7 +83,7 @@ function ScreenCost({ onNav }) {
   const alarmRows = computeAlarmRows({
     hot: hotVerdict,
     latestOutsideBand: isLatestOutsideBand(tokenState),
-    parseErrorCritDays: countParseErrorCritDays(errorState),
+    parseError: getParseErrorDayCounts(errorState),
   });
 
   useEffectC(() => {
@@ -222,8 +216,10 @@ function ScreenCost({ onNav }) {
   );
 }
 
-// One stamp for the whole screen. While a wave is in flight the value is withheld rather than shown
-// stale — a freshness claim is the one figure that must never outlive its measurement.
+/**
+ * One stamp for the whole screen, withheld while a wave is in flight rather than shown stale.
+ * A freshness claim must never outlive its measurement.
+ */
 function AsOfStampC({ ms, loading }) {
   const text = loading || ms === null
     ? 'refreshing…'
@@ -232,8 +228,10 @@ function AsOfStampC({ ms, loading }) {
   return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
 }
 
-// Instrumentation shell — the three rare-read groups share this one cost-local <details> rather than
-// three card idioms; native disclosure keeps keyboard and screen-reader semantics without a new atom.
+/**
+ * Instrumentation shell — three rare-read groups over one cost-local <details>, not three card idioms.
+ * Native disclosure keeps keyboard + screen-reader semantics without a new shared atom.
+ */
 function CostDisclosureC({ title, hint, children }) {
   const { Icon } = window.UI;
 
@@ -252,20 +250,23 @@ function CostDisclosureC({ title, hint, children }) {
   );
 }
 
-// Alarm lane — structural, leading the screen, and zero height when nothing fires. One "running hot"
-// row (today so far, its pace, or the latest day outside its own band) plus a conditional
-// parse-error row. A payload FAILURE is never a lane row: that stays a banner at its owning group.
-function computeAlarmRows({ hot, latestOutsideBand, parseErrorCritDays }) {
+/**
+ * Alarm lane — structural, leading the screen, zero height when nothing fires.
+ * One "running hot" row (today so far, its pace, or the latest day outside its own band)
+ * + a conditional parse-error row.
+ * A payload FAILURE is never a lane row — that stays a banner at its owning group.
+ */
+function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   const rows = [];
 
   if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
     rows.push({ key: 'hot', tone: 'crit', text: getHotAlarmText(hot, latestOutsideBand) });
   }
-  if (parseErrorCritDays > 0) {
+  if (parseError.crit > 0) {
     rows.push({
       key: 'parse-error',
       tone: 'warn',
-      text: `${parseErrorCritDays} days over the unreadable-log threshold — some spend may be unrecorded.`,
+      text: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold — some spend may be unrecorded.`,
     });
   }
 
@@ -279,8 +280,10 @@ function getHotAlarmText(hot, latestOutsideBand) {
   return clauses.join(' ');
 }
 
-// Is the newest day outside its own rolling band? Below the rolling window the question has no answer,
-// and "no answer" must not fire the lane.
+/**
+ * Is the newest day outside its own rolling band?
+ * Below the rolling window the question has no answer, and "no answer" must not fire the lane.
+ */
 function isLatestOutsideBand(trendState) {
   const points = trendState.status === 'ready'
     ? (trendState.data?.points ?? trendState.data?.rows ?? [])
@@ -291,9 +294,11 @@ function isLatestOutsideBand(trendState) {
   return !!(latest && latest.isAnomaly);
 }
 
-function countParseErrorCritDays(errorState) {
+// Crit days travel with the population they came from — the lane never states a count alone.
+function getParseErrorDayCounts(errorState) {
   const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
-  return rows.reduce((s, r) => s + ((Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD ? 1 : 0), 0);
+  const crit = rows.reduce((s, r) => s + ((Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD ? 1 : 0), 0);
+  return { crit, total: rows.length };
 }
 
 function AlarmLaneC({ rows }) {
@@ -319,16 +324,12 @@ function AlarmLaneC({ rows }) {
   );
 }
 
-// KPI band — the four decision-bearing facts, in priority order: today against the operator's own
-// 7-day normal · the window total and its trend · cost per finished task · cache share of cost.
-// Each tile reduces its OWN payload to one state, so a figure that never loaded never reads as a zero.
+// KPI band — today vs the 7-day normal · window total + trend · cost per task · cache share.
 
-// "Running hot" cut — today at or above 1.25x the operator's own 7-day daily normal.
-// Defined once on this screen; the Dashboard inherits this value.
+// "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
 const HOT_RATIO_CUT = 1.25;
 
-// Bullet-bar zones over today / (normal x 2), so 0.5 sits exactly on the normal.
-// Colour is reserved for the alarm — only the hot band carries a tone.
+// Bullet-bar zones over today / (normal x 2) → 0.5 = the normal · only the hot band carries a tone.
 const HOT_BULLET_ZONES = [
   { upTo: HOT_RATIO_CUT / 2, tone: 'neutral' },
   { upTo: 1.0,               tone: 'crit'    },
@@ -341,8 +342,10 @@ function toFiniteOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
-// unavailable (payload arrived, this measure is not derivable) · ready.
+/**
+ * Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
+ * unavailable (payload arrived, this measure is not derivable) · ready.
+ */
 function getTileStatus(state, value, isEmpty) {
   if (state.status === 'loading') return 'loading';
   if (state.status === 'error') return 'error';
@@ -358,8 +361,10 @@ function getTileNote(status, unavailableNote) {
   return '';
 }
 
-// Today so far against the operator's own 7-day daily normal.
-// Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+/**
+ * Today so far against the operator's own 7-day daily normal.
+ * Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+ */
 function computeHotVerdict(kpi) {
   const todayCost = toFiniteOrNull(kpi.today_cost_usd);
   const week7Cost = toFiniteOrNull(kpi.window_7d_cost_usd);
@@ -411,8 +416,10 @@ function computeWindowTotal(trendState) {
   };
 }
 
-// Cache share of cost — both cache categories over the window total, from the per-model price split.
-// A zero-cost window yields null: there is no share to state, and 0% would read as "cache is free".
+/**
+ * Cache share of cost — both cache categories over the window total, from the per-model price split.
+ * A zero-cost window yields null: 0% would read as "cache is free".
+ */
 function computeCacheShare(modelState) {
   const ready = modelState.status === 'ready';
   const rows = ready ? (modelState.data?.rows ?? []) : [];
@@ -483,8 +490,10 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
   );
 }
 
-// Cost-local tile shell — the shared KPI atom is a single-value button, and tile 1 carries a bar and a
-// verdict, so all four tiles use this one shell rather than mixing two tile idioms in one band.
+/**
+ * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
+ * All four tiles take this one shell rather than mixing two tile idioms in one band.
+ */
 function CostTileC({ label, status, value, hint, unavailableNote, children }) {
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
@@ -501,8 +510,10 @@ function CostTileC({ label, status, value, hint, unavailableNote, children }) {
   );
 }
 
-// Bullet bar carries the alarm tone; the sentence under it repeats the verdict in words, and the
-// pace figure lives in that sentence alone so it can never colour the bar.
+/**
+ * Bullet bar carries the alarm tone, the sentence under it repeats the verdict in words.
+ * The pace figure lives in that sentence alone → it can never colour the bar.
+ */
 function HotBulletC({ hot }) {
   const { BulletBar } = window.UI;
   // today / (normal x 2) — the normal sits at 0.5, the 1.25x cut at 0.625, anything beyond clamps to 1.
@@ -536,9 +547,11 @@ function TrendDeltaC({ delta }) {
   );
 }
 
-// CostTrendCard — daily cost as a single-axis line (one magnitude, so no stacking). The ±2σ band
-// is a toggle on this chart rather than a second card: the band answers "is this day unusual" about
-// the very series already drawn here.
+/**
+ * Daily cost as a single-axis line — one magnitude, so no stacking.
+ * The ±2σ band is a toggle here rather than a second card: it asks "is this day unusual" about
+ * the very series already drawn.
+ */
 function CostTrendCard({ state, days, onRetry }) {
   const { CardHead } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
@@ -552,7 +565,7 @@ function CostTrendCard({ state, days, onRetry }) {
         title="Cost over time"
         right={
           <button
-            className={`btn ghost sm ${bandOn ? 'active' : ''}`}
+            className="btn ghost sm"
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
@@ -600,9 +613,11 @@ function CostTrendBody({ state, days, bandOn, onRetry }) {
   );
 }
 
-// Single Y axis, faint horizontal gridlines only. With the band on, the rolling mean and the ±2σ
-// envelope ride the same chart — upper Area visible over a lower Area masked in the card surface,
-// the layering Recharts 2.x needs because an array dataKey is unstable there.
+/**
+ * Single Y axis, faint horizontal gridlines only.
+ * Band on → rolling mean + ±2σ envelope ride the same chart: upper Area over a lower Area masked
+ * in the card surface, the layering Recharts 2.x needs because an array dataKey is unstable there.
+ */
 function CostTrendChart({ rows, bandOn }) {
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
@@ -877,10 +892,12 @@ function TokenTooltipC({ active, payload }) {
   );
 }
 
-// Token-category cost split — the ledger's row 0. Each model's authoritative cost_usd is distributed
-// across the four categories by price weight (tokens x rate/1M), so the split sums back to the ledger
-// total. A token-COUNT ratio would ignore the ~50x price gap between output and cache_read and
-// under-report output; a model with no catalog price falls back to that count ratio deliberately.
+/**
+ * Token-category cost split — the ledger's row 0.
+ * Each model's authoritative cost_usd is distributed by price weight (tokens x rate/1M) → the split
+ * sums back to the ledger total; a token-COUNT ratio would ignore the ~50x output/cache_read price
+ * gap and under-report output. A model with no catalog price falls back to that count ratio.
+ */
 function getCategoryWeights(modelRow, categoryRates) {
   const rates = window.getTokenRate(modelRow.model);
   const weight = {};
@@ -1080,8 +1097,7 @@ function ModelCostBody({ state, days, onRetry }) {
           </tfoot>
         </table>
       </div>
-      {/* Named gap, never proxied: cost_events carry a model, not an agent, so per-agent cost
-          cannot be derived here — a session-to-agent guess would read as a measurement. */}
+      {/* Named gap, never proxied — cost_events carry a model, not an agent. */}
       <div className="cost-foot mt-2">
         Cost per agent is not available — cost events carry a model, not an agent.
       </div>
@@ -1089,8 +1105,10 @@ function ModelCostBody({ state, days, onRetry }) {
   );
 }
 
-// One ledger row; the token columns live behind the row's own expand so the default table stays
-// at the four columns a spend decision needs.
+/**
+ * One ledger row — token columns behind the row's own expand.
+ * The default table stays at the four columns a spend decision needs.
+ */
 function ModelCostRow({ r }) {
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
@@ -1293,8 +1311,7 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. Most expensive sessions — top five plus a rolled-up Other row. The histogram answers the
-// distribution question only when it is asked, so it sits behind the Other row in the drawer.
+// 5c. Most expensive sessions — top five + a rolled-up Other row, histogram behind it in the drawer.
 const SESSION_TOPN = 5;
 
 // Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
@@ -1613,6 +1630,7 @@ function computeAnomalyRows(points, window, sigma) {
       date: typeof p.date === 'string' ? p.date.slice(5) : '',
       fullDate: p.date,
       actual,
+      session_count: Number(p.session_count) || 0,
       rollingMean: null,
       upperBand: null,
       lowerBand: null,
