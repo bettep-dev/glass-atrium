@@ -14,7 +14,7 @@ slice reaches the verifier intact. Covered here:
       ends on an arbitrary character;
   (d) an empty file still yields an empty excerpt, preserving the caller's
       directed-FAIL emptiness path;
-  (e) both C2 routes above still hold under a budget-family label — the context
+  (e) both C2 routes above hold under a budget-family label — the context
       that attaches the injected turn-budget blocks — since the meter's policy
       half is left unsourced precisely BECAUSE C2 already carries it.
 

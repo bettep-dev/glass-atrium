@@ -169,11 +169,13 @@ def get_manifest_text(**overrides: object) -> str:
     return json.dumps({**manifest, **overrides}, indent=2)
 
 
-def get_scan_hits(manifest_text: str) -> set[str]:
+def get_scan_hits(manifest_text: str, rel: str = _MANIFEST) -> set[str]:
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         subprocess.run(["git", "-C", scratch, "init", "-q"], check=True)
-        (root / _MANIFEST).write_text(manifest_text, encoding="utf-8")
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(manifest_text, encoding="utf-8")
         return find_naming_files(root, get_listed_files(root))
 
 
@@ -200,12 +202,7 @@ class ManifestPositionalExemptionTest(unittest.TestCase):
                 self.assertEqual(get_scan_hits(text), {_MANIFEST})
 
     def test_should_not_exempt_a_nested_manifest_when_it_names_the_surface(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            subprocess.run(["git", "-C", scratch, "init", "-q"], check=True)
-            (root / "sub").mkdir()
-            (root / "sub" / _MANIFEST).write_text(get_manifest_text(), encoding="utf-8")
-            self.assertEqual(find_naming_files(root, get_listed_files(root)), {"sub/manifest.json"})
+        self.assertEqual(get_scan_hits(get_manifest_text(), "sub/manifest.json"), {"sub/manifest.json"})
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ against the live scoped store, and every miss is loud. Covered here:
       directions, so an agent added to the farm without a map entry — the gap
       that left glass-atrium-dev-swift judging C3 against nothing — is red here
       rather than silent at daemon runtime;
-  (f) the map stays a CLOSED set of scope-*.md files after the injected
-      turn-budget source joined the same scoped store — that source EXTENDS the
+  (f) the map stays a CLOSED set of scope-*.md files while the injected
+      turn-budget source shares the same scoped store — that source EXTENDS the
       store's readers and is reached by its own resolver, never by a map entry.
 
 The scoped store is pointed at the repo's own ``scoped/`` via ``GA_DATA_ROOT``

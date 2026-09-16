@@ -1155,9 +1155,7 @@ def _read_marker_block(path: Path, start: str, end: str) -> str:
         if end in line:
             break
         kept.append(line)
-    if not opened:
-        return ""
-    return "\n".join(line for line in kept if line not in (start, end))
+    return "\n".join(line for line in kept if line != start)
 
 
 def _injected_budget_excerpt() -> str:
