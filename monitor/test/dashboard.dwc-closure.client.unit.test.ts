@@ -1,8 +1,9 @@
 // Unit tests for the closure-aware Task-results logic in
-// public/src/screens/dashboard.jsx — getOpenCount / computeOutcomeHint /
-// computeWorstRollup. The norm warning keys on OPEN done-with-concerns
-// (count - closed_count), so an all-closed DWC population must stop warning
-// while the total count and the fail/blocked thresholds stay closure-blind.
+// public/src/screens/dashboard.jsx — computeOutcomeHint / computeWorstRollup.
+// The norm warning keys on OPEN done-with-concerns (count - closed_count), so an
+// all-closed DWC population must stop warning while the total count and the
+// fail/blocked thresholds stay closure-blind. The open-count derivation itself
+// now lives in ui.jsx and is pinned by ui.outcome-tone.client.unit.test.ts.
 //
 // Sandbox harness (esbuild + node:vm over the real shipped dashboard.jsx): client-sandbox.ts.
 //
@@ -28,12 +29,13 @@ interface Hint {
   text: string;
 }
 interface DashHelpers {
-  getOpenCount: (row: ByResultRow | undefined) => number;
   computeOutcomeHint: (byResultMap: Map<string, ByResultRow>, total: number) => Hint | null;
   computeWorstRollup: (args: { outcomesState: unknown }) => string | null;
 }
 
-const helpers = await buildScreenSandbox<DashHelpers>(DASH_SRC);
+// withUi — the hint and the rollup read the writer-population helpers through
+// window.UI, so the stub's formatter-only surface is not enough.
+const helpers = await buildScreenSandbox<DashHelpers>(DASH_SRC, { withUi: true });
 
 function buildMap(rows: ByResultRow[]): Map<string, ByResultRow> {
   return new Map(rows.map((r) => [r.result, r]));
@@ -41,18 +43,6 @@ function buildMap(rows: ByResultRow[]): Map<string, ByResultRow> {
 function buildRollupState(rows: ByResultRow[], total: number): { outcomesState: unknown } {
   return { outcomesState: { status: "ready", data: { total, by_result: rows } } };
 }
-
-// --- getOpenCount: the shared open-count derivation ---
-
-test("getOpenCount subtracts closed_count and treats an absent field as zero closed", () => {
-  assert.strictEqual(helpers.getOpenCount({ result: "done_with_concerns", count: 10, closed_count: 4 }), 6);
-  assert.strictEqual(helpers.getOpenCount({ result: "done_with_concerns", count: 10 }), 10);
-  assert.strictEqual(helpers.getOpenCount(undefined), 0);
-});
-
-test("getOpenCount clamps at zero when closed_count exceeds count", () => {
-  assert.strictEqual(helpers.getOpenCount({ result: "done_with_concerns", count: 3, closed_count: 9 }), 0);
-});
 
 // --- AC2: the norm warning keys on OPEN done-with-concerns ---
 

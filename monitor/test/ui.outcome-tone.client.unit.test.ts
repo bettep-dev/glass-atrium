@@ -131,5 +131,6 @@ test("the per-row writer helpers subtract the reconstructed sub-count", () => {
 
 test("getWriterOpenCount falls back to the closure-only open count on a legacy row", () => {
   assert.strictEqual(ui.getWriterOpenCount({ count: 10, closed_count: 4 }), 6);
+  assert.strictEqual(ui.getWriterOpenCount({ count: 3, closed_count: 9 }), 0, "never negative");
   assert.strictEqual(ui.getWriterOpenCount(undefined), 0);
 });
