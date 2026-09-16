@@ -32,7 +32,8 @@
 # stages, and a python failure must not be erased by green bats. The self-improvement
 # daemon reaches the suite ONLY through this script and consumes only its exit code
 # (autoagent/daemon-apply.sh green-suite gate), so a python-stage failure becomes a
-# gate failure with no extra wiring.
+# gate failure with no extra wiring. The ONE rc that is not a stage verdict is
+# TOOLCHAIN_PRECONDITION_RC, raised before stage 1 (rationale at the constant).
 #
 # Every stage prints a banner carrying its DURATION, because that gate re-runs the
 # WHOLE runner once on a first failure (daemon-apply.sh green_gate_flaky_retry): the
@@ -61,6 +62,14 @@ readonly HOOKS_TEST_ROOT=hooks/test
 readonly AUTOAGENT_TEST_ROOT=autoagent/test
 readonly SCRIPTS_TEST_ROOT=scripts/test
 
+# The exit code RESERVED for a toolchain precondition failure — a tool present but
+# UNUSABLE, which is neither an absent binary nor a red suite. Chosen outside every
+# rc a stage can fold into WORST_RC (pytest returns 1-5, bats and unittest 1) and
+# below the shell's 126+ band, so no suite can produce it. autoagent/daemon-apply.sh
+# mirrors the value to pick its abort clause, and scripts/test/run-bats-parallel.bats
+# pins it, so a probe later moved into a folding position cannot promote it silently.
+readonly TOOLCHAIN_PRECONDITION_RC=17
+
 # The env autoagent/daemon-cycle.sh EXPORTS before daemon-apply.sh shells this runner,
 # scrubbed from every stage so the gate verifies each suite against its own fixture rather
 # than the daemon's ambient config.
@@ -88,6 +97,9 @@ readonly DAEMON_ENV_SCRUB=(
 # stage 3 never inherits what stage 2's suites left behind. The cleanup trap still tracks
 # a single path because removing the parent removes both.
 SANDBOX_ROOT=""
+# The git probe's throwaway repo, declared here so the EXIT trap below already covers
+# it when probe_git_usable creates it.
+GIT_PROBE_DIR=""
 # The highest exit code any stage has returned so far, folded by run_stage itself. The
 # fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
 # disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
@@ -99,6 +111,9 @@ WORST_RC=0
 cleanup() {
   if [[ -n "${SANDBOX_ROOT}" && -d "${SANDBOX_ROOT}" ]]; then
     rm -rf -- "${SANDBOX_ROOT}"
+  fi
+  if [[ -n "${GIT_PROBE_DIR}" && -d "${GIT_PROBE_DIR}" ]]; then
+    rm -rf -- "${GIT_PROBE_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -116,6 +131,23 @@ run_stage() {
   if ((rc > WORST_RC)); then WORST_RC="${rc}"; fi
   printf 'run-bats-parallel: [%s] rc=%s (%ss)\n' \
     "${label}" "${rc}" "$((SECONDS - t0))" >&2
+}
+
+# probe_git_usable — exit TOOLCHAIN_PRECONDITION_RC unless git can INITIALIZE a
+# repository, not merely answer --version. An unaccepted Xcode licence leaves the
+# latter working while every `git init` fails, which reds hundreds of suite rows at
+# once and reads downstream as a failing harness rather than a broken toolchain.
+# Called from main's preflight block ahead of stage 1, so the verdict never enters
+# run_stage's WORST_RC fold and a deterministic failure costs milliseconds.
+probe_git_usable() {
+  local err=""
+  GIT_PROBE_DIR="$(mktemp -d -t run-bats-parallel-gitprobe.XXXXXX)"
+  if err="$(git -C "${GIT_PROBE_DIR}" init -q 2>&1)"; then
+    return 0
+  fi
+  printf 'run-bats-parallel: toolchain precondition FAILED (rc %s) — git cannot initialize a repository, so the suite never ran; this is NOT a red suite: %s\n' \
+    "${TOOLCHAIN_PRECONDITION_RC}" "${err}" >&2
+  exit "${TOOLCHAIN_PRECONDITION_RC}"
 }
 
 main() {
@@ -143,6 +175,9 @@ main() {
       "${HOOKS_TEST_ROOT}" "${AUTOAGENT_TEST_ROOT}" >&2
     exit 1
   }
+  # Presence is not usability, and the three checks above only answer presence. Probed
+  # in the same block so a toolchain verdict is reached before any stage costs time.
+  probe_git_usable
 
   # macOS ships no nproc (GNU coreutils only); sysctl hw.ncpu is the BSD core source.
   local job_count=""

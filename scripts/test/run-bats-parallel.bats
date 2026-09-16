@@ -43,6 +43,14 @@
 # That asymmetry is left UNPINNED rather than frozen — pinning the caller's HOME would red
 # the day someone fixes it. Dropping any asserted leg from the runner reds this test.
 #
+# The eleventh pins the toolchain preflight probe. git being ON PATH is not git being
+# USABLE — an unaccepted Xcode licence answers `git --version` and fails every `git init`
+# — and the daemon consumes only this runner's rc, so the distinction survives to it only
+# as a RESERVED exit code. Both halves are pinned: the VALUE (a later move into a
+# WORST_RC-folding position could otherwise promote it silently) and the PLACEMENT ahead
+# of stage 1 (asserted by stage 1 never having run), against the healthy leg in the same
+# scenario, which is what makes the probe's no-op claim falsifiable.
+#
 # The tenth pins the daemon-exported env out of EVERY stage, stage 1 included.
 # daemon-cycle.sh exports its apply-scope trio and the resolved claude binary before
 # daemon-apply.sh shells this runner, so an unscrubbed stage verifies the suite under the
@@ -569,4 +577,42 @@ teardown() {
   assert_daemon_env_scrubbed 'discover -s hooks/test' 'stage 2' || return 1
   assert_daemon_env_scrubbed 'discover -s autoagent/test' 'stage 3' || return 1
   assert_daemon_env_scrubbed '-m pytest' 'stage 4' || return 1
+}
+
+# The value is a LITERAL here on purpose: this is the contract that DEFINES it, so reading
+# it out of the runner would assert only that the runner agrees with itself. The daemon's
+# mirror of the same number is pinned against the runner's source separately
+# (autoagent/test/daemon-apply-preflight.bats).
+@test "(11) an unusable git exits the reserved toolchain rc before stage 1, and is a no-op otherwise" {
+  # Exit 69 is what the Xcode licence gate itself returns; any non-zero reproduces the
+  # condition, since the probe reads only whether `git init` succeeded.
+  write_stub git <<'STUB'
+#!/usr/bin/env bash
+printf 'You have not agreed to the Xcode license agreements\n' >&2
+exit 69
+STUB
+
+  run_runner_expecting 17 || return 1
+  [[ "${stderr}" == *"toolchain precondition FAILED"* ]] || {
+    printf 'no toolchain clause on stderr:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+  # Placement: the probe sits in main's preflight block, so NO stage ran. The bats stub
+  # writes this log on every invocation, which makes its absence the placement assertion.
+  [[ ! -e "${STUB_LOG_DIR}/bats-args.log" ]] || {
+    printf 'stage 1 ran before the toolchain probe:\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log")" >&2
+    return 1
+  }
+
+  # The healthy leg, in the SAME scenario: with the real git back, the probe changes
+  # nothing. Asserted here rather than left to the other scenarios so that a probe which
+  # ALWAYS refused would fail this test rather than pass its own half.
+  rm -f -- "${STUB_BIN}/git"
+  run_runner_expecting 0 || return 1
+  grep -q -- '--no-parallelize-within-files' "${STUB_LOG_DIR}/bats-args.log" || {
+    printf 'stage 1 did not run on a healthy toolchain; recorded bats calls:\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log" 2>/dev/null)" >&2
+    return 1
+  }
 }
