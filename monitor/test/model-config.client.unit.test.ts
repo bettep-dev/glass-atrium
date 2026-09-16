@@ -513,6 +513,7 @@ const DOMAIN_ROW_FIXTURE_MC = [
 function domainsPropsMc(domains: unknown[] = DOMAIN_ROW_FIXTURE_MC): Record<string, unknown> {
   const form = { models: { "model.dev": "claude-opus-4-8" }, budgets: {} };
   return {
+    state: "ready",
     domains,
     knownModels: KNOWN_MODELS_FIXTURE,
     form,

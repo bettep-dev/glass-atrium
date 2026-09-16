@@ -308,6 +308,13 @@ function ScreenModelConfig() {
 	const hasAlarm = Boolean(
 		configState.status === "error" || saveError || showDrift || surfaceResults,
 	);
+	// 헤더를 들어올리는 대신 섹션마다 state prop — 두 방식 다 "모든 상태에서 헤더 유지" 를 만족하고
+	// 이쪽이 diff 가 작다 (계획 Open Question: 구현자 판단).
+	const sectionState = ready
+		? "ready"
+		: configState.status === "loading"
+			? "loading"
+			: "unavailable";
 
 	return (
 		<div className="flex flex-col">
@@ -367,26 +374,23 @@ function ScreenModelConfig() {
 				</div>
 			)}
 
-			{configState.status === "loading" && <ModelConfigSkeletonMC />}
-			{ready && (
-				<>
-					<DomainsSectionMC
-						domains={data.domains}
-						knownModels={knownModels}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onModelChange={setModel}
-					/>
-					<BudgetsSectionMC
-						budgets={data.budgets}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onBudgetChange={setBudget}
-					/>
-				</>
-			)}
+			<DomainsSectionMC
+				state={sectionState}
+				domains={data?.domains}
+				knownModels={knownModels}
+				form={form}
+				baseline={baseline}
+				errors={errors}
+				onModelChange={setModel}
+			/>
+			<BudgetsSectionMC
+				state={sectionState}
+				budgets={data?.budgets}
+				form={form}
+				baseline={baseline}
+				errors={errors}
+				onBudgetChange={setBudget}
+			/>
 
 			{ready && isDirty && (
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
@@ -505,6 +509,7 @@ const DOMAIN_TABLE_COLSPAN_MC = 4;
 
 // 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
 function DomainsSectionMC({
+	state,
 	domains,
 	knownModels,
 	form,
@@ -517,36 +522,40 @@ function DomainsSectionMC({
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
-			<table className="tbl">
-				<thead>
-					<tr>
-						<th>Agent tier</th>
-						<th>Model</th>
-						<th>Live</th>
-						<th>Takes effect</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.length === 0 ? (
-						<EmptyRowMC
-							colSpan={DOMAIN_TABLE_COLSPAN_MC}
-							message="No model domains reported."
-						/>
-					) : (
-						rows.map((d) => (
-							<DomainRowMC
-								key={d.domain}
-								domain={d}
-								knownModels={knownModels}
-								value={form.models[d.domain] ?? ""}
-								defaultValue={baseline?.models[d.domain] ?? ""}
-								error={errors[d.domain]}
-								onChange={(v) => onModelChange(d.domain, v)}
+			{state !== "ready" ? (
+				<SectionBodyStateMC state={state} rows={5} />
+			) : (
+				<table className="tbl">
+					<thead>
+						<tr>
+							<th>Agent tier</th>
+							<th>Model</th>
+							<th>Live</th>
+							<th>Takes effect</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={DOMAIN_TABLE_COLSPAN_MC}
+								message="No model domains reported."
 							/>
-						))
-					)}
-				</tbody>
-			</table>
+						) : (
+							rows.map((d) => (
+								<DomainRowMC
+									key={d.domain}
+									domain={d}
+									knownModels={knownModels}
+									value={form.models[d.domain] ?? ""}
+									defaultValue={baseline?.models[d.domain] ?? ""}
+									error={errors[d.domain]}
+									onChange={(v) => onModelChange(d.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
 		</div>
 	);
 }
@@ -787,41 +796,52 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 const BUDGET_TABLE_COLSPAN_MC = 4;
 
 // per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
-function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
+function BudgetsSectionMC({
+	state,
+	budgets,
+	form,
+	baseline,
+	errors,
+	onBudgetChange,
+}) {
 	const rows = sortBudgetsMC(budgets || []);
 
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Per-call budget caps" />
-			<table className="tbl">
-				<thead>
-					<tr>
-						<th>Background call</th>
-						<th>Per-call cap</th>
-						<th>Live</th>
-						<th>Takes effect</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.length === 0 ? (
-						<EmptyRowMC
-							colSpan={BUDGET_TABLE_COLSPAN_MC}
-							message="No budget caps reported."
-						/>
-					) : (
-						rows.map((b) => (
-							<BudgetRowMC
-								key={b.domain}
-								budget={b}
-								value={form.budgets[b.domain] ?? ""}
-								defaultValue={baseline?.budgets[b.domain] ?? ""}
-								error={errors[b.domain]}
-								onChange={(v) => onBudgetChange(b.domain, v)}
+			{state !== "ready" ? (
+				<SectionBodyStateMC state={state} rows={2} />
+			) : (
+				<table className="tbl">
+					<thead>
+						<tr>
+							<th>Background call</th>
+							<th>Per-call cap</th>
+							<th>Live</th>
+							<th>Takes effect</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={BUDGET_TABLE_COLSPAN_MC}
+								message="No budget caps reported."
 							/>
-						))
-					)}
-				</tbody>
-			</table>
+						) : (
+							rows.map((b) => (
+								<BudgetRowMC
+									key={b.domain}
+									budget={b}
+									value={form.budgets[b.domain] ?? ""}
+									defaultValue={baseline?.budgets[b.domain] ?? ""}
+									error={errors[b.domain]}
+									onChange={(v) => onBudgetChange(b.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
 		</div>
 	);
 }
@@ -1070,29 +1090,31 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-function ModelConfigSkeletonMC() {
-	const block = (h) => (
-		<div
-			aria-busy="true"
-			style={{
-				width: "100%",
-				height: h,
-				borderRadius: 8,
-				background: "rgb(var(--sunken))",
-				opacity: 0.7,
-				animation: "skelPulseMC 1.4s ease-in-out infinite",
-			}}
-		/>
-	);
-	return (
-		<div className="space-y-4" aria-label="Loading model config">
-			<div className="grid grid-cols-3 gap-3">
-				{block(72)}
-				{block(72)}
-				{block(72)}
+function SectionBodyStateMC({ state, rows }) {
+	if (state === "loading") {
+		return (
+			<div aria-busy="true" aria-label="Loading rows">
+				{Array.from({ length: rows }, (_unused, i) => (
+					<div
+						key={i}
+						style={{
+							height: 34,
+							marginBottom: 6,
+							borderRadius: 6,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+							animation: "skelPulseMC 1.4s ease-in-out infinite",
+						}}
+					/>
+				))}
 			</div>
-			{block(280)}
-			{block(200)}
+		);
+	}
+
+	// 미가용 — 0 이 아니라 "읽지 못했다" 로 읽혀야 한다. 원인은 상단 알람 레인이 싣는다.
+	return (
+		<div className="fs-meta text-faint py-2">
+			Not available — the saved config could not be loaded.
 		</div>
 	);
 }
