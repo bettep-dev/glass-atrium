@@ -31,10 +31,10 @@ export function resolveCircuitBreakerDir(): string {
   return path.join(root, "data", "agent-circuit-breaker");
 }
 
-// Mirrors the hook's hook_path_safe_key transform: anything outside the
-// filename-safe class collapses to '_'.
+// Mirrors the hook's hook_path_safe_key writer (`tr -cd 'A-Za-z0-9_-'`): every
+// character outside that class is DROPPED, and '.' is outside it.
 export function toCircuitBreakerKey(agent: string): string {
-  return agent.replace(/[^A-Za-z0-9._-]/g, "_");
+  return agent.replace(/[^A-Za-z0-9_-]/g, "");
 }
 
 export async function loadAgentCircuitBreakerSnapshot(

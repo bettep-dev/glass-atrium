@@ -102,9 +102,14 @@ test("an unreadable state dir is unavailable, and publishes no zeroed states", a
   }
 });
 
-test("the on-disk key collapses characters outside the filename-safe class", () => {
-  assert.equal(toCircuitBreakerKey("glass-atrium/dev react"), "glass-atrium_dev_react");
-  assert.equal(toCircuitBreakerKey("dev-react"), "dev-react");
+test("the on-disk key keeps exactly the characters the hook writer keeps", () => {
+  // Writer: hooks/hook-utils.sh -> hook_path_safe_key() { printf '%s' "$1" | tr -cd 'A-Za-z0-9_-'; }
+  const writerKey = (name: string) =>
+    [...name].filter((ch) => /[A-Za-z0-9_-]/.test(ch)).join("");
+
+  for (const name of ["dev-react", "glass-atrium/dev react", "dev.react", "a b*c", "에이전트-1"]) {
+    assert.equal(toCircuitBreakerKey(name), writerKey(name), `reader mirrors the writer for ${name}`);
+  }
 });
 
 test("the default state dir tracks the hook writer's GA data root, override first", () => {
