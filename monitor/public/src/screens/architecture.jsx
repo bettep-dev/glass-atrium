@@ -237,7 +237,7 @@ const RUN_VERDICT_NOTE = {
 function ScreenArchitecture(
 	/* { onNav } unused — uniform Screen signature per app.jsx */
 ) {
-	const { Icon, Badge, PageHeader, TypeScaleStyle } = window.UI;
+	const { Icon, PageHeader, TypeScaleStyle, formatRelativeTime } = window.UI;
 
 	const [diagState, setDiagState] = useStateAR({
 		status: "loading",
@@ -265,6 +265,9 @@ function ScreenArchitecture(
 
 	// health 전용 틱 — 60s 폴링이 설계도/live/큐 재요청까지 끌고 가지 않게 분리함.
 	const [healthTick, setHealthTick] = useStateAR(0);
+
+	// health 읽은 시각 — 머리글 넷 중 가장 늦게 도착한 응답의 시각. 판정 옆에 서는 유일한 신선도 사실임.
+	const [healthAsOf, setHealthAsOf] = useStateAR(null);
 
 	// 노드 상세 modal — null 이면 닫힘. payload = { kind, payload, diagramId }
 	const [detail, setDetail] = useStateAR(null);
@@ -331,7 +334,11 @@ function ScreenArchitecture(
 				.then((data) => {
 					if (!ctrl.signal.aborted) setter({ status: "ready", data, error: null });
 				})
-				.catch((err) => handleErrorAR(err, setter));
+				.catch((err) => handleErrorAR(err, setter))
+				// 도착이면 성공이든 실패든 시각을 밀어 올림 — 못 읽은 것도 '지금 읽어 본 결과' 임.
+				.finally(() => {
+					if (!ctrl.signal.aborted) setHealthAsOf(new Date().toISOString());
+				});
 		});
 
 		return () => ctrl.abort();
@@ -478,10 +485,14 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
+	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치.
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
 	const healthBusy = [daemonHealthState, hookState, pgState, hookFailState].some(
 		(state) => state.status === "loading",
 	);
+
+	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
+	const healthCaption = getHealthCaptionAR(healthPartRows, healthBusy);
 
 	const handleSelectNode = useCallbackAR(
 		(nodeId) => {
@@ -654,13 +665,19 @@ function ScreenArchitecture(
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="System map"
-					sub="Live system architecture"
+					sub={healthCaption}
 					right={
 						<>
+							{/* 신선도 — 판정이 언제 읽힌 것인지. 없으면 아직 한 번도 안 읽은 것임. */}
+							<span className="fs-meta text-dim" aria-busy={healthBusy || undefined}>
+								{healthAsOf
+									? `Health as of ${formatRelativeTime(healthAsOf)}`
+									: "Health not read yet"}
+							</span>
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
-								aria-label="Refresh system map"
+								aria-label="Re-read the system map and its health"
 							>
 								<Icon name="refresh" size={14} />
 								Refresh
@@ -2053,6 +2070,32 @@ function buildLiveDaemonsByNodeId(daemons) {
 // 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
 //   판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 — 어느 쪽도 여기서
 //   다시 재지 않음. 판정을 못 받은 행은 tone 을 아예 싣지 않음: 미수신과 정상은 다른 사실임.
+/**
+ * 머리글 문장 — 손댈 곳의 수를 모집단과 함께 냄. 모집단은 헬스 모델의 부품 행 수이고,
+ * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
+ * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
+ */
+function getHealthCaptionAR(partRows, busy) {
+	const total = partRows.length;
+	if (total === 0)
+		return busy ? "Reading part health…" : "Part health unavailable";
+
+	const judged = partRows.filter((row) => row.tone);
+	const attention = judged.filter((row) => row.tone !== "ok");
+	const unverified = total - judged.length;
+
+	if (attention.length > 0)
+		return `${attention.length} of ${total} parts need attention`;
+	if (judged.length === 0)
+		return busy
+			? `Reading ${total} parts…`
+			: `No verdict yet for ${total} parts`;
+	if (unverified > 0)
+		return `${judged.length} of ${total} parts ok · ${unverified} not verified`;
+
+	return `All ${total} parts ok`;
+}
+
 // 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
 const ALARM_TONE_RANK = { crit: 1, warn: 2 };
 
