@@ -49,7 +49,7 @@ export type AudienceLiteral = "exposed" | "hidden";
 // HTML primary (user-requested visual/shared) · md/yaml/json/txt_body → plain primary
 // (agent-only token-optimized). ≥2 body fields → 400 invalid_body (mutually exclusive, no
 // silent fallback). audience unspecified → null (read-side 'exposed'); doc_type silently
-// ignored (no column). doc_status POST default 'progress'; supersede auto-transitions predecessor to 'done'.
+// ignored (no column). doc_status POST default 'doc_review'; supersede auto-transitions predecessor to 'done'.
 export interface CreateClaudedDocBody {
   title: string;
   author: string;
@@ -280,7 +280,7 @@ export interface UpdateClaudedDocBody {
   // (single-statement CTE). A non-terminal move never touches a sibling.
   doc_status?: DocStatusLiteral;
   // Model id performing this status write — see `LastStatusModel`. Written only alongside a
-  // doc_status change; omitted → the stored value is preserved.
+  // doc_status change; omitted on one → the actor is unknown (null), not the previous model.
   last_status_model?: LastStatusModel;
   // Group display ordering excluded — persistence SoT is the reorder endpoint
   // (see CreateClaudedDocBody).

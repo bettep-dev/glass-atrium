@@ -106,8 +106,8 @@ export const DOC_STAGES: readonly DocStageLiteral[] = [
 
 const TERMINAL_DOC_STAGE: DocStageLiteral = "done";
 
-// Accepted on a WRITE = every token a row may hold. The retired in-flight alias stays in so a
-// not-yet-updated writer keeps working; it is stored as itself and read as the first stage.
+// Accepted on a WRITE. The retired in-flight alias stays accepted so a not-yet-updated writer
+// keeps working, but it normalises to the first stage — only stages are ever stored.
 export const WRITE_DOC_STATUSES: ReadonlySet<DocStatusLiteral> = new Set<DocStatusLiteral>([
   ...DOC_STAGES, "progress",
 ]);
@@ -1654,14 +1654,14 @@ async function handleUpdateHtmlBody(
   if (existing.content_hash === conversion.contentHash && sameAudience) {
     const cascadeNeeded =
       parsed.doc_status !== undefined &&
-      parsed.doc_status !== (existing.doc_status as DocStatusLiteral);
+      parsed.doc_status !== normalizeStoredStage(existing.doc_status);
     if (!cascadeNeeded) {
       return buildWriteResponse(await replyNoOpUpdate(request, reply, id, existing), notices);
     }
     return buildWriteResponse(
       await replyCascadeOnlyUpdate(
         request, reply, id, existing, parsed.doc_status as DocStatusLiteral,
-        parsed.last_status_model ?? existing.last_status_model, "html", parsed.expected_hash,
+        parsed.last_status_model ?? null, "html", parsed.expected_hash,
       ),
       notices,
     );
@@ -1790,13 +1790,13 @@ async function handleUpdatePlainBody(
   if (existing.content_hash === conversion.contentHash && sameAudience) {
     const cascadeNeeded =
       parsed.doc_status !== undefined &&
-      parsed.doc_status !== (existing.doc_status as DocStatusLiteral);
+      parsed.doc_status !== normalizeStoredStage(existing.doc_status);
     if (!cascadeNeeded) {
       return replyNoOpUpdatePlain(request, reply, id, existing, format);
     }
     return replyCascadeOnlyUpdate(
       request, reply, id, existing, parsed.doc_status as DocStatusLiteral,
-      parsed.last_status_model ?? existing.last_status_model, format, parsed.expected_hash,
+      parsed.last_status_model ?? null, format, parsed.expected_hash,
     );
   }
 
@@ -2713,11 +2713,10 @@ export async function updateClaudedDocRow(
   // doc_status unspecified → keep existing. This function handles body+meta only;
   // group cascade fires separately via cascadeUpdateDocStatus.
   const docStatusNew = parsed.doc_status ?? (existing.doc_status as DocStatusLiteral);
-  // The model is a property OF the status action — absent or status-less, the stored one stands.
+  // The model is a property OF the status action — a status write carrying none has an unknown
+  // actor (null), never the previous action's model; a status-less write keeps the stored one.
   const lastStatusModelNew =
-    parsed.doc_status === undefined || parsed.last_status_model === undefined
-      ? existing.last_status_model
-      : parsed.last_status_model;
+    parsed.doc_status === undefined ? existing.last_status_model : parsed.last_status_model ?? null;
   const rows = await prisma.$queryRaw<ClaudedDocDbRow[]>`
     UPDATE monitor.documents
     SET
@@ -2870,7 +2869,7 @@ export async function cascadeAfterRowUpdate(
   }
   try {
     const cascadeRows = await cascadeUpdateDocStatus(prisma, id, parsed.doc_status as DocStatusLiteral, {
-      lastStatusModel: parsed.last_status_model ?? existing.last_status_model,
+      lastStatusModel: parsed.last_status_model ?? null,
       cascadeToGroup: true,
     });
     request.log.info(
@@ -2994,14 +2993,14 @@ function parseCreateBody(raw: unknown): ParsedCreateBody | string {
   }
   const folderId: number | undefined = folderValidation;
 
-  // doc_status enum validation. Unspecified → 'progress' (injected explicitly to
-  // avoid relying on the silent DB default); other values → 400. Discriminated
-  // union avoids the `typeof === "string"` trap (success values are strings too).
+  // doc_status enum validation. Unspecified → the first stage (injected explicitly to avoid
+  // relying on the silent DB default); the retired alias normalises to it; other values → 400.
+  // Discriminated union avoids the `typeof === "string"` trap (success values are strings too).
   const docStatusValidation = validateDocStatusField(body.doc_status);
   if (docStatusValidation.kind === "err") {
     return docStatusValidation.reason;
   }
-  const docStatus: DocStatusLiteral = docStatusValidation.value;
+  const docStatus: DocStageLiteral = docStatusValidation.value;
 
   const modelValidation = validateLastStatusModelField(body.last_status_model);
   if (modelValidation.kind === "err") {
@@ -3218,14 +3217,14 @@ function parseUpdateBody(raw: unknown): ParsedUpdateBody | string {
     audience = body.audience as AudienceLiteral;
   }
 
-  // doc_status (cascade trigger). Unspecified → undefined (keep row value, no
-  // cascade); only 'progress'|'done' allowed.
-  let docStatus: DocStatusLiteral | undefined;
+  // doc_status (cascade trigger). Unspecified → undefined (keep row value, no cascade); the
+  // retired alias normalises to the stage it names, so only stages reach the column.
+  let docStatus: DocStageLiteral | undefined;
   if (body.doc_status !== undefined && body.doc_status !== null) {
     if (typeof body.doc_status !== "string" || !WRITE_DOC_STATUSES.has(body.doc_status as DocStatusLiteral)) {
       return `doc_status must be one of: ${Array.from(WRITE_DOC_STATUSES).join(", ")}`;
     }
-    docStatus = body.doc_status as DocStatusLiteral;
+    docStatus = normalizeStoredStage(body.doc_status) as DocStageLiteral;
   }
 
   const modelValidation = validateLastStatusModelField(body.last_status_model);
@@ -3338,7 +3337,7 @@ function validateFolderIdField(raw: unknown): number | undefined | string {
  * The union avoids the `typeof === "string"` trap (success values are strings too).
  */
 type DocStatusValidation =
-  | { kind: "ok"; value: DocStatusLiteral }
+  | { kind: "ok"; value: DocStageLiteral }
   | { kind: "err"; reason: string };
 
 function validateDocStatusField(raw: unknown): DocStatusValidation {
@@ -3346,7 +3345,8 @@ function validateDocStatusField(raw: unknown): DocStatusValidation {
   if (typeof raw !== "string" || !WRITE_DOC_STATUSES.has(raw as DocStatusLiteral)) {
     return { kind: "err", reason: `doc_status must be one of: ${Array.from(WRITE_DOC_STATUSES).join(", ")}` };
   }
-  return { kind: "ok", value: raw as DocStatusLiteral };
+  // Non-null by the membership guard above — every accepted write token names a stage.
+  return { kind: "ok", value: normalizeStoredStage(raw) as DocStageLiteral };
 }
 
 /**
