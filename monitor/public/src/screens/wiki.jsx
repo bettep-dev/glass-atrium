@@ -10,10 +10,9 @@ const {
 // 사이클 기간 allowlist — server ALLOWED_WIKI_DAYS 와 정합 (routes/wiki.ts).
 const WIKI_CYCLE_DAYS = 30;
 
-// 일일 보고 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
+// Run-table window allowlist — server allowlist 와 정합 (routes/health.ts).
 const WIKI_REPORT_DAYS_OPTIONS = [
 	{ value: 7, label: "7d" },
-	{ value: 14, label: "14d" },
 	{ value: 30, label: "30d" },
 	{ value: 90, label: "90d" },
 ];
@@ -33,7 +32,7 @@ function ScreenWiki() {
 	const [backlogState, setBacklogState] = useStateW(INITIAL_FETCH_STATE);
 	// 일일 보고 — /api/health/wiki-reports (라우트 불변, 호출 화면만 이동). 기간 선택 state 동반.
 	const [reportState, setReportState] = useStateW(INITIAL_FETCH_STATE);
-	const [reportDays, setReportDays] = useStateW(7);
+	const [reportDays, setReportDays] = useStateW(30);
 
 	const [refreshTick, setRefreshTick] = useStateW(0);
 
@@ -110,6 +109,20 @@ function ScreenWiki() {
 					indexState={indexState}
 					backlogState={backlogState}
 				/>
+
+				{/* Behind the click — working lists, run history, note composition. */}
+				<WikiMaintenanceSection
+					backlogState={backlogState}
+					onRetry={triggerRefresh}
+				/>
+				<WikiRunHistorySection
+					cyclesState={cyclesState}
+					reportState={reportState}
+					days={reportDays}
+					onChangeDays={setReportDays}
+					onRetry={triggerRefresh}
+				/>
+				<WikiNotesByTypeSection state={indexState} onRetry={triggerRefresh} />
 
 				{/* 1. 개요 KPI×3 + 최근 사이클 헬스 (cycles → KPI 인라인 스파크라인 추세) */}
 				<WikiOverviewSection
@@ -522,6 +535,275 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 	};
 }
 
+// Maintenance — one summary line above the fold, the working lists behind a click.
+// The proposals list reports the cost-guard residue, since unverified candidate pairs
+// make the proposal count a floor rather than a total.
+
+function WikiMaintenanceSection({ backlogState, onRetry }) {
+	const model = useMemoW(
+		() => buildMaintenanceModel(backlogState),
+		[backlogState],
+	);
+
+	if (model.state === "error") {
+		return (
+			<ErrorBannerW
+				title="Couldn't load the maintenance backlog"
+				detail={backlogState.error}
+				onRetry={onRetry}
+			/>
+		);
+	}
+
+	return (
+		<div className="flex flex-col gap-2">
+			<div
+				className="fs-body font-mono text-dim"
+				aria-busy={model.state === "loading" ? "true" : undefined}
+			>
+				{model.summaryLine}
+			</div>
+
+			{model.proposals && model.proposals.length > 0 && (
+				<BacklogExplorer
+					label="Merge proposals"
+					count={model.proposals.length}
+					payload={model.proposals}
+				>
+					<div className="flex flex-col gap-2">
+						<ul className="flex flex-col gap-2 m-0 p-0 list-none max-h-64 overflow-y-auto">
+							{model.proposals.map((proposal, i) => (
+								<MergeSuggestionItem
+									key={proposal.cluster_hash || i}
+									proposal={proposal}
+								/>
+							))}
+						</ul>
+						{model.residueLine && (
+							<div className="fs-micro font-mono text-faint leading-tight">
+								{model.residueLine}
+							</div>
+						)}
+					</div>
+				</BacklogExplorer>
+			)}
+
+			{/* Dead-link lists appear only once the fixer has something to report. */}
+			{model.deadLinks && model.deadLinks.length > 0 && (
+				<BacklogExplorer
+					label="Broken links"
+					count={model.deadLinks.length}
+					payload={model.deadLinks}
+				/>
+			)}
+			{model.linkFixes && model.linkFixes.length > 0 && (
+				<BacklogExplorer
+					label="Link fixes applied"
+					count={model.linkFixes.length}
+					payload={model.linkFixes}
+				/>
+			)}
+		</div>
+	);
+}
+
+function buildMaintenanceModel(backlogState) {
+	if (backlogState.status === "loading") {
+		return { state: "loading", summaryLine: "Checking the maintenance backlog…" };
+	}
+	if (backlogState.status === "error") return { state: "error" };
+
+	const backlog = backlogState.data?.backlog;
+	if (!backlog) {
+		return { state: "empty", summaryLine: "No maintenance cycle reported yet." };
+	}
+
+	const proposals = readProposalsW(backlog);
+	const deadLinks = Array.isArray(backlog.deadlink_dryrun)
+		? backlog.deadlink_dryrun
+		: null;
+	const linkFixes = Array.isArray(backlog.deadlink_fixes)
+		? backlog.deadlink_fixes
+		: null;
+	const notVerified = readDedupW(backlog)?.not_verified;
+
+	return {
+		state: "ready",
+		proposals,
+		deadLinks,
+		linkFixes,
+		summaryLine: describeMaintenanceW(proposals, deadLinks),
+		residueLine:
+			typeof notVerified === "number" && notVerified > 0
+				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
+				: null,
+	};
+}
+
+// A missing key reads as "not reported", never as zero.
+function describeMaintenanceW(proposals, deadLinks) {
+	const proposalCount = proposals ? proposals.length : null;
+	const deadCount = deadLinks ? deadLinks.length : null;
+
+	if (proposalCount === 0 && deadCount === 0) {
+		return "Nothing waiting — no merge proposals, no broken links.";
+	}
+
+	const parts = [
+		proposalCount == null
+			? "merge proposals not reported"
+			: `${formatCountW(proposalCount)} merge ${proposalCount === 1 ? "proposal" : "proposals"}`,
+		deadCount == null
+			? "broken links not reported"
+			: `${formatCountW(deadCount)} broken ${deadCount === 1 ? "link" : "links"}`,
+	];
+	return parts.join(" · ");
+}
+
+// Run history — volume and the per-run table, both behind one closed disclosure.
+// The window control drives the table only; the chart and the status mix keep the
+// fixed cycles window and say so.
+
+function WikiRunHistorySection({
+	cyclesState,
+	reportState,
+	days,
+	onChangeDays,
+	onRetry,
+}) {
+	const model = useMemoW(
+		() => buildThroughputModel(cyclesState),
+		[cyclesState],
+	);
+
+	return (
+		<details className="rounded-md border border-line bg-sunken">
+			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
+				<span className="font-mono fs-body text-ink font-medium">
+					Run history
+				</span>
+				<span className="ml-auto font-mono fs-meta text-dim">
+					{describeRunHistoryW(cyclesState, model)}
+				</span>
+			</summary>
+			<div className="px-3 pb-3 flex flex-col gap-3">
+				{cyclesState.status === "loading" ? (
+					<ChartSkeletonW height={120} />
+				) : cyclesState.status === "error" ? (
+					<ErrorBannerW
+						title="Couldn't load run history"
+						detail={cyclesState.error}
+						onRetry={onRetry}
+					/>
+				) : model.rows.length === 0 ? (
+					<EmptyStateW
+						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
+					/>
+				) : (
+					<>
+						<SparseTrendW
+							label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
+							series={model.compiledSeries}
+							stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
+							w={10}
+							h={44}
+							tone="accent"
+						/>
+						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
+						{!model.dominant && <WikiStatusMixW mix={model.mix} />}
+					</>
+				)}
+
+				<div className="pt-3 border-t border-line flex flex-col gap-2">
+					<div className="flex items-center gap-2 flex-wrap">
+						<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+							Per-run table
+						</span>
+						<div
+							className="seg ml-auto"
+							role="group"
+							aria-label="Run table time range"
+						>
+							{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
+								<button
+									key={p.value}
+									className={days === p.value ? "active" : ""}
+									aria-pressed={days === p.value}
+									onClick={() => onChangeDays(p.value)}
+								>
+									{p.label}
+								</button>
+							))}
+						</div>
+					</div>
+					<div className="fs-micro font-mono text-faint leading-tight">
+						{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+					</div>
+					<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
+				</div>
+			</div>
+		</details>
+	);
+}
+
+function describeRunHistoryW(cyclesState, model) {
+	if (cyclesState.status === "loading") return "Loading…";
+	if (cyclesState.status === "error") return "Unavailable";
+	if (model.rows.length === 0) return "No runs in range";
+	return `${model.spanDays} runs · last ${model.newestDate}`;
+}
+
+// Notes by type — text rows; counts read as a list, not as a card grid.
+
+function WikiNotesByTypeSection({ state, onRetry }) {
+	const rows =
+		state.status === "ready" && Array.isArray(state.data?.by_type)
+			? state.data.by_type
+			: [];
+
+	return (
+		<details className="rounded-md border border-line bg-sunken">
+			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
+				<span className="font-mono fs-body text-ink font-medium">
+					Notes by type
+				</span>
+				<span className="ml-auto font-mono fs-meta text-dim">
+					{state.status === "ready" ? `${rows.length} types` : "—"}
+				</span>
+			</summary>
+			<div className="px-3 pb-3">
+				{state.status === "loading" ? (
+					<div className="fs-meta font-mono text-faint" aria-busy="true">
+						Loading note types…
+					</div>
+				) : state.status === "error" ? (
+					<ErrorBannerW
+						title="Couldn't load notes by type"
+						detail={state.error}
+						onRetry={onRetry}
+					/>
+				) : rows.length === 0 ? (
+					<EmptyStateW message="No notes indexed yet." />
+				) : (
+					<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+						{rows.map((t) => (
+							<li
+								key={t.note_type}
+								className="flex items-baseline gap-3 fs-meta font-mono"
+							>
+								<span className="text-dim truncate" title={t.note_type}>
+									{t.note_type}
+								</span>
+								<span className="ml-auto text-ink">{formatCountW(t.count)}</span>
+							</li>
+						))}
+					</ul>
+				)}
+			</div>
+		</details>
+	);
+}
+
 // WikiOverviewSection — KPI×3(최근 컴파일·누적 노트·사이클 p95) + 최근 사이클 헬스 배너.
 // ready 전에는 모두 '—' (가짜 0 금지). cycles 추세는 KPI 인라인 스파크라인(sparkData)으로 노출 (S3).
 
@@ -830,55 +1112,7 @@ function WikiThroughputBody({ state, model, onRetry }) {
 						<span className="text-faint">({model.dominant.runs} runs)</span>
 					</div>
 				) : (
-					<>
-						<div
-							className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
-							role="img"
-							aria-label={`Run status mix: healthy ${model.mix.ok}%, warning ${model.mix.partial}%, down ${model.mix.error}%, usage limit ${model.mix.quota}%`}
-						>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.ok}%`,
-									background: "rgb(var(--ok))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.partial}%`,
-									background: "rgb(var(--warn))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.error}%`,
-									background: "rgb(var(--crit))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.quota}%`,
-									background: "rgb(var(--faint))",
-								}}
-							/>
-						</div>
-						<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
-							{/* 레전드 = STATUS_CHIP_META 단일 SoT (dominant 칩과 tone/label 공유). 배열 순서 = 위 바 셀 순서. */}
-							{["ok", "partial", "error", "quota"].map((k) => (
-								<span key={k} className="inline-flex items-center gap-1">
-									<Icon
-										name="circle"
-										size={9}
-										className={`text-${STATUS_CHIP_META[k].tone}`}
-									/>
-									{STATUS_CHIP_META[k].label} {model.mix[k]}%
-								</span>
-							))}
-						</div>
-					</>
+					<WikiStatusMixW mix={model.mix} />
 				)}
 			</div>
 
@@ -900,6 +1134,51 @@ function WikiThroughputBody({ state, model, onRetry }) {
 				)}
 			</div>
 		</div>
+	);
+}
+
+// Status mix bar + legend — colour-blind-safe 4-cell proportion with a text legend.
+// STATUS_CHIP_META is the single tone/label source the dominant-status chip also reads.
+function WikiStatusMixW({ mix }) {
+	const { Icon } = window.UI;
+
+	return (
+		<>
+			<div
+				className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
+				role="img"
+				aria-label={`Run status mix: healthy ${mix.ok}%, warning ${mix.partial}%, down ${mix.error}%, usage limit ${mix.quota}%`}
+			>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.ok}%`, background: "rgb(var(--ok))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.partial}%`, background: "rgb(var(--warn))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.error}%`, background: "rgb(var(--crit))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.quota}%`, background: "rgb(var(--faint))" }}
+				/>
+			</div>
+			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
+				{["ok", "partial", "error", "quota"].map((k) => (
+					<span key={k} className="inline-flex items-center gap-1">
+						<Icon
+							name="circle"
+							size={9}
+							className={`text-${STATUS_CHIP_META[k].tone}`}
+						/>
+						{STATUS_CHIP_META[k].label} {mix[k]}%
+					</span>
+				))}
+			</div>
+		</>
 	);
 }
 
