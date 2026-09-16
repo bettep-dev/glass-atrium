@@ -82,7 +82,6 @@ function ScreenWiki() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Wiki"
-					sub="Wiki knowledge base"
 					right={
 						<>
 							<button
@@ -99,6 +98,19 @@ function ScreenWiki() {
 			</div>
 
 			<div className="flex flex-col gap-4">
+				{/* Above the fold — what needs a hand, then the health band. */}
+				<WikiAlarmLane
+					summaryState={summaryState}
+					indexState={indexState}
+					backlogState={backlogState}
+					cyclesState={cyclesState}
+				/>
+				<WikiTileBand
+					summaryState={summaryState}
+					indexState={indexState}
+					backlogState={backlogState}
+				/>
+
 				{/* 1. 개요 KPI×3 + 최근 사이클 헬스 (cycles → KPI 인라인 스파크라인 추세) */}
 				<WikiOverviewSection
 					state={summaryState}
@@ -138,6 +150,376 @@ function ScreenWiki() {
 			</div>
 		</div>
 	);
+}
+
+// Daily cycle plus a grace window — past this the cycle counts as missed.
+const CYCLE_OVERDUE_HOURS = 36;
+
+// Runs an unchanged proposal count must survive before the pair reads as parked.
+const PROPOSAL_PARKED_RUNS = 7;
+
+// Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
+// missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
+// renders its banner at the group it feeds, never a lane row.
+
+function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) {
+	const { Icon, TONE_ICON } = window.UI;
+
+	const model = useMemoW(
+		() =>
+			buildAlarmLaneModel(
+				summaryState,
+				indexState,
+				backlogState,
+				cyclesState,
+			),
+		[summaryState, indexState, backlogState, cyclesState],
+	);
+
+	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
+	if (model.alarms.length === 0) {
+		return model.pending ? (
+			<div className="fs-meta font-mono text-faint" aria-busy="true">
+				Checking what needs attention…
+			</div>
+		) : null;
+	}
+
+	return (
+		<ul
+			className="flex flex-col gap-2 m-0 p-0 list-none"
+			aria-label="Wiki alarms"
+		>
+			{model.alarms.map((alarm) => (
+				<li
+					key={alarm.key}
+					className="rounded-md border border-line bg-sunken px-3 py-2 flex items-stretch gap-2.5"
+				>
+					<span className={`sev-bar ${alarm.tone}`} aria-hidden="true" />
+					<Icon
+						name={TONE_ICON[alarm.tone]}
+						size={14}
+						className={`text-${alarm.tone} mt-0.5 flex-shrink-0`}
+					/>
+					<span className="min-w-0">
+						<span className="fs-body font-mono text-ink font-medium block">
+							{alarm.label}
+						</span>
+						<span className="fs-micro font-mono text-faint block leading-tight">
+							{alarm.detail}
+						</span>
+					</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+// pending = a feeder is still loading, so "no alarms" cannot yet be told apart from
+// "nothing loaded". An errored feeder is not pending — its group carries the banner.
+function buildAlarmLaneModel(
+	summaryState,
+	indexState,
+	backlogState,
+	cyclesState,
+) {
+	const alarms = [];
+
+	if (indexState.status === "ready" && indexState.data?.dirty === true) {
+		alarms.push({
+			key: "index-dirty",
+			tone: "warn",
+			label: "Search index is dirty",
+			detail: "Run a wiki compile to regenerate the master index.",
+		});
+	}
+
+	const summary = summaryState.status === "ready" ? summaryState.data : null;
+	const hours = summary?.hours_since_last_cycle;
+	if (typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS) {
+		alarms.push({
+			key: "cycle-overdue",
+			tone: "crit",
+			label: "The daily cycle has not run",
+			detail: `Last run ${summary?.last_run_date || "unknown"} · ${hours} h ago — inspect launchd.`,
+		});
+	}
+
+	const proposals =
+		backlogState.status === "ready"
+			? readProposalsW(backlogState.data?.backlog)
+			: null;
+	const count = proposals ? proposals.length : 0;
+	if (count > 0) {
+		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
+		const runs = countUnchangedDedupRunsW(cyclesState);
+		const parked = typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
+		alarms.push({
+			key: "proposals",
+			tone: parked ? "neutral" : "warn",
+			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
+			detail: describeProposalAgeW(runs, parked),
+			parked,
+		});
+	}
+
+	// Parked proposals sort last; the ranked pushes above already order the rest.
+	alarms.sort((a, b) => (a.parked ? 1 : 0) - (b.parked ? 1 : 0));
+
+	const pending =
+		summaryState.status === "loading" ||
+		indexState.status === "loading" ||
+		backlogState.status === "loading";
+
+	return { alarms, pending };
+}
+
+// Interim age source until a first-seen date per proposal lands: the streak of newest
+// cycles carrying an unchanged dedup count, labelled as a count of runs.
+function countUnchangedDedupRunsW(cyclesState) {
+	if (!cyclesState || cyclesState.status !== "ready") return null;
+
+	const cycles = [...(cyclesState.data?.cycles || [])].sort((a, b) =>
+		(b.run_date || "").localeCompare(a.run_date || ""),
+	);
+	const newest = cycles[0];
+	if (!newest || typeof newest.dedup_count !== "number") return null;
+
+	let runs = 0;
+	for (const c of cycles) {
+		if (c.dedup_count !== newest.dedup_count) break;
+		runs += 1;
+	}
+	return runs;
+}
+
+function describeProposalAgeW(runs, parked) {
+	if (typeof runs !== "number") return "Waiting time unknown — no run history yet.";
+
+	const span = `Unchanged for ${runs} ${runs === 1 ? "run" : "runs"}`;
+	return parked
+		? `${span} — parked; run the curator merge or leave the pair.`
+		: `${span}.`;
+}
+
+// dedup_proposals JSONB — { proposals, not_verified, errors, … }; the shape varies by
+// cycle, so every read is guarded and a missing key stays null rather than an empty list.
+function readDedupW(backlog) {
+	const raw = backlog?.dedup_proposals;
+	return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+}
+
+function readProposalsW(backlog) {
+	const list = readDedupW(backlog)?.proposals;
+	return Array.isArray(list) ? list : null;
+}
+
+// Four-tile band — last run · compiled last cycle · search index · library totals.
+// Steady state carries no status word and no tint; only an actionable state tints.
+
+function WikiTileBand({ summaryState, indexState, backlogState }) {
+	const tiles = useMemoW(
+		() => buildTileBandModel(summaryState, indexState, backlogState),
+		[summaryState, indexState, backlogState],
+	);
+
+	return (
+		<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+			{tiles.map((tile) => (
+				<WikiTile key={tile.key} tile={tile} />
+			))}
+		</div>
+	);
+}
+
+function WikiTile({ tile }) {
+	const tinted = tile.tone === "warn" || tile.tone === "crit";
+
+	return (
+		<div
+			className={`rounded-md border p-2.5 min-w-0 ${tinted ? "" : "border-line bg-sunken"}`}
+			style={
+				tinted
+					? {
+							background: `rgb(var(--${tile.tone}) / 0.06)`,
+							borderColor: `rgb(var(--${tile.tone}) / 0.35)`,
+						}
+					: undefined
+			}
+		>
+			<div
+				className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
+				title={tile.label}
+			>
+				{tile.label}
+			</div>
+			<div
+				className={`font-mono fs-stat font-semibold mt-0.5 ${tile.state === "ready" ? "" : "text-faint"}`}
+				aria-busy={tile.state === "loading" ? "true" : undefined}
+			>
+				{tile.value}
+			</div>
+			{tile.sub && (
+				<div
+					className="fs-micro font-mono text-faint mt-1 leading-tight truncate"
+					title={tile.sub}
+				>
+					{tile.sub}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function buildTileBandModel(summaryState, indexState, backlogState) {
+	return [
+		buildLastRunTileW(summaryState),
+		buildCompiledTileW(summaryState),
+		buildIndexTileW(indexState),
+		buildLibraryTileW(indexState, summaryState, backlogState),
+	];
+}
+
+// Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
+// none of them renders as a number (a zero nobody loaded is the failure mode).
+function tilePlaceholderW(key, label, state) {
+	const SUB = {
+		loading: "Loading",
+		error: "Couldn't load",
+		unavailable: "Not reported yet",
+		empty: "Nothing recorded",
+	};
+	return {
+		key,
+		label,
+		state,
+		value: state === "loading" ? "…" : "—",
+		sub: SUB[state],
+		tone: "neutral",
+	};
+}
+
+function tileFetchStateW(state) {
+	if (state.status === "loading") return "loading";
+	if (state.status === "error") return "error";
+	return null;
+}
+
+function buildLastRunTileW(state) {
+	const label = "Last run";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("last-run", label, pending);
+
+	const d = state.data || {};
+	if (!d.last_cycle_started_at) {
+		return tilePlaceholderW("last-run", label, "empty");
+	}
+
+	const hours = d.hours_since_last_cycle;
+	const overdue = typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS;
+	const statusTone = wikiStatusToneW(d.last_status);
+	const tone = overdue ? "crit" : statusTone === "ok" ? "neutral" : statusTone;
+
+	return {
+		key: "last-run",
+		label,
+		state: "ready",
+		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
+		// Steady state names the cycle date only; a non-healthy run names what went wrong.
+		sub: overdue
+			? `Overdue · cycle ${d.last_run_date}`
+			: tone === "neutral"
+				? `Cycle ${d.last_run_date}`
+				: `${wikiStatusLabelW(d.last_status)} · cycle ${d.last_run_date}`,
+		tone,
+	};
+}
+
+function buildCompiledTileW(state) {
+	const label = "Compiled last cycle";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("compiled", label, pending);
+
+	const d = state.data || {};
+	if (typeof d.latest_compiled_count !== "number") {
+		return tilePlaceholderW("compiled", label, "unavailable");
+	}
+
+	return {
+		key: "compiled",
+		label,
+		state: "ready",
+		value: formatCountW(d.latest_compiled_count),
+		sub: d.last_run_date ? `Cycle ${d.last_run_date}` : null,
+		tone: "neutral",
+	};
+}
+
+function buildIndexTileW(state) {
+	const label = "Search index";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("index", label, pending);
+
+	const d = state.data || {};
+	// dirty=false with no last_dirty timestamp = the flag row is absent, not a clean index.
+	if (d.dirty !== true && d.last_dirty_ms == null) {
+		return tilePlaceholderW("index", label, "unavailable");
+	}
+	if (d.dirty === true) {
+		return {
+			key: "index",
+			label,
+			state: "ready",
+			value: "Dirty",
+			sub:
+				typeof d.last_dirty_ms === "number"
+					? `Since ${window.UI.formatRelativeTime(new Date(d.last_dirty_ms).toISOString())}`
+					: "Compile pending",
+			tone: "warn",
+		};
+	}
+
+	return {
+		key: "index",
+		label,
+		state: "ready",
+		value: "Clean",
+		sub: "Master index current",
+		tone: "neutral",
+	};
+}
+
+function buildLibraryTileW(indexState, summaryState, backlogState) {
+	const label = "Library notes";
+	const pending = tileFetchStateW(indexState) || tileFetchStateW(summaryState);
+	if (pending) return tilePlaceholderW("library", label, pending);
+
+	const total =
+		typeof indexState.data?.notes_total === "number"
+			? indexState.data.notes_total
+			: summaryState.data?.notes_total;
+	if (typeof total !== "number") {
+		return tilePlaceholderW("library", label, "unavailable");
+	}
+
+	const backlog =
+		backlogState.status === "ready"
+			? backlogState.data?.backlog?.true_backlog
+			: null;
+
+	return {
+		key: "library",
+		label,
+		state: "ready",
+		value: formatCountW(total),
+		sub:
+			typeof backlog === "number"
+				? backlog === 0
+					? "No originals waiting"
+					: `${formatCountW(backlog)} originals waiting`
+				: "Backlog not reported",
+		tone: "neutral",
+	};
 }
 
 // WikiOverviewSection — KPI×3(최근 컴파일·누적 노트·사이클 p95) + 최근 사이클 헬스 배너.
