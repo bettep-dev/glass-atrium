@@ -436,6 +436,9 @@ function ScreenOutcomes({ onNav }) {
   // eligibility 는 peak-daily 를 읽으므로 창을 넓히면 수 주 전 버스트로 계속 자격이 유지된다.
   const [channelLivenessState, setChannelLivenessState] = useStateO({ status: 'loading', data: null, error: null });
 
+  // Needs-you 모집단 — 서버 attention 술어(needs_attention) 를 그대로 읽는다. limit=1 → total 만 소비.
+  const [attentionState, setAttentionState] = useStateO({ status: 'loading', data: null, error: null });
+
   // Loop-events raw 로그 — Learning 에서 이관(operational data). period 무관 all-time → refreshTick 만 의존.
   const [loopEventsState, setLoopEventsState] = useStateO({ status: 'loading', data: null, error: null });
 
@@ -623,6 +626,20 @@ function ScreenOutcomes({ onNav }) {
     return () => ctrl.abort();
   }, [refreshTick]);
 
+  useEffectO(() => {
+    const ctrl = new AbortController();
+    setAttentionState({ status: 'loading', data: null, error: null });
+
+    const params = new URLSearchParams({ days: String(filter.days), needs_attention: '1', limit: '1' });
+    setIncludeAllParamO(params, includeAll);
+
+    fetchJsonO(`/api/outcomes/search?${params.toString()}`, ctrl.signal)
+      .then((data) => { markFreshO(); setAttentionState({ status: 'ready', data, error: null }); })
+      .catch((err) => handleErrorO(err, setAttentionState));
+
+    return () => ctrl.abort();
+  }, [filter.days, includeAll, refreshTick]);
+
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
   useEffectO(() => {
     if (!detailRow) {
@@ -701,6 +718,12 @@ function ScreenOutcomes({ onNav }) {
         onRetry={triggerRefresh}
       />
 
+      <StatusBandO
+        analyticsState={analyticsState}
+        attentionState={attentionState}
+        windowDays={filter.days}
+      />
+
       <AnalyticsSection
         analyticsState={analyticsState}
         heatmapState={heatmapState}
@@ -748,6 +771,8 @@ function ScreenOutcomes({ onNav }) {
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
+
+      <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh}/>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
       <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh}/>
@@ -849,7 +874,6 @@ function AnalyticsSection({ analyticsState, heatmapState, attributionState, chan
   // AttributionHealthCard — 2열 grid 아래 full-width (일별 30-bar 그리드 가독성).
   return (
     <div className="flex-shrink-0">
-      <KpiBucketRow state={analyticsState} onRetry={onRetry}/>
       <div className="grid grid-cols-2 gap-4 mb-4">
         <HeatmapCard
           state={heatmapState}
@@ -858,7 +882,6 @@ function AnalyticsSection({ analyticsState, heatmapState, attributionState, chan
           onChangeFilter={onChangeHeatmapFilter}
           onRetry={onRetry}
         />
-        <AgentStackedBarCard state={analyticsState} onRetry={onRetry}/>
       </div>
       <AttributionHealthCard state={attributionState} period={period} onRetry={onRetry}/>
       <ChannelLivenessCard state={channelLivenessState} onRetry={onRetry}/>
@@ -868,112 +891,100 @@ function AnalyticsSection({ analyticsState, heatmapState, attributionState, chan
   );
 }
 
-// KPI 버킷 (4 result headline + reconstructed sub-line).
+// Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
-function KpiBucketRow({ state, onRetry }) {
-  if (state.status === 'loading') {
+// 타일 tone/값 산출 — 임계 판정은 공유 SoT(window.UI.outcomeShareTone) 뿐이고 여기서 두 번째 규칙을 만들지 않는다.
+// 모집단이 low-N 이면 tone 주장을 포기한다(neutral) — 소표본의 한 건이 crit 으로 보이면 안 된다.
+function buildStatusBandTilesO(data, attentionCount) {
+  const { getWriterTotal, outcomeShareTone, LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
+
+  const byResult    = data?.byResultCount || {};
+  const total       = Number(data?.overall?.total) || 0;
+  const writerTotal = getWriterTotal(data?.overall);
+  const broken      = (byResult.fail || 0) + (byResult.blocked || 0);
+  const omitted     = Math.max(0, total - writerTotal);
+  const hasFloor    = writerTotal >= LOW_N_MIN;
+
+  return [
+    {
+      key: 'attention',
+      label: 'Needs you',
+      count: attentionCount,
+      population: writerTotal,
+      tone: !hasFloor || attentionCount === null
+        ? 'neutral'
+        : (outcomeShareTone(attentionCount, writerTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
+      hint: 'Flagged for review, failed, blocked, or carrying an unclosed caveat',
+    },
+    {
+      key: 'broken',
+      label: 'Failed or blocked',
+      count: broken,
+      population: writerTotal,
+      tone: !hasFloor
+        ? 'neutral'
+        : (outcomeShareTone(broken, writerTotal, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') || 'ok'),
+      hint: 'Writer-emitted records whose result is fail or blocked',
+    },
+    {
+      key: 'recorded',
+      label: 'Recorded properly',
+      count: writerTotal,
+      population: total,
+      // 누락 보고는 여기 글리프가 유일한 등급 채널 — 레인 행으로 올리지 않는다.
+      tone: outcomeShareTone(omitted, total, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok',
+      hint: 'Records the agent emitted itself; the rest were reconstructed by the harness',
+    },
+    {
+      key: 'done',
+      label: 'Done',
+      count: byResult.done || 0,
+      population: writerTotal,
+      // 볼륨 사실 — 위험 주장이 아니므로 tone 을 태우지 않는다.
+      tone: 'neutral',
+      hint: 'Completed without a concern recorded',
+    },
+  ];
+}
+
+function StatusBandO({ analyticsState, attentionState, windowDays }) {
+  if (analyticsState.status !== 'ready') {
     return (
-      <div className="grid grid-cols-4 gap-3 mb-4" aria-busy="true" aria-label="Loading result KPIs">
+      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy={analyticsState.status === 'loading'} aria-label="Status band">
         {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
       </div>
     );
   }
-  if (state.status === 'error') {
-    return (
-      <div className="mb-4">
-        <ErrorBannerO title="Couldn't load result KPIs" detail={state.error} onRetry={onRetry}/>
-      </div>
-    );
-  }
 
-  const byResultCount = state.data.byResultCount;
-  // headline = writer-emitted (count - reconstructed) — 합성 복구행은 카드 내 sub-line 으로 분리
-  // (Attribution Health 'Reconstructed ⚠' 어휘 재사용, 복구 산물 ≠ 실패).
-  const byResultReconstructed = state.data.byResultReconstructed || {};
-
-  // 분모 = API total (5개 result enum 전수) — 4-card 합(needs_context 제외)으로 재유도 금지.
-  // total 부재 시에만 4-card 합 fallback (헤더 일치 total 우선).
-  const apiTotal      = Number(state.data.overall?.total) || 0;
-  const kpiTotal      = apiTotal > 0 ? apiTotal : sumByResultO(byResultCount);
-  const kpiSum        = sumByResultO(byResultCount);
-  const otherCount    = Math.max(0, kpiTotal - kpiSum);
-
-  // needs_context 는 유효 result enum 이나 4-KPI 밖 → 별도 세그먼트로 노출 (드롭 회피).
-  const needsContextCount = Number(state.data.needsContextCount) || 0;
+  // attention payload 가 아직/영영 없을 때 0 을 그리면 '해결됨' 으로 읽힌다 → null → em-dash.
+  const attentionCount = attentionState.status === 'ready'
+    ? (Number(attentionState.data?.total) || 0)
+    : null;
+  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
+  const windowLabel = windowDays === OUTCOME_ALL_PERIOD ? 'all time' : `${windowDays}d`;
 
   return (
-    <div className="mb-4">
-      <div className="grid grid-cols-4 gap-3">
-        {ANALYTICS_KPI_ORDER.map((key) => {
-          const meta = kpiMetaO(key);
-          const totalCount = byResultCount[key] || 0;
-          // clamp — 서버 불변식(reconstructed <= count) 방어 (음수 headline 차단).
-          const reconstructedCount = Math.min(Number(byResultReconstructed[key]) || 0, totalCount);
-          return (
-            <KpiBucket
-              key={key}
-              meta={meta}
-              count={totalCount - reconstructedCount}
-              reconstructedCount={reconstructedCount}
-              total={kpiTotal}
-            />
-          );
-        })}
-      </div>
-      <NeedsContextSegment
-        count={needsContextCount}
-        total={kpiTotal}
-        otherCount={otherCount}
-      />
+    <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" role="group" aria-label="Status band">
+      {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
     </div>
   );
 }
 
-// 분모 안내 행 — 4-KPI 카드 아래 단일 행. otherCount 존재 시 'Percentages out of N total' 노트만 표기.
-function NeedsContextSegment({ count, total, otherCount }) {
-  // residual = 4-card + needs_context 외 잔여 (fail 90d 등 — 선택 기간에 없을 수 있음).
-  const residual = Math.max(0, otherCount - count);
+function BandTileO({ tile, windowLabel }) {
+  const { TONE_ICON, formatPctWithDenominator } = window.UI;
+  const loaded = tile.count !== null && tile.count !== undefined;
+  const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
 
   return (
-    <div className="mt-2 flex items-center gap-3 flex-wrap">
-      {otherCount > 0 && (
-        <span className="fs-micro text-faint font-mono">
-          Percentages out of {formatIntO(total)} total{residual > 0 ? ` · ${formatIntO(residual)} more not shown in cards/segments` : ''}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function KpiBucket({ meta, count, total, reconstructedCount = 0 }) {
-  const pct = total > 0 ? (count / total * 100) : 0;
-
-  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
-  const ariaLabel = reconstructedCount > 0
-    ? `${meta.label}: ${count} writer-emitted, ${reconstructedCount} reconstructed`
-    : `${meta.label}: ${count}`;
-
-  return (
-    <div className="kpi cursor-default" aria-label={ariaLabel}>
+    <div className="kpi cursor-default" aria-label={`${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}`} title={tile.hint}>
       <div className="kpi-label">
-        <span
-          className="inline-block w-2 h-2 rounded-sm"
-          style={{ background: `rgb(var(${meta.colorVar}))` }}
-          aria-hidden="true"/>
-        {meta.label}
+        <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
+          <GlyphO name={TONE_ICON[tile.tone]} size={12}/>
+        </span>
+        {tile.label}
       </div>
-      <div className="kpi-value">
-        {formatIntO(count)}
-        <span className="unit">/ {pct.toFixed(1)}%</span>
-      </div>
-      {reconstructedCount > 0 && (
-        <div
-          className="fs-micro font-mono"
-          style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
-          title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
-          {synthMeta.symbol} {formatIntO(reconstructedCount)} {synthMeta.label.toLowerCase()}
-        </div>
-      )}
+      <div className="kpi-value">{loaded ? formatIntO(tile.count) : '—'}</div>
+      <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
     </div>
   );
 }
@@ -1084,120 +1095,67 @@ function HeatmapBody({ state, filter, onRetry }) {
 // 한계: 4개 독립 top-10 합성 → 각 result 11위 이하 기여 누락 가능 (비권위 근사치).
 //   pseudo-agent(subagent_stop_missing 등)는 NON_ACTIONABLE_AGENT_IDS_O 로 시각 분리.
 
-function AgentStackedBarCard({ state, onRetry }) {
-  const { CardHead } = window.UI;
+// registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
+// 행 자체가 조치 대상이므로 tone 은 글리프가 아니라 숫자의 존재로 운반된다(0 행은 아예 렌더하지 않음).
+function buildAgentFailureRowsO(agentStack) {
+  const rows = Array.isArray(agentStack) ? agentStack : [];
+  return rows
+    .map((entry) => ({
+      agent: entry.agent,
+      failed: entry.byResult?.fail || 0,
+      blocked: entry.byResult?.blocked || 0,
+      total: entry.total || 0,
+    }))
+    .filter((row) => row.failed + row.blocked > 0)
+    .sort((a, b) => (b.failed + b.blocked) - (a.failed + a.blocked));
+}
+
+function AgentFailureTableO({ state, onRetry }) {
+  const { CardHead, STICKY_TH_STYLE } = window.UI;
+
   return (
-    <div className="card">
-      <CardHead title="Results by agent" sub="Exact — reconciles with KPI totals"/>
-      <div className="card-body">
-        <AgentStackedBarBody state={state} onRetry={onRetry}/>
+    <div className="card mt-4">
+      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows"/>
+      <div className="card-body" style={{ padding: 0 }}>
+        <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
       </div>
     </div>
   );
 }
 
-function AgentStackedBarBody({ state, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonO height={220} aria-label="Loading results by agent"/>;
-  }
+function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
+  if (state.status === 'loading') return <ChartSkeletonO height={140}/>;
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load results by agent" detail={state.error} onRetry={onRetry}/>;
-  }
-  const agentStack = state.data?.agentStack ?? [];
-  if (agentStack.length === 0) {
-    return <EmptyStateO message="No agent results in this period."/>;
+    return <ErrorBannerO title="Couldn't load by-agent failures" detail={state.error} onRetry={onRetry}/>;
   }
 
+  const rows = buildAgentFailureRowsO(state.data?.agentStack);
+  if (rows.length === 0) {
+    return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
+  }
+
   return (
-    <div>
-      <div className="space-y-3">
-        {agentStack.map((row) => <AgentStackedBarRow key={row.agent} row={row}/>)}
-      </div>
-      <AgentStackedBarLegend/>
-      {/* by_agent_result 단일 쿼리 → per-agent total 이 KPI 합계와 정확히 정합 (구 4-list stitch cutoff 제거). */}
-      <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
-        <span className="inline-flex items-center gap-1">
-          <GlyphO name="diamond" className="text-dim"/> = placeholder bucket (not a real agent)
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function AgentStackedBarRow({ row }) {
-  const { AgentBadge } = window.UI;
-  const total = row.total;
-  // headline = writer-emitted (total - reconstructed) — 합성 복구행은 headline 에서 분리하고
-  // 옆의 artifact sub-note 로 노출 (KpiBucket 패턴). 분포 bar 는 전체 rows 기준 유지.
-  const reconstructed = Math.min(Number(row.reconstructed) || 0, total);
-  const writerEmitted = total - reconstructed;
-  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
-
-  // pseudo-agent (subagent_stop_missing 등) → ◇ 표식 + dim 처리로 실 agent 와 구분.
-  const isPseudoAgent = isNonActionableAgentO(row.agent);
-
-  // 0% 셀은 width 0 → 자동 제외.
-  return (
-    <div>
-      <div className="flex items-center gap-2 fs-body mb-1.5">
-        <AgentBadge a={{ id: row.agent, name: row.agent }} size={18}/>
-        <span
-          className={`flex-1 font-medium truncate ${isPseudoAgent ? 'text-dim italic' : ''}`}
-          title={isPseudoAgent ? `${row.agent} (placeholder bucket — not a real agent)` : row.agent}>
-          {isPseudoAgent && <GlyphO name="diamond" className="mr-1"/>}
-          {row.agent}
-        </span>
-        {reconstructed > 0 && (
-          <span
-            className="font-mono fs-micro"
-            style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
-            title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
-            {synthMeta.symbol} {formatIntO(reconstructed)}
-          </span>
-        )}
-        <span
-          className="font-mono text-dim fs-meta"
-          title={reconstructed > 0 ? `${writerEmitted} writer-emitted (of ${total} total, ${reconstructed} reconstructed)` : undefined}>
-          {formatIntO(writerEmitted)}
-        </span>
-      </div>
-      <div className="flex h-5 rounded overflow-hidden border border-line fs-micro font-mono text-white">
-        {ANALYTICS_KPI_ORDER.map((key) => {
-          const count = row.byResult[key] || 0;
-          const pct = total > 0 ? (count / total * 100) : 0;
-          if (pct <= 0) return null;
-          const meta = kpiMetaO(key);
-          return (
-            <div
-              key={key}
-              className="flex items-center justify-center"
-              style={{ width: `${pct.toFixed(2)}%`, background: `rgb(var(${meta.colorVar}))` }}
-              title={`${meta.label}: ${formatIntO(count)} (${pct.toFixed(1)}%)`}
-              aria-label={`${meta.label} ${pct.toFixed(1)}%`}>
-              {pct >= 12 ? pct.toFixed(0) : ''}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function AgentStackedBarLegend() {
-  return (
-    <div className="flex gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
-      {ANALYTICS_KPI_ORDER.map((key) => {
-        const meta = kpiMetaO(key);
-        return (
-          <span key={key} className="flex items-center gap-1">
-            <span
-              className="w-2 h-2 rounded-sm"
-              style={{ background: `rgb(var(${meta.colorVar}))` }}
-              aria-hidden="true"/>
-            {meta.label}
-          </span>
-        );
-      })}
+    <div className="overflow-auto" style={{ maxHeight: 260 }}>
+      <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <thead>
+          <tr>
+            <th className="text-left text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Agent</th>
+            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Failed</th>
+            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Blocked</th>
+            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>of records</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.agent} className="outcome-row">
+              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}>{row.agent}</td>
+              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
+              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
+              <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1410,7 +1368,7 @@ function AttributionLegend() {
         const meta = ATTRIBUTION_CATEGORY_META[key];
         return (
           <span key={key} className="flex items-center gap-1.5">
-            {/* 범례 점 크기 통일 — w-2 h-2 (AgentStackedBarLegend·KpiBucket 과 동일, W3-T7). */}
+            {/* 범례 점 크기 통일 — w-2 h-2 (화면 공통, W3-T7). */}
             <span
               className="w-2 h-2 rounded-sm inline-flex items-center justify-center"
               style={{ background: `rgb(var(${meta.colorVar}))` }}
@@ -2257,9 +2215,33 @@ function PlainHeader({ label, align = 'left', minWidth, width }) {
   );
 }
 
+// 서버 attention 술어의 클라이언트 미러 — 한 곳에서만 판정해 같은 행이 두 섹션에 겹치지 않게 한다.
+function isNeedsYouRowO(row, closedAt) {
+  if (row.review_flag === true) return true;
+  if (row.result === 'fail' || row.result === 'blocked') return true;
+  return row.result === 'done_with_concerns' && !closedAt;
+}
+
+// 페이지 rows → [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
+function buildLedgerSectionsO(rows, closure) {
+  const needsYou = [];
+  const routine  = [];
+  for (const row of rows) {
+    const closedAt = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
+    (isNeedsYouRowO(row, closedAt) ? needsYou : routine).push(row);
+  }
+  return [
+    { key: 'needs-you', label: 'Needs you', rows: needsYou },
+    { key: 'routine',   label: 'Routine',   rows: routine  },
+  ];
+}
+
 function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
   // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
+  // 6열 — confidence · self-check · revision · cid 는 drawer 가 운반한다(행은 판단에 필요한 축만).
+  const sections = buildLedgerSectionsO(rows, closure);
+
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -2269,24 +2251,30 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
             <PlainHeader label="Agent" minWidth={110}/>
             <PlainHeader label="task_type"/>
             <PlainHeader label="result"/>
-            {/* 고정 폭 3열 — 셀 내부 슬롯 폭과 짝을 이뤄야 열이 행마다 흔들리지 않는다 (남는 폭은 summary 가 흡수). */}
-            <PlainHeader label="conf" align="center" width={88}/>
-            <PlainHeader label="metric*" align="center" width={64}/>
             <PlainHeader label="Check" align="center" width={52}/>
-            <SortableHeader label="rev" sortKey="revision_count" currentSort={sort} onSortChange={onSortChange} align="right" width={50} descOnly/>
             <PlainHeader label="summary"/>
-            <PlainHeader label="cid" width={110}/>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
+          {sections.map((section) => (
+            section.rows.length === 0 ? null : (
+              <React.Fragment key={section.key}>
+                <tr>
+                  <th
+                    colSpan={6}
+                    scope="colgroup"
+                    className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
+                    {section.label} · {formatIntO(section.rows.length)} on this page
+                  </th>
+                </tr>
+                {section.rows.map((row) => (
+                  <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
+                ))}
+              </React.Fragment>
+            )
           ))}
         </tbody>
       </table>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 fs-micro text-faint px-2 py-2">
-        <span><span className="text-dim">metric*</span> = self-reported, not verified</span>
-      </div>
     </div>
   );
 }
@@ -2342,59 +2330,6 @@ const METRIC_MARK_SLOT  = 14;
 const METRIC_SCORE_SLOT = 22;
 const SUMMARY_FLAG_SLOT = 18;
 
-function ConfidenceChipO({ confidence }) {
-  const level = CONFIDENCE_LEVEL[confidence] || 0;
-  const label = confidence == null ? '—' : confidence;
-  const title = level === 0 ? 'confidence not reported' : `confidence: ${label}`;
-
-  return (
-    <span
-      className="inline-flex items-center gap-1 align-middle whitespace-nowrap"
-      role="img"
-      aria-label={`confidence ${label} (${level} of 3)`}
-      title={title}>
-      {/* level 0 은 세그먼트를 아예 비운다 — 빈 막대 3개는 '측정된 0'으로 읽혀 fabrication 이 된다. */}
-      <span className="inline-flex gap-0.5 shrink-0" style={{ width: CONF_BAR_SLOT }} aria-hidden="true">
-        {level > 0 && [0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="inline-block rounded-sm"
-            style={{
-              width: 5,
-              height: 10,
-              background: i < level ? 'rgb(var(--dim))' : 'rgb(var(--line))',
-            }}/>
-        ))}
-      </span>
-      <span
-        className={`fs-micro font-mono text-left shrink-0 ${level === 0 ? 'text-faint' : 'text-dim'}`}
-        style={{ width: CONF_LABEL_SLOT }}>
-        {label}
-      </span>
-    </span>
-  );
-}
-
-// metric_pass = writer self-report (측정 진실 아님) → 측정 컬럼(grader_verdict)과 분리.
-//   품질 실패 오독 차단: minimal check(✓)/x/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
-//   true=✓ · false=✕ (기호로만 구분, 톤은 동일 muted — self-report false 도 응급 신호 아님) · null=– faint.
-function MetricPassMarkO({ metricPass }) {
-  const isReported = metricPass === true || metricPass === false;
-  const iconName = metricPass === true ? 'check' : metricPass === false ? 'x' : 'minus';
-  const label  = metricPass === true ? 'pass (self-reported)' : metricPass === false ? 'fail (self-reported)' : 'not reported';
-  return (
-    <span
-      className="fs-meta font-mono inline-flex items-center justify-center align-middle shrink-0"
-      style={{ width: METRIC_MARK_SLOT, color: isReported ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
-      role="img"
-      aria-label={`self-check ${label}`}>
-      <GlyphO name={iconName}/>
-    </span>
-  );
-}
-
-// qa_score (cov/ins/instr/clar 각 1-5) → 합계(4-20) + 평균. QA 행 전용 OPTIONAL.
-//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → null (슬롭 회피, no fabricated score).
 function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
   const nums = qaScore.match(/\d+(\.\d+)?/g);
@@ -2405,19 +2340,6 @@ function parseQaScoreO(qaScore) {
 
 // 테이블 metric 컬럼의 점수 슬롯 — 합계를 숫자로 노출 (dot 은 4개 항목 분해를 못 실어 detail 패널에만 남긴다).
 //   미보고 행도 '—' 로 같은 폭을 차지해야 열이 세로로 정렬된다.
-function QaScoreValueO({ qaScore }) {
-  const score = parseQaScoreO(qaScore);
-  return (
-    <span
-      className={`fs-micro font-mono text-right shrink-0 ${score ? 'text-dim' : 'text-faint'}`}
-      style={{ width: METRIC_SCORE_SLOT }}
-      title={score ? `QA score ${score.sum}/20 — ${qaScore}` : 'QA score not reported'}>
-      {score ? score.sum : '—'}
-    </span>
-  );
-}
-
-// detail 패널 전용 — 5 중립 dot (채워진 dot 수 = 평균 점수). 테이블은 폭 정렬 때문에 숫자 슬롯을 쓴다.
 function QaScoreDotsO({ qaScore }) {
   const score = parseQaScoreO(qaScore);
   if (score == null) return null;
@@ -2442,26 +2364,6 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function RevisionCountCellO({ revisionCount }) {
-  const { Bar } = window.UI;
-  const n = Number(revisionCount) || 0;
-
-  if (n === 0) {
-    return <span className="text-dim font-mono">—</span>;
-  }
-  if (n < 2) {
-    return <span className="text-dim font-mono">{formatIntO(n)}</span>;
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 justify-end" title={`reworked ${n} times — high revision frequency (≥2)`}>
-      <span className="text-ink font-mono font-semibold">{formatIntO(n)}</span>
-      <span style={{ width: 28 }}>
-        <Bar value={Math.min(n, 5)} max={5} tone="warn" ariaLabel={`revision count ${n}, high (≥2)`}/>
-      </span>
-    </span>
-  );
-}
-
 function ResultTableRow({ row, onRowClick, closure }) {
   const isFail   = row.result === 'fail';
   const isReview = !isFail && row.review_flag === true;
@@ -2469,7 +2371,6 @@ function ResultTableRow({ row, onRowClick, closure }) {
 
   const ts       = formatTimestampO(row.record_ts);
   const summary  = truncateO(row.summary || '', 60);
-  const cidShort = truncateO(row.cid || '', 12);
   const grader   = graderVerdictMetaO(row.grader_verdict);
   // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
   const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
@@ -2535,16 +2436,6 @@ function ResultTableRow({ row, onRowClick, closure }) {
           )}
         </span>
       </td>
-      <td className="text-center px-2 py-1.5 border-b border-line">
-        <ConfidenceChipO confidence={row.confidence}/>
-      </td>
-      <td
-        className="text-center font-mono px-2 py-1.5 border-b border-line">
-        <span className="inline-flex items-center gap-1.5 justify-center whitespace-nowrap">
-          <MetricPassMarkO metricPass={row.metric_pass}/>
-          <QaScoreValueO qaScore={row.qa_score}/>
-        </span>
-      </td>
       <td
         className="text-center px-2 py-1.5 border-b border-line"
         title={graderTitle}>
@@ -2557,15 +2448,9 @@ function ResultTableRow({ row, onRowClick, closure }) {
           <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
-      <td className="text-right px-2 py-1.5 border-b border-line">
-        <RevisionCountCellO revisionCount={row.revision_count}/>
-      </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
         <SummaryFlagSlotO row={row}/>
         {summary}
-      </td>
-      <td className="text-left text-faint font-mono px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 110 }} title={row.cid || ''}>
-        {cidShort || '—'}
       </td>
     </tr>
   );
