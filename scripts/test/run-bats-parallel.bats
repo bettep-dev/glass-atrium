@@ -43,12 +43,13 @@
 # That asymmetry is left UNPINNED rather than frozen — pinning the caller's HOME would red
 # the day someone fixes it. Dropping any asserted leg from the runner reds this test.
 #
-# The tenth pins the autoagent stage's one EXTRA scrub. daemon-cycle.sh exports
-# AUTOAGENT_CLAUDE_BIN at the resolved claude binary and daemon-apply.sh then shells this
-# runner, while daemon_cycle.CLAUDE_BIN freezes that value at import — so an unscrubbed
-# stage would drive the autoagent corpus with a live model seam in scope from inside the
-# green-suite gate. autoagent/test/suite-hermeticity.bats scrubs it on the identical
-# discover run; this holds the stage to the same conditions its probe stands for.
+# The tenth pins the daemon-exported env out of EVERY stage, stage 1 included.
+# daemon-cycle.sh exports its apply-scope trio and the resolved claude binary before
+# daemon-apply.sh shells this runner, so an unscrubbed stage verifies the suite under the
+# daemon's ambient config instead of each suite's own fixture. That is measured on
+# AUTOAGENT_GIT_ROOT, which daemon_cycle._resolve_apply_git_scope short-circuits on by
+# documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
+# identical discover runs, so no probe can read green under conditions its stage lacks.
 
 bats_require_minimum_version 1.5.0
 
@@ -64,6 +65,18 @@ CORPUS_IGNORE_FILES=(
   "scripts/test/.gitignore"
   "autoagent/.gitignore"
 )
+
+# The variables autoagent/daemon-cycle.sh exports on the way to this runner, and the
+# python3 env-log field each lands in. Two parallel arrays rather than one associative
+# array: bash 3.2 has no `declare -A`.
+DAEMON_ENV_NAMES=(
+  AUTOAGENT_GIT_ROOT
+  AUTOAGENT_GIT_PATHSPEC
+  AUTOAGENT_AGENTS_DIR
+  AUTOAGENT_CLAUDE_BIN
+  CLAUDE_BIN
+)
+DAEMON_ENV_PY_FIELDS=(6 7 8 5 9)
 
 # Writes stdin to an executable stub of the given name in the stub bin dir.
 write_stub() {
@@ -124,6 +137,57 @@ assert_stage_scrubbed() {
   }
 }
 
+# Gives every daemon-exported variable an ambient value, so a runner that scrubbed NOTHING
+# is distinguishable from one that scrubbed correctly — with them unset the two look alike.
+export_daemon_env() {
+  export AUTOAGENT_GIT_ROOT="${TMPROOT}/ambient-git-root"
+  export AUTOAGENT_GIT_PATHSPEC=ambient-pathspec/
+  export AUTOAGENT_AGENTS_DIR="${TMPROOT}/ambient-agents"
+  export AUTOAGENT_CLAUDE_BIN="${TMPROOT}/ambient-claude"
+  export CLAUDE_BIN="${TMPROOT}/ambient-claude-bin"
+}
+
+# Asserts one PYTHON stage inherited none of DAEMON_ENV_NAMES, identifying the stage by a
+# substring of its argv. Call it as `assert_daemon_env_scrubbed … || return 1`, matching the
+# gating discipline of every other assertion here.
+# $1 = argv substring identifying the stage · $2 = human label for the failure message
+assert_daemon_env_scrubbed() {
+  local pattern="${1}" label="${2}" i=0 name seen
+  [[ -n "$(grep -m1 -- "${pattern}" "${STUB_LOG_DIR}/python3-env.log" || true)" ]] || {
+    printf 'no %s row in the python3 env log:\n%s\n' "${label}" \
+      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
+    return 1
+  }
+
+  while [[ "${i}" -lt "${#DAEMON_ENV_NAMES[@]}" ]]; do
+    name="${DAEMON_ENV_NAMES[${i}]}"
+    seen="$(stage_env_field "${pattern}" "${DAEMON_ENV_PY_FIELDS[${i}]}")"
+    [[ "${seen}" == "__UNSET__" ]] || {
+      printf '%s inherited %s=%s; the scrub is missing\n' "${label}" "${name}" "${seen}" >&2
+      return 1
+    }
+    i=$((i + 1))
+  done
+}
+
+# The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
+# all, which is also why the wrapper it asserts had to be introduced rather than extended.
+assert_stage1_daemon_env_scrubbed() {
+  local log="${STUB_LOG_DIR}/bats-daemon-env.log" name
+  [[ -s "${log}" ]] || {
+    printf 'no stage 1 env record — the bats stub never ran\n' >&2
+    return 1
+  }
+
+  for name in "${DAEMON_ENV_NAMES[@]}"; do
+    grep -qx -- "${name}=__UNSET__" "${log}" || {
+      printf 'stage 1 inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
+        "${name}" "$(cat "${log}")" >&2
+      return 1
+    }
+  done
+}
+
 setup() {
   if [[ ! -f "${REAL_RUNNER}" ]]; then
     echo "broken tree: run-bats-parallel.sh missing at ${REAL_RUNNER}" >&2
@@ -155,6 +219,15 @@ setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
+# Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
+# A separate log because scenario 1 asserts bats-env.log as a whole file.
+{
+  printf 'AUTOAGENT_GIT_ROOT=%s\n' "${AUTOAGENT_GIT_ROOT-__UNSET__}"
+  printf 'AUTOAGENT_GIT_PATHSPEC=%s\n' "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}"
+  printf 'AUTOAGENT_AGENTS_DIR=%s\n' "${AUTOAGENT_AGENTS_DIR-__UNSET__}"
+  printf 'AUTOAGENT_CLAUDE_BIN=%s\n' "${AUTOAGENT_CLAUDE_BIN-__UNSET__}"
+  printf 'CLAUDE_BIN=%s\n' "${CLAUDE_BIN-__UNSET__}"
+} >>"${STUB_LOG_DIR}/bats-daemon-env.log"
 if [[ -n "${STUB_BATS_IMPORT_PROBE:-}" ]]; then
   cd -- "${STUB_LOG_DIR}/pyprobe" && "${REAL_PYTHON3}" -c 'import ga_probe_mod'
 fi
@@ -166,12 +239,15 @@ STUB
   write_stub python3 <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/python3-args.log"
-# One TAB-separated row per call: the argv is what identifies the stage, and the four
-# variables are what the python stages claim to control. The sentinel distinguishes
-# "unset" from "set to empty", which is the whole distinction `env -u` makes.
-printf '%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
+# One TAB-separated row per call: the argv is what identifies the stage, and the rest are
+# what the python stages claim to control. The sentinel distinguishes "unset" from "set to
+# empty", which is the whole distinction `env -u` makes. Field order is APPEND-ONLY —
+# DAEMON_ENV_PY_FIELDS indexes into it by position.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
   "${ATRIUM_UPDATE_STATE_DIR-__UNSET__}" "${HOME-__UNSET__}" \
-  "${AUTOAGENT_CLAUDE_BIN-__UNSET__}" \
+  "${AUTOAGENT_CLAUDE_BIN-__UNSET__}" "${AUTOAGENT_GIT_ROOT-__UNSET__}" \
+  "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
+  "${CLAUDE_BIN-__UNSET__}" \
   >>"${STUB_LOG_DIR}/python3-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
@@ -482,22 +558,15 @@ teardown() {
   }
 }
 
-@test "(10) the autoagent stage additionally scrubs AUTOAGENT_CLAUDE_BIN" {
-  # Set deliberately: with it unset, a runner scrubbing nothing would look identical.
-  export AUTOAGENT_CLAUDE_BIN="${TMPROOT}/ambient-claude"
+# Asserted per STAGE rather than once over the whole log: stage 1 was the stage with no
+# wrapper at all, so a check that any stage scrubbed the family would have read green on
+# exactly the leak this scenario exists to catch.
+@test "(10) every stage runs with the daemon-exported env scrubbed" {
+  export_daemon_env
   run_runner_expecting 0 || return 1
 
-  local seen
-  seen="$(stage_env_field 'discover -s autoagent/test' 5)"
-  [[ -n "${seen}" ]] || {
-    printf 'no autoagent stage row in the python3 env log:\n%s\n' \
-      "$(cat "${STUB_LOG_DIR}/python3-env.log" 2>/dev/null)" >&2
-    return 1
-  }
-  [[ "${seen}" == "__UNSET__" ]] || {
-    printf 'stage 3 inherited AUTOAGENT_CLAUDE_BIN=%s; the scrub is missing — daemon_cycle\n' \
-      "${seen}" >&2
-    printf 'freezes CLAUDE_BIN from it at import, so the corpus would run with a live model seam\n' >&2
-    return 1
-  }
+  assert_stage1_daemon_env_scrubbed || return 1
+  assert_daemon_env_scrubbed 'discover -s hooks/test' 'stage 2' || return 1
+  assert_daemon_env_scrubbed 'discover -s autoagent/test' 'stage 3' || return 1
+  assert_daemon_env_scrubbed '-m pytest' 'stage 4' || return 1
 }
