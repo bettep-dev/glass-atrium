@@ -1,10 +1,10 @@
-// Unit test for formatRateI in public/src/screens/improvement.jsx — the screen's
-// rate renderer, which the corpus-growth card reuses for compliance_rate /
+// Unit test for formatRateI in public/src/screens/improvement-instrumentation.jsx —
+// the instrumentation view's rate renderer, which the corpus-growth card reuses for compliance_rate /
 // override_rate. Those two are nullable end to end
 // because a null is insufficient data and a 0 is a measured total failure; a
 // renderer that folds them together destroys the distinction the column carries.
 //
-// Sandbox harness (esbuild + node:vm over the real shipped improvement.jsx): client-sandbox.ts.
+// Sandbox harness (esbuild + node:vm over the real shipped view source): client-sandbox.ts.
 //
 // Runner: npx tsx --test test/improvement.corpus-growth.client.unit.test.ts
 
@@ -16,13 +16,16 @@ import { dirname, resolve } from "node:path";
 import { buildScreenSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
+const INSTRUMENTATION_SRC = resolve(
+  __dirname,
+  "../public/src/screens/improvement-instrumentation.jsx",
+);
 
 interface ImprovementHelpers {
   formatRateI: (rate: number | null | undefined) => string;
 }
 
-const helpers = await buildScreenSandbox<ImprovementHelpers>(IMPROVEMENT_SRC);
+const helpers = await buildScreenSandbox<ImprovementHelpers>(INSTRUMENTATION_SRC);
 
 test("null rate renders as the insufficient-data dash, never a percentage", () => {
   assert.equal(helpers.formatRateI(null), "—");
