@@ -14,9 +14,6 @@ import esbuild from "esbuild";
 
 const UI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src/ui.jsx");
 
-// ui.jsx mirror — the rollup skips samples below it.
-export const LOW_N_MIN = 30;
-
 async function transformScript(srcPath: string): Promise<string> {
   const built = await esbuild.build({
     entryPoints: [srcPath],

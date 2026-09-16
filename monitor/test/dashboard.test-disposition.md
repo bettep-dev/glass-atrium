@@ -11,7 +11,7 @@ Runner for every row (both variables exported, see the plan's worktree contract)
 | File | Subject | Tests | Disposition |
 |---|---|---|---|
 | `app.nav-badge.client.unit.test.ts` | `app.jsx` nav slot merge + ALL SYSTEMS footer | 13 | stays — extend for the stream-2 harness fold; never re-add drift cases |
-| `dashboard-cost.kpi-membership-gate.route.test.ts` | `/api/dashboard/kpi` + `/api/cost/kpi` registry gate | 2 | stays unchanged — server-side, and tiles 3-4 keep both endpoints |
+| `dashboard-cost.kpi-membership-gate.route.test.ts` | `/api/dashboard/kpi` + `/api/cost/kpi` registry gate | 2 | stays unchanged — server-side; the Dashboard now reads `/api/dashboard/kpi` only, which carries the cost fields tiles 3-4 need |
 | `dashboard.client.unit.test.ts` | `deriveUpdateView` — the `UpdateBadge` state machine | 18 | stays green as written — it is the guard that stream 4 re-hosts `UpdateBadge` rather than rewriting it |
 | `dashboard.cost-timeseries-tz.unit.test.ts` | `computeBucketTzToday` bounding `/api/dashboard/cost-timeseries` | 5 | stays in place, ownership moves to Cost & usage — the screen drops the trend fetch, the route does not change; any rename is out of this plan |
 | `dashboard.daemon-status.test.ts` | `buildDaemonStatusItems` missing/stale synthesis | 4 | stays — the shell fold consumes this board |
@@ -27,4 +27,4 @@ Runner for every row (both variables exported, see the plan's worktree contract)
 - Nothing in the table retires as a whole file; only the named `computeWorstRollup` cases retire, together with the badge they pin.
 - A re-homed assertion is moved with its relationship intact — it is rewritten against the shared classifier's export, never duplicated on both sides.
 - The two client sandbox suites run the screen SOURCE through `test/client-sandbox.ts` (esbuild, `bundle: false`, node:vm), so no `npm run build:jsx` is needed for them.
-- That harness stubs `window.UI.*` and mirrors `LOW_N_MIN`. Moving the outcome-rate classifier or the low-n gate into a shared export (stream 2) means adding it to the stub in the same change, or every sandbox suite fails at module-top evaluation.
+- That harness evaluates the REAL `ui.jsx` into the same vm context rather than stubbing `window.UI.*`, so the outcome-rate classifier and the low-n gate are asserted against the shipped rule (stream 2) instead of against a mirror that can drift.
