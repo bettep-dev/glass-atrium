@@ -23,9 +23,10 @@ const UPDATE_STATUS_ENDPOINT = '/api/dashboard/update-status';
 //   decoupled job 이 나중에 덮어쓴다. 버전 라벨로 렌더하면 'pending' 이라는 버전이 있는 것처럼 읽힌다.
 const UPDATE_PENDING_VERSION = 'pending';
 
-// 오늘 지출 경보 컷 — 어제 동시각 누계의 1.25배. 규칙 소유는 Cost & usage 계획(clauded-docs/39582);
-// 그쪽이 공용 상수를 내보내면 이 리터럴은 그 export 소비로 교체된다.
+// 오늘 지출 경보 컷 — 7일 일평균(avg/day)의 1.25배. 규칙 소유는 Cost & usage 계획(clauded-docs/39582);
+// 대시보드는 같은 /api/cost/kpi 를 읽어 그 판정을 소비만 한다 — 두 화면이 같은 분에 다른 답을 내면 안 된다.
 const SPEND_PACE_CUT = 1.25;
+const SPEND_BASELINE_DAYS = 7;
 
 // severity 우선순위 — 레인 정렬 기준. 높을수록 위험.
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
@@ -33,7 +34,7 @@ const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 function ScreenDashboard({ onNav, harness }) {
   const { Icon, PageHeader, TypeScaleStyle } = window.UI;
 
-  const [kpiState,       setKpiState]       = useStateD(INITIAL_FETCH_STATE);
+  const [costState,      setCostState]      = useStateD(INITIAL_FETCH_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_FETCH_STATE);
   const [outcomesState,  setOutcomesState]  = useStateD(INITIAL_FETCH_STATE);
   const [updateState,    setUpdateState]    = useStateD(INITIAL_FETCH_STATE);
@@ -57,13 +58,13 @@ function ScreenDashboard({ onNav, harness }) {
     abortRef.current?.abort();
     abortRef.current = ctrl;
 
-    const setters = [setKpiState, setAgentsState, setOutcomesState, setUpdateState, setUpdateJobState];
+    const setters = [setCostState, setAgentsState, setOutcomesState, setUpdateState, setUpdateJobState];
     setters.forEach((s) => s(INITIAL_FETCH_STATE));
 
     // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(풋터와 어긋나는 원인).
     // agents 는 meta 카운트만 필요 → limit=1 (최다 실행 1행)로 목록 전송량 최소화.
     Promise.allSettled([
-      runFetch('/api/dashboard/kpi', ctrl.signal, setKpiState),
+      runFetch('/api/cost/kpi', ctrl.signal, setCostState),
       runFetch('/api/agents/summary?days=7&order=runs&limit=1', ctrl.signal, setAgentsState),
       runFetch('/api/outcomes/cross-analysis?days=7', ctrl.signal, setOutcomesState),
       runFetch(UPDATE_STATUS_ENDPOINT, ctrl.signal, setUpdateState),
@@ -87,8 +88,8 @@ function ScreenDashboard({ onNav, harness }) {
     staleMs: UPDATE_STALE_MS,
   }).kind;
 
-  const alarms = buildAlarms({ harness, kpiState, installKind });
-  const tiles = buildTiles({ harness, kpiState, agentsState, outcomesState });
+  const alarms = buildAlarms({ harness, costState, installKind });
+  const tiles = buildTiles({ harness, costState, agentsState, outcomesState });
 
   return (
     <div className="flex flex-col">
@@ -415,7 +416,7 @@ const TONE_WORD = { crit: 'Down', warn: 'Attention', ok: 'Healthy', info: 'No da
 // 레인 union — harness · fleet · spend · install 만 합친다. Learning/Wiki/Task-results/Models
 // 경보는 각 화면의 nav 숫자가 운반하므로 여기서 합성하지 않는다(같은 사실 이중 신고 방지).
 // fleet 정지(suspension) 행은 소스가 아직 없다 — 없는 사실을 지어내지 않고 타일 힌트로만 고지한다.
-function buildAlarms({ harness, kpiState, installKind }) {
+function buildAlarms({ harness, costState, installKind }) {
   const rows = [];
 
   if (harness && harness.status === 'ready' && harness.downNames.length > 0) {
@@ -429,13 +430,13 @@ function buildAlarms({ harness, kpiState, installKind }) {
     });
   }
 
-  const spend = resolveSpendPace(kpiState);
+  const spend = resolveSpendPace(costState);
   if (spend.status === 'hot') {
     rows.push({
       id: 'spend',
       tone: 'warn',
-      title: 'Spend is running ahead of yesterday',
-      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.basis)} at this time yesterday`,
+      title: 'Spend is running ahead of the 7-day average',
+      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the 3 h burn · ${formatUsd(spend.basis)} 7-day avg/day`,
       target: 'cost',
       targetLabel: 'Cost & usage',
     });
@@ -455,25 +456,27 @@ function buildAlarms({ harness, kpiState, installKind }) {
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
 }
 
-// 오늘 지출 vs 어제 동시각 누계. 기준 0 → 'unavailable'(가짜 +100% 금지) · 미수신 → 'unavailable'.
-function resolveSpendPace(kpiState) {
-  if (!kpiState || kpiState.status !== 'ready') return { status: 'unavailable', today: null, basis: null };
-  const k = kpiState.data || {};
+// 오늘 누계(so-far) 또는 일간 pace 가 7일 일평균의 컷을 넘는지 — Cost 화면과 같은 payload·같은 컷.
+// 기준 0 → 'no-basis'(가짜 +100% 금지) · 미수신 → 'unavailable'.
+function resolveSpendPace(costState) {
+  if (!costState || costState.status !== 'ready') return { status: 'unavailable', today: null, basis: null, pace: null };
+  const k = costState.data || {};
   const today = Number(k.today_cost_usd) || 0;
-  // 동시각 컷 부재(구 payload) → 전일 전체로 폴백. 기준 라벨은 호출부가 붙이지 않는다.
-  const raw = k.yesterday_same_time_cost_usd != null ? k.yesterday_same_time_cost_usd : k.yesterday_cost_usd;
-  const basis = Number(raw) || 0;
-  if (basis <= 0) return { status: 'no-basis', today, basis };
-  return { status: today > basis * SPEND_PACE_CUT ? 'hot' : 'normal', today, basis };
+  // pace = 3h burn 의 일간 외삽 — so-far 만 보면 이른 시각의 과열은 하루가 끝나야 읽힌다.
+  const pace = (Number(k.burn_rate_3h_usd_per_hour) || 0) * 24;
+  const basis = (Number(k.window_7d_cost_usd) || 0) / SPEND_BASELINE_DAYS;
+  if (basis <= 0) return { status: 'no-basis', today, basis, pace };
+  const cut = basis * SPEND_PACE_CUT;
+  return { status: today >= cut || pace >= cut ? 'hot' : 'normal', today, basis, pace };
 }
 
 // 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
-function buildTiles({ harness, kpiState, agentsState, outcomesState }) {
+function buildTiles({ harness, costState, agentsState, outcomesState }) {
   return [
     buildHarnessTile(harness),
     buildOutcomeTile(outcomesState),
     buildFleetTile(agentsState),
-    buildSpendTile(kpiState),
+    buildSpendTile(costState),
   ];
 }
 
@@ -550,18 +553,18 @@ function buildFleetTile(agentsState) {
 }
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
-function buildSpendTile(kpiState) {
+function buildSpendTile(costState) {
   const base = { id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage' };
-  if (!kpiState || kpiState.status === 'loading') {
+  if (!costState || costState.status === 'loading') {
     return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Loading…' };
   }
-  if (kpiState.status === 'error') {
+  if (costState.status === 'error') {
     return { ...base, status: 'error', tone: 'neutral', value: '—', hint: "Couldn't load today's spend." };
   }
-  const pace = resolveSpendPace(kpiState);
+  const pace = resolveSpendPace(costState);
   const hint = pace.status === 'no-basis'
-    ? 'No spend at this time yesterday — no baseline to compare against.'
-    : `${formatUsd(pace.basis)} at this time yesterday · alarm above ${SPEND_PACE_CUT}×.`;
+    ? 'No spend in the last 7 days — no baseline to compare against.'
+    : `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
   return { ...base, status: 'ready', tone: pace.status === 'hot' ? 'warn' : 'neutral', value: formatUsd(pace.today), hint };
 }
 

@@ -44,10 +44,10 @@ interface Fold {
   version?: string | null;
 }
 interface DashHelpers {
-  buildAlarms: (args: { harness: Fold | null; kpiState: unknown; installKind: string }) => Alarm[];
+  buildAlarms: (args: { harness: Fold | null; costState: unknown; installKind: string }) => Alarm[];
   buildTiles: (args: {
     harness: Fold | null;
-    kpiState: unknown;
+    costState: unknown;
     agentsState: unknown;
     outcomesState: unknown;
   }) => Tile[];
@@ -65,11 +65,13 @@ const ERRORED = { status: "error", data: null, error: "HTTP 500" };
 function ready(data: unknown): unknown {
   return { status: "ready", data, error: null };
 }
-function kpi(today: number, sameTimeYesterday: number): unknown {
+// /api/cost/kpi shape — the baseline the screen compares against is window_7d_cost_usd / 7,
+// and the pace leg extrapolates the 3 h burn, so a fixture states avg/day and $/day directly.
+function kpi(today: number, avgDaily: number, paceDaily: number = today): unknown {
   return ready({
     today_cost_usd: today,
-    yesterday_same_time_cost_usd: sameTimeYesterday,
-    yesterday_cost_usd: sameTimeYesterday,
+    window_7d_cost_usd: avgDaily * 7,
+    burn_rate_3h_usd_per_hour: paceDaily / 24,
   });
 }
 function tileOf(tiles: Tile[], id: string): Tile {
@@ -81,14 +83,14 @@ function tileOf(tiles: Tile[], id: string): Tile {
 // --- The lane: empty when nothing is wrong, worst-first when something is ---
 
 test("a healthy harness with normal spend and no update produces no lane rows", () => {
-  const rows = dash.buildAlarms({ harness: HEALTHY, kpiState: kpi(10, 10), installKind: "hidden" });
+  const rows = dash.buildAlarms({ harness: HEALTHY, costState: kpi(10, 10), installKind: "hidden" });
   assert.deepEqual([...rows], [], "an empty lane renders nothing at all");
 });
 
 test("every down part becomes one harness row naming the parts", () => {
   const rows = dash.buildAlarms({
     harness: { ...HEALTHY, partsOk: 4, downNames: ["PostgreSQL", "autoagent"] },
-    kpiState: kpi(10, 10),
+    costState: kpi(10, 10),
     installKind: "hidden",
   });
   assert.equal(rows.length, 1);
@@ -101,28 +103,42 @@ test("every down part becomes one harness row naming the parts", () => {
 test("an unavailable harness fold raises no alarm — absence is not a fault", () => {
   const rows = dash.buildAlarms({
     harness: { ...HEALTHY, status: "unavailable", partsChecked: 0, downNames: [] },
-    kpiState: LOADING,
+    costState: LOADING,
     installKind: "hidden",
   });
   assert.equal(rows.length, 0, "nothing polled must never read as something broken");
-  assert.equal(dash.buildAlarms({ harness: null, kpiState: LOADING, installKind: "hidden" }).length, 0);
+  assert.equal(dash.buildAlarms({ harness: null, costState: LOADING, installKind: "hidden" }).length, 0);
 });
 
-test("spend alarms only once today is past the pace cut, at any scale", () => {
-  for (const [today, basis, alarms] of [
-    [125, 100, false], [126, 100, true], [1.26, 1, true], [50, 100, false], [0, 0, false],
+test("spend alarms only once today is past the 7-day-average cut, at any scale", () => {
+  for (const [today, avgDaily, alarms] of [
+    [124, 100, false], [125, 100, true], [1.25, 1, true], [50, 100, false], [0, 0, false],
   ] as [number, number, boolean][]) {
-    const rows = dash.buildAlarms({ harness: HEALTHY, kpiState: kpi(today, basis), installKind: "hidden" });
+    const rows = dash.buildAlarms({ harness: HEALTHY, costState: kpi(today, avgDaily), installKind: "hidden" });
     assert.equal(
       rows.some((r) => r.id === "spend"),
       alarms,
-      `${today} against ${basis} at this time yesterday`,
+      `${today} against a ${avgDaily} 7-day avg/day`,
     );
   }
 });
 
+test("either leg crosses the cut on its own — so-far under it still alarms on pace", () => {
+  const paceOnly = dash.buildAlarms({
+    harness: HEALTHY, costState: kpi(10, 100, 200), installKind: "hidden",
+  });
+  assert.ok(
+    paceOnly.some((r) => r.id === "spend"),
+    "a day that has barely spent yet but is burning at 2x the average is running hot",
+  );
+  const neither = dash.buildAlarms({
+    harness: HEALTHY, costState: kpi(10, 100, 110), installKind: "hidden",
+  });
+  assert.equal(neither.length, 0, "both legs under the cut is not an alarm");
+});
+
 test("a zero baseline never alarms — there is no pace to be ahead of", () => {
-  const rows = dash.buildAlarms({ harness: HEALTHY, kpiState: kpi(500, 0), installKind: "hidden" });
+  const rows = dash.buildAlarms({ harness: HEALTHY, costState: kpi(500, 0), installKind: "hidden" });
   assert.equal(rows.length, 0, "a fake +100% is worse than no signal");
 });
 
@@ -130,7 +146,7 @@ test("the install row appears only for the actionable update views", () => {
   for (const [kind, present] of [
     ["hidden", false], ["current", false], ["updating", false], ["available", true], ["failed", true],
   ] as [string, boolean][]) {
-    const rows = dash.buildAlarms({ harness: HEALTHY, kpiState: kpi(10, 10), installKind: kind });
+    const rows = dash.buildAlarms({ harness: HEALTHY, costState: kpi(10, 10), installKind: kind });
     assert.equal(rows.some((r) => r.id === "install"), present, kind);
   }
 });
@@ -138,7 +154,7 @@ test("the install row appears only for the actionable update views", () => {
 test("rows are ordered worst-first whatever order the sources contribute in", () => {
   const rows = dash.buildAlarms({
     harness: { ...HEALTHY, downNames: ["PostgreSQL"] },
-    kpiState: kpi(500, 100),
+    costState: kpi(500, 100),
     installKind: "available",
   });
   assert.equal(rows.length, 3);
@@ -154,7 +170,7 @@ test("rows are ordered worst-first whatever order the sources contribute in", ()
 
 test("the band is always the four tiles, in the priority spine's order", () => {
   const tiles = dash.buildTiles({
-    harness: HEALTHY, kpiState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING,
+    harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING,
   });
   assert.equal(tiles.length, 4);
   assert.equal(tiles.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
@@ -171,7 +187,7 @@ test("loading, error and unavailable each read differently and none reads as a v
   ];
   for (const [name, agentsState, expected] of states) {
     const tile = tileOf(
-      dash.buildTiles({ harness: HEALTHY, kpiState: LOADING, agentsState, outcomesState: LOADING }),
+      dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
       "fleet",
     );
     assert.equal(tile.status, expected, name);
@@ -183,7 +199,7 @@ test("loading, error and unavailable each read differently and none reads as a v
 test("the fleet tile separates an empty population from an unavailable one", () => {
   const empty = tileOf(
     dash.buildTiles({
-      harness: HEALTHY, kpiState: LOADING, outcomesState: LOADING,
+      harness: HEALTHY, costState: LOADING, outcomesState: LOADING,
       agentsState: ready({ meta: { total_agents: 0 } }),
     }),
     "fleet",
@@ -200,7 +216,7 @@ test("the harness tile counts only the parts the shell actually polled", () => {
         partsOk: 5, partsChecked: 6,
         downNames: ["autoagent"], uncheckedNames: ["Hook Chain"],
       },
-      kpiState: LOADING, agentsState: LOADING, outcomesState: LOADING,
+      costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
     }),
     "harness",
   );
@@ -212,7 +228,7 @@ test("the harness tile counts only the parts the shell actually polled", () => {
 test("the outcome tile takes its verdict from the shared rule", () => {
   const crit = tileOf(
     dash.buildTiles({
-      harness: HEALTHY, kpiState: LOADING, agentsState: LOADING,
+      harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({
         total: 200,
         by_result: [{ result: "fail", count: 40 }, { result: "done", count: 160 }],
@@ -225,7 +241,7 @@ test("the outcome tile takes its verdict from the shared rule", () => {
 
   const lowN = tileOf(
     dash.buildTiles({
-      harness: HEALTHY, kpiState: LOADING, agentsState: LOADING,
+      harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }),
     }),
     "outcomes",
@@ -236,12 +252,12 @@ test("the outcome tile takes its verdict from the shared rule", () => {
 
 test("the spend tile tones only on the pace verdict, never on the amount", () => {
   const big = tileOf(
-    dash.buildTiles({ harness: HEALTHY, kpiState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),
+    dash.buildTiles({ harness: HEALTHY, costState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
   );
   assert.equal(big.tone, "neutral", "a large but on-pace spend is not an alarm");
   const hot = tileOf(
-    dash.buildTiles({ harness: HEALTHY, kpiState: kpi(3, 1), agentsState: LOADING, outcomesState: LOADING }),
+    dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 1), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
   );
   assert.equal(hot.tone, "warn", "a small but off-pace spend is");
