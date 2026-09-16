@@ -134,6 +134,9 @@ const CYCLE_OVERDUE_HOURS = 36;
 // Runs an unchanged proposal count must survive before the pair reads as parked.
 const PROPOSAL_PARKED_RUNS = 7;
 
+// Same threshold on the dated source — the cycle is daily, so a run and a day match.
+const PROPOSAL_PARKED_DAYS = 7;
+
 // Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
 // missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
 // renders its banner at the group it feeds, never a lane row.
@@ -233,13 +236,19 @@ function buildAlarmLaneModel(
 	const count = proposals ? proposals.length : 0;
 	if (count > 0) {
 		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
-		const runs = countUnchangedDedupRunsW(cyclesState);
-		const parked = typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
+		// Dates win when the server reports them; the run streak covers a payload without them.
+		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
+		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
+		const parked = wait
+			? wait.days >= PROPOSAL_PARKED_DAYS
+			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
 		alarms.push({
 			key: "proposals",
 			tone: parked ? "neutral" : "warn",
 			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
-			detail: describeProposalAgeW(runs, parked),
+			detail: wait
+				? describeProposalWaitW(wait, parked)
+				: describeProposalAgeW(runs, parked),
 			parked,
 		});
 	}
@@ -264,7 +273,34 @@ function buildAlarmLaneModel(
 	return { alarms, pending, unchecked };
 }
 
-// Interim age source until a first-seen date per proposal lands: the streak of newest
+// Oldest first-seen date among the waiting proposals — the server's dated age source.
+// Absent map, unhashed proposals or an unparseable date → null, and the run streak answers instead.
+function readProposalWaitW(backlog, proposals) {
+	const firstSeen = backlog?.proposal_first_seen;
+	if (!firstSeen || typeof firstSeen !== "object" || !proposals) return null;
+
+	let since = null;
+	for (const p of proposals) {
+		const seen = firstSeen[p?.cluster_hash];
+		if (typeof seen === "string" && (since === null || seen < since)) since = seen;
+	}
+	if (since === null) return null;
+
+	const days = ageInUtcDaysW(since);
+	return typeof days === "number" ? { days, since } : null;
+}
+
+function describeProposalWaitW(wait, parked) {
+	const span =
+		wait.days === 0
+			? `Waiting since today (${wait.since})`
+			: `Waiting ${wait.days} ${wait.days === 1 ? "day" : "days"} (since ${wait.since})`;
+	return parked
+		? `${span} — parked; run the curator merge or leave the pair.`
+		: `${span}.`;
+}
+
+// Fallback age source for a payload with no first-seen map: the streak of newest
 // cycles carrying an unchanged dedup count, labelled as a count of runs.
 function countUnchangedDedupRunsW(cyclesState) {
 	if (!cyclesState || cyclesState.status !== "ready") return null;
@@ -461,10 +497,11 @@ function buildIndexTileW(state) {
 	if (pending) return tilePlaceholderW("index", label, pending);
 
 	const d = state.data || {};
-	// dirty=false with no last_dirty timestamp = the flag row is absent, not a clean index.
-	if (d.dirty !== true && d.last_dirty_ms == null) {
-		return tilePlaceholderW("index", label, "unavailable");
-	}
+	// The server states row presence outright; the timestamp inference covers a payload predating it.
+	const flagMissing =
+		d.has_dirty_flag === false ||
+		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
+	if (flagMissing) return tilePlaceholderW("index", label, "unavailable");
 	if (d.dirty === true) {
 		return {
 			key: "index",
