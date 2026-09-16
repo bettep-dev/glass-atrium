@@ -182,13 +182,6 @@ function toneFromColorVarO(colorVar) {
 // KPI 4 버킷 — 라벨/색/기호는 RESULT_META SoT 에서 파생 (로컬 중복 맵 제거, T-OUT-1).
 const ANALYTICS_KPI_ORDER = ['done', 'done_with_concerns', 'blocked', 'fail'];
 
-// KPI 버킷 표시 메타 — RESULT_META(label/tone/glyph) SoT 에서 colorVar/sparkRgb 파생. 로컬 색 맵 미보유.
-function kpiMetaO(result) {
-  const meta     = window.UI.RESULT_META[result] || { tone: 'neutral', glyph: 'ℹ', label: result };
-  const colorVar = resultColorVarO(result);
-  return { label: meta.label, glyph: meta.glyph, colorVar, sparkRgb: `rgb(var(${colorVar}))` };
-}
-
 // Attribution Health 상수 — /api/outcomes/attribution-daily 4-category 분해 (sum-complete, 색맹 안전 듀얼인코딩).
 // 의미: literal_omission = actionable 위생 신호 · attribution_loss = 잔존 버그 신호(감소 모니터) · synthesized = 복구 산물(실패 아님).
 const ATTRIBUTION_CATEGORY_ORDER = ['healthy', 'attribution_loss', 'literal_omission', 'synthesized'];
@@ -305,16 +298,6 @@ function AttributionBudgetKillListO({ rows }) {
 // 일별 그리드 막대 수 — 비활성일은 series 누락 → FE 가 0-fill (활동일만 backend 전송).
 const ATTRIBUTION_GRID_BARS = 30;
 
-// Heatmap 필터 칩 — 톤 (info/warn/crit/ok) 은 셀 색조 변수로 매핑.
-// 백엔드 result enum: all|empty|failed|done — 4종 전부 노출 (done 미노출 = dead filter).
-// 'failed' = fail+blocked 집계 (fail 단독 아님) → 라벨 'Fail+blocked'. needs_context 는 설계상 제외.
-const HEATMAP_FILTER_OPTIONS = [
-  { value: 'all',    label: 'All',          tone: 'info' },
-  { value: 'empty',  label: 'No self-check', tone: 'warn' },
-  { value: 'failed', label: 'Fail+blocked', tone: 'crit' },
-  { value: 'done',   label: 'Done only',    tone: 'ok'   },
-];
-
 // 헤더의 단일 window 컨트롤 — band · ledger · 분석이 같은 창을 읽는다 (사이드바 period 병합).
 const ANALYTICS_PERIOD_OPTIONS = [
   { value: 7,  label: '7d'  },
@@ -326,9 +309,6 @@ const ANALYTICS_PERIOD_OPTIONS = [
 function analyticsDaysO(days) {
   return ANALYTICS_PERIOD_OPTIONS.some((o) => o.value === days) ? days : 90;
 }
-
-// Postgres EXTRACT(DOW) 0=Sun → 6=Sat (outcomes.ts handleHeatmap).
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // 자가개선 데몬 사이클 raw 이벤트 로그 — Learning 화면에서 이관(operational data, 집계 신호 아님).
 //   소유 endpoint: /api/improvement/loop-events (core.autoagent_loop_events per-cycle stage stream).
@@ -425,9 +405,7 @@ function ScreenOutcomes({ onNav }) {
 
   // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
   const analyticsPeriod = analyticsDaysO(filter.days);
-  const [heatmapFilter,   setHeatmapFilter]   = useStateO('all');
   const [analyticsState,  setAnalyticsState]  = useStateO({ status: 'loading', data: null, error: null });
-  const [heatmapState,    setHeatmapState]    = useStateO({ status: 'loading', data: null, error: null });
 
   // Attribution Health — /api/outcomes/attribution-daily (analyticsPeriod 와 동일 window).
   const [attributionState, setAttributionState] = useStateO({ status: 'loading', data: null, error: null });
@@ -534,20 +512,12 @@ function ScreenOutcomes({ onNav }) {
     return () => ctrl.abort();
   }, [filter, sort, page, refreshTick, includeAll]);
 
-  // 분석 fetch — period 또는 heatmap 필터 변경 시 재실행.
-  // 병렬 2 fetch: cross-analysis(overall) x1 + heatmap x1.
-  // AbortController 분리 → 탐색기 wave 와 독립.
+  // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
     const ctrl = new AbortController();
     setAnalyticsState({ status: 'loading', data: null, error: null });
-    setHeatmapState({ status: 'loading', data: null, error: null });
 
-    const crossUrl   = `/api/outcomes/cross-analysis?days=${analyticsPeriod}`;
-    const heatmapUrl = `/api/outcomes/heatmap?days=${analyticsPeriod}&result=${heatmapFilter}`;
-
-    // per-result rank-distribution sparkline 제거(DF-29) → per-result cross-analysis fetch 도 폐지
-    // (해당 4 요청은 오직 sparkline 산출용이었음). overall + heatmap 만 유지.
-    const heatmapTask = fetchJsonO(heatmapUrl, ctrl.signal);
+    const crossUrl = `/api/outcomes/cross-analysis?days=${analyticsPeriod}`;
 
     fetchJsonO(crossUrl, ctrl.signal)
       .then((overall) => {
@@ -567,14 +537,10 @@ function ScreenOutcomes({ onNav }) {
       })
       .catch((err) => handleErrorO(err, setAnalyticsState));
 
-    heatmapTask
-      .then((data) => setHeatmapState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setHeatmapState));
-
     return () => ctrl.abort();
-  }, [analyticsPeriod, heatmapFilter, refreshTick]);
+  }, [analyticsPeriod, refreshTick]);
 
-  // Attribution Health fetch — heatmap 과 동일 window, AbortController 공유 회피 위해 별도 effect.
+  // Attribution Health fetch — 같은 window, AbortController 공유 회피 위해 별도 effect.
   // analyticsPeriod {7,30,90} 가 backend 의 ALLOWED_DAYS_NUMERIC 와 동일 → param 검증 추가 불필요.
   useEffectO(() => {
     const ctrl = new AbortController();
@@ -724,17 +690,6 @@ function ScreenOutcomes({ onNav }) {
         windowDays={filter.days}
       />
 
-      <AnalyticsSection
-        analyticsState={analyticsState}
-        heatmapState={heatmapState}
-        attributionState={attributionState}
-        channelLivenessState={channelLivenessState}
-        heatmapFilter={heatmapFilter}
-        period={analyticsPeriod}
-        onChangeHeatmapFilter={setHeatmapFilter}
-        onRetry={triggerRefresh}
-      />
-
       {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
       <div
         className="grid gap-4 mt-4"
@@ -774,8 +729,21 @@ function ScreenOutcomes({ onNav }) {
 
       <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh}/>
 
+      {/* 주간·월간 사실 3종 — 닫힌 채로 바닥에 둔다. 매일 읽는 band/ledger 를 밀어내지 않게. */}
+      <DisclosureO title="Reporting health" summary={reportingHealthSummaryO(channelLivenessState)}>
+        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={triggerRefresh}/>
+        <ChannelLivenessCard state={channelLivenessState} onRetry={triggerRefresh}/>
+      </DisclosureO>
+
+      <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
+        <GraderBreakdownCard state={analyticsState} period={analyticsPeriod} onRetry={triggerRefresh}/>
+        <CrosstabCard state={analyticsState} period={analyticsPeriod} onRetry={triggerRefresh}/>
+      </DisclosureO>
+
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh}/>
+      <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
+        <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh}/>
+      </DisclosureO>
 
       {detailRow && (
         <DetailModal
@@ -834,8 +802,6 @@ function SilentChannelRowO({ channels }) {
   );
 }
 
-// 분석 섹션 — 차트는 inline SVG / .heat-cell / Tailwind flex 비례 바 (Recharts 미사용).
-
 // 한 번도 적재되지 않은 값은 em-dash — 0 으로 읽히면 안 된다 (39578 §D).
 function AsOfStampO({ at }) {
   const { tzShortLabel, formatKstTime, formatKstFull, getDisplayTimezone } = window.UI;
@@ -868,27 +834,36 @@ function WindowSeg({ value, onChange }) {
   );
 }
 
-function AnalyticsSection({ analyticsState, heatmapState, attributionState, channelLivenessState, heatmapFilter, period, onChangeHeatmapFilter, onRetry }) {
-  // Heatmap + AgentStackedBar 좌우 2열 — heat-cell aspect-ratio:1 로 폭 축소 시 높이 자동 정렬.
-  // 데스크탑 viewport 만 운영 (127.0.0.1:16145) → md breakpoint 분기 불필요.
-  // AttributionHealthCard — 2열 grid 아래 full-width (일별 30-bar 그리드 가독성).
+// 닫힘이 기본인 개시 영역 — 여는 수고가 곧 빈도 순위다. 요약 줄은 열지 않고도 답을 주는 한 줄.
+function DisclosureO({ title, summary, children }) {
   return (
-    <div className="flex-shrink-0">
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <HeatmapCard
-          state={heatmapState}
-          filter={heatmapFilter}
-          period={period}
-          onChangeFilter={onChangeHeatmapFilter}
-          onRetry={onRetry}
-        />
-      </div>
-      <AttributionHealthCard state={attributionState} period={period} onRetry={onRetry}/>
-      <ChannelLivenessCard state={channelLivenessState} onRetry={onRetry}/>
-      <GraderBreakdownCard state={analyticsState} period={period} onRetry={onRetry}/>
-      <CrosstabCard state={analyticsState} period={period} onRetry={onRetry}/>
-    </div>
+    <details className="card mt-4">
+      <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
+        <span className="fs-title font-medium text-ink">{title}</span>
+        <span className="fs-micro font-mono text-faint ml-auto">{summary}</span>
+      </summary>
+      <div className="pb-1">{children}</div>
+    </details>
   );
+}
+
+// 미적재 payload 는 em-dash — 닫힌 개시 영역의 요약 줄이 '이상 없음' 으로 읽히면 안 된다.
+function reportingHealthSummaryO(channelLivenessState) {
+  if (channelLivenessState.status !== 'ready') return '—';
+  const alerting = channelLivenessState.data?.alerting || [];
+  return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
+}
+
+function selfReportSummaryO(analyticsState) {
+  if (analyticsState.status !== 'ready') return '—';
+  const writerTotal = window.UI.getWriterTotal(analyticsState.data?.overall);
+  return `${formatIntO(writerTotal)} writer-emitted records`;
+}
+
+function loopEventsSummaryO(loopEventsState) {
+  if (loopEventsState.status !== 'ready') return '—';
+  const events = loopEventsState.data?.events;
+  return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
 }
 
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
@@ -988,112 +963,6 @@ function BandTileO({ tile, windowLabel }) {
     </div>
   );
 }
-
-// DOW × Hour Heatmap.
-
-// 서버 grid 는 record_ts AT TIME ZONE meta.timezone 버킷(config [meta].timezone) →
-// 응답 필드의 tz 약칭 명시. meta 부재 시 표시 tz 폴백 (tzShortLabel 인자 생략 동작).
-function buildHeatmapSubText(state, period, filter) {
-  if (state.status !== 'ready') {
-    return state.status === 'loading' ? 'Loading…' : "Couldn't load";
-  }
-  const total = Number(state.data?.meta?.total_count ?? 0);
-  const tzLabel = window.UI.tzShortLabel(state.data?.meta?.timezone);
-  return `${tzLabel} · ${formatIntO(total)} records`;
-}
-
-function HeatmapCard({ state, filter, period, onChangeFilter, onRetry }) {
-  const { CardHead, Tabs } = window.UI;
-  const subText = buildHeatmapSubText(state, period, filter);
-
-  return (
-    <div className="card">
-      <CardHead
-        title="Activity by day and hour"
-        sub={subText}
-        right={
-          <Tabs
-            value={filter}
-            onChange={onChangeFilter}
-            items={HEATMAP_FILTER_OPTIONS}
-          />
-        }
-      />
-      <div className="card-body">
-        <HeatmapBody state={state} filter={filter} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function HeatmapBody({ state, filter, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonO height={220} aria-label="Loading heatmap"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load heatmap" detail={state.error} onRetry={onRetry}/>;
-  }
-  const grid = state.data?.data;
-  if (!Array.isArray(grid) || grid.length === 0) {
-    return <EmptyStateO message="No results in this period."/>;
-  }
-
-  // 단일 색조 톤 — 필터별 info/warn/crit 매핑.
-  const tone = (HEATMAP_FILTER_OPTIONS.find((opt) => opt.value === filter) || HEATMAP_FILTER_OPTIONS[0]).tone;
-  const toneVar = `--${tone}`;
-  const max = grid.flat().reduce((m, v) => Math.max(m, Number(v) || 0), 0);
-
-  return (
-    <div>
-      {/* 7x24 grid: 첫 컬럼 32px 요일 라벨, 첫 행 시간 라벨 (3h 간격). */}
-      <div className="grid gap-[3px]" style={{ gridTemplateColumns: '32px repeat(24, minmax(0, 1fr))' }}>
-        <div/>
-        {Array.from({ length: 24 }, (_, h) => (
-          <div key={`hcol-${h}`} className="fs-micro font-mono text-faint text-center">
-            {h % 3 === 0 ? h : ''}
-          </div>
-        ))}
-        {grid.map((row, di) => (
-          <React.Fragment key={`hrow-${di}`}>
-            <div className="fs-micro font-mono text-faint flex items-center">
-              {DOW_LABELS[di]}
-            </div>
-            {row.map((v, hi) => {
-              const opacity = max === 0 ? 0 : 0.1 + (Number(v) / max) * 0.9;
-              return (
-                <div
-                  key={`hc-${di}-${hi}`}
-                  className="heat-cell"
-                  style={{ background: `rgb(var(${toneVar}) / ${opacity.toFixed(3)})` }}
-                  title={`${DOW_LABELS[di]} ${hi}:00 — ${formatIntO(v)}`}
-                  aria-label={`${DOW_LABELS[di]} ${hi}:00 — ${formatIntO(v)} records`}/>
-              );
-            })}
-          </React.Fragment>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 mt-3 fs-micro text-faint">
-        <span>Fewer</span>
-        <div className="flex gap-[2px]" aria-hidden="true">
-          {[0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((o) => (
-            <div
-              key={`leg-${o}`}
-              className="w-4 h-3 rounded-sm"
-              style={{ background: `rgb(var(${toneVar}) / ${o})` }}/>
-          ))}
-        </div>
-        <span>More</span>
-        <span className="ml-auto font-mono">peak {formatIntO(max)}/h</span>
-      </div>
-    </div>
-  );
-}
-
-// ----- 에이전트별 outcome 분포 (4 result stack) -------------------------------
-// 데이터: per-result cross-analysis x4 (ANALYTICS_KPI_ORDER 순) → 에이전트별 카운트 stitch.
-// 가로 바 h-5 ok/warn/info/crit 비례 stack — 실제 카운트 기반.
-// 한계: 4개 독립 top-10 합성 → 각 result 11위 이하 기여 누락 가능 (비권위 근사치).
-//   pseudo-agent(subagent_stop_missing 등)는 NON_ACTIONABLE_AGENT_IDS_O 로 시각 분리.
 
 // registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
 // 행 자체가 조치 대상이므로 tone 은 글리프가 아니라 숫자의 존재로 운반된다(0 행은 아예 렌더하지 않음).
@@ -2411,8 +2280,8 @@ function ResultTableRow({ row, onRowClick, closure }) {
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-          <span className="inline-flex items-center gap-0.5" style={{ color: resultColor, fontWeight: 500 }}>
-            <GlyphO name={resultMeta.icon}/>
+          <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
+            <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
             {row.result}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
             {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
@@ -3108,12 +2977,6 @@ function buildAgentStackO(byAgentResult, resultOrder, topN) {
   return Array.from(byAgent.values())
     .sort((a, b) => b.total - a.total)
     .slice(0, topN);
-}
-
-function sumByResultO(byResultCount) {
-  let total = 0;
-  for (const key of ANALYTICS_KPI_ORDER) total += byResultCount[key] || 0;
-  return total;
 }
 
 // cross-analysis by_result[] 에서 단일 result 카운트 추출 (needs_context 등 비-KPI result, P2).
