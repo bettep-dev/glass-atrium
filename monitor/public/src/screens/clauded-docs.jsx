@@ -1009,6 +1009,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
+        /* ID 셀 둘째 줄 계보 · 로딩 행 골격. */
+        .doc-lineage { font-size: var(--fs-micro); color: rgb(var(--faint)); white-space: nowrap; }
+        .doc-skeleton-row { display: grid; grid-template-columns: 135px 72px 1fr 110px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid rgb(var(--line) / 0.4); }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
         .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
         .doc-stage-pill.is-interactive { cursor: pointer; }
@@ -1037,7 +1040,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Documents"
-					sub="Managed documents"
+						sub={asOf ? `as of ${formatDateTimeCD(asOf)}` : "loading…"}
 					right={headerRight}
 				/>
 			</div>
@@ -1152,7 +1155,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 }
 
 // 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
-function DocTagsCellCD({ audience, format, supersedesId }) {
+function DocTagsCellCD({ audience, format }) {
 	const { Badge } = window.UI;
 	return (
 		<td className="doc-tags-cell">
@@ -1162,12 +1165,6 @@ function DocTagsCellCD({ audience, format, supersedesId }) {
 				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
 				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
-				{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'). */}
-				{supersedesId != null && (
-					<Badge role="metadata" title={`Replaces #${supersedesId}`}>
-						rev
-					</Badge>
-				)}
 			</span>
 		</td>
 	);
@@ -1221,9 +1218,10 @@ function DocListCardCD({
 	const { Icon, Badge } = window.UI;
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
+	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
 	const totalLabel =
 		!isSearchMode && docTotal != null
-			? `${formatIntCD(total)} groups · ${formatIntCD(docTotal)} documents${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+			? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
 			: hiddenCount > 0
 				? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
 				: `${formatIntCD(total)} matched`;
@@ -1286,9 +1284,9 @@ function DocListCardCD({
 					borderBottom: "1px solid rgb(var(--line))",
 				}}
 			>
-				{/* Row 1 — 검색 input (44px 터치 타겟 + Pretendard 가독). */}
-				<div className="px-4 pt-3 pb-2">
-					<div className="relative">
+				{/* 단일 툴바 행 — 검색 · 열림/종료/전체 chip(그룹 단위 건수) · 대상 chip · 건수. */}
+				<div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
 						<span className="doc-search-icon" aria-hidden="true">
 							<Icon name="search" size={14} />
 						</span>
@@ -1297,55 +1295,15 @@ function DocListCardCD({
 							className="doc-search-input"
 							placeholder="Search…"
 							value={inlineFilterProps.keyword}
-							onChange={(e) =>
-								inlineFilterProps.onKeywordChange(e.target.value)
-							}
-							style={{ height: 44 }}
+							onChange={(e) => inlineFilterProps.onKeywordChange(e.target.value)}
+							style={{ height: 36 }}
 							aria-label="Search documents"
 						/>
 					</div>
-				</div>
-				{/* Row 2 — 대상 chips (좌측) + 건수 (우측 ml-auto). 마이크로 라벨 미사용 (chips 자체로 의미 전달). */}
-				<div className="px-4 pb-2.5 flex items-center gap-2 flex-wrap">
 					<div
 						className="flex flex-wrap gap-1.5"
 						role="radiogroup"
-						aria-label="Audience filter"
-					>
-						{AUDIENCE_OPTIONS_CD.map((opt) => {
-							const active = inlineFilterProps.audienceFilter === opt.value;
-							return (
-								<button
-									key={opt.value}
-									type="button"
-									role="radio"
-									className="doc-chip-badge"
-									onClick={() => inlineFilterProps.onAudienceChange(opt.value)}
-									aria-checked={active}
-									aria-pressed={active}
-									style={chipBadgeStyleCD("--info", active)}
-								>
-									{opt.label}
-								</button>
-							);
-						})}
-					</div>
-					<span
-						className="ml-auto fs-meta font-mono"
-						style={{ color: "rgb(var(--dim))" }}
-					>
-						{totalLabel}
-					</span>
-				</div>
-				{/* Row 3 — doc_status chips — primary workflow filter (전체/진행중/완료).
-            · /api/clauded-docs/groups endpoint ?doc_status= 송신 · search mode 미적용 (search 는 rows endpoint).
-            · workflow lifecycle 1차 분류 (사용자 mental model: "지금 진행 중인 것들 보기"). */}
-				<div className="px-4 pb-2.5 flex items-center gap-2 flex-wrap">
-					<div
-						className="flex flex-wrap gap-1.5"
-						role="radiogroup"
-						aria-label="Status filter"
-					>
+						aria-label="Stage filter">
 						{DOC_STATUS_OPTIONS_CD.map((opt) => {
 							const active = inlineFilterProps.docStatusFilter === opt.value;
 							const cssVar = DOC_STATUS_CSS_VAR_CD[opt.value] || "--faint";
@@ -1359,17 +1317,43 @@ function DocListCardCD({
 									aria-checked={active}
 									aria-pressed={active}
 									style={chipBadgeStyleCD(cssVar, active)}>
-										{opt.label}
-										{groupCounts &&
-											typeof groupCounts[opt.countKey] === "number" && (
-												<span className="doc-chip-count">
-													{formatIntCD(groupCounts[opt.countKey])}
-												</span>
-											)}
-									</button>
+									{opt.label}
+									{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
+									{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
+										<span className="doc-chip-count">
+											{formatIntCD(groupCounts[opt.countKey])}
+										</span>
+									)}
+								</button>
 							);
 						})}
 					</div>
+					<div
+						className="flex flex-wrap gap-1.5"
+						role="radiogroup"
+						aria-label="Audience filter">
+						{AUDIENCE_OPTIONS_CD.map((opt) => {
+							const active = inlineFilterProps.audienceFilter === opt.value;
+							return (
+								<button
+									key={opt.value}
+									type="button"
+									role="radio"
+									className="doc-chip-badge"
+									onClick={() => inlineFilterProps.onAudienceChange(opt.value)}
+									aria-checked={active}
+									aria-pressed={active}
+									style={chipBadgeStyleCD("--info", active)}>
+									{opt.label}
+								</button>
+							);
+						})}
+					</div>
+					<span
+						className="ml-auto fs-meta font-mono"
+						style={{ color: "rgb(var(--dim))" }}>
+						{totalLabel}
+					</span>
 				</div>
 				{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
             저하(tsvector 단어 단위만 매칭)가 사용자에게 비가시 → 검색 모드에서 화면에 명시.
@@ -1378,18 +1362,10 @@ function DocListCardCD({
 					state.status === "ready" &&
 					state.data?.bigmEnabled === false && (
 						<div
-							className="mx-4 mb-2.5 flex items-center gap-2 rounded-md px-3 py-2 fs-meta"
-							style={{
-								background: "rgb(var(--warn) / 0.1)",
-								border: "1px solid rgb(var(--warn) / 0.28)",
-								color: "rgb(var(--warn))",
-							}}
-							role="note"
-						>
-							<Icon name="warn" size={14} />
-							<span style={{ color: "rgb(var(--dim))" }}>
-								Search matches whole words only (Korean partial-word matching unavailable).
-							</span>
+							className="px-4 pb-2 fs-meta"
+							style={{ color: "rgb(var(--faint))" }}
+							role="note">
+							Whole-word matches only — Korean partial-word search is unavailable.
 						</div>
 					)}
 				{/* doc_type 필터/배지 서브시스템 전면 제거.
@@ -1470,11 +1446,6 @@ function DocListCardCD({
 								<th style={{ width: 152, minWidth: 152 }}>Tags</th>
 								<th style={{ width: 110, minWidth: 110 }}>Author</th>
 								<th style={{ width: 100, minWidth: 100 }}>Created</th>
-								{isSearchMode && (
-									<th style={{ width: 56, minWidth: 56 }} className="num">
-										Order
-									</th>
-								)}
 							</tr>
 						</thead>
 						<tbody>
@@ -1557,8 +1528,16 @@ function DocListCardCD({
 													)}
 												</td>
 											<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
-												#{row.id}
-											</td>
+													<div>#{row.id}</div>
+													{/* 계보는 ID 셀 둘째 줄 — 목록에서 잘려 나가던 사실을 되돌린다. */}
+													{row.supersedes_id != null && (
+														<div
+															className="doc-lineage"
+															title={`Replaces #${row.supersedes_id}`}>
+															rev of #{row.supersedes_id}
+														</div>
+													)}
+												</td>
 											<td className="title-cell">
 												<div
 													className="doc-title-row font-medium fs-title"
@@ -1612,7 +1591,6 @@ function DocListCardCD({
 											<DocTagsCellCD
 												audience={row.audience}
 												format={row.format}
-												supersedesId={row.supersedes_id}
 											/>
 											<DocAuthorCellCD author={row.author} />
 											<td
@@ -1620,15 +1598,7 @@ function DocListCardCD({
 												style={{ color: "rgb(var(--dim))" }}
 											>
 												{formatDateCD(row.created_at)}
-											</td>
-											{isSearchMode && (
-												<td
-													className="num doc-meta-text-mono"
-													style={{ color: "rgb(var(--faint))" }}
-												>
-													{row.rank != null ? (<span title={`Relevance ${Number(row.rank).toFixed(2)}`}>•</span>) : "—"}
 												</td>
-											)}
 										</tr>
 										{isExpanded && (
 											<GroupMembersRowsCD
@@ -2059,14 +2029,6 @@ function GroupMembersRowsCD({
 				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</td>
-				{isSearchMode && (
-					<td
-						className="num doc-meta-text-mono"
-						style={{ color: "rgb(var(--faint))" }}
-					>
-						—
-					</td>
-				)}
 			</tr>
 		);
 	});
@@ -2609,6 +2571,23 @@ function DocMetaPanelCD({
 					{formatDateTimeCD(doc.created_at)}
 				</span>
 			</div>
+			{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Lineage</span>
+				<span className="doc-meta-value">
+					{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
+					{doc.superseded_by_id != null
+						? ` · superseded by #${doc.superseded_by_id}`
+						: ""}
+				</span>
+			</div>
+			{/* 목록은 모르는 행위자에 침묵하고, 뷰어가 여기서 한 번 unknown 이라고 말한다. */}
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Last action</span>
+				<span className="doc-meta-value">
+					{doc.last_status_model ? formatActorCD(doc.last_status_model) : "unknown"}
+				</span>
+			</div>
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
 				{/* doc_status dual-encoded badge (workflow lifecycle 진행중/완료).
 				    onPickStage 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
@@ -3138,8 +3117,14 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 function DocListSkeletonCD() {
 	return (
 		<div className="p-4" aria-busy="true" aria-label="Loading documents">
+			{/* 행 모양 그대로 — 로딩이 빈 목록으로 읽히지 않게 한다. */}
 			{Array.from({ length: 6 }).map((_, i) => (
-				<div key={i} style={{ ...skeletonBlockStyleCD(36), marginBottom: 8 }} />
+				<div key={i} className="doc-skeleton-row">
+					<div style={skeletonBlockStyleCD(14)} />
+					<div style={skeletonBlockStyleCD(12)} />
+					<div style={skeletonBlockStyleCD(12)} />
+					<div style={skeletonBlockStyleCD(12)} />
+				</div>
 			))}
 		</div>
 	);
@@ -3148,6 +3133,14 @@ function DocListSkeletonCD() {
 // S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
 //   · docStatus default 'progress' / audience default 'all' 기준으로 non-default 만 active 집계.
 //   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
+// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
+function emptyHeadlineCD(isSearchMode, docStatusFilter) {
+	if (isSearchMode) return "검색 결과 없음";
+	if (docStatusFilter === "open") return "열린 문서 없음";
+	if (docStatusFilter === TERMINAL_STAGE_CD) return "종료된 문서 없음";
+	return "문서 없음";
+}
+
 function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	const statusLabel = (
@@ -3170,7 +3163,7 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 
 	return (
 		<div className="doc-empty m-4" role="status" aria-live="polite">
-			<div>{isSearchMode ? "No matches" : "No documents"}</div>
+			<div>{emptyHeadlineCD(isSearchMode, docStatusFilter)}</div>
 			{hasActiveFilters && (
 				<div
 					className="fs-meta mt-2"
