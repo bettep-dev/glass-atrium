@@ -122,11 +122,6 @@ const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opac
   + '.tbl td { vertical-align: top; }';
 
 // 행 밀도 토글 옵션 (T-AGT-2) — comfortable(기본 .tbl 패딩) / compact(좁은 패딩).
-const DENSITY_OPTIONS = [
-  { value: 'comfortable', label: 'Comfortable' },
-  { value: 'compact',     label: 'Compact'     },
-];
-
 // Sticky thead 셀 공통 스타일 — window.UI 의 단일 SoT 참조 (S1, cost/outcomes/health/wiki 미러용).
 // ui.js 가 screens 보다 먼저 로드(index.html 순서)되므로 module-eval 시점에 안전.
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
@@ -294,9 +289,6 @@ function ScreenAgents() {
   // 정렬 상태를 화면 레벨로 승격 — 테이블과 드로어 Prev/Next nav 가 동일 정렬 순서를 공유 (AC3).
   const [sortBy, setSortBy] = useStateAg('name');
 
-  // 행 밀도 (T-AGT-2) — view state 로만 보존 (서버/URL 동기 불필요). 패딩만 바꿔 한 화면에 더 많은 행.
-  const [density, setDensity] = useStateAg('comfortable');
-
   // 드로어 nav 가 walk 하는 현재 정렬된 agent 행 — DetailModal 이 rows 위 idx 도출하는 패턴 미러.
   const sortedAgents = useMemoAg(
     () => sortAgentSummary(readyData(summaryState)?.agents ?? [], sortBy, failureByAgent),
@@ -390,8 +382,6 @@ function ScreenAgents() {
           days={days}
           sortBy={sortBy}
           onSortChange={setSortBy}
-          density={density}
-          onDensityChange={setDensity}
           selectedAgent={selectedAgent}
           onSelect={handleSelectRow}
           onRetry={triggerRefresh}
@@ -399,11 +389,6 @@ function ScreenAgents() {
           failureByAgent={failureByAgent}
           overageByAgent={overageByAgent}
         />
-      </div>
-
-      {/* Row 2 — 성능 (Duration · RED). col-span-full. */}
-      <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
-        <LatencyBarsCard state={latencyState} days={days} onRetry={triggerRefresh}/>
       </div>
 
       {/* Row 3 — 성공률 매트릭스 (failing-pairs 는 status band 아래로 이동). */}
@@ -633,7 +618,7 @@ const SUMMARY_SORT_OPTIONS = [
 const MINIBAR_WIDTH = 50;
 const MINIBAR_HEIGHT = 20;
 
-function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
+function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
   const { CardHead, Badge } = window.UI;
   const data = readyData(state);
   const totalAgents = data?.meta?.total_agents ?? 0;
@@ -653,8 +638,6 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensit
         days={days}
         sortBy={sortBy}
         onSortChange={onSortChange}
-        density={density}
-        onDensityChange={onDensityChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         onRetry={onRetry}
@@ -666,7 +649,7 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensit
   );
 }
 
-function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
+function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
   if (state.status === 'loading') {
     return <div className="card-body"><ChartSkeletonAg height={240} aria-label="Loading agent performance"/></div>;
   }
@@ -682,26 +665,10 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensit
   const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
   const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
   const sorted = sortAgentSummary(actionable, sortBy, failureByAgent);
-  const isCompact = density === 'compact';
 
   return (
     <>
       <div className="px-4 py-2.5 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
-        <div className="flex items-center gap-2">
-          <span className="font-mono">Density:</span>
-          <div className="seg" aria-label="Row density">
-            {DENSITY_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                className={density === opt.value ? 'active' : ''}
-                onClick={() => onDensityChange(opt.value)}
-                aria-pressed={density === opt.value}
-                aria-label={`${opt.label} row density`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="flex items-center gap-2">
           <span className="font-mono">Sort:</span>
           <select
@@ -715,7 +682,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensit
           </select>
         </div>
       </div>
-      <div className={`card-body flush${isCompact ? ' ag-density-compact' : ''}`}>
+      <div className="card-body flush">
         <AgentSummaryTable
           agents={sorted}
           pseudoAgents={pseudoAgents}
@@ -731,13 +698,8 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensit
   );
 }
 
-// 두 성공률 임계 세트가 의도적으로 다른 이유 한 줄 설명 — 사용자 혼동 차단 (CF8).
-const SUMMARY_THRESHOLD_CAPTION =
-  `Row tone tracks operational health (≥${SUMMARY_SUCCESS_OK_PCT}% ok · ≥${SUMMARY_SUCCESS_WARN_PCT}% warn); `
-  + `the agent×task matrix flags earlier at ${(SUCCESS_RATE_OK_THRESHOLD * 100).toFixed(0)}/${(SUCCESS_RATE_WARN_THRESHOLD * 100).toFixed(0)}% to surface review priority.`;
-
-// 총 컬럼 수 (footer colSpan) — badge·Agent·Runs·Launches·Success·Needs info·Breakages·P95·Trend·status = 10.
-const SUMMARY_TABLE_COLSPAN = 10;
+// Footer/expand colSpan — expand affordance · Agent · Success · Breakages · P95 · Trend.
+const SUMMARY_TABLE_COLSPAN = 6;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent }) {
   const [showPseudo, setShowPseudo] = useStateAg(false);
@@ -761,16 +723,12 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       <table className="tbl">
         <thead>
           <tr>
-            <th style={STICKY_TH_STYLE}></th>
+            <th style={STICKY_TH_STYLE}><span className="sr-only">Expand row</span></th>
             <th style={STICKY_TH_STYLE}>Agent</th>
-            <th className="num" style={STICKY_TH_STYLE} title="Times the agent finished and reported a result (outcome records)">Runs</th>
-            <th className="num" style={STICKY_TH_STYLE}>Launches</th>
             <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
-            <th className="num" style={STICKY_TH_STYLE}>Needs info</th>
             <th className="num" style={STICKY_TH_STYLE} title="Breakages = failed + blocked (blocked = a compliant halt, not a defect)">Breakages</th>
-            <th className="num" style={STICKY_TH_STYLE}>P95</th>
+            <th className="num" style={STICKY_TH_STYLE} title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</th>
             <th style={STICKY_TH_STYLE}>Trend</th>
-            <th style={STICKY_TH_STYLE}></th>
           </tr>
         </thead>
         <tbody>
@@ -792,12 +750,12 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
           </tbody>
         )}
       </table>
-      <div className="fs-micro font-mono text-faint px-1 py-2 border-t border-line">{SUMMARY_THRESHOLD_CAPTION}</div>
     </div>
   );
 }
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
+  const [isExpanded, setExpanded] = useStateAg(false);
   const { AgentBadge, StatusDot, MiniBars, Bar, Badge, resolveBadge, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
@@ -846,6 +804,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
   };
 
   return (
+    <>
     <tr
       onClick={handleClick}
       onKeyDown={handleKey}
@@ -855,18 +814,22 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
       className={isSelected ? 'bg-sunken' : ''}
       style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
-      <td><AgentBadge a={{ id: agent.agent_id, name: agent.agent_name }}/></td>
+      <td>
+        <button
+          className="btn ghost sm"
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          aria-expanded={isExpanded}
+          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} counts for ${agent.agent_name}`}>
+          {isExpanded ? '▾' : '▸'}
+        </button>
+      </td>
       <td>
         <div className="flex items-center gap-1.5 flex-wrap">
+          <StatusDot status={status}/>
+          <AgentBadge a={{ id: agent.agent_id, name: agent.agent_name }}/>
           <span className="font-medium">{isUnknownAgent ? nonActionableLabel : agent.agent_name}</span>
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
-      </td>
-      <td className="num">{formatIntAg(agent.runs)}</td>
-      <td className="num" title={formatInvocationsTitle(invocations, days)}>
-        <span className={invocationsTone(invocations, days)}>
-          {invocations == null ? '—' : formatIntAg(invocations)}
-        </span>
       </td>
       <td className="num" title={successTitle}>
         <span
@@ -882,11 +845,6 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
             ariaLabel={`success rate ${successPct.toFixed(1)}%`}
           />
         )}
-      </td>
-      <td className="num" title={`needs_context ${needsContextCount} — excluded from success rate`}>
-        <span className={needsContextCount > 0 ? 'text-dim' : 'text-faint'}>
-          {needsContextCount > 0 ? formatIntAg(needsContextCount) : '—'}
-        </span>
       </td>
       <td className="num" title={failTitle}>
         <span className={failTone}>{failCount > 0 ? formatIntAg(failCount) : '—'}</span>
@@ -925,6 +883,14 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
             </Badge>
           )}
         </span>
+        {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
+        {p95Sec != null && (
+          <Bar
+            value={Math.min(p95Sec / P95_AGENT_CRIT_SEC, 1)}
+            tone={barToneFromClass(p95Tone)}
+            ariaLabel={`p95 ${formatDurationSecAg(p95Sec)}`}
+          />
+        )}
       </td>
       <td>
         {hasTrend ? (
@@ -933,8 +899,27 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
           <span className="text-faint fs-micro font-mono" title="no 7-day daily success-rate breakdown">—</span>
         )}
       </td>
-      <td><StatusDot status={status}/></td>
     </tr>
+    {isExpanded && (
+      <tr className="bg-sunken">
+        <td colSpan={SUMMARY_TABLE_COLSPAN}>
+          <div className="flex items-center gap-4 fs-micro font-mono text-dim px-1 py-1.5">
+            <span title="Times the agent finished and reported a result (outcome records)">
+              Runs {formatIntAg(agent.runs)}
+            </span>
+            <span title={formatInvocationsTitle(invocations, days)}>
+              Launches <span className={invocationsTone(invocations, days)}>
+                {invocations == null ? '—' : formatIntAg(invocations)}
+              </span>
+            </span>
+            <span title={`needs_context ${needsContextCount} — excluded from success rate`}>
+              No completion record {needsContextCount > 0 ? formatIntAg(needsContextCount) : '—'}
+            </span>
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -971,46 +956,6 @@ function CompatibilityDetailBlock({ compatibility }) {
 
 // LatencyBars (col-span-full) — 단일 바에 P50(불투명)/P95(0.65)/P99(0.35) 3-레이어 absolute 포지셔닝.
 // max = 표시 대상 p99 최대값으로 동적 정규화 (정적 고정 대비 분포 폭 다양 → 시각감 우수).
-
-const LATENCY_DISPLAY_LIMIT = 12;
-
-function LatencyBarsCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card h-full flex flex-col min-h-0">
-      <CardHead title="Response time" sub={`p50 / p95 / p99 · last ${Math.min(days, 30)} days · top ${LATENCY_DISPLAY_LIMIT} agents by p95`}/>
-      <div className="card-body" style={CARD_BODY_FLEX_SCROLL_STYLE}>
-        <LatencyBarsBody state={state} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function LatencyBarsBody({ state, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonAg height={280} aria-label="Loading response times"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load response times" detail={state.error} onRetry={onRetry}/>;
-  }
-  // P50/P95/P99 모두 null = 페어링 없음 → 렌더 제외 (시각 스펙 보존).
-  const agents = (readyData(state)?.agents ?? [])
-    .filter((a) => a.p50_ms != null && a.p95_ms != null && a.p99_ms != null)
-    .sort((a, b) => (Number(b.p95_ms) || 0) - (Number(a.p95_ms) || 0))
-    .slice(0, LATENCY_DISPLAY_LIMIT);
-  if (agents.length === 0) {
-    return <EmptyStateAg message="No paired response-time data (no Start↔Stop events)."/>;
-  }
-  return <LatencyBars agents={agents}/>;
-}
-
-// P50/P95/P99 시각 driver — opacity descending (P99 가장 옅게 = 배경 layer).
-// 3-layer 시각 마커: div[style*='opacity'] 3개.
-const LATENCY_LAYERS = [
-  { key: 'p99', label: 'P99', field: 'p99_ms', opacity: 0.35 },
-  { key: 'p95', label: 'P95', field: 'p95_ms', opacity: 0.65 },
-  { key: 'p50', label: 'P50', field: 'p50_ms', opacity: 1    },
-];
 
 function LatencyBars({ agents }) {
   const { AgentBadge } = window.UI;
