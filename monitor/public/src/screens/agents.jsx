@@ -800,6 +800,9 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
 
   const handleClick = () => onSelect(agent.agent_id);
   const handleKey = (e) => {
+    // 행 내부 컨트롤(확장 버튼)의 Enter/Space 는 그 컨트롤 소유 — 행이 preventDefault 하면 키보드 접근 불가.
+    if (e.target !== e.currentTarget) return;
+
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onSelect(agent.agent_id);
@@ -959,6 +962,12 @@ function CompatibilityDetailBlock({ compatibility }) {
 
 // LatencyBars (col-span-full) — 단일 바에 P50(불투명)/P95(0.65)/P99(0.35) 3-레이어 absolute 포지셔닝.
 // max = 표시 대상 p99 최대값으로 동적 정규화 (정적 고정 대비 분포 폭 다양 → 시각감 우수).
+
+const LATENCY_LAYERS = [
+  { key: 'p99', label: 'P99', field: 'p99_ms', opacity: 0.35 },
+  { key: 'p95', label: 'P95', field: 'p95_ms', opacity: 0.65 },
+  { key: 'p50', label: 'P50', field: 'p50_ms', opacity: 1    },
+];
 
 function LatencyBars({ agents }) {
   const { AgentBadge } = window.UI;
@@ -2114,13 +2123,12 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
   const { CardHead, Pill } = window.UI;
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피.
-  const { failingPairs } = useMemoAg(
+  const { failingPairs, measuredPairs } = useMemoAg(
     () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, TOPN_FAILING_LIMIT),
     [state],
   );
 
   // Denominator = the agent × task-type pairs actually measured in the window.
-  const measuredPairs = (readyData(state)?.rows ?? []).length;
 
   return (
     <div className="card h-full flex flex-col min-h-0">
@@ -2776,7 +2784,7 @@ function cellTone(pooledRate) {
 // server 가 last_failure_at 미반환 → failure_count > 0 row 의 event_date 로 client-side 도출.
 function buildTopNFailing(rows, threshold, limit) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    return { failingPairs: [] };
+    return { failingPairs: [], measuredPairs: 0 };
   }
 
   const pairMap = new Map();
@@ -2817,11 +2825,15 @@ function buildTopNFailing(rows, threshold, limit) {
   }
 
   const failingPairs = [];
+  // 분모 = min-sample 를 넘겨 실제로 판정된 pair 수 (일자별 행 수가 아님).
+  let measuredPairs = 0;
   for (const agg of pairMap.values()) {
     // writer-emitted 성공/분모 — 합성 복구행 제외 (headline basis 단일화).
     const writerSuccess = Math.max(0, agg.successCount - agg.reconstructed);
     const rateDenominator = writerSuccess + agg.failureCount;
     if (rateDenominator < TOPN_MIN_SAMPLE) continue;
+
+    measuredPairs += 1;
 
     const pooledRate = writerSuccess / rateDenominator;
     if (pooledRate < threshold) {
@@ -2840,7 +2852,7 @@ function buildTopNFailing(rows, threshold, limit) {
   }
 
   failingPairs.sort((a, b) => a.pooledRate - b.pooledRate);
-  return { failingPairs: failingPairs.slice(0, limit) };
+  return { failingPairs: failingPairs.slice(0, limit), measuredPairs };
 }
 
 // Project /api/agents/revision-distribution rows → per-agent buckets map (Quality Health 좌측 input).
