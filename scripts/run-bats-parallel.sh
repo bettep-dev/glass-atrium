@@ -227,8 +227,8 @@ main() {
   # Guarding it the way stage 4 guards pytest would convert a broken install into a
   # silent pass, which is the failure this stage exists to close.
   #
-  # Its env differs from stage 2's in the sandbox HOME alone — every scrubbed name
-  # sits in DAEMON_ENV_SCRUB and reaches all four stages.
+  # Its env differs from stage 2's in the sandbox HOME alone — both run under
+  # PYTHON_STAGE_SCRUB, which adds to DAEMON_ENV_SCRUB two names stage 1 leaves set.
   # autoagent/test/suite-hermeticity.bats scrubs the same set on the identical discover
   # run, so the probe cannot read green under conditions this stage does not share.
   run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \

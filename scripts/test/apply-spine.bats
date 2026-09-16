@@ -381,6 +381,30 @@ unsafe_row() {
   [[ "${stderr}" == *"$(unsafe_row "../state/pending.json")"* ]] || return 1
 }
 
+# The next two keys only the spelling check refuses: their target is inside the root or
+# absent, so the physical check would select the first and silently skip the second.
+@test "#13 retired: a dot-dot key resolving back inside the install root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "hooks/x.sh" "vendor-body"
+  mkdir -p -- "${LIVE}/scripts"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "scripts/../hooks/x.sh")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "scripts/../hooks/x.sh")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot key with no target still emits its UNSAFE row" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    '{"../state/absent.json":["'"$(printf 'c%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/absent.json")"* ]] || return 1
+}
+
 @test "#13 retired: a dot-dot inside a segment name is not an escape and is selected" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "scripts/foo..bar" "vendor-body"
