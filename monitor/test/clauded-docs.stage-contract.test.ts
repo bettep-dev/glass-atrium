@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import type { DocStatusLiteral } from "../src/server/types/clauded-docs.js";
 import {
   DOC_STAGES,
+  getGroupStage,
   DOC_STATUS_READ_FILTERS,
   WRITE_DOC_STATUSES,
   isCascadeTransition,
@@ -16,6 +17,7 @@ import {
 } from "../src/server/routes/clauded-docs.js";
 
 const RETIRED_ALIAS: DocStatusLiteral = "progress";
+const TERMINAL_STAGE = "done" as const;
 
 test("every stored token reads as a stage, so no stored row is dropped", () => {
   for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
@@ -58,4 +60,17 @@ test("cascade fires only on the terminal transition of a grouped row", () => {
   assert.equal(isCascadeTransition(terminal, { folder_id: null, doc_status: "doc_review" }), false);
   assert.equal(isCascadeTransition(terminal, { folder_id: 7n, doc_status: terminal }), false);
   assert.equal(isCascadeTransition(undefined, grouped), false);
+});
+
+test("a group row takes its least-advanced member stage, and reports a spread as non-uniform", () => {
+  for (const [index, stage] of DOC_STAGES.entries()) {
+    const rank = index + 1;
+    assert.deepEqual(getGroupStage(rank, rank, TERMINAL_STAGE), { stage, uniform: true });
+
+    const spread = getGroupStage(rank, DOC_STAGES.length, TERMINAL_STAGE);
+    assert.equal(spread.stage, stage, "the least-advanced member decides the rendered stage");
+    assert.equal(spread.uniform, rank === DOC_STAGES.length);
+  }
+  // a rank no stage covers keeps the representative stage — an empty cell would read as unknown.
+  assert.deepEqual(getGroupStage(0, 0, "implementing"), { stage: "implementing", uniform: true });
 });

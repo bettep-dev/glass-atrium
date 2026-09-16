@@ -106,6 +106,14 @@ export const DOC_STAGES: readonly DocStageLiteral[] = [
 
 const TERMINAL_DOC_STAGE: DocStageLiteral = "done";
 
+// A row's 1-based rank in DOC_STAGES, the retired alias folded onto the first stage so an
+// un-backfilled row ranks as itself rather than as NULL. Window-aggregated per group, it is
+// what lets a group row state its least-advanced member stage instead of the representative's.
+const STAGE_RANK_SQL: Prisma.Sql = Prisma.sql`array_position(
+  ARRAY[${Prisma.join(DOC_STAGES.map((stage) => Prisma.sql`${stage}::text`))}],
+  CASE WHEN doc_status::text = 'progress' THEN ${DOC_STAGES[0]}::text ELSE doc_status::text END
+)`;
+
 // Accepted on a WRITE. The retired in-flight alias stays accepted so a not-yet-updated writer
 // keeps working, but it normalises to the first stage — only stages are ever stored.
 export const WRITE_DOC_STATUSES: ReadonlySet<DocStatusLiteral> = new Set<DocStatusLiteral>([
@@ -127,6 +135,20 @@ const LAST_STATUS_MODEL_MAX_LENGTH = 128;
 export function normalizeStoredStage(stored: string): DocStageLiteral | null {
   if (stored === "progress") return DOC_STAGES[0] as DocStageLiteral;
   return (DOC_STAGES as readonly string[]).includes(stored) ? (stored as DocStageLiteral) : null;
+}
+
+/**
+ * A group's member ranks → the stage its row renders and whether every member sits there.
+ * The least-advanced member decides, since the representative is picked by display_order and
+ * so says nothing about how far the group has moved; an out-of-range rank (a token no stage
+ * covers) keeps the representative's own stage rather than emptying the cell.
+ */
+export function getGroupStage(
+  minRank: number,
+  maxRank: number,
+  fallback: DocStageLiteral,
+): { stage: DocStageLiteral; uniform: boolean } {
+  return { stage: DOC_STAGES[minRank - 1] ?? fallback, uniform: minRank === maxRank };
 }
 
 /**
@@ -851,7 +873,11 @@ async function handleListGroups(
                  MAX(created_at) OVER (PARTITION BY folder_id) AS group_latest_at,
                  folder_id AS group_key,
                  (SELECT COUNT(*) FROM monitor.documents d2
-                  WHERE d2.folder_id = d.folder_id)::bigint AS member_count
+                  WHERE d2.folder_id = d.folder_id)::bigint AS member_count,
+                 -- least- and most-advanced member ranks: the group row renders the first and
+                 -- says members differ when they disagree.
+                 MIN(${STAGE_RANK_SQL}) OVER (PARTITION BY folder_id) AS min_stage_rank,
+                 MAX(${STAGE_RANK_SQL}) OVER (PARTITION BY folder_id) AS max_stage_rank
           FROM monitor.documents d
           ${filterClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NOT NULL`
@@ -865,7 +891,8 @@ async function handleListGroups(
                  doc_status::text AS doc_status, last_status_model,
                  audience, html_path, created_at, supersedes_id,
                  created_at AS group_latest_at, -id AS group_key,
-                 1::bigint AS member_count
+                 1::bigint AS member_count,
+                 ${STAGE_RANK_SQL} AS min_stage_rank, ${STAGE_RANK_SQL} AS max_stage_rank
           FROM monitor.documents
           ${filterClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NULL`
@@ -916,6 +943,9 @@ async function handleListGroups(
       const stage = normalizeStoredStage(row.doc_status);
       // drift defensive — a token no stage covers cannot be rendered.
       if (stage === null) return [];
+      const groupStage = getGroupStage(
+        Number(row.min_stage_rank), Number(row.max_stage_rank), stage,
+      );
       return [{
         // group_key is an internal sort key — not surfaced in the response.
         folder_id: row.group_key > 0n ? bigintToNumber(row.group_key) : null,
@@ -923,6 +953,8 @@ async function handleListGroups(
         representative_title: row.title,
         representative_author: row.author,
         representative_doc_status: stage,
+        group_doc_status: groupStage.stage,
+        group_stage_uniform: groupStage.uniform,
         representative_last_status_model: row.last_status_model,
         representative_audience: computeResponseAudience(row.audience, formatFromPath(row.html_path)),
         representative_format: formatFromPath(row.html_path),
@@ -985,6 +1017,8 @@ interface GroupedRepRow {
   group_latest_at: Date;
   group_key: bigint;
   member_count: bigint;
+  min_stage_rank: number;
+  max_stage_rank: number;
 }
 
 interface GroupsCountRow {

@@ -188,6 +188,13 @@ export interface ClaudedDocGroup {
   representative_last_status_model: LastStatusModel;
   /** representative row's predecessor FK — null = chain root. List-side revision-chain glyph source. */
   representative_supersedes_id: number | null;
+  /**
+   * Least-advanced member stage — what the group row renders. The representative is picked by
+   * display_order, so its own stage says nothing about how far the group as a whole has moved.
+   */
+  group_doc_status: DocStageLiteral;
+  /** Whether every member sits at `group_doc_status` — false = the row says members differ. */
+  group_stage_uniform: boolean;
   /** member count (NULL group = 1). */
   member_count: number;
   /** latest created_at in the group — pagination sort key (response ordering consistency). */
