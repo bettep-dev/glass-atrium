@@ -209,6 +209,14 @@ retired_live_map() {
   jq -n --arg p "$1" --arg h "$(sha256_of "${LIVE}/$1")" '{($p): [$h]}'
 }
 
+# Echo a JSON object mapping $1 to a placeholder 64-hex hash of repeated char $2 — for
+# keys whose live target is absent or not a regular file, so no real hash exists.
+absent_hash_map() {
+  local hash
+  hash="$(printf '%064d' 0)"
+  printf '{"%s":["%s"]}' "$1" "${hash//0/$2}"
+}
+
 @test "#13 retired: a pristine retired file is selected" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_file "${LIVE}" "scripts/test/gone.bats" "vendor-body"
@@ -270,7 +278,7 @@ retired_live_map() {
 @test "#13 retired: a path already absent from the live install is a silent no-op" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    '{"scripts/lib/never-here.sh":["'"$(printf 'a%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+    "$(absent_hash_map "scripts/lib/never-here.sh" a)" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"never-here.sh"* ]] || return 1
@@ -280,7 +288,7 @@ retired_live_map() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_link "${LIVE}" "scripts/lib/linked.sh" "../../elsewhere.sh"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    '{"scripts/lib/linked.sh":["'"$(printf 'b%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+    "$(absent_hash_map "scripts/lib/linked.sh" b)" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"not a regular file (symlink)"* ]] || return 1
@@ -312,8 +320,8 @@ retired_live_map() {
 }
 
 # Containment: a retired key naming a real, hash-matching file OUTSIDE the install root
-# must be refused, so every escape fixture below seeds that file with its real hash —
-# a fixture whose target is absent would pass without the refusal ever running.
+# must be refused, so each physical-check escape fixture below seeds that file with its
+# real hash — a fixture whose target is absent would pass without the refusal ever running.
 
 # Echo the one stderr row a refused retired key $1 produces.
 unsafe_row() {
@@ -398,7 +406,7 @@ unsafe_row() {
 @test "#13 retired: a dot-dot key with no target still emits its UNSAFE row" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    '{"../state/absent.json":["'"$(printf 'c%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+    "$(absent_hash_map "../state/absent.json" c)" "hooks/keep.sh"
   run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [ "${status}" -eq 0 ] || return 1
   [ -z "${output}" ] || return 1
