@@ -190,7 +190,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 	);
 
 	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
-	if (model.alarms.length === 0) {
+	if (model.alarms.length === 0 && model.unchecked.length === 0) {
 		return model.pending ? (
 			<div className="fs-meta font-mono text-faint" aria-busy="true">
 				Checking what needs attention…
@@ -224,6 +224,11 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 					</span>
 				</li>
 			))}
+			{model.unchecked.length > 0 && (
+				<li className="fs-micro font-mono text-faint">
+					{`Couldn't check: ${model.unchecked.join(", ")} — the lane is incomplete.`}
+				</li>
+			)}
 		</ul>
 	);
 }
@@ -284,7 +289,16 @@ function buildAlarmLaneModel(
 		indexState.status === "loading" ||
 		backlogState.status === "loading";
 
-	return { alarms, pending };
+	// An errored feeder answers none of its checks, so the lane says so rather than reading clear.
+	const unchecked = [
+		[indexState, "search index"],
+		[summaryState, "daily cycle"],
+		[backlogState, "merge proposals"],
+	]
+		.filter(([state]) => state.status === "error")
+		.map(([, label]) => label);
+
+	return { alarms, pending, unchecked };
 }
 
 // Interim age source until a first-seen date per proposal lands: the streak of newest
@@ -325,6 +339,16 @@ function readDedupW(backlog) {
 function readProposalsW(backlog) {
 	const list = readDedupW(backlog)?.proposals;
 	return Array.isArray(list) ? list : null;
+}
+
+// Backlog figures are a per-cycle snapshot: past one cycle they are dated, and an
+// undated or stale snapshot must not read as the current count.
+function describeSnapshotAgeW(runDate) {
+	if (!runDate) return " (run date not reported)";
+
+	const ageDays = ageInUtcDaysW(runDate);
+	const stale = typeof ageDays === "number" && ageDays > BACKLOG_STALE_DAYS;
+	return stale ? ` (as of ${runDate}, cycle overdue)` : "";
 }
 
 // Four-tile band — last run · compiled last cycle · search index · library totals.
@@ -515,10 +539,9 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 		return tilePlaceholderW("library", label, "unavailable");
 	}
 
-	const backlog =
-		backlogState.status === "ready"
-			? backlogState.data?.backlog?.true_backlog
-			: null;
+	const payload =
+		backlogState.status === "ready" ? backlogState.data?.backlog : null;
+	const backlog = payload?.true_backlog;
 
 	return {
 		key: "library",
@@ -527,9 +550,7 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 		value: formatCountW(total),
 		sub:
 			typeof backlog === "number"
-				? backlog === 0
-					? "No originals waiting"
-					: `${formatCountW(backlog)} originals waiting`
+				? `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting${describeSnapshotAgeW(payload?.run_date)}`
 				: "Backlog not reported",
 		tone: "neutral",
 	};
@@ -632,7 +653,7 @@ function buildMaintenanceModel(backlogState) {
 		proposals,
 		deadLinks,
 		linkFixes,
-		summaryLine: describeMaintenanceW(proposals, deadLinks),
+		summaryLine: `${describeMaintenanceW(proposals, deadLinks)}${describeSnapshotAgeW(backlog.run_date)}`,
 		residueLine:
 			typeof notVerified === "number" && notVerified > 0
 				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
@@ -1028,10 +1049,10 @@ function selectBacklogW(trueBacklog, runDate) {
 		};
 	}
 	return {
-		label: "Waiting",
+		label: "—",
 		tone: "faint",
 		unit: "",
-		hint: "Originals awaiting summary",
+		hint: "Backlog not reported yet",
 	};
 }
 
