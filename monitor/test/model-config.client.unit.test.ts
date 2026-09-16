@@ -455,9 +455,11 @@ function findAllMc(nodes: McNode[], match: (node: McTag) => boolean): McTag[] {
 const tagsMc = (nodes: McNode[], tag: string): McTag[] => findAllMc(nodes, (n) => n.tag === tag);
 const textsMc = (nodes: McTag[]): string[] => nodes.map((n) => textMc(n.children));
 
-async function loadMcScreens(): Promise<Record<string, unknown>> {
+async function loadMcScreens(
+  overrides: { react?: Record<string, unknown>; fetch?: unknown } = {},
+): Promise<Record<string, unknown>> {
   const code = await buildMcCode();
-  const reactStub = {
+  const reactStub: Record<string, unknown> = {
     createElement: hMc,
     Fragment: MC_FRAGMENT,
     // No re-render happens, so a setter is a no-op and state stays at its initial value.
@@ -467,6 +469,8 @@ async function loadMcScreens(): Promise<Record<string, unknown>> {
     useMemo: (fn: () => unknown) => fn(),
     useCallback: (fn: unknown) => fn,
   };
+  // Effect-running / state-recording variants ride in here, so the load path can be driven.
+  Object.assign(reactStub, overrides.react ?? {});
   // ui.jsx atoms — rendered as tagged wrappers so their children stay readable in the tree.
   const uiStub = {
     PageHeader: (p: Record<string, unknown>) => hMc("header", { className: "page-header" }, p.sub, p.right),
@@ -488,7 +492,9 @@ async function loadMcScreens(): Promise<Record<string, unknown>> {
     setTimeout,
     clearTimeout,
     AbortController,
-    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) }),
+    fetch:
+      overrides.fetch ??
+      (() => Promise.resolve({ ok: true, status: 200, json: async () => ({}) })),
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -750,3 +756,119 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
   assert.strictEqual(count(payload), fields, "count tracks the payload, not the row total");
 });
 
+
+// The header token renders its stamp only under `receivedAt`, so a load path that omits it
+// leaves every Refresh unstamped — the relationship pinned here is GET → stamped reading.
+test("a completed GET stamps the reading with its receive time", async () => {
+  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
+  const states: Record<string, unknown>[] = [];
+  const live = await loadMcScreens({
+    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => fixture }),
+    react: {
+      useEffect: (fn: () => unknown) => {
+        fn();
+      },
+      useState: (init: unknown) => [
+        typeof init === "function" ? (init as () => unknown)() : init,
+        (next: unknown) => {
+          if (next !== null && typeof next === "object" && "status" in (next as object)) {
+            states.push(next as Record<string, unknown>);
+          }
+        },
+      ],
+    },
+  });
+
+  const before = Date.now();
+  renderComponentMc(live.ScreenModelConfig, {});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const ready = states.filter((s) => s.status === "ready");
+  assert.strictEqual(ready.length, 1, "the resolved GET produced one ready reading");
+  const receivedAt = ready[0]?.receivedAt;
+  assert.ok(
+    typeof receivedAt === "number" && receivedAt >= before,
+    "the ready reading carries the time it was received",
+  );
+  const token = textMc(
+    renderComponentMc(live.SyncTokenMC, { state: "ready", sync: "ok", receivedAt }),
+  );
+  assert.ok(token.includes("as of"), "that stamp is what the header token renders");
+});
+
+test("the drift banner triggers on any drifted row, not on the file state alone", () => {
+  const hasDrift = sandboxFnMc<(data: unknown) => boolean>("hasRowDriftMC");
+  assert.strictEqual(hasDrift({ domains: [], budgets: [] }), false, "nothing drifted → no trigger");
+  assert.strictEqual(
+    hasDrift({ domains: [{ domain: "model.dev", drift: true }], budgets: [] }),
+    true,
+    "one drifted model row raises it on its own",
+  );
+  assert.strictEqual(
+    hasDrift({ domains: [], budgets: [{ domain: "budget.worker_max_usd", drift: true }] }),
+    true,
+    "one drifted budget row raises it on its own",
+  );
+});
+
+test("the drift banner's remedy is pressable and resends the drifted rows' saved targets", () => {
+  type McPayload = { models?: Record<string, string>; budgets?: Record<string, string> } | null;
+  const buildResync = sandboxFnMc<(data: unknown, edits: unknown) => McPayload>("resyncPayloadMC");
+  const data = {
+    daemon_config_sync: "ok",
+    domains: [
+      { domain: "model.dev", desired: "claude-opus-4-8", actual: "stale", drift: true },
+      { domain: "model.wiki", desired: "claude-haiku-4-8", actual: "claude-haiku-4-8", drift: false },
+    ],
+    budgets: [{ domain: "budget.worker_max_usd", desired: "10.00", actual: "10.00", drift: false }],
+  };
+
+  // Sandbox objects carry the vm realm's prototype — compare a host-realm copy.
+  const drifted = buildResync(data, null);
+  assert.deepStrictEqual(
+    { ...(drifted?.models ?? {}) },
+    { "model.dev": "claude-opus-4-8" },
+    "a drifted row is resent by its saved target, a steady row is not",
+  );
+  assert.strictEqual(drifted?.budgets, undefined, "no drifted budget row → no budget field");
+  assert.strictEqual(
+    buildResync({ daemon_config_sync: "ok", domains: [], budgets: [] }, null),
+    null,
+    "nothing to heal → nothing to press",
+  );
+
+  // A file-level mismatch is healed by the full desired state, not by a per-row diff.
+  const fileMissing = buildResync({ ...data, daemon_config_sync: "file-missing" }, null);
+  assert.strictEqual(
+    Object.keys(fileMissing?.models ?? {}).length,
+    data.domains.length,
+    "a missing daemon-config resends every domain",
+  );
+  assert.ok(fileMissing?.budgets, "and every budget key that file consumes");
+
+  // The PUT response reinitializes the form buffer, so an unsaved edit must ride along.
+  const edited = buildResync(data, { models: { "model.wiki": "claude-sonnet-4-8" } });
+  assert.strictEqual(
+    edited?.models?.["model.wiki"],
+    "claude-sonnet-4-8",
+    "an unsaved edit wins over the saved target it would otherwise discard",
+  );
+
+  const actionable = renderComponentMc(screens.DriftBannerMC, {
+    sync: "drift",
+    onResync: () => {},
+    saving: false,
+  });
+  assert.strictEqual(
+    tagsMc(actionable, "button").length,
+    1,
+    "the remedy is a control, not only a sentence",
+  );
+  const inert = renderComponentMc(screens.DriftBannerMC, { sync: "drift", onResync: null });
+  assert.strictEqual(tagsMc(inert, "button").length, 0, "no payload → no dead button");
+  const pending = renderComponentMc(screens.DriftBannerMC, {
+    sync: "pending-migration",
+    onResync: () => {},
+  });
+  assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
+});

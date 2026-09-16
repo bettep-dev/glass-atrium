@@ -1,5 +1,5 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
-// 카드: config-sync KPI → 모델 도메인 테이블 → per-call 예산 상한 카드.
+// Layout: header sync token → model domain ledger → per-call budget cap ledger.
 // DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
@@ -91,8 +91,7 @@ const DOMAIN_ORDER_MC = [
 	"model.daemon_cycle_worker",
 ];
 
-// 반영 시점 — GET apply_mode 의 표기. 모든 편집이 "언제 적용되나" 를 묻게 만드는데 화면이 답한 적이 없어
-// Enforcement(항상 applied, 정보량 0) 컬럼을 이걸로 교체.
+// Take-effect labels — GET apply_mode rendered, so every row answers when its edit applies.
 const APPLY_MODE_META_MC = {
 	"next-spawn": {
 		label: "Next spawn",
@@ -194,7 +193,12 @@ function ScreenModelConfig() {
 		setSaveError(null);
 		fetchJsonMC("/api/model-config", ctrl.signal)
 			.then((data) => {
-				setConfigState({ status: "ready", data, error: null });
+				setConfigState({
+					status: "ready",
+					data,
+					error: null,
+					receivedAt: Date.now(),
+				});
 				setForm(buildFormMC(data));
 			})
 			.catch((err) => {
@@ -230,6 +234,7 @@ function ScreenModelConfig() {
 	);
 	const payload = baseline && form ? diffFormMC(baseline, form) : null;
 	const hasErrors = Object.keys(errors).length > 0;
+	const changeCount = countChangesMC(payload);
 	// dirty = 저장할 변경분 존재 — save-banner 노출 + beforeunload 경고 게이트.
 	const isDirty = payload !== null;
 
@@ -260,14 +265,16 @@ function ScreenModelConfig() {
 	const setBudget = (key, value) => {
 		setForm((f) => (f ? { ...f, budgets: { ...f.budgets, [key]: value } } : f));
 	};
-	const save = async () => {
-		if (!payload || hasErrors || saving) return;
+	// One transport for both Save controls — the sticky bar sends the edit diff, the drift banner
+	// sends the saved targets of the rows that drifted.
+	const submit = async (body) => {
+		if (!body || hasErrors || saving) return;
 		setSaving(true);
 		setSaveError(null);
 		setSurfaceResults(null);
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
-			const data = await putJsonMC("/api/model-config", payload);
+			const data = await putJsonMC("/api/model-config", body);
 			setConfigState({
 				status: "ready",
 				data,
@@ -277,7 +284,7 @@ function ScreenModelConfig() {
 			setForm(buildFormMC(data));
 			const problems = extractSurfaceResultsMC(data);
 			setSurfaceResults(problems);
-			// 깨끗한 저장만 토스트로 끝낸다 — 실패/스킵이 섞이면 카드가 그 자리를 대신한다.
+			// Only a clean save ends in a toast — a failed or skipped surface gets the card instead.
 			if (!problems) showToast("ok", "Changes saved");
 		} catch (err) {
 			setSaveError(err && err.message ? err.message : String(err));
@@ -285,6 +292,7 @@ function ScreenModelConfig() {
 			setSaving(false);
 		}
 	};
+	const save = () => submit(payload);
 
 	// Discard — 편집 버퍼를 저장된 baseline 로 되돌림 (네트워크 호출 없음). confirm 게이트 통과 후 실행.
 	const discard = () => {
@@ -302,14 +310,17 @@ function ScreenModelConfig() {
 
 	const ready = configState.status === "ready" && form !== null;
 	const data = configState.data;
-	// 배너 트리거는 파일 sync 상태 하나가 아니라 행 드리프트 전체 — 행에서 걷어낸 처방을 배너가 대신 싣는다.
+	// Banner trigger = any row drift, not the file-sync state alone — the banner carries the remedy the rows no longer do.
 	const showDrift =
-		ready && (data.daemon_config_sync !== "ok" || anyDriftMC(data));
+		ready && (data.daemon_config_sync !== "ok" || hasRowDriftMC(data));
+	// The banner's remedy must be pressable at the moment it fires: a drifted row is clean against
+	// the form buffer, so the sticky Save bar is absent exactly then.
+	const resyncPayload = ready ? resyncPayloadMC(data, payload) : null;
 	const hasAlarm = Boolean(
 		configState.status === "error" || saveError || showDrift || surfaceResults,
 	);
-	// 헤더를 들어올리는 대신 섹션마다 state prop — 두 방식 다 "모든 상태에서 헤더 유지" 를 만족하고
-	// 이쪽이 diff 가 작다 (계획 Open Question: 구현자 판단).
+	// state prop per section rather than a lifted header — both keep the headers in every state
+	// → the smaller diff wins (plan Open Question: implementer's call).
 	const sectionState = ready
 		? "ready"
 		: configState.status === "loading"
@@ -364,7 +375,17 @@ function ScreenModelConfig() {
 							onRetry={save}
 						/>
 					)}
-					{showDrift && <DriftBannerMC sync={data.daemon_config_sync} />}
+					{showDrift && (
+						<DriftBannerMC
+							sync={data.daemon_config_sync}
+							onResync={
+								resyncPayload && !hasErrors
+									? () => submit(resyncPayload)
+									: null
+							}
+							saving={saving}
+						/>
+					)}
 					{surfaceResults && (
 						<SurfaceResultsCardMC
 							results={surfaceResults}
@@ -396,8 +417,8 @@ function ScreenModelConfig() {
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
 					<div className="flex items-center gap-2 min-w-0">
 						<span className="fs-body font-medium text-ink">
-							{countChangesMC(payload)} unsaved change
-							{countChangesMC(payload) === 1 ? "" : "s"}
+							{changeCount} unsaved change
+							{changeCount === 1 ? "" : "s"}
 						</span>
 						{hasErrors && (
 							<span className="fs-meta text-crit">
@@ -451,8 +472,8 @@ function ScreenModelConfig() {
 	);
 }
 
-// 헤더 sync 토큰 — "저장한 값이 실제로 도는가" 를 화면당 한 번만 답한다(행마다 반복 금지).
-// 톤은 glyph 가 싣고 텍스트는 평문 · as-of 는 클라이언트 수신 시각(루프백이라 payload 시각과 동치).
+// Header sync token — answers "is what I saved what runs?" once per screen, never per row.
+// Tone rides the glyph, text stays plain · as-of = client receive time (loopback → same instant).
 function SyncTokenMC({ state, sync, receivedAt }) {
 	const { Icon } = window.UI;
 
@@ -482,7 +503,7 @@ function SyncTokenMC({ state, sync, receivedAt }) {
 	);
 }
 
-// as-of 표기 — 초까지(분 단위면 방금 받은 응답이 오래돼 보인다).
+// as-of format — seconds included, so a just-received reading never looks stale.
 function formatClockMC(ms) {
 	return new Date(ms).toLocaleTimeString();
 }
@@ -560,7 +581,7 @@ function DomainsSectionMC({
 	);
 }
 
-// 로스터가 빈 응답 — 행 0개를 "로드 안 됨" 과 구분해 명시 (빈 표 = 무언의 0 금지).
+// Empty roster — states zero rows explicitly, so it never reads as a failed load.
 function EmptyRowMC({ colSpan, message }) {
 	return (
 		<tr>
@@ -571,7 +592,7 @@ function EmptyRowMC({ colSpan, message }) {
 	);
 }
 
-// 1줄 힌트 + 전문은 클릭 뒤 — 전 컬럼 폭 설명 행이 표 리듬을 깨던 자리를 대체.
+// One-line hint, full text behind a click — a full-width prose row breaks the table rhythm.
 function RowHintMC({ hint, detail }) {
 	if (!hint && !detail) return null;
 	if (!detail || detail === hint) {
@@ -586,8 +607,8 @@ function RowHintMC({ hint, detail }) {
 	);
 }
 
-// 라이브 값 = 소비 지점 실측. 저장값과 같으면 dim 텍스트 하나(정상 상태에 상시 ok pill 금지),
-// 다르면 warn 배지 1개 — 톤은 배지 glyph 가 싣는다. files 가 오면 mixed 내역을 클릭 뒤로 공시.
+// Live value = measured at the consumption point. Matching the saved target → one dim line
+// (no standing ok pill); differing → one warn badge, tone on the glyph · mixed files behind a click.
 function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
@@ -624,7 +645,7 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 	);
 }
 
-// 반영 시점 — 무톤 텍스트. 알람이 아니라 리포트라 색을 쓰지 않는다.
+// Take-effect cell — toneless: a report, not an alarm.
 function ApplyModeMC({ mode }) {
 	const meta = APPLY_MODE_META_MC[mode] || { label: mode || "—", desc: "" };
 
@@ -973,11 +994,11 @@ function SurfaceResultRowMC({ result: r }) {
 	);
 }
 
-// 설정 드리프트 배너 — 파일 불일치 또는 행 드리프트 존재 시 노출. 처방은 여기 한 번만 실린다.
+// Config drift banner — one remedy, carried here only: file mismatch or any drifted row raises it.
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
-function DriftBannerMC({ sync }) {
+function DriftBannerMC({ sync, onResync, saving }) {
 	const { Icon } = window.UI;
-	// 처방이 다르다 — drift/file-missing 은 Save 가, pending-migration 은 db-setup 이 고친다.
+	// Remedies differ — Save fixes drift/file-missing, db-setup fixes pending-migration.
 	const pendingMigration = sync === "pending-migration";
 
 	return (
@@ -1006,6 +1027,15 @@ function DriftBannerMC({ sync }) {
 						"Save again to rewrite the surfaces that consume these values."
 					)}
 				</div>
+				{!pendingMigration && onResync && (
+					<button
+						className="btn primary sm mt-2"
+						onClick={onResync}
+						disabled={saving}
+					>
+						Save again
+					</button>
+				)}
 			</div>
 		</div>
 	);
@@ -1111,7 +1141,7 @@ function SectionBodyStateMC({ state, rows }) {
 		);
 	}
 
-	// 미가용 — 0 이 아니라 "읽지 못했다" 로 읽혀야 한다. 원인은 상단 알람 레인이 싣는다.
+	// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
 	return (
 		<div className="fs-meta text-faint py-2">
 			Not available — the saved config could not be loaded.
@@ -1206,8 +1236,32 @@ function sortBudgetsMC(budgets) {
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
 }
 
-// 행 드리프트 존재 여부 — 배너 트리거 (모델/예산 어느 쪽이든 1건이면 참).
-function anyDriftMC(data) {
+// Banner remedy payload — re-sends the saved target of every drifted row, so the PUT reaches the
+// render side effects with nothing edited. Unsaved edits win: the response reinitializes the form
+// buffer, so a value left out here would be discarded.
+function resyncPayloadMC(data, edits) {
+	const fileDrift = (data?.daemon_config_sync ?? "ok") !== "ok";
+	const models = {};
+	for (const d of data?.domains || []) {
+		if (!(d.drift || fileDrift) || !d.desired) continue;
+		models[d.domain] = d.desired;
+	}
+	const budgets = {};
+	for (const b of data?.budgets || []) {
+		if (!(b.drift || fileDrift) || !b.desired) continue;
+		budgets[b.domain] = b.desired;
+	}
+	Object.assign(models, edits?.models || {});
+	Object.assign(budgets, edits?.budgets || {});
+
+	const payload = {};
+	if (Object.keys(models).length > 0) payload.models = models;
+	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	return Object.keys(payload).length > 0 ? payload : null;
+}
+
+// Row drift present — banner trigger, true on one drifted model or budget row.
+function hasRowDriftMC(data) {
 	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
 	return rows.some((r) => r.drift);
 }
@@ -1215,11 +1269,11 @@ function anyDriftMC(data) {
 function extractSurfaceResultsMC(data) {
 	const results = data.results ?? data.surfaces ?? null;
 	if (!Array.isArray(results) || results.length === 0) return null;
-	// 전부 ok 면 카드를 띄우지 않는다 — 정상 저장의 공시는 토스트 하나로 끝난다.
+	// All ok → no card: a clean save is announced by the toast alone.
 	return results.some((r) => r.status !== "ok") ? results : null;
 }
 
-// 미저장 변경 수 = partial PUT payload 의 필드 수 — 화면 문구가 실제 전송분과 어긋나지 않게.
+// Unsaved count = fields in the partial PUT payload, so the wording matches what is sent.
 function countChangesMC(payload) {
 	if (!payload) return 0;
 	return (
