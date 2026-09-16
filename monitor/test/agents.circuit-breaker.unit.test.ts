@@ -6,11 +6,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import {
   loadAgentCircuitBreakerSnapshot,
+  resolveCircuitBreakerDir,
   toCircuitBreakerKey,
 } from "../src/server/agents/circuit-breaker.js";
 
@@ -104,4 +105,37 @@ test("an unreadable state dir is unavailable, and publishes no zeroed states", a
 test("the on-disk key collapses characters outside the filename-safe class", () => {
   assert.equal(toCircuitBreakerKey("glass-atrium/dev react"), "glass-atrium_dev_react");
   assert.equal(toCircuitBreakerKey("dev-react"), "dev-react");
+});
+
+test("the default state dir tracks the hook writer's GA data root, override first", () => {
+  const savedOverride = process.env.AGENT_CIRCUIT_BREAKER_DIR;
+  const savedRoot = process.env.GA_DATA_ROOT;
+  try {
+    delete process.env.AGENT_CIRCUIT_BREAKER_DIR;
+    process.env.GA_DATA_ROOT = "/tmp/ga-root-sentinel";
+    assert.equal(
+      resolveCircuitBreakerDir(),
+      path.join("/tmp/ga-root-sentinel", "data", "agent-circuit-breaker"),
+    );
+
+    delete process.env.GA_DATA_ROOT;
+    assert.equal(
+      resolveCircuitBreakerDir(),
+      path.join(homedir(), ".glass-atrium", "data", "agent-circuit-breaker"),
+    );
+
+    process.env.AGENT_CIRCUIT_BREAKER_DIR = "/tmp/explicit-cb-dir";
+    assert.equal(resolveCircuitBreakerDir(), "/tmp/explicit-cb-dir");
+  } finally {
+    if (savedOverride === undefined) {
+      delete process.env.AGENT_CIRCUIT_BREAKER_DIR;
+    } else {
+      process.env.AGENT_CIRCUIT_BREAKER_DIR = savedOverride;
+    }
+    if (savedRoot === undefined) {
+      delete process.env.GA_DATA_ROOT;
+    } else {
+      process.env.GA_DATA_ROOT = savedRoot;
+    }
+  }
 });

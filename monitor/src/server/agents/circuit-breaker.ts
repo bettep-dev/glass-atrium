@@ -19,13 +19,16 @@ export interface AgentCircuitBreakerSnapshot {
 }
 
 // Env override keeps the suite off the operator's live dir — same precedent as
-// AGENT_REGISTRY_PATH in ./registry.ts.
+// AGENT_REGISTRY_PATH in ./registry.ts. The default mirrors the hook writer's own
+// root (`hook-utils.sh` HOOK_DATA_DIR), so GA_DATA_ROOT redirects both sides together.
 export function resolveCircuitBreakerDir(): string {
   const override = process.env.AGENT_CIRCUIT_BREAKER_DIR;
   if (override && override.trim() !== "") {
     return override;
   }
-  return path.join(homedir(), ".claude", "data", "agent-circuit-breaker");
+
+  const root = process.env.GA_DATA_ROOT ?? path.join(homedir(), ".glass-atrium");
+  return path.join(root, "data", "agent-circuit-breaker");
 }
 
 // Mirrors the hook's hook_path_safe_key transform: anything outside the
