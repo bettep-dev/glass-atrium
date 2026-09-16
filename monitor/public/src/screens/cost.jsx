@@ -81,6 +81,14 @@ function ScreenCost({ onNav }) {
 
   const triggerRefresh = useCallbackC(() => setRefreshTick((t) => t + 1), []);
 
+  // One derivation, two readers — the lane states the same verdict tile 1 renders.
+  const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
+  const alarmRows = computeAlarmRows({
+    hot: hotVerdict,
+    latestOutsideBand: isLatestOutsideBand(tokenState),
+    parseErrorCritDays: countParseErrorCritDays(errorState),
+  });
+
   useEffectC(() => {
     const ctrl = new AbortController();
     abortRef.current?.abort();
@@ -161,9 +169,12 @@ function ScreenCost({ onNav }) {
         />
       </div>
 
+      <AlarmLaneC rows={alarmRows}/>
+
       {/* 1. KPI band — today vs. own normal · window total · cost per finished task · cache share. */}
       <KpiRowC
         kpiState={kpiState}
+        hot={hotVerdict}
         trendState={tokenState}
         modelState={modelState}
         days={days}
@@ -195,6 +206,73 @@ function ScreenCost({ onNav }) {
 
       {/* 7. 턴 통계 (P2-B) — stop_reason 분포 + turns 집계, full-width */}
       <TurnStatsCard state={turnState} days={days} onRetry={triggerRefresh}/>
+    </div>
+  );
+}
+
+// Alarm lane — structural, leading the screen, and zero height when nothing fires. One "running hot"
+// row (today so far, its pace, or the latest day outside its own band) plus a conditional
+// parse-error row. A payload FAILURE is never a lane row: that stays a banner at its owning group.
+function computeAlarmRows({ hot, latestOutsideBand, parseErrorCritDays }) {
+  const rows = [];
+
+  if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
+    rows.push({ key: 'hot', tone: 'crit', text: getHotAlarmText(hot, latestOutsideBand) });
+  }
+  if (parseErrorCritDays > 0) {
+    rows.push({
+      key: 'parse-error',
+      tone: 'warn',
+      text: `${parseErrorCritDays} days over the unreadable-log threshold — some spend may be unrecorded.`,
+    });
+  }
+
+  return rows;
+}
+
+function getHotAlarmText(hot, latestOutsideBand) {
+  const clauses = [];
+  if (hot.isHot || hot.isPaceHot) clauses.push(hot.verdict);
+  if (latestOutsideBand) clauses.push('The latest day sits outside its own 7-day normal band.');
+  return clauses.join(' ');
+}
+
+// Is the newest day outside its own rolling band? Below the rolling window the question has no answer,
+// and "no answer" must not fire the lane.
+function isLatestOutsideBand(trendState) {
+  const points = trendState.status === 'ready'
+    ? (trendState.data?.points ?? trendState.data?.rows ?? [])
+    : [];
+  if (points.length < ROLLING_WINDOW) return false;
+  const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
+  const latest = rows[rows.length - 1];
+  return !!(latest && latest.isAnomaly);
+}
+
+function countParseErrorCritDays(errorState) {
+  const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
+  return rows.reduce((s, r) => s + ((Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD ? 1 : 0), 0);
+}
+
+function AlarmLaneC({ rows }) {
+  const { Icon } = window.UI;
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col gap-2 mb-4">
+      {rows.map((r) => (
+        <div
+          key={r.key}
+          role="alert"
+          className="rounded-md border p-3 flex items-start gap-3"
+          style={{ background: `rgb(var(--${r.tone}) / 0.08)`, borderColor: `rgb(var(--${r.tone}) / 0.4)` }}>
+          <Icon name="warn" size={16} className={`text-${r.tone} mt-0.5`}/>
+          <div className="fs-body text-ink">{r.text}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -277,13 +355,16 @@ function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
   const points = ready ? (trendState.data?.points ?? trendState.data?.rows ?? []) : [];
   if (points.length === 0) {
-    return { total: null, delta: null, dayCount: 0, isEmpty: ready };
+    return { total: null, delta: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
   }
   const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
+  const total = series.reduce((s, v) => s + v, 0);
   return {
-    total: series.reduce((s, v) => s + v, 0),
+    total,
     delta: computeSparkDeltaC(series),
     dayCount: points.length,
+    avgDaily: total / points.length,
+    peakCost: Math.max(...series),
     isEmpty: false,
   };
 }
@@ -306,9 +387,8 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, trendState, modelState, days, onRetry }) {
+function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
-  const hot = computeHotVerdict(kpi);
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
   const costPerDone = toFiniteOrNull(kpi.cost_per_done_usd);
@@ -336,7 +416,9 @@ function KpiRowC({ kpiState, trendState, modelState, days, onRetry }) {
           label={`Cost, last ${days} days`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
-          hint={`${windowTotal.dayCount} days with cost`}
+          hint={windowTotal.total === null
+            ? ''
+            : `${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
           unavailableNote="Trend payload carries no cost figure.">
           <TrendDeltaC delta={windowTotal.delta}/>
         </CostTileC>
@@ -412,25 +494,41 @@ function TrendDeltaC({ delta }) {
   );
 }
 
-// 2. CostTrendCard — 일별 비용 단일 Y축 LINE 차트 (T-CST-1).
-// cost-over-time 의 1차 표현은 라인 (단일 magnitude → 누적 영역 불필요). 토큰 input/output 분할만
-// 누적 영역(서로 다른 magnitude)으로 별도 카드에서 표현 (TokenStackedCard).
+// 2. CostTrendCard — daily cost as a single-axis line (one magnitude, so no stacking). The ±2σ band
+// is a toggle on this chart rather than a second card: the band answers "is this day unusual" about
+// the very series already drawn here.
 function CostTrendCard({ state, days, onRetry }) {
   const { CardHead } = window.UI;
+  const [bandOn, setBandOn] = useStateC(false);
+
+  const points = state.status === 'ready' ? (state.data?.points ?? state.data?.rows ?? []) : [];
+  const bandAvailable = points.length >= ROLLING_WINDOW;
 
   return (
     <div className="card mb-4">
       <CardHead
         title="Cost over time"
+        right={
+          <button
+            className={`btn ghost sm ${bandOn ? 'active' : ''}`}
+            disabled={!bandAvailable}
+            aria-pressed={bandOn}
+            title={bandAvailable
+              ? 'Overlay the 7-day rolling average and its ±2σ band'
+              : `Needs ${ROLLING_WINDOW} days of cost to compute a rolling band`}
+            onClick={() => setBandOn((v) => !v)}>
+            ±2σ band
+          </button>
+        }
       />
       <div className="card-body">
-        <CostTrendBody state={state} days={days} onRetry={onRetry}/>
+        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry}/>
       </div>
     </div>
   );
 }
 
-function CostTrendBody({ state, days, onRetry }) {
+function CostTrendBody({ state, days, bandOn, onRetry }) {
   if (state.status === 'loading') {
     return <ChartSkeletonC height={260} aria-label="Loading cost trend"/>;
   }
@@ -443,115 +541,115 @@ function CostTrendBody({ state, days, onRetry }) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
 
-  const totalCost = points.reduce((s, p) => s + (Number(p.cost_usd) || 0), 0);
-  const avgDaily = points.length > 0 ? totalCost / points.length : 0;
-  const peak = points.reduce(
-    (best, p) => {
-      const c = Number(p.cost_usd) || 0;
-      return c > best.cost ? { cost: c, date: p.date } : best;
-    },
-    { cost: 0, date: null },
-  );
-
-  const rows = points.map((p) => ({
-    date: typeof p.date === 'string' ? p.date.slice(5) : '',
-    fullDate: p.date,
-    cost_usd: Number(p.cost_usd) || 0,
-    session_count: Number(p.session_count) || 0,
-  }));
+  // The band rows carry the plain series too, so one row builder serves both chart modes.
+  const rows = bandOn
+    ? computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA)
+    : points.map((p) => ({
+      date: typeof p.date === 'string' ? p.date.slice(5) : '',
+      fullDate: p.date,
+      actual: pointCostC(p),
+      session_count: Number(p.session_count) || 0,
+    }));
 
   return (
-    <>
-      {/* 동일 크기(fs-display) · 위계는 강조(합계=semibold·기본색 / 평균·피크=text-dim)로만 표현 → baseline 정렬. */}
-      <div className="flex items-start gap-4 mb-3">
-        <div>
-          <div className="fs-meta text-dim">Period total</div>
-          <div className="font-mono fs-display font-semibold tracking-tight">{formatUsdC(totalCost)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Period avg/day</div>
-          <div className="font-mono fs-display text-dim tracking-tight">{formatUsdC(avgDaily)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Peak day</div>
-          <div className="font-mono fs-display text-dim tracking-tight">
-            {peak.cost > 0 ? formatUsdC(peak.cost) : '—'}
-          </div>
-        </div>
-      </div>
-      <div style={{ width: '100%', height: 260 }}>
-        <CostTrendChart rows={rows}/>
-      </div>
-    </>
+    <div style={{ width: '100%', height: 260 }}>
+      <CostTrendChart rows={rows} bandOn={bandOn}/>
+    </div>
   );
 }
 
-// 단일 Y축 LINE 차트 — gridline 없음(--faint 톤 약하게 horizontal 만). cost magnitude 단일 → 라인.
-// annotations (T-CST-5): { date, label } 실 이벤트 배열. 비어있으면(기본) 아무것도 렌더 안 함 —
-// 가짜 마커 발명 금지(SLOP 가드). 실 이벤트 데이터 소스가 생기면 props 로 주입.
-function CostTrendChart({ rows, annotations = [] }) {
-  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
-
-  // x축 dataKey 는 MM-DD 슬라이스 — annotation date 도 동일 형식으로 매칭 (full ISO → slice(5)).
-  const annoByX = annotations
-    .map((a) => ({ x: typeof a.date === 'string' ? a.date.slice(5) : a.date, label: a.label }))
-    .filter((a) => a.x && rows.some((r) => r.date === a.x));
+// Single Y axis, faint horizontal gridlines only. With the band on, the rolling mean and the ±2σ
+// envelope ride the same chart — upper Area visible over a lower Area masked in the card surface,
+// the layering Recharts 2.x needs because an array dataKey is unstable there.
+function CostTrendChart({ rows, bandOn }) {
+  const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-        {/* faint gridline — 수평만, --line 위 0.6 opacity 로 거의 안 보이게 (T-CST-1 faint/no gridlines). */}
+      <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
+          tick={anomalyAxisTickStyle}
+          axisLine={anomalyAxisLineStyle}
           tickLine={false}
         />
         <YAxis
           tickFormatter={formatUsdAxisC}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
+          tick={anomalyAxisTickStyle}
+          axisLine={anomalyAxisLineStyle}
           tickLine={false}
           width={56}
         />
-        <Tooltip content={<CostTrendTooltipC/>}/>
-        {annoByX.map((a, i) => (
-          <ReferenceLine
-            key={i}
-            x={a.x}
-            stroke="rgb(var(--warn))"
-            strokeDasharray="3 3"
-            label={{ value: a.label, position: 'insideTop', fontSize: 9, fill: 'rgb(var(--warn))' }}
+        <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
+        {bandOn && (
+          <Area
+            type="monotone"
+            dataKey="upperBand"
+            stroke="none"
+            fill="rgb(var(--faint) / 0.18)"
+            isAnimationActive={false}
+            connectNulls={false}
           />
-        ))}
+        )}
+        {bandOn && (
+          <Area
+            type="monotone"
+            dataKey="lowerBand"
+            stroke="none"
+            fill="rgb(var(--elev))"
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+        )}
+        {bandOn && (
+          <Line
+            type="monotone"
+            dataKey="rollingMean"
+            stroke="rgb(var(--dim))"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+        )}
         <Line
           type="monotone"
-          dataKey="cost_usd"
+          dataKey="actual"
           stroke="rgb(var(--accent))"
           strokeWidth={2}
           dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
           activeDot={{ r: 4 }}
           isAnimationActive={false}
         />
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
 
-function CostTrendTooltipC({ active, payload }) {
+function CostTrendTooltipC({ active, payload, bandOn }) {
   if (!active || !payload || payload.length === 0) {
     return null;
   }
   const row = payload[0].payload;
+  const hasBand = bandOn && row.rollingMean !== null && row.rollingMean !== undefined;
+
   return (
     <div style={tooltipStyle}>
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        Daily cost {formatUsdC(row.cost_usd)}
+        Daily cost {formatUsdC(row.actual)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
+      {hasBand && (
+        <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
+          Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
+        </div>
+      )}
+      {typeof row.session_count === 'number' && (
+        <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
+      )}
     </div>
   );
 }
