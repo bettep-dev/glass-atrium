@@ -55,9 +55,10 @@ interface DashHelpers {
 
 const dash = await buildScreenSandbox<DashHelpers>(DASH_SRC);
 
+// Every part the shell polls answered healthy — the hook chain rides the harness wave too.
 const HEALTHY: Fold = {
-  status: "ready", partsOk: 6, partsChecked: 6, partsTotal: 7,
-  downNames: [], uncheckedNames: ["Hook Chain"], version: "1.0.0",
+  status: "ready", partsOk: 7, partsChecked: 7, partsTotal: 7,
+  downNames: [], uncheckedNames: [], version: "1.0.0",
 };
 const LOADING = { status: "loading", data: null, error: null };
 const ERRORED = { status: "error", data: null, error: "HTTP 500" };
@@ -194,7 +195,11 @@ test("the fleet tile separates an empty population from an unavailable one", () 
 test("the harness tile counts only the parts the shell actually polled", () => {
   const tile = tileOf(
     dash.buildTiles({
-      harness: { ...HEALTHY, partsOk: 5, partsChecked: 6, downNames: ["autoagent"] },
+      harness: {
+        ...HEALTHY,
+        partsOk: 5, partsChecked: 6,
+        downNames: ["autoagent"], uncheckedNames: ["Hook Chain"],
+      },
       kpiState: LOADING, agentsState: LOADING, outcomesState: LOADING,
     }),
     "harness",

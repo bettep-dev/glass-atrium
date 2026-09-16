@@ -133,25 +133,31 @@ function countDaemonsDown(livePayload) {
   return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
 }
 
-// 파트 kind → 관측 결과 (true ok · false down · null unchecked).
-// hook chain 은 셸이 폴링하지 않는다(집계 엔드포인트는 System map 소유) → 항상 unchecked.
-const HARNESS_PART_PROBES = {
-  pg: (_def, { healthState }) =>
-    readReady(healthState, (d) => d?.status === 'ok' && d?.db === 'open'),
-  browser: (_def, { healthState }) =>
-    readReady(healthState, (d) => (d?.browser || 'unprobed') !== 'failed'),
-  daemon: (def, { liveState }) =>
-    readReady(liveState, (d) => {
-      const row = (d?.daemons || []).find((r) => r.daemon_name === def.daemonName);
-      return row ? row.effective_status === 'ok' : false;
-    }),
-  hook: () => null,
-};
+// tone → 파트 관측 결과. ok=정상 · crit/warn=고장 · 그 외(info·비ready)=관측 못 함(null).
+// 모르는 파트는 분모에서 빠진다 — 정상으로도 고장으로도 세지 않음.
+const PART_OK_BY_TONE = { ok: true, crit: false, warn: false };
 
+// 셸 스토어 → resolveCardFacts 입력 이름. 미폴링 스토어도 loading 계약으로 채워
+// resolver 가 옵셔널 체크 없이 같은 형태를 읽는다.
+const STORE_UNPOLLED = { status: 'loading', data: null };
+
+function toCardStates(states) {
+  return {
+    pgState: states.healthState || STORE_UNPOLLED,
+    daemonState: states.liveState || STORE_UNPOLLED,
+    hookState: states.hookState || STORE_UNPOLLED,
+    hookFailState: states.hookFailState || STORE_UNPOLLED,
+  };
+}
+
+// 파트 판정은 System map 과 같은 resolveCardFacts tone 하나에서 나온다 — 두 번째 분류기를
+// 두면 같은 payload 로 레인은 'down', 맵은 '데이터 없음' 이라 말할 수 있음 (SRP).
 function foldHarness(states = {}) {
+  const cardStates = toCardStates(states);
   const parts = HEALTH_CARD_DEFS.map((def) => {
-    const probe = HARNESS_PART_PROBES[def.kind];
-    return { id: def.id, name: def.name, ok: probe ? probe(def, states) : null };
+    const facts = resolveCardFacts(def, cardStates);
+    const ok = facts.status === 'ready' ? PART_OK_BY_TONE[facts.tone] : undefined;
+    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok };
   });
   const checked = parts.filter((p) => p.ok !== null);
   const down = checked.filter((p) => p.ok === false);
