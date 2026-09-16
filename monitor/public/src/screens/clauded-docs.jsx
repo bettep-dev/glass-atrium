@@ -1219,12 +1219,15 @@ function DocListCardCD({
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
+	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
 	const totalLabel =
-		!isSearchMode && docTotal != null
-			? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
-			: hiddenCount > 0
-				? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
-				: `${formatIntCD(total)} matched`;
+		state.status !== "ready"
+			? null
+			: !isSearchMode && docTotal != null
+				? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+				: hiddenCount > 0
+					? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
+					: `${formatIntCD(total)} matched`;
 
 	// multi-select 파생값. server contract 정합 (group ≥ 2, ungroup ≥ 1).
 	const selectionSize = selectedIds.size;
@@ -1349,11 +1352,13 @@ function DocListCardCD({
 							);
 						})}
 					</div>
-					<span
-						className="ml-auto fs-meta font-mono"
-						style={{ color: "rgb(var(--dim))" }}>
-						{totalLabel}
-					</span>
+					{totalLabel && (
+						<span
+							className="ml-auto fs-meta font-mono"
+							style={{ color: "rgb(var(--dim))" }}>
+							{totalLabel}
+						</span>
+					)}
 				</div>
 				{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
             저하(tsvector 단어 단위만 매칭)가 사용자에게 비가시 → 검색 모드에서 화면에 명시.
