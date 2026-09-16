@@ -550,9 +550,6 @@ function ScreenArchitecture(
 					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
 					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
 					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
-					// 라이브 상태 상단 스트립 — 가로 스크롤 1줄 (좌측 컬럼 폭 미점유).
-					".arch-live-strip { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; overflow-x: auto; " +
-					"padding: 6px 10px; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line)); border-radius: 6px; flex-shrink: 0; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
 					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
@@ -689,8 +686,6 @@ function ScreenArchitecture(
 
 			<div className="arch-page">
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
-
-				<LiveStrip state={liveState} onRetry={triggerRefresh} />
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
@@ -1247,54 +1242,6 @@ function MermaidCanvas({
 function ArchIconTargetAR() {
 	const { Icon } = window.UI;
 	return <Icon name="target" size={15} />;
-}
-
-// Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
-//   같은 페치가 거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 둘의 예고이기도 함.
-
-// 로드 실패 줄 — live 스트립이 쓰는 한 줄 경보. 컨테이너 클래스는 호출부가 정함.
-// detail 은 끊긴 원인을 이름으로 부르는 자리 — 없으면 그 줄만 빠짐.
-function StripAlertAR({ className, message, detail, onRetry }) {
-	return (
-		<div className={className} role="alert">
-			<span className="fs-meta text-crit" style={{ flexShrink: 0 }}>
-				{message}
-			</span>
-			{detail && (
-				<span className="fs-meta font-mono text-dim truncate">{detail}</span>
-			)}
-			{onRetry && (
-				<button className="btn ghost sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
-		</div>
-	);
-}
-
-function LiveStrip({ state, onRetry }) {
-	if (state.status === "loading") {
-		return (
-			<div className="arch-live-strip" aria-busy="true">
-				<SkelAR w={120} h={16} />
-				<SkelAR w={100} h={16} />
-				<SkelAR w={140} h={16} />
-			</div>
-		);
-	}
-	if (state.status === "error") {
-		return (
-			<StripAlertAR
-				className="arch-live-strip"
-				message="Couldn't load live data"
-				detail={state.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
-
-	// ready 는 렌더할 것이 없음 — 칩이 사라졌고 이중기록 경보는 페이지 상단 배너로 나감.
-	return null;
 }
 
 // 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.

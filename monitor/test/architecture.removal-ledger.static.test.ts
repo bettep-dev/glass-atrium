@@ -133,6 +133,13 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "DualWriteBannerAR", kind: "identifier", ac: "39731-S1" },
   { name: "arch-health-alert-wrap", kind: "attribute", ac: "39731-S1" },
   { name: "arch-queue-error", kind: "attribute", ac: "39731-S1" },
+
+  // 39731 S4 가 지운 live 스트립 — 로딩 스켈레톤과 실패 줄, 그리고 그 줄을 짓던 공용 atom.
+  // 페치의 실패는 이제 경보 레인의 한 행이고, 로딩은 지도 자신의 스켈레톤이 냄 — 지도 위에
+  // 상시로 자리를 쓰는 줄이 남아 있으면 그 둘이 두 자리에서 같은 말을 함.
+  { name: "LiveStrip", kind: "identifier", ac: "39731-S4" },
+  { name: "StripAlertAR", kind: "identifier", ac: "39731-S4" },
+  { name: "arch-live-strip", kind: "attribute", ac: "39731-S4" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -147,13 +154,10 @@ const DISCRIMINABILITY_EXCLUSIONS: { name: string; kind: TokenKind; declaredIn: 
   { name: "data-health-tone", kind: "attribute", declaredIn: "monitor/public/src/screens/architecture.jsx" },
 ];
 
-// 지우지 않은 것 — 이사한 경보의 본체와 live 스트립. 원장이 넘치게 지워지지 않았음을 재는 반대 방향.
+// 지우지 않은 것 — 이사한 경보가 읽는 이름들. 원장이 넘치게 지워지지 않았음을 재는 반대 방향.
 const SURVIVING_TOKENS: LedgerToken[] = [
-  { name: "StripAlertAR", kind: "identifier", ac: "AC-B2-6d" },
   { name: "HEALTH_STORE_LABELS_AR", kind: "identifier", ac: "AC-B2-6d" },
   { name: "getHealthStoreErrorsAR", kind: "identifier", ac: "AC-B2-6d" },
-  { name: "LiveStrip", kind: "identifier", ac: "AC-B2-6d" },
-  { name: "arch-live-strip", kind: "attribute", ac: "AC-B2-6d" },
   // KPI 가 읽던 카드 fold — 집계가 접힌 뒤 tone 버킷 불변식이 서는 자리가 바로 여기임.
   { name: "resolveCardFacts", kind: "identifier", ac: "AC-B2-6b" },
 
@@ -286,17 +290,17 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 
 // 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외는 판별성의 근거를, 생존은 넘치게 지워지지 않았음을 잼.
 // 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽음 → 순회는 하나로 두고, 실패 메시지가 깨진 토큰을 담음.
-test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1)", () => {
+test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1 · 39731-S4)", () => {
   // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
   const ledgerCountByAc: Record<string, number> = {};
   for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
   assert.deepEqual(
     ledgerCountByAc,
-    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3, "39739-R1": 9, "39731-S1": 5 },
+    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3, "39739-R1": 9, "39731-S1": 5, "39731-S4": 3 },
     "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
   assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
-  assert.equal(SURVIVING_TOKENS.length, 24, "survivor list membership changed");
+  assert.equal(SURVIVING_TOKENS.length, 21, "survivor list membership changed");
 
   const allNames = [...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS].map((t) => t.name);
   assert.equal(

@@ -96,7 +96,7 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 				daemon_name: BOUND_DAEMON,
 				// "critical" is not a DAEMON_STATUS_TONE key, so the tone resolves through the
 				// `info` fallback and the pill text reads "critical" — ui.jsx `daemonStatusLabel`
-				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on LiveStrip
+				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on the strip
 				// text inherits `critical`, not an em dash.
 				effective_status: "critical",
 				last_run_at: null,
@@ -587,8 +587,8 @@ test("AC-T19 no interaction attaches the node-dim classes", async () => {
 
 // 상시 칩이 렌더하던 정확한 라벨 — 기본 픽스처(writers 빈 배열 · 최근활동 0) 기준.
 // 맨 단어(cost/agent/outcome)는 다이어그램 노드 라벨과 충돌하므로(diagrams-source 의
-// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 로드 실패 경보와
-// 로딩 스켈레톤이 같은 .arch-live-strip 을 쓰고 둘 다 남기 때문임.
+// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 칩이 살던 줄 자체가
+// 이제 화면에 없으므로 클래스로는 그 부재를 가릴 수 없음.
 const CHIP_LABELS = ["Writer 0/0", "cost 0", "agent 0", "outcome \u2014"];
 
 // 실제 로스터 이름 — composeWriters(live-overlay.ts:383-387)가 내보내는 원소 모양과 같음.
