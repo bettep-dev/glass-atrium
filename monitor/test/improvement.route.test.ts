@@ -9,6 +9,7 @@
 //   - GET /api/improvement?limit=200 (max) · 200 + bounded
 //   - GET /api/improvement invalid query · 400 invalid_param
 //   - GET /api/improvement/stats · 200 + shape + cache hit on 2nd call
+//   - GET /api/improvement/stats · latest_cycle_started_at = unwindowed last autoagent cycle start
 //
 // Test infra:
 //   - DB: real Postgres (DATABASE_URL from .env) — read-only assertions only,
@@ -440,6 +441,44 @@ test("GET /api/improvement/stats: happy path — 200 + complete shape", async ()
     assert.ok(
       Math.abs(body.zero_apply_cycle_rate - expectedRate) < 1e-3,
       "zero_apply_cycle_rate consistent with decomposition buckets",
+    );
+  }
+});
+
+// The status tile answers "when did the loop last run". The day-truncated
+// latest-cycle date the corpus-audit payload carries cannot: a cycle that ran at
+// 04:00 and one that has not run at all today render as the same string. Window-free
+// on purpose — a windowed timestamp goes silent exactly when the loop has been quiet
+// longest, which is when the answer matters.
+test("GET /api/improvement/stats: latest_cycle_started_at is the last autoagent cycle start, unwindowed", async () => {
+  __resetImprovementStatsCacheForTests();
+  const prisma = getPrisma();
+  const maxStartedAt = async (): Promise<string | null> => {
+    const rows = await prisma.$queryRaw<Array<{ started_at: Date | null }>>`
+      SELECT MAX(started_at) AS started_at
+      FROM core.daemon_runs
+      WHERE daemon_name = 'autoagent'
+    `;
+    const value = rows[0]?.started_at ?? null;
+    return value === null ? null : value.toISOString();
+  };
+  // Bracketed like review_flag_last_7d — a live cycle row may land mid-test.
+  const startBefore = await maxStartedAt();
+  const res = await app.inject({ method: "GET", url: "/api/improvement/stats" });
+  assert.strictEqual(res.statusCode, 200);
+  const startAfter = await maxStartedAt();
+  const body = res.json() as { latest_cycle_started_at: string | null };
+  assert.ok(
+    body.latest_cycle_started_at === startBefore || body.latest_cycle_started_at === startAfter,
+    `latest_cycle_started_at ${body.latest_cycle_started_at} matches neither the pre (${startBefore}) ` +
+      `nor the post (${startAfter}) MAX(started_at) of the autoagent cycles`,
+  );
+  if (body.latest_cycle_started_at !== null) {
+    // Time of day present — a day-truncated date is the state this field replaces.
+    assert.match(body.latest_cycle_started_at, /T\d{2}:\d{2}:\d{2}/);
+    assert.ok(
+      Date.parse(body.latest_cycle_started_at) <= Date.now(),
+      "a cycle cannot have started in the future",
     );
   }
 });
