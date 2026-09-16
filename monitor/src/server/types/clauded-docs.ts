@@ -3,9 +3,30 @@
 // 2-value exposure bit; lifecycle is the doc_status axis with supersede chains on the
 // supersedes_id FK. bigint ids coerce to JSON-safe number via bigintToNumber.
 
-// Group cascade target. Same-folder_id rows bulk-update on PUT doc_status
-// (single-statement CTE); supersede auto-transitions the predecessor to 'done'.
-export type DocStatusLiteral = "progress" | "done";
+// Work stage — stored token, then the Korean label the screen renders:
+//   doc_review 문서 검증 · implementing 구현중 · impl_review 구현 검증 ·
+//   impl_done 구현 완료 · done 종료
+// The three implementation stages are optional — doc_review → done is the only edge every
+// document traverses, and the server accepts any stage from any stage (order is a screen
+// affordance). Supersede auto-transitions the predecessor to 'done'.
+export type DocStageLiteral =
+  | "doc_review"
+  | "implementing"
+  | "impl_review"
+  | "impl_done"
+  | "done";
+
+// What monitor.documents.doc_status can hold = the stages plus the retired in-flight token.
+// 'progress' is an accepted write alias for 'doc_review', and a STORED one reads as
+// 'doc_review' rather than being dropped — a read that narrows it away empties the operator's
+// open list. Group cascade target: same-folder_id rows bulk-update on PUT doc_status
+// (single-statement CTE), narrowed to the terminal transition.
+export type DocStatusLiteral = DocStageLiteral | "progress";
+
+// Model id that performed the last status action — null = unknown, a state the screen renders
+// as such rather than as an absent value. The operator's own action is written as a reserved
+// literal in the same column and rendered distinctly from a model id.
+export type LastStatusModel = string | null;
 
 // GET /:id body shape on disk. Default derives from the html_path extension
 // (no `format` DB column — formatFromPath()); explicit `?format=` retained for
