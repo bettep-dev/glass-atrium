@@ -53,6 +53,12 @@ interface AgentStackEntry {
   byResult: Record<string, number>;
 }
 interface OutcomesHelpers {
+  buildAttentionParamsO: (days: number | string) => URLSearchParams;
+  buildPayloadGroupsO: (states: {
+    attentionState: unknown;
+    searchState: unknown;
+    analyticsState: unknown;
+  }) => { key: string; label: string; state: unknown }[];
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
   buildAgentFailureRowsO: (agentStack: unknown) => { agent: string; failed: number; blocked: number; total: number }[];
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
@@ -188,6 +194,55 @@ test("buildStatusBandTilesO: the recorded tile weds writer-emitted records to th
   // 40/200 reconstructed = 20% of the window never reached the recorder as a writer emit.
   const lossy = tileOf(helpers.buildStatusBandTilesO(aboveFloor({ done: 190 }, 40), 0), "recorded");
   assert.deepStrictEqual([lossy.count, lossy.population, lossy.tone], [160, 200, "warn"]);
+});
+
+test("buildStatusBandTilesO: the attention tile weds its count to the whole window, not the writer-only subset", () => {
+  // The server predicate counts reconstructed rows too, so a writer-only denominator would let the
+  // share exceed 100% — 40 of these 200 records never reached the recorder as a writer emit.
+  const attention = tileOf(helpers.buildStatusBandTilesO(aboveFloor({ done: 150 }, 40), 200), "attention");
+  assert.deepStrictEqual([attention.count, attention.population], [200, 200]);
+  assert.ok(attention.count! <= attention.population, "a value is never more than its stated population");
+});
+
+test("buildStatusBandTilesO: the missing-report level honours the same low-N floor as its sibling tiles", () => {
+  const smallWindow = { overall: { total: 12, reconstructed_total: 4 }, byResultCount: { done: 8 } };
+  assert.strictEqual(
+    toneOf(helpers.buildStatusBandTilesO(smallWindow, 0), "recorded"),
+    "neutral",
+    "4 reconstructed rows in a 12-record window is too small a sample to grade",
+  );
+});
+
+// --- wiring: the request literal the route parses, and the lane row that covers its failure ---
+
+test("buildAttentionParamsO: emits a needs_attention literal the route's parser accepts", () => {
+  // routes/outcomes.ts parseFilters: 'true' applies the filter, 'false'/absent applies none,
+  // anything else is a 400 — which lands the tile in error with no banner behind it.
+  const routeAccepted = ["true", "false"];
+  for (const days of [7, 30, 90]) {
+    const params = helpers.buildAttentionParamsO(days);
+    assert.ok(routeAccepted.includes(params.get("needs_attention")!), "a value outside the vocabulary is a 400");
+    assert.strictEqual(params.get("needs_attention"), "true", "the tile asks for the filtered population");
+    assert.strictEqual(params.get("days"), String(days), "the query carries the band's own window");
+    assert.strictEqual(params.get("limit"), "1", "only the total is consumed");
+  }
+});
+
+test("buildPayloadGroupsO: every above-the-fold payload owns a lane row carrying its own state", () => {
+  const attentionState = { status: "error", error: "boom" };
+  const searchState = { status: "ready" };
+  const analyticsState = { status: "loading" };
+  const groups = helpers.buildPayloadGroupsO({ attentionState, searchState, analyticsState });
+
+  assert.deepStrictEqual(
+    sameRealm(groups.map((g) => g.key)),
+    ["attention", "ledger", "analytics"],
+    "a read that owns a tile but no lane row fails silently",
+  );
+  for (const [key, state] of [["attention", attentionState], ["ledger", searchState], ["analytics", analyticsState]] as const) {
+    assert.strictEqual(groups.find((g) => g.key === key)!.state, state, `${key} row reads its own payload`);
+    assert.ok(groups.find((g) => g.key === key)!.label.length > 0, `${key} row names the payload in words`);
+  }
 });
 
 // --- by-agent failures: the table exists to name who broke, so silent rows never render ---

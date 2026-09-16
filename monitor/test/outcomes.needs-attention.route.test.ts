@@ -206,6 +206,19 @@ test("/search needs_attention=false is the same query as an absent param", async
   assert.strictEqual(unfiltered.filter.needs_attention, false, "the echo reports no filter");
 });
 
+// The literal query outcomes.jsx buildAttentionParamsO emits — the seam that 400'd on needs_attention=1.
+test("/search accepts the attention query the client actually emits", async () => {
+  const res = await app.inject({
+    method: "GET",
+    url: "/api/outcomes/search?days=30&needs_attention=true&limit=1",
+  });
+
+  assert.strictEqual(res.statusCode, 200, "the emitted literal must reach the filter, not a 400");
+  const body = res.json() as OutcomeSearchResponse;
+  assert.strictEqual(body.filter.needs_attention, true, "the echo confirms the filter applied");
+  assert.ok(body.rows.length <= 1, "limit=1 — the tile consumes the total only");
+});
+
 test("/search rejects a non-boolean needs_attention", async () => {
   const res = await app.inject({
     method: "GET",

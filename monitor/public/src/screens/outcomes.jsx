@@ -310,6 +310,13 @@ function analyticsDaysO(days) {
   return ANALYTICS_PERIOD_OPTIONS.some((o) => o.value === days) ? days : 90;
 }
 
+// Needs-you 질의 — 서버 parseFilters 는 needs_attention 에 'true'|'false' 만 받는다(그 밖 → 400).
+// 창은 analyticsDaysO 로 접힌 분석 창: 타일 1 의 분자·분모가 다른 창을 읽으면 비율이 성립하지 않는다.
+// limit=1 → total 만 소비.
+function buildAttentionParamsO(days) {
+  return new URLSearchParams({ days: String(days), needs_attention: 'true', limit: '1' });
+}
+
 // 자가개선 데몬 사이클 raw 이벤트 로그 — Learning 화면에서 이관(operational data, 집계 신호 아님).
 //   소유 endpoint: /api/improvement/loop-events (core.autoagent_loop_events per-cycle stage stream).
 const LOOP_EVENTS_URL = '/api/improvement/loop-events?limit=50';
@@ -521,17 +528,13 @@ function ScreenOutcomes({ onNav }) {
 
     fetchJsonO(crossUrl, ctrl.signal)
       .then((overall) => {
-        const byResultCount    = buildByResultCountMapO(overall.by_result);
-        // 합성 복구행(reconstructed) 서브카운트 — KPI headline 을 writer-emitted 로 분리.
-        const byResultReconstructed = buildByResultReconstructedMapO(overall.by_result);
-        const agentStack       = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
-        // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
-        const needsContextCount = extractResultCountO(overall.by_result, 'needs_context');
-        const crosstab          = buildCrosstabO(overall.cells);
+        const byResultCount = buildByResultCountMapO(overall.by_result);
+        const agentStack    = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
+        const crosstab      = buildCrosstabO(overall.cells);
         markFreshO();
         setAnalyticsState({
           status: 'ready',
-          data: { overall, byResultCount, byResultReconstructed, agentStack, needsContextCount, crosstab },
+          data: { overall, byResultCount, agentStack, crosstab },
           error: null,
         });
       })
@@ -596,7 +599,7 @@ function ScreenOutcomes({ onNav }) {
     const ctrl = new AbortController();
     setAttentionState({ status: 'loading', data: null, error: null });
 
-    const params = new URLSearchParams({ days: String(filter.days), needs_attention: '1', limit: '1' });
+    const params = buildAttentionParamsO(analyticsPeriod);
     setIncludeAllParamO(params, includeAll);
 
     fetchJsonO(`/api/outcomes/search?${params.toString()}`, ctrl.signal)
@@ -604,7 +607,7 @@ function ScreenOutcomes({ onNav }) {
       .catch((err) => handleErrorO(err, setAttentionState));
 
     return () => ctrl.abort();
-  }, [filter.days, includeAll, refreshTick]);
+  }, [analyticsPeriod, includeAll, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
   useEffectO(() => {
@@ -677,17 +680,14 @@ function ScreenOutcomes({ onNav }) {
 
       <AlarmLaneO
         channelLivenessState={channelLivenessState}
-        payloadGroups={[
-          { key: 'ledger',   label: 'the record ledger', state: searchState },
-          { key: 'analytics', label: 'the status band',  state: analyticsState },
-        ]}
+        payloadGroups={buildPayloadGroupsO({ attentionState, searchState, analyticsState })}
         onRetry={triggerRefresh}
       />
 
       <StatusBandO
         analyticsState={analyticsState}
         attentionState={attentionState}
-        windowDays={filter.days}
+        windowDays={analyticsPeriod}
       />
 
       {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
@@ -760,6 +760,15 @@ function ScreenOutcomes({ onNav }) {
 
 // 예약 레인 — 문제가 없으면 아무것도 렌더하지 않는다. 침묵한 기록 채널과 payload 실패만 레인 행이 되고,
 // 나머지 등급은 status band 글리프가 운반한다 (39573 §4 admission).
+// above-the-fold payload 마다 레인 행 하나 — 실패한 읽기가 타일만 비우고 침묵하면 조작자는 아무것도 못 본다.
+function buildPayloadGroupsO({ attentionState, searchState, analyticsState }) {
+  return [
+    { key: 'attention', label: 'the needs-you tile', state: attentionState },
+    { key: 'ledger',    label: 'the record ledger',  state: searchState },
+    { key: 'analytics', label: 'the status band',    state: analyticsState },
+  ];
+}
+
 function AlarmLaneO({ channelLivenessState, payloadGroups, onRetry }) {
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
   const groups = Array.isArray(payloadGroups) ? payloadGroups : [];
@@ -871,32 +880,38 @@ function loopEventsSummaryO(loopEventsState) {
 // 타일 tone/값 산출 — 임계 판정은 공유 SoT(window.UI.outcomeShareTone) 뿐이고 여기서 두 번째 규칙을 만들지 않는다.
 // 모집단이 low-N 이면 tone 주장을 포기한다(neutral) — 소표본의 한 건이 crit 으로 보이면 안 된다.
 function buildStatusBandTilesO(data, attentionCount) {
-  const { getWriterTotal, outcomeShareTone, LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
+  const {
+    getWriterTotal, outcomeShareTone, LOW_N_MIN,
+    OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE, OUTCOME_MISSING_REPORT_WARN_SHARE,
+  } = window.UI;
 
   const byResult    = data?.byResultCount || {};
   const total       = Number(data?.overall?.total) || 0;
   const writerTotal = getWriterTotal(data?.overall);
   const broken      = (byResult.fail || 0) + (byResult.blocked || 0);
   const omitted     = Math.max(0, total - writerTotal);
-  const hasFloor    = writerTotal >= LOW_N_MIN;
+  // 두 모집단은 서로 다른 사실을 센다 — writer-emitted 사실은 writerTotal, 창 전체 사실은 total.
+  const hasWriterFloor = writerTotal >= LOW_N_MIN;
+  const hasRecordFloor = total >= LOW_N_MIN;
 
   return [
     {
       key: 'attention',
       label: 'Needs you',
       count: attentionCount,
-      population: writerTotal,
-      tone: !hasFloor || attentionCount === null
+      // 서버 attention 술어는 복구행을 빼지 않는다 → 분모도 창 전체 기록(total). writerTotal 이면 100% 초과 가능.
+      population: total,
+      tone: !hasRecordFloor || attentionCount === null
         ? 'neutral'
-        : (outcomeShareTone(attentionCount, writerTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
-      hint: 'Flagged for review, failed, blocked, or carrying an unclosed caveat',
+        : (outcomeShareTone(attentionCount, total, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
+      hint: 'Records in the window flagged for review, failed, blocked, or carrying an unclosed caveat',
     },
     {
       key: 'broken',
       label: 'Failed or blocked',
       count: broken,
       population: writerTotal,
-      tone: !hasFloor
+      tone: !hasWriterFloor
         ? 'neutral'
         : (outcomeShareTone(broken, writerTotal, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') || 'ok'),
       hint: 'Writer-emitted records whose result is fail or blocked',
@@ -907,7 +922,9 @@ function buildStatusBandTilesO(data, attentionCount) {
       count: writerTotal,
       population: total,
       // 누락 보고는 여기 글리프가 유일한 등급 채널 — 레인 행으로 올리지 않는다.
-      tone: outcomeShareTone(omitted, total, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok',
+      tone: !hasRecordFloor
+        ? 'neutral'
+        : (outcomeShareTone(omitted, total, OUTCOME_MISSING_REPORT_WARN_SHARE, 'warn') || 'ok'),
       hint: 'Records the agent emitted itself; the rest were reconstructed by the harness',
     },
     {
@@ -936,7 +953,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays }) {
     ? (Number(attentionState.data?.total) || 0)
     : null;
   const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
-  const windowLabel = windowDays === OUTCOME_ALL_PERIOD ? 'all time' : `${windowDays}d`;
+  // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
+  const windowLabel = `${windowDays}d`;
 
   return (
     <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" role="group" aria-label="Status band">
@@ -2186,17 +2204,7 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
   );
 }
 
-// confidence 3-seg NEUTRAL slate chip (T-OUT-2) — high/medium/low 를 채워진 슬레이트 세그먼트 수로 표현.
-//   green/red 회피: confidence 는 품질 판정이 아니라 작성자의 자기확신도 → 중립(slate) 단계만 인코딩.
-//   null(작성자 누락) = 빈 칩 + '—' (수치 fabrication 회피). 색≠의미 단독: 세그먼트 수가 위계를 전달.
-const CONFIDENCE_LEVEL = { high: 3, medium: 2, low: 1 };
-
-// 셀 안의 고정 슬롯 폭 — 셀마다 내용 폭이 달라지면 열이 세로로 정렬되지 않는다 (행마다 들쭉날쭉).
-//   슬롯 폭이 고정이면 막대/라벨/글리프가 행을 가로질러 각자의 수직선을 이룬다.
-const CONF_BAR_SLOT   = 19;   // 5px 세그먼트 3 + 2px 간격 2
-const CONF_LABEL_SLOT = 44;   // 최장 라벨 'medium' (fs-micro mono)
-const METRIC_MARK_SLOT  = 14;
-const METRIC_SCORE_SLOT = 22;
+// 요약 셀의 고정 flag 슬롯 폭 — 폭이 행마다 달라지면 요약 텍스트가 세로로 정렬되지 않는다.
 const SUMMARY_FLAG_SLOT = 18;
 
 function parseQaScoreO(qaScore) {
@@ -2940,20 +2948,6 @@ function buildByResultCountMapO(byResult) {
   return out;
 }
 
-// cross-analysis by_result → { result: reconstructed_count } (합성 복구행 서브카운트).
-//   writer-emitted headline = count - reconstructed_count. 필드 부재(구 응답) → 0 (분리 없음과 동일).
-function buildByResultReconstructedMapO(byResult) {
-  const out = {};
-  for (const key of ANALYTICS_KPI_ORDER) out[key] = 0;
-  if (!Array.isArray(byResult)) return out;
-  for (const row of byResult) {
-    if (row && typeof row.result === 'string') {
-      out[row.result] = Number(row.reconstructed_count) || 0;
-    }
-  }
-  return out;
-}
-
 // cross-analysis by_agent_result (단일 GROUP BY (agent, result)) → 에이전트별 스택 행.
 // 이전 per-result top-10 4-list stitch(는 #11↓ agent 를 소리없이 누락 = 근사치)를 대체 —
 // 서버가 canonical agent 전체의 모든 result 를 한 쿼리로 반환하므로 per-agent total 이 정확히 정합.
@@ -2977,16 +2971,6 @@ function buildAgentStackO(byAgentResult, resultOrder, topN) {
   return Array.from(byAgent.values())
     .sort((a, b) => b.total - a.total)
     .slice(0, topN);
-}
-
-// cross-analysis by_result[] 에서 단일 result 카운트 추출 (needs_context 등 비-KPI result, P2).
-// 응답 미포함 result → 0 (해당 기간 0건과 동일 처리).
-function extractResultCountO(byResult, result) {
-  if (!Array.isArray(byResult)) return 0;
-  for (const row of byResult) {
-    if (row && row.result === result) return Number(row.count) || 0;
-  }
-  return 0;
 }
 
 // cross-analysis cells[] (12-cell) → confidence×metric_pass 조회 맵 + 합계 (P2 polar-mismatch cross-tab).

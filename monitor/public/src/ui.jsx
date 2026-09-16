@@ -754,6 +754,8 @@ function worstTone(a, b) {
 // Outcome quality thresholds — the share a fact must reach before it carries a tone.
 const OUTCOME_BREAKAGE_CRIT_SHARE = 0.05;
 const OUTCOME_OPEN_CAVEAT_WARN_SHARE = 0.1;
+// Recorder-reconstructed share — a reporting-pipeline fact, tuned independently of the caveat rule.
+const OUTCOME_MISSING_REPORT_WARN_SHARE = 0.1;
 
 // Per-fact tone SoT — every screen reads one fact's share against one population here,
 // so a bare "greater than zero" never becomes a second rule. Population <= 0 → null
@@ -884,5 +886,6 @@ window.UI = {
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   SEVERITY_RANK, worstTone, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
+  OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
 };
