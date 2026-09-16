@@ -42,41 +42,41 @@ const MODEL_CAP_MC = {
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
 	inherit: "Falls back to whatever settings.json resolves to",
 };
-// 도메인 표시 메타 — 라벨/평이 설명/옵션 구성. enforcement = spec D3 class 컬럼의 클라이언트 표기
+// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명/옵션 구성
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
 	"model.dev": {
 		label: "Dev agents",
-		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file, picked up at next spawn",
-		enforcement: "applied",
+		hint: "Code implementation across the dev fleet",
+		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file",
 		editable: true,
 		inherit: true,
 	},
 	"model.research": {
 		label: "Research agent",
-		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis; written into its agent file, picked up at next spawn",
-		enforcement: "applied",
+		hint: "Web and codebase research",
+		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis",
 		editable: true,
 		inherit: true,
 	},
 	"model.meta": {
 		label: "Meta agent",
+		hint: "Rewrites agent instructions",
 		desc: "glass-atrium-meta-agent — the AutoAgent self-improvement loop's instruction rewriter: regenerates agent instruction files from outcome signals, so its model quality shapes how well every agent evolves",
-		enforcement: "applied",
 		editable: true,
 		inherit: true,
 	},
 	"model.wiki": {
 		label: "Wiki curator",
+		hint: "Wiki compilation and index writes",
 		desc: "glass-atrium-wiki-curator — sole owner of wiki writes: incremental compilation, index and topic-map updates, health checks, and raw-ingestion validation",
-		enforcement: "applied",
 		editable: true,
 		inherit: true,
 	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
+		hint: "Background daemon housekeeping steps",
 		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
-		enforcement: "applied",
 		editable: true,
 		inherit: false,
 	},
@@ -91,12 +91,24 @@ const DOMAIN_ORDER_MC = [
 	"model.daemon_cycle_worker",
 ];
 
-// enforcement class 칩 — 정직 공시: applied=저장이 실제 소비 지점에 반영.
-const ENFORCEMENT_META_MC = {
-	applied: {
-		label: "Applied",
-		tone: "ok",
-		desc: "Saving here changes the real consumed value",
+// 반영 시점 — GET apply_mode 의 표기. 모든 편집이 "언제 적용되나" 를 묻게 만드는데 화면이 답한 적이 없어
+// Enforcement(항상 applied, 정보량 0) 컬럼을 이걸로 교체.
+const APPLY_MODE_META_MC = {
+	"next-spawn": {
+		label: "Next spawn",
+		desc: "Saved now — a running agent keeps its current model until it next spawns",
+	},
+	"next-cycle": {
+		label: "Next cycle",
+		desc: "Saved now — the daemon picks it up on its next cycle",
+	},
+	"tmux-restart": {
+		label: "After tmux restart",
+		desc: "Saved now — the tmux session must restart before it is used",
+	},
+	immediate: {
+		label: "Immediately",
+		desc: "In force as soon as the save lands",
 	},
 };
 
@@ -130,10 +142,12 @@ const SYNC_META_MC = {
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
+		hint: "Caps one self-improve generation or wiki compile call",
 		desc: "Aborts a single runaway model call in the self-improve generation step and the wiki compile step (both share this cap)",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
+		hint: "Caps one self-improve pre-verify call",
 		desc: "Aborts a single runaway model call in the self-improve pre-verify step",
 	},
 };
@@ -478,10 +492,10 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
-// 총 컬럼 수 (설명 행 colSpan) — Target·Saved target·Actual·Sync·Enforcement = 5.
-const DOMAIN_TABLE_COLSPAN_MC = 5;
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live·Takes effect = 4.
+const DOMAIN_TABLE_COLSPAN_MC = 4;
 
-// 모델 도메인 섹션 — Saved target(편집) vs Actual(실측) + apply/enforcement 칩.
+// 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
 function DomainsSectionMC({
 	domains,
 	knownModels,
@@ -498,46 +512,108 @@ function DomainsSectionMC({
 			<table className="tbl">
 				<thead>
 					<tr>
-						<th>Target</th>
-						<th>Saved target</th>
-						<th>Actual</th>
-						<th>Sync</th>
-						<th>Enforcement</th>
+						<th>Agent tier</th>
+						<th>Model</th>
+						<th>Live</th>
+						<th>Takes effect</th>
 					</tr>
 				</thead>
 				<tbody>
-					{rows.map((d) => (
-						<DomainRowMC
-							key={d.domain}
-							domain={d}
-							knownModels={knownModels}
-							value={form.models[d.domain] ?? ""}
-							defaultValue={baseline?.models[d.domain] ?? ""}
-							error={errors[d.domain]}
-							onChange={(v) => onModelChange(d.domain, v)}
+					{rows.length === 0 ? (
+						<EmptyRowMC
+							colSpan={DOMAIN_TABLE_COLSPAN_MC}
+							message="No model domains reported."
 						/>
-					))}
+					) : (
+						rows.map((d) => (
+							<DomainRowMC
+								key={d.domain}
+								domain={d}
+								knownModels={knownModels}
+								value={form.models[d.domain] ?? ""}
+								defaultValue={baseline?.models[d.domain] ?? ""}
+								error={errors[d.domain]}
+								onChange={(v) => onModelChange(d.domain, v)}
+							/>
+						))
+					)}
 				</tbody>
 			</table>
 		</div>
 	);
 }
 
-// drift/in-sync 상태 배지 — actual↔saved(또는 daemon-config) 정합성 공시. DomainRowMC/BudgetRowMC 공용
-// (드리프트 소스 boolean + title 문구만 상이 — span[title]>Badge 구조는 동일).
-function DriftBadgeMC({ drift, driftTitle, syncTitle, className = "" }) {
+// 로스터가 빈 응답 — 행 0개를 "로드 안 됨" 과 구분해 명시 (빈 표 = 무언의 0 금지).
+function EmptyRowMC({ colSpan, message }) {
+	return (
+		<tr>
+			<td colSpan={colSpan}>
+				<div className="fs-meta text-faint">{message}</div>
+			</td>
+		</tr>
+	);
+}
+
+// 1줄 힌트 + 전문은 클릭 뒤 — 전 컬럼 폭 설명 행이 표 리듬을 깨던 자리를 대체.
+function RowHintMC({ hint, detail }) {
+	if (!hint && !detail) return null;
+	if (!detail || detail === hint) {
+		return <div className="fs-meta text-faint is-wrap">{hint}</div>;
+	}
+
+	return (
+		<details className="fs-meta text-faint">
+			<summary className="is-wrap">{hint}</summary>
+			<div className="is-wrap mt-1">{detail}</div>
+		</details>
+	);
+}
+
+// 라이브 값 = 소비 지점 실측. 저장값과 같으면 dim 텍스트 하나(정상 상태에 상시 ok pill 금지),
+// 다르면 warn 배지 1개 — 톤은 배지 glyph 가 싣는다. files 가 오면 mixed 내역을 클릭 뒤로 공시.
+function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
-	return drift ? (
-		<span title={driftTitle}>
-			<Badge role="status" tone="warn" icon={true} className={className}>
-				drift
-			</Badge>
-		</span>
-	) : (
-		<span title={syncTitle}>
-			<Badge role="status" tone="ok" icon={true} className={className}>
-				in sync
-			</Badge>
+	const fileRows = Array.isArray(files) ? files : [];
+
+	return (
+		<div className="flex flex-col gap-1 min-w-0">
+			<div className="flex items-center gap-2 min-w-0">
+				<span
+					className={`font-mono fs-meta truncate ${drift ? "text-ink" : "text-dim"}`}
+				>
+					{value ?? "—"}
+				</span>
+				{drift && (
+					<span title={driftTitle}>
+						<Badge role="status" tone="warn" icon={true} className="pill--ctl-h">
+							drift
+						</Badge>
+					</span>
+				)}
+			</div>
+			{fileRows.length > 0 && (
+				<details className="fs-micro text-faint">
+					<summary>{fileRows.length} files</summary>
+					<div className="mt-1 flex flex-col gap-0.5">
+						{fileRows.map((f) => (
+							<div key={f.file} className="font-mono truncate">
+								{f.file} — {f.model ?? "inherit"}
+							</div>
+						))}
+					</div>
+				</details>
+			)}
+		</div>
+	);
+}
+
+// 반영 시점 — 무톤 텍스트. 알람이 아니라 리포트라 색을 쓰지 않는다.
+function ApplyModeMC({ mode }) {
+	const meta = APPLY_MODE_META_MC[mode] || { label: mode || "—", desc: "" };
+
+	return (
+		<span className="fs-meta text-dim" title={meta.desc}>
+			{meta.label}
 		</span>
 	);
 }
@@ -553,83 +629,52 @@ function DomainRowMC({
 	const { Badge } = window.UI;
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
+		hint: "",
 		desc: "",
-		enforcement: "applied",
 		editable: d.editable !== false,
 	};
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
-	const enforceMeta =
-		ENFORCEMENT_META_MC[meta.enforcement] || ENFORCEMENT_META_MC.applied;
 
 	// 행 간격 10px(상하 5px) — 라벨/컨트롤 묶음이 개별 행으로 읽히게.
 	const cellPad = { paddingTop: 5, paddingBottom: 5 };
 
 	return (
-		<>
-			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-				<td style={cellPad}>
-					<div className="flex items-center gap-2 min-w-0">
-						<span className="shrink-0 fs-body font-medium text-ink">
-							{meta.label}
-						</span>
-					</div>
-				</td>
-				<td style={{ ...cellPad, minWidth: 220 }}>
-					{editable ? (
-						<ModelSelectMC
-							domain={d.domain}
-							knownModels={knownModels}
-							value={value}
-							defaultValue={defaultValue}
-							error={error}
-							pricingKnown={d.pricing_known}
-							onChange={onChange}
-						/>
-					) : (
-						// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
-						<Badge role="metadata" className="pill--ctl-h">
-							{value || d.desired || "—"}
-						</Badge>
-					)}
-				</td>
-				<td style={cellPad}>
-					{/* 메타/상태 배지는 SAVED TARGET <select> 와 같은 높이(--ctl-h)로 맞춘다 — 사용자 요구.
-					    한 행 안에서 높이가 어긋나면 버그로 읽힌다. 공용 Badge 로 이관할 때도 이 height-match 는 유지할 것
-					    (이전 이관에서 표준 22px 로 되돌아가 회귀했던 지점). */}
-					<Badge role="metadata" className="pill--ctl-h">
-						{d.actual ?? "—"}
-					</Badge>
-				</td>
-				<td style={cellPad}>
-					<DriftBadgeMC
-						drift={d.drift}
-						driftTitle="Actual differs from saved target"
-						syncTitle="Actual matches saved target"
-						className="pill--ctl-h"
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td style={{ ...cellPad, maxWidth: 260 }}>
+				<div className="fs-body font-medium text-ink">{meta.label}</div>
+				<RowHintMC hint={meta.hint} detail={meta.desc} />
+			</td>
+			<td style={{ ...cellPad, minWidth: 220 }}>
+				{editable ? (
+					<ModelSelectMC
+						domain={d.domain}
+						knownModels={knownModels}
+						value={value}
+						defaultValue={defaultValue}
+						error={error}
+						pricingKnown={d.pricing_known}
+						onChange={onChange}
 					/>
-				</td>
-				<td style={cellPad}>
-					<span title={enforceMeta.desc}>
-						<Badge
-							role="status"
-							tone={enforceMeta.tone}
-							glyph={false}
-							className="pill--ctl-h">
-							{enforceMeta.label}
-						</Badge>
-					</span>
-				</td>
-			</tr>
-			{meta.desc && (
-				// 설명은 전 컬럼 폭 행으로 — 좁은 첫 컬럼에 갇히면 여러 줄로 접혀 읽히지 않는다.
-				<tr className="row-desc">
-					<td colSpan={DOMAIN_TABLE_COLSPAN_MC}>
-						<div className="card-sub is-wrap">{meta.desc}</div>
-					</td>
-				</tr>
-			)}
-		</>
+				) : (
+					// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
+					<Badge role="metadata" className="pill--ctl-h">
+						{value || d.desired || "—"}
+					</Badge>
+				)}
+			</td>
+			<td style={cellPad}>
+				<LiveValueMC
+					value={d.actual}
+					drift={d.drift}
+					files={d.files}
+					driftTitle="Live value differs from the saved target — press Save again"
+				/>
+			</td>
+			<td style={cellPad}>
+				<ApplyModeMC mode={d.apply_mode} />
+			</td>
+		</tr>
 	);
 }
 
@@ -730,10 +775,10 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	);
 }
 
-// 총 컬럼 수 (설명 행 colSpan) — Background call·Per-call cap·Actual·Sync = 4.
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live·Takes effect = 4.
 const BUDGET_TABLE_COLSPAN_MC = 4;
 
-// per-call 예산 상한 섹션 — 입력 + apply/drift 칩 + OAuth 맥락 정직 공시 (월 청구 캡이 아님).
+// per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
 function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
 	const rows = sortBudgetsMC(budgets || []);
 
@@ -745,21 +790,28 @@ function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
 					<tr>
 						<th>Background call</th>
 						<th>Per-call cap</th>
-						<th>Actual</th>
-						<th>Sync</th>
+						<th>Live</th>
+						<th>Takes effect</th>
 					</tr>
 				</thead>
 				<tbody>
-					{rows.map((b) => (
-						<BudgetRowMC
-							key={b.domain}
-							budget={b}
-							value={form.budgets[b.domain] ?? ""}
-							defaultValue={baseline?.budgets[b.domain] ?? ""}
-							error={errors[b.domain]}
-							onChange={(v) => onBudgetChange(b.domain, v)}
+					{rows.length === 0 ? (
+						<EmptyRowMC
+							colSpan={BUDGET_TABLE_COLSPAN_MC}
+							message="No budget caps reported."
 						/>
-					))}
+					) : (
+						rows.map((b) => (
+							<BudgetRowMC
+								key={b.domain}
+								budget={b}
+								value={form.budgets[b.domain] ?? ""}
+								defaultValue={baseline?.budgets[b.domain] ?? ""}
+								error={errors[b.domain]}
+								onChange={(v) => onBudgetChange(b.domain, v)}
+							/>
+						))
+					)}
 				</tbody>
 			</table>
 		</div>
@@ -773,75 +825,63 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// 예산 1행 — $ 입력(2-decimal 문자열) + 단위/범위 힌트 + validate-on-blur + field-adjacent role=alert
-// (T-MDL-4) + actual/drift + ghost default/reset (T-MDL-6).
+// 예산 1행 — $ 입력(2-decimal 문자열) + validate-on-blur + field-adjacent role=alert (T-MDL-4)
+// + 실측/반영 시점 + ghost default/reset (T-MDL-6).
 function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
-	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, desc: "" };
+	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// touched = blur 1회 후에만 inline 에러 노출 (validate-on-blur — 타이핑 중 noise 억제).
 	const [touched, setTouched] = useStateMC(false);
 	const showError = error && touched;
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
-		<>
-			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-				<td>
-					<div className="fs-body">{meta.label}</div>
-				</td>
-				<td style={{ minWidth: 180 }}>
-					<div className="flex items-center gap-2">
-						<span
-							className={`field-affix${showError ? " is-error" : ""}`}
-							style={{ width: "6rem" }}
-						>
-							<span className="field-affix__sym">$</span>
-							<input
-								type="text"
-								inputMode="decimal"
-								className="field field--mono text-right"
-								value={value}
-								placeholder={budgetPlaceholderMC()}
-								onChange={(e) => onChange(e.target.value)}
-								onBlur={() => setTouched(true)}
-								aria-label={`${meta.label} per-call cap in USD`}
-								aria-invalid={showError ? "true" : undefined}
-							/>
-						</span>
-					</div>
-					{showError && (
-						<div className="fs-meta text-crit mt-1" role="alert">
-							{error}
-						</div>
-					)}
-					<GhostResetMC
-						overridden={overridden}
-						defaultValue={defaultValue}
-						onReset={() => onChange(defaultValue)}
-					/>
-				</td>
-				<td>
-					<span className="font-mono fs-body">
-						{b.actual ? `$${b.actual}` : "—"}
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td style={{ maxWidth: 260 }}>
+				<div className="fs-body">{meta.label}</div>
+				<RowHintMC hint={meta.hint} detail={meta.desc} />
+			</td>
+			<td style={{ minWidth: 180 }}>
+				<div className="flex items-center gap-2">
+					<span
+						className={`field-affix${showError ? " is-error" : ""}`}
+						style={{ width: "6rem" }}
+					>
+						<span className="field-affix__sym">$</span>
+						<input
+							type="text"
+							inputMode="decimal"
+							className="field field--mono text-right"
+							value={value}
+							placeholder={budgetPlaceholderMC()}
+							onChange={(e) => onChange(e.target.value)}
+							onBlur={() => setTouched(true)}
+							aria-label={`${meta.label} per-call cap in USD`}
+							aria-invalid={showError ? "true" : undefined}
+						/>
 					</span>
-				</td>
-				<td>
-					<DriftBadgeMC
-						drift={b.drift}
-						driftTitle="daemon-config.json differs from saved target — press Save"
-						syncTitle="daemon-config.json matches saved target"
-						className="pill--ctl-h"
-					/>
-				</td>
-			</tr>
-			{meta.desc && (
-				// 설명은 전 컬럼 폭 행으로 — ellipsis 로 잘려 hover 툴팁에만 있던 문장을 인라인 전문 노출.
-				<tr className="row-desc">
-					<td colSpan={BUDGET_TABLE_COLSPAN_MC}>
-						<div className="fs-meta text-faint">{meta.desc}</div>
-					</td>
-				</tr>
-			)}
-		</>
+				</div>
+				{showError && (
+					<div className="fs-meta text-crit mt-1" role="alert">
+						{error}
+					</div>
+				)}
+				<GhostResetMC
+					overridden={overridden}
+					defaultValue={defaultValue}
+					onReset={() => onChange(defaultValue)}
+				/>
+			</td>
+			<td>
+				<LiveValueMC
+					value={b.actual ? `$${b.actual}` : null}
+					drift={b.drift}
+					driftTitle="daemon-config.json differs from the saved cap — press Save again"
+				/>
+			</td>
+			<td>
+				<ApplyModeMC mode={b.apply_mode} />
+			</td>
+		</tr>
 	);
 }
 
