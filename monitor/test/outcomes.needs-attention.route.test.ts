@@ -15,6 +15,9 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
@@ -22,6 +25,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerOutcomesRoutes } from "../src/server/routes/outcomes.js";
 import type {
   OutcomeCrossAnalysisResponse,
@@ -70,7 +74,34 @@ function openCaveatCount(agent: string): number {
   ).length;
 }
 
+// Hermetic registry — by_agent_top_10 stays registry-scoped even under include_all,
+// so the seed agents reach that dimension only by being canonical members here.
+function buildRegistryFixture(): unknown {
+  const agents: Record<string, unknown> = {};
+  for (const agent of new Set(SEED_ROWS.map((row) => row.agent))) {
+    agents[agent] = { domains: ["test"], phase: "implementation", dual_phase: false };
+  }
+  return { $schema: "agent-registry", version: "1.1", agents };
+}
+
+let registryRoot: string;
+
+async function setRegistryFixture(): Promise<void> {
+  registryRoot = await mkdtemp(join(tmpdir(), "needs-attention-registry-"));
+  const registryPath = join(registryRoot, "agent-registry.json");
+  await writeFile(registryPath, JSON.stringify(buildRegistryFixture()), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+}
+
+async function clearRegistryFixture(): Promise<void> {
+  delete process.env.AGENT_REGISTRY_PATH;
+  resetAgentRegistryCache();
+  await rm(registryRoot, { recursive: true, force: true });
+}
+
 before(async () => {
+  await setRegistryFixture();
   app = Fastify({ logger: false });
   await registerOutcomesRoutes(app);
   await app.ready();
@@ -92,6 +123,7 @@ after(async () => {
     console.error("[needs-attention-test cleanup] DB scrub failed:", error);
   }
   await disconnectPrisma();
+  await clearRegistryFixture();
 });
 
 async function seedRows(): Promise<void> {
