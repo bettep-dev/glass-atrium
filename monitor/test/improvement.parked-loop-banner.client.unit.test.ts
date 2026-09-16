@@ -26,6 +26,10 @@ import { buildScreenSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
+const INSTRUMENTATION_SRC = resolve(
+  __dirname,
+  "../public/src/screens/improvement-instrumentation.jsx",
+);
 
 interface RecordedElement {
   type: unknown;
@@ -34,8 +38,16 @@ interface RecordedElement {
 
 interface BannerSandbox {
   React: { createElement: unknown };
+  window: { UI: Record<string, unknown> };
   ParkedLoopBannerI: (props: { applyCap: unknown }) => RecordedElement | null;
   AlarmLaneI: (props: { applyCap: unknown }) => RecordedElement | null;
+  LedgerFooterI: (props: {
+    total: number;
+    declined: number;
+    suppression: unknown;
+  }) => RecordedElement | null;
+  BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
+  CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
 }
 
 const HINT = "the reset does NOT re-arm the cap; it only overwrites the park timestamp";
@@ -64,6 +76,10 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
 const rendered = sandbox.ParkedLoopBannerI({
   applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: HINT },
 });
+// The bucket row asks the shared harness for one more window.UI member than the
+// module top level reads.
+Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
+
 const hosts = findHintHosts(rendered, []);
 
 test("the rendered banner puts the hint in exactly one element", () => {
@@ -170,11 +186,73 @@ test("the operator view keeps the five-surface spine order", async () => {
 // encodes no severity and has no token.
 test("colour is consumed through design tokens, never a raw literal", async () => {
   const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
-  assert.deepEqual(hex, [], "hex colour literals bypass the token layer");
-  const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter(
-    (decl) => !decl.includes("var(") && !/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*[,)]/.test(decl),
+  for (const path of [IMPROVEMENT_SRC, INSTRUMENTATION_SRC]) {
+    const src = await readFile(path, "utf8");
+    const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    assert.deepEqual(hex, [], `hex colour literals bypass the token layer in ${path}`);
+    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter(
+      (decl) => !decl.includes("var(") && !/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*[,)]/.test(decl),
+    );
+    assert.deepEqual(
+      rawFns,
+      [],
+      `only the neutral drop shadow may name a colour without a token in ${path}`,
+    );
+  }
+});
+
+// ----- The same contract on the REPORT surfaces --------------------------------
+//
+// The banner walk above covers the one surface the plan allows a container tint.
+// The ledger footer and the CTM/EPM bucket row are report surfaces, allowed no
+// tint at all, so a severity class there can only be sitting on text. Both are
+// invoked directly: the recorder stores a function child as `type` without calling
+// it, so walking the ledger card would stop at its footer.
+
+function tintedTextNodes(tree: unknown): string[] {
+  return collectElements(tree, [])
+    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => el.props.s === undefined)
+    .map((el) => String(el.props.className));
+}
+
+test("the ledger footer reports its worst figures with no hue on text", () => {
+  const footer = sandbox.LedgerFooterI({
+    total: 40,
+    declined: 9,
+    suppression: { pending_total: 12, pending_unpromptable: 7, off_registry_parked: 3 },
+  });
+  assert.deepEqual(
+    tintedTextNodes(footer),
+    [],
+    "severity hue on a footer text node — the count already carries the fact",
   );
-  assert.deepEqual(rawFns, [], "only the neutral drop shadow may name a colour without a token");
+});
+
+test("the CTM/EPM row leaves its tone on the glyph", () => {
+  const row = sandbox.BucketRowI({
+    state: { status: "ready" },
+    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
+  });
+  assert.deepEqual(
+    tintedTextNodes(row),
+    [],
+    "the label repeats a tone the SymI beside it already declares",
+  );
+});
+
+test("the cycle decomposition chips leave their tone on the glyph", () => {
+  const row = sandbox.CycleDecompositionRowI({
+    stats: {
+      cycles_generated_applied_7d: 3,
+      cycles_generated_not_applied_7d: 4,
+      cycles_no_generation_7d: 5,
+      cycle_total_7d: 12,
+    },
+  });
+  assert.deepEqual(
+    tintedTextNodes(row),
+    [],
+    "the chip label repeats a tone the SymI beside it already declares",
+  );
 });

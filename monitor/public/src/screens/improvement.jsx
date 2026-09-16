@@ -522,8 +522,6 @@ function ScreenImprovement({ onNav }) {
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
-        .i-sig-cell { min-width:200px; max-width:0; width:60%; }
-        .i-sig-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; word-break:break-word; line-height:1.4; min-height:2.8em; }
         /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
         .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
         .i-act-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:1px; }
@@ -707,7 +705,7 @@ function StatusBandI({
 				tone="text-ok"
 				symbol="✓"
 				label="Applied (7 days)"
-				value={formatIntI(Number(s.applied_last_7d ?? 0))}
+				value={formatIntI(Number(s.cycles_generated_applied_7d ?? 0))}
 				population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
 				onRetry={onRetry}
 			/>
@@ -822,7 +820,7 @@ function AsOfStampI({ at }) {
 	return (
 		<span
 			className="fs-micro font-mono text-faint"
-			title="When this screen's payloads last landed"
+			title="When the pattern list last landed — every other card reports its own state"
 		>
 			as of {at ? formatCycleStampI(at) : "—"}
 		</span>
@@ -951,7 +949,7 @@ function CycleDecompositionRowI({ stats }) {
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
 					<SymI s={sym} className={tone} size={12} />
-					<span className={tone}>{label}</span>
+					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
 			))}
@@ -1614,7 +1612,10 @@ function BucketRowI({ state, buckets }) {
 	if (state.status === "loading" || !buckets) {
 		return (
 			<div className="card">
-				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+				<CardHead
+					title="Learning memory: wins & mistakes (CTM · EPM)"
+					sub="All time, every agent — not the group's 7-day cycle window"
+				/>
 				<div className="grid grid-cols-2 gap-2 p-3">
 					{Array.from({ length: 2 }).map((_, i) => (
 						<div
@@ -1659,7 +1660,10 @@ function BucketRowI({ state, buckets }) {
 	];
 	return (
 		<div className="card">
-			<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+			<CardHead
+				title="Learning memory: wins & mistakes (CTM · EPM)"
+				sub="All time, every agent — not the group's 7-day cycle window"
+			/>
 			<div className="grid grid-cols-2 gap-2 p-3">
 				{cards.map(([sym, tone, label, value, hint, accent]) => (
 					<div
@@ -1673,7 +1677,7 @@ function BucketRowI({ state, buckets }) {
 					>
 						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span>{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -1905,16 +1909,14 @@ function LedgerFooterI({ total, declined, suppression }) {
 			</div>
 			{suppression ? (
 				<div className="card-sub is-wrap fs-micro">
-					<span className={unpromptable > 0 ? "text-warn" : ""}>
-						{formatIntI(unpromptable)}
-					</span>{" "}
-					of {formatIntI(pendingTotal)} pending rows can never propose — counted
+					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can
+					never propose — counted
 					across every agent, because the intake skip reads the label. The held
 					figures above are narrower: agents in agent-registry.json only.
 				</div>
 			) : null}
 			{offRegistry > 0 ? (
-				<div className="card-sub is-wrap fs-micro text-warn">
+				<div className="card-sub is-wrap fs-micro">
 					{formatIntI(offRegistry)} parked{" "}
 					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
 					held figure: the agent is not in agent-registry.json. Still parked, still
