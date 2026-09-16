@@ -20,6 +20,8 @@ interface ElementNode {
 
 const FRAGMENT = Symbol("Fragment");
 const MAX_DEPTH = 60;
+const IIFE_OPEN = "(() => {";
+const IIFE_CLOSE = "})();";
 
 export function createReactStub(): Record<string, unknown> {
   const createElement = (
@@ -77,9 +79,10 @@ export async function loadScreenModule(
   context.window = context.window ?? context;
   context.globalThis = context;
   vm.createContext(context);
-  // The IIFE wrapper hides top-level bindings — strip it so they land on the context.
-  const code = built.outputFiles[0].text.replace(/^\(\(\) => \{|\}\)\(\);?\s*$/g, "");
-  vm.runInContext(code, context);
+  // esbuild emits `"use strict";\n(() => { … })();` — unwrap by locating the
+  // wrapper itself, so the module's top-level declarations land on the context
+  // (a line-anchored regex misses the leading directive and cuts only the tail).
+  vm.runInContext(unwrapIife(built.outputFiles[0].text), context);
   return context;
 }
 
@@ -146,6 +149,16 @@ export function collectText(node: RenderedNode | string | null): string {
     return node;
   }
   return node.children.map(collectText).join(" ");
+}
+
+function unwrapIife(text: string): string {
+  const open = text.indexOf(IIFE_OPEN);
+  const close = text.lastIndexOf(IIFE_CLOSE);
+  if (open === -1 || close === -1 || close <= open) {
+    throw new Error("esbuild iife wrapper not found — cannot expose top-level bindings");
+  }
+
+  return text.slice(open + IIFE_OPEN.length, close);
 }
 
 function flatten(values: unknown[]): unknown[] {
