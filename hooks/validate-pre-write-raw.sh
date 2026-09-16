@@ -6,32 +6,16 @@
 # Honest limits:
 # - V6 enforces the untrusted-source LABEL, never sanitizes the content; read-side clauses are adherence-layer only.
 # - V8 asserts destination state at check time, not a race control; only the destination and its immediate parent are tested.
-# - SCOPE-009 is advisory telemetry (exit 0): Write immutability is policy only, and delete-then-Write is silent by design.
-# - stderr on an exit-0 PreToolUse is not shown to be model-visible; the fired log, written only with transcript_path, is the record.
-# - SCOPE-010/011 (fetch ledger) are advisory telemetry and see WebFetch only.
-# - Invisible to them: WebSearch snippets, Bash curl/gh and MCP fetch tools; the researcher holds WebSearch.
-# - Content handed in through a delegation prompt is invisible too, and raises a false SCOPE-010.
-# - The fired log records the source host only, never the full URL, query or content.
-# - A matched fetch proves no body match: WebFetch returns model-processed text, not page bytes.
-# - A result without toolUseResult carries no HTTP code.
-#   Such a non-error result is a page unless its text opens with a harness failure prefix (HTTP status, redirect).
-#   The prefix set is closed: a harness failure wording outside it counts as a page.
-# - The redirect arm needs toolUseResult.url: without it a followed redirect leaves no final URL.
-#   Declaring that final URL then raises SCOPE-010.
-# - SCOPE-011 is correlated only: fetch-all-then-save-all raises a false positive.
-#   Pages fetched before an earlier save and pasted later raise nothing (false negative).
-# - The PreToolUse transcript_path target for a subagent is unmeasured; the resolver accepts either parent or own file.
-# - For a subagent the ledger scans only the subagent's own transcript, never the parent.
-# - An unresolved transcript or a failed scanner is silent on stderr and logs ledger=unavailable, never a false code.
-#
-# RAW_FETCH_LEDGER_PY: scanner-only interpreter (default python3); envelope parsing stays on PATH python3
+# - Write immutability is policy only: an overwrite of an existing raw file lands silently, as does delete-then-Write.
+# - V3 vacant: one-URL-per-file is enforced on the FRONTMATTER alone (V1/V2). A body pasting several pages under one
+#   declared source_url is NOT mechanically enforced by anything here, so the researcher's one-URL-per-file rule
+#   (agents/glass-atrium-intel-researcher.md → Raw Source Storage Pipeline) is honor-system.
+# - Every code this gate emits blocks; it carries no advisory/warn channel.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
-
-RAW_FETCH_LEDGER_FIRED_LOG="${RAW_FETCH_LEDGER_FIRED_LOG:-${HOOK_DATA_DIR}/raw-fetch-ledger-fired.log}"
 
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -148,8 +132,7 @@ BODY=$(printf '%s\n' "${CONTENT}" | awk '
   cnt>=2 { print }
 ')
 
-# V3 vacant: a body pasting several pages under one declared URL is caught by no check.
-# V1/V2 hold only the frontmatter half of one-URL-per-file; SCOPE-011 is a weak correlated signal, not a replacement.
+# V3 vacant: V1/V2 hold only the frontmatter half of one-URL-per-file; nothing checks the body half (header, Honest limits).
 # V4 vacant: no translation check — a language signal cannot tell a translated source from one written in that language.
 
 # V6: body-resident envelope, opening marker on an earlier line than the closing one; markers are HTML comments (non-rendering).
@@ -166,215 +149,7 @@ else
   fi
 fi
 
-# One fired-log TSV line; the subshell contains every failure, so an unwritable log degrades to silence.
-# Args: $1=codes $2=ledger state $3=reason.
-write_fired_log() {
-  local codes="${1}" ledger="${2}" reason="${3}"
-  (
-    local host ts
-    host="${SRC_LINE#*://}"
-    host="${host%%[/?#]*}"
-    host="${host##*@}"
-    ts=$(python3 -c 'import datetime as d; t=d.datetime.now(d.timezone.utc); print(t.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (t.microsecond // 1000))') \
-      || ts=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
-    mkdir -p -- "${RAW_FETCH_LEDGER_FIRED_LOG%/*}"
-    printf '%s\tcodes=%s\thost=%s\tsession=%s\tledger=%s\treason=%s\n' \
-      "${ts}" "${codes}" "${host}" "${SESSION_ID}" "${ledger}" "${reason}" >>"${RAW_FETCH_LEDGER_FIRED_LOG}"
-  ) 2>/dev/null || true
-}
-
-# Subagent's own transcript under both layouts (flat, workflows/wf_*), envelope project dir first, then ~/.claude/projects.
-# Never the parent transcript: it holds none of the subagent's fetches, so reading it raises a false SCOPE-010.
-find_subagent_transcript() {
-  local name="agent-${AGENT_ID}.jsonl" root candidate
-  local -a roots=("${HOME}/.claude/projects/"*)
-  [[ "${AGENT_ID}" =~ ^[A-Za-z0-9_-]+$ && "${SESSION_ID}" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
-  [[ -z "${TRANSCRIPT_PATH}" ]] || roots=("${TRANSCRIPT_PATH%/*}" "${roots[@]}")
-  for root in "${roots[@]}"; do
-    for candidate in "${root}/${SESSION_ID}/subagents/${name}" "${root}/${SESSION_ID}/subagents/workflows/"wf_*"/${name}"; do
-      [[ -f "${candidate}" ]] || continue
-      printf '%s' "${candidate}"
-      return 0
-    done
-  done
-  return 1
-}
-
-# Transcript the ledger scans: the envelope file for the main session or when it already names agent-<id>.jsonl.
-resolve_transcript() {
-  if [[ -z "${AGENT_ID}" ]] || [[ "${TRANSCRIPT_PATH##*/}" == "agent-${AGENT_ID}.jsonl" ]]; then
-    [[ -n "${TRANSCRIPT_PATH}" && -f "${TRANSCRIPT_PATH}" ]] || return 1
-    printf '%s' "${TRANSCRIPT_PATH}"
-    return 0
-  fi
-  find_subagent_transcript
-}
-
-# match=1: a WebFetch of the declared URL (input url, or result url after a redirect) has a page result.
-# Page result: not an error, no harness failure text, and a 2xx code where toolUseResult records one.
-# pages: distinct pages fetched after the last raw Write with a non-error result.
-# Results pair with their tool_use by id alone: a result line names no tool. An unpaired raw Write is the one in flight.
-# URLs compare normalized: http→https, lowercase scheme + host, no fragment, no trailing `/`, query kept.
-# A malformed line is skipped, never fatal. Args: $1=transcript $2=declared URL $3=raw dir.
-run_scanner() {
-  "${RAW_FETCH_LEDGER_PY:-python3}" - "${1}" "${2}" "${3}" <<'PY'
-import json
-import sys
-from urllib.parse import urlsplit, urlunsplit
-
-
-def field(obj, key):
-    return obj.get(key) if isinstance(obj, dict) else None
-
-
-def normalize(url):
-    if not isinstance(url, str):
-        return None
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return None
-    scheme = "https" if parts.scheme.lower() == "http" else parts.scheme.lower()
-    return urlunsplit((scheme, parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
-
-
-def is_raw(path, raw_dir):
-    return isinstance(path, str) and path.endswith(".md") and (
-        path.startswith(raw_dir + "/") or "/.glass-atrium/wiki/raw/" in path
-    )
-
-
-# Harness-written text a non-error result carries instead of a page (an HTTP error status, a redirect not followed).
-HARNESS_FAILURE_PREFIXES = ("The server returned HTTP ", "REDIRECT DETECTED: ")
-
-
-def is_page(item, result):
-    if field(item, "is_error"):
-        return False
-    body = field(item, "content")
-    if isinstance(body, str) and body.startswith(HARNESS_FAILURE_PREFIXES):
-        return False
-    code = field(result, "code")
-    return code is None or (isinstance(code, int) and 200 <= code < 300)
-
-
-transcript, declared, raw_dir = sys.argv[1], normalize(sys.argv[2]), sys.argv[3]
-pending_fetches = {}
-pending_writes = {}
-pages = []
-window = -1
-matched = False
-with open(transcript, "rb") as lines:
-    for position, line in enumerate(lines):
-        # A result line names no tool → admitted by its pending id; a paired id is dropped and admits nothing more.
-        if (
-            b'"WebFetch"' not in line
-            and b'"Write"' not in line
-            and not any(fetch_id in line for fetch_id in pending_fetches)
-            and not any(write_id in line for write_id in pending_writes)
-        ):
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        content = field(field(entry, "message"), "content")
-        result = field(entry, "toolUseResult")
-        for item in content if isinstance(content, list) else []:
-            kind = field(item, "type")
-            item_id = field(item, "id") if kind == "tool_use" else field(item, "tool_use_id")
-            if not isinstance(item_id, str):
-                continue
-            if kind == "tool_use" and field(item, "name") == "WebFetch":
-                pending_fetches[item_id.encode()] = normalize(field(field(item, "input"), "url"))
-            elif kind == "tool_use" and field(item, "name") == "Write":
-                if is_raw(field(field(item, "input"), "file_path"), raw_dir):
-                    pending_writes[item_id.encode()] = position
-            elif kind == "tool_result" and item_id.encode() in pending_fetches:
-                fetched = pending_fetches.pop(item_id.encode())
-                ok = is_page(item, result)
-                urls = (fetched, normalize(field(result, "url")))
-                matched = matched or (ok and declared is not None and declared in urls)
-                if ok and fetched is not None:
-                    pages.append((position, fetched))
-            elif kind == "tool_result" and item_id.encode() in pending_writes:
-                started = pending_writes.pop(item_id.encode())
-                if not field(item, "is_error"):
-                    window = max(window, started)
-page_count = len({url for position, url in pages if position > window})
-print("match=%d\tpages=%d" % (matched, page_count))
-PY
-}
-
-# Scanner contract: exactly one `match=<0|1>\tpages=<n>` line and exit 0; sets SCAN_MATCH and SCAN_PAGES.
-# Anything else returns 1, never a no-match: a misread failure would raise a false SCOPE-010/011.
-# Args: $1=transcript $2=declared URL.
-scan_transcript() {
-  local out contract=$'^match=([01])\tpages=([0-9]+)$'
-  # shellcheck disable=SC2310
-  out=$(run_scanner "${1}" "${2}" "${WIKI_RAW_DIR}" 2>/dev/null) || return 1
-  [[ "${out}" =~ ${contract} ]] || return 1
-  SCAN_MATCH="${BASH_REMATCH[1]}"
-  SCAN_PAGES="${BASH_REMATCH[2]}"
-}
-
-# Sets LEDGER_STATE, LEDGER_REASON and LEDGER_CODES.
-# SCOPE-010: no successful fetch of the declared URL. SCOPE-011: 2+ pages fetched since the last completed raw write.
-run_ledger() {
-  local transcript url
-  LEDGER_STATE="unavailable"
-  LEDGER_REASON="transcript"
-  LEDGER_CODES=""
-  # shellcheck disable=SC2310
-  transcript=$(resolve_transcript) || return 0
-  LEDGER_REASON="scanner"
-  url="${SRC_LINE#source_url:}"
-  url="${url#"${url%%[![:space:]]*}"}"
-  # shellcheck disable=SC2310
-  scan_transcript "${transcript}" "${url}" || return 0
-  LEDGER_STATE="ok"
-  LEDGER_REASON="-"
-  if [[ "${SCAN_MATCH}" == "0" ]]; then
-    emit_error "SCOPE-010" "warn" \
-      "Declared source_url was not fetched by WebFetch in this session — body provenance is unverified" \
-      "Fetch the declared source with WebFetch before saving, or declare the URL the content was fetched from" \
-      "{\"file\":\"${FILE_PATH}\"}"
-    LEDGER_CODES="SCOPE-010"
-  fi
-  if [[ "${SCAN_PAGES}" -ge 2 ]]; then
-    emit_error "SCOPE-011" "warn" \
-      "Several pages were fetched since the last raw save — a one-URL raw file may carry pasted content from more than one" \
-      "Save each fetched page as its own raw file under its own source_url" \
-      "{\"file\":\"${FILE_PATH}\"}"
-    LEDGER_CODES="${LEDGER_CODES}${LEDGER_CODES:+,}SCOPE-011"
-  fi
-}
-
-# Permit-path advisories: warn-severity stderr plus at most one fired-log line.
-run_advisories() {
-  local codes="" fields
-  if [[ -f "${FILE_PATH}" ]]; then
-    emit_error "SCOPE-009" "warn" \
-      "Raw file already exists — raw files are immutable after save; this Write replaces an existing source file" \
-      "Correction path is delete, then Write the corrected content" \
-      "{\"file\":\"${FILE_PATH}\"}"
-    codes="SCOPE-009"
-  fi
-  # Unit separator, not whitespace: an empty field must survive the split.
-  fields=$(printf '%s' "${INPUT}" | jq -r '[.transcript_path, .agent_id, .session_id] | map(. // "" | tostring) | join("")') \
-    || return 0
-  IFS=$'\x1f' read -r TRANSCRIPT_PATH AGENT_ID SESSION_ID <<<"${fields}"
-  run_ledger
-  codes="${codes}${codes:+${LEDGER_CODES:+,}}${LEDGER_CODES}"
-  [[ -n "${TRANSCRIPT_PATH}" ]] || return 0
-  [[ -n "${codes}" || "${LEDGER_STATE}" == "unavailable" ]] || return 0
-  write_fired_log "${codes:--}" "${LEDGER_STATE}" "${LEDGER_REASON}"
-}
-
 if [[ ${#VIOLATIONS[@]} -eq 0 ]]; then
-  # Called from an `if` → errexit is off inside, so no advisory failure can change the exit status (SC2310 intended).
-  # shellcheck disable=SC2310
-  if ! run_advisories; then :; fi
   exit 0
 fi
 

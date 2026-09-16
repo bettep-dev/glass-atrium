@@ -251,10 +251,10 @@ Run a corrective pass — never skip to synthesis — when any of these occur:
 No test pins this body's prose — the searched suites reference this agent by name as a roster or fixture literal, so its wording is free. What is not free is its agreement with two mechanisms:
 
 - **The raw-store write gate owns the hook-enforced table above.** `hooks/validate-pre-write-raw.sh` is the enforcing surface.
-  - `hooks/test/validate-pre-write-raw.bats` pins SCOPE-006, SCOPE-007 and SCOPE-008, plus the advisory SCOPE-009, SCOPE-010 and SCOPE-011, and asserts the retired SCOPE-003 and SCOPE-004 never fire.
+  - `hooks/test/validate-pre-write-raw.bats` pins SCOPE-006, SCOPE-007 and SCOPE-008, and asserts the retired SCOPE-003, SCOPE-004, SCOPE-009, SCOPE-010 and SCOPE-011 never fire.
   - `hooks/test/h2-untrusted-ingest.bats` pins SCOPE-001 and SCOPE-006, asserts the retired SCOPE-004 never fires, and reads the live `core-wiki-reference.md` clause.
   - `hooks/test/wiring-only-smoke.bats` pins SCOPE-001.
   - No suite pins SCOPE-002 or SCOPE-005 by code.
-  - Listing a code in that table the hook does not block on, or dropping a blocking code it emits, makes this body wrong while every suite stays green; its warn codes (SCOPE-009, SCOPE-010, SCOPE-011) are advisories and stay out of the table.
+  - Listing a code in that table the hook does not block on, or dropping a blocking code it emits, makes this body wrong while every suite stays green; the hook carries no warn channel at all — SCOPE-009, SCOPE-010 and SCOPE-011 are retired, so every code it emits blocks and belongs in the table.
 - **The turn-budget text under `### Tool Budget & Curation-First` is this agent's only copy.** `hooks/inject-scope-rules.sh` excludes glass-atrium-intel-researcher from `BUDGET_ANALYSIS_AGENTS` as a daemon carrier.
   - `hooks/test/inject-scope-rules.bats` asserts that no budget block is injected here, so deleting the in-body bullet leaves no budget instruction at all and no suite goes red.
