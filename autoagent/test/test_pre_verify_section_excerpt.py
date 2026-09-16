@@ -6,7 +6,8 @@ slice reaches the verifier intact. Covered here:
   (a) a fixture GLOBAL_RULES file carrying two sentinel ``##`` sections past the
       former cap position reaches the prompt with each heading line AND its
       terminal line — whole-block, not a mid-block cut — and the real canonical
-      ``Turn Budget & Graceful Exit`` section does the same from the live file;
+      ``Turn Budget & Graceful Exit`` section does the same from the repository's
+      tracked copy, so the pin runs under a sandbox HOME and on CI;
   (b) a target agent body sized from the live registry corpus (never from the
       implementation's own bound) carrying a sentinel heading block past the
       former cap position reaches the prompt whole, ending on a block boundary;
@@ -16,7 +17,9 @@ slice reaches the verifier intact. Covered here:
       directed-FAIL emptiness path;
   (e) both C2 routes above hold under a budget-family label — the context
       that attaches the injected turn-budget blocks — since the meter's policy
-      half is left unsourced precisely BECAUSE C2 already carries it.
+      half is left unsourced precisely BECAUSE C2 already carries it; and only
+      that label fills the turn-budget slot, the plain one getting the
+      not-applicable marker there.
 
 The former cap position (6000) is a fixed historical offset, never read from the
 implementation's current bound — a fixture sized from the bound under test can
@@ -60,6 +63,10 @@ _AGENT = "glass-atrium-dev-python"
 _RELATIVE_TARGET = f"agents/{_AGENT}.md"
 _FORMER_CAP = 6000
 _TURN_BUDGET_HEADING = "### Turn Budget & Graceful Exit"
+# Tracked copy, not the HOME-anchored dc.GLOBAL_RULES_FILE — that one is absent under a sandbox HOME.
+_TRACKED_GLOBAL_RULES = _REPO_ROOT / "agents" / "GLASS_ATRIUM_GLOBAL_RULES.md"
+_TURN_BUDGET_SLOT = "[INJECTED TURN-BUDGET TEXT"
+_BUDGET_SENTINEL = "injected budget sentinel 4b7c1e"
 
 _RULES_HEADING_A = "## Sentinel Rule Section A 4b7c1e"
 _RULES_TERMINAL_A = "sentinel rule terminal A 4b7c1e"
@@ -110,6 +117,32 @@ def _get_prompt(target_file: str, label: str = "test signal") -> tuple[str, str]
 def _budget_family_label() -> str:
     """A live-shaped budget-family label — stable signature core plus its tail."""
     return f"{sorted(dc.BUDGET_FAMILY_SIGNATURE_CORES)[0]} (avg overrun +7 tool_uses)"
+
+
+def _get_turn_budget_slot(prompt: str) -> str:
+    """Text between the turn-budget slot's own ``---`` fences."""
+    return prompt.split(_TURN_BUDGET_SLOT, 1)[1].split("\n---\n", 2)[1]
+
+
+def _write_budget_source(root: Path) -> None:
+    """Every declared marker pair, each carrying `<name> <sentinel>` as its block text."""
+    src = root / "scoped" / dc.TURN_BUDGET_SRC_NAME
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(
+        "".join(
+            f"{start}\n{name} {_BUDGET_SENTINEL}\n{end}\n"
+            for name, start, end in dc.BUDGET_BLOCK_MARKERS
+        ),
+        encoding="utf-8",
+    )
+
+
+def _get_tracked_turn_budget_block(test: unittest.TestCase) -> tuple[str, list[str]]:
+    """(tracked GLOBAL_RULES text, non-blank lines of its Turn Budget block) — fails when absent."""
+    text = _TRACKED_GLOBAL_RULES.read_text(encoding="utf-8")
+    blocks = [b for b in dc._split_heading_blocks(text) if b.startswith(_TURN_BUDGET_HEADING)]
+    test.assertEqual(len(blocks), 1, f"{_TURN_BUDGET_HEADING} absent from {_TRACKED_GLOBAL_RULES}")
+    return text, [line for line in blocks[0].splitlines() if line.strip()]
 
 
 def _write_agent(root: Path, body: str) -> Path:
@@ -185,24 +218,15 @@ class RuleCorpusExcerptTest(unittest.TestCase):
             self.assertIn(terminal, prompt)
 
     def test_when_real_global_rules_read_then_turn_budget_section_is_whole(self):
-        rules = dc.GLOBAL_RULES_FILE
-        if rules is None or not rules.exists():
-            self.skipTest(f"live GLOBAL_RULES file unreadable: {rules}")
-        text = rules.read_text(encoding="utf-8", errors="replace")
-        offset = text.find(_TURN_BUDGET_HEADING)
-        if offset < 0:
-            self.skipTest("canonical Turn Budget section absent from the live file")
-        self.assertGreater(offset, _FORMER_CAP)
-
-        block = next(
-            b for b in dc._split_heading_blocks(text) if b.startswith(_TURN_BUDGET_HEADING)
-        )
-        lines = [line for line in block.splitlines() if line.strip()]
+        text, lines = _get_tracked_turn_budget_block(self)
+        self.assertGreater(text.find(_TURN_BUDGET_HEADING), _FORMER_CAP)
 
         with tempfile.TemporaryDirectory() as live:
             live_root = Path(live)
             _write_agent(live_root, f"# {_AGENT}\n\nbody line\n")
-            with _base_root(live_root):
+            with _base_root(live_root), mock.patch.object(
+                dc, "GLOBAL_RULES_FILE", _TRACKED_GLOBAL_RULES
+            ):
                 prompt, _ = _get_prompt(_RELATIVE_TARGET)
 
         # Derived on both sides: the section's own first and last lines, never literals.
@@ -304,6 +328,7 @@ class BudgetFamilyContextTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as live:
             live_root = Path(live)
             _write_agent(live_root, f"# {_AGENT}\n\nbody line\n")
+            _write_budget_source(live_root)
             rules = live_root / "GLASS_ATRIUM_GLOBAL_RULES.md"
             rules.write_text(body, encoding="utf-8")
 
@@ -317,27 +342,22 @@ class BudgetFamilyContextTest(unittest.TestCase):
         ):
             self.assertIn(heading, budget)
             self.assertIn(terminal, budget)
-        # Relationship, not a literal: the budget-family context ADDS a slot and
-        # subtracts nothing, so it can never be shorter than the plain one.
-        self.assertGreater(len(budget), len(plain))
+        # Both prompts carry the slot; only its CONTENT tells the two labels apart.
+        budget_slot = _get_turn_budget_slot(budget)
+        for name, _, _ in dc.BUDGET_BLOCK_MARKERS:
+            self.assertIn(f"{name} {_BUDGET_SENTINEL}", budget_slot)
+        self.assertNotIn(dc.TURN_BUDGET_NOT_APPLICABLE, budget_slot)
+        self.assertEqual(_get_turn_budget_slot(plain).strip(), dc.TURN_BUDGET_NOT_APPLICABLE)
 
     def test_when_label_is_budget_family_then_live_turn_budget_section_is_whole(self):
-        rules = dc.GLOBAL_RULES_FILE
-        if rules is None or not rules.exists():
-            self.skipTest(f"live GLOBAL_RULES file unreadable: {rules}")
-        text = rules.read_text(encoding="utf-8", errors="replace")
-        if text.find(_TURN_BUDGET_HEADING) < 0:
-            self.skipTest("canonical Turn Budget section absent from the live file")
-
-        block = next(
-            b for b in dc._split_heading_blocks(text) if b.startswith(_TURN_BUDGET_HEADING)
-        )
-        lines = [line for line in block.splitlines() if line.strip()]
+        _, lines = _get_tracked_turn_budget_block(self)
 
         with tempfile.TemporaryDirectory() as live:
             live_root = Path(live)
             _write_agent(live_root, f"# {_AGENT}\n\nbody line\n")
-            with _base_root(live_root):
+            with _base_root(live_root), mock.patch.object(
+                dc, "GLOBAL_RULES_FILE", _TRACKED_GLOBAL_RULES
+            ):
                 prompt, _ = _get_prompt(_RELATIVE_TARGET, _budget_family_label())
 
         # Derived on both sides: the section's own first and last lines.

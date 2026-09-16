@@ -15,8 +15,9 @@ of the process cwd. Covered here:
       directs the C4 verdict to FAIL;
   (e) a resolvable target leaves the target channel on stderr silent;
   (f) the injected turn-budget source, which resolves through the SAME seam,
-      inherits that cwd-independence — both the path it composes and the text
-      that reaches the assembled prompt.
+      inherits that cwd-independence — both the path it composes and the
+      injected blocks that reach the assembled prompt, each asserted as its own
+      ``<name> <marker>`` block text so the C4 body cannot stand in for it.
 
 Both roots are temporary: the "live" root is bound through ``GA_DATA_ROOT`` (the
 ga_paths seam) and the "repo" root is a cwd carrying its own agents/ copy, so no
@@ -270,7 +271,9 @@ class TurnBudgetSourceResolutionTest(unittest.TestCase):
                         ),
                     )
 
-        self.assertIn(_LIVE_MARKER, prompt)
+        # `<name> <marker>` is the injected-block form only; the C4 body carries the bare marker.
+        for name, _, _ in dc.BUDGET_BLOCK_MARKERS:
+            self.assertIn(f"{name} {_LIVE_MARKER}", prompt)
         self.assertNotIn(_RELEASE_MARKER, prompt)
         self.assertNotIn(dc.TURN_BUDGET_UNREADABLE_SIGNAL, captured.getvalue())
 

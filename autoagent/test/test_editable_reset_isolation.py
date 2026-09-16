@@ -88,7 +88,7 @@ def is_manifest_exempt(text: str) -> bool:
     """True only when every needle occurrence in the raw text sits at an allowed manifest position.
 
     The raw-count reconciliation fails any mention the walk did not credit, including one hidden
-    behind a duplicate key or altered by JSON escaping.
+    behind a duplicate key; a JSON-escaped allowed path offsetting a literal mention elsewhere passes.
     """
     try:
         manifest = json.loads(text, object_pairs_hook=_get_unique_object)
@@ -194,6 +194,10 @@ class ManifestPositionalExemptionTest(unittest.TestCase):
             + _E4_RETIRED_KEY
             + '": []},'
             + get_manifest_text()[1:],
+            # Escaped needle: invisible to the raw count, so only the values refusal flags it.
+            "escaped needle in hashes value": get_manifest_text(
+                hashes={"scripts/update.sh": "ESCAPED"}
+            ).replace('"ESCAPED"', '"editable\\u002dreset"'),
             "top level not an object": json.dumps(["editable-reset"]),
             "parse failure": get_manifest_text()[:-1],
         }
