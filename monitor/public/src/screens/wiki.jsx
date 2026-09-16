@@ -1,4 +1,4 @@
-// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합) 6-섹션 SPA.
+// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 알람 레인 + 타일 밴드 + 디스클로저 3종.
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
@@ -239,22 +239,21 @@ function buildAlarmLaneModel(
 		// Dates win when the server reports them; the run streak covers a payload without them.
 		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
 		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
+		// Cycles still in flight → the streak is unknown, not absent.
+		const checking = !wait && cyclesState?.status === "loading";
 		const parked = wait
 			? wait.days >= PROPOSAL_PARKED_DAYS
 			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
 		alarms.push({
 			key: "proposals",
-			tone: parked ? "neutral" : "warn",
+			tone: parked ? "info" : "warn",
 			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
 			detail: wait
 				? describeProposalWaitW(wait, parked)
-				: describeProposalAgeW(runs, parked),
+				: describeProposalAgeW(runs, parked, checking),
 			parked,
 		});
 	}
-
-	// Parked proposals sort last; the ranked pushes above already order the rest.
-	alarms.sort((a, b) => (a.parked ? 1 : 0) - (b.parked ? 1 : 0));
 
 	const pending =
 		summaryState.status === "loading" ||
@@ -319,8 +318,12 @@ function countUnchangedDedupRunsW(cyclesState) {
 	return runs;
 }
 
-function describeProposalAgeW(runs, parked) {
-	if (typeof runs !== "number") return "Waiting time unknown — no run history yet.";
+function describeProposalAgeW(runs, parked, checking) {
+	if (typeof runs !== "number") {
+		return checking
+			? "Checking run history for the waiting time…"
+			: "Waiting time unknown — no run history yet.";
+	}
 
 	const span = `Unchanged for ${runs} ${runs === 1 ? "run" : "runs"}`;
 	return parked
@@ -368,21 +371,14 @@ function WikiTileBand({ summaryState, indexState, backlogState }) {
 	);
 }
 
+// Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
+// figure, leaving tinted containers to the alarm lane (39578 §C/§D).
 function WikiTile({ tile }) {
-	const tinted = tile.tone === "warn" || tile.tone === "crit";
+	const { Icon, TONE_ICON } = window.UI;
+	const alarmed = tile.tone === "warn" || tile.tone === "crit";
 
 	return (
-		<div
-			className={`rounded-md border p-2.5 min-w-0 ${tinted ? "" : "border-line bg-sunken"}`}
-			style={
-				tinted
-					? {
-							background: `rgb(var(--${tile.tone}) / 0.06)`,
-							borderColor: `rgb(var(--${tile.tone}) / 0.35)`,
-						}
-					: undefined
-			}
-		>
+		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
 			<div
 				className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
 				title={tile.label}
@@ -390,9 +386,14 @@ function WikiTile({ tile }) {
 				{tile.label}
 			</div>
 			<div
-				className={`font-mono fs-stat font-semibold mt-0.5 ${tile.state === "ready" ? "" : "text-faint"}`}
+				className={`font-mono fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
 				aria-busy={tile.state === "loading" ? "true" : undefined}
 			>
+				{alarmed && (
+					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true">
+						<Icon name={TONE_ICON[tile.tone]} size={13} />
+					</span>
+				)}
 				{tile.value}
 			</div>
 			{tile.sub && (
@@ -730,8 +731,7 @@ function WikiRunHistorySection({
 							h={44}
 							tone="accent"
 						/>
-						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
-						{!model.dominant && <WikiStatusMixW mix={model.mix} />}
+						<WikiStatusMixW mix={model.mix} />
 					</>
 				)}
 
@@ -846,7 +846,6 @@ function ageInUtcDaysW(runDate) {
 }
 
 // Status mix bar + legend — colour-blind-safe 4-cell proportion with a text legend.
-// STATUS_CHIP_META is the single tone/label source the dominant-status chip also reads.
 function WikiStatusMixW({ mix }) {
 	const { Icon } = window.UI;
 
@@ -893,15 +892,11 @@ function WikiStatusMixW({ mix }) {
 function buildThroughputModel(state) {
 	if (state.status !== "ready") {
 		return {
-			ready: false,
 			rows: [],
 			compiledSeries: [],
 			mix: EMPTY_MIX,
 			maxCompiledLabel: "—",
-			oldestDate: "",
 			newestDate: "",
-			sparse: false,
-			totalCompiled: 0,
 			spanDays: 0,
 		};
 	}
@@ -909,15 +904,11 @@ function buildThroughputModel(state) {
 	const rows = state.data?.cycles || [];
 	if (rows.length === 0) {
 		return {
-			ready: true,
 			rows: [],
 			compiledSeries: [],
 			mix: EMPTY_MIX,
 			maxCompiledLabel: "—",
-			oldestDate: "",
 			newestDate: "",
-			sparse: false,
-			totalCompiled: 0,
 			spanDays: 0,
 		};
 	}
@@ -929,32 +920,23 @@ function buildThroughputModel(state) {
 	const compiledSeries = ascending.map((r) => Number(r.compiled_count) || 0);
 	const maxCompiled =
 		compiledSeries.length > 0 ? Math.max(...compiledSeries) : 0;
-	// F4: 비0 포인트 < SPARSE_MIN_NONZERO 면 넓은 트랙의 외톨이 막대가 차트 깨짐처럼 읽힘 → 캡션으로 "실제 희소 데이터" 표기.
+	// 비0 포인트 수 — 캡션의 active days 수치 · 희소 판정은 SparseTrendW 가 자체 계산.
 	const nonZeroCount = compiledSeries.filter((v) => v > 0).length;
 
 	const mix = computeStatusMix(rows);
 
 	return {
-		ready: true,
 		rows,
 		compiledSeries,
 		mix,
-		// A6: 한 상태가 >95% 면 4종 막대+레전드 대신 단일 칩으로 축약 (비-ok 상태 존재 시에만 전체 바).
-		dominant: selectDominantStatusW(mix, rows.length),
 		maxCompiledLabel: formatCountW(maxCompiled),
-		oldestDate: ascending[0]?.run_date || "",
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
-		sparse: nonZeroCount < SPARSE_MIN_NONZERO,
 		activeDays: nonZeroCount,
-		totalCompiled: compiledSeries.reduce((s, v) => s + v, 0),
 		spanDays: compiledSeries.length,
 	};
 }
 
 const EMPTY_MIX = { ok: 0, partial: 0, error: 0, quota: 0 };
-
-// 단일 우세 상태 임계(%) — 한 상태가 이 비율 초과면 4종 바+레전드를 단일 칩으로 축약 (A6).
-const STATUS_DOMINANT_PCT = 95;
 
 const STATUS_CHIP_META = {
 	ok: { tone: "ok", label: "Healthy" },
@@ -962,22 +944,6 @@ const STATUS_CHIP_META = {
 	error: { tone: "crit", label: "Down" },
 	quota: { tone: "faint", label: "Usage limit" },
 };
-
-// status mix → 단일 우세 상태(>STATUS_DOMINANT_PCT). 충족 시 { tone, label, pct, runs } · 미충족 → null(전체 바 렌더).
-function selectDominantStatusW(mix, runCount) {
-	for (const key of Object.keys(STATUS_CHIP_META)) {
-		if (mix[key] > STATUS_DOMINANT_PCT) {
-			const meta = STATUS_CHIP_META[key];
-			return {
-				tone: meta.tone,
-				label: meta.label,
-				pct: mix[key],
-				runs: runCount,
-			};
-		}
-	}
-	return null;
-}
 
 // status 분포 → 백분율. ok/partial/error/quota_exceeded 외 status 는 error 로 합산(보수적).
 function computeStatusMix(rows) {
@@ -1006,14 +972,11 @@ function computeStatusMix(rows) {
 
 // collapsible explorer shell SoT — summary(라벨+카운트) · 'none' 빈상태 · 본문 컨테이너 단일 출처.
 //   children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
-function BacklogExplorer({ label, count, payload, defaultOpen, children }) {
+function BacklogExplorer({ label, count, payload, children }) {
 	const isEmpty = count === 0 || payload == null;
 
 	return (
-		<details
-			className="rounded-md border border-line bg-sunken"
-			open={(defaultOpen && !isEmpty) || undefined}
-		>
+		<details className="rounded-md border border-line bg-sunken">
 			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
 				{/* 12px→fs-body(12) 라벨 · 10.5px→fs-meta(11) 카운트. */}
 				<span className="font-mono fs-body text-ink font-medium">{label}</span>

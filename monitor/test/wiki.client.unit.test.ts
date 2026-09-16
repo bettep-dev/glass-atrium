@@ -210,17 +210,21 @@ test("without a first-seen map the age falls back to the unchanged-run count", (
   assert.match(alarm.detail, /Unchanged for 9 runs/);
 });
 
-test("parked proposals sort behind every other alarm", () => {
-  const model = helpers.buildAlarmLaneModel(
+test("a loading run history reads as unknown-yet, never as absent history", () => {
+  const checking = helpers.buildAlarmLaneModel(
     ready({}),
-    ready({ dirty: true }),
-    proposalBacklog(["h1"], { h1: isoDaysAgo(30) }),
+    ready({}),
+    proposalBacklog(["h1"]),
+    loading,
+  ).alarms[0] as Alarm;
+  const settled = helpers.buildAlarmLaneModel(
+    ready({}),
+    ready({}),
+    proposalBacklog(["h1"]),
     ready({ cycles: [] }),
-  );
-  assert.deepEqual(
-    [...model.alarms].map((a) => a.key),
-    ["index-dirty", "proposals"],
-  );
+  ).alarms[0] as Alarm;
+  assert.match(checking.detail, /Checking run history/);
+  assert.match(settled.detail, /unknown/);
 });
 
 // Server helpers for the two additive fields.
