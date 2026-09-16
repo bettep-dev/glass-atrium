@@ -335,12 +335,13 @@ function ScreenModelConfig() {
 			</style>
 			<div className="flex-shrink-0">
 				<PageHeader
-					sub="Models & per-call budget caps"
+					title="Models & budgets"
+					sub="Models & budgets"
 					right={
 						<>
 							<SyncTokenMC
 								state={configState.status}
-								sync={data?.daemon_config_sync}
+								sync={headerSyncMC(data)}
 								receivedAt={configState.receivedAt}
 							/>
 							<button
@@ -422,7 +423,8 @@ function ScreenModelConfig() {
 						</span>
 						{hasErrors && (
 							<span className="fs-meta text-crit">
-								— fix the highlighted fields before saving
+								<span aria-hidden="true">✕ </span>
+								fix the highlighted fields before saving
 							</span>
 						)}
 					</div>
@@ -776,6 +778,7 @@ function ModelSelectMC({
 			)}
 			{error && (
 				<div className="fs-meta text-crit mt-1" role="alert">
+					<span aria-hidden="true">✕ </span>
 					{error}
 				</div>
 			)}
@@ -911,6 +914,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 				</div>
 				{showError && (
 					<div className="fs-meta text-crit mt-1" role="alert">
+						<span aria-hidden="true">✕ </span>
 						{error}
 					</div>
 				)}
@@ -1258,6 +1262,12 @@ function resyncPayloadMC(data, edits) {
 	if (Object.keys(models).length > 0) payload.models = models;
 	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
 	return Object.keys(payload).length > 0 ? payload : null;
+}
+
+// Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
+function headerSyncMC(data) {
+	const sync = data?.daemon_config_sync;
+	return sync === "ok" && hasRowDriftMC(data) ? "drift" : sync;
 }
 
 // Row drift present — banner trigger, true on one drifted model or budget row.
