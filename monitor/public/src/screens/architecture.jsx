@@ -674,7 +674,7 @@ function ScreenArchitecture(
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
-								aria-label="Re-read the system map and its health"
+								aria-label="Refresh system map"
 							>
 								<Icon name="refresh" size={14} />
 								Refresh
@@ -1426,24 +1426,32 @@ function HookFailureDetail({ state }) {
 function NodePartHealth({
 	nodeId,
 	partRows,
+	daemons,
 	payloadDaemon,
 	onSelectDaemon,
 	payloadState,
 	hookState,
 	hookFailState,
 }) {
-	const { StatusDot, formatRelativeTime } = window.UI;
+	const { Badge, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
+		window.UI;
 
 	const unscoped = unscopedNodeIdAR(nodeId);
 	const rows = partRows.filter((row) => row.nodeIds.includes(unscoped));
 
-	// 이 노드에 묶인 부품이 없으면 구획 자체가 없음 — 빈 제목은 판정이 비었다고 거짓말함.
-	if (rows.length === 0) return null;
+	// 부품 행이 이미 부르는 데몬은 여기서 빼냄 — 같은 데몬이 두 줄로 서면 판정이 두 겹으로 읽힘.
+	const namedDaemons = new Set(rows.map((row) => row.daemonName).filter(Boolean));
+	const looseDaemons = (daemons || []).filter(
+		(daemon) => !namedDaemons.has(daemon.daemon_name),
+	);
+
+	// 이 노드에 묶인 판정이 하나도 없으면 구획 자체가 없음 — 빈 제목은 판정이 비었다고 거짓말함.
+	if (rows.length === 0 && looseDaemons.length === 0) return null;
 
 	return (
 		<div data-node-health={unscoped}>
 			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
-				Health ({rows.length})
+				Health ({rows.length + looseDaemons.length})
 			</div>
 			<div className="arch-part-list">
 				{rows.map((row) => {
@@ -1509,6 +1517,30 @@ function NodePartHealth({
 						</div>
 					);
 				})}
+
+				{/* 부품 표에 없는 데몬 — 종전에는 이름 옆 pill 줄이 실어 나르던 사실임. 같은 물음
+				    ("이 노드는 지금 어떤가")의 답이므로 같은 목록에 섬. 부품 행의 data 속성은
+				    쓰지 않음: 하네스가 그 이름으로 부품 판정을 세는데, 이 줄은 부품이 아님. */}
+				{looseDaemons.map((daemon) => (
+					<div
+						key={daemon.daemon_name}
+						className="arch-part-entry"
+						data-live-daemon={daemon.daemon_name}
+						data-live-tone={daemonStatusTone(daemon.effective_status) || undefined}>
+						<div className="arch-part-head">
+							<span className="fs-meta font-mono text-ink">
+								{daemon.daemon_name}
+							</span>
+							<Badge role="status" tone={daemonStatusTone(daemon.effective_status)}>
+								{daemonStatusLabel(daemon.effective_status)}
+							</Badge>
+							<span className="fs-meta text-dim">
+								Last run{" "}
+								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : "—"}
+							</span>
+						</div>
+					</div>
+				))}
 			</div>
 		</div>
 	);
@@ -1639,9 +1671,9 @@ function NodeDetailBody({
 	hookState,
 	hookFailState,
 }) {
-	const { Pill, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
-		window.UI;
-	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
+	const { Pill } = window.UI;
+	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 가능 (F39).
+	//   판정은 pill 줄이 아니라 아래 health 행이 실음 — 한 노드의 상태를 한 자리에서 읽게 함.
 	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
 
 	const inbound = flows.filter((f) => f.to === info.id);
@@ -1653,21 +1685,13 @@ function NodeDetailBody({
 			<div className="flex flex-wrap items-center gap-1.5">
 				{info.type && <Pill>{NODE_TYPE_LABEL[info.type] || info.type}</Pill>}
 				{info.layer_label && <Pill>Layer: {info.layer_label}</Pill>}
-				{daemons.map((daemon) => (
-					<Pill
-						key={daemon.daemon_name}
-						tone={daemonStatusTone(daemon.effective_status)}>
-						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.effective_status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
-					</Pill>
-				))}
 			</div>
-			{info.path && <FieldBlock label="File path" value={info.path} mono />}
-			{info.description && (
-				<FieldBlock label="Description" value={info.description} mono={false} />
-			)}
+			{/* 순서는 조작자의 물음 순서임 — 무엇인가 · 지금 어떤가 · 무엇에 닿는가 ·
+			    어디를 여는가. 경로와 설명은 그 답을 고른 뒤에야 쓰이므로 뒤로 감. */}
 			<NodePartHealth
 				nodeId={info.id}
 				partRows={healthPartRows}
+				daemons={daemons}
 				payloadDaemon={payloadDaemon}
 				onSelectDaemon={onSelectDaemon}
 				payloadState={payloadState}
@@ -1679,6 +1703,10 @@ function NodeDetailBody({
 				outbound={outbound}
 				nodeIndex={nodeIndex}
 			/>
+			{info.path && <FieldBlock label="File path" value={info.path} mono />}
+			{info.description && (
+				<FieldBlock label="Description" value={info.description} mono={false} />
+			)}
 		</>
 	);
 }
