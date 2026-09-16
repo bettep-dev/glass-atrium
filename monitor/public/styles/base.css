@@ -453,19 +453,9 @@
 	border-radius: 999px;
 	color: rgb(var(--dim));
 }
-.nav-badge.crit {
-	background: rgb(var(--crit) / 0.15);
-	color: rgb(var(--crit));
-	border-color: transparent;
-}
 .nav-badge.warn {
 	background: rgb(var(--warn) / 0.15);
 	color: rgb(var(--warn));
-	border-color: transparent;
-}
-.nav-badge.info {
-	background: rgb(var(--info) / 0.15);
-	color: rgb(var(--info));
 	border-color: transparent;
 }
 

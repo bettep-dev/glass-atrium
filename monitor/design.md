@@ -293,7 +293,7 @@ Linear/Vercel/Raycast 패턴을 따른다 — 카드 elevation 은 다음 요소
 **금지 (FORBID) — 데이터 밀집 UI 에서 실패:**
 - 테이블/리스트 row 개별 blur (`.tbl tbody tr`, `.alert-row`): row 마다 컴포지팅 레이어 → 스크롤 frame drop + 값 변동 시 가독성 붕괴.
 - **KPI 카드 그리드 일괄 blur** (`.kpi` ×8~16): GPU 예산 초과 + 카드가 서로 뭉개져 독립 신호성 상실.
-- severity 색 요소(`.sev-bar`·`.pill.crit`·`.nav-badge.crit`) 위 blur: desaturation 으로 응급 신호 약화.
+- severity 색 요소(`.sev-bar`·`.pill.crit`) 위 blur: desaturation 으로 응급 신호 약화.
 - 폼/입력 필드, 동적 콘텐츠 위 정적 glass(실시간 차트·로그 스트림 뒤).
 
 **Anti-pattern 체크(연구 종합):** AP-1 모든 카드 blur · AP-2 scrim 없는 raw glass 위 텍스트 · AP-3 동적 콘텐츠 위 glass · AP-4 다크 휘도 보상 없는 glass · AP-5 `prefers-reduced-transparency` fallback 누락 · AP-6 severity 색 dilution · AP-7 중첩 blur 2겹 초과 · AP-8 border 없는 glass(저대비 배경에서 비가시).
