@@ -275,8 +275,10 @@ function ScreenModelConfig() {
 				receivedAt: Date.now(),
 			});
 			setForm(buildFormMC(data));
-			setSurfaceResults(extractSurfaceResultsMC(data));
-			showToast("ok", "Changes saved");
+			const problems = extractSurfaceResultsMC(data);
+			setSurfaceResults(problems);
+			// 깨끗한 저장만 토스트로 끝낸다 — 실패/스킵이 섞이면 카드가 그 자리를 대신한다.
+			if (!problems) showToast("ok", "Changes saved");
 		} catch (err) {
 			setSaveError(err && err.message ? err.message : String(err));
 		} finally {
@@ -390,7 +392,8 @@ function ScreenModelConfig() {
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
 					<div className="flex items-center gap-2 min-w-0">
 						<span className="fs-body font-medium text-ink">
-							Unsaved changes
+							{countChangesMC(payload)} unsaved change
+							{countChangesMC(payload) === 1 ? "" : "s"}
 						</span>
 						{hasErrors && (
 							<span className="fs-meta text-crit">
@@ -890,48 +893,62 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 	);
 }
 
-// Save 의 per-surface 결과 공시 — frontmatter per-file ok/skipped/failed 등 (silent skip 금지, AC-5).
+// Save 의 per-surface 결과 공시 — 문제 행(failed/skipped)만 펼쳐 두고 ok 행은 접힌 disclosure 뒤로
+// (silent skip 금지, AC-5 — 접어도 목록에는 남는다).
 function SurfaceResultsCardMC({ results, onDismiss }) {
-	const { CardHead, Icon, Badge } = window.UI;
+	const { CardHead, Icon } = window.UI;
 
 	const rows = Array.isArray(results) ? results : [];
 	if (rows.length === 0) return null;
 
-	const toneOf = (status) =>
-		status === "ok" ? "ok" : status === "skipped" ? "warn" : "crit";
+	const problems = rows.filter((r) => r.status !== "ok");
+	const okRows = rows.filter((r) => r.status === "ok");
 
 	return (
-		<div className="card mb-4">
+		<div className="card">
 			<CardHead
-				title="Save results"
+				title={`Save touched ${rows.length} surface${rows.length === 1 ? "" : "s"}`}
 				right={
 					<button
 						className="btn ghost sm"
 						onClick={onDismiss}
-						aria-label="Dismiss save results"
-					>
+						aria-label="Dismiss save results">
 						<Icon name="x" size={14} />
 					</button>
 				}
 			/>
 			<div className="card-body">
-				{rows.map((r, i) => (
-					<div
-						key={i}
-						className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0"
-					>
-						<Badge role="status" tone={toneOf(r.status)} icon={true}>
-							{r.status || "—"}
-						</Badge>
-						<span className="text-dim truncate">
-							{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
-						</span>
-						{r.reason && (
-							<span className="text-faint truncate">— {r.reason}</span>
-						)}
-					</div>
+				{problems.map((r, i) => (
+					<SurfaceResultRowMC key={i} result={r} />
 				))}
+				{okRows.length > 0 && (
+					<details className="fs-meta text-faint mt-1">
+						<summary>{okRows.length} surfaces written without error</summary>
+						<div className="mt-1">
+							{okRows.map((r, i) => (
+								<SurfaceResultRowMC key={i} result={r} />
+							))}
+						</div>
+					</details>
+				)}
 			</div>
+		</div>
+	);
+}
+
+function SurfaceResultRowMC({ result: r }) {
+	const { Badge } = window.UI;
+	const tone = r.status === "ok" ? "ok" : r.status === "skipped" ? "warn" : "crit";
+
+	return (
+		<div className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0">
+			<Badge role="status" tone={tone} icon={true}>
+				{r.status || "—"}
+			</Badge>
+			<span className="text-dim truncate">
+				{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
+			</span>
+			{r.reason && <span className="text-faint truncate">— {r.reason}</span>}
 		</div>
 	);
 }
@@ -1175,7 +1192,18 @@ function anyDriftMC(data) {
 
 function extractSurfaceResultsMC(data) {
 	const results = data.results ?? data.surfaces ?? null;
-	return Array.isArray(results) && results.length > 0 ? results : null;
+	if (!Array.isArray(results) || results.length === 0) return null;
+	// 전부 ok 면 카드를 띄우지 않는다 — 정상 저장의 공시는 토스트 하나로 끝난다.
+	return results.some((r) => r.status !== "ok") ? results : null;
+}
+
+// 미저장 변경 수 = partial PUT payload 의 필드 수 — 화면 문구가 실제 전송분과 어긋나지 않게.
+function countChangesMC(payload) {
+	if (!payload) return 0;
+	return (
+		Object.keys(payload.models || {}).length +
+		Object.keys(payload.budgets || {}).length
+	);
 }
 
 async function fetchJsonMC(url, signal) {
