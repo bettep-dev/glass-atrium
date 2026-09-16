@@ -50,7 +50,7 @@ const LEDGER_TOKENS: LedgerToken[] = [
 
   // B2-6a 가 지운 지도 위 두 줄 — 큐 스트립과 health 요약 스트립, 그리고 둘만 부르던 읽기 함수들.
   // `getStoreErrorAR` 의 호출 둘은 함께 사라진 큐 효과 안에 있었고, `.arch-queue-fact` 는
-  // 두 스트립의 사실 칸 전용 클래스였음 — 이사한 경보는 `arch-queue-error` 를 씀.
+  // 두 스트립의 사실 칸 전용 클래스였음 — 이사한 경보는 지금 경보 레인의 한 행임.
   { name: "QueueStrip", kind: "identifier", ac: "AC-B2-6d" },
   { name: "getPendingCountAR", kind: "identifier", ac: "AC-B2-6d" },
   { name: "getTopSignalAR", kind: "identifier", ac: "AC-B2-6d" },
@@ -124,6 +124,15 @@ const LEDGER_TOKENS: LedgerToken[] = [
   { name: "driftStale", kind: "identifier", ac: "39739-R1" },
   { name: "driftDiffs", kind: "identifier", ac: "39739-R1" },
   { name: "getDriftDiff", kind: "identifier", ac: "39739-R1" },
+
+  // 39731 S1 이 지운 배너 삼형제와 그 컨테이너 둘 — 경보 레인이 네 사실을 한 상자로 받으면서
+  // 배너마다 제 상자를 세우던 자리가 통째로 사라졌음. 셸까지 함께 적음: 셸만 남으면 다음 작업이
+  // 그것을 보고 배너를 되살림. 두 클래스는 health 경보가 서던 바깥 상자와 그 안쪽 줄이었음.
+  { name: "AlertBannerAR", kind: "identifier", ac: "39731-S1" },
+  { name: "MembershipBannerAR", kind: "identifier", ac: "39731-S1" },
+  { name: "DualWriteBannerAR", kind: "identifier", ac: "39731-S1" },
+  { name: "arch-health-alert-wrap", kind: "attribute", ac: "39731-S1" },
+  { name: "arch-queue-error", kind: "attribute", ac: "39731-S1" },
 ];
 
 // 원장에 올릴 수 없는 이름과 그 이유(ADR-13 판별성) — 제거 단위 밖에 같은 선언이 살아 있으면
@@ -144,7 +153,6 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   { name: "HEALTH_STORE_LABELS_AR", kind: "identifier", ac: "AC-B2-6d" },
   { name: "getHealthStoreErrorsAR", kind: "identifier", ac: "AC-B2-6d" },
   { name: "LiveStrip", kind: "identifier", ac: "AC-B2-6d" },
-  { name: "arch-queue-error", kind: "attribute", ac: "AC-B2-6d" },
   { name: "arch-live-strip", kind: "attribute", ac: "AC-B2-6d" },
   // KPI 가 읽던 카드 fold — 집계가 접힌 뒤 tone 버킷 불변식이 서는 자리가 바로 여기임.
   { name: "resolveCardFacts", kind: "identifier", ac: "AC-B2-6b" },
@@ -165,13 +173,15 @@ const SURVIVING_TOKENS: LedgerToken[] = [
   { name: "data-daemon-detail", kind: "attribute", ac: "ADR-20" },
   { name: "arch-part-entry", kind: "attribute", ac: "ADR-20" },
   { name: "arch-part-drill", kind: "attribute", ac: "ADR-20" },
-  // 표 안에 서 있던 경보가 페이지로 올라간 자리 — 이 클래스가 그 이사 자체임.
-  { name: "arch-health-alert-wrap", kind: "attribute", ac: "ADR-20" },
 
-  // 드리프트 배너만 죽었음 — 같은 셸을 쓰던 두 배너와 셸 자체는 남아 AC-T5 · AC-T18(c) · AC-B2-6a 가 잼.
-  { name: "AlertBannerAR", kind: "identifier", ac: "39739-R1" },
-  { name: "MembershipBannerAR", kind: "identifier", ac: "39739-R1" },
-  { name: "DualWriteBannerAR", kind: "identifier", ac: "39739-R1" },
+  // 배너 삼형제가 이사한 자리 (39731-S1) — 네 사실을 실어 나르는 레인과 그 행, 그리고 행을
+  // 조립하는 함수. 이름이 사라지면 AC-T5 · AC-T18(c) · AC-B2-6a 가 재던 사실이 갈 곳이 없음.
+  { name: "AlarmLaneAR", kind: "identifier", ac: "39731-S1" },
+  { name: "AlarmRowAR", kind: "identifier", ac: "39731-S1" },
+  { name: "getAlarmRows", kind: "identifier", ac: "39731-S1" },
+  { name: "arch-alarm-lane", kind: "attribute", ac: "39731-S1" },
+  { name: "arch-alarm-row", kind: "attribute", ac: "39731-S1" },
+  { name: "data-alarm", kind: "attribute", ac: "39731-S1" },
 ];
 
 // 경계 문자 집합 — 식별자와 CSS 이름이 서로 다름. 하이픈이 갈림길임.
@@ -276,17 +286,17 @@ test("ADR-13 the ledger match is boundary-anchored, never a substring", () => {
 
 // 세 목록을 트리 한 번 순회로 함께 잼 — 원장은 부활을, 제외는 판별성의 근거를, 생존은 넘치게 지워지지 않았음을 잼.
 // 토큰마다 test 를 내면 같은 트리를 토큰 수만큼 다시 읽음 → 순회는 하나로 두고, 실패 메시지가 깨진 토큰을 담음.
-test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1)", () => {
+test("the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1)", () => {
   // 비공허 통제 — 크기를 고정함: 비어 있지 않음만 재면 항목 하나가 사라져도 초록임.
   const ledgerCountByAc: Record<string, number> = {};
   for (const { ac } of LEDGER_TOKENS) ledgerCountByAc[ac] = (ledgerCountByAc[ac] ?? 0) + 1;
   assert.deepEqual(
     ledgerCountByAc,
-    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3, "39739-R1": 9 },
+    { "AC-B2-5d": 8, "AC-B2-6d": 14, "AC-B2-6b": 3, "ADR-20": 16, "AC-12": 3, "39739-R1": 9, "39731-S1": 5 },
     "ledger membership changed — a dropped token silently unpins its removal, and an unknown AC tag has no removal unit behind it",
   );
   assert.equal(DISCRIMINABILITY_EXCLUSIONS.length, 2, "exclusion list membership changed");
-  assert.equal(SURVIVING_TOKENS.length, 23, "survivor list membership changed");
+  assert.equal(SURVIVING_TOKENS.length, 24, "survivor list membership changed");
 
   const allNames = [...LEDGER_TOKENS, ...DISCRIMINABILITY_EXCLUSIONS, ...SURVIVING_TOKENS].map((t) => t.name);
   assert.equal(

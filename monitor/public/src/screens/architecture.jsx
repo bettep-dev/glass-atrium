@@ -495,7 +495,14 @@ function ScreenArchitecture(
 	// 거버넌스 멤버십 — 컴플라이언스 매트릭스가 이름 댄 문서의 부재 목록(총계 아님).
 	const governance =
 		liveState.status === "ready" ? liveState.data?.governance : null;
-	const absentDocs = governance?.absent || [];
+
+	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
+	const alarmRows = getAlarmRows({
+		offWriters,
+		healthStoreErrors,
+		liveState,
+		governance,
+	});
 
 	return (
 		<div className="h-full flex flex-col min-h-0">
@@ -519,7 +526,8 @@ function ScreenArchitecture(
 					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
-					".arch-queue-error { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; padding: 4px 8px; } " +
+					// 경보 레인 — 지도 위에 서는 단 하나의 상자. 행이 없으면 레인도 없음(빈 상태 없음).
+					".arch-alarm-lane { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
@@ -593,8 +601,6 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-state { display: none; } ` +
 					// 헬스 저장소 경보의 자리 — 표를 걷어내며 페이지로 올라온 유일한 조각.
 					// 지도가 pane 을 다 쓰므로 flex-shrink:0 으로 제 높이를 지킴(경보가 눌리면 사유가 잘림).
-					".arch-health-alert-wrap { flex-shrink: 0; overflow: hidden; background: rgb(var(--sunken)); " +
-					"border: 1px solid rgb(var(--line)); border-radius: 6px; } " +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
 					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
 					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
@@ -639,28 +645,9 @@ function ScreenArchitecture(
 			</div>
 
 			<div className="arch-page">
-				{offWriters.length > 0 && <DualWriteBannerAR writers={offWriters} />}
-
-				{/* 거버넌스 문서 부재 — 이름을 부르는 경고(warn-tone). */}
-				{(absentDocs.length > 0 || governance?.sourceMissing) && (
-					<MembershipBannerAR
-						absent={absentDocs}
-						sourceMissing={governance?.sourceMissing}
-					/>
-				)}
+				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
-
-				{healthStoreErrors.length > 0 && (
-					<div className="arch-health-alert-wrap">
-						<StripAlertAR
-							className="arch-queue-error"
-							message="Couldn't load system health"
-							detail={healthStoreErrors.join(" · ")}
-							onRetry={triggerRefresh}
-						/>
-					</div>
-				)}
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
 				<div className="arch-main">
@@ -1200,8 +1187,7 @@ function ArchIconTargetAR() {
 // Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
 //   같은 페치가 거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 둘의 예고이기도 함.
 
-// 로드 실패 줄 — live 스트립과 표의 health 저장소 경보가 같은 모양을 씀. 컨테이너 클래스는
-// 호출부가 정함: 두 경보는 각자의 클래스(.arch-live-strip / .arch-queue-error)로 구별돼야 함.
+// 로드 실패 줄 — live 스트립이 쓰는 한 줄 경보. 컨테이너 클래스는 호출부가 정함.
 // detail 은 끊긴 원인을 이름으로 부르는 자리 — 없으면 그 줄만 빠짐.
 function StripAlertAR({ className, message, detail, onRetry }) {
 	return (
@@ -1805,82 +1791,63 @@ const TONE_TEXT_CLASS = {
 };
 
 /**
- * 경보 배너 셸 — 두 배너(거버넌스 warn · 이중기록 crit)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
+ * 경보 레인의 행 — 심각도별 tint · 아이콘 · 이름 배지를 한 상자로 실음.
  * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
+ * role=alert 는 행이 가짐 — 레인이 가지면 네 사실이 한 경보로 접혀 이름을 따로 셀 수 없음.
  */
-function AlertBannerAR({ tone, icon, title, note, badges }) {
+function AlarmRowAR({ row, onRetry }) {
 	const { Icon, Badge } = window.UI;
-	const items = badges || [];
+	const names = row.badges || [];
 	return (
 		<div
 			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
+			data-alarm={row.key}
+			data-alarm-tone={row.tone}
+			className="arch-alarm-row rounded-md border p-3 flex items-start gap-3"
 			style={{
-				background: `rgb(var(--${tone}) / 0.08)`,
-				borderColor: `rgb(var(--${tone}) / 0.4)`,
+				background: `rgb(var(--${row.tone}) / 0.08)`,
+				borderColor: `rgb(var(--${row.tone}) / 0.4)`,
 			}}
 		>
 			<Icon
-				name={icon}
+				name={row.icon}
 				size={16}
-				className={`${TONE_TEXT_CLASS[tone]} mt-0.5`}
+				className={`${TONE_TEXT_CLASS[row.tone]} mt-0.5`}
 			/>
 			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				<div className="fs-meta text-dim mt-1">{note}</div>
-				{items.length > 0 && (
+				<div className="fs-body font-medium text-ink">{row.title}</div>
+				<div className="fs-meta text-dim mt-1">{row.note}</div>
+				{names.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
-						{items.map((it) => (
-							<Badge key={it.key} role="status" tone={tone} glyph={false}>
-								{it.label}
+						{names.map((name) => (
+							<Badge key={name} role="status" tone={row.tone} glyph={false}>
+								{name}
 							</Badge>
 						))}
 					</div>
 				)}
 			</div>
+			{onRetry && (
+				<button className="btn sm" onClick={onRetry}>
+					Retry
+				</button>
+			)}
 		</div>
 	);
 }
 
 /**
- * 거버넌스 멤버십 배너 — 매트릭스가 선언한 scope/rule 문서가 사라졌을 때 그 이름을 부른다.
- * 총계 배지는 무엇이 없어졌는지 말하지 못하므로 이름 목록이 곧 신호다.
+ * 경보 레인 — 조작자가 손을 대야 하는 사실만 심각도 순으로 폄.
+ * 로딩도 빈 상태도 두지 않음: 둘 다 '문제 없음' 을 문제처럼 그림 — 행이 없으면 DOM 에 없음.
  */
-function MembershipBannerAR({ absent, sourceMissing }) {
-	const names = (absent || []).map((name) => ({ key: name, label: name }));
+function AlarmLaneAR({ rows, onRetry }) {
+	if (!rows || rows.length === 0) return null;
 	return (
-		<AlertBannerAR
-			tone="warn"
-			icon="warn"
-			title={
-				sourceMissing
-					? "Governance membership unverifiable — compliance matrix unreadable"
-					: "Governance document missing"
-			}
-			note="The compliance matrix names these files; they are not on disk."
-			badges={names}
-		/>
-	);
-}
-
-/**
- * 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 거버넌스 warn-tone 과 구별.
- * 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부름.
- */
-function DualWriteBannerAR({ writers }) {
-	const names = (writers || []).map((w) => ({
-		key: w.writer_name,
-		label: w.writer_name,
-	}));
-	return (
-		<AlertBannerAR
-			tone="crit"
-			icon="warn"
-			title="Dual-write stopped — these writers are not recording"
-			/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */
-			note="Marker scan found no dual-write block, or could not read the file."
-			badges={names}
-		/>
+		<div className="arch-alarm-lane">
+			{rows.map((row) => (
+				<AlarmRowAR key={row.key} row={row} onRetry={onRetry} />
+			))}
+		</div>
 	);
 }
 
@@ -2034,6 +2001,63 @@ function buildLiveDaemonsByNodeId(daemons) {
 // 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
 //   판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 — 어느 쪽도 여기서
 //   다시 재지 않음. 판정을 못 받은 행은 tone 을 아예 싣지 않음: 미수신과 정상은 다른 사실임.
+// 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
+const ALARM_TONE_RANK = { crit: 1, warn: 2 };
+
+/**
+ * 경보 레인의 행 — 네 사실을 한 목록으로 접고 심각도로 세움.
+ * 각 사실의 근거는 화면이 이미 들고 있는 값뿐임 — 여기서 다시 판정하지 않음.
+ */
+function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) {
+	const rows = [];
+
+	if (offWriters.length > 0)
+		rows.push({
+			key: "dual-write",
+			tone: "crit",
+			icon: "warn",
+			title: "Dual-write stopped — these writers are not recording",
+			// 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음.
+			note: "Marker scan found no dual-write block, or could not read the file.",
+			badges: offWriters.map((w) => w.writer_name),
+		});
+
+	if (healthStoreErrors.length > 0)
+		rows.push({
+			key: "health-store",
+			tone: "crit",
+			icon: "warn",
+			title: "Couldn't load system health",
+			note: "These stores did not answer; the parts they judge carry no verdict.",
+			badges: healthStoreErrors,
+		});
+
+	if (liveState.status === "error")
+		rows.push({
+			key: "live-overlay",
+			tone: "crit",
+			icon: "warn",
+			title: "Couldn't load the live overlay",
+			note: liveState.error || "The live endpoint did not answer.",
+			badges: [],
+		});
+
+	const absent = governance?.absent || [];
+	if (absent.length > 0 || governance?.sourceMissing)
+		rows.push({
+			key: "governance",
+			tone: "warn",
+			icon: "warn",
+			title: governance?.sourceMissing
+				? "Governance membership unverifiable — compliance matrix unreadable"
+				: "Governance document missing",
+			note: "The compliance matrix names these files; they are not on disk.",
+			badges: absent,
+		});
+
+	return rows.sort((a, b) => ALARM_TONE_RANK[a.tone] - ALARM_TONE_RANK[b.tone]);
+}
+
 function getHealthPartRows(cardStates, partBindings) {
 	const model = window.HealthModel;
 	if (!model || typeof model.resolveCardFacts !== "function") return [];

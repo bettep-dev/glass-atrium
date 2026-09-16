@@ -2829,7 +2829,7 @@ async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null
 
 // 끊긴 health 저장소를 부르는 경보 — 이름·자리·복구 컨트롤을 함께 읽음.
 // 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '노드를 눌러야 보임' 이 초록으로 지나감.
-// 경보는 표 안에 서 있었고 표가 사라지며 페이지로 올라왔음 — `onPage` 가 그 이사를 잼.
+// 경보는 이제 지도 위 경보 레인의 한 행임 — `onPage` 가 그 자리를 잼.
 async function getStoreAlerts(): Promise<
 	{ text: string; onPage: boolean; inPanel: boolean; retries: number }[]
 > {
@@ -2838,7 +2838,7 @@ async function getStoreAlerts(): Promise<
 			.filter((el) => (el.textContent || "").includes("system health"))
 			.map((el) => ({
 				text: (el.textContent || "").replace(/\s+/g, " ").trim(),
-				onPage: Boolean(el.closest(".arch-health-alert-wrap")),
+				onPage: Boolean(el.closest(".arch-alarm-lane")),
 				// 패널 안에 서면 노드를 눌러야 보임 — 헬스를 통째로 못 읽었다는 사실이
 				// 클릭 뒤에 숨는 것이 이 절이 막는 결함임.
 				inPanel: Boolean(el.closest("[data-node-health]")),
@@ -2851,7 +2851,7 @@ test("AC-B2-6b a health store that failed is named by an alert standing on the p
 	await openMapWithHealth(getHealthFixture({ failedStores: ["health"] }));
 	// 끊긴 저장소의 부품은 tone 을 못 받으므로 판정 앵커를 쓸 수 없음 — 경보 자체를 기다림.
 	// 부재는 아래 단언이 문장으로 보고함(여기서 던지면 붉은 이유가 타임아웃으로 바뀜).
-	await page.waitForSelector(".arch-health-alert-wrap .arch-queue-error", { timeout: 15_000 }).then(
+	await page.waitForSelector('.arch-alarm-lane [data-alarm="health-store"]', { timeout: 15_000 }).then(
 		() => true,
 		() => false,
 	);
