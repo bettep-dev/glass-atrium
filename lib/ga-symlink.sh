@@ -11,6 +11,33 @@ read_manifest_files() {
   jq -r '.files[]' -- "${MANIFEST}"
 }
 
+# manifest key containment (parent-shell precondition)
+# Logs every files[] key spine_is_escaping_key rejects, then returns MANIFEST_EXIT_ESCAPING_KEY. Callers run
+# it in their OWN shell before a manifest loop: read_manifest_files feeds process substitutions, where a die
+# only truncates the loop and the run still exits 0. Absent jq/manifest → 0, each caller keeps its own
+# absence contract; a non-array files member counts as unreadable.
+require_contained_manifest_keys() {
+  command -v jq >/dev/null 2>&1 || return 0
+  [[ -f "${MANIFEST}" ]] || return 0
+  if ! jq -e '(.files // []) | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
+    log "FATAL: manifest files[] unreadable (${MANIFEST}) — refusing every manifest loop"
+    return "${MANIFEST_EXIT_ESCAPING_KEY}"
+  fi
+  local key offenders=0
+  # NUL-delimited so a key carrying a newline stays one key; the array check above settles jq's rc.
+  # shellcheck disable=SC2312
+  while IFS= read -r -d '' key; do
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_key "${key}"; then
+      log "manifest key escapes the install root: $(printf '%q' "${key}")"
+      offenders=$((offenders + 1))
+    fi
+  done < <(jq -j '(.files // [])[] | tostring + "\u0000"' -- "${MANIFEST}")
+  [[ "${offenders}" -eq 0 ]] && return 0
+  log "FATAL: manifest carries ${offenders} escaping files[] key(s) (listed above) — nothing farmed, removed or pruned (${MANIFEST})"
+  return "${MANIFEST_EXIT_ESCAPING_KEY}"
+}
+
 # collision scope query
 # Echo "yes" when a target-relative path falls under a collision-checked component dir (agents/ or
 # skills/) — the components the dropped plugin layer would have auto-namespaced; else "no".
@@ -276,6 +303,8 @@ remove_manifest_links() {
     log "manifest absent (${MANIFEST}) — skipping manifest pass (orphan sweep still runs)"
     return 0
   }
+  # shellcheck disable=SC2310  # verdict branched on; exit_step exits on the CLI, returns under a TUI step
+  require_contained_manifest_keys || exit_step "${MANIFEST_EXIT_ESCAPING_KEY}" || return "${MANIFEST_EXIT_ESCAPING_KEY}"
   local rel removed=0 rc
   # jq output streamed via process substitution → loop stays in current shell.
   # shellcheck disable=SC2312
@@ -348,6 +377,8 @@ remove_empty_dirs() {
     return 0
   }
   [[ -d "${TARGET_HOME}" ]] || return 0
+  # shellcheck disable=SC2310  # verdict branched on; exit_step exits on the CLI, returns under a TUI step
+  require_contained_manifest_keys || exit_step "${MANIFEST_EXIT_ESCAPING_KEY}" || return "${MANIFEST_EXIT_ESCAPING_KEY}"
 
   local reldir abs removed=0 kept=0
   # read_manifest_dirs streams deepest-first via process substitution → loop stays in the current
@@ -427,6 +458,8 @@ read_manifest_dirs() {
 # contract is identical, so it lives here once. Honours TARGET_HOME + DRY_RUN via swap_symlink.
 run_symlink_farm() {
   local label="$1"
+  # shellcheck disable=SC2310  # verdict branched on; exit_step exits on the CLI, returns under a TUI step
+  require_contained_manifest_keys || exit_step "${MANIFEST_EXIT_ESCAPING_KEY}" || return "${MANIFEST_EXIT_ESCAPING_KEY}"
 
   log "== ${label}: per-file symlink farm (target=${TARGET_HOME}) =="
   "${DRY_RUN}" && log "(dry-run: staging only — no symlink/launchd writes)"

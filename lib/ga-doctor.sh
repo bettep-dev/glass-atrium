@@ -56,6 +56,13 @@ run_doctor() {
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" ]]; then
     if jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
       log "  ok   : manifest parseable (${MANIFEST})"
+      # shellcheck disable=SC2310  # verdict branched on — a bad manifest is a FAIL row, never an abort
+      if require_contained_manifest_keys; then
+        log "  ok   : manifest files[] keys contained in the install root"
+      else
+        log "  FAIL : manifest carries escaping or unreadable files[] key(s) (listed above) — install/uninstall/prune refuse it"
+        fail=1
+      fi
       local rel missing=0
       # read_manifest_files dies on its own failure → masked exit is benign;
       # process substitution keeps the loop in the current shell (var-safe).

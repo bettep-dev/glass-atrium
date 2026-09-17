@@ -251,6 +251,12 @@ capture_install_baseline() {
 # ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
 capture_base_agent_store() {
   local store rel src dst base copied=0 missing=0 refused=0
+  # advisory contract: an escaping agents/ key would copy a file from outside GA_ROOT, so refuse the whole seed
+  # shellcheck disable=SC2310
+  if ! require_contained_manifest_keys; then
+    log "  warn : base-content store NOT seeded — the manifest carries escaping files[] key(s); next update falls back to the gated-2-way merge"
+    return 0
+  fi
   store="$(spine_baseline_dir)/base-agents"
   if ! mkdir -p -- "${store}"; then
     log "  warn : base-content store dir uncreatable (${store}) — next update falls back to the gated-2-way merge"
@@ -348,6 +354,8 @@ run_prune() {
       printf 'FATAL: manifest absent or .files not an array: %s\n' "${MANIFEST}" >&2
       exit "${PRUNE_EXIT_NO_MANIFEST}"
     }
+  # shellcheck disable=SC2310  # verdict branched on; exit_step exits on the CLI, returns under a TUI step
+  require_contained_manifest_keys || exit_step "${MANIFEST_EXIT_ESCAPING_KEY}" || return "${MANIFEST_EXIT_ESCAPING_KEY}"
 
   log "== prune: orphan dangling GA symlinks (target=${TARGET_HOME}) =="
   "${DRY_RUN}" && log "(dry-run: report only — no unlink)"
