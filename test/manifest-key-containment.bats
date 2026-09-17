@@ -146,7 +146,7 @@ assert_lacks() {
   printf '{"version":"1.0.0","files":"agents/dev-x.md"}\n' >"${MANIFEST}"
   run_engine 'run_agents_only'
   assert_status "${ESCAPING_KEY_EXIT}"
-  assert_has "manifest files[] unreadable"
+  assert_has "FATAL: manifest files[] unreadable"
 }
 
 @test "CLI install: an escaping key exits non-zero before run_install starts" {
@@ -192,6 +192,16 @@ assert_lacks() {
   assert_has "warn : base-content store NOT seeded — the manifest carries escaping or unreadable files[] key(s)"
   assert_lacks "FATAL"
   [ ! -e "${STATE}/base-agents/secret.md" ]
+  [ ! -e "${STATE}/base-agents/dev-x.md" ]
+}
+
+@test "install baseline: an unreadable files[] member skips the seed without a FATAL line" {
+  printf '{"version":"1.0.0","files":"agents/dev-x.md"}\n' >"${MANIFEST}"
+  run_engine 'capture_base_agent_store'
+  assert_status 0
+  assert_has "manifest files[] unreadable"
+  assert_has "warn : base-content store NOT seeded"
+  assert_lacks "FATAL"
   [ ! -e "${STATE}/base-agents/dev-x.md" ]
 }
 

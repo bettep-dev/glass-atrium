@@ -30,8 +30,19 @@ require_contained_manifest_keys() {
     fi
     return "${MANIFEST_EXIT_ESCAPING_KEY}"
   fi
+  local offenders
+  # shellcheck disable=SC2311  # the helper's commands are all conditions or logs — nothing for set -e to catch
+  offenders="$(count_escaping_manifest_keys)"
+  [[ "${offenders}" -eq 0 ]] && return 0
+  [[ "${consequence}" == "report" ]] && return "${MANIFEST_EXIT_ESCAPING_KEY}"
+  log "FATAL: manifest carries ${offenders} escaping files[] key(s) (listed above) — nothing farmed, removed or pruned (${MANIFEST})"
+  return "${MANIFEST_EXIT_ESCAPING_KEY}"
+}
+
+# Log each escaping files[] key; stdout = their count. Callers settle the array shape first.
+count_escaping_manifest_keys() {
   local key offenders=0
-  # NUL-delimited so a key carrying a newline stays one key; the array check above settles jq's rc.
+  # NUL-delimited so a key carrying a newline stays one key; the caller's array check settles jq's rc.
   # shellcheck disable=SC2312
   while IFS= read -r -d '' key; do
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
@@ -40,10 +51,7 @@ require_contained_manifest_keys() {
       offenders=$((offenders + 1))
     fi
   done < <(jq -j '(.files // [])[] | tostring + "\u0000"' -- "${MANIFEST}")
-  [[ "${offenders}" -eq 0 ]] && return 0
-  [[ "${consequence}" == "report" ]] && return "${MANIFEST_EXIT_ESCAPING_KEY}"
-  log "FATAL: manifest carries ${offenders} escaping files[] key(s) (listed above) — nothing farmed, removed or pruned (${MANIFEST})"
-  return "${MANIFEST_EXIT_ESCAPING_KEY}"
+  printf '%s\n' "${offenders}"
 }
 
 # collision scope query
