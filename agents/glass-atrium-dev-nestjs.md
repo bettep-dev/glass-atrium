@@ -25,10 +25,8 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
-- No business logic (validation, transformation, DB query) in a Controller method — delegate to a Service or Handler.
-- The Domain layer imports nothing from Infrastructure and depends on no external system (DB, HTTP).
 - **Refactor impact + consolidation**: before a DTO/entity/enum refactor or consolidation, grep for every reference.
-  - Grep targets: `@/` sibling DTOs, responses, schemas, type imports, mocks and enums · `schema.prisma` for the enum's values and for any duplicate enum declaration.
+  - Grep targets: `@/` sibling DTOs, responses, schemas, type imports, mocks and enums · `schema.prisma` for the enum's values, any duplicate enum declaration, and the DTO's persisted field names.
   - Deduping across layers → host the SoT in a shared leaf utility both consumers import, and verify every reference is updated before completion.
   - Exception to **Stage Checkpoints for Complex Work**: a reference-rename consolidation updates all references atomically in one pass (a half-migrated reference set breaks the build).
 - **Pre-Execution Assumption Check**: before editing more than 2 files, run every `## Pre-Execution Verification` check for all targets, plus file existence (Glob) and `@/` import paths (Grep). Any failed check → stop and clarify.
@@ -38,7 +36,6 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
   - Backing is production code, not a test: `hooks/inject-scope-rules.sh` excludes the daemon-carrier agents (this agent among them) from its budget-dev injection roster, so this bullet is the only budget-sizing text reaching this agent.
 - Process spawning: `execFile` only.
 - LLM-injected context: external `@Body()` data is sanitized before it enters any LangChain / LLM context (LLM01).
-- Raw SQL, LLM-generated SQL included: parameterized binding through the `Prisma.sql` tagged template only; string concatenation is FORBIDDEN (LLM05).
 <!-- EDITABLE:END -->
 
 ## Tech Stack
@@ -84,15 +81,12 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- **DI**: Services and Repositories take dependencies through `constructor(private readonly …)`; no direct `new`.
-- **DTO validation**: every POST/PUT body DTO carries class-validator decorators; `ValidationPipe` is applied globally.
-- **Error handling**: domain exceptions map to the HttpException hierarchy (`BadRequestException`, `NotFoundException`); an ExceptionFilter keeps responses consistent; no empty catch.
-- **Configuration**: read environment values through `ConfigService`, never `process.env`.
+- **Error handling**: an ExceptionFilter keeps error responses consistent.
 - **Prisma schema change** → run `prisma:generate`.
 - **Import order**: @nestjs → builtin → third-party → @/app → @/core → @/mail → @/system → @/ → relative.
-- **Security middleware**: Helmet · CORS allowlist · `ThrottlerGuard` from `@nestjs/throttler` for rate limiting · in a global-JWT project, every endpoint carries the auth guard.
+- **Security middleware**: Helmet · CORS allowlist · `ThrottlerGuard` from `@nestjs/throttler` for rate limiting.
 - **Git refactor verification**: before a revert or removal, confirm `git status` is clean (not `git diff HEAD`, which conflates staged changes in multi-task reviews) and grep the target across `@/`; zero hits = safe to remove.
-- **Raw SQL caller audit**: before simplifying a `Prisma.raw` / `Prisma.sql` query, grep every caller (query name plus reverse `.raw(` / `.sql` usages) and confirm the simplification breaks no caller's filter or column assumptions.
+- **Raw SQL caller audit**: before simplifying a `Prisma.raw` / `Prisma.sql` query, grep every caller (query name plus reverse `.raw(` / `.sql` usages) and confirm the simplification breaks no caller's filter or column assumptions, and re-verify the finished change against every identified call site before completion.
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
@@ -115,6 +109,14 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 
 ## Success Criteria
 
+- **Controller**: no business logic (validation, transformation, DB query) in a Controller method — delegate to a Service or Handler.
+- **Layer imports**: the Domain layer imports nothing from Infrastructure and depends on no external system (DB, HTTP).
+- **Raw SQL**: raw SQL, LLM-generated SQL included, uses parameterized binding through the `Prisma.sql` tagged template only; string concatenation is FORBIDDEN (LLM05).
+- **DI**: Services and Repositories take dependencies through `constructor(private readonly …)`; no direct `new`.
+- **DTO validation**: every POST/PUT body DTO carries class-validator decorators; `ValidationPipe` is applied globally.
+- **Error handling**: domain exceptions map to the HttpException hierarchy (`BadRequestException`, `NotFoundException`); no empty catch.
+- **Configuration**: read environment values through `ConfigService`, never `process.env`.
+- **Auth guard**: in a global-JWT project, every endpoint carries the auth guard.
 - **Tests**: a new Service or Controller ships with a `*.spec.ts` (Jest + Supertest).
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).
