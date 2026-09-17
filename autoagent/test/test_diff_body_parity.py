@@ -155,6 +155,9 @@ def _aux_rows() -> dict[str, str]:
         + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
         "aux_quoted_unknown_escape_target": f'--- "a/{_TARGET[:-2]}\\md"\n+++ "b/{_TARGET[:-2]}\\md"\n'
         + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
+        # Quoted headers that unquote to no path, read as their unquoted `+++ ` / `+++ b/` equivalents.
+        "aux_quoted_empty_header": '--- ""\n+++ ""\n@@ -1,1 +1,2 @@\n ctx\n+line\n',
+        "aux_quoted_empty_b_header": '--- "a/"\n+++ "b/"\n@@ -1,1 +1,2 @@\n ctx\n+line\n',
     }
 
 
@@ -162,6 +165,8 @@ def _aux_rows() -> dict[str, str]:
 _LOOSENING_ROWS: dict[str, str] = {
     "aux_quoted_target_header": "f2-basename-quoted-path-correction",
     "aux_quoted_hook_header": "hook-touch-true-reduces-prose-only-add-warning",
+    "aux_quoted_empty_header": "f2-basename-quoted-path-correction",
+    "aux_quoted_empty_b_header": "f2-basename-quoted-path-correction",
 }
 
 
@@ -233,7 +238,7 @@ def _count_landed_pieces(diff: str) -> int:
 
 
 # HEAD becfb284 verdicts over _fixture_rows(), recorded before the body-reading change.
-# `counts_valid` is recorded only: it follows the recount columns, which carry the verdict.
+# `counts_valid` follows the recount columns: it may flip only where the body reading changed.
 # HEAD had no file-delete rejection, so its `f2_reject` column is the basename verdict alone.
 _BASELINE_KEYS: tuple[str, ...] = ('safety', 'sensitive_hit', 'added', 'removed', 'split_added', 'split_removed', 'added_content', 'frontmatter', 'replace_shape', 'counts_valid', 'recount_old', 'recount_new', 'f2_reject', 'hook_touch', 'landed_added', 'reference_added')
 _HEAD_BASELINE: dict[str, tuple[object, ...]] = {
@@ -541,6 +546,8 @@ _HEAD_BASELINE: dict[str, tuple[object, ...]] = {
     'aux_quoted_truncated_escape_hook': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
     'aux_quoted_trailing_backslash_hook': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
     'aux_quoted_unknown_escape_target': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
+    'aux_quoted_empty_header': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
+    'aux_quoted_empty_b_header': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
 }
 
 
@@ -720,6 +727,28 @@ def _commit_work_tree(name: str, body: str) -> tuple[Path, Path]:
     ):
         subprocess.run(["git", "-C", str(work_tree), *args], check=True)
     return work_tree, target
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class EmptyQuotedHeaderLandsOnTheProposalTarget(unittest.TestCase):
+    """The bound on the empty-quoted-header loosening: past F2, the only write is to the proposal's own target."""
+
+    _BODY = "# Agent\n\n- keep\n"
+
+    def setUp(self) -> None:
+        self.work_tree, self.target = _commit_work_tree(Path(_TARGET).name, self._BODY)
+        self.addCleanup(shutil.rmtree, self.work_tree, ignore_errors=True)
+
+    def test_should_store_a_diff_that_applies_to_the_proposal_target_only(self) -> None:
+        for row_id in ("aux_quoted_empty_header", "aux_quoted_empty_b_header"):
+            with self.subTest(row_id):
+                with redirect_stderr(StringIO()):
+                    stored = dc._gate_validated_diff(_aux_rows()[row_id], self.target, self.work_tree)
+                self.assertEqual(dc._diff_header_target_basename(stored), self.target.name)
+                subprocess.run(
+                    ["git", "-C", str(self.work_tree), "apply", "--check", "-"],
+                    input=stored, text=True, check=True, capture_output=True,
+                )
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
