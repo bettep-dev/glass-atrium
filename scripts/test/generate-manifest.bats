@@ -406,6 +406,47 @@ ship_lib_a() {
   [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
 }
 
+# Stamp one retired entry into a freshly generated manifest, then run --check. The
+# default value is a REAL shipped hash, so only the entry's shape can fail the gate.
+check_with_retired_entry() {
+  local key="$1" value="${2:-}"
+  "${SCRIPT}" >/dev/null
+  [[ -n "${value}" ]] || value="$(jq -r '.hashes["LICENSE"]' "${MANIFEST}")"
+  jq --arg k "${key}" --arg v "${value}" '.retired = {($k): [$v]}' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  run "${SCRIPT}" --check
+}
+
+@test "--check: exit 1 names a dot-dot escaping retired key" {
+  check_with_retired_entry "../../escape"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "../../escape"'* ]] || return 1
+}
+
+@test "--check: exit 1 names an absolute retired key" {
+  check_with_retired_entry "/scripts/lib/gone.sh"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "/scripts/lib/gone.sh"'* ]] || return 1
+}
+
+@test "--check: exit 1 names a retired key with a mid-path dot-dot segment" {
+  check_with_retired_entry "a/../../x"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "a/../../x"'* ]] || return 1
+}
+
+@test "--check: exit 1 names a retired key whose value is not 64-hex" {
+  check_with_retired_entry "scripts/lib/gone.sh" \
+    "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "scripts/lib/gone.sh"'* ]] || return 1
+}
+
 @test "--validate: rejects a retired key that is also a files[] entry" {
   "${SCRIPT}"
   local victim

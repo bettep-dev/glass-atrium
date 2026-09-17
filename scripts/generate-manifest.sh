@@ -78,7 +78,8 @@
 #   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta on
 #                                  orphan/missing paths, VERSION mismatch, per-file
 #                                  HASH mismatch (content changed, path unchanged),
-#                                  an ABSENT retired key, OR a retired-map delta
+#                                  an ABSENT retired key, a retired key or value of
+#                                  invalid shape, OR a retired-map delta
 #   generate-manifest.sh --validate FILE
 #                                  structural validation of an arbitrary manifest
 #                                  against the same invariants the regeneration
@@ -327,6 +328,25 @@ build_retired_json() {
   } | LC_ALL=C sort -u | spine_build_retired_map
 }
 
+# jq definition shared by --validate and --check: the sorted retired keys whose key is
+# empty, absolute or carries a `..` segment (the updater removes what a key names), or
+# whose value is not a non-empty array of 64-hex strings. A non-object map yields [] —
+# the object-type clause is validate's, and --check reports it as a RETIRED delta.
+readonly RETIRED_SHAPE_JQ_DEF='
+def retired_shape_violations:
+  (.retired // {})
+  | if type == "object" then
+      [to_entries[]
+       | select(
+           .key == "" or (.key | startswith("/"))
+           or any(.key | split("/")[]; . == "..")
+           or ((.value | type == "array" and length > 0
+                and all(.[]; type == "string" and test("^[0-9a-f]{64}$"))) | not))
+       | .key]
+      | sort
+    else [] end;
+'
+
 # Structural validation of a manifest FILE against the invariants a regeneration
 # must satisfy before its temp replaces the live manifest: version stamped, files
 # non-empty, one 64-hex hash and one octal mode per file, and a retired map that is
@@ -334,7 +354,7 @@ build_retired_json() {
 # a non-empty relative path with no `..` segment (the updater removes what a key names),
 # and whose every value is a non-empty array of 64-hex strings.
 validate_manifest_file() {
-  jq -e '
+  jq -e "${RETIRED_SHAPE_JQ_DEF}"'
     (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
     and (.files | type == "array" and length > 0)
     and (.hashes | type == "object")
@@ -348,13 +368,7 @@ validate_manifest_file() {
          | .retired | keys | all($shipped[.] == null))
     and (.retired | keys
          | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
-    and (.retired | keys | all(
-           . != "" and (startswith("/") | not)
-           and all(split("/")[]; . != "..")))
-    and (.retired | to_entries | all(
-           (.value | type == "array")
-           and (.value | length > 0)
-           and (.value | all(type == "string" and test("^[0-9a-f]{64}$")))))
+    and (retired_shape_violations | length == 0)
   ' -- "$1" >/dev/null 2>&1
 }
 
@@ -370,7 +384,7 @@ require_manifest() {
 run_check() {
   local orphans missing mismatches manifest_version gen_count rc=0
   local modes_count mode_mismatches files
-  local committed_retired generated_retired dropped dropped_count
+  local committed_retired generated_retired dropped dropped_count retired_invalid
   require_manifest
 
   # Single git ls-files pass — the sorted list feeds the count, both comm diffs,
@@ -449,6 +463,13 @@ run_check() {
     echo "generate-manifest --check: RETIRED key ABSENT — the manifest must always carry a retired map" >&2
     rc=1
     committed_retired='{}'
+  fi
+  retired_invalid="$(jq -r "${RETIRED_SHAPE_JQ_DEF}"'retired_shape_violations[] | tojson' \
+    -- "${MANIFEST}")"
+  if [[ -n "${retired_invalid}" ]]; then
+    echo "generate-manifest --check: RETIRED shape INVALID:" >&2
+    printf '%s\n' "${retired_invalid}" | sed 's/^/  ! /' >&2
+    rc=1
   fi
   dropped="$(retired_dropped_lines | cut -f1 | LC_ALL=C sort -u)"
   if [[ -n "${dropped}" ]]; then
