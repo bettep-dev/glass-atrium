@@ -37,7 +37,7 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
-# write_manifest KEY… — files[] in the given order, each resolvable source carrying its REAL sha256.
+# write_manifest KEY… — files[] in the given order; a key naming an existing sandbox file gets its REAL sha256, any other key no hash row.
 write_manifest() {
   local key src hashes="{}" modes="{}" sum
   for key in "$@"; do
@@ -142,6 +142,7 @@ assert_has() {
 @test "install baseline: an escaping agents/ key never copies an outside file into the base store" {
   write_manifest "agents/dev-x.md" "agents/../../esc/secret.md"
   run_engine 'capture_base_agent_store'
+  assert_status 0
   assert_has "manifest key escapes the install root: agents/../../esc/secret.md"
   assert_has "base-content store NOT seeded"
   [ ! -e "${STATE}/base-agents/secret.md" ]

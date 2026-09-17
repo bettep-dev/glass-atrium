@@ -342,26 +342,21 @@ is_escaping_manifest_key() {
 require_contained_release_keys() {
   local manifest="$1" scratch="$2" rel line offenders=0
   # shellcheck disable=SC2310  # a read failure is the verdict — branched on
-  manifest_get files "${manifest}" >"${scratch}/files-keys" \
+  manifest_get files "${manifest}" >"${scratch}/release-keys" \
     || die "${EXIT_MANIFEST_KEY_ESCAPES}" "cannot read manifest.files keys from ${manifest}"
   # shellcheck disable=SC2310  # a read failure is the verdict — branched on
   manifest_get modes "${manifest}" >"${scratch}/modes-lines" \
     || die "${EXIT_MANIFEST_KEY_ESCAPES}" "cannot read manifest.modes keys from ${manifest}"
+  while IFS= read -r line; do
+    printf '%s\n' "${line%$'\t'*}" # the mode value carries no tab; the key may
+  done <"${scratch}/modes-lines" >>"${scratch}/release-keys"
   while IFS= read -r rel; do
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if is_escaping_manifest_key "${rel}"; then
       printf 'manifest key escapes the install root: %q\n' "${rel}" >&2
       offenders=$((offenders + 1))
     fi
-  done <"${scratch}/files-keys"
-  while IFS= read -r line; do
-    rel="${line%$'\t'*}" # the mode value carries no tab; the key may
-    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
-    if is_escaping_manifest_key "${rel}"; then
-      printf 'manifest key escapes the install root: %q\n' "${rel}" >&2
-      offenders=$((offenders + 1))
-    fi
-  done <"${scratch}/modes-lines"
+  done <"${scratch}/release-keys"
   if ((offenders > 0)); then
     die "${EXIT_MANIFEST_KEY_ESCAPES}" \
       "${offenders} manifest key(s) escape the install root — refusing to install."
@@ -443,7 +438,7 @@ install_tree() {
     [[ -f "${src}" ]] \
       || die "${EXIT_EXTRACT_FAILED}" "verified staging member missing for ${rel} — refusing a partial install."
     # spelling was refused before verify_bundle; what remains is a directory symlink
-    # already inside GA_DIR (E5), judged before mkdir -p creates anything through it
+    # already inside GA_DIR, judged before mkdir -p creates anything through it
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if spine_is_escaping_write_target "${dst}" "${GA_DIR}"; then
       die "${EXIT_EXTRACT_FAILED}" "write target escapes the install root: $(printf '%q' "${rel}")"

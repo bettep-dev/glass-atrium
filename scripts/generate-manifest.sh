@@ -344,7 +344,6 @@ def modes_keys: .modes | if type == "object" then keys else [] end;
 def files_key_violations: [files_list[] | select(escaping_key)] | unique;
 def modes_only_keys: modes_keys - files_list;
 def files_only_keys: (files_list | unique) - modes_keys;
-def is_modes_key_set_equal: modes_keys == (files_list | unique);
 def retired_shape_violations:
   (.retired // {})
   | if type == "object" then
@@ -382,7 +381,8 @@ validate_manifest_file() {
          | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
     and (retired_shape_violations | length == 0)
     and (files_key_violations | length == 0)
-    and is_modes_key_set_equal
+    and (modes_only_keys | length == 0)
+    and (files_only_keys | length == 0)
   ' -- "$1" >/dev/null 2>&1
 }
 

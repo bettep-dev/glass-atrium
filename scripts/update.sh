@@ -4263,7 +4263,7 @@ update_enforce_manifest_modes() {
       update_log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
       continue
     fi
-    # Runs after finalize, so a symlinked directory component inside the root (E5)
+    # Runs after finalize, so a symlinked directory component inside the root
     # is a per-key skip, never an abort of an already-landed apply.
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if spine_is_escaping_write_target "${root}/${rel}" "${root}"; then

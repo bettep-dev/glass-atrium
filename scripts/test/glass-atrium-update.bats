@@ -2414,6 +2414,7 @@ refused_record() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"retired MALFORMED — scripts/tool.sh is retired AND shipped; skipped"* ]] || return 1
   [[ "${output}" == *"unmoved=0 refused=2"* ]] || return 1
+  [[ "${output}" == *"WARN: 2 retired manifest key(s) refused by the sweep"* ]] || return 1
   [[ "$(cat "$(refused_record)")" == $'MALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
   [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
 }
