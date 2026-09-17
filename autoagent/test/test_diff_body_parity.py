@@ -545,7 +545,7 @@ _HEAD_BASELINE: dict[str, tuple[object, ...]] = {
 
 
 def _is_not_looser(column: str, head_row: dict[str, object], new_row: dict[str, object], row_id: str) -> bool:
-    """One column's verdict against HEAD: equal where exact, monotone only where 결정 3 lets counts grow."""
+    """One column's verdict against HEAD: equal where exact, monotone where the body reading lets counts grow."""
     loosening = _LOOSENING_ROWS.get(row_id)
     head, new = head_row[column], new_row[column]
     is_reading_changed = any(_get_count(new_row, c) != _get_count(head_row, c) for c in ("added", "removed"))

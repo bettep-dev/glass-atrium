@@ -1231,8 +1231,8 @@ def _get_unquoted_git_path(body: str) -> str | None:
         if _GIT_OCTAL_ESCAPE_RE.fullmatch(escape):
             out.append(int(escape, 8))
             idx += 4
-        elif escape[:1] in _GIT_QUOTE_ESCAPES:
-            out.append(_GIT_QUOTE_ESCAPES[escape[:1]])
+        elif (named := _GIT_QUOTE_ESCAPES.get(escape[:1])) is not None:
+            out.append(named)
             idx += 2
         else:
             return None
@@ -4318,8 +4318,8 @@ def _recount_hunk_header(diff_text: str) -> str:
       - '+' prefix  → added    → counts toward new (d) only, ``+++ `` included
       - any other line → context → counts toward BOTH old (b) and new (d)
       - the next ``@@ `` or ``diff --git `` line ends the current hunk body; any other
-        ``@@``-prefixed line is a prefix-less body line, as git's ``recount_diff`` stops
-        only at ``@@ ``
+        ``@@``-prefixed line is a prefix-less body line, as git's ``recount_diff`` ends a
+        body at ``@@ `` and at no other ``@@``-prefixed line
       - '\\ No newline at end of file' markers are ignored (not a content line)
 
     FU-3 reuses this helper to re-stamp difflib output defensively.
