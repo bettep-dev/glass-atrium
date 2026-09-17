@@ -954,7 +954,7 @@
     "autoagent/test/test_corpus_audit_pg_sink.py": "8af0c2a8cc21f9577a931f2d99ab445e5c5b9d4ba0b4b05036fa6fc84b1168ca",
     "autoagent/test/test_cycle_status_classification.py": "45088f6b9e6c8499b66d0b766ca39fd371992abb6221b17ade6e3c0a93906253",
     "autoagent/test/test_dead_reference_guard.py": "48450ec057da9d68e0e80bf7790e2cba16145362eeaed55f56297e2a8a34c1c5",
-    "autoagent/test/test_diff_body_parity.py": "ab7dfa3c2d1bb7fa5e55667244a6ba31665bfe65c84559f40d6ff5b21d43e240",
+    "autoagent/test/test_diff_body_parity.py": "f6eea5639750cd98c5d6af2e1f625901ebd732e72fcce6975fb0d5035d442b73",
     "autoagent/test/test_diff_target_basename.py": "5036e4b8f075c7a31acc2c9c547e585a03347964459c0d8a254c4da9dba6971c",
     "autoagent/test/test_discharge_wiring.py": "3ea37d7ae536fe9b7ca1f6863737c1a260c3e9140e01ca927a61e67db45c4589",
     "autoagent/test/test_discovered_date_semantics.py": "be5731260732b5e180a6f65d9e333c84b8bc4bb78b5bba3bfee340be10ff2a60",
