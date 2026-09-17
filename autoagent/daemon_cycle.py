@@ -1168,14 +1168,25 @@ _GIT_QUOTE_ESCAPES: dict[str, int] = {
 
 
 def _get_diff_header_paths(diff: str) -> list[str]:
-    """Return the file paths a diff's header pairs name — path extraction only, never a body reading.
+    """Return the file paths a diff's header pairs name — path extraction only, never a body reading."""
+    paths: list[str] = []
+    for _idx, old_text, new_text in _get_diff_header_pairs(diff):
+        for text, prefix in ((old_text, "a/"), (new_text, "b/")):
+            path = _get_header_path(text, prefix)
+            if path:
+                paths.append(path)
+    return paths
+
+
+def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
+    """Return ``(--- line index, old path text, new path text)`` per header pair, ``\\r`` stripped.
 
     Before any hunk (or after ``diff --git``) a ``--- `` line directly followed by
     ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
     because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
     """
     lines = [line.removesuffix("\r") for line in (diff or "").splitlines()]
-    paths: list[str] = []
+    pairs: list[tuple[int, str, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
         if line.startswith(("@@", "diff --git ")):
@@ -1186,11 +1197,8 @@ def _get_diff_header_paths(diff: str) -> list[str]:
             continue
         if in_hunk and not (len(pair) > 2 and pair[2].startswith("@@")):
             continue
-        for raw, prefix in ((line, "a/"), (pair[1], "b/")):
-            path = _get_header_path(raw[4:], prefix)
-            if path:
-                paths.append(path)
-    return paths
+        pairs.append((idx, line[4:], pair[1][4:]))
+    return pairs
 
 
 def _get_header_path(text: str, prefix: str) -> str | None:
@@ -4294,11 +4302,12 @@ def _recount_hunk_header(diff_text: str) -> str:
     Start-offset drift is handled by the full difflib re-derivation against the
     current file.
 
-    Line classification per hunk body (mirrors unified-diff semantics):
-      - ' ' prefix  → context  → counts toward BOTH old (b) and new (d)
-      - '-' prefix  → removed  → counts toward old (b) only
-      - '+' prefix  → added    → counts toward new (d) only
-      - file headers (---/+++) and nested @@ end the current hunk body
+    Line classification per hunk body — the ``_get_diff_line_kinds`` body reading,
+    so the counts agree with what ``git apply --recount`` applies:
+      - '-' prefix  → removed  → counts toward old (b) only, ``--- `` included
+      - '+' prefix  → added    → counts toward new (d) only, ``+++ `` included
+      - any other line → context → counts toward BOTH old (b) and new (d)
+      - the next @@ or a ``diff --git`` line ends the current hunk body
       - '\\ No newline at end of file' markers are ignored (not a content line)
 
     FU-3 reuses this helper to re-stamp difflib output defensively.
@@ -4310,6 +4319,7 @@ def _recount_hunk_header(diff_text: str) -> str:
         return diff_text
 
     lines = diff_text.splitlines(keepends=True)
+    kinds = _get_diff_line_kinds(diff_text)
     out: list[str] = []
     i = 0
     n = len(lines)
@@ -4322,28 +4332,21 @@ def _recount_hunk_header(diff_text: str) -> str:
             continue
 
         start_old, _, start_new, _, trailer = m.groups()
-        # Scan the body following this hunk header until the next hunk / header.
-        body: list[str] = []
+        # Body runs to the next hunk or file section, never to a '---'/'+++' line.
         j = i + 1
-        while j < n:
-            bl = lines[j]
-            stripped_bl = bl.rstrip("\n")
-            if _UNIFIED_HUNK_CAPTURE_RE.match(stripped_bl):
-                break
-            if stripped_bl.startswith("--- ") or stripped_bl.startswith("+++ "):
-                break
-            body.append(bl)
+        while j < n and kinds[j][0] != "hunk" and not lines[j].startswith("diff --git "):
             j += 1
+        body = lines[i + 1 : j]
 
         old_count = 0
         new_count = 0
-        for bl in body:
+        for kind, bl in kinds[i + 1 : j]:
             if bl.startswith("\\"):
                 # "\ No newline at end of file" — not a content line.
                 continue
-            if bl.startswith("+"):
+            if kind == "added":
                 new_count += 1
-            elif bl.startswith("-"):
+            elif kind == "removed":
                 old_count += 1
             else:
                 # ' ' context OR a prefix-less line difflib never emits but the
@@ -5243,20 +5246,36 @@ def _validate_unified_diff(
 
 
 def _diff_header_target_basename(diff: str) -> str | None:
-    """Return the basename declared by the diff's first ``+++`` header, or None.
+    """Return the basename declared by the diff's first ``+++`` line, or None.
 
-    None is returned when the diff carries no ``+++`` header (a header-less
-    append-only fragment asserts no target file — valid by construction). Strips
-    a leading ``a/``/``b/`` prefix and any trailing tab-separated timestamp, then
-    returns the final path component.
+    None is returned when the diff carries no ``+++`` line (a header-less
+    append-only fragment asserts no target file — valid by construction). A line
+    that is the new side of a header pair is read by ``_get_header_path`` — the
+    one correction, a C-style quoted path, is unquoted. Any other ``+++`` line
+    keeps the strict raw reading (prefix-stripped, cut at a tab), so a header-less
+    fragment carrying one still fails the gate's basename match.
     """
-    for line in diff.splitlines():
-        if line.startswith("+++"):
-            rest = line[3:].strip().split("\t", 1)[0].strip()
-            if rest.startswith(("a/", "b/")):
-                rest = rest[2:]
-            return rest.rsplit("/", 1)[-1] if rest else None
+    new_header_texts = {
+        idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    }
+    for idx, line in enumerate(diff.splitlines()):
+        if not line.startswith("+++"):
+            continue
+        if idx in new_header_texts:
+            path = _get_header_path(new_header_texts[idx], "b/")
+        else:
+            path = line[3:].strip().split("\t", 1)[0].strip()
+            path = path[2:] if path.startswith(("a/", "b/")) else path
+        return path.rsplit("/", 1)[-1] if path else None
     return None
+
+
+def _diff_deletes_file(diff: str) -> bool:
+    """True iff any header pair's new path is ``/dev/null`` — a whole-file delete."""
+    return any(
+        new_text.split("\t", 1)[0] == "/dev/null"
+        for _idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    )
 
 
 def _gate_validated_diff(
@@ -5279,6 +5298,9 @@ def _gate_validated_diff(
          caller stores an EMPTY diff (caught downstream as nothing-to-apply)
          rather than a known-broken one that funnels to rc=128 on every drain.
 
+    Before step 1 a diff whose header pair names ``/dev/null`` as the new path is
+    rejected: no agent-body proposal legitimately deletes its own file.
+
     Step 3 refuses a REPLACE diff outright: its builder takes added lines only,
     so rebuilding one drops the removal silently.
 
@@ -5291,6 +5313,14 @@ def _gate_validated_diff(
     """
     if not diff.strip():
         return diff
+
+    if _diff_deletes_file(diff):
+        sys.stderr.write(
+            f"[daemon-cycle] F2 GATE: diff header deletes a file ('+++ /dev/null') "
+            f"for proposal target {target_file.name!r} — an agent-body proposal "
+            f"never deletes its file, rejected (stored empty)\n"
+        )
+        return ""
 
     # Basename-match assertion — a '+++' header declares the file the diff
     # targets. If its basename diverges from target_file, `git apply` (run under
@@ -5923,17 +5953,9 @@ _HOOK_PATH_RE = re.compile(r"(^|/)hooks/.*\.(sh|py|bats)$")
 
 
 def _diff_touches_hook_file(diff: str, target_file: str) -> bool:
-    """True iff the patch target OR any diff ``+++``/``---`` header is a hook file."""
-    if target_file and _HOOK_PATH_RE.search(target_file):
-        return True
-    for line in diff.splitlines():
-        if line.startswith(("+++", "---")):
-            # strip the 'a/'/'b/' diff prefix before matching
-            path = line[3:].strip()
-            path = re.sub(r"^[ab]/", "", path)
-            if _HOOK_PATH_RE.search(path):
-                return True
-    return False
+    """True iff the patch target OR any path a diff header pair names is a hook file."""
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
+    return any(_HOOK_PATH_RE.search(path) for path in candidates if path)
 
 
 # -- reference-resolution guard ---------------------------------------------
@@ -5966,6 +5988,7 @@ _EXAMPLE_CONTEXT_RE = re.compile(
 def _iter_added_reference_lines(diff: str) -> list[str]:
     """Added ('+') diff lines OUTSIDE any fenced code block, diff-prefix stripped.
 
+    Added lines are the ``_get_diff_line_kinds`` body reading, ``+++ `` included.
     A ``` fence toggles collection off: fenced content is an illustrative snippet
     (a rule QUOTE / worked example), not a live pointer. Fence state is tracked
     across context AND added lines so a fence opened on a context line still
@@ -5973,8 +5996,8 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
     """
     out: list[str] = []
     in_fence = False
-    for raw_line in (diff or "").splitlines():
-        if raw_line.startswith(("+++", "---", "@@")):
+    for kind, raw_line in _get_diff_line_kinds(diff):
+        if kind in ("header", "hunk"):
             continue
         marker = raw_line[:1]
         content = raw_line[1:] if marker in "+- " else raw_line
@@ -5983,7 +6006,7 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
             continue
         if in_fence:
             continue
-        if marker == "+":
+        if kind == "added":
             out.append(content)
     return out
 
@@ -9354,8 +9377,8 @@ def _render_landed_history_block(
     for label, diff in rows:
         added = [
             line[1:].strip()
-            for line in (diff or "").splitlines()
-            if line.startswith("+") and not line.startswith("+++")
+            for kind, line in _get_diff_line_kinds(diff)
+            if kind == "added"
         ]
         added_text = " / ".join(text for text in added if text)
         rendered = (
