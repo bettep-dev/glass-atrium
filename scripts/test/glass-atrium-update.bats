@@ -2253,7 +2253,7 @@ seed_launcher_stub() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/test/x.bats"* ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
-  [[ "${output}" == *"retired sweep: removed=2 preserved=0 family-skipped=0 unmoved=0"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=2 preserved=0 family-skipped=0 unmoved=0 refused=0"* ]] || return 1
   [[ ! -e "${INSTALL}/scripts/test/x.bats" ]] || return 1
   [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
   [[ "$(cat "${INSTALL}/scripts/keep.sh")" == "untouched" ]] || return 1
@@ -2370,6 +2370,70 @@ seed_launcher_stub() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
   [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+# The refusal record the sweep leaves for doctor: one `<kind><TAB><key>` line per key.
+refused_record() {
+  printf '%s\n' "${STATE}/update-state/retired-refused-keys.txt"
+}
+
+@test "#14 retired: an escaping retired key is logged, counted as refused and recorded, and a clean key still moves" {
+  sweep_sandbox
+  # The outside file carries the key's REAL hash, so only the key's spelling can refuse it.
+  printf '%s' "outside-body" >"${WORK}/escape.sh"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  local map
+  map="$(retired_live_map "scripts/lib/y.sh" \
+    | jq -c --arg h "$(sha256_of "${WORK}/escape.sh")" '. + {"../escape.sh": [$h]}')"
+  RETIRED_JSON="${map}" write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  # The spine's row prefix is what the counter keys on: a reworded row must redden this.
+  [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; skipped"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=1 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
+  [[ "${output}" == *"WARN: 1 retired manifest key(s) refused by the sweep"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\t../escape.sh' ]] || return 1
+  [[ "$(cat "${WORK}/escape.sh")" == "outside-body" ]] || return 1
+  [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: both MALFORMED shapes (retired-AND-shipped, bad hash list) are counted as refusals" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  RETIRED_JSON="$(retired_live_map "scripts/tool.sh" | jq -c '. + {"scripts/lib/y.sh": ["not-a-hash"]}')" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired MALFORMED — scripts/tool.sh is retired AND shipped; skipped"* ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=2"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'MALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
+  [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a run with no refusal removes a stale refusal record" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  mkdir -p -- "$(dirname -- "$(refused_record)")"
+  printf 'UNSAFE\t../escape.sh\n' >"$(refused_record)"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=0"* ]] || return 1
+  [[ "${output}" != *"retired manifest key(s) refused"* ]] || return 1
+  [[ ! -e "$(refused_record)" ]] || return 1
 }
 
 @test "#14 retired: a removed hooks/<name> retires its binding, an un-moved one does not" {

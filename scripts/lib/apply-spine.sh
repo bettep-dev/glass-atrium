@@ -311,6 +311,14 @@ spine_retired_unmoved_path() {
   printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-unmoved.txt"
 }
 
+# Echo the path of the retired-key refusal record (UNSAFE / MALFORMED map keys the sweep
+# skipped) — one derivation for the sweep and doctor, as for the un-moved record. Named
+# apart from the editable-reset `refused` outcomes, which are a different mechanism.
+# Arg: $1 = optional state-dir override.
+spine_retired_refused_path() {
+  printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-refused-keys.txt"
+}
+
 # Emit (one relative path per line) every path this release RETIRED that is safe to
 # sweep from the live install. The map carries the whole provenance: `retired[path]`
 # is the set of hashes the vendor ever shipped for that path, so a live file matching

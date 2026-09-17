@@ -4088,9 +4088,10 @@ update_retire_swept_hook_bindings() {
 # Args: $1 = new manifest · $2 = live install root.
 update_sweep_removed_files() {
   local manifest="$1" root="$2"
-  local removed rows_file row path ts record
-  local removed_n=0 preserved_n=0 family_n=0 unmoved_n=0
+  local removed rows_file row path ts record refused_record key
+  local removed_n=0 preserved_n=0 family_n=0 unmoved_n=0 refused_n=0 refused_rows=""
   record="$(spine_retired_unmoved_path)"
+  refused_record="$(spine_retired_refused_path)"
   rows_file="$(mktemp -t glass-atrium-retired-rows.XXXXXX)"
   # The spine's named rows arrive on stderr so stdout stays the path list; they are
   # replayed through update_log so ONE prefix carries the whole pass, and counted
@@ -4106,10 +4107,33 @@ update_sweep_removed_files() {
     case "${row}" in
       *'user-modified, preserved'*) preserved_n=$((preserved_n + 1)) ;;
       *'family-excluded'*) family_n=$((family_n + 1)) ;;
+      # UNSAFE / MALFORMED rows are logged above like every row, but a logged row alone
+      # is never surfaced — a headless run's log is read by nobody — so each refused key
+      # is also counted and recorded for doctor.
+      *'retired UNSAFE — '*)
+        key="${row#*retired UNSAFE — }"
+        refused_rows="${refused_rows}UNSAFE"$'\t'"${key% escapes install root; skipped}"$'\n'
+        refused_n=$((refused_n + 1))
+        ;;
+      *'retired MALFORMED — '*)
+        key="${row#*retired MALFORMED — }"
+        key="${key% is retired AND shipped; skipped}"
+        refused_rows="${refused_rows}MALFORMED"$'\t'"${key% carries no non-empty 64-hex hash list; skipped}"$'\n'
+        refused_n=$((refused_n + 1))
+        ;;
       *) ;;
     esac
   done <"${rows_file}"
   rm -f -- "${rows_file}"
+
+  # Rewritten each run, like the un-moved record: a release that fixed its map clears it.
+  if [[ "${refused_n}" -gt 0 ]]; then
+    mkdir -p -- "$(dirname -- "${refused_record}")"
+    printf '%s' "${refused_rows}" >"${refused_record}"
+    update_log "WARN: ${refused_n} retired manifest key(s) refused by the sweep (UNSAFE/MALFORMED, never moved) — recorded for doctor at ${refused_record}"
+  else
+    rm -f -- "${refused_record}"
+  fi
 
   if [[ -n "${removed}" ]]; then
     # Per-run sink: a timestamped subdir so one run's removals form a single recovery
@@ -4144,7 +4168,7 @@ update_sweep_removed_files() {
     # moment the retry succeeds — otherwise doctor reports a residue that is gone.
     rm -f -- "${record}"
   fi
-  update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n}"
+  update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
 
 # The merge → base-content-capture → retirement-sweep → baseline-capture finalize
