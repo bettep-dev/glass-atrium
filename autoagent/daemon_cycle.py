@@ -115,6 +115,7 @@ try:
             count_outcomes_since as _pg_count_outcomes_since,
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
+            read_coverage_learning_patterns as _pg_read_coverage_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
             discharge_learning_pattern as _pg_discharge_learning_pattern,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
@@ -9581,14 +9582,47 @@ _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
 )
 
 
+# Terminal learning_log statuses — the set _LEARNING_LOG_DISCHARGE_SQL's guard excludes.
+PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
+
+# Why an applied proposal matched no intake row — one eval_result per cause.
+DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
+DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
+DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
+DISCHARGE_EVENT_INTAKE_MISS = "discharge-intake-miss"
+
+_UNCOVERED_WARN_REASONS = {
+    DISCHARGE_EVENT_READ_FAILED: (
+        "applied proposal id={proposal_id} matched no intake row and the "
+        "status-agnostic pattern read failed — cause unknown, nothing discharged"
+    ),
+    DISCHARGE_EVENT_UNRESOLVED: (
+        "applied proposal id={proposal_id}: no stored pattern row matches the "
+        "label, nothing discharged"
+    ),
+    DISCHARGE_EVENT_INTAKE_MISS: (
+        "applied proposal id={proposal_id} covers non-terminal row(s) [{rows}] "
+        "absent from the intake read (intake read failed, or row outside the "
+        "intake tier band), nothing discharged"
+    ),
+}
+
+
 class DischargeReport(NamedTuple):
-    """Outcome of one discharge stage — an outage is never an empty result."""
+    """Outcome of one discharge stage — an outage is never an empty result.
+
+    The last four fields partition the proposals that matched no intake row by
+    cause; `unresolved` holds only those whose label matches no stored row.
+    """
 
     outage: bool
     would_discharge: list[int]
     discharged: list[int]
     failed: list[int]
     unresolved: list[int]
+    covered_terminal: list[int]
+    intake_miss: list[int]
+    read_failed: list[int]
 
 
 def _canon_agent_key(agent: str) -> str:
@@ -9626,6 +9660,27 @@ def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
     rows = _pg_read_pending_patterns()
     if rows is None:
         return None
+    return _index_rows_by_agent(rows)
+
+
+def get_coverage_rows_by_agent() -> dict[str, list[dict]] | None:
+    """Status-agnostic core.learning_log rows indexed by bare agent key.
+
+    The intake index answers "which covered rows may still be discharged"; this
+    one answers "which rows does the label cover at all", terminal rows included.
+    Helper import absent or read failure → None, never an empty index, so an
+    outage cannot read as "no stored row".
+    """
+    if not HAS_PG_PATTERN_READ:
+        return None
+    rows = _pg_read_coverage_patterns()
+    if rows is None:
+        return None
+    return _index_rows_by_agent(rows)
+
+
+def _index_rows_by_agent(rows: list[dict]) -> dict[str, list[dict]]:
+    """Single keying site for both indexes — a key drift silently matches nothing."""
     index: dict[str, list[dict]] = {}
     for row in rows:
         index.setdefault(_canon_agent_key(row.get("agent") or ""), []).append(row)
@@ -9699,13 +9754,19 @@ def discharge_applied_patterns(
     applied_rows: list[tuple] | None,
     rows_by_agent: dict[str, list[dict]] | None,
     *,
+    coverage_reader: Callable[[], dict[str, list[dict]] | None],
     live: bool = False,
 ) -> DischargeReport:
     """Discharge the pattern rows covered by each proposal applied this window.
 
-    Ambiguity discharges NOTHING: an unreadable input is an outage and an
-    unresolvable label is a loud skip, so the stage can never fall back to
-    terminalizing an agent's whole row set.
+    Ambiguity discharges NOTHING: an unreadable input is an outage and a proposal
+    matching no intake row is a skip reported under its cause, so the stage can
+    never fall back to terminalizing an agent's whole row set. Only intake-index
+    rows are ever transitioned.
+
+    coverage_reader: the status-agnostic index loader (get_coverage_rows_by_agent
+    in production) — called at most once, and only when some proposal matches no
+    intake row.
     """
     if applied_rows is None or rows_by_agent is None:
         sys.stderr.write(
@@ -9713,28 +9774,35 @@ def discharge_applied_patterns(
             "(applied-proposal or pattern read unavailable); this is NOT "
             "'nothing to discharge', and no row was transitioned\n"
         )
-        return DischargeReport(True, [], [], [], [])
+        return DischargeReport(True, [], [], [], [], [], [], [])
 
     event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
     would: list[int] = []
     discharged: list[int] = []
     failed: list[int] = []
-    unresolved: list[int] = []
+    uncovered: dict[str, list[int]] = {
+        cause: []
+        for cause in (
+            DISCHARGE_EVENT_UNRESOLVED,
+            DISCHARGE_EVENT_COVERED_TERMINAL,
+            DISCHARGE_EVENT_INTAKE_MISS,
+            DISCHARGE_EVENT_READ_FAILED,
+        )
+    }
 
-    for proposal_id, agent, label in applied_rows:
-        covered = find_covered_pattern_rows(label or "", agent or "", rows_by_agent)
+    matches = [
+        (proposal_id, agent or "", label or "",
+         find_covered_pattern_rows(label or "", agent or "", rows_by_agent))
+        for proposal_id, agent, label in applied_rows
+    ]
+    has_uncovered = any(not covered for _, _, _, covered in matches)
+    coverage_by_agent = coverage_reader() if has_uncovered else None
+
+    for proposal_id, agent, label, covered in matches:
         if not covered:
-            unresolved.append(proposal_id)
-            _warn_pattern_skip(
-                agent or "",
-                label or "",
-                event_ts,
-                eval_result="discharge-unresolved",
-                reason=(
-                    f"applied proposal id={proposal_id} covers no stored pattern "
-                    "row — label shape unrecognized, nothing discharged"
-                ),
-            )
+            cause, covering = _get_uncovered_cause(label, agent, coverage_by_agent)
+            uncovered[cause].append(proposal_id)
+            _report_uncovered_proposal(proposal_id, agent, label, cause, covering, event_ts)
             continue
         if not live:
             would.extend(covered)
@@ -9753,19 +9821,78 @@ def discharge_applied_patterns(
                     "call never completed, retried next cycle\n"
                 )
 
+    unresolved = uncovered[DISCHARGE_EVENT_UNRESOLVED]
+    covered_terminal = uncovered[DISCHARGE_EVENT_COVERED_TERMINAL]
+    intake_miss = uncovered[DISCHARGE_EVENT_INTAKE_MISS]
+    read_failed = uncovered[DISCHARGE_EVENT_READ_FAILED]
+    uncovered_summary = (
+        f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}, "
+        f"{len(covered_terminal)} covered-terminal {sorted(covered_terminal)}, "
+        f"{len(intake_miss)} intake-miss {sorted(intake_miss)}, "
+        f"{len(read_failed)} read-failed {sorted(read_failed)}"
+    )
     if live:
         sys.stderr.write(
             f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
             f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
     else:
         sys.stderr.write(
             f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
             f"would-discharge {len(would)} row(s) {sorted(would)}; "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
-    return DischargeReport(False, would, discharged, failed, unresolved)
+    return DischargeReport(
+        False, would, discharged, failed, unresolved, covered_terminal, intake_miss, read_failed
+    )
+
+
+def _get_uncovered_cause(
+    label: str,
+    agent: str,
+    coverage_by_agent: dict[str, list[dict]] | None,
+) -> tuple[str, list[dict]]:
+    """Cause token for a proposal that matched no intake row, plus the rows it covers.
+
+    Terminal-only coverage is the expected aftermath of a pattern parked before
+    its proposal applied; a non-terminal covering row means the intake read lost it.
+    """
+    if coverage_by_agent is None:
+        return DISCHARGE_EVENT_READ_FAILED, []
+    covered_ids = set(find_covered_pattern_rows(label, agent, coverage_by_agent))
+    covering = [
+        row
+        for row in coverage_by_agent.get(_canon_agent_key(agent), ())
+        if row["id"] in covered_ids
+    ]
+    if not covering:
+        return DISCHARGE_EVENT_UNRESOLVED, []
+    if all(row.get("status") in PATTERN_TERMINAL_STATUSES for row in covering):
+        return DISCHARGE_EVENT_COVERED_TERMINAL, covering
+    return DISCHARGE_EVENT_INTAKE_MISS, covering
+
+
+def _report_uncovered_proposal(
+    proposal_id: int,
+    agent: str,
+    label: str,
+    cause: str,
+    covering: list[dict],
+    event_ts: str,
+) -> None:
+    """One stderr line + one loop event per uncovered proposal; covered-terminal is info."""
+    rows = ", ".join(f"{row['id']}:{row.get('status')}" for row in covering)
+    if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+        reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
+        _warn_pattern_skip(agent, label, event_ts, eval_result=cause, reason=reason)
+        return
+    sys.stderr.write(
+        f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
+        f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
+        f"row(s) [{rows}], nothing left to discharge\n"
+    )
+    _emit_gate_loop_event(agent, event_ts, cause)
 
 
 # -- Post-apply regression gate ---------------------------------------------
@@ -10575,6 +10702,7 @@ def run_cycle(
     discharge_applied_patterns(
         _fetch_applied_for_discharge(),
         pattern_rows_by_agent,
+        coverage_reader=get_coverage_rows_by_agent,
         live=discharge_live_enabled(),
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
