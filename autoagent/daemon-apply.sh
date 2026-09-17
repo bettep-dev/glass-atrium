@@ -1045,13 +1045,16 @@ extract_body_auto_patches() {
 import json, sys
 report_path = sys.argv[1]
 allow_haiku_skip = sys.argv[2] == "1"
-with open(report_path, "r", encoding="utf-8") as fh:
-    data = json.load(fh)
-# A non-object report or non-list patches field must fail (exit 22 upstream): `{}` as patches would
-# otherwise iterate as zero patches. A non-object entry fails at .get below.
+# Every unreadable shape exits with ONE named line (exit 22 upstream), never an uncaught traceback.
+try:
+    with open(report_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError both subclass it
+    sys.exit("[daemon-apply] report %s: not UTF-8 JSON (%s)" % (report_path, exc))
+# `{}` as patches would otherwise iterate as zero patches.
 patches = data.get("patches", []) if isinstance(data, dict) else None
-if not isinstance(patches, list):
-    sys.exit("[daemon-apply] report %s: not a JSON object with a patches list" % report_path)
+if not isinstance(patches, list) or not all(isinstance(patch, dict) for patch in patches):
+    sys.exit("[daemon-apply] report %s: not a JSON object with a patches list of objects" % report_path)
 for patch in patches:
     if patch.get("classification") != "body-auto":
         continue

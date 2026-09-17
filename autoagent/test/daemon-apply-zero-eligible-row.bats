@@ -128,8 +128,8 @@ SH
   chmod +x "${1}/psql"
 }
 
-# make_unreadable_backlog_psql — a psql whose backlog answer is one row in the pre-encoding grammar,
-# whose '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
+# make_unreadable_backlog_psql — a psql whose backlog answer is one raw, unencoded row whose
+# '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
 make_unreadable_backlog_psql() {
   rm -f -- "${1}/psql" # never redirect onto an inherited symlink
   cat >"${1}/psql" <<'SH'
@@ -486,7 +486,7 @@ assert_one_abort_row() {
   assert_one_abort_row proposal_row_unreadable 23 backlog
 }
 
-@test "AC9: an unreadable REPORT exits 22 with one abort row and no heartbeat" {
+@test "AC9: an unreadable REPORT exits 22 with one abort row, no heartbeat and no traceback" {
   printf '%s\n' '{"patches": [' >"${WORK}/report.json" # a truncated write
   run_apply "${MIRROR}"
   [[ "${status}" -eq 22 ]] || {
@@ -494,8 +494,8 @@ assert_one_abort_row() {
     return 1
   }
   [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
-    "${output}" != *"0 body-auto patches"* ]] || {
-    echo "the unreadable report is not named, or still reads as zero patches" >&2
+    "${output}" != *"0 body-auto patches"* && "${output}" != *Traceback* ]] || {
+    echo "the unreadable report is not named, reads as zero patches, or leaks a traceback" >&2
     dump_log
     return 1
   }

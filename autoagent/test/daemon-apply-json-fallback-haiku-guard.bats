@@ -8,8 +8,9 @@
 #       operator WARN (never silent).
 # Plus regression guards: an 'ok'/'ok:retried' status is still admitted by default
 # (the gate is not over-blocking — startswith('ok') == the single path's ok* match).
-# And (f): a report that cannot be read returns non-zero, the signal the source
-# dispatch turns into exit 22 (the dispatch itself: daemon-apply-zero-eligible-row.bats AC9).
+# And (f): a report that cannot be read returns non-zero with one named stderr line and no
+# traceback, the signal the source dispatch turns into exit 22 (the dispatch itself:
+# daemon-apply-zero-eligible-row.bats AC9).
 #
 # Originated as a disposable verification artifact (agent-test-files-disposable);
 # now retained in-repo under autoagent/test/.
@@ -245,13 +246,15 @@ JSON
 #     never reads the report as zero patches
 # ---------------------------------------------------------------------------
 
-@test "JSON-fallback: a report that is not a JSON object with a patches list of objects returns non-zero" {
+@test "JSON-fallback: every unreadable report shape returns non-zero with one named line and no traceback" {
   # One fixture per way a present report can be unreadable; an empty patches list is the valid boundary.
+  # The operator sees the extractor's stderr verbatim, so each shape owes one line naming the report.
   local body
-  for body in '{"patches": [' '[]' '{"patches": {}}' '{"patches": ["body-auto"]}'; do
+  for body in '{"patches": [' $'\xff' '[]' '{"patches": {}}' '{"patches": ["body-auto"]}'; do
     printf '%s\n' "${body}" >"${REPORT}"
     run extract_body_auto_patches "${REPORT}"
-    [[ "${status}" -ne 0 && "${output}" != *'"classification"'* ]] || {
+    [[ "${status}" -ne 0 && "${output}" != *'"classification"'* && "${output}" != *Traceback* &&
+      "${#lines[@]}" -eq 1 && "${output}" == "[daemon-apply] report ${REPORT}: "* ]] || {
       echo "report ${body} read as rc=${status}: ${output}" >&2
       return 1
     }
