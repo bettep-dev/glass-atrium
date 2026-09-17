@@ -550,7 +550,11 @@ def write_autoagent_proposal(
             -- to the reject-streak classifier, not inert history. The two predicates
             -- below MUST stay identical; the co-movement is pinned by
             -- scripts/test/test_pg_dual_write_proposal_upsert.py, not by this comment.
-            -- Marker exemption: a stored skip record yields to a non-marker push.
+            -- Marker exemption — widens the non-terminal-push arm only.
+            -- Stored skip record → yields to a non-marker push.
+            -- Stored skip record → kept against a snoozed (legacy) marker push.
+            -- Terminal push → ELSE, as for any row.
+            -- → rejected marker re-push: status stays rejected, newer rationale lands.
             -- COALESCE → a NULL outcome compares as not-the-marker, never as unknown.
             rationale = CASE
                           WHEN core.autoagent_proposals.status
