@@ -103,8 +103,9 @@ def _run_guard(
     *,
     coverage: dict | None,
     rejected_ids: list[int] | None = None,
+    write_error: Exception | None = None,
 ) -> tuple[int, str, str, mock.Mock]:
-    write = mock.Mock(return_value=rejected_ids or [])
+    write = mock.Mock(side_effect=write_error, return_value=rejected_ids or [])
     stdout, stderr = io.StringIO(), io.StringIO()
     with (
         mock.patch.object(dc, "get_coverage_rows_by_agent", return_value=coverage),
@@ -291,20 +292,13 @@ class GuardFailureTest(unittest.TestCase):
         )
         for name, argv, stdin_text, coverage, write_error in cases:
             with self.subTest(name):
-                stdout, stderr = io.StringIO(), io.StringIO()
-                write = mock.Mock(side_effect=write_error, return_value=[])
-                with (
-                    mock.patch.object(dc, "get_coverage_rows_by_agent", return_value=coverage),
-                    mock.patch.object(dc, "update_parked_proposal_status", write),
-                    mock.patch.object(sys, "stdin", io.StringIO(stdin_text)),
-                    contextlib.redirect_stdout(stdout),
-                    contextlib.redirect_stderr(stderr),
-                ):
-                    rc = dc._main(argv)
+                rc, stdout, stderr, write = _run_guard(
+                    argv, stdin_text, coverage=coverage, write_error=write_error
+                )
                 self.assertEqual(rc, dc.PARKED_GUARD_FAILURE_EXIT_CODE)
                 self.assertNotEqual(rc, 0)
-                self.assertEqual(stdout.getvalue(), "")
-                self.assertIn(sys.executable, stderr.getvalue())
+                self.assertEqual(stdout, "")
+                self.assertIn(sys.executable, stderr)
                 if write_error is None:
                     write.assert_not_called()
 

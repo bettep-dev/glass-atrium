@@ -9593,6 +9593,12 @@ _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
 # Terminal learning_log statuses — the set _LEARNING_LOG_DISCHARGE_SQL's guard excludes.
 PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
 
+
+def _build_row_status_text(rows: list[dict]) -> str:
+    """`3384:rejected, 6:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
+    return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
+
+
 # Why an applied proposal matched no intake row — one eval_result per cause.
 DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
 DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
@@ -9890,7 +9896,7 @@ def _report_uncovered_proposal(
     event_ts: str,
 ) -> None:
     """One stderr line + one loop event per uncovered proposal; covered-terminal is info."""
-    rows = ", ".join(f"{row['id']}:{row.get('status')}" for row in covering)
+    rows = _build_row_status_text(covering)
     if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
         reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
         _warn_pattern_skip(agent, label, event_ts, eval_result=cause, reason=reason)
@@ -9954,7 +9960,7 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             for entry in parked:
-                rows = ", ".join(f"{row['id']}:{row['status']}" for row in entry["rows"])
+                rows = _build_row_status_text(entry["rows"])
                 rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
                 cur.execute(update_sql, (rationale, entry["proposal_id"]))
                 rejected.extend(row[0] for row in cur.fetchall())
@@ -9985,7 +9991,7 @@ def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
         )
         return PARKED_GUARD_FAILURE_EXIT_CODE
     for entry in parked:
-        rows = ", ".join(f"{row['id']}:{row['status']}" for row in entry["rows"])
+        rows = _build_row_status_text(entry["rows"])
         outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
         sys.stderr.write(
             f"[daemon-cycle] parked-pattern guard: proposal id={entry['proposal_id']} "
