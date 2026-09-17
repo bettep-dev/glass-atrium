@@ -75,7 +75,9 @@ export interface RejectProposalResponse {
 //   unrecoverable (422)    ← exit 14: no landable diff regenerable (row pending)
 //   already_terminal (409) ← reject UPDATE matched 0 rows (already terminal)
 //   invalid_param (400)    ← :id not a positive integer
-//   apply_error (503)      ← exit 21: proposal DB query failed (nothing applied)
+//   row_unreadable (422)   ← exit 23: stored proposal row unreadable (nothing applied);
+//                            a data problem, so no retry — Reject is the way out
+//   apply_error (503)      ← exit 21: proposal DB query failed (nothing applied; retryable)
 //   apply_error (500)      ← other infra failure (exit 2 bad-arg / 3 no-psql / 6 DB-update-fail / other)
 //   internal (500)         ← unexpected route-level failure
 export type ImprovementMutationErrorBody =
@@ -86,6 +88,7 @@ export type ImprovementMutationErrorBody =
   | { status: "regen_failed"; id: number; reason: string }
   | { status: "regen_invalid"; id: number; reason: string; axes?: PreVerifyAxes }
   | { status: "unrecoverable"; id: number; reason: string }
+  | { status: "row_unreadable"; id: number; reason: string }
   | { status: "already_terminal"; id: number; reason: string }
   | { status: "invalid_param"; param: string }
   | { status: "apply_error"; id: number; reason: string }

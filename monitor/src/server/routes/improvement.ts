@@ -1755,8 +1755,11 @@ export function resolveApplyScript(): string {
 //   19 = not found (no proposal with that id; no-op)
 //   20 = generation-outcome refusal (stored haiku_status not ok-prefixed; nothing
 //        applied, row untouched; stderr names the outcome — Reject is the way out)
-//   21 = proposal DB query failed (lookup errored or its row was unreadable;
-//        nothing applied) — infra, answered 503 rather than the generic 500
+//   21 = proposal DB query failed (the lookup errored; nothing applied) — infra,
+//        answered 503 rather than the generic 500, and a retry can succeed
+//   23 = proposal row unreadable (the lookup answered but the row did not reassemble
+//        or answered for another id; nothing applied) — stored data, so a retry reads
+//        the same bytes; stderr names the row — Reject is the way out
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1771,6 +1774,7 @@ const APPLY_EXIT_PARKED_PATTERN = 18;
 const APPLY_EXIT_NOT_FOUND = 19;
 const APPLY_EXIT_GENERATION_NOT_OK = 20;
 const APPLY_EXIT_QUERY_FAILED = 21;
+const APPLY_EXIT_ROW_UNREADABLE = 23;
 
 // Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
@@ -1938,6 +1942,16 @@ async function handleApprove(
       status: "apply_error",
       id,
       reason: `proposal DB query failed, nothing applied — retry once the database is reachable: ${truncateStderr(stderr)}`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_ROW_UNREADABLE) {
+    // Data problem, not an outage — no retry offered; way out first since the approve toast truncates
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal row unreadable (nothing applied)");
+    reply.code(422);
+    return {
+      status: "row_unreadable",
+      id,
+      reason: `use Reject — stored proposal row is unreadable (row data, not a DB outage), nothing applied: ${truncateStderr(stderr)}`,
     };
   }
 

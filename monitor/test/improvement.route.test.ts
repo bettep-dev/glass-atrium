@@ -620,7 +620,7 @@ test("POST approve: exit 18 with no parseable rows → 409 { status: 'parked_pat
   assert.doesNotMatch(body.reason, /\(rows /, "no rows tail is appended from an unparseable line");
 });
 
-// --- single-path lookup and generation-outcome exits (19/20/21) --------------
+// --- single-path lookup and generation-outcome exits (19/20/21/23) -----------
 
 test("POST approve: exit 19 → 404 { status: 'not_found' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-not-found.sh", 19);
@@ -680,7 +680,26 @@ test("POST approve: exit 21 → 503 { status: 'apply_error' } naming the failed 
   assert.strictEqual(body.status, "apply_error");
   assert.strictEqual(body.id, 4242);
   assert.match(body.reason, /DB query failed/);
+  assert.match(body.reason, /\bretry\b/, "an outage clears, so retrying is the remedy");
   assert.ok(body.reason.includes("lookup failed"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 23 → 422 { status: 'row_unreadable' } leading with Reject, never retry", async () => {
+  // select_single_proposal's unreadable-row line verbatim — the row answered, so a retry reads the same bytes
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-row-unreadable.sh",
+    23,
+    "[daemon-apply] FATAL: proposal id=4242 row is unreadable — nothing applied (stored row data, not a DB outage)",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 422, "stored row data is unprocessable, not an outage or the generic 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "row_unreadable");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.startsWith("use Reject"), "the way out leads, since the approve toast truncates");
+  assert.match(body.reason.slice(0, 80), /not a DB outage/, "the cause survives the 80-char toast cut");
+  assert.doesNotMatch(body.reason, /\bretry/i, "a data problem is never offered a retry");
+  assert.ok(body.reason.includes("row is unreadable"), "the daemon's stderr rides along for diagnosis");
 });
 
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
