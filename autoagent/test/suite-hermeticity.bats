@@ -19,6 +19,27 @@ setup() {
   ga_bats_assert_hermetic
 }
 
+# Asserted on THIS process, and deliberately in its own @test: the discover probe below
+# scrubs the same names for its child, so an assertion written inside that `env -u` could
+# never fail — the vacuous test scoped/shared-testing.md prohibits. `ga_bats_assert_hermetic`
+# above checks its own process for the same reason.
+#
+# It stands for scripts/run-bats-parallel.sh's stage-1 `env` wrapper, since a .bats file is
+# reached through that stage alone; stage 3's copy of the scrub is pinned separately, by
+# scripts/test/run-bats-parallel.bats.
+#
+# `env` lists exported variables only, which is exactly the class here — daemon-cycle.sh
+# exports every one of them.
+@test "the daemon-exported env does not reach this suite" {
+  local leaked
+  leaked="$(env | grep -E '^(AUTOAGENT_GIT_(ROOT|PATHSPEC)|AUTOAGENT_AGENTS_DIR|AUTOAGENT_CLAUDE_BIN|CLAUDE_BIN)=' || true)"
+  [[ -z "${leaked}" ]] || {
+    printf 'the daemon-exported env reached this suite:\n%s\n' "${leaked}" >&2
+    printf 'expected run-bats-parallel.sh stage 1 to scrub it (DAEMON_ENV_SCRUB)\n' >&2
+    return 1
+  }
+}
+
 # The python suites in this directory are driven by `unittest discover`, which offers no
 # directory-scoped setup hook: each module pins its own sandbox, and a module that forgets
 # reaches the operator's real state root, because editable_merge.state_root falls back to
@@ -53,7 +74,13 @@ setup() {
   # their roots through that seam at IMPORT time, ahead of any per-test patch — a module
   # that forgot to sandbox itself would then write outside ${home}, where the find cannot
   # see it, and this probe would read green on a real escape.
-  env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR -u AUTOAGENT_CLAUDE_BIN \
+  #
+  # The rest is the daemon-exported env, held in lockstep with this corpus's own runner
+  # stage (DAEMON_ENV_SCRUB + stage 3 in scripts/run-bats-parallel.sh), so the probe cannot
+  # read green under conditions that stage does not share.
+  env -u AUTOAGENT_GIT_ROOT -u AUTOAGENT_GIT_PATHSPEC -u AUTOAGENT_AGENTS_DIR \
+    -u AUTOAGENT_CLAUDE_BIN -u CLAUDE_BIN \
+    -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
     HOME="${home}" PATH="${bin}:${PATH}" \
     python3 -m unittest discover -s "${BATS_TEST_DIRNAME}" -p 'test_*.py' \
     >"${log}" 2>&1 || rc=$?

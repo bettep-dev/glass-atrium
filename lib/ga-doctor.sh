@@ -56,6 +56,13 @@ run_doctor() {
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" ]]; then
     if jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
       log "  ok   : manifest parseable (${MANIFEST})"
+      # shellcheck disable=SC2310  # verdict branched on — a bad manifest is a FAIL row, never an abort
+      if require_contained_manifest_keys report; then
+        log "  ok   : manifest files[] keys contained in the install root"
+      else
+        log "  FAIL : manifest carries escaping or unreadable files[] key(s) (listed above) — install/uninstall/prune refuse it"
+        fail=1
+      fi
       local rel missing=0
       # read_manifest_files dies on its own failure → masked exit is benign;
       # process substitution keeps the loop in the current shell (var-safe).
@@ -1072,6 +1079,25 @@ run_doctor() {
     fi
   fi
 
+  # 19b. retired-key refusal surface. The sweep skips a retired map key that escapes the install
+  #      root (UNSAFE) or is malformed (MALFORMED); the row is logged but a headless log is read by
+  #      nobody, so the sweep records each refused key and this section names them. WARN, never
+  #      FAIL, for the §19 reason. Not re-checked: a refusal is a property of the release manifest,
+  #      and the next refusal-free update run removes the record.
+  local retired_refused=0
+  local refused_record="" refused_kind="" refused_key=""
+  # spine_retired_refused_path is a pure printf resolver (exits 0) → the masked errexit is vacuous.
+  # shellcheck disable=SC2311
+  refused_record="$(spine_retired_refused_path)"
+  if [[ -f "${refused_record}" ]]; then
+    while IFS=$'\t' read -r refused_kind refused_key; do
+      [[ -n "${refused_key}" ]] || continue
+      log "  warn : retired manifest key refused by the update sweep (${refused_kind}) — ${refused_key} (never moved; the release manifest carries a bad retired entry — report it)"
+      retired_refused=$((retired_refused + 1))
+    done <"${refused_record}"
+    [[ "${retired_refused}" -eq 0 ]] || log "         record: ${refused_record}"
+  fi
+
   # 20. settings permissions coverage. Registration kind B (report-only): no counter, no term in the
   #     warning total, exit code unchanged. settings.template.json ships the RECOMMENDED permissions
   #     shape and nothing applies it — wire_hooks owns hooks and never touches permissions — so a
@@ -1369,7 +1395,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending + inject_slot_warns))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1377,7 +1403,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot — see above) =="
     fi
     return 0
   fi

@@ -2253,7 +2253,7 @@ seed_launcher_stub() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/test/x.bats"* ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
-  [[ "${output}" == *"retired sweep: removed=2 preserved=0 family-skipped=0 unmoved=0"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=2 preserved=0 family-skipped=0 unmoved=0 refused=0"* ]] || return 1
   [[ ! -e "${INSTALL}/scripts/test/x.bats" ]] || return 1
   [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
   [[ "$(cat "${INSTALL}/scripts/keep.sh")" == "untouched" ]] || return 1
@@ -2370,6 +2370,128 @@ seed_launcher_stub() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"retired file removed → Trash: scripts/lib/y.sh"* ]] || return 1
   [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+# The refusal record the sweep leaves for doctor: one `<kind><TAB><key>` line per key.
+refused_record() {
+  printf '%s\n' "${STATE}/update-state/retired-refused-keys.txt"
+}
+
+@test "#14 retired: an escaping retired key is logged, counted as refused and recorded, and a clean key still moves" {
+  sweep_sandbox
+  # The outside file carries the key's REAL hash, so only the key's spelling can refuse it.
+  printf '%s' "outside-body" >"${WORK}/escape.sh"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  local map
+  map="$(retired_live_map "scripts/lib/y.sh" \
+    | jq -c --arg h "$(sha256_of "${WORK}/escape.sh")" '. + {"../escape.sh": [$h]}')"
+  RETIRED_JSON="${map}" write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  # The row wording is the operator-facing contract; the counter reads the structured refusal lines.
+  [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; skipped"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=1 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
+  [[ "${output}" == *"WARN: 1 retired manifest key(s) refused by the sweep"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\t../escape.sh' ]] || return 1
+  [[ "$(cat "${WORK}/escape.sh")" == "outside-body" ]] || return 1
+  [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a key resolving outside the root through an in-root directory symlink is counted as refused and recorded" {
+  sweep_sandbox
+  # Spelling, hash and final component all pass, so only the physical-escape check can refuse it.
+  mkdir -p -- "${WORK}/outside"
+  printf '%s' "outside-body" >"${WORK}/outside/old.sh"
+  mkdir -p -- "${INSTALL}/scripts"
+  ln -s -- "${WORK}/outside" "${INSTALL}/scripts/linked"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/linked/old.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired UNSAFE — scripts/linked/old.sh escapes install root; skipped"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=0 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\tscripts/linked/old.sh' ]] || return 1
+  [[ "$(cat "${WORK}/outside/old.sh")" == "outside-body" ]] || return 1
+}
+
+@test "#14 retired: both MALFORMED shapes (retired-AND-shipped, bad hash list) are counted as refusals" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  RETIRED_JSON="$(retired_live_map "scripts/tool.sh" | jq -c '. + {"scripts/lib/y.sh": ["not-a-hash"]}')" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired MALFORMED — scripts/tool.sh is retired AND shipped; skipped"* ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=2"* ]] || return 1
+  [[ "${output}" == *"WARN: 2 retired manifest key(s) refused by the sweep"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'MALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
+  [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a refused key spelled like a row suffix is recorded exactly" {
+  sweep_sandbox
+  local key='scripts/t.sh carries no non-empty 64-hex hash list; skipped'
+  seed_file "${INSTALL}" "${key}" "old"
+  seed_file "${NEWSRC}" "${key}" "new content"
+  RETIRED_JSON="$(retired_live_map "${key}")" write_manifest "${WORK}/manifest.json" "${key}"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=1"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == "MALFORMED"$'\t'"${key}" ]] || return 1
+}
+
+@test "#14 retired: rewording the spine's refusal rows leaves the refusal record unchanged" {
+  sweep_sandbox
+  local lib="${WORK}/reworded-lib"
+  cp -R -- "${GA}/scripts/lib" "${lib}"
+  sed -e "s/; skipped\\\\n'/; not swept\\\\n'/" "${GA}/scripts/lib/apply-spine.sh" >"${lib}/apply-spine.sh"
+  printf '%s' "outside-body" >"${WORK}/escape.sh"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  RETIRED_JSON="$(retired_live_map "scripts/tool.sh" | jq -c --arg h "$(sha256_of "${WORK}/escape.sh")" \
+    '. + {"scripts/lib/y.sh": ["not-a-hash"], "../escape.sh": [$h]}')" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  ATRIUM_UPDATE_LIB_DIR="${lib}" run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  # The reword must have reached the run, or this test proves nothing about wording.
+  [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; not swept"* ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=3"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\t../escape.sh\nMALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
+}
+
+@test "#14 retired: a run with no refusal removes a stale refusal record" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  mkdir -p -- "$(dirname -- "$(refused_record)")"
+  printf 'UNSAFE\t../escape.sh\n' >"$(refused_record)"
+  RETIRED_JSON="$(retired_live_map "scripts/lib/y.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=0"* ]] || return 1
+  [[ "${output}" != *"retired manifest key(s) refused"* ]] || return 1
+  [[ ! -e "$(refused_record)" ]] || return 1
 }
 
 @test "#14 retired: a removed hooks/<name> retires its binding, an un-moved one does not" {
@@ -2799,4 +2921,96 @@ assert_withheld_from_every_roster() {
   [ "${before_all}" = "${after_all}" ] || { echo "a roster path moved on a no-change run"; return 1; }
   [[ "$output" != *"roster merged + applied"* ]] || return 1
   [[ "$output" != *"DECLINED"* ]] || return 1
+}
+
+# Containment precondition: a files[] entry or modes key resolving outside the install
+# root fails the WHOLE run before any staging. The root sits one level down so an
+# escaping target stays inside the per-test dir.
+containment_sandbox() {
+  sweep_sandbox
+  INSTALL="${WORK}/nest/install"
+  mkdir -p "${INSTALL}"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${NEWSRC}" "escaped.sh" "escaped payload"
+}
+
+# Manifest whose escaping row `lnk/../../escaped.sh` resolves to a REAL hashed source:
+# the release tree ships `lnk` as a link two levels under ${WORK}/src, so the source
+# read climbs to ${WORK}/src/escaped.sh while the staging and install sides climb
+# through real dirs. Old code therefore stages and swaps the row instead of refusing
+# it for an unrelated reason; its install target is ${WORK}/nest/escaped.sh.
+write_escaping_files_manifest() {
+  seed_file "${WORK}/src" "escaped.sh" "escaped payload"
+  mkdir -p "${WORK}/src/a/b"
+  ln -s "${WORK}/src/a/b" "${NEWSRC}/lnk"
+  write_manifest "${WORK}/base.json" "scripts/tool.sh" "escaped.sh"
+  jq '.files |= map(if . == "escaped.sh" then "lnk/../../escaped.sh" else . end)
+      | .hashes["lnk/../../escaped.sh"] = .hashes["escaped.sh"] | del(.hashes["escaped.sh"])' \
+    "${WORK}/base.json" >"${WORK}/manifest.json"
+}
+
+@test "containment: an escaping files[] entry fails the run with exit 17 and writes nothing" {
+  containment_sandbox
+  write_escaping_files_manifest
+
+  run_update_sweep
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  [[ "${output}" == *'manifest key escapes the install root: lnk/../../escaped.sh'* ]] || { echo "${output}"; return 1; }
+  [ ! -e "${WORK}/nest/escaped.sh" ] || { echo "written outside the root"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "old" ] || { echo "half-applied install"; return 1; }
+}
+
+@test "containment: an escaping modes key fails the run with exit 17 and chmods nothing" {
+  containment_sandbox
+  seed_file "${WORK}/nest" "escaped.sh" "outside file"
+  chmod 600 "${WORK}/nest/escaped.sh"
+  write_manifest_with_modes "${WORK}/base.json" "scripts/tool.sh"
+  jq '.modes["../escaped.sh"] = "755"' "${WORK}/base.json" >"${WORK}/manifest.json"
+
+  run_update_sweep
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  [[ "${output}" == *'manifest key escapes the install root: ../escaped.sh'* ]] || { echo "${output}"; return 1; }
+  [ "$(stat -f '%Lp' "${WORK}/nest/escaped.sh" 2>/dev/null || stat -c '%a' "${WORK}/nest/escaped.sh")" = "600" ] \
+    || { echo "chmod reached outside the root"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "old" ] || { echo "half-applied install"; return 1; }
+}
+
+@test "containment: a headless refusal closes the job row failed with exit 17" {
+  containment_sandbox
+  # Every post-step effect is seamed, so a run that is NOT refused cannot restart the
+  # live monitor or reach launchd.
+  write_mock_psql "${WORK}/psql"
+  write_mock_claude "${WORK}/claude"
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  write_escaping_files_manifest
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    GA_TARGET_HOME="${FARM}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_TRASH_DIR="${TRASH}" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    PSQL_LOG="${WORK}/psql.log" \
+    ATRIUM_UPDATE_CLAUDE_BIN="${WORK}/claude" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist" \
+    ATRIUM_UPDATE_MONITOR_DIR="${WORK}/nonexistent-monitor" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${WORK}/LaunchAgents" \
+    ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/nonexistent-render-launchd.sh" \
+    ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/nonexistent-render-env.sh" \
+    bash "${SKILL}" --headless
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  grep -q "fr=aborted (exit=17)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  [ ! -e "${WORK}/nest/escaped.sh" ] || return 1
 }

@@ -122,7 +122,10 @@
 # database schema was NOT migrated — run `glass-atrium db-setup`; no rollback of
 # applied files) · 16 operator EDITABLE-reset request invalid (malformed, or its
 # request id already consumed) — caught before the roster gate, nothing applied;
-# a stale body inside a valid request is refused per body instead, never exit 16.
+# a stale body inside a valid request is refused per body instead, never exit 16 ·
+# 17 release manifest names a files[] entry or modes key that escapes the install
+# root (empty, absolute, or a `..` segment), or its keys are unreadable — caught
+# right after the fetch, before the roster gate and any staging, nothing applied.
 # The record subcommand also exits 16, writing nothing, for a pending request, an
 # invalid or non-merge-claimed name, an absent body, or a body without EDITABLE
 # regions; the reset restore exits 10 (the restore code) on any missing, refused or
@@ -244,6 +247,27 @@ update_require_tools() {
     fi
   done
   [[ "${missing}" -eq 0 ]] || update_die "missing required tool(s) — install and retry"
+}
+
+# Refuse the WHOLE run when a files[] entry or modes key escapes the install root.
+# Per-key skip is wrong here, unlike the retired sweep: a skipped files[] row leaves a
+# partial install and a skipped modes row a wrong mode. Keys travel NUL-delimited so a
+# newline-bearing key is judged and named whole, exactly as the manifest spells it.
+update_require_contained_manifest_keys() {
+  local manifest="$1" keys_file key offenders=0
+  keys_file="${manifest%/*}/manifest-keys.nul"
+  jq -j '[(.files // [])[], ((.modes // {}) | keys_unsorted[])][] | tostring + "\u0000"' \
+    -- "${manifest}" >"${keys_file}" \
+    || update_die_code 17 "release manifest files[]/modes keys unreadable (${manifest}) — nothing applied"
+  while IFS= read -r -d '' key; do
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_key "${key}"; then
+      update_log "manifest key escapes the install root: $(printf '%q' "${key}")"
+      offenders=$((offenders + 1))
+    fi
+  done <"${keys_file}"
+  [[ "${offenders}" -eq 0 ]] \
+    || update_die_code 17 "release manifest carries ${offenders} escaping files[]/modes key(s) (listed above) — nothing applied"
 }
 
 # ---------------------------------------------------------------------------
@@ -4064,16 +4088,18 @@ update_retire_swept_hook_bindings() {
 # Args: $1 = new manifest · $2 = live install root.
 update_sweep_removed_files() {
   local manifest="$1" root="$2"
-  local removed rows_file row path ts record
-  local removed_n=0 preserved_n=0 family_n=0 unmoved_n=0
+  local removed rows_file refusals_file row path ts record refused_record
+  local removed_n=0 preserved_n=0 family_n=0 unmoved_n=0 refused_n=0
   record="$(spine_retired_unmoved_path)"
+  refused_record="$(spine_retired_refused_path)"
   rows_file="$(mktemp -t glass-atrium-retired-rows.XXXXXX)"
+  refusals_file="$(mktemp -t glass-atrium-retired-refusals.XXXXXX)"
   # The spine's named rows arrive on stderr so stdout stays the path list; they are
   # replayed through update_log so ONE prefix carries the whole pass, and counted
   # here so the summary row is derived from the rows rather than recomputed.
-  if ! removed="$(spine_find_removed_files "${manifest}" "${root}" 2>"${rows_file}")"; then
+  if ! removed="$(spine_find_removed_files "${manifest}" "${root}" "${refusals_file}" 2>"${rows_file}")"; then
     update_log "WARN: retired selection failed — the retirement pass is skipped and any residue stays in place"
-    rm -f -- "${rows_file}"
+    rm -f -- "${rows_file}" "${refusals_file}"
     return 0
   fi
   while IFS= read -r row; do
@@ -4086,6 +4112,20 @@ update_sweep_removed_files() {
     esac
   done <"${rows_file}"
   rm -f -- "${rows_file}"
+
+  # A logged UNSAFE / MALFORMED row alone is never surfaced — a headless run's log is read
+  # by nobody — so each refused key is counted and recorded for doctor from the spine's
+  # structured refusal lines, never from the row wording.
+  refused_n="$(($(wc -l <"${refusals_file}")))"
+  # Rewritten each run, like the un-moved record: a release that fixed its map clears it.
+  if [[ "${refused_n}" -gt 0 ]]; then
+    mkdir -p -- "$(dirname -- "${refused_record}")"
+    cat -- "${refusals_file}" >"${refused_record}"
+    update_log "WARN: ${refused_n} retired manifest key(s) refused by the sweep (UNSAFE/MALFORMED, never moved) — recorded for doctor at ${refused_record}"
+  else
+    rm -f -- "${refused_record}"
+  fi
+  rm -f -- "${refusals_file}"
 
   if [[ -n "${removed}" ]]; then
     # Per-run sink: a timestamped subdir so one run's removals form a single recovery
@@ -4120,7 +4160,7 @@ update_sweep_removed_files() {
     # moment the retry succeeds — otherwise doctor reports a residue that is gone.
     rm -f -- "${record}"
   fi
-  update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n}"
+  update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
 
 # The merge → base-content-capture → retirement-sweep → baseline-capture finalize
@@ -4215,6 +4255,13 @@ update_enforce_manifest_modes() {
       update_log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
       continue
     fi
+    # Runs after finalize, so a symlinked directory component inside the root
+    # is a per-key skip, never an abort of an already-landed apply.
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${root}/${rel}" "${root}"; then
+      update_log "WARN: mode target escapes the install root (skipped): $(printf '%q' "${rel}")"
+      continue
+    fi
     # Ordered after the symlink arm so a dangling link is skipped as a link row
     # rather than read as an absent file by a dereferencing test. A merge-claimed
     # agent body reaches the install through the EDITABLE-region merge, which has a
@@ -4285,6 +4332,8 @@ update_run() {
   update_heartbeat
   update_fetch_release "${dl_dir}" "${new_dir}"
   manifest="${dl_dir}/manifest.json"
+  # Containment precondition — exit 17 before any step that stages or swaps.
+  update_require_contained_manifest_keys "${manifest}"
   # arm the agent-merge apply callback's post-copy mode re-apply (FB-2)
   _update_modes_manifest="${manifest}"
   # Record the resolved release version on the job row (INSERT used a placeholder).

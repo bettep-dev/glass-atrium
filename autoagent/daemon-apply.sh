@@ -147,16 +147,19 @@
 #
 # Test-suite preflight exit code (verify_test_harness — loud-fail BEFORE the
 # lock, so the daemon never mutates a harness it cannot verify):
-#     16 — test-suite preflight failed. ONE abort semantic for three causes,
+#     16 — test-suite preflight failed. ONE abort semantic for four causes,
 #          named distinctly on stderr: (a) a test root is absent (T1a — the
 #          install carries no executable tests); (b) a suite prerequisite
 #          (bats / GNU parallel) is absent (T22); (c) the suite ran and exited
-#          non-zero (T22 — a RED suite, distinct from absence). Bypassed by
+#          non-zero (T22 — a RED suite, distinct from absence); (d) the runner
+#          refused to start on an unusable toolchain (T22 — it exited the
+#          reserved BATS_RUNNER_TOOLCHAIN_RC, so the suite never ran at all;
+#          distinct from the RED suite of (c)). Bypassed by
 #          AUTOAGENT_ALLOW_UNVERIFIED=1 (operator override, logged), exempted
 #          under --dry-run, and skipped when AUTOAGENT_PREFLIGHT_ACTIVE=1 (the
 #          re-entry sentinel the green-suite run exports so nested daemon-apply
 #          calls do not recurse). Root presence (a) runs on BOTH the batch and
-#          single-proposal paths; the heavy green-suite run (b/c) is batch/cron
+#          single-proposal paths; the heavy green-suite run (b/c/d) is batch/cron
 #          ONLY — the single-proposal (--proposal-id) approve path is exempt.
 #          Does NOT collide with 0/2-15.
 
@@ -697,6 +700,12 @@ GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
 # The bats parallel runner (env-overridable so a test can point it at a stub and
 # never shell the real suite recursively).
 BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
+# The rc scripts/run-bats-parallel.sh RESERVES for a toolchain precondition failure —
+# a tool present but unusable (an unaccepted Xcode licence leaving every `git init`
+# broken), which reds the whole suite while nothing is wrong with the harness itself.
+# MIRRORED rather than read from the runner, which is env-overridable to a stub;
+# autoagent/test/daemon-apply-preflight.bats pins the two copies equal.
+readonly BATS_RUNNER_TOOLCHAIN_RC=17
 
 # preflight_abort_row — serialise ONE abort row for the JSONL sink. Every field
 # is built and checked separately: a nested `$(… | json_escape)` inside the
@@ -713,13 +722,14 @@ preflight_abort_row() {
         "${ts_json}" "${clause_json}" "${runner_json}"
 }
 
-# preflight_fatal — the four verify_test_harness abort sites share one framing
+# preflight_fatal — the verify_test_harness abort sites share one framing
 # ([daemon-apply] FATAL: <clause> Override: AUTOAGENT_ALLOW_UNVERIFIED=1.); pass
 # only the distinct clause so the shared prefix/suffix live in one place.
 # The abort also lands ONE row in the JSONL sink: stderr scrolls past on the
 # launchd path with no reader, so a gate that only prints degrades to silence
-# once the cycle ends. Emitting from the SHARED helper covers all four sites at
-# once — a per-site emit would inherit the same blindness the incident had.
+# once the cycle ends. Emitting from the SHARED helper covers EVERY site at once —
+# a per-site emit would inherit the same blindness the incident had, and would have
+# to be remembered again each time a cause is added.
 # The emit can NEVER change the exit: exit 16 is what the callers' tests assert,
 # so a failed row is a loud WARN and the named code is preserved.
 # The gate fires BEFORE the apply lock, so this is the sink's one unlocked write.
@@ -798,10 +808,17 @@ verify_test_harness() {
     if [[ -n "${PROPOSAL_ID}" ]]; then
         return 0
     fi
+    verify_green_suite
+}
 
-    # Prerequisites probed HERE (not delegated to the runner) so a non-zero
-    # runner exit unambiguously means a RED suite, not a missing tool — absence
-    # and failure abort on DISTINCT stderr lines.
+# The batch-path green-suite run: toolchain presence, the full suite with one flaky
+# retry, then a fatal clause picked by the runner's exit VALUE.
+verify_green_suite() {
+    # bats and GNU parallel are probed HERE rather than read off the runner's rc, so
+    # their ABSENCE aborts on its own stderr line. The runner separately probes what
+    # only it can see — a tool present but unusable — and reports that through the
+    # reserved BATS_RUNNER_TOOLCHAIN_RC, so a non-zero runner exit is disambiguated
+    # BY VALUE below rather than assumed to mean a RED suite.
     local tool
     for tool in bats parallel; do
         if ! command -v "${tool}" >/dev/null 2>&1; then
@@ -820,11 +837,22 @@ verify_test_harness() {
     # fails BOTH runs and hits the unchanged preflight_fatal. Full-suite re-run
     # (not scoped): no target→suite mapping exists and a scoped run would weaken
     # the harness-green invariant.
-    if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
+    # The rc is CAPTURED rather than tested, because the clause below is chosen by its
+    # VALUE: a boolean test collapses a toolchain refusal into the red-suite clause,
+    # which is the mislabel this branch exists to prevent. The retry still fires on any
+    # non-zero: a toolchain refusal fails before stage 1, so its second run is as cheap.
+    local suite_rc=0
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2 || suite_rc=$?
+    if [[ "${suite_rc}" -ne 0 ]]; then
         printf '[daemon-apply] WARN: green_gate_flaky_retry — test suite failed once; re-running the full suite once to rule out a flake\n' >&2
-        if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
-            preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
-        fi
+        suite_rc=0
+        AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2 || suite_rc=$?
+    fi
+    if [[ "${suite_rc}" -eq "${BATS_RUNNER_TOOLCHAIN_RC}" ]]; then
+        preflight_fatal "test-suite toolchain precondition FAILED (runner exit ${suite_rc}) — a required tool is present but unusable, so the suite never ran; refusing to apply onto an unverified harness."
+    fi
+    if [[ "${suite_rc}" -ne 0 ]]; then
+        preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
     fi
     return 0
 }

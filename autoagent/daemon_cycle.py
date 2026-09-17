@@ -40,9 +40,10 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
 # -- Constants --------------------------------------------------------------
@@ -758,9 +759,8 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
     # Optional `Sync` group → the bare and execSync call forms both fire
-    # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
-    # → a proposal re-adding that bullet routes to safety
-    # Cleaning that live copy is an operator follow-up, outside this branch
+    # Fail-closed cost, accepted: a prohibition naming the call form with a paren
+    # (`execSync (`) matches too → a proposal adding such prose routes to safety
     # execFile / execFileSync stay uncovered — named as a limit, not a claim
     re.compile(r"\bexec(?:Sync)?\s*\("),
     # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
@@ -823,14 +823,52 @@ def match_sensitive_path(path: str) -> str | None:
     return None
 
 
+DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
+
+
+def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
+    """Classify each diff line — the one body reading of the safety/count sites.
+
+    A strict superset of ``git apply --recount`` in daemon-apply.sh: after the first
+    ``@@`` every ``+``/``-`` line is body, ``+++ ``/``--- `` included, and hunk counts
+    are ignored.
+    A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
+    """
+    lines = (diff or "").splitlines()
+    kinds: list[tuple[DiffLineKind, str]] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        kind: DiffLineKind = "other"
+        if line.startswith("@@"):
+            in_hunk = True
+            kind = "hunk"
+        elif not in_hunk and _is_diff_header_line(lines, idx):
+            kind = "header"
+        elif line.startswith("+"):
+            kind = "added"
+        elif line.startswith("-"):
+            kind = "removed"
+        kinds.append((kind, line))
+    return kinds
+
+
+def _is_diff_header_line(lines: list[str], idx: int) -> bool:
+    line = lines[idx]
+    if line.startswith("--- "):
+        return idx + 1 < len(lines) and lines[idx + 1].startswith("+++ ")
+    if line.startswith("+++ "):
+        return idx > 0 and lines[idx - 1].startswith("--- ")
+    return False
+
+
 def match_sensitive_diff(diff: str) -> str | None:
     """Return the source of the first sensitive-diff pattern matching an ADDED
-    line of ``diff``, else ``None``. Only ``+``-prefixed lines are inspected
-    (excluding the ``+++`` file header) — context lines are current file state,
-    not the patch's introduction.
+    line of ``diff``, else ``None``. Added lines are read by
+    ``_get_diff_line_kinds`` — context lines are current file state, not the
+    patch's introduction.
     """
-    for line in (diff or "").splitlines():
-        if not line.startswith("+") or line.startswith("+++"):
+    for kind, line in _get_diff_line_kinds(diff):
+        if kind != "added":
             continue
         body = line[1:]  # strip leading '+'
         for pat in _SAFETY_SENSITIVE_DIFF_PATTERNS:
@@ -1045,6 +1083,318 @@ def _get_target_path(target_file: str) -> Path | None:
         )
         return None
     return candidate
+
+
+# -- injected turn-budget text (the pre-verify source the 4 C-slots cannot reach) --
+#
+# The four compliance slots resolve the matrix, GLOBAL_RULES, one scope-*.md and
+# the target body. None of them can reach the turn-budget text the SubagentStart
+# injector delivers: _AGENT_SCOPE_MAP resolves ONLY to scope-*.md files, and no
+# slot resolves hooks/inject-scope-rules.sh. So a patch duplicating an already
+# injected budget bullet reads to C4 as "a NEW rule consistent with the existing
+# ones" — a clean PASS. This section attaches that text, budget-family only, so a
+# non-budget prompt pays none of its tokens, and labels each block with whether the
+# hook rosters actually inject it into the target agent.
+
+# Marker literals — verbatim copies of BUDGET_DEV_MARKER_START/END and
+# BUDGET_ANALYSIS_MARKER_START/END in hooks/inject-scope-rules.sh, which
+# daemon_cycle.py cannot source (shell). Same keep-in-sync convention as the
+# learning-aggregator label literals above; drift fails OPEN — an extraction that
+# matches nothing is loud and attaches no block, never a wrong one.
+BUDGET_BLOCK_MARKERS: tuple[tuple[str, str, str], ...] = (
+    (
+        "BUDGET-DEV",
+        "<!-- AGENT-INJECT:BUDGET-DEV:START -->",
+        "<!-- AGENT-INJECT:BUDGET-DEV:END -->",
+    ),
+    (
+        "BUDGET-ANALYSIS",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->",
+    ),
+)
+TURN_BUDGET_SRC_NAME = "shared-turn-budget.md"
+
+# Receiving roster of each marker block, by the hook's declaration NAME. Members are
+# read from that declaration at assembly time — the hook arrays are the only
+# runtime source of who receives a block, and the registry carries no budget field.
+BUDGET_BLOCK_ROSTERS: dict[str, str] = {
+    "BUDGET-DEV": "BUDGET_DEV_AGENTS",
+    "BUDGET-ANALYSIS": "BUDGET_ANALYSIS_AGENTS",
+}
+TURN_BUDGET_ROSTER_SRC = Path("hooks") / "inject-scope-rules.sh"
+TURN_BUDGET_NOT_INJECTED_SIGNAL = "TURN-BUDGET-NOT-INJECTED"
+TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL = "TURN-BUDGET-DELIVERY-UNVERIFIED"
+
+# Named signal for an unreadable injected-text source, carried on BOTH channels —
+# the reason C3/C4 each carry one: a silently empty slot reads to the verifier as
+# "nothing is injected", which is the misjudgement this source exists to prevent.
+TURN_BUDGET_UNREADABLE_SIGNAL = "TURN-BUDGET-TEXT-UNREADABLE"
+
+# Attached to every non-budget-family prompt, so the slot always states whether
+# the harness looked rather than leaving an unexplained empty block.
+TURN_BUDGET_NOT_APPLICABLE = (
+    "(not a budget-family patch — no injected turn-budget text is attached for it)"
+)
+
+# LABEL leg. Membership is containment against the STABLE pattern_signature core,
+# never the free-text label tail: learning-aggregator.py emits
+# "size-est under-estimate concentration (avg overrun +N tool_uses)", so equality
+# (the NON_PROMPTABLE_LABELS shape) would miss every live row, and a display remap
+# or a multi-signal "(a / b)" join moves the core off position 0, so startswith
+# (the _FAIL_COUNT_LABEL_PREFIXES shape) would miss those. Copied verbatim from
+# SIZE_EST_UNDER_LABEL there (daemon_cycle.py does not import the aggregator).
+#
+# BUDGET_OVERAGE_LABEL is deliberately NOT a member. It reports a different axis —
+# an operational counter — and it is already a NON_PROMPTABLE_LABELS member, i.e.
+# an exclusion set that drops the row BEFORE proposal generation; a row carrying
+# it therefore never reaches pre-verify at all, so naming it here could only
+# suppress the very patterns this source exists to serve.
+BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
+
+# SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
+# against the declared target AND the paths _get_diff_header_paths reads.
+#
+# GLASS_ATRIUM_GLOBAL_RULES.md is deliberately absent: its Turn Budget section
+# already reaches the verifier WHOLE in the C2 slot, so a row for it would attach
+# these blocks to every GLOBAL_RULES patch and buy nothing.
+_TURN_BUDGET_SITE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(^|/)shared-turn-budget\.md$"),
+    re.compile(r"(^|/)inject-scope-rules\.sh$"),
+)
+_GIT_QUOTE_ESCAPES: dict[str, int] = {
+    "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92,
+}
+_GIT_OCTAL_ESCAPE_RE = re.compile(r"[0-3][0-7]{2}")
+
+
+def _get_diff_header_paths(diff: str) -> list[str]:
+    """Return the file paths a diff's header pairs name — path extraction only, never a body reading."""
+    paths: list[str] = []
+    for _idx, old_text, new_text in _get_diff_header_pairs(diff):
+        for text, prefix in ((old_text, "a/"), (new_text, "b/")):
+            path = _get_header_path(text, prefix)
+            if path:
+                paths.append(path)
+    return paths
+
+
+def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
+    """Return ``(--- line index, old path text, new path text)`` per header pair.
+
+    Before any hunk (or after ``diff --git``) a ``--- `` line directly followed by
+    ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
+    because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
+    """
+    lines = (diff or "").splitlines()
+    pairs: list[tuple[int, str, str]] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        if line.startswith(("@@", "diff --git ")):
+            in_hunk = line.startswith("@@")
+            continue
+        if not (line.startswith("--- ") and _is_diff_header_line(lines, idx)):
+            continue
+        if in_hunk and not (idx + 2 < len(lines) and lines[idx + 2].startswith("@@")):
+            continue
+        pairs.append((idx, line[4:], lines[idx + 1][4:]))
+    return pairs
+
+
+def _get_header_path(text: str, prefix: str) -> str | None:
+    """One header's path: cut at the first tab, git-unquoted, ``prefix`` stripped once."""
+    path = text.split("\t", 1)[0]
+    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
+        unquoted = _get_unquoted_git_path(path[1:-1])
+        path = path if unquoted is None else unquoted
+    if path == "/dev/null":
+        return None
+    return path.removeprefix(prefix) or None
+
+
+def _get_unquoted_git_path(body: str) -> str | None:
+    """Undo git's C-style path quoting, or None where git's ``unquote_c_style`` fails.
+
+    Mirrors git: an octal escape takes a first digit 0-3 (so every byte fits), and an
+    out-of-range, truncated, unknown or trailing escape fails the whole unquote, after
+    which ``git apply`` reads the header text raw, quotes included.
+    """
+    out = bytearray()
+    idx = 0
+    while idx < len(body):
+        if body[idx] != "\\":
+            out += body[idx].encode()
+            idx += 1
+            continue
+        escape = body[idx + 1 : idx + 4]
+        if _GIT_OCTAL_ESCAPE_RE.fullmatch(escape):
+            out.append(int(escape, 8))
+            idx += 4
+        elif (named := _GIT_QUOTE_ESCAPES.get(escape[:1])) is not None:
+            out.append(named)
+            idx += 2
+        else:
+            return None
+    return out.decode("utf-8", errors="replace")
+
+
+def _get_turn_budget_src() -> Path:
+    """Resolve the injected turn-budget source (``<base>/scoped/shared-turn-budget.md``).
+
+    Through the C3/C4 ga_paths seam, never a HOME-hardcoded constant like the C1/C2
+    file constants: the source is then cwd-independent and follows a redirected
+    base root, the same guarantee _get_target_path documents.
+    """
+    return _get_scoped_dir() / TURN_BUDGET_SRC_NAME
+
+
+def _read_marker_block(path: Path, start: str, end: str) -> str:
+    """Return the lines BETWEEN a marker pair in ``path``, or "" on any miss.
+
+    Deliberately mirrors hooks/inject-scope-rules.sh ``extract_block``, so two
+    readers of one marker contract cannot drift apart unnoticed:
+      - range selection is CONTAINMENT on a line (its ``sed -n /start/,/end/p``);
+      - marker lines are dropped by WHOLE-LINE equality (its ``grep -vxF``);
+      - a start with no end runs to EOF, as a sed range does;
+      - absent file, unreadable file, or absent start marker → "" (fail-open).
+
+    ONE divergence, stated rather than silent: a sed range RESTARTS, so a repeated
+    marker pair yields every occurrence there and only the FIRST here. The source
+    carries one pair per name, and a second pair is a corpus defect rather than a
+    shape worth mirroring.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+
+    opened = False
+    kept: list[str] = []
+    for line in lines:
+        if not opened:
+            opened = start in line
+            continue
+        if end in line:
+            break
+        kept.append(line)
+    return "\n".join(line for line in kept if line != start)
+
+
+def _get_budget_rosters() -> dict[str, frozenset[str]] | None:
+    """Read each receiving roster from its one-line ``readonly <NAME>="..."`` hook declaration.
+
+    ``None`` when the hook is unreadable or any declaration is missing, so no caller
+    claims a delivery it could not read. A line-anchored local parse:
+    scripts/agent_lifecycle/readers.py uses package-relative imports the daemon cannot take.
+    """
+    try:
+        text = (ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    rosters: dict[str, frozenset[str]] = {}
+    for roster in BUDGET_BLOCK_ROSTERS.values():
+        match = re.search(rf'^readonly {roster}="([^"]*)"$', text, re.MULTILINE)
+        if match is None:
+            return None
+        rosters[roster] = frozenset(match.group(1).split())
+    return rosters
+
+
+def _get_agent_body_name(target_file: str) -> str | None:
+    """The agent an ``agents/<name>.md`` target is the body of; ``None`` for any other target."""
+    path = PurePosixPath(target_file or "")
+    if path.parent.name != "agents" or path.suffix != ".md" or path.name == GLOBAL_RULES_FILE.name:
+        return None
+    return path.stem
+
+
+def _injected_budget_excerpt(target_file: str) -> str:
+    """Compose the budget blocks the hook injects, each labelled with its delivery to ``target_file``."""
+    agent = _get_agent_body_name(target_file)
+    if agent is None:
+        return _compose_budget_blocks(
+            BUDGET_BLOCK_MARKERS, lambda name: f"every {BUDGET_BLOCK_ROSTERS[name]} member"
+        )
+    rosters = _get_budget_rosters()
+    if rosters is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL} — budget rosters "
+            f"unreadable in {ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC}; "
+            f"no block attached for {agent}\n"
+        )
+        return _get_delivery_unverified_line(agent)
+    received = tuple(m for m in BUDGET_BLOCK_MARKERS if agent in rosters[BUDGET_BLOCK_ROSTERS[m[0]]])
+    if not received:
+        return (
+            f"{TURN_BUDGET_NOT_INJECTED_SIGNAL}: {agent} is in no budget injection roster, so "
+            "the hook delivers no budget block to it. Budget text in its own body is its "
+            "designed path, and there is no injected text to compare a restatement against."
+        )
+    return _compose_budget_blocks(
+        received, lambda name: f"THIS target agent ({agent}, a {BUDGET_BLOCK_ROSTERS[name]} member)"
+    )
+
+
+def _get_delivery_unverified_line(agent: str) -> str:
+    """The slot line for rosters that could not be read — never a delivery claim."""
+    src = ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC
+    return (
+        f"{TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL}: the injection rosters in {src} could "
+        f"not be read, so whether any budget block reaches {agent} is unknown. No block "
+        "is attached and none is claimed injected."
+    )
+
+
+def _compose_budget_blocks(
+    markers: tuple[tuple[str, str, str], ...], recipient: Callable[[str], str]
+) -> str:
+    """Read each marker block and label it with the ``recipient`` the hook injects it into."""
+    src = _get_turn_budget_src()
+    parts: list[str] = []
+    for name, start, end in markers:
+        block = _read_marker_block(src, start, end)
+        if not block.strip():
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: {TURN_BUDGET_UNREADABLE_SIGNAL} — {name} block "
+                f"empty or markers absent in {src}\n"
+            )
+            continue
+        parts.append(f"[{name} — injected at spawn into {recipient(name)}]\n{block}")
+    if not parts:
+        return (
+            f"{TURN_BUDGET_UNREADABLE_SIGNAL}: no injected turn-budget block resolved "
+            f"from {src}, so this prompt cannot show what the target agent receives at spawn."
+        )
+    return "\n\n".join(parts)
+
+
+def match_turn_budget_site(target_file: str, diff: str) -> str | None:
+    """Return the source of the first turn-budget site pattern the patch touches.
+
+    The declared target AND the diff's own header paths are both inspected — a
+    patch can be filed against one path and carry hunks against another.
+    """
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
+    for candidate in candidates:
+        for pat in _TURN_BUDGET_SITE_PATTERNS:
+            if pat.search(candidate):
+                return pat.pattern
+    return None
+
+
+def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str | None:
+    """Return the leg identifying a budget-family proposal, else ``None``.
+
+    An OR of two legs, each covering the other's blind spot: the LABEL leg misses
+    a patch editing budget text under an unrelated label, and the SITE leg misses
+    a budget-family label patching an agent body.
+    """
+    label = pattern_label or ""
+    for core in sorted(BUDGET_FAMILY_SIGNATURE_CORES):
+        if core in label:
+            return f"label:{core}"
+    site = match_turn_budget_site(target_file, diff)
+    return f"site:{site}" if site else None
 
 
 # -- Promotion ladder config ------------------------------------------------
@@ -3961,11 +4311,14 @@ def _recount_hunk_header(diff_text: str) -> str:
     Start-offset drift is handled by the full difflib re-derivation against the
     current file.
 
-    Line classification per hunk body (mirrors unified-diff semantics):
-      - ' ' prefix  → context  → counts toward BOTH old (b) and new (d)
-      - '-' prefix  → removed  → counts toward old (b) only
-      - '+' prefix  → added    → counts toward new (d) only
-      - file headers (---/+++) and nested @@ end the current hunk body
+    Line classification per hunk body — the ``_get_diff_line_kinds`` body reading,
+    so the counts agree with what ``git apply --recount`` applies:
+      - '-' prefix  → removed  → counts toward old (b) only, ``--- `` included
+      - '+' prefix  → added    → counts toward new (d) only, ``+++ `` included
+      - any other line → context → counts toward BOTH old (b) and new (d)
+      - the next ``@@ `` or ``diff --git `` line ends the current hunk body; any other
+        ``@@``-prefixed line is a prefix-less body line, as git's ``recount_diff`` ends a
+        body at ``@@ `` and at no other ``@@``-prefixed line
       - '\\ No newline at end of file' markers are ignored (not a content line)
 
     FU-3 reuses this helper to re-stamp difflib output defensively.
@@ -3977,6 +4330,7 @@ def _recount_hunk_header(diff_text: str) -> str:
         return diff_text
 
     lines = diff_text.splitlines(keepends=True)
+    kinds = _get_diff_line_kinds(diff_text)
     out: list[str] = []
     i = 0
     n = len(lines)
@@ -3989,28 +4343,20 @@ def _recount_hunk_header(diff_text: str) -> str:
             continue
 
         start_old, _, start_new, _, trailer = m.groups()
-        # Scan the body following this hunk header until the next hunk / header.
-        body: list[str] = []
         j = i + 1
-        while j < n:
-            bl = lines[j]
-            stripped_bl = bl.rstrip("\n")
-            if _UNIFIED_HUNK_CAPTURE_RE.match(stripped_bl):
-                break
-            if stripped_bl.startswith("--- ") or stripped_bl.startswith("+++ "):
-                break
-            body.append(bl)
+        while j < n and not lines[j].startswith(("@@ ", "diff --git ")):
             j += 1
+        body = lines[i + 1 : j]
 
         old_count = 0
         new_count = 0
-        for bl in body:
+        for kind, bl in kinds[i + 1 : j]:
             if bl.startswith("\\"):
                 # "\ No newline at end of file" — not a content line.
                 continue
-            if bl.startswith("+"):
+            if kind == "added":
                 new_count += 1
-            elif bl.startswith("-"):
+            elif kind == "removed":
                 old_count += 1
             else:
                 # ' ' context OR a prefix-less line difflib never emits but the
@@ -4075,24 +4421,21 @@ def _unified_diff_counts_valid(diff_text: str) -> bool:
 def _split_fragment_lines(body: str) -> tuple[list[str], list[str], list[str]]:
     """Partition a diff fragment body into (context, added, removed) lines.
 
+    - Added / removed lines: the '+' / '-' body lines of `_get_diff_line_kinds`.
     - Context lines: start with single space OR are plain text lines (no prefix).
-    - Added lines: start with '+' (NOT '+++').
-    - Removed lines: start with '-' (NOT '---').
-    - Lines starting with '@@' or that look like markdown decorations are dropped.
+    - File header pairs and '@@' lines are dropped.
 
     Returns raw line content WITH prefix preserved — caller decides how to use.
     """
     context: list[str] = []
     added: list[str] = []
     removed: list[str] = []
-    for raw_line in body.splitlines():
-        if raw_line.startswith("+++") or raw_line.startswith("---"):
+    for kind, raw_line in _get_diff_line_kinds(body):
+        if kind in ("header", "hunk"):
             continue
-        if raw_line.startswith("@@"):
-            continue
-        if raw_line.startswith("+"):
+        if kind == "added":
             added.append(raw_line)
-        elif raw_line.startswith("-"):
+        elif kind == "removed":
             removed.append(raw_line)
         elif raw_line.startswith(" "):
             context.append(raw_line)
@@ -4381,12 +4724,10 @@ def get_removal_live() -> bool:
 def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
     """Removal set declared by a stored diff, plus whether it LOOKS removal-bearing.
 
-    Enumerated from the RAW hunk lines — every line after an `@@` header — rather
-    than through `_split_fragment_lines`, which drops any `---`-prefixed line as a
-    file header. That partition cannot see the two removals that matter most here:
-    a deleted frontmatter delimiter (`---` → the diff line `----`) and a deleted
-    `-- `-prefixed line (→ `--- `). Inside a hunk those ARE removals, so the file
-    header is recognised only in the pre-hunk preamble.
+    Enumerated from the RAW hunk lines — every line after an `@@` header — so the
+    two removals that matter most here are members: a deleted frontmatter
+    delimiter (`---` → the diff line `----`) and a deleted `-- `-prefixed line
+    (→ `--- `). The file header is recognised only in the pre-hunk preamble.
 
     The second element is the AMBIGUITY probe: a diff whose preamble carries a
     removal-shaped line while no hunk exists to declare it (a header-less
@@ -4913,20 +5254,35 @@ def _validate_unified_diff(
 
 
 def _diff_header_target_basename(diff: str) -> str | None:
-    """Return the basename declared by the diff's first ``+++`` header, or None.
+    """Return the basename declared by the diff's first ``+++`` line, or None.
 
-    None is returned when the diff carries no ``+++`` header (a header-less
-    append-only fragment asserts no target file — valid by construction). Strips
-    a leading ``a/``/``b/`` prefix and any trailing tab-separated timestamp, then
-    returns the final path component.
+    None is returned when the diff carries no ``+++`` line (a header-less
+    append-only fragment asserts no target file — valid by construction). A line
+    that is the new side of a header pair is read by ``_get_header_path``. Any
+    other ``+++`` line takes the raw reading (prefix-stripped, cut at a tab), so a
+    header-less fragment carrying one still fails the gate's basename match.
     """
-    for line in diff.splitlines():
-        if line.startswith("+++"):
-            rest = line[3:].strip().split("\t", 1)[0].strip()
-            if rest.startswith(("a/", "b/")):
-                rest = rest[2:]
-            return rest.rsplit("/", 1)[-1] if rest else None
+    new_header_texts = {
+        idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    }
+    for idx, line in enumerate(diff.splitlines()):
+        if not line.startswith("+++"):
+            continue
+        if idx in new_header_texts:
+            path = _get_header_path(new_header_texts[idx], "b/")
+        else:
+            path = line[3:].strip().split("\t", 1)[0].strip()
+            path = path[2:] if path.startswith(("a/", "b/")) else path
+        return path.rsplit("/", 1)[-1] if path else None
     return None
+
+
+def _diff_deletes_file(diff: str) -> bool:
+    """True iff any header pair's new path is ``/dev/null`` — a whole-file delete."""
+    return any(
+        new_text.split("\t", 1)[0] == "/dev/null"
+        for _idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    )
 
 
 def _gate_validated_diff(
@@ -4949,6 +5305,9 @@ def _gate_validated_diff(
          caller stores an EMPTY diff (caught downstream as nothing-to-apply)
          rather than a known-broken one that funnels to rc=128 on every drain.
 
+    Before step 1 a diff whose header pair names ``/dev/null`` as the new path is
+    rejected: no agent-body proposal legitimately deletes its own file.
+
     Step 3 refuses a REPLACE diff outright: its builder takes added lines only,
     so rebuilding one drops the removal silently.
 
@@ -4961,6 +5320,14 @@ def _gate_validated_diff(
     """
     if not diff.strip():
         return diff
+
+    if _diff_deletes_file(diff):
+        sys.stderr.write(
+            f"[daemon-cycle] F2 GATE: diff header deletes a file ('+++ /dev/null') "
+            f"for proposal target {target_file.name!r} — an agent-body proposal "
+            f"never deletes its file, rejected (stored empty)\n"
+        )
+        return ""
 
     # Basename-match assertion — a '+++' header declares the file the diff
     # targets. If its basename diverges from target_file, `git apply` (run under
@@ -5254,24 +5621,17 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     )
 
 
-def _count_marker_lines(diff: str, marker: str) -> int:
-    """Count lines starting with `marker`, skipping the `marker * 3` file header."""
-    if not diff:
-        return 0
-    header = marker * 3
-    return sum(
-        1
-        for line in diff.splitlines()
-        if line.startswith(marker) and not line.startswith(header)
-    )
+def _count_kind_lines(diff: str, kind: DiffLineKind) -> int:
+    """Count body lines of `kind` under the single diff body reading."""
+    return sum(1 for line_kind, _line in _get_diff_line_kinds(diff) if line_kind == kind)
 
 
 def _count_added_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "+")
+    return _count_kind_lines(diff, "added")
 
 
 def _count_removed_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "-")
+    return _count_kind_lines(diff, "removed")
 
 
 def _diff_touches_frontmatter(diff: str) -> bool:
@@ -5600,17 +5960,9 @@ _HOOK_PATH_RE = re.compile(r"(^|/)hooks/.*\.(sh|py|bats)$")
 
 
 def _diff_touches_hook_file(diff: str, target_file: str) -> bool:
-    """True iff the patch target OR any diff ``+++``/``---`` header is a hook file."""
-    if target_file and _HOOK_PATH_RE.search(target_file):
-        return True
-    for line in diff.splitlines():
-        if line.startswith(("+++", "---")):
-            # strip the 'a/'/'b/' diff prefix before matching
-            path = line[3:].strip()
-            path = re.sub(r"^[ab]/", "", path)
-            if _HOOK_PATH_RE.search(path):
-                return True
-    return False
+    """True iff the patch target OR any path a diff header pair names is a hook file."""
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
+    return any(_HOOK_PATH_RE.search(path) for path in candidates if path)
 
 
 # -- reference-resolution guard ---------------------------------------------
@@ -5643,6 +5995,7 @@ _EXAMPLE_CONTEXT_RE = re.compile(
 def _iter_added_reference_lines(diff: str) -> list[str]:
     """Added ('+') diff lines OUTSIDE any fenced code block, diff-prefix stripped.
 
+    Added lines are the ``_get_diff_line_kinds`` body reading, ``+++ `` included.
     A ``` fence toggles collection off: fenced content is an illustrative snippet
     (a rule QUOTE / worked example), not a live pointer. Fence state is tracked
     across context AND added lines so a fence opened on a context line still
@@ -5650,8 +6003,8 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
     """
     out: list[str] = []
     in_fence = False
-    for raw_line in (diff or "").splitlines():
-        if raw_line.startswith(("+++", "---", "@@")):
+    for kind, raw_line in _get_diff_line_kinds(diff):
+        if kind in ("header", "hunk"):
             continue
         marker = raw_line[:1]
         content = raw_line[1:] if marker in "+- " else raw_line
@@ -5660,7 +6013,7 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
             continue
         if in_fence:
             continue
-        if marker == "+":
+        if kind == "added":
             out.append(content)
     return out
 
@@ -5877,9 +6230,8 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 # when it drops heading blocks at the bound — a drift the test suite pins.
 _PRE_VERIFY_PROMPT_TEMPLATE = """You are meta-prompt-engineer acting as a compliance verifier for AutoAgent.
 
-A patch has been proposed for a target agent's instruction file. Your job is
-to evaluate the patch against 4 independent compliance axes and emit a
-strict, parseable verdict.
+A patch has been proposed for a target agent's instruction file. Judge it on 4
+independent compliance axes and emit a parseable verdict.
 
 PATCH METADATA:
 - target_agent: {target_agent}
@@ -5891,12 +6243,11 @@ PROPOSED DIFF (unified-diff fragment):
 {diff}
 ---
 
-NOTE ON THE DIFF: the fragment above may be a bounded EXCERPT. A line opening
-`[DIFF-EXCERPT-` marks where the harness stopped, and the hunks past it were
-withheld before you ever saw them. Judge every axis ONLY on the hunks shown, and
-NEVER FAIL an axis because the fragment ends early, reads as partial, or carries
-such a marker — that is a harness bound, not a defect in the patch. With no such
-marker the fragment is the COMPLETE diff.
+NOTE ON THE DIFF: a line opening `[DIFF-EXCERPT-` marks where the harness cut
+the fragment; the hunks past it were withheld. Judge every axis ONLY on the hunks
+shown, and NEVER FAIL an axis because the fragment ends early or carries that
+marker — it is a harness bound, not a patch defect. With no such marker the
+fragment is the COMPLETE diff.
 
 RATIONALE FROM PATCH GENERATOR:
 {patch_rationale}
@@ -5923,13 +6274,21 @@ COMPLIANCE SOURCES (excerpts):
 {target_agent_excerpt}
 ---
 
-NOTE ON THE EXCERPTS: each compliance source above may be a bounded EXCERPT. A
-line opening `[TRUNCATED:` marks where the harness stopped, and the whole heading
-blocks past it were withheld before you ever saw them. Under that marker its
-source is NOT the complete list the axis reading it calls one, so a rule you
-recall but cannot find there IS a ground for FAIL — name it in the RATIONALE.
-This gate applies edits unattended, so err that way. With no such marker the
-excerpt is COMPLETE.
+NOTE ON THE EXCERPTS: C2 and C3 are judged ONLY against their excerpt. With no
+`[TRUNCATED:` line the excerpt is COMPLETE, so a rule you recall but cannot find
+there is not a ground for FAIL. A line opening `[TRUNCATED:` marks where the
+harness withheld whole heading blocks; under it a rule you recall but cannot
+find IS a ground for FAIL — name it in the RATIONALE, because this gate applies
+edits unattended.
+
+[INJECTED TURN-BUDGET TEXT — hook-injected at spawn, in NO excerpt above; each block states its recipient]
+---
+{turn_budget_excerpt}
+---
+
+NOTE ON THE INJECTED TEXT: a block labelled as injected into THIS target agent
+reaches it at every spawn through the SubagentStart hook, without appearing in
+any excerpt above.
 
 VERIFICATION TASK:
 
@@ -5937,23 +6296,19 @@ For each of the 4 axes, decide PASS or FAIL:
   C1: Does the patch subvert / remove / weaken any Tier-1, Tier-2, or Tier-3
       rule loading policy in compliance-matrix? (FAIL if it removes a rule
       reference the target agent's scope must load.)
-  C2: Does the patch violate any ALL-scope rule stated in the GLOBAL_RULES
-      excerpt above? That excerpt is the COMPLETE and authoritative list —
-      judge against what it states and nothing else, so a rule you recall
-      but cannot find there is not a ground for FAIL. Its `## Absolute
-      Rules` section is the densest source; every ALL-scope section the
-      excerpt carries counts equally.
-  C3: Does the patch violate any rule stated in the target agent's scope
-      excerpt above? Same excerpt-only judgement as C2. Scope files differ
-      in how they head their rule sections and some head none, so a missing
-      heading is not an absent rule — read the excerpt, not for a title.
+  C2: Does the patch violate any ALL-scope rule the GLOBAL_RULES excerpt
+      above states? Every section it carries counts equally.
+  C3: Does the patch violate any rule the target agent's scope excerpt above
+      states? A rule counts under any heading or none — read the excerpt,
+      not its titles.
   C4: Does the patch CONTRADICT (not merely add to) a rule the target agent
-      file above ALREADY states? Judge on the rules that excerpt carries,
-      under whatever heading they sit and under none.
+      file above ALREADY states, under any heading or none?
       (Adding a NEW rule consistent with the existing ones = PASS.
-       Reversing or weakening an existing rule = FAIL.)
+       Reversing or weakening an existing rule = FAIL.
+       Restating text from a block labelled as injected into THIS target
+       agent = FAIL — the agent already receives it, so it is a duplicate.)
 
-OUTPUT STRICT FORMAT (no preamble, no markdown fences, exactly these lines):
+OUTPUT FORMAT (exactly these lines, each on its own line):
 C1: PASS|FAIL
 C2: PASS|FAIL
 C3: PASS|FAIL
@@ -6162,7 +6517,20 @@ def _build_pre_verify_prompt(
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
         target_agent_excerpt=target_agent_excerpt,
+        turn_budget_excerpt=_turn_budget_excerpt_for(patch, pattern),
     )
+
+
+def _turn_budget_excerpt_for(patch: PatchProposal, pattern: Pattern) -> str:
+    """Attach the injected turn-budget blocks for a budget-family patch only.
+
+    Every other prompt gets the not-applicable line instead: the blocks are only
+    ever relevant to a patch that could duplicate them, and attaching them to all
+    prompts would spend the excerpt budget on text no axis would use.
+    """
+    if match_budget_family(pattern.label, patch.target_file, patch.proposed_diff) is None:
+        return TURN_BUDGET_NOT_APPLICABLE
+    return _injected_budget_excerpt(patch.target_file)
 
 
 def _parse_pre_verify_response(stdout: str) -> tuple[dict[str, bool], bool, str]:
@@ -7565,7 +7933,6 @@ def _added_content_lines(diff_text: str) -> list[str]:
     for line in added:
         if _REGEN_BLANK_ADDED_RE.match(line):
             continue
-        # Strip only one '+' ('+++' added lines already filtered by _split).
         out.append(line[1:] if line.startswith("+") else line)
     return out
 
@@ -9017,8 +9384,8 @@ def _render_landed_history_block(
     for label, diff in rows:
         added = [
             line[1:].strip()
-            for line in (diff or "").splitlines()
-            if line.startswith("+") and not line.startswith("+++")
+            for kind, line in _get_diff_line_kinds(diff)
+            if kind == "added"
         ]
         added_text = " / ".join(text for text in added if text)
         rendered = (
