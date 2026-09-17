@@ -339,8 +339,8 @@ class TestProtectedSet(unittest.TestCase):
 
 
 class TestDeclaredSetDerivation(unittest.TestCase):
-    """Enumeration is from the RAW hunk lines, which is what makes the
-    frontmatter-delimiter and `-- `-prefixed members visible at all."""
+    """Enumeration is from the RAW hunk lines, so the frontmatter-delimiter and
+    `-- `-prefixed removals are declared members."""
 
     def test_when_frontmatter_delimiter_removed_then_fragment_partition_sees_it(
         self,

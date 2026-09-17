@@ -828,13 +828,14 @@ DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
 
 
 def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
-    """Classify each ``\\r``-stripped diff line — the one body reading of the safety/count sites.
+    """Classify each diff line — the one body reading of the safety/count sites.
 
-    Mirrors ``git apply --recount`` in daemon-apply.sh: after the first ``@@`` every
-    ``+``/``-`` line is body, ``+++ ``/``--- `` included, and hunk counts are ignored.
+    A strict superset of ``git apply --recount`` in daemon-apply.sh: after the first
+    ``@@`` every ``+``/``-`` line is body, ``+++ ``/``--- `` included, and hunk counts
+    are ignored.
     A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
     """
-    lines = [line.removesuffix("\r") for line in (diff or "").splitlines()]
+    lines = (diff or "").splitlines()
     kinds: list[tuple[DiffLineKind, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
@@ -1179,25 +1180,24 @@ def _get_diff_header_paths(diff: str) -> list[str]:
 
 
 def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
-    """Return ``(--- line index, old path text, new path text)`` per header pair, ``\\r`` stripped.
+    """Return ``(--- line index, old path text, new path text)`` per header pair.
 
     Before any hunk (or after ``diff --git``) a ``--- `` line directly followed by
     ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
     because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
     """
-    lines = [line.removesuffix("\r") for line in (diff or "").splitlines()]
+    lines = (diff or "").splitlines()
     pairs: list[tuple[int, str, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
         if line.startswith(("@@", "diff --git ")):
             in_hunk = line.startswith("@@")
             continue
-        pair = lines[idx : idx + 3]
-        if not (len(pair) > 1 and line.startswith("--- ") and pair[1].startswith("+++ ")):
+        if not (line.startswith("--- ") and _is_diff_header_line(lines, idx)):
             continue
-        if in_hunk and not (len(pair) > 2 and pair[2].startswith("@@")):
+        if in_hunk and not (idx + 2 < len(lines) and lines[idx + 2].startswith("@@")):
             continue
-        pairs.append((idx, line[4:], pair[1][4:]))
+        pairs.append((idx, line[4:], lines[idx + 1][4:]))
     return pairs
 
 
@@ -1309,6 +1309,11 @@ def _injected_budget_excerpt(target_file: str) -> str:
         )
     rosters = _get_budget_rosters()
     if rosters is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL} — budget rosters "
+            f"unreadable in {ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC}; "
+            f"no block attached for {agent}\n"
+        )
         return _get_delivery_unverified_line(agent)
     received = tuple(m for m in BUDGET_BLOCK_MARKERS if agent in rosters[BUDGET_BLOCK_ROSTERS[m[0]]])
     if not received:
@@ -1323,12 +1328,8 @@ def _injected_budget_excerpt(target_file: str) -> str:
 
 
 def _get_delivery_unverified_line(agent: str) -> str:
-    """Warn and return the slot line for rosters that could not be read — never a delivery claim."""
+    """The slot line for rosters that could not be read — never a delivery claim."""
     src = ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC
-    sys.stderr.write(
-        f"[daemon-cycle] WARN: {TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL} — budget rosters "
-        f"unreadable in {src}; no block attached for {agent}\n"
-    )
     return (
         f"{TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL}: the injection rosters in {src} could "
         f"not be read, so whether any budget block reaches {agent} is unknown. No block "
@@ -4332,7 +4333,6 @@ def _recount_hunk_header(diff_text: str) -> str:
             continue
 
         start_old, _, start_new, _, trailer = m.groups()
-        # Body runs to the next hunk or file section, never to a '---'/'+++' line.
         j = i + 1
         while j < n and kinds[j][0] != "hunk" and not lines[j].startswith("diff --git "):
             j += 1
@@ -4714,12 +4714,10 @@ def get_removal_live() -> bool:
 def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
     """Removal set declared by a stored diff, plus whether it LOOKS removal-bearing.
 
-    Enumerated from the RAW hunk lines — every line after an `@@` header — rather
-    than through `_split_fragment_lines`, which drops any `---`-prefixed line as a
-    file header. That partition cannot see the two removals that matter most here:
-    a deleted frontmatter delimiter (`---` → the diff line `----`) and a deleted
-    `-- `-prefixed line (→ `--- `). Inside a hunk those ARE removals, so the file
-    header is recognised only in the pre-hunk preamble.
+    Enumerated from the RAW hunk lines — every line after an `@@` header — so the
+    two removals that matter most here are members: a deleted frontmatter
+    delimiter (`---` → the diff line `----`) and a deleted `-- `-prefixed line
+    (→ `--- `). The file header is recognised only in the pre-hunk preamble.
 
     The second element is the AMBIGUITY probe: a diff whose preamble carries a
     removal-shaped line while no hunk exists to declare it (a header-less
@@ -5250,10 +5248,9 @@ def _diff_header_target_basename(diff: str) -> str | None:
 
     None is returned when the diff carries no ``+++`` line (a header-less
     append-only fragment asserts no target file — valid by construction). A line
-    that is the new side of a header pair is read by ``_get_header_path`` — the
-    one correction, a C-style quoted path, is unquoted. Any other ``+++`` line
-    keeps the strict raw reading (prefix-stripped, cut at a tab), so a header-less
-    fragment carrying one still fails the gate's basename match.
+    that is the new side of a header pair is read by ``_get_header_path``. Any
+    other ``+++`` line takes the raw reading (prefix-stripped, cut at a tab), so a
+    header-less fragment carrying one still fails the gate's basename match.
     """
     new_header_texts = {
         idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
@@ -5614,17 +5611,17 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     )
 
 
-def _count_marker_lines(diff: str, kind: DiffLineKind) -> int:
+def _count_kind_lines(diff: str, kind: DiffLineKind) -> int:
     """Count body lines of `kind` under the single diff body reading."""
     return sum(1 for line_kind, _line in _get_diff_line_kinds(diff) if line_kind == kind)
 
 
 def _count_added_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "added")
+    return _count_kind_lines(diff, "added")
 
 
 def _count_removed_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "removed")
+    return _count_kind_lines(diff, "removed")
 
 
 def _diff_touches_frontmatter(diff: str) -> bool:
