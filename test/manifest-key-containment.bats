@@ -125,11 +125,19 @@ assert_has() {
   }
 }
 
+assert_lacks() {
+  [[ "${output}" != *"${1}"* ]] || {
+    printf 'output unexpectedly carries [%s]:\n%s\n' "${1}" "${output}" >&2
+    return 1
+  }
+}
+
 @test "agents-only: an escaping files[] key fails the run before any symlink is farmed" {
   write_manifest "agents/dev-x.md" "../esc/x.md"
   run_engine 'run_agents_only'
   assert_status "${ESCAPING_KEY_EXIT}"
   assert_has "manifest key escapes the install root: ../esc/x.md"
+  assert_has "FATAL: manifest carries 1 escaping files[] key(s) (listed above) — nothing farmed, removed or pruned"
   [ ! -e "${SANDBOX}/b/esc" ]
   [ ! -L "${TARGET}/agents/dev-x.md" ]
 }
@@ -181,7 +189,8 @@ assert_has() {
   run_engine 'capture_base_agent_store'
   assert_status 0
   assert_has "manifest key escapes the install root: agents/../../esc/secret.md"
-  assert_has "base-content store NOT seeded"
+  assert_has "warn : base-content store NOT seeded — the manifest carries escaping or unreadable files[] key(s)"
+  assert_lacks "FATAL"
   [ ! -e "${STATE}/base-agents/secret.md" ]
   [ ! -e "${STATE}/base-agents/dev-x.md" ]
 }
@@ -212,5 +221,6 @@ assert_has() {
   run_engine 'run_doctor'
   assert_has "manifest key escapes the install root: ../esc/x.md"
   assert_has "FAIL : manifest carries escaping or unreadable files[] key(s)"
+  assert_lacks "FATAL"
   assert_has "== doctor: FAIL =="
 }

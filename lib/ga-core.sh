@@ -253,8 +253,8 @@ capture_base_agent_store() {
   local store rel src dst base copied=0 missing=0 refused=0
   # advisory contract: an escaping agents/ key would copy a file from outside GA_ROOT, so refuse the whole seed
   # shellcheck disable=SC2310
-  if ! require_contained_manifest_keys; then
-    log "  warn : base-content store NOT seeded — the manifest carries escaping files[] key(s); next update falls back to the gated-2-way merge"
+  if ! require_contained_manifest_keys report; then
+    log "  warn : base-content store NOT seeded — the manifest carries escaping or unreadable files[] key(s); next update falls back to the gated-2-way merge"
     return 0
   fi
   store="$(spine_baseline_dir)/base-agents"

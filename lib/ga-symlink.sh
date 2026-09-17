@@ -16,11 +16,18 @@ read_manifest_files() {
 # it in their OWN shell before a manifest loop: read_manifest_files feeds process substitutions, where a die
 # only truncates the loop and the run still exits 0. Absent jq/manifest → 0, each caller keeps its own
 # absence contract; a non-array files member counts as unreadable.
+# $1 = refuse (default: the caller stops, so the verdict line is FATAL) | report (the caller carries on and logs
+# its own consequence, so only the offending detail is logged).
 require_contained_manifest_keys() {
+  local consequence="${1:-refuse}"
   command -v jq >/dev/null 2>&1 || return 0
   [[ -f "${MANIFEST}" ]] || return 0
   if ! jq -e '(.files // []) | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
-    log "FATAL: manifest files[] unreadable (${MANIFEST}) — refusing every manifest loop"
+    if [[ "${consequence}" == "report" ]]; then
+      log "manifest files[] unreadable (${MANIFEST})"
+    else
+      log "FATAL: manifest files[] unreadable (${MANIFEST}) — refusing every manifest loop"
+    fi
     return "${MANIFEST_EXIT_ESCAPING_KEY}"
   fi
   local key offenders=0
@@ -34,6 +41,7 @@ require_contained_manifest_keys() {
     fi
   done < <(jq -j '(.files // [])[] | tostring + "\u0000"' -- "${MANIFEST}")
   [[ "${offenders}" -eq 0 ]] && return 0
+  [[ "${consequence}" == "report" ]] && return "${MANIFEST_EXIT_ESCAPING_KEY}"
   log "FATAL: manifest carries ${offenders} escaping files[] key(s) (listed above) — nothing farmed, removed or pruned (${MANIFEST})"
   return "${MANIFEST_EXIT_ESCAPING_KEY}"
 }
