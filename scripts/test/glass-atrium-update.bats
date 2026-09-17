@@ -2800,3 +2800,95 @@ assert_withheld_from_every_roster() {
   [[ "$output" != *"roster merged + applied"* ]] || return 1
   [[ "$output" != *"DECLINED"* ]] || return 1
 }
+
+# Containment precondition: a files[] entry or modes key resolving outside the install
+# root fails the WHOLE run before any staging. The root sits one level down so an
+# escaping target stays inside the per-test dir.
+containment_sandbox() {
+  sweep_sandbox
+  INSTALL="${WORK}/nest/install"
+  mkdir -p "${INSTALL}"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${NEWSRC}" "escaped.sh" "escaped payload"
+}
+
+# Manifest whose escaping row `lnk/../../escaped.sh` resolves to a REAL hashed source:
+# the release tree ships `lnk` as a link two levels under ${WORK}/src, so the source
+# read climbs to ${WORK}/src/escaped.sh while the staging and install sides climb
+# through real dirs. Old code therefore stages and swaps the row instead of refusing
+# it for an unrelated reason; its install target is ${WORK}/nest/escaped.sh.
+write_escaping_files_manifest() {
+  seed_file "${WORK}/src" "escaped.sh" "escaped payload"
+  mkdir -p "${WORK}/src/a/b"
+  ln -s "${WORK}/src/a/b" "${NEWSRC}/lnk"
+  write_manifest "${WORK}/base.json" "scripts/tool.sh" "escaped.sh"
+  jq '.files |= map(if . == "escaped.sh" then "lnk/../../escaped.sh" else . end)
+      | .hashes["lnk/../../escaped.sh"] = .hashes["escaped.sh"] | del(.hashes["escaped.sh"])' \
+    "${WORK}/base.json" >"${WORK}/manifest.json"
+}
+
+@test "containment: an escaping files[] entry fails the run with exit 17 and writes nothing" {
+  containment_sandbox
+  write_escaping_files_manifest
+
+  run_update_sweep
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  [[ "${output}" == *'manifest key escapes the install root: lnk/../../escaped.sh'* ]] || { echo "${output}"; return 1; }
+  [ ! -e "${WORK}/nest/escaped.sh" ] || { echo "written outside the root"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "old" ] || { echo "half-applied install"; return 1; }
+}
+
+@test "containment: an escaping modes key fails the run with exit 17 and chmods nothing" {
+  containment_sandbox
+  seed_file "${WORK}/nest" "escaped.sh" "outside file"
+  chmod 600 "${WORK}/nest/escaped.sh"
+  write_manifest_with_modes "${WORK}/base.json" "scripts/tool.sh"
+  jq '.modes["../escaped.sh"] = "755"' "${WORK}/base.json" >"${WORK}/manifest.json"
+
+  run_update_sweep
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  [[ "${output}" == *'manifest key escapes the install root: ../escaped.sh'* ]] || { echo "${output}"; return 1; }
+  [ "$(stat -f '%Lp' "${WORK}/nest/escaped.sh" 2>/dev/null || stat -c '%a' "${WORK}/nest/escaped.sh")" = "600" ] \
+    || { echo "chmod reached outside the root"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "old" ] || { echo "half-applied install"; return 1; }
+}
+
+@test "containment: a headless refusal closes the job row failed with exit 17" {
+  containment_sandbox
+  # Every post-step effect is seamed, so a run that is NOT refused cannot restart the
+  # live monitor or reach launchd.
+  write_mock_psql "${WORK}/psql"
+  write_mock_claude "${WORK}/claude"
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  write_escaping_files_manifest
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    GA_TARGET_HOME="${FARM}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_TRASH_DIR="${TRASH}" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    PSQL_LOG="${WORK}/psql.log" \
+    ATRIUM_UPDATE_CLAUDE_BIN="${WORK}/claude" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist" \
+    ATRIUM_UPDATE_MONITOR_DIR="${WORK}/nonexistent-monitor" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${WORK}/LaunchAgents" \
+    ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/nonexistent-render-launchd.sh" \
+    ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/nonexistent-render-env.sh" \
+    bash "${SKILL}" --headless
+
+  [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
+  grep -q "fr=aborted (exit=17)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  [ ! -e "${WORK}/nest/escaped.sh" ] || return 1
+}

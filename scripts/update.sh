@@ -122,7 +122,10 @@
 # database schema was NOT migrated — run `glass-atrium db-setup`; no rollback of
 # applied files) · 16 operator EDITABLE-reset request invalid (malformed, or its
 # request id already consumed) — caught before the roster gate, nothing applied;
-# a stale body inside a valid request is refused per body instead, never exit 16.
+# a stale body inside a valid request is refused per body instead, never exit 16 ·
+# 17 release manifest names a files[] entry or modes key that escapes the install
+# root (empty, absolute, or a `..` segment), or its keys are unreadable — caught
+# right after the fetch, before the roster gate and any staging, nothing applied.
 # The record subcommand also exits 16, writing nothing, for a pending request, an
 # invalid or non-merge-claimed name, an absent body, or a body without EDITABLE
 # regions; the reset restore exits 10 (the restore code) on any missing, refused or
@@ -244,6 +247,27 @@ update_require_tools() {
     fi
   done
   [[ "${missing}" -eq 0 ]] || update_die "missing required tool(s) — install and retry"
+}
+
+# Refuse the WHOLE run when a files[] entry or modes key escapes the install root.
+# Per-key skip is wrong here, unlike the retired sweep: a skipped files[] row leaves a
+# partial install and a skipped modes row a wrong mode. Keys travel NUL-delimited so a
+# newline-bearing key is judged and named whole, exactly as the manifest spells it.
+update_require_contained_manifest_keys() {
+  local manifest="$1" keys_file key offenders=0
+  keys_file="${manifest%/*}/manifest-keys.nul"
+  jq -j '[(.files // [])[], ((.modes // {}) | keys_unsorted[])][] | tostring + "\u0000"' \
+    -- "${manifest}" >"${keys_file}" \
+    || update_die_code 17 "release manifest files[]/modes keys unreadable (${manifest}) — nothing applied"
+  while IFS= read -r -d '' key; do
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_key "${key}"; then
+      update_log "manifest key escapes the install root: $(printf '%q' "${key}")"
+      offenders=$((offenders + 1))
+    fi
+  done <"${keys_file}"
+  [[ "${offenders}" -eq 0 ]] \
+    || update_die_code 17 "release manifest carries ${offenders} escaping files[]/modes key(s) (listed above) — nothing applied"
 }
 
 # ---------------------------------------------------------------------------
@@ -4285,6 +4309,8 @@ update_run() {
   update_heartbeat
   update_fetch_release "${dl_dir}" "${new_dir}"
   manifest="${dl_dir}/manifest.json"
+  # Containment precondition — exit 17 before any step that stages or swaps.
+  update_require_contained_manifest_keys "${manifest}"
   # arm the agent-merge apply callback's post-copy mode re-apply (FB-2)
   _update_modes_manifest="${manifest}"
   # Record the resolved release version on the job row (INSERT used a placeholder).
