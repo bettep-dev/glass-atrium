@@ -1064,3 +1064,54 @@ t6_build_jqless_toolbin() {
   [ ! -e "${WORK}/outside/new" ] || return 1
   [ "$(cat "${LIVE}/hooks/a.sh")" = "ORIGINAL-a" ] || return 1
 }
+
+# write-target walk — every input terminates; a relative walk with no existing ancestor fails closed
+
+# write_target_verdict CWD INPUT ROOT — echoes rc 0 (escaping) / 1 (contained), or `hang` when
+# the predicate has not returned within ~5s. Backgrounded so a spinning walk reads RED, never hangs the suite.
+write_target_verdict() {
+  local verdict="${WORK}/verdict" pid tick
+  rm -f -- "${verdict}"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    cd -- "$2"
+    rc=0
+    spine_is_escaping_write_target "$3" "$4" || rc=$?
+    printf "%s" "${rc}" >"$5.tmp" && mv -- "$5.tmp" "$5"
+  ' _ "${REAL_LIB}" "$1" "$2" "$3" "${verdict}" &
+  pid=$!
+  for ((tick = 0; tick < 50; tick++)); do
+    [[ -s "${verdict}" ]] && break
+    sleep 0.1
+  done
+  if [[ ! -s "${verdict}" ]]; then
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    printf 'hang\n'
+    return 0
+  fi
+  wait "${pid}" || true
+  cat -- "${verdict}"
+}
+
+@test "write target: a relative path with no existing ancestor terminates and fails closed" {
+  local input got
+  for input in "missing/a/b" "missing/a" "missing" "missing/"; do
+    got="$(write_target_verdict "${WORK}" "${input}" "${LIVE}")"
+    [ "${got}" = "0" ] || {
+      printf 'input=%s verdict=%s (expected 0 = escaping)\n' "${input}" "${got}"
+      return 1
+    }
+  done
+}
+
+@test "write target: a relative path under an existing in-root directory stays contained" {
+  mkdir -p "${LIVE}/hooks"
+  local got
+  got="$(write_target_verdict "${LIVE}" "hooks/new/x.sh" "${LIVE}")"
+  [ "${got}" = "1" ] || {
+    printf 'verdict=%s (expected 1 = contained)\n' "${got}"
+    return 1
+  }
+}

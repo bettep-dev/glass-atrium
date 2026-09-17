@@ -446,10 +446,12 @@ spine_is_escaping_dir() {
 # True when writing path $1 (not yet necessarily present) would land physically outside
 # install root $2 through a symlinked directory component. Judges the nearest EXISTING
 # ancestor, so a caller checking before `mkdir -p` never creates a directory outside
-# the root first — and a brand-new subtree inside the root still passes.
+# the root first — and a brand-new subtree inside the root still passes. A relative walk
+# that runs out of components with no existing ancestor counts as escaping.
 spine_is_escaping_write_target() {
   local ancestor="${1%/*}"
   while [[ -n "${ancestor}" && ! -d "${ancestor}" ]]; do
+    [[ "${ancestor}" == */* ]] || return 0
     ancestor="${ancestor%/*}"
   done
   spine_is_escaping_dir "${ancestor:-/}" "$2"
