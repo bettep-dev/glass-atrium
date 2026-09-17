@@ -759,9 +759,8 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
     # Optional `Sync` group → the bare and execSync call forms both fire
-    # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
-    # → a proposal re-adding that bullet routes to safety
-    # Cleaning that live copy is an operator follow-up, outside this branch
+    # Fail-closed cost, accepted: a prohibition naming the call form with a paren
+    # (`execSync (`) matches too → a proposal adding such prose routes to safety
     # execFile / execFileSync stay uncovered — named as a limit, not a claim
     re.compile(r"\bexec(?:Sync)?\s*\("),
     # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
