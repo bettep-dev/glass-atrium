@@ -4239,6 +4239,13 @@ update_enforce_manifest_modes() {
       update_log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
       continue
     fi
+    # Runs after finalize, so a symlinked directory component inside the root (E5)
+    # is a per-key skip, never an abort of an already-landed apply.
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${root}/${rel}" "${root}"; then
+      update_log "WARN: mode target escapes the install root (skipped): $(printf '%q' "${rel}")"
+      continue
+    fi
     # Ordered after the symlink arm so a dangling link is skipped as a link row
     # rather than read as an absent file by a dereferencing test. A merge-claimed
     # agent body reaches the install through the EDITABLE-region merge, which has a

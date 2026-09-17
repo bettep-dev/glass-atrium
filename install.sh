@@ -442,6 +442,12 @@ install_tree() {
     dst="${GA_DIR}/${rel}"
     [[ -f "${src}" ]] \
       || die "${EXIT_EXTRACT_FAILED}" "verified staging member missing for ${rel} — refusing a partial install."
+    # spelling was refused before verify_bundle; what remains is a directory symlink
+    # already inside GA_DIR (E5), judged before mkdir -p creates anything through it
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${dst}" "${GA_DIR}"; then
+      die "${EXIT_EXTRACT_FAILED}" "write target escapes the install root: $(printf '%q' "${rel}")"
+    fi
     mkdir -p -- "$(dirname -- "${dst}")" \
       || die "${EXIT_EXTRACT_FAILED}" "failed to create the destination directory for ${rel} under ${GA_DIR}."
     spine_atomic_swap "${src}" "${dst}" \
@@ -531,6 +537,11 @@ enforce_manifest_modes() {
     # link row rather than read as an absent file by a dereferencing test.
     if [[ -L "${GA_DIR}/${rel}" ]]; then
       log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
+      continue
+    fi
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${GA_DIR}/${rel}" "${GA_DIR}"; then
+      log "WARN: mode target escapes the install root (skipped): $(printf '%q' "${rel}")"
       continue
     fi
     [[ -f "${GA_DIR}/${rel}" ]] \

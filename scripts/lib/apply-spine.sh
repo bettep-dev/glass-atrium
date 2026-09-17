@@ -423,10 +423,28 @@ spine_is_escaping_retired_key() {
 # unresolvable side counts as escaping. The final component is already known not to
 # be a symlink, so its parent is what resolves.
 spine_is_escaping_retired_target() {
-  local parent root
-  parent="$(CDPATH='' cd -P -- "$(dirname -- "$1")" && pwd -P)" || return 0
+  spine_is_escaping_dir "$(dirname -- "$1")" "$2"
+}
+
+# True when existing directory $1 physically resolves outside install root $2; an
+# unresolvable side counts as escaping.
+spine_is_escaping_dir() {
+  local dir root
+  dir="$(CDPATH='' cd -P -- "$1" && pwd -P)" || return 0
   root="$(CDPATH='' cd -P -- "$2" && pwd -P)" || return 0
-  [[ "${parent}" != "${root}" && "${parent}" != "${root%/}/"* ]]
+  [[ "${dir}" != "${root}" && "${dir}" != "${root%/}/"* ]]
+}
+
+# True when writing path $1 (not yet necessarily present) would land physically outside
+# install root $2 through a symlinked directory component. Judges the nearest EXISTING
+# ancestor, so a caller checking before `mkdir -p` never creates a directory outside
+# the root first — and a brand-new subtree inside the root still passes.
+spine_is_escaping_write_target() {
+  local ancestor="${1%/*}"
+  while [[ -n "${ancestor}" && ! -d "${ancestor}" ]]; do
+    ancestor="${ancestor%/*}"
+  done
+  spine_is_escaping_dir "${ancestor:-/}" "$2"
 }
 
 # T11 — staged apply + rollback
@@ -568,6 +586,13 @@ spine_commit_staged() {
     snap="${snapshot}/${path}"
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if ! spine_is_present_path "${src}"; then
+      failed="${path}"
+      rc=1
+      break
+    fi
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${dst}" "${install_root}"; then
+      printf 'apply-spine: write target escapes install root — %s\n' "${path}" >&2
       failed="${path}"
       rc=1
       break

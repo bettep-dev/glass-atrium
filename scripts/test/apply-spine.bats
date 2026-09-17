@@ -1039,3 +1039,28 @@ t6_build_jqless_toolbin() {
   fi
   [ "${n_widened}" -eq 4 ]
 }
+
+# E5 — a directory symlink already inside the root: spelling passes, the write escapes
+
+@test "E5 commit: a row through a symlinked directory rolls back and creates nothing outside" {
+  mkdir -p "${WORK}/outside"
+  ln -s "${WORK}/outside" "${LIVE}/ext"
+  seed_file "${WORKDIR}/staging" "hooks/a.sh" "NEW-a"
+  seed_file "${WORKDIR}/staging" "ext/new/x.sh" "ESCAPED"
+  seed_file "${LIVE}" "hooks/a.sh" "ORIGINAL-a"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "hooks/a.sh" "ext/new/x.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [ "${status}" -eq 1 ] || {
+    printf '%s\n' "${output}"
+    return 1
+  }
+  [[ "${output}" == *"write target escapes install root — ext/new/x.sh"* ]] || return 1
+  [[ "${output}" == *"commit FAILED at ext/new/x.sh"* ]] || return 1
+  # checked before mkdir -p: not even the empty directory lands outside
+  [ ! -e "${WORK}/outside/new" ] || return 1
+  [ "$(cat "${LIVE}/hooks/a.sh")" = "ORIGINAL-a" ] || return 1
+}
