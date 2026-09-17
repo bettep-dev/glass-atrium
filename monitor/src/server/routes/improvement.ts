@@ -1738,7 +1738,7 @@ export function resolveApplyScript(): string {
 
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
-//   8  = no-op / not actionable (id not found OR status not pending/snoozed)
+//   8  = no-op, already terminal (status applied/rejected/approved/reverted)
 //   9  = apply failed without auto-regen (won't occur on this route — we always
 //        pass --auto-regen — but kept as a defensive fallback branch)
 //   10 = applied-after-regen (stale diff → regenerated + pre-verify passed →
@@ -1752,6 +1752,11 @@ export function resolveApplyScript(): string {
 //   14 = regen-unrecoverable (no landable diff could be produced; row left pending)
 //   18 = parked-pattern refusal (every covering pattern row is terminal; nothing
 //        applied, row untouched; stderr names the rows — Reject is the way out)
+//   19 = not found (no proposal with that id; no-op)
+//   20 = generation-outcome refusal (stored haiku_status not ok-prefixed; nothing
+//        applied, row untouched; stderr names the outcome — Reject is the way out)
+//   21 = proposal DB query failed (lookup errored or its row was unreadable;
+//        nothing applied) — infra, answered 503 rather than the generic 500
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1763,8 +1768,11 @@ const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 const APPLY_EXIT_PARKED_PATTERN = 18;
+const APPLY_EXIT_NOT_FOUND = 19;
+const APPLY_EXIT_GENERATION_NOT_OK = 20;
+const APPLY_EXIT_QUERY_FAILED = 21;
 
-// Approve-only exit-18 refusal — route-local like RestoreErrorBody, shared union untouched
+// Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
   status: "parked_pattern";
   id: number;
@@ -1833,14 +1841,9 @@ async function handleApprove(
     return { id, status: "applied", already_applied: true };
   }
   if (exitCode === APPLY_EXIT_NOOP) {
-    // Idempotent no-op: id absent OR already terminal/approved — nothing changed.
-    request.log.warn({ ...logBase, stderr }, "approve no-op (id not found or already terminal)");
+    request.log.warn({ ...logBase, stderr }, "approve no-op (already terminal)");
     reply.code(409);
-    return {
-      status: "noop",
-      id,
-      reason: "proposal not found or not in an actionable (pending/snoozed) state",
-    };
+    return { status: "noop", id, reason: "proposal already terminal — nothing to apply" };
   }
   if (exitCode === APPLY_EXIT_FAILED) {
     // Defensive fallback: with --auto-regen the stale path no longer emits exit 9
@@ -1906,6 +1909,35 @@ async function handleApprove(
       status: "parked_pattern",
       id,
       reason: parkedRows ? `${reason} (rows ${parkedRows})` : reason,
+    };
+  }
+  if (exitCode === APPLY_EXIT_NOT_FOUND) {
+    request.log.warn({ ...logBase, stderr }, "approve no-op (proposal not found)");
+    reply.code(404);
+    return { status: "not_found", id, reason: "proposal not found" };
+  }
+  if (exitCode === APPLY_EXIT_GENERATION_NOT_OK) {
+    // Refusal, not a rejection — way out first since the approve toast truncates
+    const outcome = parseGenerationOutcome(stderr);
+    request.log.warn(
+      { ...logBase, stderr, outcome },
+      "approve refused (generation outcome not ok-prefixed — row left as it was)",
+    );
+    reply.code(409);
+    const outcomeText = outcome ? ` haiku_status=${outcome}` : "";
+    return {
+      status: "generation_not_ok",
+      id,
+      reason: `use Reject — generation outcome${outcomeText} is not ok-prefixed, nothing applied (override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_QUERY_FAILED) {
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal DB query failed (nothing applied)");
+    reply.code(503);
+    return {
+      status: "apply_error",
+      id,
+      reason: `proposal DB query failed, nothing applied — retry once the database is reachable: ${truncateStderr(stderr)}`,
     };
   }
 
@@ -2927,6 +2959,12 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
  */
 function parseParkedRows(stderr: string): string | undefined {
   const match = /guard REFUSED proposal id=\d+[^\n]*?\(rows (\d+:[a-z]+(?:, \d+:[a-z]+)*)\)/.exec(stderr);
+  return match?.[1];
+}
+
+// Exit-20 outcome token — value charset only, so no free stderr text rides into the reason
+function parseGenerationOutcome(stderr: string): string | undefined {
+  const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
   return match?.[1];
 }
 

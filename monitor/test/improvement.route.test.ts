@@ -492,14 +492,15 @@ test("POST approve: exit 0 → 200 { status: 'applied' }", async () => {
   assert.strictEqual(body.status, "applied");
 });
 
-test("POST approve: exit 8 → 409 { status: 'noop' } (not actionable / idempotent)", async () => {
+test("POST approve: exit 8 → 409 { status: 'noop' } (already terminal / idempotent)", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-noop.sh", 8);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
   assert.strictEqual(res.statusCode, 409);
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "noop");
   assert.strictEqual(body.id, 4242);
-  assert.ok(body.reason.length > 0, "noop carries a human reason");
+  assert.match(body.reason, /already terminal/, "exit 8 now means already terminal only");
+  assert.doesNotMatch(body.reason, /not found/, "a missing id is exit 19, never folded into exit 8");
 });
 
 test("POST approve: exit 9 → 422 { status: 'apply_failed', reason: 'needs_regen' }", async () => {
@@ -617,6 +618,69 @@ test("POST approve: exit 18 with no parseable rows → 409 { status: 'parked_pat
   assert.strictEqual(body.status, "parked_pattern");
   assert.match(body.reason, /\bReject\b/, "the way out survives a garbled line");
   assert.doesNotMatch(body.reason, /\(rows /, "no rows tail is appended from an unparseable line");
+});
+
+// --- single-path lookup and generation-outcome exits (19/20/21) --------------
+
+test("POST approve: exit 19 → 404 { status: 'not_found' }", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-not-found.sh", 19);
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 404);
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "not_found");
+  assert.strictEqual(body.id, 4242);
+  assert.match(body.reason, /not found/);
+});
+
+test("POST approve: exit 20 → 409 { status: 'generation_not_ok' } leading with Reject and naming the stored outcome", async () => {
+  // assert_generation_outcome's refusal line verbatim; <none> is how it prints a NULL haiku_status
+  const outcomes = ["skipped:chronic-timeout-backoff", "<none>"];
+  for (const [index, outcome] of outcomes.entries()) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-generation-not-ok-${index}.sh`,
+      20,
+      `[daemon-apply] use Reject — proposal id=4242 generation outcome haiku_status=${outcome} is not ok-prefixed, so its diff was never quality-screened; nothing applied, row left as it was (operator override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 409, `outcome ${outcome}`);
+    const body = res.json() as { status: string; id: number; reason: string };
+    assert.strictEqual(body.status, "generation_not_ok");
+    assert.strictEqual(body.id, 4242);
+    assert.ok(body.reason.startsWith("use Reject"), "the way out leads, since the approve toast truncates");
+    assert.ok(body.reason.includes(`haiku_status=${outcome}`), `reason names outcome ${outcome}`);
+    assert.ok(body.reason.includes("AUTOAGENT_ALLOW_HAIKU_SKIP"), "reason names the operator override");
+  }
+});
+
+test("POST approve: exit 20 with no parseable outcome → 409 { status: 'generation_not_ok' } still leading with Reject", async () => {
+  // A value token the parser rejects — stderr text must not ride into the reason.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-generation-not-ok-garbled.sh",
+    20,
+    "[daemon-apply] use Reject — proposal id=4242 generation outcome haiku_status=skipped garbled tail is not ok-prefixed",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; reason: string };
+  assert.strictEqual(body.status, "generation_not_ok");
+  assert.ok(body.reason.startsWith("use Reject"), "the way out survives a garbled line");
+  assert.ok(body.reason.includes("AUTOAGENT_ALLOW_HAIKU_SKIP"), "the override survives a garbled line");
+  assert.doesNotMatch(body.reason, /garbled/, "no stderr text is copied from an unparseable line");
+});
+
+test("POST approve: exit 21 → 503 { status: 'apply_error' } naming the failed DB query", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-query-failed.sh",
+    21,
+    "[daemon-apply] FATAL: proposal id=4242 lookup failed — nothing applied (DB query error, not a no-op)",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 503, "a DB outage is unavailable, not the generic infra 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "apply_error");
+  assert.strictEqual(body.id, 4242);
+  assert.match(body.reason, /DB query failed/);
+  assert.ok(body.reason.includes("lookup failed"), "the daemon's stderr rides along for diagnosis");
 });
 
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
