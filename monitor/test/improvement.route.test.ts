@@ -499,7 +499,7 @@ test("POST approve: exit 8 → 409 { status: 'noop' } (already terminal / idempo
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "noop");
   assert.strictEqual(body.id, 4242);
-  assert.match(body.reason, /already terminal/, "exit 8 now means already terminal only");
+  assert.match(body.reason, /already terminal/, "exit 8 means already terminal only");
   assert.doesNotMatch(body.reason, /not found/, "a missing id is exit 19, never folded into exit 8");
 });
 
