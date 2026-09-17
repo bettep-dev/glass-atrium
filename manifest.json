@@ -75,7 +75,6 @@
     "autoagent/test/setup_suite.bash",
     "autoagent/test/suite-hermeticity.bats",
     "autoagent/test/test_all_reject_alert.py",
-    "autoagent/test/test_all_reject_alert_e2e.py",
     "autoagent/test/test_apply_parked_guard.py",
     "autoagent/test/test_c3_scope_resolution.py",
     "autoagent/test/test_c4_target_resolution.py",
@@ -880,7 +879,7 @@
   ],
   "hashes": {
     "LICENSE": "4f1fa8b64af3405e4ecc89143f3c13d1b25948336c418a53dc425bd5faca319d",
-    "LICENSES-THIRD-PARTY.md": "94140b5699988b684658637082a9a2ef9628183313ec608d84ba99582b8bcc65",
+    "LICENSES-THIRD-PARTY.md": "e8ab307f7a83cce55a261130b9469b98bf5cca384259df058715baf28c41b035",
     "agent-registry.json": "432955f6a71b708c87b22b08ef80e99a32a307b29ae1c0e21ee2000ce759f1b5",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "f5873bca8392c575b1f053e8be18a83c33058b346e7d9757a691afa80c0a7783",
     "agents/glass-atrium-design-designer.md": "297850a4ec8b06b432ee8e6f0bf0cd91f4f4407dd7b164cfa14ada43df43d301",
@@ -953,7 +952,6 @@
     "autoagent/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
     "autoagent/test/suite-hermeticity.bats": "a073bfb63cee00274ffa9aaddca3ee5aeba903caedef1cadc1a0fa9ef706e2b6",
     "autoagent/test/test_all_reject_alert.py": "b226f7852e4d27ddb4b081e67638a60d628341d5000185fcfdee3f23d12e423e",
-    "autoagent/test/test_all_reject_alert_e2e.py": "c60cc86a887b71c9fee99befafd40885d86809acf02f6e89541213ce85567590",
     "autoagent/test/test_apply_parked_guard.py": "d5aeaa43e7d1c48e7efe33ce63603334f6b2737cb9c79bf5105aa3d965814b42",
     "autoagent/test/test_c3_scope_resolution.py": "8b8c68ed4103872a9aacc9da363e8021a0cc3983b845767450bd3272628feb21",
     "autoagent/test/test_c4_target_resolution.py": "84202e8d6c5c20ae37868ddb590df34f2efee5220489c1532fdb147b4b33c1cd",
@@ -1453,7 +1451,7 @@
     "scoped/shared-turn-budget.md": "fb9a4670450ff68cf57f7e2aa671df57039a73b76964e56b06633ed7db1252fe",
     "scoped/shared-type-safety.md": "7b0bdbcc80d4346d0d819bf1309cfc44a08a5b4aa1840c1005e76346e8414f8a",
     "scripts/_pg_archive_rotate.py": "040de7e5d4d429a96bd586080f74c215959dd281d83de6f48c7ddf09923a84e7",
-    "scripts/_pg_dual_write_daemon.py": "a5b325bc3702c9155f17c0b373e94e9cbeac28649d04357b2a1962ace8edc117",
+    "scripts/_pg_dual_write_daemon.py": "63e2d3dc3350f14c7f9d67280181a960532069d199cb14a5610e15041d900ecd",
     "scripts/_pg_push_autoagent_cycle.py": "c387211d0dcc6ca8b88b128ddbe353e54b9fed7a0a9fd770bfd69f130a919624",
     "scripts/_pg_push_autoagent_loop_events.py": "8e0451514f8e20b056383736435c00799362fdf478a13d0bb7ae7b7b32c120e2",
     "scripts/_pg_push_wiki_cycle.py": "ca8047f51776891f30a723dc1d64d53e329ea992059efecd697ccdd18648f728",
@@ -1831,7 +1829,6 @@
     "autoagent/test/setup_suite.bash": "644",
     "autoagent/test/suite-hermeticity.bats": "644",
     "autoagent/test/test_all_reject_alert.py": "644",
-    "autoagent/test/test_all_reject_alert_e2e.py": "644",
     "autoagent/test/test_apply_parked_guard.py": "644",
     "autoagent/test/test_c3_scope_resolution.py": "644",
     "autoagent/test/test_c4_target_resolution.py": "644",
@@ -2635,6 +2632,9 @@
     "test/workbox-bar-count-visible-during-resolve.bats": "644"
   },
   "retired": {
+    "autoagent/test/test_all_reject_alert_e2e.py": [
+      "c60cc86a887b71c9fee99befafd40885d86809acf02f6e89541213ce85567590"
+    ],
     "monitor/public/src/screens/health.jsx": [
       "f435eacae518bb5a34fdcf57b5e50d8019307d3b4a507eb17ce422d673bfd4e4"
     ],
