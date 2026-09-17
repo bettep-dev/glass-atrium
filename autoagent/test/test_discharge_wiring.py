@@ -51,6 +51,27 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
+# Loop-event envelopes the module-level seal captured instead of writing them.
+_EMITTED: list[dict] = []
+_EMIT_PATCHER = None
+
+
+def setUpModule() -> None:
+    """Seal the loop-event writer for every test in this file — an unresolved
+    proposal reaches the emit, and an unsealed run writes live PG rows."""
+    global _EMIT_PATCHER
+    if dc is None:
+        return
+    _EMIT_PATCHER = mock.patch.object(
+        dc, "_invoke_pg_helper", lambda envelope: _EMITTED.append(envelope) or True
+    )
+    _EMIT_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    if _EMIT_PATCHER is not None:
+        _EMIT_PATCHER.stop()
+
 
 # ---------------------------------------------------------------------------
 # FROZEN FIXTURES — real stored strings, transcribed verbatim
@@ -66,14 +87,14 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 _ROW = "{label}|{agent}"
 
 
-def _row(row_id: int, agent: str, label: str) -> dict:
+def _row(row_id: int, agent: str, label: str, status: str = "identified") -> dict:
     return {
         "id": row_id,
         "agent": agent,
         "pattern_signature": _ROW.format(label=label, agent=agent),
         "frequency": 1,
         "discovered_date": date(2026, 7, 1),
-        "status": "identified",
+        "status": status,
         "approval_tier": "user-pending",
     }
 
@@ -82,6 +103,8 @@ _FAIL_CORE = "repeated failure by same agent"
 _BUDGET_CORE = "budget-overage concentration"
 _RATE_CORE_SPACED = "agent instruction-improvement candidate (failure rate )"
 _RATE_CORE_BARE = "agent instruction-improvement candidate (failure rate)"
+# Row 3384's stored core, which is also proposal 7497's pattern_label, verbatim.
+_SIZE_EST_CORE = "size-est under-estimate concentration (avg overrun + tool_uses)"
 
 # Real stored rows. dev-react + dev-nestjs sit on the spaced fork, dev-shell on
 # the bare fork. bulldog-w2 is a real low-frequency row that roster validation
@@ -148,9 +171,33 @@ REAL_CONSOLIDATIONS: tuple[tuple[str, str, frozenset[int]], ...] = (
 
 _STORED_IDS = frozenset(r["id"] for r in STORED_ROWS)
 
+# Production read shape for an agent whose rows are all parked: the intake read
+# (status='identified') drops every terminal row, while the status-agnostic
+# coverage read keeps it. One row per detector family, all dev-nestjs.
+_PARKED_AGENT = "glass-atrium-dev-nestjs"
+PARKED_FAMILIES: tuple[tuple[str, str, int, str], ...] = (
+    ("fail", _FAIL_CORE, 3, "rejected"),
+    ("rate", _RATE_CORE_SPACED, 6, "applied"),
+    ("budget", _BUDGET_CORE, 8, "rejected"),
+    ("size-est", _SIZE_EST_CORE, 3384, "rejected"),
+)
+_PARKED_STATUS = {row_id: status for _, _, row_id, status in PARKED_FAMILIES}
+PARKED_INTAKE_ROWS: tuple[dict, ...] = tuple(
+    r for r in STORED_ROWS if r["id"] not in _PARKED_STATUS
+)
+COVERAGE_ROWS: tuple[dict, ...] = tuple(
+    {
+        "id": r["id"],
+        "pattern_signature": r["pattern_signature"],
+        "agent": r["agent"],
+        "status": _PARKED_STATUS.get(r["id"], r["status"]),
+    }
+    for r in STORED_ROWS + (_row(3384, _PARKED_AGENT, _SIZE_EST_CORE),)
+)
 
-def _index() -> dict:
-    """Per-agent row index built from the frozen rows, PG untouched."""
+
+def _index(rows: tuple[dict, ...] = STORED_ROWS) -> dict:
+    """Per-agent intake row index built from the frozen rows, PG untouched."""
     # Two-part PG-less pattern (mirrors test_pg_pattern_intake): flip the
     # HAS_PG_PATTERN_READ gate — get_pattern_rows_by_agent returns None without it
     # — AND patch the reader with create=True, since _pg_read_pending_patterns is a
@@ -158,9 +205,17 @@ def _index() -> dict:
     # absent, the CI condition). Every patch of it here is pure-mock and opens no
     # cursor, so this keeps the tests RUNNING PG-less rather than skipping.
     with mock.patch.object(dc, "HAS_PG_PATTERN_READ", True), mock.patch.object(
-        dc, "_pg_read_pending_patterns", return_value=list(STORED_ROWS), create=True
+        dc, "_pg_read_pending_patterns", return_value=list(rows), create=True
     ):
         return dc.get_pattern_rows_by_agent()
+
+
+def _coverage_index(rows: tuple[dict, ...] = COVERAGE_ROWS) -> dict:
+    """Status-agnostic row index through the shipped indexer, PG untouched."""
+    with mock.patch.object(dc, "HAS_PG_PATTERN_READ", True), mock.patch.object(
+        dc, "_pg_read_coverage_patterns", return_value=list(rows), create=True
+    ):
+        return dc.get_coverage_rows_by_agent()
 
 
 @contextlib.contextmanager
@@ -315,9 +370,13 @@ class CoverageResolutionTest(unittest.TestCase):
 class DischargeStageTest(unittest.TestCase):
     """discharge_applied_patterns — dry-run default, tri-state, no lockout."""
 
+    _UNSET = object()
+
     def setUp(self):
         self.calls: list[tuple[int, str]] = []
         self.outcomes: dict[int, str] = {}
+        self.coverage_reads = 0
+        _EMITTED.clear()
 
         def _fake_discharge(row_id: int, reason: str):
             self.calls.append((row_id, reason))
@@ -330,11 +389,23 @@ class DischargeStageTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _run(self, applied_rows, *, live=False, index=None):
+    def _run(self, applied_rows, *, live=False, index=None, coverage=_UNSET):
         idx = _index() if index is None else index
+        coverage_index = _coverage_index() if coverage is self._UNSET else coverage
+
+        def _read_coverage():
+            self.coverage_reads += 1
+            return coverage_index
+
         with _capture_stderr() as buf:
-            report = dc.discharge_applied_patterns(applied_rows, idx, live=live)
+            report = dc.discharge_applied_patterns(
+                applied_rows, idx, coverage_reader=_read_coverage, live=live
+            )
         return report, buf.getvalue()
+
+    @staticmethod
+    def _emitted_tokens() -> list[str]:
+        return [e["args"]["eval_result"] for e in _EMITTED]
 
     def test_when_dry_run_then_no_transition_and_membership_on_the_log_line(self):
         report, err = self._run([(1, "glass-atrium-dev-react", LABEL_REACT_3)])
@@ -369,14 +440,62 @@ class DischargeStageTest(unittest.TestCase):
             )
         self.assertEqual(reader.call_count, 1)
 
-    def test_when_resolution_is_empty_then_nothing_discharges_and_it_is_loud(self):
-        report, err = self._run(
-            [(77, "glass-atrium-dev-react", "unrecognized form")], live=True
+    def test_when_intake_match_is_empty_then_exactly_one_named_cause_is_reported(self):
+        # (cause token, report field, intake index, coverage index, label, loud)
+        react = "glass-atrium-dev-react"
+        cases = (
+            ("discharge-read-failed", "read_failed", {}, None, LABEL_REACT_3, True),
+            ("discharge-unresolved", "unresolved", None, self._UNSET,
+             "some future proposal label form v2", True),
+            ("discharge-intake-miss", "intake_miss", {}, self._UNSET, LABEL_REACT_3, True),
+            ("discharge-covered-terminal", "covered_terminal",
+             _index(PARKED_INTAKE_ROWS), self._UNSET, _SIZE_EST_CORE, False),
         )
-        self.assertEqual(self.calls, [])
-        self.assertEqual(report.discharged, [])
-        self.assertEqual(report.unresolved, [77])
-        self.assertIn("discharge-unresolved", err)
+        cause_fields = ("read_failed", "unresolved", "intake_miss", "covered_terminal")
+        for token, field_name, intake, coverage, label, loud in cases:
+            with self.subTest(cause=token):
+                _EMITTED.clear()
+                agent = _PARKED_AGENT if field_name == "covered_terminal" else react
+                report, err = self._run(
+                    [(77, agent, label)], live=True, index=intake, coverage=coverage
+                )
+                for other in cause_fields:
+                    expected = [77] if other == field_name else []
+                    self.assertEqual(getattr(report, other), expected, other)
+                self.assertEqual(self._emitted_tokens(), [token])
+                line = next(ln for ln in err.splitlines() if token in ln)
+                self.assertEqual("WARN" in line, loud, line)
+                self.assertNotIn("label shape unrecognized", err)
+
+    def test_when_covering_row_already_terminal_then_each_family_reports_covered_terminal(self):
+        # Production shape: the intake index lacks the parked row, the coverage
+        # index holds it — the retired fixture injected it INTO the intake index.
+        intake = _index(PARKED_INTAKE_ROWS)
+        for family, label, row_id, status in PARKED_FAMILIES:
+            with self.subTest(family=family):
+                _EMITTED.clear()
+                self.calls.clear()
+                report, err = self._run(
+                    [(7497, _PARKED_AGENT, label)], live=True, index=intake
+                )
+                self.assertEqual(report.covered_terminal, [7497])
+                self.assertEqual(report.unresolved, [])
+                self.assertEqual(self.calls, [])
+                self.assertEqual(self._emitted_tokens(), ["discharge-covered-terminal"])
+                self.assertIn(f"{row_id}:{status}", err)
+
+    def test_when_every_proposal_resolves_through_intake_then_coverage_is_read_at_most_once(self):
+        self._run([(1, "glass-atrium-dev-react", LABEL_REACT_3)], live=True)
+        self.assertEqual(self.coverage_reads, 0)
+
+        self._run(
+            [
+                (77, "glass-atrium-dev-react", "unrecognized form"),
+                (78, "glass-atrium-dev-shell", "another unrecognized form"),
+            ],
+            live=True,
+        )
+        self.assertEqual(self.coverage_reads, 1)
 
     def test_when_read_failed_then_outage_is_distinct_from_an_empty_resolution(self):
         outage, err = self._run(None, live=True)
@@ -398,7 +517,9 @@ class DischargeStageTest(unittest.TestCase):
         self.assertIn(7, report.discharged)
         self.assertIn("discharge transition failed", err)
 
-    def test_when_row_already_terminal_then_it_reports_not_matched_not_failed(self):
+    def test_when_row_turns_terminal_between_read_and_update_then_not_matched_not_failed(self):
+        # The SQL terminal guard's race answer — distinct from a row the intake
+        # read already dropped, which never reaches the update.
         self.outcomes = {7: dc.DISCHARGE_NOT_MATCHED}
         report, _ = self._run(
             [(1, "glass-atrium-dev-react", LABEL_REACT_3)], live=True
@@ -409,10 +530,18 @@ class DischargeStageTest(unittest.TestCase):
     def test_when_ambiguous_then_it_can_never_become_a_whole_agent_lockout(self):
         # Fail-closed: neither an outage nor an unresolvable label may fall back
         # to discharging the agent's whole row set. Ambiguity discharges NOTHING.
-        for rows in (None, [(77, "glass-atrium-dev-react", "unrecognized form")]):
+        # The intake-miss and covered-terminal shapes hold real covering rows —
+        # the ones a fallback would transition.
+        shapes = (
+            (None, None),
+            ([(77, "glass-atrium-dev-react", "unrecognized form")], None),
+            ([(77, "glass-atrium-dev-react", LABEL_REACT_3)], {}),
+            ([(7497, _PARKED_AGENT, _SIZE_EST_CORE)], _index(PARKED_INTAKE_ROWS)),
+        )
+        for rows, intake in shapes:
             with self.subTest(rows=rows):
                 self.calls.clear()
-                report, _ = self._run(rows, live=True)
+                report, _ = self._run(rows, live=True, index=intake)
                 self.assertEqual(self.calls, [])
                 self.assertEqual(report.discharged, [])
 

@@ -539,6 +539,9 @@ const REJECT_BUCKET_QUALITY = "quality";
 // reuses 'rejected' — which is why the rationale text is the only discriminator available.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
+// Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede
+const PARKED_PATTERN_RATIONALE_LIKE = "covering pattern parked before apply%";
+
 // The daemon's own apply gate (is_apply_eligible_haiku_status / the daemon-apply
 // `haiku_status LIKE 'ok%'` SELECT) reads an ok-prefixed status as "the model produced a
 // usable diff". The quality bucket reuses that reading rather than enumerating skip
@@ -867,9 +870,9 @@ async function handleImprovement(
       `,
       // Reject lifecycle split. Tier is omitted for the same reason as the prose-only-add
       // count above — the split is tier-independent.
-      //   - CASE order is the contract: a superseded row carries haiku_status 'ok', so the
-      //     lifecycle arm must precede the quality arm or the mechanical rows book as
-      //     quality rejects (the defect).
+      //   - CASE order is the contract: a superseded or parked-pattern row carries
+      //     haiku_status 'ok', so the lifecycle arms must precede the quality arm or the
+      //     mechanical rows book as quality rejects (the defect).
       //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
       //     compares NULL against LIKE and would otherwise fall through untyped.
       //   - The provenance filter drops updater-written release rows, which are not
@@ -880,6 +883,8 @@ async function handleImprovement(
         SELECT
           CASE
             WHEN COALESCE(rationale, '') LIKE ${SUPERSEDE_RATIONALE_LIKE}
+              THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN COALESCE(rationale, '') LIKE ${PARKED_PATTERN_RATIONALE_LIKE}
               THEN ${REJECT_BUCKET_LIFECYCLE}
             WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
               THEN ${REJECT_BUCKET_QUALITY}
@@ -1745,7 +1750,10 @@ export function resolveApplyScript(): string {
 //   13 = regen-invalid (regenerated but 4-axis pre-verify failed; row left
 //        pending; failing axes on stderr — "axes: C1=..,C2=..,C3=..,C4=..")
 //   14 = regen-unrecoverable (no landable diff could be produced; row left pending)
-//   2 = bad arg · 3 = no psql · 6 = DB update failed (infra-class failures)
+//   18 = parked-pattern refusal (every covering pattern row is terminal; nothing
+//        applied, row untouched; stderr names the rows — Reject is the way out)
+//   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
+//       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
 const APPLY_EXIT_NOOP = 8;
 const APPLY_EXIT_FAILED = 9;
@@ -1754,6 +1762,14 @@ const APPLY_EXIT_REGEN_FAILED = 11;
 const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
+const APPLY_EXIT_PARKED_PATTERN = 18;
+
+// Approve-only exit-18 refusal — route-local like RestoreErrorBody, shared union untouched
+interface ApproveRefusalBody {
+  status: "parked_pattern";
+  id: number;
+  reason: string;
+}
 
 // SECURITY (LLM06 — Excessive Agency): approve mutates agent .md files via daemon-apply.sh
 // (high-impact). What actually constrains a caller: (1) the loopback-only bind in main.ts;
@@ -1771,7 +1787,7 @@ const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 async function handleApprove(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply,
-): Promise<ApproveProposalResponse | ImprovementMutationErrorBody> {
+): Promise<ApproveProposalResponse | ImprovementMutationErrorBody | ApproveRefusalBody> {
   const start = Date.now();
   const id = parseIdParam(request.params.id);
   if (id === null) {
@@ -1875,6 +1891,21 @@ async function handleApprove(
       status: "unrecoverable",
       id,
       reason: "no applyable diff could be regenerated",
+    };
+  }
+  if (exitCode === APPLY_EXIT_PARKED_PATTERN) {
+    // Refusal, not a rejection — row stays queued; way out first since the approve toast truncates
+    const parkedRows = parseParkedRows(stderr);
+    request.log.warn(
+      { ...logBase, stderr, parkedRows },
+      "approve refused (every covering pattern row is terminal — row left as it was)",
+    );
+    reply.code(409);
+    const reason = "all covering pattern rows are terminal, nothing applied — use Reject instead";
+    return {
+      status: "parked_pattern",
+      id,
+      reason: parkedRows ? `${reason} (rows ${parkedRows})` : reason,
     };
   }
 
@@ -2888,6 +2919,15 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
     axes[key] = match[2].toLowerCase() === "true";
   }
   return Object.keys(axes).length > 0 ? axes : undefined;
+}
+
+/**
+ * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 3384:rejected, 6:applied)` line.
+ * Only id:status tokens pass — no other stderr text reaches the reason; undefined when none.
+ */
+function parseParkedRows(stderr: string): string | undefined {
+  const match = /guard REFUSED proposal id=\d+[^\n]*?\(rows (\d+:[a-z]+(?:, \d+:[a-z]+)*)\)/.exec(stderr);
+  return match?.[1];
 }
 
 // Mutation-side DB failure → 500 with the discriminated mutation-error envelope

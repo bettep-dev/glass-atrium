@@ -32,7 +32,8 @@
 # helper's --auto-regen skip gate applies on the newly-wired branch too.
 #
 # HERMETIC: the predicate is extracted and driven in isolation; the end-to-end
-# rows run against a temp tree with a stateful psql stand-in prepended to PATH.
+# rows run against a temp tree with a stateful psql stand-in prepended to PATH
+# and the daemon_cycle.py seam pointed at a guard pass-through.
 # No live PG, no live install, no live agents dir.
 #
 # Run via: bats autoagent/test/daemon-apply-marker-preservation.bats
@@ -234,7 +235,27 @@ STUB
   chmod +x "$1/psql"
 }
 
-# setup_e2e — temp tree, stub PATH, probe fixture, and the unverifiable diff.
+# build_guard_passthrough PATH — Python stand-in for the
+# AUTOAGENT_DAEMON_CYCLE_PY seam (run as `python3 <seam>`): the parked-pattern
+# guard reads through psycopg, which no psql stub isolates, so it answers "no
+# guard fires" (stdin drained for the piping printf); every other mode — the
+# removal-evidence call these rows reach — execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
+# setup_e2e — temp tree, stub PATH, guard seam, probe fixture, and the unverifiable diff.
 setup_e2e() {
   STUB="${WORK}/bin"
   AGENTS="${WORK}/agents"
@@ -242,8 +263,10 @@ setup_e2e() {
   FAKE_HOME="${WORK}/home"
   PSQL_LOG="${WORK}/psql-invocations.log"
   STATE="${WORK}/row-state"
+  GUARD_SEAM="${WORK}/daemon_cycle_passthrough.py"
   mkdir -p "${STUB}" "${AGENTS}" "${REPORTS}" "${FAKE_HOME}"
   install_psql_stub "${STUB}"
+  build_guard_passthrough "${GUARD_SEAM}"
   printf 'status=pending\ncount=0\n' >"${STATE}"
 
   PROBE="${AGENTS}/probe.md"
@@ -290,6 +313,7 @@ run_apply() {
     AUTOAGENT_REMOVAL_LIVE=1 \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 \
+    AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     STUB_PSQL_LOG="${PSQL_LOG}" \
     STUB_STATE="${STATE}" \
     STUB_ROW_ID="2762" \

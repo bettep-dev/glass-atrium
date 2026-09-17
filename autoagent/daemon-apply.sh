@@ -162,6 +162,21 @@
 #          single-proposal paths; the heavy green-suite run (b/c/d) is batch/cron
 #          ONLY — the single-proposal (--proposal-id) approve path is exempt.
 #          Does NOT collide with 0/2-15.
+#
+# Parked-pattern guard exit codes (set_parked_verdict — daemon_cycle.py
+# --parked-pattern-guard judges the selected backlog/single rows at the head of
+# EVERY drain, the --auto-regen re-attempt included; report rows carry no
+# proposal id, so that source is announced on stderr, never guarded):
+#     17 — the guard gave no verdict: the mode exited non-zero, printed nothing
+#          (e.g. the update-pause gate's clean exit), or printed anything but one
+#          verdict line. Nothing is applied; stderr names the python3 interpreter
+#          and an abort row lands in the applied log. Not the bats runner's
+#          reserved toolchain rc (also 17), which this script maps to 16.
+#     18 — --proposal-id: REFUSED — every pattern row covering the proposal is
+#          terminal (rejected/applied). Nothing applied and the row is left as it
+#          was (a refusal is not a human rejection); stderr names the parked rows.
+#          Batch rows in that state are skipped instead, and the live batch has
+#          the guard transition them to rejected. Does NOT collide with 0/2-16.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -2115,6 +2130,10 @@ VERIFY_BEFORE_IMAGE=""
 REMOVAL_DECLARED_FILE=""
 REMOVAL_VERDICT=""
 
+# Guarded proposals of the drain in progress, one `id<US>rejected<US>rows` line each (US = \x1f) —
+# SET at the head of every drain by set_parked_verdict, read per row in the loop.
+PARKED_VERDICT=""
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -2232,6 +2251,8 @@ fi
 # is what separates this post-gate refusal from the pre-gate one, and §14 reads it to pick the remedy.
 # $1 = the observed eligible-pending count. Both counts are shell-side integers (an array length, and
 # a threshold already regex-validated at parse time), so they add no escaping failure path.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
 backlog_anomaly_row() {
     local eligible="$1" ts_json
     ts_json="$(ts_now_json)" || return 1
@@ -2240,16 +2261,18 @@ backlog_anomaly_row() {
         "${ts_json}" "${eligible}" "${ANOMALY_THRESHOLD}"
 }
 
-# emit_backlog_anomaly_row — land that row, or say out loud that it could not be landed. The exit is
-# NEVER the emit's to change: exit 7 is what the caller's tests assert, so a failed row degrades to a
-# named WARN and the exit code stands.
-emit_backlog_anomaly_row() {
-    local row=""
-    if row="$(backlog_anomaly_row "$1")" && emit_log "${row}"; then
-        printf '[daemon-apply] backlog-anomaly abort recorded → %s\n' "${APPLIED_LOG}" >&2
+# emit_abort_row LABEL BUILDER [ARG...] — land the row `BUILDER ARG...` prints, or say out loud that it
+# could not be landed. The exit is NEVER the emit's to change: each caller's named exit code is what its
+# tests assert, so a failed row degrades to a named WARN. The builder runs in its own `$()`, so a build
+# failure takes the WARN branch too.
+emit_abort_row() {
+    local label="$1" row=""
+    shift
+    if row="$("$@")" && emit_log "${row}"; then
+        printf '[daemon-apply] %s abort recorded → %s\n' "${label}" "${APPLIED_LOG}" >&2
     else
-        printf '[daemon-apply] WARN: backlog-anomaly abort row NOT persisted (%s) — this abort is stderr-only\n' \
-            "${APPLIED_LOG}" >&2
+        printf '[daemon-apply] WARN: %s abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${label}" "${APPLIED_LOG}" >&2
     fi
 }
 
@@ -2258,9 +2281,104 @@ if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ ${#PATCH_ROWS[@]} -gt ${ANOMALY_TH
         "${#PATCH_ROWS[@]}" "${ANOMALY_THRESHOLD}" >&2
     # stderr alone is silence on the launchd path (Precondition Loud-Fail's third leg): this was the
     # one terminal path in the file whose FATAL left no durable trace behind the cycle.
-    emit_backlog_anomaly_row "${#PATCH_ROWS[@]}"
+    emit_abort_row backlog-anomaly backlog_anomaly_row "${#PATCH_ROWS[@]}"
     exit 7
 fi
+
+# -- Parked-pattern guard --------------------------------------------------
+# A proposal queued before its covering pattern rows all turned terminal must not land. The verdict
+# rule and the reject write live in daemon_cycle.py; this side feeds it the selected rows and acts on
+# the answer.
+
+# get_parked_guard_verdict — run the guard mode over PATCH_ROWS; print one `id<US>rejected<US>rows`
+# line per guarded proposal. Non-zero on ANY answer other than exactly one verdict line, so a missing
+# verdict can never read as "nothing guarded". The reject write is requested on the live batch only:
+# a single-mode refusal is not a human rejection, and a dry-run writes nothing.
+get_parked_guard_verdict() {
+    local guard_args=(--parked-pattern-guard)
+    if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ "${DRY_RUN}" -eq 0 ]]; then
+        guard_args+=(--reject-parked)
+    fi
+    local guard_out guard_rc
+    if guard_out="$(printf '%s\n' "${PATCH_ROWS[@]}" | python3 "${DAEMON_CYCLE_PY}" "${guard_args[@]}")"; then
+        guard_rc=0
+    else
+        guard_rc=$?
+    fi
+    if [[ "${guard_rc}" -ne 0 ]]; then
+        printf '[daemon-apply] parked-pattern guard mode exited rc=%d\n' "${guard_rc}" >&2
+        return 1
+    fi
+    local _py_verdict
+    _py_verdict="$(cat <<'PY'
+import json, sys
+try:
+    lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError("expected one verdict line, got %d" % len(lines))
+    verdict = json.loads(lines[0])
+    rejected = {int(pid) for pid in verdict["rejected"]}
+    out = []
+    for entry in verdict["guarded"]:
+        pid = int(entry["proposal_id"])
+        rows = ", ".join("%s:%s" % (row["id"], row["status"]) for row in entry["rows"])
+        out.append("%d\x1f%d\x1f%s\n" % (pid, pid in rejected, rows))
+except (ValueError, KeyError, TypeError) as exc:
+    sys.exit("[daemon-apply] parked-pattern guard output is not a verdict: %s: %s" % (type(exc).__name__, exc))
+sys.stdout.write("".join(out))
+PY
+)"
+    python3 -c "${_py_verdict}" <<<"${guard_out}"
+}
+
+# parked_guard_abort_row — the ONE row a guard failure lands. `abort` for the reasons at the
+# backlog_anomaly_row header; `reason` separates it. PATCH_SOURCE is a closed literal, so no escaping.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
+parked_guard_abort_row() {
+    local ts_json
+    ts_json="$(ts_now_json)" || return 1
+    [[ -n "${ts_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"parked_guard_failed","exit_code":17,"patch_source":"%s","selected":%d}' \
+        "${ts_json}" "${PATCH_SOURCE}" "${#PATCH_ROWS[@]}"
+}
+
+# set_parked_verdict — guard the rows about to drain into PARKED_VERDICT. No verdict → apply nothing
+# (exit 17); a guarded single proposal → refuse it (exit 18). Report rows carry no proposal id, so that
+# source is announced before it drains, never judged.
+set_parked_verdict() {
+    PARKED_VERDICT=""
+    if [[ "${PATCH_SOURCE}" == "report" ]]; then
+        printf '[daemon-apply] NOTICE parked-pattern guard unavailable on the report source (dry-run, or psql absent) — %d row(s) drain without the covering-pattern check\n' \
+            "${#PATCH_ROWS[@]}" >&2
+        return 0
+    fi
+    local verdict interpreter
+    if ! verdict="$(get_parked_guard_verdict)"; then
+        interpreter="$(command -v python3)"
+        printf '[daemon-apply] FATAL: parked-pattern guard gave no verdict (interpreter=%s daemon_cycle=%s) — applying nothing this run\n' \
+            "${interpreter}" "${DAEMON_CYCLE_PY}" >&2
+        emit_abort_row 'parked-pattern guard' parked_guard_abort_row
+        exit 17
+    fi
+    if [[ "${PATCH_SOURCE}" == "single" ]] && [[ -n "${verdict}" ]]; then
+        printf '[daemon-apply] parked-pattern guard REFUSED proposal id=%s — every covering pattern row is terminal (rows %s); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.\n' \
+            "${PROPOSAL_ID}" "${verdict##*$'\x1f'}" >&2
+        exit 18
+    fi
+    PARKED_VERDICT="${verdict}"
+}
+
+# get_parked_verdict_line ID — `rejected<US>rows` for guarded proposal ID, or nothing.
+get_parked_verdict_line() {
+    local pid rejected rows
+    while IFS=$'\x1f' read -r pid rejected rows; do
+        if [[ -n "${pid}" ]] && [[ "${pid}" == "$1" ]]; then
+            printf '%s\x1f%s\n' "${rejected}" "${rows}"
+            return 0
+        fi
+    done <<<"${PARKED_VERDICT}"
+}
 
 # apply_patch_rows — drain the global PATCH_ROWS array, applying each patch and
 # mutating the shared counters (PROCESSED/APPLIED/SKIPPED/ERRORS/NEEDS_REGEN).
@@ -2271,6 +2389,8 @@ fi
 # column-0 `PY` delimiter inward — breaking heredoc termination.
 apply_patch_rows() {
 local row
+# Head of EVERY drain, so the auto-regen re-attempt is guarded as well as the first pass.
+set_parked_verdict
 for row in "${PATCH_ROWS[@]}"; do
     # LIMIT=0 = unbounded (drain all). LIMIT>0 = optional manual processing
     # throttle for ad-hoc operator use (NOT the anomaly guard, which already
@@ -2312,6 +2432,27 @@ PY
     patch_id="${PATCH_ID:-}"
 
     timestamp="$(ts_now)"
+
+    # -- Sanity 0: parked-pattern guard verdict ----------------------------
+    # Every covering pattern row is terminal. Any reject already ran inside the guard mode, so the
+    # row only has to stay unapplied; `rejected` records whether that write moved it.
+    parked_line=""
+    if [[ -n "${PARKED_VERDICT}" ]]; then
+        parked_line="$(get_parked_verdict_line "${patch_id}")"
+    fi
+    if [[ -n "${parked_line}" ]]; then
+        SKIPPED=$((SKIPPED + 1))
+        parked_rejected=false
+        [[ "${parked_line%%$'\x1f'*}" != "1" ]] || parked_rejected=true
+        emit_log "$(printf '{"ts":%s,"status":"skip","reason":"parked_pattern","pattern_label":%s,"target_file":%s,"proposal_id":%s,"rejected":%s,"parked_rows":%s}' \
+            "$(printf '%s' "${timestamp}" | json_escape)" \
+            "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
+            "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
+            "$(printf '%s' "${patch_id}" | json_escape)" \
+            "${parked_rejected}" \
+            "$(printf '%s' "${parked_line#*$'\x1f'}" | json_escape)")"
+        continue
+    fi
 
     # -- Sanity 1: target inside agents/ ----------------------------------
     if ! verify_target_in_agents "${PATCH_TARGET}"; then

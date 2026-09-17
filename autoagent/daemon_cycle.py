@@ -115,6 +115,7 @@ try:
             count_outcomes_since as _pg_count_outcomes_since,
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
+            read_coverage_learning_patterns as _pg_read_coverage_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
             discharge_learning_pattern as _pg_discharge_learning_pattern,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
@@ -313,6 +314,7 @@ FAILURE_CLASS_TRANSIENT = "transient-overload"  # Overloaded / 529 / reset blip
 FAILURE_CLASS_TIMEOUT = "chronic-timeout"    # Haiku call timed out
 FAILURE_CLASS_SUPERSEDE = "supersede"        # mechanical cross-day supersede
 FAILURE_CLASS_AUTH = "auth-failure"          # 401/credential — expired OAuth token
+FAILURE_CLASS_PARKED_PATTERN = "parked-pattern"  # apply guard: covering rows all terminal
 # ADJUDICATING (advances the streak, like quality) but named apart from it so an
 # operator can filter the pattern rows a removal refusal terminalizes: a pattern
 # whose only expressible fix needs a removal the loop cannot evidence is one the
@@ -335,6 +337,8 @@ _NON_ADJUDICATION_CLASSES = frozenset(
         # outage never advances the reject streak (fossilizing healthy agents
         # like dev-shell / dev-front on a credential-expired night).
         FAILURE_CLASS_AUTH,
+        # A guarded reject judges the pattern's state, never the candidate diff.
+        FAILURE_CLASS_PARKED_PATTERN,
     }
 )
 # FAILURE_CLASS_REMOVAL_REFUSAL is deliberately ABSENT from the set above — the
@@ -424,6 +428,9 @@ CYCLE_REGRESSION_EXIT_CODE = 6
 # surfaces a distinct code (NOT silent absorption) so the operator/monitor can
 # tell a backfill DB fault apart from a generation regression.
 BACKFILL_PG_EXIT_CODE = 7
+# Parked-pattern guard mode failed (read, input or write) — stdout stays empty and the
+# apply path applies nothing that run.
+PARKED_GUARD_FAILURE_EXIT_CODE = 8
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
@@ -8974,6 +8981,8 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_REMOVAL_REFUSAL
     if text.startswith(_SUPERSEDE_REASON):
         return FAILURE_CLASS_SUPERSEDE
+    if text.startswith(_PARKED_PATTERN_REASON):
+        return FAILURE_CLASS_PARKED_PATTERN
     if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
         return FAILURE_CLASS_TIMEOUT
     if text.startswith("haiku auth failure"):
@@ -9581,14 +9590,53 @@ _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
 )
 
 
+# Terminal learning_log statuses — the set _LEARNING_LOG_DISCHARGE_SQL's guard excludes.
+PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
+
+
+def _build_row_status_text(rows: list[dict]) -> str:
+    """`3384:rejected, 6:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
+    return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
+
+
+# Why an applied proposal matched no intake row — one eval_result per cause.
+DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
+DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
+DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
+DISCHARGE_EVENT_INTAKE_MISS = "discharge-intake-miss"
+
+_UNCOVERED_WARN_REASONS = {
+    DISCHARGE_EVENT_READ_FAILED: (
+        "applied proposal id={proposal_id} matched no intake row and the "
+        "status-agnostic pattern read failed — cause unknown, nothing discharged"
+    ),
+    DISCHARGE_EVENT_UNRESOLVED: (
+        "applied proposal id={proposal_id}: no stored pattern row matches the "
+        "label, nothing discharged"
+    ),
+    DISCHARGE_EVENT_INTAKE_MISS: (
+        "applied proposal id={proposal_id} covers non-terminal row(s) [{rows}] "
+        "absent from the intake read (intake read failed, or row outside the "
+        "intake tier band), nothing discharged"
+    ),
+}
+
+
 class DischargeReport(NamedTuple):
-    """Outcome of one discharge stage — an outage is never an empty result."""
+    """Outcome of one discharge stage — an outage is never an empty result.
+
+    The last four fields partition the proposals that matched no intake row by
+    cause; `unresolved` holds only those whose label matches no stored row.
+    """
 
     outage: bool
     would_discharge: list[int]
     discharged: list[int]
     failed: list[int]
     unresolved: list[int]
+    covered_terminal: list[int]
+    intake_miss: list[int]
+    read_failed: list[int]
 
 
 def _canon_agent_key(agent: str) -> str:
@@ -9626,6 +9674,27 @@ def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
     rows = _pg_read_pending_patterns()
     if rows is None:
         return None
+    return _index_rows_by_agent(rows)
+
+
+def get_coverage_rows_by_agent() -> dict[str, list[dict]] | None:
+    """Status-agnostic core.learning_log rows indexed by bare agent key.
+
+    The intake index answers "which covered rows may still be discharged"; this
+    one answers "which rows does the label cover at all", terminal rows included.
+    Helper import absent or read failure → None, never an empty index, so an
+    outage cannot read as "no stored row".
+    """
+    if not HAS_PG_PATTERN_READ:
+        return None
+    rows = _pg_read_coverage_patterns()
+    if rows is None:
+        return None
+    return _index_rows_by_agent(rows)
+
+
+def _index_rows_by_agent(rows: list[dict]) -> dict[str, list[dict]]:
+    """Single keying site for both indexes — a key drift silently matches nothing."""
     index: dict[str, list[dict]] = {}
     for row in rows:
         index.setdefault(_canon_agent_key(row.get("agent") or ""), []).append(row)
@@ -9699,13 +9768,19 @@ def discharge_applied_patterns(
     applied_rows: list[tuple] | None,
     rows_by_agent: dict[str, list[dict]] | None,
     *,
+    coverage_reader: Callable[[], dict[str, list[dict]] | None],
     live: bool = False,
 ) -> DischargeReport:
     """Discharge the pattern rows covered by each proposal applied this window.
 
-    Ambiguity discharges NOTHING: an unreadable input is an outage and an
-    unresolvable label is a loud skip, so the stage can never fall back to
-    terminalizing an agent's whole row set.
+    Ambiguity discharges NOTHING: an unreadable input is an outage and a proposal
+    matching no intake row is a skip reported under its cause, so the stage can
+    never fall back to terminalizing an agent's whole row set. Only intake-index
+    rows are ever transitioned.
+
+    coverage_reader: the status-agnostic index loader (get_coverage_rows_by_agent
+    in production) — called at most once, and only when some proposal matches no
+    intake row.
     """
     if applied_rows is None or rows_by_agent is None:
         sys.stderr.write(
@@ -9713,28 +9788,35 @@ def discharge_applied_patterns(
             "(applied-proposal or pattern read unavailable); this is NOT "
             "'nothing to discharge', and no row was transitioned\n"
         )
-        return DischargeReport(True, [], [], [], [])
+        return DischargeReport(True, [], [], [], [], [], [], [])
 
     event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
     would: list[int] = []
     discharged: list[int] = []
     failed: list[int] = []
-    unresolved: list[int] = []
+    uncovered: dict[str, list[int]] = {
+        cause: []
+        for cause in (
+            DISCHARGE_EVENT_UNRESOLVED,
+            DISCHARGE_EVENT_COVERED_TERMINAL,
+            DISCHARGE_EVENT_INTAKE_MISS,
+            DISCHARGE_EVENT_READ_FAILED,
+        )
+    }
 
-    for proposal_id, agent, label in applied_rows:
-        covered = find_covered_pattern_rows(label or "", agent or "", rows_by_agent)
+    matches = [
+        (proposal_id, agent or "", label or "",
+         find_covered_pattern_rows(label or "", agent or "", rows_by_agent))
+        for proposal_id, agent, label in applied_rows
+    ]
+    has_uncovered = any(not covered for _, _, _, covered in matches)
+    coverage_by_agent = coverage_reader() if has_uncovered else None
+
+    for proposal_id, agent, label, covered in matches:
         if not covered:
-            unresolved.append(proposal_id)
-            _warn_pattern_skip(
-                agent or "",
-                label or "",
-                event_ts,
-                eval_result="discharge-unresolved",
-                reason=(
-                    f"applied proposal id={proposal_id} covers no stored pattern "
-                    "row — label shape unrecognized, nothing discharged"
-                ),
-            )
+            cause, covering = _get_uncovered_cause(label, agent, coverage_by_agent)
+            uncovered[cause].append(proposal_id)
+            _report_uncovered_proposal(proposal_id, agent, label, cause, covering, event_ts)
             continue
         if not live:
             would.extend(covered)
@@ -9753,19 +9835,170 @@ def discharge_applied_patterns(
                     "call never completed, retried next cycle\n"
                 )
 
+    unresolved = uncovered[DISCHARGE_EVENT_UNRESOLVED]
+    covered_terminal = uncovered[DISCHARGE_EVENT_COVERED_TERMINAL]
+    intake_miss = uncovered[DISCHARGE_EVENT_INTAKE_MISS]
+    read_failed = uncovered[DISCHARGE_EVENT_READ_FAILED]
+    uncovered_summary = (
+        f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}, "
+        f"{len(covered_terminal)} covered-terminal {sorted(covered_terminal)}, "
+        f"{len(intake_miss)} intake-miss {sorted(intake_miss)}, "
+        f"{len(read_failed)} read-failed {sorted(read_failed)}"
+    )
     if live:
         sys.stderr.write(
             f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
             f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
     else:
         sys.stderr.write(
             f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
             f"would-discharge {len(would)} row(s) {sorted(would)}; "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
-    return DischargeReport(False, would, discharged, failed, unresolved)
+    return DischargeReport(
+        False, would, discharged, failed, unresolved, covered_terminal, intake_miss, read_failed
+    )
+
+
+def _get_uncovered_cause(
+    label: str,
+    agent: str,
+    coverage_by_agent: dict[str, list[dict]] | None,
+) -> tuple[str, list[dict]]:
+    """Cause token for a proposal that matched no intake row, plus the rows it covers.
+
+    Terminal-only coverage is the expected aftermath of a pattern parked before
+    its proposal applied; a non-terminal covering row means the intake read lost it.
+    """
+    if coverage_by_agent is None:
+        return DISCHARGE_EVENT_READ_FAILED, []
+    covered_ids = set(find_covered_pattern_rows(label, agent, coverage_by_agent))
+    covering = [
+        row
+        for row in coverage_by_agent.get(_canon_agent_key(agent), ())
+        if row["id"] in covered_ids
+    ]
+    if not covering:
+        return DISCHARGE_EVENT_UNRESOLVED, []
+    if all(row.get("status") in PATTERN_TERMINAL_STATUSES for row in covering):
+        return DISCHARGE_EVENT_COVERED_TERMINAL, covering
+    return DISCHARGE_EVENT_INTAKE_MISS, covering
+
+
+def _report_uncovered_proposal(
+    proposal_id: int,
+    agent: str,
+    label: str,
+    cause: str,
+    covering: list[dict],
+    event_ts: str,
+) -> None:
+    """One stderr line + one loop event per uncovered proposal; covered-terminal is info."""
+    rows = _build_row_status_text(covering)
+    if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+        reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
+        _warn_pattern_skip(agent, label, event_ts, eval_result=cause, reason=reason)
+        return
+    sys.stderr.write(
+        f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
+        f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
+        f"row(s) [{rows}], nothing left to discharge\n"
+    )
+    _emit_gate_loop_event(agent, event_ts, cause)
+
+
+# -- Parked-pattern apply guard ----------------------------------------------
+
+# Head of every guarded-reject rationale. classify_failure_rationale prefix-tests it and
+# the monitor reject-bucket route stores it as a LIKE marker — compose tails onto it.
+_PARKED_PATTERN_REASON = "covering pattern parked before apply"
+
+
+def find_parked_proposals(
+    triples: list[dict],
+    coverage_by_agent: dict[str, list[dict]],
+) -> list[dict]:
+    """Selected proposals whose covered pattern rows are all terminal, with those rows.
+
+    Same rule as discharge's covered-terminal cause, so the two cannot drift: an empty
+    covered set or any non-terminal covered row applies as before.
+    """
+    parked: list[dict] = []
+    for triple in triples:
+        proposal_id = int(triple["proposal_id"])
+        cause, covering = _get_uncovered_cause(
+            triple.get("pattern_label") or "",
+            triple.get("pattern_agent") or "",
+            coverage_by_agent,
+        )
+        if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+            continue
+        rows = [{"id": row["id"], "status": row["status"]} for row in covering]
+        parked.append({"proposal_id": proposal_id, "rows": rows})
+    return parked
+
+
+def update_parked_proposal_status(parked: list[dict]) -> list[int]:
+    """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
+
+    Same shape as the same-agent supersede: status + rationale, no enum change, one
+    transaction. A row that left pending/snoozed since selection is left untouched.
+    """
+    if not parked:
+        return []
+    if not HAS_PG_LOOP_WRITE:
+        raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
+    update_sql = (
+        "UPDATE core.autoagent_proposals "
+        "SET status = 'rejected', rationale = %s "
+        "WHERE status IN ('pending', 'snoozed') AND id = %s "
+        "RETURNING id"
+    )
+    rejected: list[int] = []
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            for entry in parked:
+                rows = _build_row_status_text(entry["rows"])
+                rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
+                cur.execute(update_sql, (rationale, entry["proposal_id"]))
+                rejected.extend(row[0] for row in cur.fetchall())
+        conn.commit()
+    return rejected
+
+
+def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
+    """CLI arm: one JSON verdict line `{"guarded": [...], "rejected": [...]}` on stdout.
+
+    stdin = the apply stage's PATCH_ROWS JSON lines (proposal_id, pattern_agent,
+    pattern_label read; other keys ignored). Any failure → empty stdout + a named exit,
+    and the stderr line names the interpreter, since one without psycopg fails every read.
+    """
+    try:
+        triples = [json.loads(line) for line in stdin_text.splitlines() if line.strip()]
+        coverage_by_agent = get_coverage_rows_by_agent()
+        if coverage_by_agent is None:
+            raise RuntimeError("status-agnostic pattern read failed or is unavailable")
+        parked = find_parked_proposals(triples, coverage_by_agent)
+        rejected = update_parked_proposal_status(parked) if reject_parked else []
+    except Exception as exc:  # noqa: BLE001 — loud-fail: named exit code, nothing applies
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard FAILED: {type(exc).__name__}: "
+            f"{str(exc)[:200]} (interpreter={sys.executable} "
+            f"python {sys.version.split()[0]}, pattern read import ok="
+            f"{HAS_PG_PATTERN_READ}) — nothing applies this run\n"
+        )
+        return PARKED_GUARD_FAILURE_EXIT_CODE
+    for entry in parked:
+        rows = _build_row_status_text(entry["rows"])
+        outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard: proposal id={entry['proposal_id']} "
+            f"covers only terminal row(s) [{rows}] — {outcome}\n"
+        )
+    sys.stdout.write(json.dumps({"guarded": parked, "rejected": rejected}) + "\n")
+    return 0
 
 
 # -- Post-apply regression gate ---------------------------------------------
@@ -10575,6 +10808,7 @@ def run_cycle(
     discharge_applied_patterns(
         _fetch_applied_for_discharge(),
         pattern_rows_by_agent,
+        coverage_reader=get_coverage_rows_by_agent,
         live=discharge_live_enabled(),
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
@@ -11252,7 +11486,28 @@ def _main(argv: list[str]) -> int:
         help="Agent body the --removal-evidence query resolves its removal set "
         "against.",
     )
+    parser.add_argument(
+        "--parked-pattern-guard",
+        action="store_true",
+        help="Apply guard query: read selected proposal JSON lines on stdin and print "
+        "one JSON verdict naming proposals whose covered pattern rows are all terminal. "
+        "Read-only unless --reject-parked.",
+    )
+    parser.add_argument(
+        "--reject-parked",
+        action="store_true",
+        help="With --parked-pattern-guard: transition guarded pending/snoozed proposals "
+        "to rejected.",
+    )
     args = parser.parse_args(argv)
+
+    if args.reject_parked and not args.parked_pattern_guard:
+        parser.error("--reject-parked requires --parked-pattern-guard")
+
+    if args.parked_pattern_guard:
+        # Answered BEFORE the pause gate: the gate's clean exit 0 with empty stdout would
+        # read as a verdict. The caller holds the apply lock the updater also takes.
+        return _emit_parked_pattern_guard(sys.stdin.read(), reject_parked=args.reject_parked)
 
     if args.removal_evidence:
         # Answered BEFORE the pause gate below: this arm is a read-only query
