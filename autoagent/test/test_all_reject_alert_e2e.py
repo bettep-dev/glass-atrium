@@ -61,7 +61,6 @@ except Exception as exc:  # noqa: BLE001 — psycopg / helper absent → skip, n
 
 _CYCLE_DATE = "2026-06-13"
 _GENERATED_AT = "2026-06-13T00:00:00.000Z"
-_MARKER_OUTCOME = "skipped:chronic-timeout-backoff"
 
 # Sandbox schema: the live autoagent_loop_events columns + dedup index, plus the
 # three proposal columns the prior-streak read walks (status kept as text so the
@@ -271,7 +270,7 @@ class TestAllRejectAlertLivePersist(unittest.TestCase):
                 cur.execute(
                     "INSERT INTO core.autoagent_proposals "
                     "(cycle_date, status, haiku_status) VALUES (%s, 'rejected', %s)",
-                    ("2026-06-12", _MARKER_OUTCOME),
+                    ("2026-06-12", dc.TIMEOUT_BACKOFF_HAIKU_STATUS),
                 )
             conn.commit()
         with contextlib.redirect_stderr(io.StringIO()):

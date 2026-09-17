@@ -48,7 +48,6 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     _IMPORT_ERROR = exc
 
 _CYCLE_DATE = "2026-06-10"
-_MARKER_OUTCOME = "skipped:chronic-timeout-backoff"
 
 
 def _patch_result(status: str, haiku_status: str = "ok") -> "dc.PatchResult":
@@ -68,7 +67,10 @@ def _patch_result(status: str, haiku_status: str = "ok") -> "dc.PatchResult":
 
 def _report(statuses: list[str], markers: int = 0) -> "dc.CycleReport":
     patches = [_patch_result(s) for s in statuses]
-    patches += [_patch_result("rejected", _MARKER_OUTCOME) for _ in range(markers)]
+    patches += [
+        _patch_result("rejected", dc.TIMEOUT_BACKOFF_HAIKU_STATUS)
+        for _ in range(markers)
+    ]
     return dc.CycleReport(
         cycle_date=_CYCLE_DATE,
         generated_at="2026-06-10T00:00:00.000Z",
@@ -226,7 +228,7 @@ class TestPriorAllRejectCycleCountOnEngine(unittest.TestCase):
         # Extending would give 3, breaking 1; the NULL outcome row must still count.
         rows = [
             ("2026-06-09", "rejected", None),
-            ("2026-06-08", "rejected", _MARKER_OUTCOME),
+            ("2026-06-08", "rejected", dc.TIMEOUT_BACKOFF_HAIKU_STATUS),
             ("2026-06-07", "rejected", "ok"),
             ("2026-06-06", "applied", "ok"),
         ]

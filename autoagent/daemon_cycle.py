@@ -9000,10 +9000,10 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_SUPERSEDE
     if text.startswith(_PARKED_PATTERN_REASON):
         return FAILURE_CLASS_PARKED_PATTERN
-    if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
-        return FAILURE_CLASS_TIMEOUT
-    if text.startswith(TIMEOUT_BACKOFF_RATIONALE_PREFIX):
-        # Back-off marker stored 'rejected' — no Haiku call ran, so no verdict.
+    # Back-off marker (stored 'rejected') ran no Haiku call → no verdict, as a timeout.
+    if text.startswith(
+        (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)
+    ):
         return FAILURE_CLASS_TIMEOUT
     if text.startswith("haiku auth failure"):
         # 401/credential — INFRA, looked PAST by the kill streak (must precede

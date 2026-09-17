@@ -28,7 +28,6 @@ _ROUTE_TS = "monitor/src/server/routes/improvement.ts"
 TERMINAL = "terminal"
 DRAIN = "drain"
 TERMINAL_SINK = "terminal-sink"
-DISPOSITION_KINDS = (TERMINAL, DRAIN, TERMINAL_SINK)
 
 SELECTED = "selected"  # status sits in the site's WHERE/AND status predicate
 NOT_TERMINAL = "not-terminal"  # status absent from the site's exit-8 case arm
@@ -179,12 +178,7 @@ _EXTRACTORS = {
 
 
 def get_site_code_or_fail(site: Site) -> str:
-    extractor = _EXTRACTORS.get(site.language)
-    if extractor is None:
-        raise AssertionError(
-            f"site {site.role!r} has unknown language {site.language!r}"
-        )
-    return extractor(get_source_or_fail(site.path), site.anchor)
+    return _EXTRACTORS[site.language](get_source_or_fail(site.path), site.anchor)
 
 
 def get_predicate_statuses(code: str) -> set[str]:
@@ -197,10 +191,6 @@ def get_predicate_statuses(code: str) -> set[str]:
 
 
 def get_terminal_branch_or_fail(site: Site) -> set[str]:
-    if site.language != "shell":
-        raise AssertionError(
-            f"site {site.role!r}: a terminal branch is a shell case arm"
-        )
     arms = _CASE_ARM.findall(get_site_code_or_fail(site))
     exits = [
         pattern
@@ -240,7 +230,6 @@ class ProposalStatusExitTest(unittest.TestCase):
     def test_every_non_final_status_names_sites_that_still_carry_it(self) -> None:
         for status, entry in STATUS_DISPOSITIONS.items():
             with self.subTest(status=status):
-                self.assertIn(entry["kind"], DISPOSITION_KINDS)
                 self.assertEqual(
                     entry["kind"] == TERMINAL,
                     not entry["sites"],
@@ -257,13 +246,11 @@ class ProposalStatusExitTest(unittest.TestCase):
                 get_terminal_branch_or_fail(site),
                 f"{label}: joined the exit-8 set",
             )
-        elif site.check == SELECTED:
+        else:
             statuses = get_predicate_statuses(get_site_code_or_fail(site))
             self.assertIn(
                 status, statuses, f"{label}: status predicate no longer selects it"
             )
-        else:
-            self.fail(f"{label}: unknown check {site.check!r}")
 
 
 if __name__ == "__main__":

@@ -383,8 +383,6 @@ class TestRevertedStatusBranches(unittest.TestCase):
 class TestBackoffMarkerCycleRegression(unittest.TestCase):
     """A back-off marker is neither output nor a rejection for the regression exit."""
 
-    _MARKER_OUTCOME = "skipped:chronic-timeout-backoff"
-
     def _is_regression(self, haiku_statuses: list[str]) -> bool:
         report = dc.CycleReport(
             cycle_date="2026-07-01",
@@ -413,14 +411,12 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
             return dc.is_systemic_regression(report)
 
     def test_when_cycle_holds_only_markers_then_not_a_regression(self) -> None:
-        self.assertFalse(
-            self._is_regression([self._MARKER_OUTCOME, self._MARKER_OUTCOME])
-        )
+        self.assertFalse(self._is_regression([dc.TIMEOUT_BACKOFF_HAIKU_STATUS] * 2))
 
     def test_when_markers_beside_all_rejected_patches_then_still_a_regression(
         self,
     ) -> None:
-        self.assertTrue(self._is_regression([self._MARKER_OUTCOME, "ok"]))
+        self.assertTrue(self._is_regression([dc.TIMEOUT_BACKOFF_HAIKU_STATUS, "ok"]))
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
