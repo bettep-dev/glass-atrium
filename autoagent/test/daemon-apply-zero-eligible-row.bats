@@ -428,9 +428,8 @@ run_apply_gate() {
 # ── AC9 — a patch source that could not be READ is an abort, never a zero-eligible cycle ────────
 #
 # The heartbeat supersedes an earlier abort, so writing it for a cycle that never saw its source
-# would clear a live condition with a false "nothing to do". Both batch sources used to read their
-# extractor through `< <(…)`, which drops the return code: a DB outage and a corrupt report each
-# printed "0 … patches", wrote the heartbeat and exited 0.
+# would clear a live condition with a false "nothing to do": a DB outage or a corrupt report must
+# exit non-zero with an abort row, never print "0 … patches" and write the heartbeat.
 
 # assert_one_abort_row REASON EXIT_CODE SOURCE — the log holds exactly ONE row, and it is that abort
 # (so no heartbeat rode along with it).

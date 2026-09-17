@@ -1029,18 +1029,9 @@ PY
 # heredoc is the runtime enforcer for).
 extract_body_auto_patches() {
     local report="$1"
-
-    # Operator carve-out parse — mirrors assert_generation_outcome so the two patch
-    # sources behave identically. Default 0 (fail-closed); 1 when the env var is
-    # truthy, with a LOUD WARN so the bypass is never silent.
     local allow_haiku_skip=0
-    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
-        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
-        *) allow_haiku_skip=0 ;;
-    esac
-    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — body-auto patches in %s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
-            "${report}" >&2
+    if is_haiku_skip_override_set "body-auto patches in ${report}"; then
+        allow_haiku_skip=1
     fi
 
     python3 - "${report}" "${allow_haiku_skip}" <<'PY'
@@ -1076,6 +1067,17 @@ for patch in patches:
         continue
     sys.stdout.write(json.dumps(patch, ensure_ascii=False) + "\n")
 PY
+}
+
+# is_haiku_skip_override_set SUBJECT — 0 when the operator carve-out is truthy (default off = fail-closed),
+# WARNing that SUBJECT bypasses the haiku-skip guard so the bypass is never silent. Both patch sources call it.
+is_haiku_skip_override_set() {
+    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
+        1 | true | TRUE | yes | YES) ;;
+        *) return 1 ;;
+    esac
+    printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — %s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
+        "$1" >&2
 }
 
 # backlog_source_available — 0 (true) when PG backlog selection is usable.
@@ -2421,14 +2423,7 @@ assert_generation_outcome() {
     if [[ "${PATCH_SOURCE}" != "single" ]]; then
         return 0
     fi
-    local allow_haiku_skip=0
-    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
-        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
-        *) allow_haiku_skip=0 ;;
-    esac
-    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — id=%s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
-            "${PROPOSAL_ID}" >&2
+    if is_haiku_skip_override_set "id=${PROPOSAL_ID}"; then
         return 0
     fi
     if [[ "${SINGLE_HAIKU_STATUS}" != ok* ]]; then

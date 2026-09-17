@@ -361,13 +361,13 @@ applied_log_path() {
 # P3b (i) — SQL-shape pin: the lookup is id-only, the branch lives in the shell
 # ---------------------------------------------------------------------------
 
-@test "P3b: the single lookup selects by id only and returns status + haiku_status for the shell to branch on" {
+@test "P3b: the single lookup selects by id only and returns status + haiku_status for the shell to branch on; an unknown id exits 19" {
   make_probe
   STUB_NO_ROW="1" run_single "ok"
 
   # Exit 19 means one psql call (the lookup), so the log holds exactly its SQL.
-  [[ "${status}" -eq 19 && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
-    echo "expected exit 19 after one lookup, got ${status}: ${output}" >&2
+  [[ "${status}" -eq 19 && "${output}" == *"id=1022 not found"* && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
+    echo "expected exit 19 naming the id after one lookup, got ${status}: ${output}" >&2
     return 1
   }
   grep -q "WHERE id::text = :'pid'" "${PSQL_LOG}"
@@ -379,7 +379,7 @@ applied_log_path() {
 }
 
 # ---------------------------------------------------------------------------
-# Exit split — 21 query failed · 19 not found · 8 terminal, checked in that order
+# Exit split — 21 query failed · 19 not found (pinned by P3b (i)) · 8 terminal, checked in that order
 # ---------------------------------------------------------------------------
 
 @test "exit split: a failed lookup query exits 21 and is never read as not-found or a no-op" {
@@ -396,16 +396,6 @@ applied_log_path() {
     return 1
   }
   [[ ! -f "$(applied_log_path)" ]]
-}
-
-@test "exit split: an unknown id exits 19 (not found)" {
-  make_probe
-  STUB_NO_ROW="1" run_single "ok"
-
-  [[ "${status}" -eq 19 && "${output}" == *"id=1022 not found"* ]] || {
-    echo "expected exit 19 naming the id, got ${status}: ${output}" >&2
-    return 1
-  }
 }
 
 @test "exit split: every terminal status exits 8 ahead of the outcome check; snoozed stays actionable" {

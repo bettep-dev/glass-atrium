@@ -15,7 +15,7 @@
 # now retained in-repo under autoagent/test/.
 # Run via: bats autoagent/test/daemon-apply-json-fallback-haiku-guard.bats
 #
-# Strategy: extract ONLY the function under test into a sourceable file and call
+# Strategy: extract ONLY the function under test (and its override helper) into a sourceable file and call
 # it directly — no full-script side effects (no CLI parse / git precondition /
 # lock), so the assertion targets the gate alone. python3 is the only runtime dep.
 
@@ -29,8 +29,8 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-jf-bats.XXXXXX)" && pwd -P)"
   FN_FILE="${WORK}/fn.sh"
   REPORT="${WORK}/report.json"
-  # Extract ONLY extract_body_auto_patches into a sourceable file.
-  awk '/^extract_body_auto_patches\(\) \{/,/^\}/' "${REAL_SCRIPT}" >"${FN_FILE}"
+  # Extract ONLY extract_body_auto_patches and its override helper into a sourceable file.
+  awk '/^(extract_body_auto_patches|is_haiku_skip_override_set)\(\) \{/,/^\}/' "${REAL_SCRIPT}" >"${FN_FILE}"
   # Sanity: extraction captured the new gate (else the test is vacuous).
   grep -q 'allow_haiku_skip' "${FN_FILE}"
   # shellcheck source=/dev/null
