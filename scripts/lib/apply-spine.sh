@@ -313,7 +313,7 @@ spine_retired_unmoved_path() {
 
 # Echo the path of the retired-key refusal record (UNSAFE / MALFORMED map keys the sweep
 # skipped) — one derivation for the sweep and doctor, as for the un-moved record. Named
-# apart from the editable-reset `refused` outcomes, which are a different mechanism.
+# apart from the update.sh reset modes' `refused` outcomes, which are a different mechanism.
 # Arg: $1 = optional state-dir override.
 spine_retired_refused_path() {
   printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-refused-keys.txt"
