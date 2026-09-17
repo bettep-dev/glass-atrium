@@ -586,6 +586,39 @@ test("POST approve: exit 14 → 422 { status: 'unrecoverable' }", async () => {
   assert.ok(body.reason.length > 0, "unrecoverable carries a human reason");
 });
 
+// --- parked-pattern guard refusal (exit 18) ----------------------------------
+
+test("POST approve: exit 18 → 409 { status: 'parked_pattern' } naming the parked rows and the Reject way out", async () => {
+  // daemon-apply.sh set_parked_verdict's refusal line verbatim — a drifted parse fails here.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-parked-pattern.sh",
+    18,
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 3384:rejected, 6:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "parked_pattern");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.includes("3384:rejected, 6:applied"), "reason names every parked row");
+  assert.match(body.reason, /\bReject\b/, "reason points to the Reject action");
+});
+
+test("POST approve: exit 18 with no parseable rows → 409 { status: 'parked_pattern' } still pointing to Reject", async () => {
+  // A rows tail that is not id:status tokens — stderr text must not ride into the reason.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-parked-pattern-norows.sh",
+    18,
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows <unreadable>); nothing applied",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; reason: string };
+  assert.strictEqual(body.status, "parked_pattern");
+  assert.match(body.reason, /\bReject\b/, "the way out survives a garbled line");
+  assert.doesNotMatch(body.reason, /\(rows /, "no rows tail is appended from an unparseable line");
+});
+
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-badarg.sh", 2);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
