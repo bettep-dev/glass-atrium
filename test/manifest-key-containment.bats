@@ -84,6 +84,33 @@ run_passthrough() {
     ' _ "$@"
 }
 
+# run_tui_plan ACTION — the REAL launcher's build_step_plan + run_plan (panel mode, as dispatch drives it), with
+# EVERY plan step except the containment gate replaced by a recorder. The recorders are proven installed
+# (each `type` body writes RECORD) before run_plan starts, so no real teardown step can ever run here.
+run_tui_plan() {
+  run env GA_LAUNCHER="${GA}/glass-atrium" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}" RECORD="${RECORD}" DEFS="${SANDBOX}/recorders.sh" \
+    bash -c '
+      source "${GA_LAUNCHER}" >/dev/null 2>&1
+      trap - EXIT INT TERM ERR
+      set +e
+      build_step_plan "$1"
+      for step in "${STEP_FN[@]}"; do
+        fn="${step%% *}"
+        [[ "${fn}" == "require_contained_manifest_keys" ]] && continue
+        printf "%s() { printf \"%%s\\\\n\" %s >>\"\${RECORD}\"; }\n" "${fn}" "${fn}"
+      done >"${DEFS}"
+      source "${DEFS}"
+      for step in "${STEP_FN[@]}"; do
+        fn="${step%% *}"
+        [[ "${fn}" == "require_contained_manifest_keys" ]] && continue
+        type "${fn}" | grep -qF "RECORD" || { printf "recorder missing for %s\n" "${fn}"; exit 97; }
+      done
+      TTY=/dev/null
+      run_plan "Uninstall" "" "panel" </dev/null
+    ' _ "$@"
+}
+
 assert_status() {
   [ "${status}" -eq "${1}" ] || {
     printf 'status=%s (expected %s):\n%s\n' "${status}" "${1}" "${output}" >&2
@@ -128,6 +155,16 @@ assert_has() {
   assert_status "${ESCAPING_KEY_EXIT}"
   assert_has "manifest key escapes the install root: ../esc/sub/x.md"
   [ ! -s "${RECORD}" ]
+}
+
+@test "TUI uninstall plan: an escaping key is refused before any teardown step runs" {
+  write_manifest "agents/dev-x.md" "../esc/sub/x.md"
+  run_tui_plan uninstall
+  [ ! -s "${RECORD}" ] || {
+    printf 'teardown steps ran before the refusal:\n%s\n' "$(cat -- "${RECORD}")" >&2
+    return 1
+  }
+  assert_status "${ESCAPING_KEY_EXIT}"
 }
 
 @test "uninstall TUI step: remove_empty_dirs returns non-zero under GA_TUI_STEP instead of killing the process" {

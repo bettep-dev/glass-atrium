@@ -601,6 +601,8 @@ run_bootstrap() {
 # before the DB is dropped and their symlinked files vanish.
 run_uninstall() {
   log "== uninstall: removing GA symlinks (target=${TARGET_HOME}) =="
+  # STEP0 — refuse a bad manifest before any teardown; the TUI runs this body as a plan with no parent-shell check
+  require_contained_manifest_keys
   # STEP1 — stop + deregister the com.glass-atrium.* launchd jobs before the
   # symlinks they depend on are swept (bootout the daemons first).
   unload_launchd_jobs
