@@ -11,22 +11,23 @@
 #         AUTO_REGEN -ne 1 && PATCH_SOURCE in {backlog,single}. DRY_RUN reaches
 #         NO DB write (short-circuits before the guard).
 #
-#   P3b — extract_single_proposal's SELECT now admits a row ONLY when
-#         haiku_status LIKE 'ok%' (NULL/skipped/error excluded → fail-closed),
-#         UNLESS the operator carve-out AUTOAGENT_ALLOW_HAIKU_SKIP=1 is engaged
-#         (loud WARN). ok / ok:retried / ok:fuzzy-parsed all pass; ='ok' is NOT
-#         used (variants preserved).
+#   P3b — the single lookup selects by id only and the shell branches on what it
+#         returns, in order: query failed → 21 · no row → 19 · terminal status → 8 ·
+#         (parked guard 17/18, pinned in daemon-apply-parked-guard.bats) · generation
+#         outcome (haiku_status) not ok-prefixed → 20 (NULL/skipped/error fail closed)
+#         UNLESS the operator carve-out AUTOAGENT_ALLOW_HAIKU_SKIP=1 is engaged (loud
+#         WARN). ok / ok:retried / ok:fuzzy-parsed all pass.
 #
 # Run via: bats autoagent/test/daemon-apply-stale-drain-haiku-guard.bats
 # Requires: bats >= 1.5.0, bash 3.2+, git, python3, base64
 #
 # Hermetic strategy: a per-test standalone git repo fixture under a realpath-
-# resolved temp root, plus a stub PATH whose `psql` is a FAITHFUL PG stand-in.
-# The stub dispatches on the SQL it receives + the -v bindings, logs every
-# invocation for assertions, and (for the single SELECT) honors the haiku-skip
-# predicate exactly (admit iff allow_haiku_skip=1 OR STUB_HAIKU matches ok*).
-# The SQL predicate TEXT itself is independently pinned by the shape-assertion
-# test below — so the stub re-implementing the predicate is not the sole guard.
+# resolved temp root, plus a stub PATH whose `psql` is a PG stand-in. The stub
+# dispatches on the SQL it receives, logs every invocation for assertions, and
+# answers the id-only single lookup with the STUB_* row (its status and
+# haiku_status included), no row (STUB_NO_ROW=1) or a query failure
+# (STUB_SINGLE_RC). It applies no predicate: the branch lives in the shell, and
+# the id-only SQL shape is pinned by its own test below.
 # The daemon_cycle.py seam points at a guard pass-through (build_guard_passthrough).
 # No live PG, no live agents/ dir is touched.
 
@@ -118,33 +119,25 @@ install_psql_stub() {
 set -u
 log="${STUB_PSQL_LOG:?stub needs STUB_PSQL_LOG}"
 
-args=("$@")
-n=${#args[@]}
-allow=""
-for ((i = 0; i < n; i++)); do
-  if [[ "${args[i]}" == "-v" ]] && ((i + 1 < n)); then
-    case "${args[i + 1]}" in
-      allow_haiku_skip=*) allow="${args[i + 1]#allow_haiku_skip=}" ;;
-    esac
-  fi
-done
-
 sql="$(cat)"
 {
   printf '=== psql invocation ===\n'
   printf 'argv: %s\n' "$*"
-  printf 'allow_haiku_skip=%s\n' "${allow}"
   printf 'sql<<<\n%s\n>>>\n' "${sql}"
 } >>"${log}"
 
 case "${sql}" in
   *"translate(encode(convert_to"*)
-    # extract_single_proposal SELECT — honor the haiku-skip predicate faithfully.
-    haiku="${STUB_HAIKU:-ok}"
-    if [[ "${allow}" == "1" ]] || [[ "${haiku}" == ok* ]]; then
-      printf '%s|%s|%s|%s|%s|%s\n' \
+    # single lookup — the backlog's 6 fields, then status and haiku_status (unset → ok, empty = NULL).
+    if [[ "${STUB_SINGLE_RC:-0}" -ne 0 ]]; then
+      printf 'psql: error: connection to server failed (stub)\n' >&2
+      exit "${STUB_SINGLE_RC}"
+    fi
+    if [[ "${STUB_NO_ROW:-0}" != "1" ]]; then
+      printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
         "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "${STUB_LABEL:?}" \
-        "${STUB_AGENT:?}" "${STUB_TARGET:?}" "${STUB_DIFF_B64:?}"
+        "${STUB_AGENT:?}" "${STUB_TARGET:?}" "${STUB_DIFF_B64:?}" \
+        "${STUB_STATUS:-pending}" "${STUB_HAIKU-ok}"
     fi
     ;;
   *"stale_attempt_count"*)
@@ -201,6 +194,9 @@ run_single() {
     STUB_HAIKU="${haiku}" \
     AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     ${STUB_STALE_VERDICT:+STUB_STALE_VERDICT="${STUB_STALE_VERDICT}"} \
+    ${STUB_STATUS:+STUB_STATUS="${STUB_STATUS}"} \
+    ${STUB_NO_ROW:+STUB_NO_ROW="${STUB_NO_ROW}"} \
+    ${STUB_SINGLE_RC:+STUB_SINGLE_RC="${STUB_SINGLE_RC}"} \
     ${ALLOW:+AUTOAGENT_ALLOW_HAIKU_SKIP="${ALLOW}"} \
     bash "${REAL_SCRIPT}" --proposal-id 1022 --agents-dir "${AGENTS}" "$@"
 }
@@ -299,19 +295,30 @@ applied_log_path() {
 }
 
 # ---------------------------------------------------------------------------
-# P3b (f) — haiku_status skipped/empty/error is BLOCKED by default (fail-closed)
+# P3b (f) — a non-ok generation outcome is REFUSED with exit 20 (fail-closed)
 # ---------------------------------------------------------------------------
 
-@test "P3b: a haiku-skipped row is NOT selected by default (exit 8 no-op, fail-closed)" {
+@test "P3b: a non-ok or NULL generation outcome exits 20, leads with Reject, names haiku_status and the carve-out, applies nothing" {
   make_probe
   STUB_STALE_VERDICT="incremented"
-  run_single "skipped:empty-or-error"
-
-  # 0 rows selected → single-mode "not actionable" no-op exit 8 (NOT an apply).
-  [[ "${status}" -eq 8 ]]
-  # The row never reached the landing-zone guard (it was filtered at SELECT).
-  [[ ! -f "$(applied_log_path)" ]] || run grep -q 'landing_zone_reject' "$(applied_log_path)"
-  [[ "${status}" -ne 0 ]]
+  local haiku
+  for haiku in "skipped:chronic-timeout-backoff" ""; do
+    rm -f -- "$(applied_log_path)" "${PSQL_LOG}"
+    run_single "${haiku}"
+    [[ "${status}" -eq 20 ]] || {
+      echo "haiku_status='${haiku}': expected exit 20, got ${status}: ${output}" >&2
+      return 1
+    }
+    [[ "${output}" == *"] use Reject"* && "${output}" == *"haiku_status=${haiku:-<none>} "* \
+      && "${output}" == *"AUTOAGENT_ALLOW_HAIKU_SKIP"* ]] || {
+      echo "haiku_status='${haiku}': refusal text lacks Reject / the stored value / the carve-out: ${output}" >&2
+      return 1
+    }
+    [[ ! -f "$(applied_log_path)" ]] && ! grep -q 'stale_attempt_count' "${PSQL_LOG}" || {
+      echo "haiku_status='${haiku}': the refused row reached the apply loop" >&2
+      return 1
+    }
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -323,44 +330,98 @@ applied_log_path() {
   STUB_STALE_VERDICT="incremented"
   ALLOW="1" run_single "skipped:empty-or-error"
 
-  # Carve-out admitted the row → it flowed to the landing-zone reject (exit 9).
-  [[ "${status}" -eq 9 ]]
+  # Carve-out admitted the row → it flowed to the landing-zone reject (exit 9), with the loud
+  # operator bypass WARN on stderr in generation-outcome terms.
+  [[ "${status}" -eq 9 && "${output}" == *"haiku-skip guard BYPASSED by operator"* \
+    && "${output}" == *"generation outcome"* ]] || {
+    echo "expected exit 9 with the bypass WARN, got ${status}: ${output}" >&2
+    return 1
+  }
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
-  # Loud operator bypass WARN on stderr.
-  [[ "${output}" == *"haiku-skip guard BYPASSED by operator"* ]]
-  # The SELECT carried allow_haiku_skip=1.
-  grep -q 'allow_haiku_skip=1' "${PSQL_LOG}"
 }
 
 # ---------------------------------------------------------------------------
-# P3b (h) — ok-variant (ok:retried) is preserved by LIKE 'ok%' (not ='ok')
+# P3b (h) — ok-variant (ok:retried) passes the ok-prefix check (not ='ok')
 # ---------------------------------------------------------------------------
 
-@test "P3b: ok:retried is admitted (LIKE 'ok%' preserves the variant)" {
+@test "P3b: ok:retried is admitted (ok-prefix check preserves the variant)" {
   make_probe
   STUB_STALE_VERDICT="incremented"
   run_single "ok:retried"
 
   # Admitted → reaches the landing-zone reject (exit 9), proving the variant passes.
-  [[ "${status}" -eq 9 ]]
+  [[ "${status}" -eq 9 ]] || {
+    echo "expected exit 9, got ${status}: ${output}" >&2
+    return 1
+  }
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
 }
 
 # ---------------------------------------------------------------------------
-# P3b (i) — SQL-shape + default-flag pin (predicate text is independently fixed)
+# P3b (i) — SQL-shape pin: the lookup is id-only, the branch lives in the shell
 # ---------------------------------------------------------------------------
 
-@test "P3b: single SELECT carries haiku_status LIKE 'ok%' + carve-out, never ='ok', default flag 0" {
+@test "P3b: the single lookup selects by id only and returns status + haiku_status for the shell to branch on" {
+  make_probe
+  STUB_NO_ROW="1" run_single "ok"
+
+  # Exit 19 means one psql call (the lookup), so the log holds exactly its SQL.
+  [[ "${status}" -eq 19 && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
+    echo "expected exit 19 after one lookup, got ${status}: ${output}" >&2
+    return 1
+  }
+  grep -q "WHERE id::text = :'pid'" "${PSQL_LOG}"
+  grep -qE "^[[:space:]]*status,?$" "${PSQL_LOG}"
+  grep -qE "coalesce\(haiku_status, ''\)" "${PSQL_LOG}"
+  # A status or outcome predicate back in the SQL would collapse 8/20 into the not-found exit.
+  run grep -qE "status IN|haiku_status LIKE|allow_haiku_skip" "${PSQL_LOG}"
+  [[ "${status}" -ne 0 ]]
+}
+
+# ---------------------------------------------------------------------------
+# Exit split — 21 query failed · 19 not found · 8 terminal, checked in that order
+# ---------------------------------------------------------------------------
+
+@test "exit split: a failed lookup query exits 21 and is never read as not-found or a no-op" {
+  make_probe
+  STUB_SINGLE_RC="2" run_single "ok"
+
+  [[ "${status}" -eq 21 ]] || {
+    echo "expected exit 21, got ${status}: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"single_proposal_query failed rc=2"* && "${output}" != *"not found"* \
+    && "${output}" != *"already terminal"* ]] || {
+    echo "the query failure is not named, or reads as not-found / terminal: ${output}" >&2
+    return 1
+  }
+  [[ ! -f "$(applied_log_path)" ]]
+}
+
+@test "exit split: an unknown id exits 19 (not found)" {
+  make_probe
+  STUB_NO_ROW="1" run_single "ok"
+
+  [[ "${status}" -eq 19 && "${output}" == *"id=1022 not found"* ]] || {
+    echo "expected exit 19 naming the id, got ${status}: ${output}" >&2
+    return 1
+  }
+}
+
+@test "exit split: every terminal status exits 8 ahead of the outcome check; snoozed stays actionable" {
   make_probe
   STUB_STALE_VERDICT="incremented"
-  run_single "ok"
-
-  # The exact predicate text reached psql (independent of the stub's own logic).
-  grep -q "haiku_status LIKE 'ok%'" "${PSQL_LOG}"
-  grep -q ":'allow_haiku_skip' = '1' OR" "${PSQL_LOG}"
-  # The brittle exact-match form is NOT used (would drop ok:retried / ok:fuzzy-parsed).
-  run grep -qE "haiku_status[[:space:]]*=[[:space:]]*'ok'" "${PSQL_LOG}"
-  [[ "${status}" -ne 0 ]]
-  # Default (no env) → carve-out OFF.
-  grep -q 'allow_haiku_skip=0' "${PSQL_LOG}"
+  local terminal
+  for terminal in applied rejected approved reverted; do
+    STUB_STATUS="${terminal}" run_single "skipped:chronic-timeout-backoff"
+    [[ "${status}" -eq 8 && "${output}" == *"already terminal (status=${terminal})"* ]] || {
+      echo "status=${terminal}: expected exit 8 naming the status, got ${status}: ${output}" >&2
+      return 1
+    }
+  done
+  STUB_STATUS="snoozed" run_single "ok"
+  [[ "${status}" -eq 9 ]] || {
+    echo "status=snoozed must reach the apply (exit 9 on this out-of-region fixture), got ${status}: ${output}" >&2
+    return 1
+  }
 }

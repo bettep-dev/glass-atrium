@@ -74,8 +74,9 @@
 #   Because that click IS the human-in-the-loop decision, this path BYPASSES
 #   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
 #   safety/user-tier proposal here (the auto-batch path still excludes safety;
-#   only this explicit path bypasses). Selection: id=N AND status IN
-#   ('pending','snoozed'). Reuses the SAME apply_diff + update_db_status path.
+#   only this explicit path bypasses). Selection: id=N only; the shell then
+#   branches on the row's status and generation outcome (exits 21/19/8/20 below).
+#   Reuses the SAME apply_diff + update_db_status path.
 #
 # Auto-regen mode (regen-on-accept path):
 #   --auto-regen modifies --proposal-id N ONLY when the normal single-mode apply
@@ -114,9 +115,9 @@
 #     7 — backlog anomaly: eligible-pending count exceeds ANOMALY_THRESHOLD
 #         (loud-fail tripwire — a proposal-generation bug must NOT trigger a
 #         runaway mass-apply; nothing is applied, operator must investigate)
-#     8 — --proposal-id: NOT actionable (id not found, OR status not in
-#         pending/snoozed = already applied/rejected/approved). No-op,
-#         idempotent: nothing changed. Scriptable "nothing to do" signal.
+#     8 — --proposal-id: already TERMINAL (status applied/rejected/approved/
+#         reverted). No-op, idempotent: nothing changed. Scriptable "nothing
+#         to do" signal.
 #     9 — --proposal-id: apply FAILED (diff rejected by git apply --recount →
 #         needs_regen; row left pending). Scriptable "could not apply".
 #
@@ -177,6 +178,18 @@
 #          was (a refusal is not a human rejection); stderr names the parked rows.
 #          Batch rows in that state are skipped instead, and the live batch has
 #          the guard transition them to rejected. Does NOT collide with 0/2-16.
+#
+# Single-proposal lookup exit codes (select_single_proposal, then
+# assert_generation_outcome after the parked guard). Checked in the order
+# 21 → 19 → 8 → 17/18 → 20, so the most specific answer wins:
+#     19 — --proposal-id: no proposal with that id. No-op.
+#     20 — --proposal-id: REFUSED — the stored generation outcome (haiku_status)
+#          is not ok-prefixed (skipped / error / NULL), so the diff was never
+#          quality-screened. Nothing applied, row left as it was; Reject is the
+#          way out, AUTOAGENT_ALLOW_HAIKU_SKIP=1 the operator override (loud WARN).
+#     21 — --proposal-id: the lookup FAILED (the psql query errored, or its row
+#          could not be reassembled). Infra failure, never read as not-found or a
+#          no-op; nothing applied. Does NOT collide with 0/2-20.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -986,8 +999,8 @@ PY
 # Delegates to python3 to avoid jq-dependence (jq is optional).
 #
 # Requires classification == "body-auto" AND approval_tier == "auto" AND a
-# haiku_status of 'ok*' (the JSON-side mirror of the single-proposal SELECT's
-# `haiku_status LIKE 'ok%'` gate), so only patches that BOTH passed pre-verify
+# haiku_status of 'ok*' (the JSON-side mirror of the single path's generation-
+# outcome check, assert_generation_outcome), so only patches that BOTH passed pre-verify
 # (4-axis verification in daemon_cycle.py) AND were Haiku quality-screened reach
 # auto-apply. "auto" tier routes other values upstream:
 #   - "safety"  → monitor #improvement safety queue (explicit user approval)
@@ -996,9 +1009,9 @@ PY
 #                 generate a user-approval row)
 #
 # haiku_status gate (P3b fail-open CLOSE): historically this JSON-fallback path
-# omitted the Haiku gate the single-proposal SELECT enforces, so in psql-absent
+# omitted the Haiku gate the single-proposal path enforces, so in psql-absent
 # (degraded) mode a non-ok haiku_status body-auto patch could still auto-apply.
-# It now mirrors extract_single_proposal: a 'ok*' haiku_status (ok / ok:retried /
+# It now mirrors assert_generation_outcome: a 'ok*' haiku_status (ok / ok:retried /
 # ok:fuzzy-parsed) is required, fail-CLOSED on skipped:*/error:/empty/missing
 # (NULL → ineligible, never an implicit pass). Operator carve-out: an operator
 # who sets AUTOAGENT_ALLOW_HAIKU_SKIP=1 may force-admit haiku-skipped patches
@@ -1008,7 +1021,7 @@ PY
 extract_body_auto_patches() {
     local report="$1"
 
-    # Operator carve-out parse — mirrors extract_single_proposal so the two patch
+    # Operator carve-out parse — mirrors assert_generation_outcome so the two patch
     # sources behave identically. Default 0 (fail-closed); 1 when the env var is
     # truthy, with a LOUD WARN so the bypass is never silent.
     local allow_haiku_skip=0
@@ -1017,7 +1030,7 @@ extract_body_auto_patches() {
         *) allow_haiku_skip=0 ;;
     esac
     if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — body-auto patches in %s may apply with a non-ok haiku_status (pre-verify skipped/failed)\n' \
+        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — body-auto patches in %s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
             "${report}" >&2
     fi
 
@@ -1039,11 +1052,11 @@ for patch in data.get("patches", []):
     # operator haiku-skip carve-out — pre-verify is a hard gate on both paths.
     if patch.get("pre_verify_passed") is not True:
         continue
-    # Haiku-skip gate (P3b, fail-CLOSED): the diff's Haiku pre-verify MUST have
-    # produced an 'ok*' verdict. A missing/empty/None/skipped:*/error: status is
+    # Haiku-skip gate (P3b, fail-CLOSED): the diff's Haiku generation outcome MUST
+    # be an 'ok*' verdict. A missing/empty/None/skipped:*/error: status is
     # excluded UNLESS the operator carve-out is engaged. `or ""` coerces an
     # explicit JSON null so str(None) -> "None" can never slip past startswith.
-    # Mirrors daemon_cycle.is_apply_eligible_haiku_status + the SELECT `LIKE 'ok%'`.
+    # Mirrors daemon_cycle.is_apply_eligible_haiku_status + assert_generation_outcome.
     haiku_status = str(patch.get("haiku_status", "") or "")
     if not allow_haiku_skip and not haiku_status.startswith("ok"):
         continue
@@ -1198,85 +1211,40 @@ PSQL
     reassemble_proposal_rows "${psql_out}"
 }
 
-# extract_single_proposal — single-proposal mode. Emit the ONE proposal with
-# id=PROPOSAL_ID on stdout (same row shape as extract_backlog_patches via the
-# shared reassembler), or nothing if the id is absent / not actionable.
+# extract_single_proposal — single-proposal lookup. Print the psql row for id=PROPOSAL_ID on stdout
+# (nothing when the id is absent); return 1 when the query fails. Row grammar: the backlog's 6 fields,
+# then status and haiku_status (NULL → ''), which select_single_proposal branches on.
 #
 # Selection contract (DELIBERATELY different from the batch backlog):
-#   id     = :'pid'                       (exactly one proposal)
-#   status IN ('pending','snoozed')       (only non-terminal rows are actionable;
-#                                          already applied/rejected/approved → 0 rows
-#                                          → caller exits 8 no-op)
-#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY
-#                               via an explicit user button-click (the human-in-
-#                               the-loop substitute for the safety gate), so a
-#                               user MAY apply a safety/user-tier proposal here.
-#   NO pre_verify_passed filter → user judgment takes priority over the 4-axis
-#                               pre-verify gate.
-#   haiku_status LIKE 'ok%'   → P3b fail-open CLOSE. UNLIKE approval_tier /
-#                               pre_verify_passed (bypassed by-design above), the
-#                               diff's Haiku pre-verify MUST have produced an 'ok*'
-#                               verdict: the human click is NOT a substitute for that
-#                               quality screen. A 401/credential outage leaves
-#                               haiku_status skipped/empty/NULL — those rows were the
-#                               2 live fossils that silently applied here, so they are
-#                               now EXCLUDED (NULL is fail-closed, not admitted). LIKE
-#                               'ok%' (never ='ok') keeps ok / ok:retried /
-#                               ok:fuzzy-parsed. Operator carve-out: an operator who
-#                               sets AUTOAGENT_ALLOW_HAIKU_SKIP=1 may still force-apply
-#                               a haiku-skipped row (loud WARN), for the rare
-#                               deliberate override — the human-override escape hatch.
-# The auto-batch path (extract_backlog_patches) STILL excludes safety — only this
-# explicit single path bypasses. Unix socket auth via -d glass_atrium.
+#   id = :'pid' ONLY          → no status / haiku_status predicate: a not-found, a terminal row and a
+#                               non-ok generation outcome each keep their own exit instead of all
+#                               reading as zero rows.
+#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY via an explicit user
+#                               button-click (the human-in-the-loop substitute for the safety gate),
+#                               so a user MAY apply a safety/user-tier proposal here.
+#   NO pre_verify_passed filter → user judgment takes priority over the 4-axis pre-verify gate.
+# The generation outcome is NOT bypassed — assert_generation_outcome enforces it. haiku_status is the
+# last field, so a '|' inside it can only widen its own field. Unix socket auth via -d glass_atrium.
 extract_single_proposal() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-single.XXXXXX)"
     # shellcheck disable=SC2064
     trap "rm -f '${psql_err}'" RETURN
 
-    # -- haiku-skip fail-open guard (single human-override path) --------------
-    # POLICY DECISION (explicit — P3b option (a): guard-WITH-carve-out). The
-    # documented Tier-1 apply condition requires haiku_status to be 'ok*' (the
-    # Haiku pre-verify actually RAN and passed). This single path bypasses the
-    # auto-tier + pre_verify_passed gates BY DESIGN (the click is the human gate),
-    # but that bypass is SCOPED to those two axes — it does NOT cover haiku_status.
-    # A non-ok haiku_status (skipped/empty/error/NULL) means the diff was never
-    # quality-screened (e.g. a 401 credential outage) — the documented-but-
-    # unenforced fail-open that let 2 fossils apply. The SELECT below now requires
-    # haiku_status LIKE 'ok%' (NULL excluded → fail-closed) UNLESS an operator
-    # explicitly engages the carve-out. The carve-out is LOUD so it is never silent.
-    local allow_haiku_skip=0
-    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
-        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
-        *) allow_haiku_skip=0 ;;
-    esac
-    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — id=%s may apply with a non-ok haiku_status (pre-verify skipped/failed)\n' \
-            "${PROPOSAL_ID}" >&2
-    fi
-
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' \
             -v "pid=${PROPOSAL_ID}" \
-            -v "allow_haiku_skip=${allow_haiku_skip}" \
             2>"${psql_err}" <<'PSQL'
 SELECT id,
        cycle_date,
        pattern_label,
        coalesce(target_agent, ''),
        target_file,
-       translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', '')
+       translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', ''),
+       status,
+       coalesce(haiku_status, '')
 FROM core.autoagent_proposals
-WHERE id::text = :'pid'
-  AND status IN ('pending'::core."ProposalStatus", 'snoozed'::core."ProposalStatus")
-  -- haiku-skip fail-open guard (P3b): admit ONLY a row whose Haiku pre-verify
-  -- produced an 'ok*' verdict, UNLESS the operator carve-out is engaged
-  -- (:'allow_haiku_skip' = '1', warned loudly in the shell above). LIKE 'ok%'
-  -- keeps ok / ok:retried / ok:fuzzy-parsed; a NULL haiku_status yields NULL
-  -- (not TRUE) so it stays EXCLUDED — fail-closed. Pure SELECT-predicate add: no
-  -- absorption idiom (no stderr-to-null, no forced-success), ON_ERROR_STOP=1
-  -- loud-fail intact.
-  AND (:'allow_haiku_skip' = '1' OR haiku_status LIKE 'ok%');
+WHERE id::text = :'pid';
 PSQL
     )"; then
         psql_rc=0
@@ -1291,8 +1259,41 @@ PSQL
             "${psql_rc}" "${PROPOSAL_ID}" "${err_msg}" >&2
         return 1
     fi
+    printf '%s' "${psql_out}"
+}
 
-    reassemble_proposal_rows "${psql_out}"
+# select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
+# generation outcome, or exit: 21 lookup failed · 19 not found · 8 already terminal. The outcome
+# refusal (20) waits for the parked guard, whose exit 18 is the better remedy for a row tripping both.
+# The lookup is captured, not read through `< <(…)`, which would drop its return code.
+select_single_proposal() {
+    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status haiku_status
+    if ! lookup_out="$(extract_single_proposal)"; then
+        printf '[daemon-apply] FATAL: proposal id=%s lookup failed — nothing applied (DB query error, not a no-op)\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 21
+    fi
+    if [[ -z "${lookup_out}" ]]; then
+        printf '[daemon-apply] proposal id=%s not found — no-op\n' "${PROPOSAL_ID}" >&2
+        exit 19
+    fi
+    IFS='|' read -r row_id cycle_date label agent target diff_b64 status haiku_status <<<"${lookup_out}"
+    case "${status}" in
+        applied | rejected | approved | reverted)
+            printf '[daemon-apply] proposal id=%s already terminal (status=%s) — no-op\n' \
+                "${PROPOSAL_ID}" "${status}" >&2
+            exit 8
+            ;;
+        *) ;;
+    esac
+    if ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")" \
+        || [[ -z "${patch_row}" ]]; then
+        printf '[daemon-apply] FATAL: proposal id=%s lookup row could not be reassembled — nothing applied\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 21
+    fi
+    PATCH_ROWS=("${patch_row}")
+    SINGLE_HAIKU_STATUS="${haiku_status}"
 }
 
 # verify_target_in_agents — sanity check: target_file MUST live under agents_dir.
@@ -2144,6 +2145,8 @@ PARKED_VERDICT=""
 # bash 3.2 compat: mapfile is bash 4+, so we use IFS=$'\n' + read loop.
 PATCH_ROWS=()
 PATCH_SOURCE="report"
+# Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
+SINGLE_HAIKU_STATUS=""
 
 if [[ -n "${PROPOSAL_ID}" ]]; then
     # Single-proposal mode. Requires psql (the row lives in PG). enforce=1
@@ -2153,9 +2156,7 @@ if [[ -n "${PROPOSAL_ID}" ]]; then
         exit 3
     fi
     PATCH_SOURCE="single"
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_single_proposal)
+    select_single_proposal
 elif backlog_source_available; then
     PATCH_SOURCE="backlog"
     while IFS= read -r _row; do
@@ -2214,16 +2215,9 @@ emit_zero_eligible_row() {
     fi
 }
 
+# The single source never gets here empty: select_single_proposal exits 21/19/8 instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
-    if [[ "${PATCH_SOURCE}" == "single" ]]; then
-        # Idempotent no-op: id absent OR status not in pending/snoozed
-        # (already applied/rejected/approved). Distinct exit 8 so the API can
-        # report "nothing to do" vs an apply failure. NO post-gate row: this path is
-        # human-gated, not a scheduled cycle, and the window reasons about cycles.
-        printf '[daemon-apply] proposal id=%s not actionable (not found, or status not in pending/snoozed) — no-op\n' \
-            "${PROPOSAL_ID}" >&2
-        exit 8
-    elif [[ "${PATCH_SOURCE}" == "backlog" ]]; then
+    if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
         emit_zero_eligible_row backlog
     else
@@ -2380,6 +2374,31 @@ get_parked_verdict_line() {
     done <<<"${PARKED_VERDICT}"
 }
 
+# assert_generation_outcome — single source only: exit 20 unless the stored generation outcome is
+# ok-prefixed (ok / ok:retried / ok:fuzzy-parsed; '' = NULL fails closed) or the operator carve-out is
+# set. The click bypasses the tier and pre_verify_passed gates, never this one: a non-ok outcome means
+# the diff was never quality-screened. Runs after the parked guard, so exit 18 wins for a row tripping both.
+assert_generation_outcome() {
+    if [[ "${PATCH_SOURCE}" != "single" ]]; then
+        return 0
+    fi
+    local allow_haiku_skip=0
+    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
+        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
+        *) allow_haiku_skip=0 ;;
+    esac
+    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
+        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — id=%s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
+            "${PROPOSAL_ID}" >&2
+        return 0
+    fi
+    if [[ "${SINGLE_HAIKU_STATUS}" != ok* ]]; then
+        printf '[daemon-apply] use Reject — proposal id=%s generation outcome haiku_status=%s is not ok-prefixed, so its diff was never quality-screened; nothing applied, row left as it was (operator override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)\n' \
+            "${PROPOSAL_ID}" "${SINGLE_HAIKU_STATUS:-<none>}" >&2
+        exit 20
+    fi
+}
+
 # apply_patch_rows — drain the global PATCH_ROWS array, applying each patch and
 # mutating the shared counters (PROCESSED/APPLIED/SKIPPED/ERRORS/NEEDS_REGEN).
 # A function (not inline) so the auto-regen re-attempt can re-run the EXACT same
@@ -2391,6 +2410,7 @@ apply_patch_rows() {
 local row
 # Head of EVERY drain, so the auto-regen re-attempt is guarded as well as the first pass.
 set_parked_verdict
+assert_generation_outcome
 for row in "${PATCH_ROWS[@]}"; do
     # LIMIT=0 = unbounded (drain all). LIMIT>0 = optional manual processing
     # throttle for ad-hoc operator use (NOT the anomaly guard, which already
@@ -2797,18 +2817,13 @@ if [[ "${PATCH_SOURCE}" == "single" ]] && [[ "${APPLIED}" -eq 0 ]] \
             # second drain's verdict reads cleanly.
             printf '[daemon-apply] auto-regen: id=%s regenerated — re-attempting apply\n' \
                 "${PROPOSAL_ID}" >&2
-            PATCH_ROWS=()
-            while IFS= read -r _row; do
-                [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-            done < <(extract_single_proposal)
+            select_single_proposal
             PROCESSED=0
             APPLIED=0
             SKIPPED=0
             ERRORS=0
             NEEDS_REGEN=0
-            if [[ ${#PATCH_ROWS[@]} -gt 0 ]]; then
-                apply_patch_rows
-            fi
+            apply_patch_rows
             if [[ "${APPLIED}" -ge 1 ]]; then
                 printf '[daemon-apply] auto-regen: id=%s RE-APPLIED after regen\n' \
                     "${PROPOSAL_ID}" >&2
@@ -2856,7 +2871,7 @@ printf '[daemon-apply] processed=%d applied=%d skipped=%d needs_regen=%d errors=
 # row either applied (APPLIED=1 → success, fall through to exit 0) or failed to
 # land (needs_regen, or an error path) leaving it pending. The API must see
 # a NON-zero exit to report "could not apply" to the user → exit 9 (distinct
-# from exit 8 "not actionable / no-op"). Batch/report modes are unaffected.
+# from exit 8 "already terminal / no-op"). Batch/report modes are unaffected.
 # (--auto-regen replaces this exit-9 stale path above; this block stays the
 # default for --auto-regen-off OR a non-stale single failure (hard error).)
 if [[ "${PATCH_SOURCE}" == "single" ]] && [[ "${APPLIED}" -eq 0 ]]; then
