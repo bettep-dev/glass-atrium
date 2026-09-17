@@ -27,6 +27,7 @@
 # predicate exactly (admit iff allow_haiku_skip=1 OR STUB_HAIKU matches ok*).
 # The SQL predicate TEXT itself is independently pinned by the shape-assertion
 # test below — so the stub re-implementing the predicate is not the sole guard.
+# The daemon_cycle.py seam points at a guard pass-through (build_guard_passthrough).
 # No live PG, no live agents/ dir is touched.
 
 bats_require_minimum_version 1.5.0
@@ -63,14 +64,16 @@ setup_file() {
   mkdir -p "${shared_stub}"
   build_full_stub "${shared_stub}"
   install_psql_stub "${shared_stub}"
+  build_guard_passthrough "${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
 }
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-sd-bats.XXXXXX)" && pwd -P)"
-  # STUB points at the file-scoped bin pre-built once in setup_file; only per-test fixture
-  # state (git repo, reports, psql log) is created here under the throwaway WORK.
+  # STUB and GUARD_SEAM point at the file-scoped fixtures pre-built once in setup_file; only per-test
+  # fixture state (git repo, reports, psql log) is created here under the throwaway WORK.
   STUB="${BATS_FILE_TMPDIR}/bin"
+  GUARD_SEAM="${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
   AGENTS="${WORK}/agents"
   REPORTS="${WORK}/reports"
   PSQL_LOG="${WORK}/psql-invocations.log"
@@ -84,6 +87,24 @@ setup() {
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+}
+
+# build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
+# `python3 <seam>`): the parked-pattern guard reads through psycopg, which no psql stub isolates, so
+# it answers "no guard fires" (stdin drained for the piping printf); every other mode execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
 }
 
 # install_psql_stub — write the faithful PG stand-in into the stub bin.
@@ -178,6 +199,7 @@ run_single() {
     STUB_TARGET="${AGENTS}/probe.md" \
     STUB_DIFF_B64="$(oor_diff_b64)" \
     STUB_HAIKU="${haiku}" \
+    AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     ${STUB_STALE_VERDICT:+STUB_STALE_VERDICT="${STUB_STALE_VERDICT}"} \
     ${ALLOW:+AUTOAGENT_ALLOW_HAIKU_SKIP="${ALLOW}"} \
     bash "${REAL_SCRIPT}" --proposal-id 1022 --agents-dir "${AGENTS}" "$@"

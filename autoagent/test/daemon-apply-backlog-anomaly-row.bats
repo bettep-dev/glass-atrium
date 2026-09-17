@@ -21,8 +21,8 @@
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-zero-eligible-row.bats) with psql replaced
 # by a stub answering every query with a fixed row set, a git shim that allows only `git apply`, an
-# echo-OK claude stub, and AUTOAGENT_REPORTS_DIR pointed at a temp dir. No PG, no live agents dir,
-# no ~/.glass-atrium state is read or written.
+# echo-OK claude stub, AUTOAGENT_REPORTS_DIR pointed at a temp dir, and the daemon_cycle.py seam at a
+# guard pass-through. No PG, no live agents dir, no ~/.glass-atrium state is read or written.
 #
 # BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
 #   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
@@ -111,14 +111,34 @@ SH
   chmod +x "${dir}/psql"
 }
 
+# build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
+# `python3 <seam>`): the parked-pattern guard reads through psycopg, which no psql stub isolates, so
+# it answers "no guard fires" (stdin drained for the piping printf); every other mode execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
 setup_file() {
   MIRROR="${BATS_FILE_TMPDIR}/bin"
+  GUARD_SEAM="${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
   if [[ -f "${REAL_SCRIPT}" ]]; then
     mirror_path "${MIRROR}"
     build_git_apply_shim "${MIRROR}"
     make_claude_stub "${MIRROR}"
+    build_guard_passthrough "${GUARD_SEAM}"
   fi
-  export MIRROR
+  export MIRROR GUARD_SEAM
 }
 
 setup() {
@@ -147,7 +167,7 @@ run_apply() {
   make_backlog_psql "${BACKLOG_BIN}" "${rows}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${BACKLOG_BIN}:${MIRROR}" HOME="${WORK}/home" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    AUTOAGENT_ANOMALY_THRESHOLD="${threshold}" \
+    AUTOAGENT_ANOMALY_THRESHOLD="${threshold}" AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
 
