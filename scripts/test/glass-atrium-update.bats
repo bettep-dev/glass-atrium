@@ -2392,7 +2392,7 @@ refused_record() {
   run_update_sweep
 
   [[ "${status}" -eq 0 ]] || return 1
-  # The spine's row prefix is what the counter keys on: a reworded row must redden this.
+  # The row wording is the operator-facing contract; the counter no longer reads it.
   [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; skipped"* ]] || return 1
   [[ "${output}" == *"retired sweep: removed=1 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
   [[ "${output}" == *"WARN: 1 retired manifest key(s) refused by the sweep"* ]] || return 1
@@ -2417,6 +2417,42 @@ refused_record() {
   [[ "${output}" == *"WARN: 2 retired manifest key(s) refused by the sweep"* ]] || return 1
   [[ "$(cat "$(refused_record)")" == $'MALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
   [[ -f "${INSTALL}/scripts/lib/y.sh" ]] || return 1
+}
+
+@test "#14 retired: a refused key spelled like a row suffix is recorded exactly" {
+  sweep_sandbox
+  local key='scripts/t.sh carries no non-empty 64-hex hash list; skipped'
+  seed_file "${INSTALL}" "${key}" "old"
+  seed_file "${NEWSRC}" "${key}" "new content"
+  RETIRED_JSON="$(retired_live_map "${key}")" write_manifest "${WORK}/manifest.json" "${key}"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=1"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == "MALFORMED"$'\t'"${key}" ]] || return 1
+}
+
+@test "#14 retired: rewording the spine's refusal rows leaves the refusal record unchanged" {
+  sweep_sandbox
+  local lib="${WORK}/reworded-lib"
+  cp -R -- "${GA}/scripts/lib" "${lib}"
+  sed -e "s/; skipped\\\\n'/; not swept\\\\n'/" "${GA}/scripts/lib/apply-spine.sh" >"${lib}/apply-spine.sh"
+  printf '%s' "outside-body" >"${WORK}/escape.sh"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  seed_file "${INSTALL}" "scripts/lib/y.sh" "stale-lib"
+  RETIRED_JSON="$(retired_live_map "scripts/tool.sh" | jq -c --arg h "$(sha256_of "${WORK}/escape.sh")" \
+    '. + {"scripts/lib/y.sh": ["not-a-hash"], "../escape.sh": [$h]}')" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  ATRIUM_UPDATE_LIB_DIR="${lib}" run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  # The reword must have reached the run, or this test proves nothing about wording.
+  [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; not swept"* ]] || return 1
+  [[ "${output}" == *"unmoved=0 refused=3"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\t../escape.sh\nMALFORMED\tscripts/lib/y.sh\nMALFORMED\tscripts/tool.sh' ]] || return 1
 }
 
 @test "#14 retired: a run with no refusal removes a stale refusal record" {

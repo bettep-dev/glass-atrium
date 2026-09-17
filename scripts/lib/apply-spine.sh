@@ -337,10 +337,15 @@ spine_retired_refused_path() {
 # migrations arm — so the family row is derived from the single definition rather
 # than from a second copy of the pattern.
 #
-# Args: $1 = new-release manifest.json · $2 = live install root. Returns 0 whenever
-# the manifest is readable: one unusable entry must not cancel the pass.
+# An UNSAFE or MALFORMED key is also appended as a `<kind><TAB><key>` line to the optional
+# refusal file, so a caller records the key itself rather than parsing it back out of a row
+# worded for humans.
+#
+# Args: $1 = new-release manifest.json · $2 = live install root · $3 = optional refusal
+# file. Returns 0 whenever the manifest is readable: one unusable entry must not cancel
+# the pass.
 spine_find_removed_files() {
-  local manifest="$1" install_root="$2"
+  local manifest="$1" install_root="$2" refusals="${3:-}"
   local path target live hashes new_files
   spine_require_tools jq || return 1
   if [[ ! -f "${manifest}" ]]; then
@@ -356,14 +361,14 @@ spine_find_removed_files() {
     [[ -n "${path}" ]] || continue
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if spine_is_escaping_retired_key "${path}"; then
-      printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped\n' "${path}" >&2
+      spine_refuse_retired_key UNSAFE "${path}" 'escapes install root' "${refusals}"
       continue
     fi
     # Tripwire: the generator guarantees retired and files[] are disjoint, so a path
     # in both is a malformed manifest rather than a removal decision to act on.
     case $'\n'"${new_files}"$'\n' in
       *$'\n'"${path}"$'\n'*)
-        printf 'apply-spine: retired MALFORMED — %s is retired AND shipped; skipped\n' "${path}" >&2
+        spine_refuse_retired_key MALFORMED "${path}" 'is retired AND shipped' "${refusals}"
         continue
         ;;
       *) ;;
@@ -385,7 +390,7 @@ spine_find_removed_files() {
         else ""
         end' -- "${manifest}")"
     if [[ -z "${hashes}" ]]; then
-      printf 'apply-spine: retired MALFORMED — %s carries no non-empty 64-hex hash list; skipped\n' "${path}" >&2
+      spine_refuse_retired_key MALFORMED "${path}" 'carries no non-empty 64-hex hash list' "${refusals}"
       continue
     fi
     target="${install_root}/${path}"
@@ -400,7 +405,7 @@ spine_find_removed_files() {
     fi
     # shellcheck disable=SC2310
     if spine_is_escaping_retired_target "${target}" "${install_root}"; then
-      printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped\n' "${path}" >&2
+      spine_refuse_retired_key UNSAFE "${path}" 'escapes install root' "${refusals}"
       continue
     fi
     live="$(spine_sha256_of "${target}")" || return 1
@@ -409,6 +414,14 @@ spine_find_removed_files() {
       *) printf 'apply-spine: retired user-modified, preserved — %s\n' "${path}" >&2 ;;
     esac
   done < <(jq -r '.retired | keys[]' -- "${manifest}")
+}
+
+# Emit the named stderr row for a refused retired key and, when a refusal file is given,
+# append its structured `<kind><TAB><key>` line. Args: $1 = UNSAFE|MALFORMED · $2 = key ·
+# $3 = reason phrase · $4 = refusal file, or empty.
+spine_refuse_retired_key() {
+  printf 'apply-spine: retired %s — %s %s; skipped\n' "$1" "$2" "$3" >&2
+  [[ -z "$4" ]] || printf '%s\t%s\n' "$1" "$2" >>"$4"
 }
 
 # True when manifest key $1 cannot name a path inside the install root by its spelling
