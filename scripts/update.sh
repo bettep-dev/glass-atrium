@@ -4116,8 +4116,7 @@ update_sweep_removed_files() {
   # A logged UNSAFE / MALFORMED row alone is never surfaced — a headless run's log is read
   # by nobody — so each refused key is counted and recorded for doctor from the spine's
   # structured refusal lines, never from the row wording.
-  refused_n="$(grep -c . -- "${refusals_file}" || true)" # GA-ABSORB[benign]: zero match exits 1
-  [[ -n "${refused_n}" ]] || refused_n=0
+  refused_n="$(($(wc -l <"${refusals_file}")))"
   # Rewritten each run, like the un-moved record: a release that fixed its map clears it.
   if [[ "${refused_n}" -gt 0 ]]; then
     mkdir -p -- "$(dirname -- "${refused_record}")"

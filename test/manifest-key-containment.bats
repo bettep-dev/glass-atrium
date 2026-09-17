@@ -98,12 +98,8 @@ run_tui_plan() {
       for step in "${STEP_FN[@]}"; do
         fn="${step%% *}"
         [[ "${fn}" == "require_contained_manifest_keys" ]] && continue
-        printf "%s() { printf \"%%s\\\\n\" %s >>\"\${RECORD}\"; }\n" "${fn}" "${fn}"
-      done >"${DEFS}"
-      source "${DEFS}"
-      for step in "${STEP_FN[@]}"; do
-        fn="${step%% *}"
-        [[ "${fn}" == "require_contained_manifest_keys" ]] && continue
+        printf "%s() { printf \"%%s\\\\n\" %s >>\"\${RECORD}\"; }\n" "${fn}" "${fn}" >"${DEFS}"
+        source "${DEFS}"
         type "${fn}" | grep -qF "RECORD" || { printf "recorder missing for %s\n" "${fn}"; exit 97; }
       done
       TTY=/dev/null

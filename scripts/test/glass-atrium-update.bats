@@ -2392,7 +2392,7 @@ refused_record() {
   run_update_sweep
 
   [[ "${status}" -eq 0 ]] || return 1
-  # The row wording is the operator-facing contract; the counter no longer reads it.
+  # The row wording is the operator-facing contract; the counter reads the structured refusal lines.
   [[ "${output}" == *"retired UNSAFE — ../escape.sh escapes install root; skipped"* ]] || return 1
   [[ "${output}" == *"retired sweep: removed=1 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
   [[ "${output}" == *"WARN: 1 retired manifest key(s) refused by the sweep"* ]] || return 1
