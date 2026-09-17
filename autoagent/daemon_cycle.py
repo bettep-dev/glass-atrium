@@ -823,14 +823,51 @@ def match_sensitive_path(path: str) -> str | None:
     return None
 
 
+DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
+
+
+def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
+    """Classify each ``\\r``-stripped diff line — the one body reading of the safety/count sites.
+
+    Mirrors ``git apply --recount`` in daemon-apply.sh: after the first ``@@`` every
+    ``+``/``-`` line is body, ``+++ ``/``--- `` included, and hunk counts are ignored.
+    A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
+    """
+    lines = [line.removesuffix("\r") for line in (diff or "").splitlines()]
+    kinds: list[tuple[DiffLineKind, str]] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        kind: DiffLineKind = "other"
+        if line.startswith("@@"):
+            in_hunk = True
+            kind = "hunk"
+        elif not in_hunk and _is_diff_header_line(lines, idx):
+            kind = "header"
+        elif line.startswith("+"):
+            kind = "added"
+        elif line.startswith("-"):
+            kind = "removed"
+        kinds.append((kind, line))
+    return kinds
+
+
+def _is_diff_header_line(lines: list[str], idx: int) -> bool:
+    line = lines[idx]
+    if line.startswith("--- "):
+        return idx + 1 < len(lines) and lines[idx + 1].startswith("+++ ")
+    if line.startswith("+++ "):
+        return idx > 0 and lines[idx - 1].startswith("--- ")
+    return False
+
+
 def match_sensitive_diff(diff: str) -> str | None:
     """Return the source of the first sensitive-diff pattern matching an ADDED
-    line of ``diff``, else ``None``. Only ``+``-prefixed lines are inspected
-    (excluding the ``+++`` file header) — context lines are current file state,
-    not the patch's introduction.
+    line of ``diff``, else ``None``. Added lines are read by
+    ``_get_diff_line_kinds`` — context lines are current file state, not the
+    patch's introduction.
     """
-    for line in (diff or "").splitlines():
-        if not line.startswith("+") or line.startswith("+++"):
+    for kind, line in _get_diff_line_kinds(diff):
+        if kind != "added":
             continue
         body = line[1:]  # strip leading '+'
         for pat in _SAFETY_SENSITIVE_DIFF_PATTERNS:
@@ -4239,24 +4276,21 @@ def _unified_diff_counts_valid(diff_text: str) -> bool:
 def _split_fragment_lines(body: str) -> tuple[list[str], list[str], list[str]]:
     """Partition a diff fragment body into (context, added, removed) lines.
 
+    - Added / removed lines: the '+' / '-' body lines of `_get_diff_line_kinds`.
     - Context lines: start with single space OR are plain text lines (no prefix).
-    - Added lines: start with '+' (NOT '+++').
-    - Removed lines: start with '-' (NOT '---').
-    - Lines starting with '@@' or that look like markdown decorations are dropped.
+    - File header pairs and '@@' lines are dropped.
 
     Returns raw line content WITH prefix preserved — caller decides how to use.
     """
     context: list[str] = []
     added: list[str] = []
     removed: list[str] = []
-    for raw_line in body.splitlines():
-        if raw_line.startswith("+++") or raw_line.startswith("---"):
+    for kind, raw_line in _get_diff_line_kinds(body):
+        if kind in ("header", "hunk"):
             continue
-        if raw_line.startswith("@@"):
-            continue
-        if raw_line.startswith("+"):
+        if kind == "added":
             added.append(raw_line)
-        elif raw_line.startswith("-"):
+        elif kind == "removed":
             removed.append(raw_line)
         elif raw_line.startswith(" "):
             context.append(raw_line)
@@ -5418,24 +5452,17 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     )
 
 
-def _count_marker_lines(diff: str, marker: str) -> int:
-    """Count lines starting with `marker`, skipping the `marker * 3` file header."""
-    if not diff:
-        return 0
-    header = marker * 3
-    return sum(
-        1
-        for line in diff.splitlines()
-        if line.startswith(marker) and not line.startswith(header)
-    )
+def _count_marker_lines(diff: str, kind: DiffLineKind) -> int:
+    """Count body lines of `kind` under the single diff body reading."""
+    return sum(1 for line_kind, _line in _get_diff_line_kinds(diff) if line_kind == kind)
 
 
 def _count_added_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "+")
+    return _count_marker_lines(diff, "added")
 
 
 def _count_removed_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "-")
+    return _count_marker_lines(diff, "removed")
 
 
 def _diff_touches_frontmatter(diff: str) -> bool:
@@ -7755,7 +7782,6 @@ def _added_content_lines(diff_text: str) -> list[str]:
     for line in added:
         if _REGEN_BLANK_ADDED_RE.match(line):
             continue
-        # Strip only one '+' ('+++' added lines already filtered by _split).
         out.append(line[1:] if line.startswith("+") else line)
     return out
 
