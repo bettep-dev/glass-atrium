@@ -2251,6 +2251,8 @@ fi
 # is what separates this post-gate refusal from the pre-gate one, and §14 reads it to pick the remedy.
 # $1 = the observed eligible-pending count. Both counts are shell-side integers (an array length, and
 # a threshold already regex-validated at parse time), so they add no escaping failure path.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
 backlog_anomaly_row() {
     local eligible="$1" ts_json
     ts_json="$(ts_now_json)" || return 1
@@ -2259,16 +2261,18 @@ backlog_anomaly_row() {
         "${ts_json}" "${eligible}" "${ANOMALY_THRESHOLD}"
 }
 
-# emit_backlog_anomaly_row — land that row, or say out loud that it could not be landed. The exit is
-# NEVER the emit's to change: exit 7 is what the caller's tests assert, so a failed row degrades to a
-# named WARN and the exit code stands.
-emit_backlog_anomaly_row() {
-    local row=""
-    if row="$(backlog_anomaly_row "$1")" && emit_log "${row}"; then
-        printf '[daemon-apply] backlog-anomaly abort recorded → %s\n' "${APPLIED_LOG}" >&2
+# emit_abort_row LABEL BUILDER [ARG...] — land the row `BUILDER ARG...` prints, or say out loud that it
+# could not be landed. The exit is NEVER the emit's to change: each caller's named exit code is what its
+# tests assert, so a failed row degrades to a named WARN. The builder runs in its own `$()`, so a build
+# failure takes the WARN branch too.
+emit_abort_row() {
+    local label="$1" row=""
+    shift
+    if row="$("$@")" && emit_log "${row}"; then
+        printf '[daemon-apply] %s abort recorded → %s\n' "${label}" "${APPLIED_LOG}" >&2
     else
-        printf '[daemon-apply] WARN: backlog-anomaly abort row NOT persisted (%s) — this abort is stderr-only\n' \
-            "${APPLIED_LOG}" >&2
+        printf '[daemon-apply] WARN: %s abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${label}" "${APPLIED_LOG}" >&2
     fi
 }
 
@@ -2277,7 +2281,7 @@ if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ ${#PATCH_ROWS[@]} -gt ${ANOMALY_TH
         "${#PATCH_ROWS[@]}" "${ANOMALY_THRESHOLD}" >&2
     # stderr alone is silence on the launchd path (Precondition Loud-Fail's third leg): this was the
     # one terminal path in the file whose FATAL left no durable trace behind the cycle.
-    emit_backlog_anomaly_row "${#PATCH_ROWS[@]}"
+    emit_abort_row backlog-anomaly backlog_anomaly_row "${#PATCH_ROWS[@]}"
     exit 7
 fi
 
@@ -2329,6 +2333,8 @@ PY
 
 # parked_guard_abort_row — the ONE row a guard failure lands. `abort` for the reasons at the
 # backlog_anomaly_row header; `reason` separates it. PATCH_SOURCE is a closed literal, so no escaping.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
 parked_guard_abort_row() {
     local ts_json
     ts_json="$(ts_now_json)" || return 1
@@ -2337,22 +2343,14 @@ parked_guard_abort_row() {
         "${ts_json}" "${PATCH_SOURCE}" "${#PATCH_ROWS[@]}"
 }
 
-# emit_parked_guard_abort_row — land that row, or say out loud it could not be landed; never the exit.
-emit_parked_guard_abort_row() {
-    local row=""
-    if row="$(parked_guard_abort_row)" && emit_log "${row}"; then
-        printf '[daemon-apply] parked-pattern guard abort recorded → %s\n' "${APPLIED_LOG}" >&2
-    else
-        printf '[daemon-apply] WARN: parked-pattern guard abort row NOT persisted (%s) — this abort is stderr-only\n' \
-            "${APPLIED_LOG}" >&2
-    fi
-}
-
 # set_parked_verdict — guard the rows about to drain into PARKED_VERDICT. No verdict → apply nothing
-# (exit 17); a guarded single proposal → refuse it (exit 18). The report source has no ids to judge.
+# (exit 17); a guarded single proposal → refuse it (exit 18). Report rows carry no proposal id, so that
+# source is announced before it drains, never judged.
 set_parked_verdict() {
     PARKED_VERDICT=""
     if [[ "${PATCH_SOURCE}" == "report" ]]; then
+        printf '[daemon-apply] NOTICE parked-pattern guard unavailable on the report source (dry-run, or psql absent) — %d row(s) drain without the covering-pattern check\n' \
+            "${#PATCH_ROWS[@]}" >&2
         return 0
     fi
     local verdict interpreter
@@ -2360,7 +2358,7 @@ set_parked_verdict() {
         interpreter="$(command -v python3)"
         printf '[daemon-apply] FATAL: parked-pattern guard gave no verdict (interpreter=%s daemon_cycle=%s) — applying nothing this run\n' \
             "${interpreter}" "${DAEMON_CYCLE_PY}" >&2
-        emit_parked_guard_abort_row
+        emit_abort_row 'parked-pattern guard' parked_guard_abort_row
         exit 17
     fi
     if [[ "${PATCH_SOURCE}" == "single" ]] && [[ -n "${verdict}" ]]; then
@@ -2772,11 +2770,6 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
 fi
 
 # -- Drain (extracted apply loop) ------------------------------------------
-# Report rows carry no proposal id, so set_parked_verdict cannot judge them — say so before they drain.
-if [[ "${PATCH_SOURCE}" == "report" ]]; then
-    printf '[daemon-apply] NOTICE parked-pattern guard unavailable on the report source (dry-run, or psql absent) — %d row(s) drain without the covering-pattern check\n' \
-        "${#PATCH_ROWS[@]}" >&2
-fi
 apply_patch_rows
 
 # -- Auto-regen on the stale path (--proposal-id + --auto-regen) ------
