@@ -67,6 +67,18 @@ class TestDiffHeaderTargetBasename(unittest.TestCase):
         # Strict: no header pair, so the raw '+++' line keeps HEAD's reading and the gate rejects on mismatch.
         self.assertEqual(dc._diff_header_target_basename("+++ b/other.md\n+y\n"), "other.md")
 
+    def test_when_a_quoted_header_carries_an_escape_git_cannot_unquote_then_the_raw_text_is_read(self) -> None:
+        # Basenames as `git apply --numstat` reads these headers: the unquote fails, quotes stay.
+        rows = {
+            "out-of-range octal": ('"b/agents/x\\777.md"', 'x\\777.md"'),
+            "truncated escape": ('"b/agents/x\\1.md"', 'x\\1.md"'),
+            "lone trailing backslash": ('"b/agents/x.md\\"', 'x.md\\"'),
+        }
+        for name, (header, basename) in rows.items():
+            with self.subTest(name):
+                diff = f"--- {header.replace('b/', 'a/', 1)}\n+++ {header}\n@@ -1 +1,2 @@\n x\n+y\n"
+                self.assertEqual(dc._diff_header_target_basename(diff), basename)
+
     def test_when_no_plus_header_then_none(self) -> None:
         # Header-less append-only fragment (Strategy B) — no target asserted.
         self.assertIsNone(dc._diff_header_target_basename("+added line\n+another\n"))

@@ -1166,6 +1166,7 @@ _TURN_BUDGET_SITE_PATTERNS: tuple[re.Pattern[str], ...] = (
 _GIT_QUOTE_ESCAPES: dict[str, int] = {
     "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92,
 }
+_GIT_OCTAL_ESCAPE_RE = re.compile(r"[0-3][0-7]{2}")
 
 
 def _get_diff_header_paths(diff: str) -> list[str]:
@@ -1205,28 +1206,36 @@ def _get_header_path(text: str, prefix: str) -> str | None:
     """One header's path: cut at the first tab, git-unquoted, ``prefix`` stripped once."""
     path = text.split("\t", 1)[0]
     if len(path) > 1 and path.startswith('"') and path.endswith('"'):
-        path = _get_unquoted_git_path(path[1:-1])
+        unquoted = _get_unquoted_git_path(path[1:-1])
+        path = path if unquoted is None else unquoted
     if path == "/dev/null":
         return None
     return path.removeprefix(prefix) or None
 
 
-def _get_unquoted_git_path(body: str) -> str:
-    """Undo git's C-style path quoting — named escapes and 3-digit octal UTF-8 bytes."""
+def _get_unquoted_git_path(body: str) -> str | None:
+    """Undo git's C-style path quoting, or None where git's ``unquote_c_style`` fails.
+
+    Mirrors git: an octal escape takes a first digit 0-3 (so every byte fits), and an
+    out-of-range, truncated, unknown or trailing escape fails the whole unquote, after
+    which ``git apply`` reads the header text raw, quotes included.
+    """
     out = bytearray()
     idx = 0
     while idx < len(body):
-        octal = body[idx + 1 : idx + 4]
-        if body[idx] != "\\" or idx + 1 == len(body):
+        if body[idx] != "\\":
             out += body[idx].encode()
             idx += 1
-        elif len(octal) == 3 and all(ch in "01234567" for ch in octal):
-            out.append(int(octal, 8))
+            continue
+        escape = body[idx + 1 : idx + 4]
+        if _GIT_OCTAL_ESCAPE_RE.fullmatch(escape):
+            out.append(int(escape, 8))
             idx += 4
-        else:
-            escaped = _GIT_QUOTE_ESCAPES.get(body[idx + 1])
-            out += bytes([escaped]) if escaped is not None else body[idx + 1].encode()
+        elif escape[:1] in _GIT_QUOTE_ESCAPES:
+            out.append(_GIT_QUOTE_ESCAPES[escape[:1]])
             idx += 2
+        else:
+            return None
     return out.decode("utf-8", errors="replace")
 
 
@@ -4308,7 +4317,9 @@ def _recount_hunk_header(diff_text: str) -> str:
       - '-' prefix  → removed  → counts toward old (b) only, ``--- `` included
       - '+' prefix  → added    → counts toward new (d) only, ``+++ `` included
       - any other line → context → counts toward BOTH old (b) and new (d)
-      - the next @@ or a ``diff --git`` line ends the current hunk body
+      - the next ``@@ `` or ``diff --git `` line ends the current hunk body; any other
+        ``@@``-prefixed line is a prefix-less body line, as git's ``recount_diff`` stops
+        only at ``@@ ``
       - '\\ No newline at end of file' markers are ignored (not a content line)
 
     FU-3 reuses this helper to re-stamp difflib output defensively.
@@ -4334,7 +4345,7 @@ def _recount_hunk_header(diff_text: str) -> str:
 
         start_old, _, start_new, _, trailer = m.groups()
         j = i + 1
-        while j < n and kinds[j][0] != "hunk" and not lines[j].startswith("diff --git "):
+        while j < n and not lines[j].startswith(("@@ ", "diff --git ")):
             j += 1
         body = lines[i + 1 : j]
 

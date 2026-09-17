@@ -146,6 +146,15 @@ def _aux_rows() -> dict[str, str]:
         + "@@ -1,1 +1,2 @@\n ctx\n+line\n"
         + f"--- a/{_TARGET}\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-a\n",
         "aux_dash_content_removal": headers + "@@ -1,3 +1,2 @@\n ctx\n--- old dash rule\n ctx\n",
+        # Escapes git's unquote_c_style rejects: git apply then reads the header raw, quotes kept.
+        "aux_quoted_octal_out_of_range": '--- "a/agents/x\\777.md"\n+++ "b/agents/x\\777.md"\n'
+        + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
+        "aux_quoted_truncated_escape_hook": '--- "a/hooks/x\\1.sh"\n+++ "b/hooks/x\\1.sh"\n'
+        + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
+        "aux_quoted_trailing_backslash_hook": '--- "a/hooks/x.sh\\"\n+++ "b/hooks/x.sh\\"\n'
+        + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
+        "aux_quoted_unknown_escape_target": f'--- "a/{_TARGET[:-2]}\\md"\n+++ "b/{_TARGET[:-2]}\\md"\n'
+        + "@@ -1,1 +1,2 @@\n ctx\n+line\n",
     }
 
 
@@ -528,30 +537,47 @@ _HEAD_BASELINE: dict[str, tuple[object, ...]] = {
     'aux_delete_whole_file': ('', False, 0, 2, 0, 2, 0, False, False, True, 2, 0, True, False, 0, 0),
     'aux_delete_later_section': ('', False, 1, 1, 1, 1, 1, False, True, True, 2, 2, False, False, 1, 1),
     'aux_dash_content_removal': ('', False, 0, 0, 0, 0, 0, False, False, False, 1, 1, False, False, 0, 0),
+    'aux_quoted_octal_out_of_range': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
+    'aux_quoted_truncated_escape_hook': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
+    'aux_quoted_trailing_backslash_hook': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
+    'aux_quoted_unknown_escape_target': ('', False, 1, 0, 1, 0, 1, False, False, True, 1, 2, True, False, 1, 1),
 }
 
 
-def _is_not_looser(column: str, head: object, new: object, row_id: str) -> bool:
+def _is_not_looser(column: str, head_row: dict[str, object], new_row: dict[str, object], row_id: str) -> bool:
+    """One column's verdict against HEAD: equal where exact, monotone only where 결정 3 lets counts grow."""
     loosening = _LOOSENING_ROWS.get(row_id)
+    head, new = head_row[column], new_row[column]
+    is_reading_changed = any(_get_count(new_row, c) != _get_count(head_row, c) for c in ("added", "removed"))
     match column:
         case "safety":
             return head != "safety" or new == "safety"
         case "sensitive_hit" | "replace_shape":
             return not head or bool(new)
-        case (
-            "added" | "removed" | "split_added" | "split_removed" | "added_content"
-            | "recount_old" | "recount_new" | "landed_added" | "reference_added"
-        ):
-            return int(new) >= int(head)  # type: ignore[call-overload]
+        case "added" | "removed" | "split_added" | "split_removed" | "added_content":
+            return _get_count(new_row, column) >= _get_count(head_row, column)
+        case "landed_added" | "reference_added":
+            # Other readers of the added lines — they move in lockstep with `added`.
+            growth = _get_count(new_row, "added") - _get_count(head_row, "added")
+            return _get_count(new_row, column) - _get_count(head_row, column) == growth
+        case "recount_old" | "recount_new":
+            return head == new or (is_reading_changed and _get_count(new_row, column) >= _get_count(head_row, column))
+        case "counts_valid":
+            # Follows the recount, so it may flip only where the body reading itself changed.
+            return head == new or is_reading_changed
         case "f2_reject":
             return not head or bool(new) or loosening == "f2-basename-quoted-path-correction"
         case "hook_touch":
             return bool(head) or not new or loosening == "hook-touch-true-reduces-prose-only-add-warning"
         case "frontmatter":
             return head == new
-        case "counts_valid":
-            return True
     raise KeyError(column)
+
+
+def _get_count(row: dict[str, object], column: str) -> int:
+    value = row[column]
+    assert isinstance(value, int), f"{column} is not a count: {value!r}"
+    return value
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
@@ -599,11 +625,12 @@ class BodyReadingNeverLoosensHeadVerdicts(unittest.TestCase):
     def test_should_keep_every_head_verdict_or_tighten_it(self) -> None:
         for row_id, diff in _fixture_rows().items():
             results = _site_results(diff)
-            for column, head in zip(_BASELINE_KEYS, _HEAD_BASELINE[row_id], strict=True):
+            head_row = dict(zip(_BASELINE_KEYS, _HEAD_BASELINE[row_id], strict=True))
+            for column in _BASELINE_KEYS:
                 with self.subTest(row=row_id, column=column):
                     self.assertTrue(
-                        _is_not_looser(column, head, results[column], row_id),
-                        msg=f"HEAD={head!r} new={results[column]!r}",
+                        _is_not_looser(column, head_row, results, row_id),
+                        msg=f"HEAD={head_row[column]!r} new={results[column]!r}",
                     )
 
     def test_should_tag_only_rows_the_new_reading_actually_loosens(self) -> None:
@@ -615,7 +642,7 @@ class BodyReadingNeverLoosensHeadVerdicts(unittest.TestCase):
                 head = dict(zip(_BASELINE_KEYS, _HEAD_BASELINE[row_id], strict=True))
                 self.assertTrue(
                     any(
-                        not _is_not_looser(column, head[column], results[column], "")
+                        not _is_not_looser(column, head, results, "")
                         for column in _BASELINE_KEYS
                     ),
                     msg="tagged row no longer loosens a HEAD verdict — drop its tag",
@@ -658,6 +685,22 @@ class HeaderSitesReadBodyLines(unittest.TestCase):
         diff = self.rows["offender_add3_eight_lines"]
         self.assertEqual(dc._iter_added_reference_lines(diff), [f"++ i{n}" for n in range(1, 9)])
         self.assertEqual(_count_landed_pieces(diff), 8)
+
+    def test_should_count_a_column_zero_at_sign_body_line_as_context_as_git_recount_does(self) -> None:
+        # git's recount_diff ends a hunk body only at "@@ " or "diff ", never at "@@x".
+        diff = f"--- a/{_TARGET}\n+++ b/{_TARGET}\n@@ -1,4 +1,4 @@\n ctx\n@@x\n-a\n+b\n ctx\n"
+        self.assertEqual(dc._recount_hunk_header(diff), diff)
+
+    def test_should_read_an_in_hunk_dash_plus_pair_with_no_hunk_after_it_as_body_not_a_header(self) -> None:
+        diff = f"--- a/{_TARGET}\n+++ b/{_TARGET}\n@@ -1,2 +1,2 @@\n ctx\n--- a/hooks/x.sh\n+++ /dev/null\n"
+        self.assertFalse(dc._diff_deletes_file(diff))
+        self.assertFalse(dc._diff_touches_hook_file(diff, _TARGET))
+
+    def test_should_read_a_header_git_cannot_unquote_as_raw_text_at_every_header_site(self) -> None:
+        budget = '--- "a/scoped/shared-turn-budget.md\\777"\n+++ "b/scoped/shared-turn-budget.md\\777"\n'
+        self.assertIsNone(dc.match_turn_budget_site(_TARGET, budget + "@@ -1,1 +1,2 @@\n ctx\n+line\n"))
+        self.assertEqual(dc._diff_header_target_basename(self.rows["aux_quoted_octal_out_of_range"]), 'x\\777.md"')
+        self.assertFalse(dc._diff_touches_hook_file(self.rows["aux_quoted_truncated_escape_hook"], _TARGET))
 
     def test_should_reject_a_diff_that_deletes_a_file_in_any_header_section(self) -> None:
         for row_id in ("aux_delete_whole_file", "aux_delete_later_section"):
