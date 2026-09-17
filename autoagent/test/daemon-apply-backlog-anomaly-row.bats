@@ -94,16 +94,20 @@ SH
 
 # make_backlog_psql — a psql present on PATH (so backlog_source_available() is true) that answers
 # EVERY query with $2 eligible rows in the producer's own 6-field pipe grammar
-# (id|cycle_date|pattern_label|target_agent|target_file|diff_b64). The diff field is empty: the
+# (id|cycle_date|label_b64|agent_b64|target_b64|diff_b64). The diff field is empty: the
 # tripwire fires on the COUNT before any patch is read, so a real diff would only add fixture noise.
 make_backlog_psql() {
   local dir="$1" rows="$2"
   rm -f -- "${dir}/psql"
   cat >"${dir}/psql" <<SH
 #!/usr/bin/env bash
+b64() {
+  printf '%s' "\$1" | base64 | tr -d '\n'
+}
 i=1
 while [[ "\${i}" -le ${rows} ]]; do
-  printf '%s|2026-08-0%s|probe-pattern-%s|probe|/tmp/anomaly-probe-%s.md|\n' "\${i}" 1 "\${i}" "\${i}"
+  printf '%s|2026-08-01|%s|%s|%s|\n' "\${i}" "\$(b64 "probe-pattern-\${i}")" "\$(b64 probe)" \
+    "\$(b64 "/tmp/anomaly-probe-\${i}.md")"
   i=\$((i + 1))
 done
 exit 0

@@ -61,8 +61,9 @@ teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# install_psql_stub — the status flip logs its bindings and returns one id; the two SELECTs answer
-# from fixture files.
+# install_psql_stub — the status flip logs its bindings and returns one id; the backlog SELECT answers
+# from its fixture file. The Nth single lookup answers from single.rows.N when scripted (a
+# single.rows.N.rc file scripts a query failure instead), else from single.rows.
 install_psql_stub() {
   cat >"${STUB}/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -73,8 +74,25 @@ case "${sql}" in
     printf '1\n'
     ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
-  *"ORDER BY cycle_date ASC, id ASC"*) cat -- "${STUB_BACKLOG_ROWS:?}" ;;
-  *"id::text = :'pid'"*) cat -- "${STUB_SINGLE_ROW:?}" ;;
+  *"ORDER BY cycle_date ASC, id ASC"*)
+    printf '%s\n' "${sql}" >"${STUB_BACKLOG_ROWS:?}.sql"
+    cat -- "${STUB_BACKLOG_ROWS}"
+    ;;
+  *"id::text = :'pid'"*)
+    calls="${STUB_SINGLE_ROW:?}.calls"
+    n=1
+    [[ -f "${calls}" ]] && n=$(($(cat -- "${calls}") + 1))
+    printf '%s\n' "${n}" >"${calls}"
+    if [[ -f "${STUB_SINGLE_ROW}.${n}.rc" ]]; then
+      printf 'psql: error: connection to server failed (stub)\n' >&2
+      exit "$(cat -- "${STUB_SINGLE_ROW}.${n}.rc")"
+    fi
+    if [[ -f "${STUB_SINGLE_ROW}.${n}" ]]; then
+      cat -- "${STUB_SINGLE_ROW}.${n}"
+    else
+      cat -- "${STUB_SINGLE_ROW}"
+    fi
+    ;;
   *) : ;;
 esac
 exit 0
@@ -147,10 +165,22 @@ stale_diff() {
     ' goal line two' "+goal line added to $1" ' goal line one'
 }
 
-# proposal_row ID NAME DIFF — one row in the producer's 6-field psql grammar.
+# b64 TEXT — un-wrapped base64, the form the producer's SELECT gives every free-text field.
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+# proposal_row ID NAME DIFF [LABEL] — one row in the producer's 6-field psql grammar
+# (label defaults to probe-pattern-ID).
 proposal_row() {
-  printf '%s|2026-09-01|probe-pattern-%s|%s|%s/%s.md|%s\n' \
-    "$1" "$1" "$2" "${AGENTS}" "$2" "$(printf '%s' "$3" | base64 | tr -d '\n')"
+  printf '%s|2026-09-01|%s|%s|%s|%s\n' "$1" "$(b64 "${4:-probe-pattern-$1}")" "$(b64 "$2")" \
+    "$(b64 "${AGENTS}/$2.md")" "$(b64 "$3")"
+}
+
+# single_row ID NAME DIFF [STATUS] [HAIKU] — the single lookup's grammar: the 6 fields, then status
+# (default pending) and haiku_status (default ok; pass '' for NULL).
+single_row() {
+  printf '%s|%s|%s\n' "$(proposal_row "$1" "$2" "$3")" "${4:-pending}" "${5-ok}"
 }
 
 # answer_guard N RC OUT — the stub's reply to its Nth guard call.
@@ -241,7 +271,7 @@ dump_state() {
 }
 
 @test "single: a guarded proposal is refused with its own exit, names the parked rows and the Reject way out, and touches nothing" {
-  proposal_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "$(guarded_verdict 201 '[]')"
   run_apply --proposal-id 201
 
@@ -332,8 +362,31 @@ dump_state() {
   }
 }
 
+@test "batch: a '|' inside a stored label shifts no field — the backlog SELECT encodes every free-text column and the row applies under its whole label" {
+  proposal_row 103 probe-a "$(landing_diff probe-a)" 'probe|pipe|label' >"${WORK}/backlog.rows"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply
+
+  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a && was_flipped 103 || {
+    dump_state
+    return 1
+  }
+  grep '"status":"applied"' "${APPLIED_LOG}" | grep -qF '"pattern_label":"probe|pipe|label"' || {
+    echo "the applied row does not carry the whole '|'-bearing label" >&2
+    dump_state
+    return 1
+  }
+  local column
+  for column in "pattern_label" "coalesce(target_agent, '')" "target_file"; do
+    grep -qF "encode(convert_to(${column}, 'UTF8'), 'base64')" "${WORK}/backlog.rows.sql" || {
+      echo "the backlog SELECT sends ${column} unencoded, so a '|' in it would shift every later field" >&2
+      return 1
+    }
+  done
+}
+
 @test "auto-regen: the re-attempt after a regenerate is guarded too" {
-  proposal_row 301 probe-a "$(stale_diff probe-a)" >"${WORK}/single.rows"
+  single_row 301 probe-a "$(stale_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
   answer_guard 2 0 "$(guarded_verdict 301 '[]')"
   run_apply --proposal-id 301 --auto-regen
@@ -354,8 +407,88 @@ dump_state() {
   }
 }
 
+@test "single: the guard answers before the generation outcome — a guarded non-ok row exits 18, an unguarded one exits 20" {
+  single_row 201 probe-a "$(landing_diff probe-a)" pending 'skipped:chronic-timeout-backoff' >"${WORK}/single.rows"
+  answer_guard 1 0 "$(guarded_verdict 201 '[]')"
+  run_apply --proposal-id 201
+
+  [[ "${status}" -eq 18 ]] || {
+    echo "a guarded row with a non-ok outcome must take the guard's more specific refusal" >&2
+    dump_state
+    return 1
+  }
+
+  answer_guard 2 0 "${NO_GUARD}"
+  run_apply --proposal-id 201
+
+  [[ "${status}" -eq 20 && "$(count_calls --parked-pattern-guard)" -eq 2 ]] || {
+    echo "an unguarded non-ok row must be refused (20) only after its guard call" >&2
+    dump_state
+    return 1
+  }
+  is_unchanged probe-a && ! was_flipped 201 && [[ "$(count_calls --reject-parked)" -eq 0 ]] || {
+    dump_state
+    return 1
+  }
+}
+
+@test "single: a terminal row exits 8 before the guard is ever asked" {
+  single_row 201 probe-a "$(landing_diff probe-a)" reverted >"${WORK}/single.rows"
+  run_apply --proposal-id 201
+
+  [[ "${status}" -eq 8 && "$(count_calls --parked-pattern-guard)" -eq 0 ]] || {
+    dump_state
+    return 1
+  }
+  is_unchanged probe-a && ! was_flipped 201 || {
+    dump_state
+    return 1
+  }
+}
+
+@test "auto-regen: the re-read after a regenerate takes the same lookup branch — a failed query exits 21" {
+  single_row 301 probe-a "$(stale_diff probe-a)" >"${WORK}/single.rows"
+  printf '2\n' >"${WORK}/single.rows.2.rc"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply --proposal-id 301 --auto-regen
+
+  [[ "$(count_calls --regenerate-stale)" -eq 1 ]] || {
+    echo "the first attempt never reached the regenerate path, so the re-read is untested" >&2
+    dump_state
+    return 1
+  }
+  [[ "${status}" -eq 21 && "$(count_calls --parked-pattern-guard)" -eq 1 ]] || {
+    echo "a failed re-read must exit 21, never read as a row that still would not land" >&2
+    dump_state
+    return 1
+  }
+  is_unchanged probe-a && ! was_flipped 301 || {
+    dump_state
+    return 1
+  }
+}
+
+@test "auto-regen: a re-read row whose generation outcome is not ok exits 20 after its own guard call" {
+  single_row 301 probe-a "$(stale_diff probe-a)" >"${WORK}/single.rows"
+  single_row 301 probe-a "$(landing_diff probe-a)" pending 'skipped:transient' >"${WORK}/single.rows.2"
+  answer_guard 1 0 "${NO_GUARD}"
+  answer_guard 2 0 "${NO_GUARD}"
+  run_apply --proposal-id 301 --auto-regen
+
+  [[ "${status}" -eq 20 && "$(count_calls --regenerate-stale)" -eq 1 \
+    && "$(count_calls --parked-pattern-guard)" -eq 2 ]] || {
+    dump_state
+    return 1
+  }
+  is_unchanged probe-a && ! was_flipped 301 || {
+    echo "the re-read row with a non-ok outcome landed" >&2
+    dump_state
+    return 1
+  }
+}
+
 @test "dry-run: the guard still answers but never receives the reject flag" {
-  proposal_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "$(guarded_verdict 201 '[]')"
   run_apply --proposal-id 201 --dry-run
 

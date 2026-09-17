@@ -550,11 +550,18 @@ def write_autoagent_proposal(
             -- to the reject-streak classifier, not inert history. The two predicates
             -- below MUST stay identical; the co-movement is pinned by
             -- scripts/test/test_pg_dual_write_proposal_upsert.py, not by this comment.
+            -- Marker exemption — widens the non-terminal-push arm only (cases: test docstring).
+            -- COALESCE → a NULL outcome compares as not-the-marker, never as unknown.
             rationale = CASE
                           WHEN core.autoagent_proposals.status
                                IN ('applied', 'approved', 'rejected')
                                AND EXCLUDED.status
                                    NOT IN ('applied', 'approved', 'rejected')
+                               AND NOT (
+                                   COALESCE(core.autoagent_proposals.haiku_status, '')
+                                       = 'skipped:chronic-timeout-backoff'
+                                   AND COALESCE(EXCLUDED.haiku_status, '')
+                                       <> 'skipped:chronic-timeout-backoff')
                           THEN core.autoagent_proposals.rationale
                           ELSE EXCLUDED.rationale
                         END,
@@ -576,6 +583,11 @@ def write_autoagent_proposal(
                             IN ('applied', 'approved', 'rejected')
                             AND EXCLUDED.status
                                 NOT IN ('applied', 'approved', 'rejected')
+                            AND NOT (
+                                COALESCE(core.autoagent_proposals.haiku_status, '')
+                                    = 'skipped:chronic-timeout-backoff'
+                                AND COALESCE(EXCLUDED.haiku_status, '')
+                                    <> 'skipped:chronic-timeout-backoff')
                        THEN core.autoagent_proposals.status
                        ELSE EXCLUDED.status
                      END,
@@ -591,6 +603,10 @@ def write_autoagent_proposal(
             confidence_observed = EXCLUDED.confidence_observed,
             project_key = EXCLUDED.project_key,
             promotion_tier = EXCLUDED.promotion_tier
+        -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
+        WHERE NOT (core.autoagent_proposals.status
+                       IN ('applied', 'approved', 'rejected', 'reverted')
+                   AND core.autoagent_proposals.reviewed_at IS NOT NULL)
         RETURNING id
     """
     # pre_verify_axes is JSONB. None / empty dict both pass through Jsonb() —
@@ -628,7 +644,7 @@ def write_autoagent_proposal(
                     promotion_tier_param,
                 ),
             )
-            cur.fetchone()
+            cur.fetchone()  # None when the reviewed-row freeze skips the update
         conn.commit()
     return (time.monotonic_ns() - start_ns) // 1_000_000
 

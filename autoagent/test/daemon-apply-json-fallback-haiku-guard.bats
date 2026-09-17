@@ -1,19 +1,22 @@
 #!/usr/bin/env bats
 # DISPOSABLE verification test for the P3b JSON-fallback haiku gate added to
 # extract_body_auto_patches in daemon-apply.sh. Proves the degraded-mode
-# (psql-absent) JSON-report fallback path now mirrors extract_single_proposal:
+# (psql-absent) JSON-report fallback path now mirrors assert_generation_outcome:
 #   (a) EXCLUDES a haiku-skipped (and a missing-haiku) body-auto patch by default
 #       (fail-CLOSED), and
 #   (b) ADMITS a haiku-skipped patch with AUTOAGENT_ALLOW_HAIKU_SKIP=1 plus a loud
 #       operator WARN (never silent).
 # Plus regression guards: an 'ok'/'ok:retried' status is still admitted by default
-# (the gate is not over-blocking — startswith('ok') == the SELECT's LIKE 'ok%').
+# (the gate is not over-blocking — startswith('ok') == the single path's ok* match).
+# And (f): a report that cannot be read returns non-zero with one named stderr line and no
+# traceback, the signal the source dispatch turns into exit 22 (the dispatch itself:
+# daemon-apply-zero-eligible-row.bats AC9).
 #
 # Originated as a disposable verification artifact (agent-test-files-disposable);
 # now retained in-repo under autoagent/test/.
 # Run via: bats autoagent/test/daemon-apply-json-fallback-haiku-guard.bats
 #
-# Strategy: extract ONLY the function under test into a sourceable file and call
+# Strategy: extract ONLY the function under test (and its override helper) into a sourceable file and call
 # it directly — no full-script side effects (no CLI parse / git precondition /
 # lock), so the assertion targets the gate alone. python3 is the only runtime dep.
 
@@ -27,8 +30,8 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-jf-bats.XXXXXX)" && pwd -P)"
   FN_FILE="${WORK}/fn.sh"
   REPORT="${WORK}/report.json"
-  # Extract ONLY extract_body_auto_patches into a sourceable file.
-  awk '/^extract_body_auto_patches\(\) \{/,/^\}/' "${REAL_SCRIPT}" >"${FN_FILE}"
+  # Extract ONLY extract_body_auto_patches and its override helper into a sourceable file.
+  awk '/^(extract_body_auto_patches|is_haiku_skip_override_set)\(\) \{/,/^\}/' "${REAL_SCRIPT}" >"${FN_FILE}"
   # Sanity: extraction captured the new gate (else the test is vacuous).
   grep -q 'allow_haiku_skip' "${FN_FILE}"
   # shellcheck source=/dev/null
@@ -97,11 +100,17 @@ JSON
 @test "JSON-fallback: AUTOAGENT_ALLOW_HAIKU_SKIP=1 ADMITS a haiku-skipped patch with a loud WARN" {
   write_report "skipped:empty-or-error"
   AUTOAGENT_ALLOW_HAIKU_SKIP=1 run extract_body_auto_patches "${REPORT}"
-  [[ "${status}" -eq 0 ]]
-  # Admitted → the patch JSON is emitted on stdout.
-  [[ "${output}" == *'"classification": "body-auto"'* ]]
-  # Loud operator bypass WARN (never silent) — stderr merged into $output by run.
-  [[ "${output}" == *"haiku-skip guard BYPASSED by operator"* ]]
+  # Admitted → the patch JSON is emitted on stdout; the loud operator bypass WARN (never silent) is
+  # merged into $output by run, and names the generation outcome — pre-verify is a different gate.
+  [[ "${status}" -eq 0 && "${output}" == *'"classification": "body-auto"'* ]] || {
+    echo "the carve-out did not admit the patch: ${status}: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"haiku-skip guard BYPASSED by operator"* &&
+    "${output}" == *"(generation outcome skipped/failed)"* && "${output}" != *"pre-verify"* ]] || {
+    echo "the bypass WARN is missing or names the wrong gate: ${output}" >&2
+    return 1
+  }
 }
 
 @test "JSON-fallback: carve-out accepts truthy variants (yes) too" {
@@ -124,7 +133,7 @@ JSON
   [[ "${output}" != *"BYPASSED by operator"* ]]
 }
 
-@test "JSON-fallback: 'ok:retried' variant admitted by default (startswith 'ok' == LIKE 'ok%')" {
+@test "JSON-fallback: 'ok:retried' variant admitted by default (startswith 'ok' == the single path's ok*)" {
   write_report "ok:retried"
   run extract_body_auto_patches "${REPORT}"
   [[ "${status}" -eq 0 ]]
@@ -230,4 +239,30 @@ JSON
   [[ "${status}" -eq 0 ]]
   # Carve-out bypasses ONLY the haiku gate; the pre-verify gate still excludes it.
   [[ "${output}" != *'"pattern_label": "probe"'* ]]
+}
+
+# ---------------------------------------------------------------------------
+# (f) an unreadable report — the extractor fails, so the dispatch exits 22 and
+#     never reads the report as zero patches
+# ---------------------------------------------------------------------------
+
+@test "JSON-fallback: every unreadable report shape returns non-zero with one named line and no traceback" {
+  # One fixture per way a present report can be unreadable; an empty patches list is the valid boundary.
+  # The operator sees the extractor's stderr verbatim, so each shape owes one line naming the report.
+  local body
+  for body in '{"patches": [' $'\xff' '[]' '{"patches": {}}' '{"patches": ["body-auto"]}'; do
+    printf '%s\n' "${body}" >"${REPORT}"
+    run extract_body_auto_patches "${REPORT}"
+    [[ "${status}" -ne 0 && "${output}" != *'"classification"'* && "${output}" != *Traceback* &&
+      "${#lines[@]}" -eq 1 && "${output}" == "[daemon-apply] report ${REPORT}: "* ]] || {
+      echo "report ${body} read as rc=${status}: ${output}" >&2
+      return 1
+    }
+  done
+  printf '%s\n' '{"patches": []}' >"${REPORT}"
+  run extract_body_auto_patches "${REPORT}"
+  [[ "${status}" -eq 0 && -z "${output}" ]] || {
+    echo "an empty patches list is a readable report, got rc=${status}: ${output}" >&2
+    return 1
+  }
 }

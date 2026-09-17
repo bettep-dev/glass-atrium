@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import contextlib
 import io
+import sqlite3
 import sys
+import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -30,6 +33,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
+if str(_STUB_DIR) not in sys.path:
+    sys.path.insert(0, str(_STUB_DIR))
+
+import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
 
 try:
     import daemon_cycle as dc
@@ -42,7 +50,7 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 _CYCLE_DATE = "2026-06-10"
 
 
-def _patch_result(status: str) -> "dc.PatchResult":
+def _patch_result(status: str, haiku_status: str = "ok") -> "dc.PatchResult":
     return dc.PatchResult(
         pattern_label="probe pattern",
         pattern_agent="probe-agent",
@@ -52,18 +60,23 @@ def _patch_result(status: str) -> "dc.PatchResult":
         rationale="",
         proposed_diff="",
         outcomes_sampled=0,
-        haiku_status="ok",
+        haiku_status=haiku_status,
         status=status,
     )
 
 
-def _report(statuses: list[str]) -> "dc.CycleReport":
+def _report(statuses: list[str], markers: int = 0) -> "dc.CycleReport":
+    patches = [_patch_result(s) for s in statuses]
+    patches += [
+        _patch_result("rejected", dc.TIMEOUT_BACKOFF_HAIKU_STATUS)
+        for _ in range(markers)
+    ]
     return dc.CycleReport(
         cycle_date=_CYCLE_DATE,
         generated_at="2026-06-10T00:00:00.000Z",
-        patterns_processed=len(statuses),
+        patterns_processed=len(patches),
         cost_guard={},
-        patches=[_patch_result(s) for s in statuses],
+        patches=patches,
     )
 
 
@@ -127,6 +140,15 @@ class TestAlertAllRejectStreak(_AlertFixture):
         self.assertEqual(err, "")
         self.assertEqual(self.emitted, [])
 
+    def test_when_only_backoff_markers_then_no_alert(self) -> None:
+        err = self._run(_report([], markers=2), prior=5)
+        self.assertEqual(err, "")
+        self.assertEqual(self.emitted, [])
+
+    def test_when_markers_beside_rejects_then_judged_on_the_rejects(self) -> None:
+        err = self._run(_report(["rejected"], markers=1), prior=2)
+        self.assertIn("all-reject streak", err)
+
     def test_when_no_proposals_then_no_alert(self) -> None:
         err = self._run(_report([]), prior=5)
         self.assertEqual(err, "")
@@ -171,6 +193,46 @@ class TestPriorAllRejectCycleCount(unittest.TestCase):
         ), contextlib.redirect_stderr(stderr):
             self.assertEqual(dc._prior_all_reject_cycle_count(_CYCLE_DATE), 0)
         self.assertIn("fail-open", stderr.getvalue())
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(
+    sqlite3.sqlite_version_info < (3, 39, 0), "sqlite lacks IS DISTINCT FROM"
+)
+class TestPriorAllRejectCycleCountOnEngine(unittest.TestCase):
+    """The persisted walk's own SQL, run on the stdlib backend."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "proposals.sqlite"
+        stub.create_proposals_table(self.db)
+
+    def _count(self, rows: list[tuple[str, str, str | None]]) -> int:
+        with closing(sqlite3.connect(self.db)) as db:
+            db.executemany(
+                "INSERT INTO autoagent_proposals "
+                "(cycle_date, pattern_label, target_file, status, haiku_status) "
+                "VALUES (?, ?, '/tmp/probe-agent.md', ?, ?)",
+                [(day, f"label {i}", s, h) for i, (day, s, h) in enumerate(rows)],
+            )
+            db.commit()
+        with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True), mock.patch.object(
+            dc, "_pg_connect", lambda: stub.create_connection(self.db), create=True
+        ):
+            return dc._prior_all_reject_cycle_count(_CYCLE_DATE)
+
+    def test_when_a_prior_date_holds_only_markers_then_streak_skips_over_it(
+        self,
+    ) -> None:
+        # Extending would give 3, breaking 1; the NULL outcome row must still count.
+        rows = [
+            ("2026-06-09", "rejected", None),
+            ("2026-06-08", "rejected", dc.TIMEOUT_BACKOFF_HAIKU_STATUS),
+            ("2026-06-07", "rejected", "ok"),
+            ("2026-06-06", "applied", "ok"),
+        ]
+        self.assertEqual(self._count(rows), 2)
 
 
 if __name__ == "__main__":
