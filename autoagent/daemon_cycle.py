@@ -314,6 +314,7 @@ FAILURE_CLASS_TRANSIENT = "transient-overload"  # Overloaded / 529 / reset blip
 FAILURE_CLASS_TIMEOUT = "chronic-timeout"    # Haiku call timed out
 FAILURE_CLASS_SUPERSEDE = "supersede"        # mechanical cross-day supersede
 FAILURE_CLASS_AUTH = "auth-failure"          # 401/credential — expired OAuth token
+FAILURE_CLASS_PARKED_PATTERN = "parked-pattern"  # apply guard: covering rows all terminal
 # ADJUDICATING (advances the streak, like quality) but named apart from it so an
 # operator can filter the pattern rows a removal refusal terminalizes: a pattern
 # whose only expressible fix needs a removal the loop cannot evidence is one the
@@ -336,6 +337,8 @@ _NON_ADJUDICATION_CLASSES = frozenset(
         # outage never advances the reject streak (fossilizing healthy agents
         # like dev-shell / dev-front on a credential-expired night).
         FAILURE_CLASS_AUTH,
+        # A guarded reject judges the pattern's state, never the candidate diff.
+        FAILURE_CLASS_PARKED_PATTERN,
     }
 )
 # FAILURE_CLASS_REMOVAL_REFUSAL is deliberately ABSENT from the set above — the
@@ -425,6 +428,9 @@ CYCLE_REGRESSION_EXIT_CODE = 6
 # surfaces a distinct code (NOT silent absorption) so the operator/monitor can
 # tell a backfill DB fault apart from a generation regression.
 BACKFILL_PG_EXIT_CODE = 7
+# Parked-pattern guard mode failed (read, input or write) — stdout stays empty and the
+# apply path applies nothing that run.
+PARKED_GUARD_FAILURE_EXIT_CODE = 8
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
@@ -8975,6 +8981,8 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_REMOVAL_REFUSAL
     if text.startswith(_SUPERSEDE_REASON):
         return FAILURE_CLASS_SUPERSEDE
+    if text.startswith(_PARKED_PATTERN_REASON):
+        return FAILURE_CLASS_PARKED_PATTERN
     if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
         return FAILURE_CLASS_TIMEOUT
     if text.startswith("haiku auth failure"):
@@ -9893,6 +9901,98 @@ def _report_uncovered_proposal(
         f"row(s) [{rows}], nothing left to discharge\n"
     )
     _emit_gate_loop_event(agent, event_ts, cause)
+
+
+# -- Parked-pattern apply guard ----------------------------------------------
+
+# Head of every guarded-reject rationale. classify_failure_rationale prefix-tests it and
+# the monitor reject-bucket route stores it as a LIKE marker — compose tails onto it.
+_PARKED_PATTERN_REASON = "covering pattern parked before apply"
+
+
+def find_parked_proposals(
+    triples: list[dict],
+    coverage_by_agent: dict[str, list[dict]],
+) -> list[dict]:
+    """Selected proposals whose covered pattern rows are all terminal, with those rows.
+
+    Same rule as discharge's covered-terminal cause, so the two cannot drift: an empty
+    covered set or any non-terminal covered row applies as before.
+    """
+    parked: list[dict] = []
+    for triple in triples:
+        proposal_id = int(triple["proposal_id"])
+        cause, covering = _get_uncovered_cause(
+            triple.get("pattern_label") or "",
+            triple.get("pattern_agent") or "",
+            coverage_by_agent,
+        )
+        if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+            continue
+        rows = [{"id": row["id"], "status": row["status"]} for row in covering]
+        parked.append({"proposal_id": proposal_id, "rows": rows})
+    return parked
+
+
+def update_parked_proposal_status(parked: list[dict]) -> list[int]:
+    """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
+
+    Same shape as the same-agent supersede: status + rationale, no enum change, one
+    transaction. A row that left pending/snoozed since selection is left untouched.
+    """
+    if not parked:
+        return []
+    if not HAS_PG_LOOP_WRITE:
+        raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
+    update_sql = (
+        "UPDATE core.autoagent_proposals "
+        "SET status = 'rejected', rationale = %s "
+        "WHERE status IN ('pending', 'snoozed') AND id = %s "
+        "RETURNING id"
+    )
+    rejected: list[int] = []
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            for entry in parked:
+                rows = ", ".join(f"{row['id']}:{row['status']}" for row in entry["rows"])
+                rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
+                cur.execute(update_sql, (rationale, entry["proposal_id"]))
+                rejected.extend(row[0] for row in cur.fetchall())
+        conn.commit()
+    return rejected
+
+
+def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
+    """CLI arm: one JSON verdict line `{"guarded": [...], "rejected": [...]}` on stdout.
+
+    stdin = the apply stage's PATCH_ROWS JSON lines (proposal_id, pattern_agent,
+    pattern_label read; other keys ignored). Any failure → empty stdout + a named exit,
+    and the stderr line names the interpreter, since one without psycopg fails every read.
+    """
+    try:
+        triples = [json.loads(line) for line in stdin_text.splitlines() if line.strip()]
+        coverage_by_agent = get_coverage_rows_by_agent()
+        if coverage_by_agent is None:
+            raise RuntimeError("status-agnostic pattern read failed or is unavailable")
+        parked = find_parked_proposals(triples, coverage_by_agent)
+        rejected = update_parked_proposal_status(parked) if reject_parked else []
+    except Exception as exc:  # noqa: BLE001 — loud-fail: named exit code, nothing applies
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard FAILED: {type(exc).__name__}: "
+            f"{str(exc)[:200]} (interpreter={sys.executable} "
+            f"python {sys.version.split()[0]}, pattern read import ok="
+            f"{HAS_PG_PATTERN_READ}) — nothing applies this run\n"
+        )
+        return PARKED_GUARD_FAILURE_EXIT_CODE
+    for entry in parked:
+        rows = ", ".join(f"{row['id']}:{row['status']}" for row in entry["rows"])
+        outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard: proposal id={entry['proposal_id']} "
+            f"covers only terminal row(s) [{rows}] — {outcome}\n"
+        )
+    sys.stdout.write(json.dumps({"guarded": parked, "rejected": rejected}) + "\n")
+    return 0
 
 
 # -- Post-apply regression gate ---------------------------------------------
@@ -11380,7 +11480,28 @@ def _main(argv: list[str]) -> int:
         help="Agent body the --removal-evidence query resolves its removal set "
         "against.",
     )
+    parser.add_argument(
+        "--parked-pattern-guard",
+        action="store_true",
+        help="Apply guard query: read selected proposal JSON lines on stdin and print "
+        "one JSON verdict naming proposals whose covered pattern rows are all terminal. "
+        "Read-only unless --reject-parked.",
+    )
+    parser.add_argument(
+        "--reject-parked",
+        action="store_true",
+        help="With --parked-pattern-guard: transition guarded pending/snoozed proposals "
+        "to rejected.",
+    )
     args = parser.parse_args(argv)
+
+    if args.reject_parked and not args.parked_pattern_guard:
+        parser.error("--reject-parked requires --parked-pattern-guard")
+
+    if args.parked_pattern_guard:
+        # Answered BEFORE the pause gate: the gate's clean exit 0 with empty stdout would
+        # read as a verdict. The caller holds the apply lock the updater also takes.
+        return _emit_parked_pattern_guard(sys.stdin.read(), reject_parked=args.reject_parked)
 
     if args.removal_evidence:
         # Answered BEFORE the pause gate below: this arm is a read-only query
