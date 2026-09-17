@@ -286,6 +286,13 @@ class SectionExtractorTest(unittest.TestCase):
         kept = [line for line in excerpt.splitlines() if "TRUNCATED" not in line]
         self.assertTrue(all(line in source_lines for line in kept if line))
 
+    def test_when_bound_crossed_then_the_note_opens_with_the_prefix_the_prompt_teaches(self):
+        text = "## A\n" + "a line\n" * 100 + "## B\n" + "b line\n" * 100
+        with self._file(text) as path, contextlib.redirect_stderr(io.StringIO()):
+            note = dc._read_sections(path, 900).rstrip("\n").splitlines()[-1]
+        # The template's NOTE ON THE EXCERPTS must quote the prefix the reader emits.
+        self.assertIn(f"`{note[: note.index(':') + 1]}`", dc._PRE_VERIFY_PROMPT_TEMPLATE)
+
     def test_when_first_block_oversized_then_kept_whole_and_loud(self):
         text = "## Only\n" + "x line\n" * 100
         with self._file(text) as path:
@@ -334,7 +341,8 @@ class BudgetFamilyContextTest(unittest.TestCase):
 
             with _base_root(live_root), mock.patch.object(dc, "GLOBAL_RULES_FILE", rules):
                 plain, _ = _get_prompt(_RELATIVE_TARGET)
-                budget, _ = _get_prompt(_RELATIVE_TARGET, _budget_family_label())
+                # A non-agent-body target attaches every block without a roster read.
+                budget, _ = _get_prompt("hooks/inject-scope-rules.sh", _budget_family_label())
 
         for heading, terminal in (
             (_RULES_HEADING_A, _RULES_TERMINAL_A),

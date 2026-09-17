@@ -14,9 +14,14 @@ patches only. Covered here:
   (c) the budget-family predicate fires on EITHER leg and on neither for a
       neighbouring non-budget proposal, and never on the forbidden
       operational-counter literal;
-  (d) the extracted text actually ARRIVES in the assembled prompt for a
-      budget-family patch and is absent for a non-budget one, and assembly stays
-      byte-idempotent either way.
+  (d) the site leg reads diff file headers the way the header reader defines
+      them — a ``+++ `` body line names no file, a quoted path does;
+  (e) delivery is judged per block against the hook's own roster declarations:
+      a roster member gets only its block, an agent in no roster gets no block
+      text and a not-injected line, a non-agent target gets both blocks labelled
+      by receiving roster, an unreadable roster gets a delivery-unverified line —
+      and assembly stays byte-idempotent on every branch;
+  (f) the live hook rosters still classify the agents these cases rely on.
 
 Both roots are temporary — the source is bound through ``GA_DATA_ROOT`` (the
 ga_paths seam) — so no case depends on an installed ``~/.glass-atrium``.
@@ -58,6 +63,11 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 
 _AGENT = "glass-atrium-dev-python"
 _RELATIVE_TARGET = f"agents/{_AGENT}.md"
+# One agent per delivery branch; RosterDriftTest holds the live hook to these.
+_CARRIER = "glass-atrium-dev-nestjs"
+_DEV_MEMBER = "glass-atrium-dev-node"
+_ANALYSIS_MEMBER = "glass-atrium-intel-planner"
+_ROSTER_OF = {"BUDGET-DEV": _DEV_MEMBER, "BUDGET-ANALYSIS": _ANALYSIS_MEMBER}
 _INJECT_HOOK = _HOOKS_DIR / "inject-scope-rules.sh"
 _LIVE_BUDGET_SRC = _REPO_ROOT / "scoped" / "shared-turn-budget.md"
 # The operational-counter literal the predicate must never key on: it rides a
@@ -107,11 +117,18 @@ def _write_source(root: Path, body: str) -> Path:
     return src
 
 
-def _write_agent(root: Path) -> Path:
-    target = root / "agents" / f"{_AGENT}.md"
+def _write_agent(root: Path, agent: str = _AGENT) -> Path:
+    target = root / "agents" / f"{agent}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(f"# {_AGENT}\n\nbody line\n", encoding="utf-8")
+    target.write_text(f"# {agent}\n\nbody line\n", encoding="utf-8")
     return target
+
+
+def _write_roster_hook(root: Path) -> None:
+    """Copy the live injector hook under `root`, so fixture rosters are the real ones."""
+    dest = root / "hooks" / _INJECT_HOOK.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_INJECT_HOOK, dest)
 
 
 def _fixture_source() -> str:
@@ -131,6 +148,11 @@ def _get_prompt(label: str, target_file: str = _RELATIVE_TARGET, diff: str = "+ 
             _patch_proposal(target_file, diff), _pattern(label)
         )
     return prompt, captured.getvalue()
+
+
+def _get_block_label(prompt: str, name: str) -> str:
+    """The label line an attached block opens with."""
+    return next(line for line in prompt.splitlines() if line.startswith(f"[{name} "))
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
@@ -264,55 +286,160 @@ class BudgetFamilyPredicateTest(unittest.TestCase):
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
-class PromptAttachmentTest(unittest.TestCase):
-    """(d) the blocks arrive, only where they should, and assembly is idempotent."""
+class HeaderSiteTest(unittest.TestCase):
+    """(d) the site leg keys on header paths, never on body lines shaped like headers."""
+
+    _HOOK = "hooks/inject-scope-rules.sh"
+
+    def test_when_a_header_names_the_site_then_the_site_leg_fires(self):
+        prefix = "--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\n"
+        for diff in (
+            f"{prefix}--- a/{self._HOOK}\n+++ b/{self._HOOK}\n@@ -1 +1 @@\n+x\n",
+            f'--- "a/{self._HOOK}"\n+++ "b/{self._HOOK}"\n@@ -1 +1 @@\n+x\n',
+            f"--- a/{self._HOOK}\t2026-01-01\r\n+++ b/{self._HOOK}\t2026-01-01\r\n@@ -1 +1 @@\n",
+        ):
+            with self.subTest(diff=diff):
+                self.assertIsNotNone(dc.match_turn_budget_site(_RELATIVE_TARGET, diff))
+
+    def test_when_only_a_body_line_names_the_site_then_no_site_leg_fires(self):
+        for diff in (
+            f"--- a/x.md\n+++ b/x.md\n@@ -1 +1,2 @@\n-a\n+++ b/{self._HOOK}\n+b\n",
+            f"--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n--- a/{self._HOOK}\n+++ b/{self._HOOK}\n",
+            f"---a/{self._HOOK}\n+++b/{self._HOOK}\n",
+        ):
+            with self.subTest(diff=diff):
+                self.assertIsNone(dc.match_turn_budget_site(_RELATIVE_TARGET, diff))
+
+    def test_when_header_paths_read_then_prefix_tab_quote_and_dev_null_resolve(self):
+        diff = (
+            '--- /dev/null\n+++ "b/d\\303\\251 \\"q\\".md"\t2026\n@@ -0,0 +1 @@\n+x\n'
+            "diff --git a/a/y.md b/a/y.md\n--- a/a/y.md\n+++ b/a/y.md\n"
+        )
+        self.assertEqual(
+            dc._get_diff_header_paths(diff), ['dé "q".md', "a/y.md", "a/y.md"]
+        )
+
+
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class RosterDeliveryTest(unittest.TestCase):
+    """(e) each block's delivery claim follows the hook rosters, on every branch."""
 
     def setUp(self):
+        if not _INJECT_HOOK.is_file():
+            self.skipTest(f"injector hook not readable: {_INJECT_HOOK}")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
-        _write_agent(self.root)
+        for agent in (_AGENT, _CARRIER, _DEV_MEMBER, _ANALYSIS_MEMBER):
+            _write_agent(self.root, agent)
         self.src = _write_source(self.root, _fixture_source())
+        _write_roster_hook(self.root)
         self.budget_label = f"{_budget_core()} (avg overrun +7 tool_uses)"
 
-    def _blocks(self) -> list[str]:
-        return [
-            dc._read_marker_block(self.src, start, end)
-            for _name, start, end in dc.BUDGET_BLOCK_MARKERS
-        ]
+    def _block(self, name: str) -> str:
+        _name, start, end = next(m for m in dc.BUDGET_BLOCK_MARKERS if m[0] == name)
+        return dc._read_marker_block(self.src, start, end)
 
-    def test_when_patch_is_budget_family_then_every_block_reaches_the_prompt(self):
+    def _get_agent_prompt(self, agent: str) -> tuple[str, str]:
         with _base_root(self.root):
-            prompt, stderr = _get_prompt(self.budget_label)
-        for block in self._blocks():
-            self.assertIn(block, prompt)
-        self.assertNotIn(dc.TURN_BUDGET_NOT_APPLICABLE, prompt)
-        self.assertNotIn(dc.TURN_BUDGET_UNREADABLE_SIGNAL, stderr)
+            return _get_prompt(self.budget_label, f"agents/{agent}.md")
+
+    def test_when_target_is_a_roster_member_then_only_its_block_is_attached(self):
+        for name, agent in _ROSTER_OF.items():
+            with self.subTest(block=name):
+                prompt, _ = self._get_agent_prompt(agent)
+                for other in dc.BUDGET_BLOCK_ROSTERS:
+                    if other == name:
+                        self.assertIn(self._block(other), prompt)
+                    else:
+                        self.assertNotIn(self._block(other), prompt)
+                label = _get_block_label(prompt, name)
+                self.assertIn(agent, label)
+                self.assertIn(dc.BUDGET_BLOCK_ROSTERS[name], label)
+                self.assertNotIn(dc.TURN_BUDGET_NOT_INJECTED_SIGNAL, prompt)
+
+    def test_when_target_is_in_no_roster_then_no_block_text_and_a_not_injected_line(self):
+        prompt, _ = self._get_agent_prompt(_CARRIER)
+        for name in dc.BUDGET_BLOCK_ROSTERS:
+            self.assertNotIn(self._block(name), prompt)
+        line = next(ln for ln in prompt.splitlines() if dc.TURN_BUDGET_NOT_INJECTED_SIGNAL in ln)
+        self.assertIn(_CARRIER, line)
+        live = _LIVE_BUDGET_SRC.read_text(encoding="utf-8") if _LIVE_BUDGET_SRC.is_file() else ""
+        for block_line in (ln.strip() for ln in live.splitlines()):
+            # The line may cite no block wording, live source included.
+            if len(block_line) > 12:
+                self.assertNotIn(block_line, line)
+
+    def test_when_target_is_not_an_agent_body_then_every_block_names_its_roster(self):
+        for target in ("scoped/shared-turn-budget.md", "agents/GLASS_ATRIUM_GLOBAL_RULES.md"):
+            with self.subTest(target=target), _base_root(self.root):
+                prompt, _ = _get_prompt(self.budget_label, target)
+                for name, roster in dc.BUDGET_BLOCK_ROSTERS.items():
+                    self.assertIn(self._block(name), prompt)
+                    self.assertIn(roster, _get_block_label(prompt, name))
+
+    def test_when_roster_unreadable_then_delivery_is_unverified_on_both_channels(self):
+        hook = self.root / "hooks" / _INJECT_HOOK.name
+        for body in (None, "#!/usr/bin/env bash\nreadonly OTHER=\" x \"\n"):
+            with self.subTest(hook_body=body):
+                if body is None:
+                    hook.unlink()
+                else:
+                    hook.write_text(body, encoding="utf-8")
+                prompt, stderr = self._get_agent_prompt(_DEV_MEMBER)
+                self.assertIn(dc.TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL, prompt)
+                self.assertIn(dc.TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL, stderr)
+                for name in dc.BUDGET_BLOCK_ROSTERS:
+                    self.assertNotIn(self._block(name), prompt)
 
     def test_when_patch_is_not_budget_family_then_no_block_reaches_the_prompt(self):
         with _base_root(self.root):
-            prompt, _ = _get_prompt(_NEIGHBOUR_LABEL)
-        for block in self._blocks():
-            self.assertNotIn(block, prompt)
+            prompt, _ = _get_prompt(_NEIGHBOUR_LABEL, f"agents/{_DEV_MEMBER}.md")
+        for name in dc.BUDGET_BLOCK_ROSTERS:
+            self.assertNotIn(self._block(name), prompt)
         self.assertIn(dc.TURN_BUDGET_NOT_APPLICABLE, prompt)
 
     def test_when_source_unreadable_then_the_named_signal_is_loud_on_both_channels(self):
-        with tempfile.TemporaryDirectory() as bare:
-            bare_root = Path(bare)
-            _write_agent(bare_root)
-            with _base_root(bare_root):
-                prompt, stderr = _get_prompt(self.budget_label)
+        self.src.unlink()
+        prompt, stderr = self._get_agent_prompt(_DEV_MEMBER)
         self.assertIn(dc.TURN_BUDGET_UNREADABLE_SIGNAL, stderr)
         self.assertIn(dc.TURN_BUDGET_UNREADABLE_SIGNAL, prompt)
 
-    def test_when_assembled_twice_then_the_prompt_is_byte_identical(self):
-        # The docstring's idempotency claim, asserted for BOTH dispositions of
-        # the new slot — attached and not.
-        for label in (self.budget_label, _NEIGHBOUR_LABEL):
-            with self.subTest(label=label), _base_root(self.root):
-                first, _ = _get_prompt(label)
-                second, _ = _get_prompt(label)
-                self.assertEqual(first, second)
+    def test_when_assembled_twice_then_the_prompt_is_byte_identical_on_every_branch(self):
+        cases = [(self.budget_label, f"agents/{a}.md") for a in (_CARRIER, _DEV_MEMBER, _ANALYSIS_MEMBER)]
+        cases += [(self.budget_label, "scoped/shared-turn-budget.md"), (_NEIGHBOUR_LABEL, _RELATIVE_TARGET)]
+        for label, target in cases:
+            with self.subTest(target=target), _base_root(self.root):
+                self.assertEqual(_get_prompt(label, target)[0], _get_prompt(label, target)[0])
+        (self.root / "hooks" / _INJECT_HOOK.name).unlink()
+        with _base_root(self.root):
+            first = _get_prompt(self.budget_label, f"agents/{_DEV_MEMBER}.md")[0]
+            self.assertEqual(first, _get_prompt(self.budget_label, f"agents/{_DEV_MEMBER}.md")[0])
+
+
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class RosterDriftTest(unittest.TestCase):
+    """(f) the live hook arrays still put each test agent on the branch it stands for."""
+
+    def test_when_live_hook_read_then_rosters_match_bash_and_the_test_agents(self):
+        if not _INJECT_HOOK.is_file() or not shutil.which("bash"):
+            self.skipTest("injector hook or bash unavailable")
+        with _base_root(_REPO_ROOT):
+            rosters = dc._get_budget_rosters()
+        self.assertIsNotNone(rosters)
+        for roster, members in rosters.items():
+            # bash evaluates the declaration itself — the parser must agree with it.
+            shell = subprocess.run(
+                ["bash", "-c", f'eval "$(grep -E "^readonly {roster}=" "$1")"; echo ${roster}',
+                 "_", str(_INJECT_HOOK)],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(members, frozenset(shell.stdout.split()), roster)
+        for name, agent in _ROSTER_OF.items():
+            self.assertEqual(
+                {r for r, m in rosters.items() if agent in m}, {dc.BUDGET_BLOCK_ROSTERS[name]}
+            )
+        self.assertFalse(any(_CARRIER in m for m in rosters.values()))
 
 
 if __name__ == "__main__":

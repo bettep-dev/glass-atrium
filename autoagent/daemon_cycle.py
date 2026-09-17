@@ -40,9 +40,10 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
 # -- Constants --------------------------------------------------------------
@@ -1092,7 +1093,8 @@ def _get_target_path(target_file: str) -> Path | None:
 # slot resolves hooks/inject-scope-rules.sh. So a patch duplicating an already
 # injected budget bullet reads to C4 as "a NEW rule consistent with the existing
 # ones" — a clean PASS. This section attaches that text, budget-family only, so a
-# non-budget prompt pays none of its tokens.
+# non-budget prompt pays none of its tokens, and labels each block with whether the
+# hook rosters actually inject it into the target agent.
 
 # Marker literals — verbatim copies of BUDGET_DEV_MARKER_START/END and
 # BUDGET_ANALYSIS_MARKER_START/END in hooks/inject-scope-rules.sh, which
@@ -1112,6 +1114,17 @@ BUDGET_BLOCK_MARKERS: tuple[tuple[str, str, str], ...] = (
     ),
 )
 TURN_BUDGET_SRC_NAME = "shared-turn-budget.md"
+
+# Receiving roster of each marker block, by the hook's declaration NAME. Members are
+# read from that declaration at assembly time — the hook arrays are the only
+# runtime source of who receives a block, and the registry carries no budget field.
+BUDGET_BLOCK_ROSTERS: dict[str, str] = {
+    "BUDGET-DEV": "BUDGET_DEV_AGENTS",
+    "BUDGET-ANALYSIS": "BUDGET_ANALYSIS_AGENTS",
+}
+TURN_BUDGET_ROSTER_SRC = Path("hooks") / "inject-scope-rules.sh"
+TURN_BUDGET_NOT_INJECTED_SIGNAL = "TURN-BUDGET-NOT-INJECTED"
+TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL = "TURN-BUDGET-DELIVERY-UNVERIFIED"
 
 # Named signal for an unreadable injected-text source, carried on BOTH channels —
 # the reason C3/C4 each carry one: a silently empty slot reads to the verifier as
@@ -1140,7 +1153,7 @@ TURN_BUDGET_NOT_APPLICABLE = (
 BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
 
 # SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
-# against the declared target AND the diff's own file headers.
+# against the declared target AND the paths _get_diff_header_paths reads.
 #
 # GLASS_ATRIUM_GLOBAL_RULES.md is deliberately absent: its Turn Budget section
 # already reaches the verifier WHOLE in the C2 slot, so a row for it would attach
@@ -1149,8 +1162,64 @@ _TURN_BUDGET_SITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)shared-turn-budget\.md$"),
     re.compile(r"(^|/)inject-scope-rules\.sh$"),
 )
-# Unified-diff file headers, a/ and b/ prefixes stripped.
-_DIFF_FILE_HEADER_RE = re.compile(r"^(?:---|\+\+\+) (?:[ab]/)?(\S+)", re.MULTILINE)
+_GIT_QUOTE_ESCAPES: dict[str, int] = {
+    "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92,
+}
+
+
+def _get_diff_header_paths(diff: str) -> list[str]:
+    """Return the file paths a diff's header pairs name — path extraction only, never a body reading.
+
+    Before any hunk (or after ``diff --git``) a ``--- `` line directly followed by
+    ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
+    because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
+    """
+    lines = [line.removesuffix("\r") for line in (diff or "").splitlines()]
+    paths: list[str] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        if line.startswith(("@@", "diff --git ")):
+            in_hunk = line.startswith("@@")
+            continue
+        pair = lines[idx : idx + 3]
+        if not (len(pair) > 1 and line.startswith("--- ") and pair[1].startswith("+++ ")):
+            continue
+        if in_hunk and not (len(pair) > 2 and pair[2].startswith("@@")):
+            continue
+        for raw, prefix in ((line, "a/"), (pair[1], "b/")):
+            path = _get_header_path(raw[4:], prefix)
+            if path:
+                paths.append(path)
+    return paths
+
+
+def _get_header_path(text: str, prefix: str) -> str | None:
+    """One header's path: cut at the first tab, git-unquoted, ``prefix`` stripped once."""
+    path = text.split("\t", 1)[0]
+    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
+        path = _get_unquoted_git_path(path[1:-1])
+    if path == "/dev/null":
+        return None
+    return path.removeprefix(prefix) or None
+
+
+def _get_unquoted_git_path(body: str) -> str:
+    """Undo git's C-style path quoting — named escapes and 3-digit octal UTF-8 bytes."""
+    out = bytearray()
+    idx = 0
+    while idx < len(body):
+        octal = body[idx + 1 : idx + 4]
+        if body[idx] != "\\" or idx + 1 == len(body):
+            out += body[idx].encode()
+            idx += 1
+        elif len(octal) == 3 and all(ch in "01234567" for ch in octal):
+            out.append(int(octal, 8))
+            idx += 4
+        else:
+            escaped = _GIT_QUOTE_ESCAPES.get(body[idx + 1])
+            out += bytes([escaped]) if escaped is not None else body[idx + 1].encode()
+            idx += 2
+    return out.decode("utf-8", errors="replace")
 
 
 def _get_turn_budget_src() -> Path:
@@ -1195,11 +1264,77 @@ def _read_marker_block(path: Path, start: str, end: str) -> str:
     return "\n".join(line for line in kept if line != start)
 
 
-def _injected_budget_excerpt() -> str:
-    """Compose the injected BUDGET blocks, each labelled by its marker name."""
+def _get_budget_rosters() -> dict[str, frozenset[str]] | None:
+    """Read each receiving roster from its one-line ``readonly <NAME>="..."`` hook declaration.
+
+    ``None`` when the hook is unreadable or any declaration is missing, so no caller
+    claims a delivery it could not read. A line-anchored local parse:
+    scripts/agent_lifecycle/readers.py uses package-relative imports the daemon cannot take.
+    """
+    try:
+        text = (ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    rosters: dict[str, frozenset[str]] = {}
+    for roster in BUDGET_BLOCK_ROSTERS.values():
+        match = re.search(rf'^readonly {roster}="([^"]*)"$', text, re.MULTILINE)
+        if match is None:
+            return None
+        rosters[roster] = frozenset(match.group(1).split())
+    return rosters
+
+
+def _get_agent_body_name(target_file: str) -> str | None:
+    """The agent an ``agents/<name>.md`` target is the body of; ``None`` for any other target."""
+    path = PurePosixPath(target_file or "")
+    if path.parent.name != "agents" or path.suffix != ".md" or path.name == GLOBAL_RULES_FILE.name:
+        return None
+    return path.stem
+
+
+def _injected_budget_excerpt(target_file: str) -> str:
+    """Compose the budget blocks the hook injects, each labelled with its delivery to ``target_file``."""
+    agent = _get_agent_body_name(target_file)
+    if agent is None:
+        return _compose_budget_blocks(
+            BUDGET_BLOCK_MARKERS, lambda name: f"every {BUDGET_BLOCK_ROSTERS[name]} member"
+        )
+    rosters = _get_budget_rosters()
+    if rosters is None:
+        return _get_delivery_unverified_line(agent)
+    received = tuple(m for m in BUDGET_BLOCK_MARKERS if agent in rosters[BUDGET_BLOCK_ROSTERS[m[0]]])
+    if not received:
+        return (
+            f"{TURN_BUDGET_NOT_INJECTED_SIGNAL}: {agent} is in no budget injection roster, so "
+            "the hook delivers no budget block to it. Budget text in its own body is its "
+            "designed path, and there is no injected text to compare a restatement against."
+        )
+    return _compose_budget_blocks(
+        received, lambda name: f"THIS target agent ({agent}, a {BUDGET_BLOCK_ROSTERS[name]} member)"
+    )
+
+
+def _get_delivery_unverified_line(agent: str) -> str:
+    """Warn and return the slot line for rosters that could not be read — never a delivery claim."""
+    src = ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: {TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL} — budget rosters "
+        f"unreadable in {src}; no block attached for {agent}\n"
+    )
+    return (
+        f"{TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL}: the injection rosters in {src} could "
+        f"not be read, so whether any budget block reaches {agent} is unknown. No block "
+        "is attached and none is claimed injected."
+    )
+
+
+def _compose_budget_blocks(
+    markers: tuple[tuple[str, str, str], ...], recipient: Callable[[str], str]
+) -> str:
+    """Read each marker block and label it with the ``recipient`` the hook injects it into."""
     src = _get_turn_budget_src()
     parts: list[str] = []
-    for name, start, end in BUDGET_BLOCK_MARKERS:
+    for name, start, end in markers:
         block = _read_marker_block(src, start, end)
         if not block.strip():
             sys.stderr.write(
@@ -1207,13 +1342,11 @@ def _injected_budget_excerpt() -> str:
                 f"empty or markers absent in {src}\n"
             )
             continue
-        parts.append(f"[{name} — injected at every spawn by the SubagentStart hook]\n{block}")
-
+        parts.append(f"[{name} — injected at spawn into {recipient(name)}]\n{block}")
     if not parts:
         return (
             f"{TURN_BUDGET_UNREADABLE_SIGNAL}: no injected turn-budget block resolved "
-            f"from {src}, so this prompt cannot show what the target agent already "
-            "receives at spawn."
+            f"from {src}, so this prompt cannot show what the target agent receives at spawn."
         )
     return "\n\n".join(parts)
 
@@ -1221,11 +1354,10 @@ def _injected_budget_excerpt() -> str:
 def match_turn_budget_site(target_file: str, diff: str) -> str | None:
     """Return the source of the first turn-budget site pattern the patch touches.
 
-    The declared target AND the diff's own file headers are both inspected — a
+    The declared target AND the diff's own header paths are both inspected — a
     patch can be filed against one path and carry hunks against another.
     """
-    candidates = [target_file or ""]
-    candidates.extend(_DIFF_FILE_HEADER_RE.findall(diff or ""))
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
     for candidate in candidates:
         for pat in _TURN_BUDGET_SITE_PATTERNS:
             if pat.search(candidate):
@@ -6068,9 +6200,8 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 # when it drops heading blocks at the bound — a drift the test suite pins.
 _PRE_VERIFY_PROMPT_TEMPLATE = """You are meta-prompt-engineer acting as a compliance verifier for AutoAgent.
 
-A patch has been proposed for a target agent's instruction file. Your job is
-to evaluate the patch against 4 independent compliance axes and emit a
-strict, parseable verdict.
+A patch has been proposed for a target agent's instruction file. Judge it on 4
+independent compliance axes and emit a parseable verdict.
 
 PATCH METADATA:
 - target_agent: {target_agent}
@@ -6082,12 +6213,11 @@ PROPOSED DIFF (unified-diff fragment):
 {diff}
 ---
 
-NOTE ON THE DIFF: the fragment above may be a bounded EXCERPT. A line opening
-`[DIFF-EXCERPT-` marks where the harness stopped, and the hunks past it were
-withheld before you ever saw them. Judge every axis ONLY on the hunks shown, and
-NEVER FAIL an axis because the fragment ends early, reads as partial, or carries
-such a marker — that is a harness bound, not a defect in the patch. With no such
-marker the fragment is the COMPLETE diff.
+NOTE ON THE DIFF: a line opening `[DIFF-EXCERPT-` marks where the harness cut
+the fragment; the hunks past it were withheld. Judge every axis ONLY on the hunks
+shown, and NEVER FAIL an axis because the fragment ends early or carries that
+marker — it is a harness bound, not a patch defect. With no such marker the
+fragment is the COMPLETE diff.
 
 RATIONALE FROM PATCH GENERATOR:
 {patch_rationale}
@@ -6114,24 +6244,21 @@ COMPLIANCE SOURCES (excerpts):
 {target_agent_excerpt}
 ---
 
-NOTE ON THE EXCERPTS: each compliance source above may be a bounded EXCERPT. A
-line opening `[TRUNCATED:` marks where the harness stopped, and the whole heading
-blocks past it were withheld before you ever saw them. Under that marker its
-source is NOT the complete list the axis reading it calls one, so a rule you
-recall but cannot find there IS a ground for FAIL — name it in the RATIONALE.
-This gate applies edits unattended, so err that way. With no such marker the
-excerpt is COMPLETE.
+NOTE ON THE EXCERPTS: C2 and C3 are judged ONLY against their excerpt. With no
+`[TRUNCATED:` line the excerpt is COMPLETE, so a rule you recall but cannot find
+there is not a ground for FAIL. A line opening `[TRUNCATED:` marks where the
+harness withheld whole heading blocks; under it a rule you recall but cannot
+find IS a ground for FAIL — name it in the RATIONALE, because this gate applies
+edits unattended.
 
-[INJECTED TURN-BUDGET TEXT — delivered at every spawn, present in NO excerpt above]
+[INJECTED TURN-BUDGET TEXT — hook-injected at spawn, in NO excerpt above; each block states its recipient]
 ---
 {turn_budget_excerpt}
 ---
 
-NOTE ON THE INJECTED TEXT: the block above is attached only for a budget-family
-patch; otherwise it says exactly that and carries no text. When it DOES carry
-text, that text already reaches the target agent on every spawn through the
-SubagentStart injector and so appears in NONE of the four excerpts above — which
-is why a patch restating it looks like a clean addition and is not one.
+NOTE ON THE INJECTED TEXT: a block labelled as injected into THIS target agent
+reaches it at every spawn through the SubagentStart hook, without appearing in
+any excerpt above.
 
 VERIFICATION TASK:
 
@@ -6139,25 +6266,19 @@ For each of the 4 axes, decide PASS or FAIL:
   C1: Does the patch subvert / remove / weaken any Tier-1, Tier-2, or Tier-3
       rule loading policy in compliance-matrix? (FAIL if it removes a rule
       reference the target agent's scope must load.)
-  C2: Does the patch violate any ALL-scope rule stated in the GLOBAL_RULES
-      excerpt above? That excerpt is the COMPLETE and authoritative list —
-      judge against what it states and nothing else, so a rule you recall
-      but cannot find there is not a ground for FAIL. Its `## Absolute
-      Rules` section is the densest source; every ALL-scope section the
-      excerpt carries counts equally.
-  C3: Does the patch violate any rule stated in the target agent's scope
-      excerpt above? Same excerpt-only judgement as C2. Scope files differ
-      in how they head their rule sections and some head none, so a missing
-      heading is not an absent rule — read the excerpt, not for a title.
+  C2: Does the patch violate any ALL-scope rule the GLOBAL_RULES excerpt
+      above states? Every section it carries counts equally.
+  C3: Does the patch violate any rule the target agent's scope excerpt above
+      states? A rule counts under any heading or none — read the excerpt,
+      not its titles.
   C4: Does the patch CONTRADICT (not merely add to) a rule the target agent
-      file above ALREADY states? Judge on the rules that excerpt carries,
-      under whatever heading they sit and under none.
+      file above ALREADY states, under any heading or none?
       (Adding a NEW rule consistent with the existing ones = PASS.
        Reversing or weakening an existing rule = FAIL.
-       Restating text the INJECTED TURN-BUDGET TEXT block already carries = FAIL
-       — the agent already receives it, so that is a duplicate, not a new rule.)
+       Restating text from a block labelled as injected into THIS target
+       agent = FAIL — the agent already receives it, so it is a duplicate.)
 
-OUTPUT STRICT FORMAT (no preamble, no markdown fences, exactly these lines):
+OUTPUT FORMAT (exactly these lines, each on its own line):
 C1: PASS|FAIL
 C2: PASS|FAIL
 C3: PASS|FAIL
@@ -6379,7 +6500,7 @@ def _turn_budget_excerpt_for(patch: PatchProposal, pattern: Pattern) -> str:
     """
     if match_budget_family(pattern.label, patch.target_file, patch.proposed_diff) is None:
         return TURN_BUDGET_NOT_APPLICABLE
-    return _injected_budget_excerpt()
+    return _injected_budget_excerpt(patch.target_file)
 
 
 def _parse_pre_verify_response(stdout: str) -> tuple[dict[str, bool], bool, str]:

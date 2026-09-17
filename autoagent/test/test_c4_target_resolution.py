@@ -62,6 +62,7 @@ _RELATIVE_TARGET = f"agents/{_AGENT}.md"
 _PLACEHOLDER = "(file not available)"
 _LIVE_MARKER = "LIVE-TARGET-BODY-MARKER"
 _RELEASE_MARKER = "RELEASE-ONLY-BODY-MARKER"
+_BUDGET_SITE_TARGET = "hooks/inject-scope-rules.sh"
 
 
 def _base_root(path: Path):
@@ -258,8 +259,9 @@ class TurnBudgetSourceResolutionTest(unittest.TestCase):
             captured = io.StringIO()
             with _base_root(live_root), _in_dir(repo_root):
                 with contextlib.redirect_stderr(captured):
+                    # A non-agent-body target attaches every block without a roster read.
                     prompt = dc._build_pre_verify_prompt(
-                        _patch_proposal(_RELATIVE_TARGET),
+                        _patch_proposal(_BUDGET_SITE_TARGET),
                         dc.Pattern(
                             date="2026-09-16",
                             label=budget_label,
@@ -271,7 +273,7 @@ class TurnBudgetSourceResolutionTest(unittest.TestCase):
                         ),
                     )
 
-        # `<name> <marker>` is the injected-block form only; the C4 body carries the bare marker.
+        # `<name> <marker>` is the injected-block form only; the C4 slot resolves no file here.
         for name, _, _ in dc.BUDGET_BLOCK_MARKERS:
             self.assertIn(f"{name} {_LIVE_MARKER}", prompt)
         self.assertNotIn(_RELEASE_MARKER, prompt)
