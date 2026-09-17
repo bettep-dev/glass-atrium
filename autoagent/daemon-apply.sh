@@ -104,7 +104,7 @@
 #   explicit FATAL: the batch backlog NEVER auto-regens, by design).
 #
 # Exit codes:
-#     0 — success (batch: drained/empty-backlog · single: proposal applied)
+#     0 — success (batch: drained/empty-backlog/absent report · single: proposal applied)
 #     2 — argument / config error
 #     3 — required tool missing
 #     4 — lock contention (another apply already running)
@@ -179,17 +179,26 @@
 #          Batch rows in that state are skipped instead, and the live batch has
 #          the guard transition them to rejected. Does NOT collide with 0/2-16.
 #
-# Single-proposal lookup exit codes (select_single_proposal, then
-# assert_generation_outcome after the parked guard). Checked in the order
-# 21 → 19 → 8 → 17/18 → 20, so the most specific answer wins:
+# Patch-source read exit codes. Single path: select_single_proposal, then
+# assert_generation_outcome after the parked guard, checked in the order
+# 21 → 19 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# source read itself (21 backlog · 22 report), before any row is judged — a
+# source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
 #     20 — --proposal-id: REFUSED — the stored generation outcome (haiku_status)
 #          is not ok-prefixed (skipped / error / NULL), so the diff was never
 #          quality-screened. Nothing applied, row left as it was; Reject is the
 #          way out, AUTOAGENT_ALLOW_HAIKU_SKIP=1 the operator override (loud WARN).
-#     21 — --proposal-id: the lookup FAILED (the psql query errored, or its row
-#          could not be reassembled). Infra failure, never read as not-found or a
-#          no-op; nothing applied. Does NOT collide with 0/2-20.
+#     21 — the proposal query FAILED. --proposal-id: the lookup errored or its row
+#          could not be reassembled. Batch: the backlog query (or its reassembly)
+#          errored, and one abort row lands (reason proposal_query_failed); only
+#          reachable with psql present and no --dry-run. Infra failure, never read
+#          as not-found, an empty backlog or a no-op; nothing applied.
+#     22 — report source: the report exists but is unreadable (not JSON, not an
+#          object, or its patches field is not a list of objects), so it is never
+#          read as zero patches. Nothing applied; one abort row lands (reason
+#          report_unreadable). An ABSENT report stays exit 0. Only reachable on the
+#          report fallback (psql absent, or --dry-run). Does NOT collide with 0/2-21.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -1040,7 +1049,12 @@ report_path = sys.argv[1]
 allow_haiku_skip = sys.argv[2] == "1"
 with open(report_path, "r", encoding="utf-8") as fh:
     data = json.load(fh)
-for patch in data.get("patches", []):
+# A non-object report or non-list patches field must fail (exit 22 upstream): `{}` as patches would
+# otherwise iterate as zero patches. A non-object entry fails at .get below.
+patches = data.get("patches", []) if isinstance(data, dict) else None
+if not isinstance(patches, list):
+    sys.exit("[daemon-apply] report %s: not a JSON object with a patches list" % report_path)
+for patch in patches:
     if patch.get("classification") != "body-auto":
         continue
     if patch.get("approval_tier") != "auto":
@@ -2135,6 +2149,34 @@ REMOVAL_VERDICT=""
 # SET at the head of every drain by set_parked_verdict, read per row in the loop.
 PARKED_VERDICT=""
 
+# emit_abort_row LABEL BUILDER [ARG...] — land the row `BUILDER ARG...` prints, or say out loud that it
+# could not be landed. The exit is NEVER the emit's to change: each caller's named exit code is what its
+# tests assert, so a failed row degrades to a named WARN. The builder runs in its own `$()`, so a build
+# failure takes the WARN branch too.
+emit_abort_row() {
+    local label="$1" row=""
+    shift
+    if row="$("$@")" && emit_log "${row}"; then
+        printf '[daemon-apply] %s abort recorded → %s\n' "${label}" "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: %s abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${label}" "${APPLIED_LOG}" >&2
+    fi
+}
+
+# source_read_abort_row REASON EXIT_CODE — the ONE row a batch source that could not be read lands.
+# `abort` for the reasons at the backlog_anomaly_row header; `reason` names the failed read. Every field
+# is a closed producer literal, so no escaping.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
+source_read_abort_row() {
+    local ts_json
+    ts_json="$(ts_now_json)" || return 1
+    [[ -n "${ts_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"%s","exit_code":%d,"patch_source":"%s"}' \
+        "${ts_json}" "$1" "$2" "${PATCH_SOURCE}"
+}
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -2143,8 +2185,11 @@ PARKED_VERDICT=""
 # PATCH_SOURCE drives the loud-fail contract: backlog AND single sources enforce
 # the status UPDATE (exit 6 on failure); report-sourced patches stay best-effort.
 # bash 3.2 compat: mapfile is bash 4+, so we use IFS=$'\n' + read loop.
+# Both batch extractors are captured, not read through `< <(…)`, which drops the return code and turns a
+# failed read into "0 patches" plus a heartbeat that supersedes a live abort.
 PATCH_ROWS=()
 PATCH_SOURCE="report"
+BATCH_PATCH_LINES=""
 # Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
 SINGLE_HAIKU_STATUS=""
 
@@ -2159,9 +2204,11 @@ if [[ -n "${PROPOSAL_ID}" ]]; then
     select_single_proposal
 elif backlog_source_available; then
     PATCH_SOURCE="backlog"
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_backlog_patches)
+    if ! BATCH_PATCH_LINES="$(extract_backlog_patches)"; then
+        printf '[daemon-apply] FATAL: backlog query failed — nothing applied (DB query error, not an empty backlog)\n' >&2
+        emit_abort_row 'backlog query' source_read_abort_row proposal_query_failed 21
+        exit 21
+    fi
 else
     # Fallback path only: an absent report = nothing to apply. (Relocated from
     # the old line-219 guard so it no longer short-circuits the backlog path,
@@ -2170,10 +2217,16 @@ else
         printf '[daemon-apply] no report at %s — nothing to apply\n' "${REPORT_PATH}" >&2
         exit 0
     fi
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_body_auto_patches "${REPORT_PATH}")
+    if ! BATCH_PATCH_LINES="$(extract_body_auto_patches "${REPORT_PATH}")"; then
+        printf '[daemon-apply] FATAL: report %s is unreadable — nothing applied (not read as zero patches)\n' \
+            "${REPORT_PATH}" >&2
+        emit_abort_row 'report source' source_read_abort_row report_unreadable 22
+        exit 22
+    fi
 fi
+while IFS= read -r _row; do
+    [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
+done <<<"${BATCH_PATCH_LINES}"
 
 # zero_eligible_row — serialise the ONE post-gate row a cycle with nothing to apply writes. Built
 # field-by-field for the same reason preflight_abort_row is: a nested `$(… | json_escape)` inside the
@@ -2215,7 +2268,8 @@ emit_zero_eligible_row() {
     fi
 }
 
-# The single source never gets here empty: select_single_proposal exits 21/19/8 instead.
+# Empty here means a real empty backlog or report: a failed batch read exited 21/22 above, and the single
+# source exits 21/19/8 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
@@ -2253,21 +2307,6 @@ backlog_anomaly_row() {
     [[ -n "${ts_json}" ]] || return 1
     printf '{"ts":%s,"status":"abort","reason":"backlog_anomaly","exit_code":7,"eligible_pending":%d,"threshold":%d,"patch_source":"backlog"}' \
         "${ts_json}" "${eligible}" "${ANOMALY_THRESHOLD}"
-}
-
-# emit_abort_row LABEL BUILDER [ARG...] — land the row `BUILDER ARG...` prints, or say out loud that it
-# could not be landed. The exit is NEVER the emit's to change: each caller's named exit code is what its
-# tests assert, so a failed row degrades to a named WARN. The builder runs in its own `$()`, so a build
-# failure takes the WARN branch too.
-emit_abort_row() {
-    local label="$1" row=""
-    shift
-    if row="$("$@")" && emit_log "${row}"; then
-        printf '[daemon-apply] %s abort recorded → %s\n' "${label}" "${APPLIED_LOG}" >&2
-    else
-        printf '[daemon-apply] WARN: %s abort row NOT persisted (%s) — this abort is stderr-only\n' \
-            "${label}" "${APPLIED_LOG}" >&2
-    fi
 }
 
 if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ ${#PATCH_ROWS[@]} -gt ${ANOMALY_THRESHOLD} ]]; then
