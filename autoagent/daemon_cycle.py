@@ -254,7 +254,7 @@ OUTCOME_SAMPLE_LIMIT = 5
 # GENERATION-side chronic timeout had NO back-off at all. This threshold bounds
 # it: after N CONSECUTIVE Haiku-timeouts on the SAME target_file (counted from the
 # persisted core.autoagent_proposals rows), the generation path STOPS re-invoking
-# Haiku for that target and instead emits a loud, observable 'snoozed' reject row
+# Haiku for that target and instead emits a loud, observable 'rejected' marker row
 # (no Haiku spend, no `error` → no spurious 'partial'). A single non-timeout row
 # (e.g. an 'ok' generation) breaks the streak and re-arms the candidate, so a
 # transiently-flaky-but-occasionally-generatable target recovers on its own.
@@ -279,6 +279,9 @@ TIMEOUT_BACKOFF_RATIONALE_TEMPLATE = (
     "(threshold {thr}) — generation snoozed to stop burning budget; recovers on "
     "the next non-timeout generation. Resolve the candidate or raise the timeout."
 )
+# haiku_status of a back-off row — both all-reject counters exclude it: a marker is
+# neither pipeline output nor a rejection.
+TIMEOUT_BACKOFF_HAIKU_STATUS = "skipped:chronic-timeout-backoff"
 TIMEOUT_BACKOFF_PROBE_ENV = "AUTOAGENT_TIMEOUT_BACKOFF_PROBE_CYCLES"
 # Self-lock guard: the documented recovery ("a non-timeout row breaks the streak")
 # names an actor the closed gate suppresses, so the state is unreachable from
@@ -6961,8 +6964,10 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
     Groups core.autoagent_proposals by cycle_date STRICTLY BEFORE the current
     cycle (the current cycle is judged from the in-memory report — excluding it
     here prevents a same-day re-run from double-counting today) and counts how
-    many of the most recent cycle_dates carry zero non-rejected rows. Stops at
-    the first cycle with >=1 non-rejected proposal. Bounded LIMIT mirrors
+    many of the most recent cycle_dates carry zero non-rejected rows. Back-off
+    marker rows are excluded before grouping, so a marker-only date drops out of
+    the walk like a quiet night — neither extending nor breaking the streak.
+    Stops at the first cycle with >=1 non-rejected proposal. Bounded LIMIT mirrors
     consecutive_timeout_count. PG unavailable / read error → 0 (fail-open: a
     read failure must never fabricate an alert).
     """
@@ -6973,6 +6978,9 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         "SELECT count(*) FILTER (WHERE status::text <> 'rejected') "
         "FROM core.autoagent_proposals "
         "WHERE cycle_date < %s::date "
+        # WHERE, not FILTER: a marker-only date drops out, never a zero-count group
+        # IS DISTINCT FROM: a plain <> would also drop NULL-outcome rows
+        "AND haiku_status IS DISTINCT FROM %s "
         "GROUP BY cycle_date "
         "ORDER BY cycle_date DESC "
         # LIMIT high enough not to flatten a long real streak — the prior
@@ -6984,7 +6992,9 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (current_cycle_date,))
+                cur.execute(
+                    select_sql, (current_cycle_date, TIMEOUT_BACKOFF_HAIKU_STATUS)
+                )
                 rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
         sys.stderr.write(
@@ -7049,18 +7059,25 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
 def _all_rejected_this_cycle(report: CycleReport) -> bool:
     """Shared discriminator: this cycle INGESTED input and rejected ALL of it.
 
-    True iff report.patches is non-empty AND every patch is terminal-negative.
-    A quiet night (patches=[]) is False — the single SoT for the
+    Back-off marker patches (TIMEOUT_BACKOFF_HAIKU_STATUS) are set aside first —
+    a marker is neither output nor a rejection. True iff >=1 patch remains AND
+    every remaining patch is terminal-negative. A quiet night (patches=[] or
+    markers only) is False — the single SoT for the
     "all-reject-this-cycle" precondition both alert_all_reject_streak and
     is_systemic_regression gate on (a 'snoozed'/'pending'/'applied' row is
     non-rejected pipeline output → False). 'reverted' counts as
     rejected-equivalent: a backed-out apply is terminal-non-resurrectable, NOT
     live pipeline output, so it must never resurrect the healthy-output claim.
     """
-    if not report.patches:
+    adjudicated_patches = [
+        patch
+        for patch in report.patches
+        if patch.haiku_status != TIMEOUT_BACKOFF_HAIKU_STATUS
+    ]
+    if not adjudicated_patches:
         return False
     return all(
-        patch.status in ("rejected", "reverted") for patch in report.patches
+        patch.status in ("rejected", "reverted") for patch in adjudicated_patches
     )
 
 
@@ -7068,9 +7085,9 @@ def is_systemic_regression(report: CycleReport) -> bool:
     """True only for a systemic zero-output regression, never a quiet night.
 
     The discriminator is unchanged from alert_all_reject_streak: this cycle must
-    have INGESTED input (report.patches non-empty) AND produced zero non-rejected
-    output (every patch 'rejected'). A legitimately quiet night yields
-    patches=[] → False here (caller stays clean exit 0). On top of that, ONE of
+    have INGESTED input (a non-marker patch) AND produced zero non-rejected
+    output (every non-marker patch 'rejected'). A legitimately quiet night
+    (patches=[] or back-off markers only) → False here (caller stays clean exit 0). On top of that, ONE of
     two corroborating crits must hold: the all-reject streak reached
     ALL_REJECT_ALERT_THRESHOLD, OR the days-since-last-applied gap exceeds
     DAYS_SINCE_APPLIED_CRIT_THRESHOLD (the slow-bleed leg). The days leg widens
@@ -7091,8 +7108,8 @@ def alert_all_reject_streak(report: CycleReport) -> None:
     Fires only when the CURRENT cycle produced >=1 proposal and ALL of them are
     'rejected' AND the prior persisted cycles extend the streak to
     ALL_REJECT_ALERT_THRESHOLD. 'snoozed'/'pending' rows count as non-rejected
-    (a back-off or queued proposal is still pipeline output) and break the
-    streak. Precondition Loud-Fail: the alert is the observable surface for a
+    (a queued proposal is still pipeline output) and break the streak; back-off
+    marker rows count as neither. Precondition Loud-Fail: the alert is the observable surface for a
     systemic reject regression that individual reject rows cannot convey.
     """
     if not _all_rejected_this_cycle(report):
@@ -8475,7 +8492,7 @@ def backoff_skip_proposal(target_file: str, streak: int) -> PatchProposal:
     No Haiku call was made — this is the loud, persisted record of the back-off
     decision (per shared-self-improve-hygiene Precondition Loud-Fail: the skip is
     surfaced in the proposal row, never silent). Empty diff + a back-off rationale
-    + parse_mode='skipped'. run_cycle maps this to a 'snoozed'/reject row whose
+    + parse_mode='skipped'. run_cycle maps this to a terminal 'rejected' row whose
     `error` field stays EMPTY, so the cycle does not flip to 'partial'.
 
     Args:
@@ -8985,6 +9002,9 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_PARKED_PATTERN
     if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
         return FAILURE_CLASS_TIMEOUT
+    if text.startswith(TIMEOUT_BACKOFF_RATIONALE_PREFIX):
+        # Back-off marker stored 'rejected' — no Haiku call ran, so no verdict.
+        return FAILURE_CLASS_TIMEOUT
     if text.startswith("haiku auth failure"):
         # 401/credential — INFRA, looked PAST by the kill streak (must precede
         # the generic non-zero branch so an auth failure is not mislabeled).
@@ -9091,7 +9111,7 @@ def consecutive_reject_count(
         the candidate was never genuinely adjudicated, so it MUST NOT advance
         the kill streak (the de-conflation root-cause fix);
       - 'rejected' classifying as a genuine QUALITY reject → streak += 1;
-      - 'snoozed' (back-off, stale-drain) / 'pending' (not yet adjudicated) /
+      - 'snoozed' (stale-drain, legacy back-off) / 'pending' (not yet adjudicated) /
         'reverted' (human/CLI back-out — terminal-non-resurrectable: it must
         NOT re-arm the candidate the way an accepted change does; pattern
         exclusion is owned by drop_reverted_patterns) → looked past;
@@ -11009,7 +11029,7 @@ def run_cycle(
             # can flag a backed-off candidate vs. a generic empty/error. Branch
             # FIRST among the non-test cases (it always yields an empty diff and
             # must not collapse into 'skipped:empty-or-error').
-            haiku_status = "skipped:chronic-timeout-backoff"
+            haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
         elif proposal.parse_mode == "budget-too-low":
             # Local budget-config failure — distinct from external quota. Like quota,
             # it always yields an empty diff, so branch before empty-or-error to
@@ -11129,18 +11149,11 @@ def run_cycle(
             approval_tier = "safety"
             status_value = "pending"
         elif is_backoff_skip:
-            # Chronic-timeout back-off — persist as 'snoozed' (reusing the existing
-            # ProposalStatus enum, same terminal-but-recoverable semantics as the
-            # apply-side stale-drain). 'snoozed' (not 'rejected') keeps the row
-            # visible as a backed-off candidate distinct from a quality reject. The
-            # auto-batch apply path (daemon-apply.sh extract_backlog_patches) excludes
-            # this row because it fails ALL THREE of that SELECT's predicates:
-            # approval_tier='auto' / pre_verify_passed=true / status='pending' — the
-            # back-off row carries approval_tier='', pre_verify_passed=NULL,
-            # status='snoozed', so no empty diff is ever auto-applied.
+            # Terminal 'rejected' — no apply or stale-drain selector re-picks a marker
+            # Told apart from a quality reject by haiku_status + the rationale prefix
             verify = None
             approval_tier = ""
-            status_value = "snoozed"
+            status_value = "rejected"
         else:
             # 'reject' classification — no further gating. Persist 'rejected'
             # explicitly (an empty sentinel was coerced to 'pending' → fossilized).

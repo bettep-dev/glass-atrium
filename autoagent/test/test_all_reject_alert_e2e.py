@@ -15,7 +15,7 @@ helper module's ``_connect``) are repointed at the sandbox DSN. The sandbox
 schema mirrors the live ``core.autoagent_loop_events`` columns + the
 ``autoagent_loop_events_dedup`` unique index (so the real UPSERT's ON CONFLICT
 clause is genuinely exercised) and a minimal ``core.autoagent_proposals``
-(cycle_date + status) that the prior-streak read query walks.
+(cycle_date + status + haiku_status) that the prior-streak read query walks.
 
 Run with either runner (skips cleanly when psycopg / a local PG server is absent):
     uv run --with pytest --with psycopg pytest \
@@ -61,9 +61,10 @@ except Exception as exc:  # noqa: BLE001 — psycopg / helper absent → skip, n
 
 _CYCLE_DATE = "2026-06-13"
 _GENERATED_AT = "2026-06-13T00:00:00.000Z"
+_MARKER_OUTCOME = "skipped:chronic-timeout-backoff"
 
 # Sandbox schema: the live autoagent_loop_events columns + dedup index, plus the
-# two proposal columns the prior-streak read walks (status kept as text so the
+# three proposal columns the prior-streak read walks (status kept as text so the
 # `status::text <> 'rejected'` predicate works without recreating the live enum).
 _SANDBOX_DDL = """
 CREATE SCHEMA IF NOT EXISTS core;
@@ -80,8 +81,9 @@ CREATE UNIQUE INDEX autoagent_loop_events_dedup
     ON core.autoagent_loop_events (event_ts, agent, eval_result);
 CREATE TABLE core.autoagent_proposals (
     id         bigserial PRIMARY KEY,
-    cycle_date date NOT NULL,
-    status     text NOT NULL
+    cycle_date   date NOT NULL,
+    status       text NOT NULL,
+    haiku_status varchar(32)
 );
 """
 
@@ -257,6 +259,24 @@ class TestAllRejectAlertLivePersist(unittest.TestCase):
             dc.alert_all_reject_streak(_report(["rejected"]))
 
         self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(self._fetch_alert_rows(), [])
+
+    def test_when_prior_date_holds_only_backoff_markers_then_no_row_persisted(
+        self,
+    ) -> None:
+        # 06-12 drops out of the walk: prior streak 1 + current = 2 < threshold 3.
+        self._seed_prior_cycles([("2026-06-11", "rejected")])
+        with self._sandbox_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO core.autoagent_proposals "
+                    "(cycle_date, status, haiku_status) VALUES (%s, 'rejected', %s)",
+                    ("2026-06-12", _MARKER_OUTCOME),
+                )
+            conn.commit()
+        with contextlib.redirect_stderr(io.StringIO()):
+            dc.alert_all_reject_streak(_report(["rejected"]))
+
         self.assertEqual(self._fetch_alert_rows(), [])
 
     def test_when_alert_re_emitted_then_dedup_index_holds_single_row(self) -> None:

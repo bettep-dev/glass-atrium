@@ -380,6 +380,50 @@ class TestRevertedStatusBranches(unittest.TestCase):
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestBackoffMarkerCycleRegression(unittest.TestCase):
+    """A back-off marker is neither output nor a rejection for the regression exit."""
+
+    _MARKER_OUTCOME = "skipped:chronic-timeout-backoff"
+
+    def _is_regression(self, haiku_statuses: list[str]) -> bool:
+        report = dc.CycleReport(
+            cycle_date="2026-07-01",
+            generated_at="2026-07-01T00:00:00.000Z",
+            patterns_processed=len(haiku_statuses),
+            cost_guard={},
+            patches=[
+                dc.PatchResult(
+                    pattern_label=_PROBE_LABEL,
+                    pattern_agent=_PROBE_AGENT,
+                    pattern_frequency="3",
+                    target_file="/tmp/probe-agent.md",
+                    classification="reject",
+                    rationale="",
+                    proposed_diff="",
+                    outcomes_sampled=0,
+                    haiku_status=haiku_status,
+                    status="rejected",
+                )
+                for haiku_status in haiku_statuses
+            ],
+        )
+        with mock.patch.object(
+            dc, "_prior_all_reject_cycle_count", return_value=10
+        ), mock.patch.object(dc, "_days_since_last_applied", return_value=999):
+            return dc.is_systemic_regression(report)
+
+    def test_when_cycle_holds_only_markers_then_not_a_regression(self) -> None:
+        self.assertFalse(
+            self._is_regression([self._MARKER_OUTCOME, self._MARKER_OUTCOME])
+        )
+
+    def test_when_markers_beside_all_rejected_patches_then_still_a_regression(
+        self,
+    ) -> None:
+        self.assertTrue(self._is_regression([self._MARKER_OUTCOME, "ok"]))
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestDropRevertedPatterns(unittest.TestCase):
     """AC1-4: a covering reverted proposal excludes the pattern from re-application."""
 
