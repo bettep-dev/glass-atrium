@@ -447,6 +447,48 @@ check_with_retired_entry() {
   [[ "${output}" == *'! "scripts/lib/gone.sh"'* ]] || return 1
 }
 
+# Rewrite the generated manifest with jq filter $1 applied. The LICENSE entry it
+# rewrites carries its real generated hash and mode, so only the key shape can fail.
+rewrite_manifest() {
+  "${SCRIPT}" >/dev/null
+  jq "$1" "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+}
+
+readonly MODES_KEY_SWAP_JQ='.modes["../../x"] = .modes["LICENSE"] | del(.modes["LICENSE"])'
+readonly FILES_KEY_ESCAPE_JQ='.files |= map(if . == "LICENSE" then "../../x" else . end)
+  | .hashes["../../x"] = .hashes["LICENSE"] | del(.hashes["LICENSE"])
+  | .modes["../../x"] = .modes["LICENSE"] | del(.modes["LICENSE"])'
+
+@test "--check: exit 1 lists both keys of a modes entry swapped out of the files set" {
+  rewrite_manifest "${MODES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --check
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"MODES key set differs from files:"* ]] || return 1
+  [[ "${output}" == *'+ "../../x"'* ]] || return 1
+  [[ "${output}" == *'- "LICENSE"'* ]] || return 1
+}
+
+@test "--validate: rejects a modes entry swapped out of the files set" {
+  rewrite_manifest "${MODES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [ "${status}" -eq 6 ] || return 1
+}
+
+@test "--check: exit 1 names an escaping files entry" {
+  rewrite_manifest "${FILES_KEY_ESCAPE_JQ}"
+  run "${SCRIPT}" --check
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"FILES key INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "../../x"'* ]] || return 1
+}
+
+@test "--validate: rejects an escaping files entry whose hashes and modes keys agree" {
+  rewrite_manifest "${FILES_KEY_ESCAPE_JQ}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [ "${status}" -eq 6 ] || return 1
+}
+
 @test "--validate: rejects a retired key that is also a files[] entry" {
   "${SCRIPT}"
   local victim

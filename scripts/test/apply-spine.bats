@@ -430,6 +430,28 @@ unsafe_row() {
   [[ "${output}" == "${STATE}/retired-unmoved.txt" ]] || return 1
 }
 
+@test "#13 key: the spelling predicate refuses exactly empty, absolute and dot-dot-segment keys, under both names" {
+  local fn key
+  local -a escaping=("" "/" "/scripts/x.sh" ".." "../x" "a/../b" "a/b/..")
+  local -a contained=("a" "scripts/lib/x.sh" "foo..bar" "a/.../b" ".hidden/x")
+  for fn in spine_is_escaping_key spine_is_escaping_retired_key; do
+    for key in "${escaping[@]}"; do
+      run spine "${fn}" "${key}"
+      [ "${status}" -eq 0 ] || {
+        printf '%s accepted escaping key "%s" (status %s)\n' "${fn}" "${key}" "${status}"
+        return 1
+      }
+    done
+    for key in "${contained[@]}"; do
+      run spine "${fn}" "${key}"
+      [ "${status}" -eq 1 ] || {
+        printf '%s refused contained key "%s" (status %s)\n' "${fn}" "${key}" "${status}"
+        return 1
+      }
+    done
+  done
+}
+
 # T11 — spine_stage_and_verify
 
 @test "T11 stage: staged copies verify against the manifest hashes" {

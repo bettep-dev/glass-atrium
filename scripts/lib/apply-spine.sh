@@ -403,14 +403,18 @@ spine_find_removed_files() {
   done < <(jq -r '.retired | keys[]' -- "${manifest}")
 }
 
-# True when retired key $1 leaves the install root by its spelling alone — absolute, or
-# carrying a `..` segment. Segment-exact: `foo..bar` is a name, not a traversal. Needs
-# no filesystem, so it runs for every key before any lookup.
-spine_is_escaping_retired_key() {
+# True when manifest key $1 cannot name a path inside the install root by its spelling
+# alone — empty, absolute, or carrying a `..` segment. Segment-exact: `foo..bar` is a
+# name, not a traversal. Needs no filesystem, so it runs for every key before any lookup.
+spine_is_escaping_key() {
   case "/$1/" in
-    //?* | */../*) return 0 ;;
+    // | //?* | */../*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+spine_is_escaping_retired_key() {
+  spine_is_escaping_key "$1"
 }
 
 # True when existing target $1 physically sits outside install root $2 — the escape a
