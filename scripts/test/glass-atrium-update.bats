@@ -2401,6 +2401,27 @@ refused_record() {
   [[ ! -e "${INSTALL}/scripts/lib/y.sh" ]] || return 1
 }
 
+@test "#14 retired: a key resolving outside the root through an in-root directory symlink is counted as refused and recorded" {
+  sweep_sandbox
+  # Spelling, hash and final component all pass, so only the physical-escape check can refuse it.
+  mkdir -p -- "${WORK}/outside"
+  printf '%s' "outside-body" >"${WORK}/outside/old.sh"
+  mkdir -p -- "${INSTALL}/scripts"
+  ln -s -- "${WORK}/outside" "${INSTALL}/scripts/linked"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  RETIRED_JSON="$(retired_live_map "scripts/linked/old.sh")" \
+    write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"retired UNSAFE — scripts/linked/old.sh escapes install root; skipped"* ]] || return 1
+  [[ "${output}" == *"retired sweep: removed=0 preserved=0 family-skipped=0 unmoved=0 refused=1"* ]] || return 1
+  [[ "$(cat "$(refused_record)")" == $'UNSAFE\tscripts/linked/old.sh' ]] || return 1
+  [[ "$(cat "${WORK}/outside/old.sh")" == "outside-body" ]] || return 1
+}
+
 @test "#14 retired: both MALFORMED shapes (retired-AND-shipped, bad hash list) are counted as refusals" {
   sweep_sandbox
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
