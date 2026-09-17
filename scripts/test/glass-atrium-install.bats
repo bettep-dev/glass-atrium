@@ -350,3 +350,55 @@ run_install() {
   [[ "$output" == *"refreshing facade mirrors"* ]] # the farm path was taken
   grep -qx 'agents-only' "${WORK}/farm-calls.log"  # the canonical entrypoint ran
 }
+
+# 8. manifest key containment: refused before verify_bundle, nothing written
+
+# Release whose files[] row `lnk/../../escaped.txt` resolves to a REAL hashed member:
+# the bundle ships `lnk` as a link two levels deep, so the row reads `escaped.txt`
+# in the release tree while `mkdir -p` makes `lnk` a plain directory in staging and
+# GA_DIR — there the same row lands one level ABOVE the root. `lnk` itself is a
+# tarball member only, never a files[] row, so staging never copies the link.
+build_escaping_release() {
+  mkdir -p "${SRC}/a/b"
+  printf 'escaped payload\n' >"${SRC}/escaped.txt"
+  ln -s a/b "${SRC}/lnk"
+  build_release "1.0.0-test"
+  jq --arg h "$(sha256_of "${SRC}/escaped.txt")" \
+    '.files += ["lnk/../../escaped.txt"] | .hashes["lnk/../../escaped.txt"] = $h' \
+    "${RELEASE}/manifest.json" >"${RELEASE}/manifest.tmp"
+  mv -f -- "${RELEASE}/manifest.tmp" "${RELEASE}/manifest.json"
+  printf 'escaped.txt\nlnk\na\n' >>"${RELEASE}/filelist.txt"
+  tar -czf "${RELEASE}/bundle.tar.gz" -C "${SRC}" -T "${RELEASE}/filelist.txt"
+}
+
+@test "install: an escaping files[] row exits 20 before verify_bundle and writes nothing" {
+  require_darwin
+  build_escaping_release
+  run_install
+  [ "${status}" -eq 20 ] || {
+    printf '%s\n' "${output}"
+    return 1
+  }
+  [[ "${output}" == *'manifest key escapes the install root: lnk/../../escaped.txt'* ]] || return 1
+  [[ "${output}" != *'Verifying per-file SHA-256'* ]] || return 1
+  [ ! -e "${WORK}/escaped.txt" ] || return 1
+  [ ! -e "${TARGET}" ] || return 1
+}
+
+@test "install: an escaping modes key exits 20 and leaves the outside file's mode alone" {
+  require_darwin
+  build_release "1.0.0-test"
+  printf 'outside\n' >"${WORK}/outside.txt"
+  chmod 600 "${WORK}/outside.txt"
+  jq '.modes = {"glass-atrium": "755", "../outside.txt": "755"}' \
+    "${RELEASE}/manifest.json" >"${RELEASE}/manifest.tmp"
+  mv -f -- "${RELEASE}/manifest.tmp" "${RELEASE}/manifest.json"
+  run_install
+  [ "${status}" -eq 20 ] || {
+    printf '%s\n' "${output}"
+    return 1
+  }
+  [[ "${output}" == *'manifest key escapes the install root: ../outside.txt'* ]] || return 1
+  [ "$(stat -f '%Lp' "${WORK}/outside.txt")" = "600" ] || return 1
+  [ ! -e "${TARGET}" ] || return 1
+}
