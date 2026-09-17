@@ -74,7 +74,10 @@ case "${sql}" in
     printf '1\n'
     ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
-  *"ORDER BY cycle_date ASC, id ASC"*) cat -- "${STUB_BACKLOG_ROWS:?}" ;;
+  *"ORDER BY cycle_date ASC, id ASC"*)
+    printf '%s\n' "${sql}" >"${STUB_BACKLOG_ROWS:?}.sql"
+    cat -- "${STUB_BACKLOG_ROWS}"
+    ;;
   *"id::text = :'pid'"*)
     calls="${STUB_SINGLE_ROW:?}.calls"
     n=1
@@ -162,10 +165,16 @@ stale_diff() {
     ' goal line two' "+goal line added to $1" ' goal line one'
 }
 
-# proposal_row ID NAME DIFF — one row in the producer's 6-field psql grammar.
+# b64 TEXT — un-wrapped base64, the form the producer's SELECT gives every free-text field.
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+# proposal_row ID NAME DIFF [LABEL] — one row in the producer's 6-field psql grammar
+# (label defaults to probe-pattern-ID).
 proposal_row() {
-  printf '%s|2026-09-01|probe-pattern-%s|%s|%s/%s.md|%s\n' \
-    "$1" "$1" "$2" "${AGENTS}" "$2" "$(printf '%s' "$3" | base64 | tr -d '\n')"
+  printf '%s|2026-09-01|%s|%s|%s|%s\n' "$1" "$(b64 "${4:-probe-pattern-$1}")" "$(b64 "$2")" \
+    "$(b64 "${AGENTS}/$2.md")" "$(b64 "$3")"
 }
 
 # single_row ID NAME DIFF [STATUS] [HAIKU] — the single lookup's grammar: the 6 fields, then status
@@ -351,6 +360,29 @@ dump_state() {
     dump_state
     return 1
   }
+}
+
+@test "batch: a '|' inside a stored label shifts no field — the backlog SELECT encodes every free-text column and the row applies under its whole label" {
+  proposal_row 103 probe-a "$(landing_diff probe-a)" 'probe|pipe|label' >"${WORK}/backlog.rows"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply
+
+  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a && was_flipped 103 || {
+    dump_state
+    return 1
+  }
+  grep '"status":"applied"' "${APPLIED_LOG}" | grep -qF '"pattern_label":"probe|pipe|label"' || {
+    echo "the applied row does not carry the whole '|'-bearing label" >&2
+    dump_state
+    return 1
+  }
+  local column
+  for column in "pattern_label" "coalesce(target_agent, '')" "target_file"; do
+    grep -qF "encode(convert_to(${column}, 'UTF8'), 'base64')" "${WORK}/backlog.rows.sql" || {
+      echo "the backlog SELECT sends ${column} unencoded, so a '|' in it would shift every later field" >&2
+      return 1
+    }
+  done
 }
 
 @test "auto-regen: the re-attempt after a regenerate is guarded too" {

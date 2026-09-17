@@ -19,8 +19,8 @@
 #   AC3  preflight abort               → the abort row and NO post-gate row (never self-supersede)
 #   AC4  one eligible patch            → per-patch rows only, no extra heartbeat (no double count)
 #   AC5  the row's status literal is inside the set §14's producer pin already fixes
-#   AC9  a failed backlog query / an unreadable report → exit 21 / 22, one abort row, NO heartbeat;
-#        an absent report is still a clean exit 0
+#   AC9  a failed backlog query / an unreadable backlog row / an unreadable report → exit 21 / 23 / 22,
+#        one abort row, NO heartbeat; an absent report is still a clean exit 0
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-landing-zone.bats) with psql either MASKED
 # (report fallback) or replaced by a zero-row STUB (backlog fallback with an empty eligible set), a
@@ -124,6 +124,18 @@ make_failing_backlog_psql() {
 #!/usr/bin/env bash
 echo 'psql: error: connection to server on socket failed: No such file or directory' >&2
 exit 2
+SH
+  chmod +x "${1}/psql"
+}
+
+# make_unreadable_backlog_psql — a psql whose backlog answer is one row in the pre-encoding grammar,
+# whose '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
+make_unreadable_backlog_psql() {
+  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
+  cat >"${1}/psql" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '7|2026-09-01|probe|pipe|probe|/tmp/unreadable-probe.md|'
+exit 0
 SH
   chmod +x "${1}/psql"
 }
@@ -456,6 +468,22 @@ assert_one_abort_row() {
     return 1
   }
   assert_one_abort_row proposal_query_failed 21 backlog
+}
+
+@test "AC9: an unreadable BACKLOG row exits 23 with one abort row and no heartbeat, never as an outage" {
+  make_unreadable_backlog_psql "${BACKLOG_BIN}"
+  run_apply "${BACKLOG_BIN}:${MIRROR}"
+  [[ "${status}" -eq 23 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "${output}" == *"FATAL: a backlog row is unreadable"* && "${output}" == *"7 fields, expected 6"* &&
+    "${output}" != *"backlog query failed"* && "${output}" != *"0 pending backlog patches"* ]] || {
+    echo "the unreadable row is not named, or reads as an outage or an empty backlog" >&2
+    dump_log
+    return 1
+  }
+  assert_one_abort_row proposal_row_unreadable 23 backlog
 }
 
 @test "AC9: an unreadable REPORT exits 22 with one abort row and no heartbeat" {

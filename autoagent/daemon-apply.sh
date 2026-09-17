@@ -75,7 +75,7 @@
 #   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
 #   safety/user-tier proposal here (the auto-batch path still excludes safety;
 #   only this explicit path bypasses). Selection: id=N only; the shell then
-#   branches on the row's status and generation outcome (exits 21/19/8/20 below).
+#   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
 # Auto-regen mode (regen-on-accept path):
@@ -181,24 +181,31 @@
 #
 # Patch-source read exit codes. Single path: select_single_proposal, then
 # assert_generation_outcome after the parked guard, checked in the order
-# 21 → 19 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
-# source read itself (21 backlog · 22 report), before any row is judged — a
-# source that could not be read never lands the zero-eligible heartbeat:
+# 21 → 19 → 23 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# source read itself (21 backlog · 23 backlog row · 22 report), before any row is
+# judged — a source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
 #     20 — --proposal-id: REFUSED — the stored generation outcome (haiku_status)
 #          is not ok-prefixed (skipped / error / NULL), so the diff was never
 #          quality-screened. Nothing applied, row left as it was; Reject is the
 #          way out, AUTOAGENT_ALLOW_HAIKU_SKIP=1 the operator override (loud WARN).
-#     21 — the proposal query FAILED. --proposal-id: the lookup errored or its row
-#          could not be reassembled. Batch: the backlog query (or its reassembly)
-#          errored, and one abort row lands (reason proposal_query_failed); only
-#          reachable with psql present and no --dry-run. Infra failure, never read
-#          as not-found, an empty backlog or a no-op; nothing applied.
+#     21 — the proposal query FAILED. --proposal-id: the lookup errored. Batch: the
+#          backlog query errored, and one abort row lands (reason
+#          proposal_query_failed); only reachable with psql present and no
+#          --dry-run. Infra failure, never read as not-found, an empty backlog or a
+#          no-op; nothing applied.
 #     22 — report source: the report exists but is unreadable (not JSON, not an
 #          object, or its patches field is not a list of objects), so it is never
 #          read as zero patches. Nothing applied; one abort row lands (reason
 #          report_unreadable). An ABSENT report stays exit 0. Only reachable on the
 #          report fallback (psql absent, or --dry-run). Does NOT collide with 0/2-21.
+#     23 — a proposal ROW is unreadable: the query answered, but a row did not
+#          reassemble (wrong field count, a field that is not base64 UTF-8, or —
+#          --proposal-id — a row carrying another id). Stored data or a
+#          producer/reader grammar mismatch, not a DB outage, so a retry changes
+#          nothing. Checked before the status branch, so an unreadable row is never
+#          judged terminal. Nothing applied; batch lands one abort row (reason
+#          proposal_row_unreadable). Does NOT collide with 0/2-22.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -1091,31 +1098,42 @@ backlog_source_available() {
 
 # reassemble_proposal_rows — shared transform for BOTH the batch backlog SELECT
 # and the single-proposal SELECT: reads pipe-separated psql rows on stdin
-# (6 fields: id|cycle_date|pattern_label|target_agent|target_file|diff_b64) and
+# (6 fields: id|cycle_date|label_b64|agent_b64|target_b64|diff_b64) and
 # emits one canonical patch JSON object per row on stdout. The two selectors
 # differ only in their WHERE clause; the row shape + reassembly is identical, so
 # this lives once (DRY) and both call it.
-# base64 arrives un-wrapped (SELECT-side translate strips PG's 76-char wrap).
+# Every free-text column arrives as un-wrapped base64 (SELECT-side translate strips PG's 76-char
+# wrap), so no '|' or newline in stored text can shift a field. Returns non-zero on a row that does
+# not decode — skipping it would read as a smaller backlog, blanking it would apply garbage.
 # SC2259: python source captured in a var, psql rows passed via here-string.
 reassemble_proposal_rows() {
     local rows_in="$1"
     local _py_reassemble
     _py_reassemble="$(cat <<'PY'
 import base64, json, sys
+
+def decode(name, value, row_id):
+    try:
+        return base64.b64decode(value, validate=True).decode("utf-8")
+    except ValueError as exc:  # binascii.Error and UnicodeDecodeError both subclass it
+        sys.exit("[daemon-apply] ERROR proposal row unreadable id=%r: %s is not base64 UTF-8 (%s)"
+                 % (row_id[:20], name, exc))
+
 for raw in sys.stdin:
     raw = raw.rstrip("\n")
     if not raw:
         continue
-    # split on '|' — all 6 fields are psql-controlled and the 6th (base64)
-    # contains no '|', so a plain split is unambiguous.
     parts = raw.split("|")
     if len(parts) != 6:
-        continue
-    row_id, cycle_date, pattern_label, target_agent, target_file, diff_b64 = parts
-    try:
-        proposed_diff = base64.b64decode(diff_b64).decode("utf-8") if diff_b64 else ""
-    except (ValueError, UnicodeDecodeError):
-        proposed_diff = ""
+        sys.exit("[daemon-apply] ERROR proposal row unreadable id=%r: %d fields, expected 6"
+                 % (parts[0][:20], len(parts)))
+    row_id, cycle_date = parts[0], parts[1]
+    pattern_label, target_agent, target_file, proposed_diff = (
+        decode(name, value, row_id)
+        for name, value in zip(
+            ("pattern_label", "target_agent", "target_file", "proposed_diff"), parts[2:]
+        )
+    )
     sys.stdout.write(
         json.dumps(
             {
@@ -1158,9 +1176,10 @@ PY
 #                                 in-loop processing throttle, NOT a SQL cap, so
 #                                 the anomaly detector always sees the full count.
 #
-# psql emits one pipe-separated row per patch; proposed_diff is base64-encoded
+# psql emits one pipe-separated row per patch; every free-text column is base64-encoded
 # to survive embedded newlines/pipes across the psql→shell→python boundary.
 # python re-assembles each row into the canonical patch JSON object.
+# Returns 1 when the query fails, 2 when a row is unreadable (exit 21 vs 23 upstream).
 # Unix socket auth via -d glass_atrium (no -h, no host=).
 extract_backlog_patches() {
     local psql_out psql_err psql_rc
@@ -1173,9 +1192,9 @@ extract_backlog_patches() {
             2>"${psql_err}" <<'PSQL'
 SELECT id,
        cycle_date,
-       pattern_label,
-       coalesce(target_agent, ''),
-       target_file,
+       translate(encode(convert_to(pattern_label, 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(coalesce(target_agent, ''), 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
        translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', '')
 FROM core.autoagent_proposals
 WHERE approval_tier      = 'auto'::core."ApprovalTier"
@@ -1224,7 +1243,7 @@ PSQL
     fi
 
     # Reassemble pipe-separated rows into canonical patch JSON (shared transform).
-    reassemble_proposal_rows "${psql_out}"
+    reassemble_proposal_rows "${psql_out}" || return 2
 }
 
 # extract_single_proposal — single-proposal lookup. Print the psql row for id=PROPOSAL_ID on stdout
@@ -1239,8 +1258,9 @@ PSQL
 #                               button-click (the human-in-the-loop substitute for the safety gate),
 #                               so a user MAY apply a safety/user-tier proposal here.
 #   NO pre_verify_passed filter → user judgment takes priority over the 4-axis pre-verify gate.
-# The generation outcome is NOT bypassed — assert_generation_outcome enforces it. haiku_status is the
-# last field, so a '|' inside it can only widen its own field. Unix socket auth via -d glass_atrium.
+# The generation outcome is NOT bypassed — assert_generation_outcome enforces it. Every field before
+# haiku_status is a psql scalar, base64 or an enum, so none can hold a '|'; haiku_status is last, so a
+# '|' inside it can only widen its own field. Unix socket auth via -d glass_atrium.
 extract_single_proposal() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-single.XXXXXX)"
@@ -1253,9 +1273,9 @@ extract_single_proposal() {
             2>"${psql_err}" <<'PSQL'
 SELECT id,
        cycle_date,
-       pattern_label,
-       coalesce(target_agent, ''),
-       target_file,
+       translate(encode(convert_to(pattern_label, 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(coalesce(target_agent, ''), 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
        translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', ''),
        status,
        coalesce(haiku_status, '')
@@ -1279,9 +1299,11 @@ PSQL
 }
 
 # select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
-# generation outcome, or exit: 21 lookup failed · 19 not found · 8 already terminal. The outcome
-# refusal (20) waits for the parked guard, whose exit 18 is the better remedy for a row tripping both.
-# The lookup is captured, not read through `< <(…)`, which would drop its return code.
+# generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
+# terminal. The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
+# for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
+# return code. The row is reassembled before its status is trusted: a row that does not decode, or
+# answers for another id, has no status worth branching on.
 select_single_proposal() {
     local lookup_out patch_row row_id cycle_date label agent target diff_b64 status haiku_status
     if ! lookup_out="$(extract_single_proposal)"; then
@@ -1294,6 +1316,12 @@ select_single_proposal() {
         exit 19
     fi
     IFS='|' read -r row_id cycle_date label agent target diff_b64 status haiku_status <<<"${lookup_out}"
+    if [[ "${row_id}" != "${PROPOSAL_ID}" ]] \
+        || ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")"; then
+        printf '[daemon-apply] FATAL: proposal id=%s row is unreadable — nothing applied (stored row data, not a DB outage)\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 23
+    fi
     case "${status}" in
         applied | rejected | approved | reverted)
             printf '[daemon-apply] proposal id=%s already terminal (status=%s) — no-op\n' \
@@ -1302,12 +1330,6 @@ select_single_proposal() {
             ;;
         *) ;;
     esac
-    if ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")" \
-        || [[ -z "${patch_row}" ]]; then
-        printf '[daemon-apply] FATAL: proposal id=%s lookup row could not be reassembled — nothing applied\n' \
-            "${PROPOSAL_ID}" >&2
-        exit 21
-    fi
     PATCH_ROWS=("${patch_row}")
     SINGLE_HAIKU_STATUS="${haiku_status}"
 }
@@ -2206,7 +2228,16 @@ if [[ -n "${PROPOSAL_ID}" ]]; then
     select_single_proposal
 elif backlog_source_available; then
     PATCH_SOURCE="backlog"
-    if ! BATCH_PATCH_LINES="$(extract_backlog_patches)"; then
+    if BATCH_PATCH_LINES="$(extract_backlog_patches)"; then
+        backlog_rc=0
+    else
+        backlog_rc=$?
+    fi
+    if [[ "${backlog_rc}" -eq 2 ]]; then
+        printf '[daemon-apply] FATAL: a backlog row is unreadable — nothing applied (stored row data, not a DB outage)\n' >&2
+        emit_abort_row 'backlog row' source_read_abort_row proposal_row_unreadable 23
+        exit 23
+    elif [[ "${backlog_rc}" -ne 0 ]]; then
         printf '[daemon-apply] FATAL: backlog query failed — nothing applied (DB query error, not an empty backlog)\n' >&2
         emit_abort_row 'backlog query' source_read_abort_row proposal_query_failed 21
         exit 21
@@ -2270,8 +2301,8 @@ emit_zero_eligible_row() {
     fi
 }
 
-# Empty here means a real empty backlog or report: a failed batch read exited 21/22 above, and the single
-# source exits 21/19/8 in select_single_proposal instead.
+# Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
+# source exits 21/19/23/8 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2

@@ -206,11 +206,16 @@ sql="$(cat)"
 row_status="$(sed -n 's/^status=//p' "${state}")"
 row_count="$(sed -n 's/^count=//p' "${state}")"
 
-# emit_row [EXTRA] — the backlog's 6-field row; EXTRA appends the single lookup's fields.
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+# emit_row [EXTRA] — the backlog's 6-field row, free text base64-encoded as the SELECT does; EXTRA
+# appends the single lookup's fields.
 emit_row() {
   printf '%s|%s|%s|%s|%s|%s%s\n' \
-    "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "${STUB_LABEL:?}" \
-    "${STUB_AGENT:?}" "${STUB_TARGET:?}" "${STUB_DIFF_B64:?}" "${1:-}"
+    "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "$(b64 "${STUB_LABEL:?}")" \
+    "$(b64 "${STUB_AGENT:?}")" "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}" "${1:-}"
 }
 
 case "${sql}" in

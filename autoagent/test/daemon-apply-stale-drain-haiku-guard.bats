@@ -12,8 +12,8 @@
 #         NO DB write (short-circuits before the guard).
 #
 #   P3b — the single lookup selects by id only and the shell branches on what it
-#         returns, in order: query failed → 21 · no row → 19 · terminal status → 8 ·
-#         (parked guard 17/18, pinned in daemon-apply-parked-guard.bats) · generation
+#         returns, in order: query failed → 21 · no row → 19 · row unreadable → 23 ·
+#         terminal status → 8 · (parked guard 17/18, pinned in daemon-apply-parked-guard.bats) · generation
 #         outcome (haiku_status) not ok-prefixed → 20 (NULL/skipped/error fail closed)
 #         UNLESS the operator carve-out AUTOAGENT_ALLOW_HAIKU_SKIP=1 is engaged (loud
 #         WARN). ok / ok:retried / ok:fuzzy-parsed all pass.
@@ -25,8 +25,8 @@
 # resolved temp root, plus a stub PATH whose `psql` is a PG stand-in. The stub
 # dispatches on the SQL it receives, logs every invocation for assertions, and
 # answers the id-only single lookup with the STUB_* row (its status and
-# haiku_status included), no row (STUB_NO_ROW=1) or a query failure
-# (STUB_SINGLE_RC). It applies no predicate: the branch lives in the shell, and
+# haiku_status included), no row (STUB_NO_ROW=1), a verbatim row (STUB_RAW_ROW)
+# or a query failure (STUB_SINGLE_RC). It applies no predicate: the branch lives in the shell, and
 # the id-only SQL shape is pinned by its own test below.
 # The daemon_cycle.py seam points at a guard pass-through (build_guard_passthrough).
 # No live PG, no live agents/ dir is touched.
@@ -126,17 +126,24 @@ sql="$(cat)"
   printf 'sql<<<\n%s\n>>>\n' "${sql}"
 } >>"${log}"
 
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
 case "${sql}" in
   *"translate(encode(convert_to"*)
-    # single lookup — the backlog's 6 fields, then status and haiku_status (unset → ok, empty = NULL).
+    # single lookup — the backlog's 6 fields (free text base64-encoded, as the SELECT does), then
+    # status and haiku_status (unset → ok, empty = NULL). STUB_RAW_ROW replaces the row verbatim.
     if [[ "${STUB_SINGLE_RC:-0}" -ne 0 ]]; then
       printf 'psql: error: connection to server failed (stub)\n' >&2
       exit "${STUB_SINGLE_RC}"
     fi
-    if [[ "${STUB_NO_ROW:-0}" != "1" ]]; then
+    if [[ -n "${STUB_RAW_ROW:-}" ]]; then
+      printf '%s\n' "${STUB_RAW_ROW}"
+    elif [[ "${STUB_NO_ROW:-0}" != "1" ]]; then
       printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "${STUB_LABEL:?}" \
-        "${STUB_AGENT:?}" "${STUB_TARGET:?}" "${STUB_DIFF_B64:?}" \
+        "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "$(b64 "${STUB_LABEL:?}")" \
+        "$(b64 "${STUB_AGENT:?}")" "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}" \
         "${STUB_STATUS:-pending}" "${STUB_HAIKU-ok}"
     fi
     ;;
@@ -187,7 +194,7 @@ run_single() {
     STUB_PSQL_LOG="${PSQL_LOG}" \
     STUB_ROW_ID="1022" \
     STUB_CYCLE="2026-06-26" \
-    STUB_LABEL="probe-stale" \
+    STUB_LABEL="${LABEL:-probe-stale}" \
     STUB_AGENT="probe" \
     STUB_TARGET="${AGENTS}/probe.md" \
     STUB_DIFF_B64="$(oor_diff_b64)" \
@@ -197,6 +204,7 @@ run_single() {
     ${STUB_STATUS:+STUB_STATUS="${STUB_STATUS}"} \
     ${STUB_NO_ROW:+STUB_NO_ROW="${STUB_NO_ROW}"} \
     ${STUB_SINGLE_RC:+STUB_SINGLE_RC="${STUB_SINGLE_RC}"} \
+    ${STUB_RAW_ROW:+STUB_RAW_ROW="${STUB_RAW_ROW}"} \
     ${ALLOW:+AUTOAGENT_ALLOW_HAIKU_SKIP="${ALLOW}"} \
     bash "${REAL_SCRIPT}" --proposal-id 1022 --agents-dir "${AGENTS}" "$@"
 }
@@ -379,7 +387,8 @@ applied_log_path() {
 }
 
 # ---------------------------------------------------------------------------
-# Exit split — 21 query failed · 19 not found (pinned by P3b (i)) · 8 terminal, checked in that order
+# Exit split — 21 query failed · 19 not found (pinned by P3b (i)) · 23 row unreadable · 8 terminal,
+# checked in that order
 # ---------------------------------------------------------------------------
 
 @test "exit split: a failed lookup query exits 21 and is never read as not-found or a no-op" {
@@ -414,4 +423,47 @@ applied_log_path() {
     echo "status=snoozed must reach the apply (exit 9 on this out-of-region fixture), got ${status}: ${output}" >&2
     return 1
   }
+}
+
+@test "exit split: a '|' inside the stored label shifts no field — a terminal row still exits 8 and a pending one keeps its whole label" {
+  make_probe
+  STUB_STALE_VERDICT="incremented"
+  LABEL='probe|stale|label'
+  STUB_STATUS="rejected" run_single "skipped:chronic-timeout-backoff"
+  [[ "${status}" -eq 8 && "${output}" == *"already terminal (status=rejected)"* ]] || {
+    echo "a '|' in the label moved the status field: expected exit 8, got ${status}: ${output}" >&2
+    return 1
+  }
+  local column
+  for column in "pattern_label" "coalesce(target_agent, '')" "target_file"; do
+    grep -qF "encode(convert_to(${column}, 'UTF8'), 'base64')" "${PSQL_LOG}" || {
+      echo "the single lookup sends ${column} unencoded, so a '|' in it would shift the status" >&2
+      return 1
+    }
+  done
+
+  run_single "ok"
+  [[ "${status}" -eq 9 ]] || {
+    echo "the pending '|'-labelled row must reach the apply (exit 9 on this fixture), got ${status}: ${output}" >&2
+    return 1
+  }
+  grep -qF '"pattern_label":"probe|stale|label"' "$(applied_log_path)"
+}
+
+@test "exit split: a row that does not decode, or answers for another id, exits 23 before its status is read" {
+  make_probe
+  local target_b64 raw
+  target_b64="$(printf '%s' "${AGENTS}/probe.md" | base64 | tr -d '\n')"
+  for raw in \
+    "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
+    "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
+    rm -f -- "$(applied_log_path)"
+    STUB_RAW_ROW="${raw}" run_single "ok"
+    [[ "${status}" -eq 23 && "${output}" == *"proposal id=1022 row is unreadable"* &&
+      "${output}" != *"already terminal"* && "${output}" != *"lookup failed"* &&
+      ! -f "$(applied_log_path)" ]] || {
+      echo "row '${raw%%|*}|…': expected exit 23 naming the unreadable row and applying nothing, got ${status}: ${output}" >&2
+      return 1
+    }
+  done
 }
