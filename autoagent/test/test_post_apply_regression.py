@@ -61,7 +61,7 @@ def _marker_row() -> tuple[str, str]:
     """(haiku_status, rationale) a production back-off marker row persists."""
     return (
         dc.TIMEOUT_BACKOFF_HAIKU_STATUS,
-        dc.TIMEOUT_BACKOFF_RATIONALE_PREFIX + ": 3 consecutive timeouts",
+        dc.TIMEOUT_BACKOFF_RATIONALE_TEMPLATE.format(n=3, thr=3),
     )
 
 

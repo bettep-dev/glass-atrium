@@ -49,30 +49,30 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 
 _CYCLE_DATE = "2026-06-10"
 # Unrecognized by classify_failure_rationale → FAILURE_CLASS_QUALITY, its
-# default-to-advance branch. The fixtures' former blank rationale classifies as
-# skipped, so every threshold case would otherwise pass on a set-aside row.
+# default-to-advance branch. A blank rationale classifies as skipped, so every
+# threshold case would otherwise pass on a set-aside row.
 _QUALITY_RATIONALE = "quality reject — pre-verify failed"
 
 
 def _backoff_rationale() -> str:
     """The rationale a production back-off row carries — the pinned path."""
-    return dc.TIMEOUT_BACKOFF_RATIONALE_PREFIX + ": 3 consecutive timeouts"
+    return dc.TIMEOUT_BACKOFF_RATIONALE_TEMPLATE.format(n=3, thr=3)
 
 
-def _non_adjudicating_rationales() -> list[tuple[str, str]]:
+def _non_adjudicating_rationales() -> dict[str, str]:
     """One production rationale literal per non-adjudication class.
 
     Built lazily: the literals live on dc, which is None when the import failed.
     """
-    return [
-        ("supersede", dc._SUPERSEDE_REASON + " (2026-06-11)"),
-        ("parked-pattern", dc._PARKED_PATTERN_REASON + " — rows terminal"),
-        ("quota-limit", "haiku quota limit detected"),
-        ("auth-failure", "haiku auth failure — 401 from the CLI"),
-        ("chronic-timeout", _backoff_rationale()),
-        ("below-floor → skipped", dc._BELOW_FLOOR_REJECT_PREFIX + " (0.21)"),
-        ("empty → skipped", ""),
-    ]
+    return {
+        "supersede": dc._SUPERSEDE_REASON + " (2026-06-11)",
+        "parked-pattern": dc._PARKED_PATTERN_REASON + " — rows terminal",
+        "quota-limit": "haiku quota limit detected",
+        "auth-failure": "haiku auth failure — 401 from the CLI",
+        "chronic-timeout": _backoff_rationale(),
+        "below-floor → skipped": dc._BELOW_FLOOR_REJECT_PREFIX + " (0.21)",
+        "empty → skipped": "",
+    }
 
 
 def _patch_result(
@@ -203,10 +203,13 @@ class TestAllRejectedThisCycleClassification(unittest.TestCase):
     """
 
     def test_when_every_reject_is_non_adjudicating_then_quiet_night(self) -> None:
-        for label, rationale in _non_adjudicating_rationales():
-            with self.subTest(label):
-                report = _report(["rejected", "rejected"], rationale=rationale)
-                self.assertFalse(dc._all_rejected_this_cycle(report))
+        # One representative class: both callers delegate to the same
+        # discriminator, so the full class table is enumerated once, on the walk.
+        report = _report(
+            ["rejected", "rejected"],
+            rationale=_non_adjudicating_rationales()["quota-limit"],
+        )
+        self.assertFalse(dc._all_rejected_this_cycle(report))
 
     def test_when_one_quality_reject_remains_then_all_rejected(self) -> None:
         patches = [
@@ -247,10 +250,10 @@ class TestAllRejectedThisCycleClassification(unittest.TestCase):
 class TestPriorAllRejectCycleCount(unittest.TestCase):
     """Wiring + fail-open contract of the persisted read.
 
-    The read now projects (cycle_date, status, rationale) per ROW instead of one
-    non-rejected COUNT per date, so the mock rows migrate to that shape — a
-    required fixture migration, not a regression. Walk semantics themselves are
-    pinned mock-free in TestAllRejectStreakWalk.
+    What only this class answers: the (cycle_date, status, rationale) rows a
+    cursor returns reach _all_reject_streak_from_rows with the projection
+    intact. Walk semantics themselves are pinned mock-free in
+    TestAllRejectStreakWalk.
     """
 
     def _count(self, rows: list[tuple[str, str, str]]) -> int:
@@ -266,13 +269,6 @@ class TestPriorAllRejectCycleCount(unittest.TestCase):
             ("2026-06-07", "applied", _QUALITY_RATIONALE),
         ]
         self.assertEqual(self._count(rows), 2)
-
-    def test_when_latest_cycle_has_non_rejected_then_zero(self) -> None:
-        rows = [
-            ("2026-06-09", "applied", _QUALITY_RATIONALE),
-            ("2026-06-08", "rejected", _QUALITY_RATIONALE),
-        ]
-        self.assertEqual(self._count(rows), 0)
 
     def test_when_no_prior_cycles_then_zero(self) -> None:
         self.assertEqual(self._count([]), 0)
@@ -305,7 +301,7 @@ class TestAllRejectStreakWalk(unittest.TestCase):
     ) -> None:
         # Covers the retroactive-supersede shape too: a date once queued and
         # later rewritten to supersede carries only the supersede rationale.
-        for label, rationale in _non_adjudicating_rationales():
+        for label, rationale in _non_adjudicating_rationales().items():
             with self.subTest(label):
                 rows = [
                     ("2026-06-09", "rejected", _QUALITY_RATIONALE),
@@ -337,8 +333,8 @@ class TestAllRejectStreakWalk(unittest.TestCase):
     def test_when_a_reverted_row_carries_a_blank_rationale_then_its_date_extends(
         self,
     ) -> None:
-        # Delta against the pre-change read, which treated 'reverted' as
-        # non-rejected: it is terminal by status, so no rationale can drop it.
+        # Terminal by status, so no rationale can drop it — a blank one would
+        # otherwise classify as skipped.
         rows = [
             ("2026-06-09", "reverted", ""),
             ("2026-06-08", "applied", _QUALITY_RATIONALE),
@@ -353,11 +349,10 @@ class TestAllRejectStreakWalk(unittest.TestCase):
 class TestPriorAllRejectCycleCountOnEngine(unittest.TestCase):
     """The persisted walk's own SQL, run on the stdlib backend.
 
-    The read carries no adjudication predicate any more — grouping and
-    classification moved into _all_reject_streak_from_rows — so what only a real
-    engine can answer is pinned here: the projected columns, the newest-first
-    ordering, and the LIMIT bounding DISTINCT DATES rather than rows. The former
-    sqlite>=3.39 skip is gone with the IS DISTINCT FROM comparison it guarded.
+    Grouping and classification live in _all_reject_streak_from_rows, so what
+    only a real engine can answer is pinned here: the projected columns, the
+    newest-first ordering, and the LIMIT bounding DISTINCT DATES rather than
+    rows.
     """
 
     def setUp(self) -> None:

@@ -6962,14 +6962,18 @@ def emit_loop_events(report: CycleReport) -> int:
 
 # -- cycle-level all-reject alert --------------------------------------------
 
+# Statuses every all-reject discriminator reads as terminal-negative. Named once
+# so the in-memory and the persisted walk cannot drift apart on the set.
+_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted"})
+
 
 def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
     """A 'rejected' row the classifier SoT says was never genuinely adjudicated.
 
-    The single discriminator both all-reject walks set a row aside on, delegated
-    to classify_failure_rationale exactly as consecutive_reject_count does —
-    never a parallel rationale.startswith(...) test, and never a status/agent
-    carve-out per infra class.
+    The single discriminator both all-reject walks and consecutive_reject_count
+    set a row aside on, delegated to classify_failure_rationale — never a
+    parallel rationale.startswith(...) test, and never a status/agent carve-out
+    per infra class.
 
     Status-gated deliberately: ONLY a 'rejected' row is classifiable. A
     'pending'/'snoozed'/'applied' row is pipeline output and is judged by status
@@ -6996,10 +7000,9 @@ def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> 
     for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0]):
         extends = False
         for _date, status, rationale in date_rows:
-            status_text = str(status or "")
-            if status_text not in ("rejected", "reverted"):
+            if status not in _TERMINAL_NEGATIVE_STATUSES:
                 return streak
-            if _is_non_adjudication_reject(status_text, rationale):
+            if _is_non_adjudication_reject(status, rationale):
                 continue
             extends = True
         if extends:
@@ -7029,8 +7032,7 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         "FROM core.autoagent_proposals "
         # The bound is on DISTINCT DATES, not rows — the table carries several
         # rows per cycle_date, so a row-count LIMIT of the same size would
-        # quietly shrink the horizon and flatten a genuinely long streak (the
-        # prior LIMIT 10 capped a 20-day regression at a misreported 10). The
+        # quietly shrink the horizon and flatten a genuinely long streak. The
         # walk still short-circuits at the first non-rejected cycle, so this
         # only bounds the worst case (a genuinely long all-reject run).
         "WHERE cycle_date IN ("
@@ -7103,9 +7105,9 @@ def _all_rejected_this_cycle(report: CycleReport) -> bool:
     """Shared discriminator: this cycle INGESTED input and rejected ALL of it.
 
     A rejected patch whose OWN rationale classifies non-adjudicating is set aside
-    first (_is_non_adjudication_reject) — it is neither output nor a rejection,
-    which subsumes the back-off marker carve-out: a marker row carries
-    TIMEOUT_BACKOFF_RATIONALE_PREFIX, so the classifier already looks past it.
+    first (_is_non_adjudication_reject) — it is neither output nor a rejection: a
+    marker row carries TIMEOUT_BACKOFF_RATIONALE_PREFIX, so the classifier looks
+    past it and the back-off marker needs no status carve-out of its own.
     Keys on the rationale, never failure_class: the class is filled only on the
     failure branches while the rationale rides every row. True iff >=1 patch
     remains AND every remaining patch is terminal-negative. A quiet night
@@ -7125,7 +7127,7 @@ def _all_rejected_this_cycle(report: CycleReport) -> bool:
     if not counted_patches:
         return False
     return all(
-        patch.status in ("rejected", "reverted") for patch in counted_patches
+        patch.status in _TERMINAL_NEGATIVE_STATUSES for patch in counted_patches
     )
 
 
@@ -9169,17 +9171,19 @@ def consecutive_reject_count(
       - anything else ('applied' / 'approved') → break — an accepted change
         re-arms the candidate, mirroring consecutive_timeout_count recovery.
 
-    The non-adjudication discrimination is delegated to classify_failure_rationale
-    (the single SoT) so a future infra-rationale variant has exactly one place to
-    be taught — never re-introduce a parallel rationale.startswith(...) test here.
+    The non-adjudication discrimination is delegated to _is_non_adjudication_reject
+    → classify_failure_rationale (the single SoT) so a future infra-rationale
+    variant has exactly one place to be taught — never re-introduce a parallel
+    rationale.startswith(...) test here, and never an open-coded twin of the
+    shared predicate.
     """
     streak = 0
     for status, proposal_label, rationale in proposal_rows:
         if not _covers_pattern_label(pattern_label, proposal_label):
             continue
+        if _is_non_adjudication_reject(status, rationale):
+            continue
         if status == "rejected":
-            if classify_failure_rationale(rationale) in _NON_ADJUDICATION_CLASSES:
-                continue
             streak += 1
             continue
         if status in ("snoozed", "pending", "reverted"):
