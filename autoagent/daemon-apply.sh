@@ -696,8 +696,9 @@ REPORT_PATH="${REPORT_PATH:-${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json}"
 # -- Output destinations ---------------------------------------------------
 
 # Both sinks derive from REPORTS_DIR, so the override every caller already sets
-# (AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME) reaches the dry-run too. The
-# mkdir is shared: a dry-run skips the apply lock, so it creates this dir itself.
+# (AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME) reaches the dry-run too. The SOLE
+# creation site: it serves the dry-run (which skips the apply lock) and LOCK_DIR's
+# parent, since the lib's acquire mkdir is atomic — no -p, so no parent creation.
 mkdir -p "${REPORTS_DIR}"
 if [[ "${DRY_RUN}" -eq 1 ]]; then
     APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
@@ -936,7 +937,6 @@ fi
 # Skip lock entirely in dry-run so parallel test runs don't collide.
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-    mkdir -p "${REPORTS_DIR}"
     # A crashed/SIGKILLed prior holder (no EXIT trap) left a stranded lock; the
     # lib reclaims it only when the holder is BOTH not-live AND aged past the TTL.
     # A genuinely LIVE holder still blocks here (mutual exclusion preserved).

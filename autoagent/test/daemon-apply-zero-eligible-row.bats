@@ -503,41 +503,35 @@ assert_one_abort_row() {
   assert_one_abort_row report_unreadable 22 report
 }
 
-@test "AC9: a DIRECTORY at the report path exits 22 with one abort row, never a silent exit 0" {
-  rm -f -- "${WORK}/report.json"
-  mkdir -- "${WORK}/report.json" # present but unreadable: absence is about presence, not file kind
-  run_apply "${MIRROR}"
-  [[ "${status}" -eq 22 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
-    "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
-    "${output}" != *Traceback* ]] || {
-    echo "a directory at the report path reads as absent, as zero patches, or leaks a traceback" >&2
-    dump_log
-    return 1
-  }
-  assert_one_abort_row report_unreadable 22 report
-}
-
-@test "AC9: a DANGLING SYMLINK at the report path exits 22 with one abort row, never a silent exit 0" {
-  # The link-only half of the absence test: it exists as a link, and resolves to nothing.
-  rm -f -- "${WORK}/report.json"
-  ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json"
-  run_apply "${MIRROR}"
-  [[ "${status}" -eq 22 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
-    "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
-    "${output}" != *Traceback* ]] || {
-    echo "a dangling link at the report path reads as absent, as zero patches, or leaks a traceback" >&2
-    dump_log
-    return 1
-  }
-  assert_one_abort_row report_unreadable 22 report
+@test "AC9: every unreadable report PATH SHAPE exits 22 with one abort row, never a silent exit 0" {
+  # Absence is about presence, not file kind: each shape is AT the path and resolves to nothing
+  # readable (a dangling link exists as a link), so none may read as absent or as zero patches.
+  local shape
+  for shape in directory dangling-link; do
+    rm -rf -- "${WORK}/report.json" # removes a directory, and a link without following it
+    rm -f -- "${APPLIED_LOG}"       # a fresh log per shape: assert_one_abort_row counts rows
+    case "${shape}" in
+      directory) mkdir -- "${WORK}/report.json" ;;
+      dangling-link) ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json" ;;
+    esac
+    run_apply "${MIRROR}"
+    [[ "${status}" -eq 22 ]] || {
+      echo "report shape ${shape} exited ${status}" >&2
+      dump_log
+      return 1
+    }
+    [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
+      "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
+      "${output}" != *Traceback* ]] || {
+      echo "report shape ${shape} reads as absent, as zero patches, or leaks a traceback" >&2
+      dump_log
+      return 1
+    }
+    assert_one_abort_row report_unreadable 22 report || {
+      echo "report shape ${shape}" >&2
+      return 1
+    }
+  done
 }
 
 @test "AC9: an ABSENT report stays a clean exit 0 with no abort row" {

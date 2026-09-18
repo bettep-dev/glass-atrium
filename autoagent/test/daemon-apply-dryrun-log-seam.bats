@@ -9,9 +9,9 @@
 # of the data root on this path (the apply lock is skipped entirely in dry-run),
 # so directory creation is a property of the seam and not an inherited one.
 #
-# The `.dryrun.jsonl` suffix is load-bearing NOW rather than defensively: the file
-# lands INSIDE the reports dir the backfill globs, so only the anchored filename
-# filter keeps a simulated row out of the real applied-log corpus.
+# The `.dryrun.jsonl` suffix is load-bearing: the file lands INSIDE the reports dir
+# the backfill globs, so only the anchored filename filter keeps a simulated row out
+# of the real applied-log corpus.
 #
 # Run via: bats autoagent/test/daemon-apply-dryrun-log-seam.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -69,7 +69,7 @@ setup() {
   FAKE_HOME="${WORK}/home"
   mkdir -p -- "${AGENTS}" "${FAKE_HOME}"
   CYCLE_DATE="$(date -u +%Y-%m-%d)"
-  # The host-shared path this seam replaces — the negative half of every case.
+  # The shared host path outside the seam — the negative half of every case.
   HOST_LOG="/tmp/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
 }
 
@@ -130,7 +130,7 @@ dryrun_log_path() {
 }
 
 # assert_row_landed DIR LABEL — the dry-run row for LABEL is in DIR's dry-run log,
-# and the run's own marker never reached the formerly-shared host path. `-e` guards
+# and the run's own marker never reached the shared host path. `-e` guards
 # the host file's absence (a clean CI host has none) so grep is never handed a
 # missing path.
 assert_row_landed() {
@@ -181,8 +181,8 @@ assert_row_landed() {
 }
 
 # ---------------------------------------------------------------------------
-# (c) no override at all — the HOME-anchored default. This is the leg that made
-#     an unredirected suite case a live-data-root writer.
+# (c) no override at all — the HOME-anchored default. An unredirected run writes
+#     the live data root through this leg, which is what FAKE_HOME stands in for.
 # ---------------------------------------------------------------------------
 
 @test "dry-run: with no override the row lands under \$HOME/.glass-atrium" {
@@ -194,7 +194,7 @@ assert_row_landed() {
 }
 
 # ---------------------------------------------------------------------------
-# (d) reader exclusion — the dry-run file now sits inside the directory the
+# (d) reader exclusion — the dry-run file sits inside the directory the
 #     backfill globs, so its anchored filename filter is what keeps a simulated
 #     row out of the real corpus. The pattern is read from the production source,
 #     never restated here.
@@ -225,8 +225,8 @@ PY
 # ---------------------------------------------------------------------------
 # (e) reader exclusion, operator-facing half — the doctor's abort scan globs
 #     `autoagent-applied-*.jsonl` under the reports dir, which the dry-run file
-#     now matches for the first time. Only its date pattern keeps a SIMULATED
-#     abort out of a real doctor verdict. The function is awk-range-extracted
+#     matches too. Only its date pattern keeps a SIMULATED abort out of a real
+#     doctor verdict. The function is awk-range-extracted
 #     rather than sourced (precedent: daemon-apply-json-fallback-haiku-guard.bats),
 #     so the assertion runs the production code with none of the doctor's env.
 # ---------------------------------------------------------------------------
