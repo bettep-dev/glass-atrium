@@ -198,10 +198,12 @@
 #          proposal_query_failed); only reachable with psql present and no
 #          --dry-run. Infra failure, never read as not-found, an empty backlog or a
 #          no-op; nothing applied.
-#     22 — report source: the report exists but is unreadable (not JSON, not an
-#          object, or its patches field is not a list of objects), so it is never
-#          read as zero patches. Nothing applied; one abort row lands (reason
-#          report_unreadable). An ABSENT report stays exit 0. Only reachable on the
+#     22 — report source: the report exists but is unreadable — not JSON, not an
+#          object, its patches field is not a list of objects, nested too deeply to
+#          decode, a path that cannot be opened or read, or a non-regular path
+#          (directory, dangling link, FIFO) — so it is never read as zero patches.
+#          Nothing applied; one abort row lands (reason report_unreadable). Only a
+#          report ABSENT from the filesystem stays exit 0. Only reachable on the
 #          report fallback (psql absent, or --dry-run). Does NOT collide with 0/2-21.
 #     23 — a proposal ROW is unreadable: the query answered, but a row did not
 #          reassemble (wrong field count, a field that is not base64 UTF-8, or —
@@ -1049,15 +1051,25 @@ extract_body_auto_patches() {
     fi
 
     python3 - "${report}" "${allow_haiku_skip}" <<'PY'
-import json, sys
+import json, os, stat, sys
 report_path = sys.argv[1]
 allow_haiku_skip = sys.argv[2] == "1"
 # Every unreadable shape exits with ONE named line (exit 22 upstream), never an uncaught traceback.
+# Classes enumerated by exception hierarchy, not by content shape: OSError (open/read, a dangling
+# link included), ValueError (decode), RecursionError (decoder depth).
 try:
+    # Refused BEFORE open, on link-following stat: a FIFO names a cause instead of blocking on a
+    # writer that never comes, while a symlink to a real report stays readable.
+    if not stat.S_ISREG(os.stat(report_path).st_mode):
+        sys.exit("[daemon-apply] report %s: not a regular file" % report_path)
     with open(report_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
+except OSError as exc:
+    sys.exit("[daemon-apply] report %s: cannot be opened or read (%s)" % (report_path, exc))
 except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError both subclass it
     sys.exit("[daemon-apply] report %s: not UTF-8 JSON (%s)" % (report_path, exc))
+except RecursionError as exc:
+    sys.exit("[daemon-apply] report %s: nested too deeply to decode (%s)" % (report_path, exc))
 # `{}` as patches would otherwise iterate as zero patches.
 patches = data.get("patches", []) if isinstance(data, dict) else None
 if not isinstance(patches, list) or not all(isinstance(patch, dict) for patch in patches):
@@ -2256,7 +2268,8 @@ else
     # Fallback path only: an absent report = nothing to apply. (Relocated from
     # the old line-219 guard so it no longer short-circuits the backlog path,
     # which is the PRIMARY source and needs no today-dated report.)
-    if [[ ! -f "${REPORT_PATH}" ]]; then
+    # Absent = nothing at the path, link included — a present non-regular path is unreadable, not missing.
+    if [[ ! -e "${REPORT_PATH}" && ! -L "${REPORT_PATH}" ]]; then
         printf '[daemon-apply] no report at %s — nothing to apply\n' "${REPORT_PATH}" >&2
         exit 0
     fi

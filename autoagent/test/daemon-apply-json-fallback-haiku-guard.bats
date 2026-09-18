@@ -8,9 +8,10 @@
 #       operator WARN (never silent).
 # Plus regression guards: an 'ok'/'ok:retried' status is still admitted by default
 # (the gate is not over-blocking — startswith('ok') == the single path's ok* match).
-# And (f): a report that cannot be read returns non-zero with one named stderr line and no
-# traceback, the signal the source dispatch turns into exit 22 (the dispatch itself:
-# daemon-apply-zero-eligible-row.bats AC9).
+# And (f): a report that cannot be read — by its CONTENT (malformed JSON) or by its PATH SHAPE (a
+# directory, a dangling link, nesting past the decoder's limit) — returns non-zero with one named
+# stderr line and no traceback, the signal the source dispatch turns into exit 22 (the dispatch
+# itself: daemon-apply-zero-eligible-row.bats AC9). A symlink to a valid report stays readable.
 #
 # Originated as a disposable verification artifact (agent-test-files-disposable);
 # now retained in-repo under autoagent/test/.
@@ -263,6 +264,41 @@ JSON
   run extract_body_auto_patches "${REPORT}"
   [[ "${status}" -eq 0 && -z "${output}" ]] || {
     echo "an empty patches list is a readable report, got rc=${status}: ${output}" >&2
+    return 1
+  }
+}
+
+@test "JSON-fallback: every unreadable report PATH shape returns non-zero with one named line and no traceback" {
+  # The loop above covers what a readable file can SAY; these cover what the path itself can BE.
+  # None is a decode failure — a directory and a dangling link raise OSError, a nested-past-the-limit
+  # array exhausts the decoder — so each owes the same one named line, never a traceback.
+  local shape
+  for shape in directory dangling-link deeply-nested; do
+    rm -rf -- "${REPORT}" # removes a directory, and a link without following it
+    case "${shape}" in
+      directory) mkdir -- "${REPORT}" ;;
+      dangling-link) ln -s -- "${WORK}/no-such-report.json" "${REPORT}" ;;
+      deeply-nested) python3 -c 'import sys; sys.stdout.write("[" * 200000)' >"${REPORT}" ;;
+    esac
+    run extract_body_auto_patches "${REPORT}"
+    [[ "${status}" -ne 0 && "${output}" != *'"classification"'* && "${output}" != *Traceback* &&
+      "${#lines[@]}" -eq 1 && "${output}" == "[daemon-apply] report ${REPORT}: "* ]] || {
+      echo "report shape ${shape} read as rc=${status}: ${output}" >&2
+      return 1
+    }
+  done
+}
+
+@test "JSON-fallback: a symlink to a readable report is still read (the non-regular refusal follows links)" {
+  # The over-rejection boundary of the case above: link-following stat semantics, so an operator's
+  # symlinked report keeps working — only the link's TARGET decides whether the path is regular.
+  local target="${WORK}/linked-report.json"
+  write_report "ok"
+  mv -- "${REPORT}" "${target}"
+  ln -s -- "${target}" "${REPORT}"
+  run extract_body_auto_patches "${REPORT}"
+  [[ "${status}" -eq 0 && "${output}" == *'"classification": "body-auto"'* ]] || {
+    echo "a symlink to a valid report was refused: rc=${status}: ${output}" >&2
     return 1
   }
 }
