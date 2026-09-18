@@ -51,6 +51,19 @@ _PROBE_AGENT = "post-apply-probe-agent"
 _PROBE_LABEL = "post-apply probe pattern"
 _PROPOSAL_ID = 123
 _CYCLE_DATE = date(2026, 6, 30)
+# Unrecognized by classify_failure_rationale → a genuine QUALITY reject. The
+# cycle-level discriminators set a rejected row aside on its rationale class, so
+# a blank one here would silently drop the row the case under test needs.
+_QUALITY_RATIONALE = "quality reject — pre-verify failed"
+
+
+def _marker_row() -> tuple[str, str]:
+    """(haiku_status, rationale) a production back-off marker row persists."""
+    return (
+        dc.TIMEOUT_BACKOFF_HAIKU_STATUS,
+        dc.TIMEOUT_BACKOFF_RATIONALE_PREFIX + ": 3 consecutive timeouts",
+    )
+
 
 # Full watch dependency set — every name the alert touches must be bound.
 _WATCH_READY = dc is not None and all(
@@ -348,7 +361,11 @@ class TestRevertedStatusBranches(unittest.TestCase):
                     pattern_frequency="3",
                     target_file="/tmp/probe-agent.md",
                     classification="reject" if status == "rejected" else "body-auto",
-                    rationale="",
+                    # A quality-shaped rationale, so the rejected row is a real
+                    # rejection to the discriminator: a blank one classifies as
+                    # skipped and would drop out, leaving the reverted-beside-
+                    # rejected case passing on the reverted row alone.
+                    rationale=_QUALITY_RATIONALE,
                     proposed_diff="",
                     outcomes_sampled=0,
                     haiku_status="ok",
@@ -381,13 +398,18 @@ class TestRevertedStatusBranches(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestBackoffMarkerCycleRegression(unittest.TestCase):
-    """A back-off marker is neither output nor a rejection for the regression exit."""
+    """A back-off marker is neither output nor a rejection for the regression exit.
 
-    def _is_regression(self, haiku_statuses: list[str]) -> bool:
+    The marker is recognized by the RATIONALE prefix a production back-off row
+    carries — the classifier SoT — so each fixture row pairs its haiku_status
+    with the rationale that row would really persist.
+    """
+
+    def _is_regression(self, rows: list[tuple[str, str]]) -> bool:
         report = dc.CycleReport(
             cycle_date="2026-07-01",
             generated_at="2026-07-01T00:00:00.000Z",
-            patterns_processed=len(haiku_statuses),
+            patterns_processed=len(rows),
             cost_guard={},
             patches=[
                 dc.PatchResult(
@@ -396,13 +418,13 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
                     pattern_frequency="3",
                     target_file="/tmp/probe-agent.md",
                     classification="reject",
-                    rationale="",
+                    rationale=rationale,
                     proposed_diff="",
                     outcomes_sampled=0,
                     haiku_status=haiku_status,
                     status="rejected",
                 )
-                for haiku_status in haiku_statuses
+                for haiku_status, rationale in rows
             ],
         )
         with mock.patch.object(
@@ -411,12 +433,12 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
             return dc.is_systemic_regression(report)
 
     def test_when_cycle_holds_only_markers_then_not_a_regression(self) -> None:
-        self.assertFalse(self._is_regression([dc.TIMEOUT_BACKOFF_HAIKU_STATUS] * 2))
+        self.assertFalse(self._is_regression([_marker_row()] * 2))
 
     def test_when_markers_beside_all_rejected_patches_then_still_a_regression(
         self,
     ) -> None:
-        self.assertTrue(self._is_regression([dc.TIMEOUT_BACKOFF_HAIKU_STATUS, "ok"]))
+        self.assertTrue(self._is_regression([_marker_row(), ("ok", _QUALITY_RATIONALE)]))
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

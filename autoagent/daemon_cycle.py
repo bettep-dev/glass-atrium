@@ -43,6 +43,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
+from itertools import groupby
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
@@ -390,6 +391,10 @@ HAIKU_PROBE_TIMEOUT_SEC = 2.0
 # pipeline yields nothing actionable — a systemic gate regression, not N
 # independent quality rejects (the R1 containment break presented exactly this
 # way: a layout change silently rejected 100% of proposals every cycle).
+# Both walks therefore count only ADJUDICATING rejects, through the same
+# classify_failure_rationale + _NON_ADJUDICATION_CLASSES SoT the per-pattern kill
+# streak uses: a supersede, parked, quota, auth or back-off row is not a gate
+# verdict, so a date holding only those drops out like a quiet night.
 # run_cycle counts the CURRENT in-memory cycle plus the leading run of persisted
 # all-reject cycle_dates; any cycle with >=1 non-rejected proposal breaks the
 # streak. Default 3 mirrors TIMEOUT_BACKOFF_THRESHOLD; env-overridable.
@@ -6958,43 +6963,86 @@ def emit_loop_events(report: CycleReport) -> int:
 # -- cycle-level all-reject alert --------------------------------------------
 
 
-def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
-    """Leading run of persisted cycles whose proposals were ALL rejected.
+def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
+    """A 'rejected' row the classifier SoT says was never genuinely adjudicated.
 
-    Groups core.autoagent_proposals by cycle_date STRICTLY BEFORE the current
-    cycle (the current cycle is judged from the in-memory report — excluding it
-    here prevents a same-day re-run from double-counting today) and counts how
-    many of the most recent cycle_dates carry zero non-rejected rows. Back-off
-    marker rows are excluded before grouping, so a marker-only date drops out of
-    the walk like a quiet night — neither extending nor breaking the streak.
-    Stops at the first cycle with >=1 non-rejected proposal. Bounded LIMIT mirrors
-    consecutive_timeout_count. PG unavailable / read error → 0 (fail-open: a
-    read failure must never fabricate an alert).
+    The single discriminator both all-reject walks set a row aside on, delegated
+    to classify_failure_rationale exactly as consecutive_reject_count does —
+    never a parallel rationale.startswith(...) test, and never a status/agent
+    carve-out per infra class.
+
+    Status-gated deliberately: ONLY a 'rejected' row is classifiable. A
+    'pending'/'snoozed'/'applied' row is pipeline output and is judged by status
+    alone — classifying it would let a blank-rationale queued row vanish instead
+    of breaking the streak, silently extending it over a night that shipped.
+    'reverted' is terminal by status for the same reason, in the other direction.
+    """
+    return (
+        status == "rejected"
+        and classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
+    )
+
+
+def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
+    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
+
+    Rows arrive newest-date-first, so equal dates are contiguous. Per date:
+    any row that is not terminal-negative breaks the walk (a queued or applied
+    row is pipeline output); a date whose rejects ALL classify non-adjudicating
+    drops out like a quiet night — neither extending nor breaking; a date
+    carrying >=1 adjudicating reject extends.
+    """
+    streak = 0
+    for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0]):
+        extends = False
+        for _date, status, rationale in date_rows:
+            status_text = str(status or "")
+            if status_text not in ("rejected", "reverted"):
+                return streak
+            if _is_non_adjudication_reject(status_text, rationale):
+                continue
+            extends = True
+        if extends:
+            streak += 1
+    return streak
+
+
+def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
+    """Leading run of persisted cycles whose proposals were ALL adjudicating rejects.
+
+    Reads (cycle_date, status, rationale) for every proposal on the most recent
+    cycle_dates STRICTLY BEFORE the current cycle (the current cycle is judged
+    from the in-memory report — excluding it here prevents a same-day re-run from
+    double-counting today) and hands them to _all_reject_streak_from_rows, which
+    applies the classify_failure_rationale SoT: the read cannot call it, so the
+    grouping and the classification happen in Python. A supersede / quota / auth /
+    chronic-timeout / skipped / below-floor / parked-pattern date drops out like a
+    quiet night, so a back-off marker date needs no status carve-out of its own.
+    PG unavailable / read error → 0 (fail-open: a read failure must never
+    fabricate an alert).
     """
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
     select_sql = (
-        "SELECT count(*) FILTER (WHERE status::text <> 'rejected') "
+        "SELECT cycle_date, status::text, rationale "
         "FROM core.autoagent_proposals "
+        # The bound is on DISTINCT DATES, not rows — the table carries several
+        # rows per cycle_date, so a row-count LIMIT of the same size would
+        # quietly shrink the horizon and flatten a genuinely long streak (the
+        # prior LIMIT 10 capped a 20-day regression at a misreported 10). The
+        # walk still short-circuits at the first non-rejected cycle, so this
+        # only bounds the worst case (a genuinely long all-reject run).
+        "WHERE cycle_date IN ("
+        "SELECT cycle_date FROM core.autoagent_proposals "
         "WHERE cycle_date < %s::date "
-        # WHERE, not FILTER: a marker-only date drops out, never a zero-count group
-        # IS DISTINCT FROM: a plain <> would also drop NULL-outcome rows
-        "AND haiku_status IS DISTINCT FROM %s "
-        "GROUP BY cycle_date "
-        "ORDER BY cycle_date DESC "
-        # LIMIT high enough not to flatten a long real streak — the prior
-        # LIMIT 10 capped a 20-day regression at a misreported 10. The walk
-        # still short-circuits at the first non-rejected cycle, so this only
-        # bounds the worst case (a genuinely long all-reject run).
-        "LIMIT 400"
+        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT 400) "
+        "ORDER BY cycle_date DESC"
     )
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    select_sql, (current_cycle_date, TIMEOUT_BACKOFF_HAIKU_STATUS)
-                )
+                cur.execute(select_sql, (current_cycle_date,))
                 rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
         sys.stderr.write(
@@ -7003,12 +7051,7 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         )
         return 0
 
-    streak = 0
-    for (non_rejected,) in rows:
-        if int(non_rejected or 0) > 0:
-            break
-        streak += 1
-    return streak
+    return _all_reject_streak_from_rows(rows)
 
 
 def _days_since_last_applied(current_cycle_date: str | None) -> int:
@@ -7059,25 +7102,30 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
 def _all_rejected_this_cycle(report: CycleReport) -> bool:
     """Shared discriminator: this cycle INGESTED input and rejected ALL of it.
 
-    Back-off marker patches (TIMEOUT_BACKOFF_HAIKU_STATUS) are set aside first —
-    a marker is neither output nor a rejection. True iff >=1 patch remains AND
-    every remaining patch is terminal-negative. A quiet night (patches=[] or
-    markers only) is False — the single SoT for the
+    A rejected patch whose OWN rationale classifies non-adjudicating is set aside
+    first (_is_non_adjudication_reject) — it is neither output nor a rejection,
+    which subsumes the back-off marker carve-out: a marker row carries
+    TIMEOUT_BACKOFF_RATIONALE_PREFIX, so the classifier already looks past it.
+    Keys on the rationale, never failure_class: the class is filled only on the
+    failure branches while the rationale rides every row. True iff >=1 patch
+    remains AND every remaining patch is terminal-negative. A quiet night
+    (patches=[] or set-aside-only) is False — the single SoT for the
     "all-reject-this-cycle" precondition both alert_all_reject_streak and
     is_systemic_regression gate on (a 'snoozed'/'pending'/'applied' row is
-    non-rejected pipeline output → False). 'reverted' counts as
-    rejected-equivalent: a backed-out apply is terminal-non-resurrectable, NOT
-    live pipeline output, so it must never resurrect the healthy-output claim.
+    non-rejected pipeline output → False, whatever its rationale). 'reverted'
+    counts as rejected-equivalent regardless of rationale: a backed-out apply is
+    terminal-non-resurrectable, NOT live pipeline output, so it must never
+    resurrect the healthy-output claim.
     """
-    adjudicated_patches = [
+    counted_patches = [
         patch
         for patch in report.patches
-        if patch.haiku_status != TIMEOUT_BACKOFF_HAIKU_STATUS
+        if not _is_non_adjudication_reject(patch.status, patch.rationale)
     ]
-    if not adjudicated_patches:
+    if not counted_patches:
         return False
     return all(
-        patch.status in ("rejected", "reverted") for patch in adjudicated_patches
+        patch.status in ("rejected", "reverted") for patch in counted_patches
     )
 
 
@@ -7085,9 +7133,11 @@ def is_systemic_regression(report: CycleReport) -> bool:
     """True only for a systemic zero-output regression, never a quiet night.
 
     The discriminator is unchanged from alert_all_reject_streak: this cycle must
-    have INGESTED input (a non-marker patch) AND produced zero non-rejected
-    output (every non-marker patch 'rejected'). A legitimately quiet night
-    (patches=[] or back-off markers only) → False here (caller stays clean exit 0). On top of that, ONE of
+    have INGESTED input (a patch carrying a real quality verdict) AND produced
+    zero non-rejected output (every such patch 'rejected'). A legitimately quiet
+    night (patches=[], or only rejects the classifier reads as non-adjudicating —
+    back-off markers, quota, auth, supersede) → False here (caller stays clean
+    exit 0). On top of that, ONE of
     two corroborating crits must hold: the all-reject streak reached
     ALL_REJECT_ALERT_THRESHOLD, OR the days-since-last-applied gap exceeds
     DAYS_SINCE_APPLIED_CRIT_THRESHOLD (the slow-bleed leg). The days leg widens
@@ -7105,11 +7155,12 @@ def is_systemic_regression(report: CycleReport) -> bool:
 def alert_all_reject_streak(report: CycleReport) -> None:
     """3-consecutive-all-reject-cycle WARN — stderr + loop event, never silent.
 
-    Fires only when the CURRENT cycle produced >=1 proposal and ALL of them are
-    'rejected' AND the prior persisted cycles extend the streak to
+    Fires only when the CURRENT cycle produced >=1 adjudicating proposal and ALL
+    of them are 'rejected' AND the prior persisted cycles extend the streak to
     ALL_REJECT_ALERT_THRESHOLD. 'snoozed'/'pending' rows count as non-rejected
-    (a queued proposal is still pipeline output) and break the streak; back-off
-    marker rows count as neither. Precondition Loud-Fail: the alert is the observable surface for a
+    (a queued proposal is still pipeline output) and break the streak whatever
+    their rationale; a reject the classifier reads as non-adjudicating counts as
+    neither. Precondition Loud-Fail: the alert is the observable surface for a
     systemic reject regression that individual reject rows cannot convey.
     """
     if not _all_rejected_this_cycle(report):
