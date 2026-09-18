@@ -246,7 +246,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # Dry-run over the same absent roots does NOT abort.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${SANDBOX_SCRIPT}" --dry-run --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1

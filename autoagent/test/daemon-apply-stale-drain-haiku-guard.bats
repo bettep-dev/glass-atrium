@@ -213,6 +213,12 @@ applied_log_path() {
   printf '%s/autoagent-applied-%s.jsonl' "${REPORTS}" "$(date -u +%Y-%m-%d)"
 }
 
+# dryrun_log_path — today's --dry-run JSONL: the .dryrun sibling of the applied
+# log under the SAME reports dir, so AUTOAGENT_REPORTS_DIR isolates both sinks.
+dryrun_log_path() {
+  printf '%s/autoagent-applied-%s.dryrun.jsonl' "${REPORTS}" "$(date -u +%Y-%m-%d)"
+}
+
 # ---------------------------------------------------------------------------
 # P1a (a) — out_of_region single row WIRES stale-drain (verdict: incremented)
 # ---------------------------------------------------------------------------
@@ -298,8 +304,9 @@ applied_log_path() {
   # ... but NO mark_stale_attempt CTE was sent (dry-run never reaches the guard).
   run grep -q 'stale_attempt_count' "${PSQL_LOG}"
   [[ "${status}" -ne 0 ]]
-  # Dry-run "would_commit" record went to the dry-run log, not a stale_drain line.
-  grep -q '"status":"dryrun"' "/tmp/autoagent-applied-$(date -u +%Y-%m-%d).dryrun.jsonl"
+  # Dry-run "would_commit" record went to THIS run's dry-run log, keyed on the
+  # target this run produced — any other same-day dry-run row satisfies nothing.
+  grep '"status":"dryrun"' "$(dryrun_log_path)" | grep -qF "\"target_file\":\"${AGENTS}/probe.md\""
 }
 
 # ---------------------------------------------------------------------------

@@ -38,8 +38,11 @@
 # the target from that before-image. The persistent before-image is the
 # post-hoc rollback anchor (one before-image = one patch); no VCS commit/revert.
 #
-# A JSONL log of applied patches is appended to:
+# A JSONL log of applied patches is appended, under the data root that
+# AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME resolves, to:
 #     ~/.glass-atrium/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
+# A --dry-run writes its rows to the `.dryrun.jsonl` sibling in that same
+# directory — a suffix every real applied-log reader's filename filter rejects.
 #
 # Idempotency: re-running on the same JSON skips patches whose
 # (pattern_label, target_file) tuple already appears in today's applied log.
@@ -52,7 +55,8 @@
 # Usage:
 #     daemon-apply.sh                 # drain the ENTIRE auto-tier pending
 #                                     # backlog oldest-first (no processing cap)
-#     daemon-apply.sh --dry-run       # simulate; log to /tmp/, no file writes
+#     daemon-apply.sh --dry-run       # simulate; log to the data root's
+#                                     # .dryrun.jsonl, no agent file writes
 #     daemon-apply.sh --limit 5       # OPTIONAL manual cap for ad-hoc operator
 #                                     # use; 0 (default) = unbounded process-all
 #     daemon-apply.sh --report PATH   # explicit JSON path (fallback / testing)
@@ -689,10 +693,13 @@ REPORT_PATH="${REPORT_PATH:-${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json}"
 
 # -- Output destinations ---------------------------------------------------
 
+# Both sinks derive from REPORTS_DIR, so the override every caller already sets
+# (AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME) reaches the dry-run too. The
+# mkdir is shared: a dry-run skips the apply lock, so it creates this dir itself.
+mkdir -p "${REPORTS_DIR}"
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-    APPLIED_LOG="/tmp/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
+    APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
 else
-    mkdir -p "${REPORTS_DIR}"
     APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.jsonl"
 fi
 
