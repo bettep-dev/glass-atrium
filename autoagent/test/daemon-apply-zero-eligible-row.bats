@@ -20,7 +20,8 @@
 #   AC4  one eligible patch            → per-patch rows only, no extra heartbeat (no double count)
 #   AC5  the row's status literal is inside the set §14's producer pin already fixes
 #   AC9  a failed backlog query / an unreadable backlog row / an unreadable report → exit 21 / 23 / 22,
-#        one abort row, NO heartbeat; an absent report is still a clean exit 0
+#        one abort row, NO heartbeat; a present-but-unreadable PATH SHAPE (a directory, a dangling
+#        link) is unreadable too, while a report absent from the filesystem is still a clean exit 0
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-landing-zone.bats) with psql either MASKED
 # (report fallback) or replaced by a zero-row STUB (backlog fallback with an empty eligible set), a
@@ -500,6 +501,37 @@ assert_one_abort_row() {
     return 1
   }
   assert_one_abort_row report_unreadable 22 report
+}
+
+@test "AC9: every unreadable report PATH SHAPE exits 22 with one abort row, never a silent exit 0" {
+  # Absence is about presence, not file kind: each shape is AT the path and resolves to nothing
+  # readable (a dangling link exists as a link), so none may read as absent or as zero patches.
+  local shape
+  for shape in directory dangling-link; do
+    rm -rf -- "${WORK}/report.json" # removes a directory, and a link without following it
+    rm -f -- "${APPLIED_LOG}"       # a fresh log per shape: assert_one_abort_row counts rows
+    case "${shape}" in
+      directory) mkdir -- "${WORK}/report.json" ;;
+      dangling-link) ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json" ;;
+    esac
+    run_apply "${MIRROR}"
+    [[ "${status}" -eq 22 ]] || {
+      echo "report shape ${shape} exited ${status}" >&2
+      dump_log
+      return 1
+    }
+    [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
+      "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
+      "${output}" != *Traceback* ]] || {
+      echo "report shape ${shape} reads as absent, as zero patches, or leaks a traceback" >&2
+      dump_log
+      return 1
+    }
+    assert_one_abort_row report_unreadable 22 report || {
+      echo "report shape ${shape}" >&2
+      return 1
+    }
+  done
 }
 
 @test "AC9: an ABSENT report stays a clean exit 0 with no abort row" {

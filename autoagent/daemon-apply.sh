@@ -38,8 +38,11 @@
 # the target from that before-image. The persistent before-image is the
 # post-hoc rollback anchor (one before-image = one patch); no VCS commit/revert.
 #
-# A JSONL log of applied patches is appended to:
+# A JSONL log of applied patches is appended, under the data root that
+# AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME resolves, to:
 #     ~/.glass-atrium/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
+# A --dry-run writes its rows to the `.dryrun.jsonl` sibling in that same
+# directory — a suffix every real applied-log reader's filename filter rejects.
 #
 # Idempotency: re-running on the same JSON skips patches whose
 # (pattern_label, target_file) tuple already appears in today's applied log.
@@ -52,7 +55,8 @@
 # Usage:
 #     daemon-apply.sh                 # drain the ENTIRE auto-tier pending
 #                                     # backlog oldest-first (no processing cap)
-#     daemon-apply.sh --dry-run       # simulate; log to /tmp/, no file writes
+#     daemon-apply.sh --dry-run       # simulate; log to the data root's
+#                                     # .dryrun.jsonl, no agent file writes
 #     daemon-apply.sh --limit 5       # OPTIONAL manual cap for ad-hoc operator
 #                                     # use; 0 (default) = unbounded process-all
 #     daemon-apply.sh --report PATH   # explicit JSON path (fallback / testing)
@@ -194,10 +198,12 @@
 #          proposal_query_failed); only reachable with psql present and no
 #          --dry-run. Infra failure, never read as not-found, an empty backlog or a
 #          no-op; nothing applied.
-#     22 — report source: the report exists but is unreadable (not JSON, not an
-#          object, or its patches field is not a list of objects), so it is never
-#          read as zero patches. Nothing applied; one abort row lands (reason
-#          report_unreadable). An ABSENT report stays exit 0. Only reachable on the
+#     22 — report source: the report exists but is unreadable — not JSON, not an
+#          object, its patches field is not a list of objects, nested too deeply to
+#          decode, a path that cannot be opened or read, or a non-regular path
+#          (directory, dangling link, FIFO) — so it is never read as zero patches.
+#          Nothing applied; one abort row lands (reason report_unreadable). Only a
+#          report ABSENT from the filesystem stays exit 0. Only reachable on the
 #          report fallback (psql absent, or --dry-run). Does NOT collide with 0/2-21.
 #     23 — a proposal ROW is unreadable: the query answered, but a row did not
 #          reassemble (wrong field count, a field that is not base64 UTF-8, or —
@@ -689,10 +695,14 @@ REPORT_PATH="${REPORT_PATH:-${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json}"
 
 # -- Output destinations ---------------------------------------------------
 
+# Both sinks derive from REPORTS_DIR, so the override every caller already sets
+# (AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME) reaches the dry-run too. The SOLE
+# creation site: it serves the dry-run (which skips the apply lock) and LOCK_DIR's
+# parent, since the lib's acquire mkdir is atomic — no -p, so no parent creation.
+mkdir -p "${REPORTS_DIR}"
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-    APPLIED_LOG="/tmp/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
+    APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
 else
-    mkdir -p "${REPORTS_DIR}"
     APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.jsonl"
 fi
 
@@ -927,7 +937,6 @@ fi
 # Skip lock entirely in dry-run so parallel test runs don't collide.
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-    mkdir -p "${REPORTS_DIR}"
     # A crashed/SIGKILLed prior holder (no EXIT trap) left a stranded lock; the
     # lib reclaims it only when the holder is BOTH not-live AND aged past the TTL.
     # A genuinely LIVE holder still blocks here (mutual exclusion preserved).
@@ -1042,15 +1051,25 @@ extract_body_auto_patches() {
     fi
 
     python3 - "${report}" "${allow_haiku_skip}" <<'PY'
-import json, sys
+import json, os, stat, sys
 report_path = sys.argv[1]
 allow_haiku_skip = sys.argv[2] == "1"
 # Every unreadable shape exits with ONE named line (exit 22 upstream), never an uncaught traceback.
+# Classes enumerated by exception hierarchy, not by content shape: OSError (open/read, a dangling
+# link included), ValueError (decode), RecursionError (decoder depth).
 try:
+    # Refused BEFORE open, on link-following stat: a FIFO names a cause instead of blocking on a
+    # writer that never comes, while a symlink to a real report stays readable.
+    if not stat.S_ISREG(os.stat(report_path).st_mode):
+        sys.exit("[daemon-apply] report %s: not a regular file" % report_path)
     with open(report_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
+except OSError as exc:
+    sys.exit("[daemon-apply] report %s: cannot be opened or read (%s)" % (report_path, exc))
 except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError both subclass it
     sys.exit("[daemon-apply] report %s: not UTF-8 JSON (%s)" % (report_path, exc))
+except RecursionError as exc:
+    sys.exit("[daemon-apply] report %s: nested too deeply to decode (%s)" % (report_path, exc))
 # `{}` as patches would otherwise iterate as zero patches.
 patches = data.get("patches", []) if isinstance(data, dict) else None
 if not isinstance(patches, list) or not all(isinstance(patch, dict) for patch in patches):
@@ -2249,7 +2268,8 @@ else
     # Fallback path only: an absent report = nothing to apply. (Relocated from
     # the old line-219 guard so it no longer short-circuits the backlog path,
     # which is the PRIMARY source and needs no today-dated report.)
-    if [[ ! -f "${REPORT_PATH}" ]]; then
+    # Absent = nothing at the path, link included — a present non-regular path is unreadable, not missing.
+    if [[ ! -e "${REPORT_PATH}" && ! -L "${REPORT_PATH}" ]]; then
         printf '[daemon-apply] no report at %s — nothing to apply\n' "${REPORT_PATH}" >&2
         exit 0
     fi
