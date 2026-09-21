@@ -66,6 +66,18 @@ sha256_of() {
   fi
 }
 
+# Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
+# Output-validated, never an exit-code-only `||` chain between the two SPELLINGS: GNU
+# `stat -f` is FILESYSTEM status, so '%Lp' reads as a missing operand while the statfs
+# block of the real path still lands on stdout and the fallback APPENDS the mode.
+mode_of() {
+  local m
+  m="$(stat -f '%Lp' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || m="$(stat -c '%a' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "${m}"
+}
+
 # Build a manifest.json at $1 listing relative paths $2.. rooted at the NEWSRC tree.
 write_manifest() {
   local out="$1"
@@ -2973,7 +2985,7 @@ write_escaping_files_manifest() {
 
   [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
   [[ "${output}" == *'manifest key escapes the install root: ../escaped.sh'* ]] || { echo "${output}"; return 1; }
-  [ "$(stat -f '%Lp' "${WORK}/nest/escaped.sh" 2>/dev/null || stat -c '%a' "${WORK}/nest/escaped.sh")" = "600" ] \
+  [ "$(mode_of "${WORK}/nest/escaped.sh")" = "600" ] \
     || { echo "chmod reached outside the root"; return 1; }
   [ "$(cat "${INSTALL}/scripts/tool.sh")" = "old" ] || { echo "half-applied install"; return 1; }
 }
