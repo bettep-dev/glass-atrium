@@ -260,6 +260,33 @@ class GuardedRejectWriteTest(unittest.TestCase):
                 self.assertIn(f"{row['id']}:{row['status']}", rationale)
             self.assertEqual(params[-1], entry["proposal_id"])
 
+    def test_should_stamp_the_guard_actor_and_no_verdict_instant(self) -> None:
+        """The actor names the writer that moved the row; the verdict instant answers
+        a question this writer never asked, so the statement never assigns it."""
+        executed: list[tuple[str, tuple]] = []
+        cursor = mock.MagicMock()
+        cursor.execute.side_effect = lambda sql, params: executed.append((sql, params))
+        cursor.fetchall.return_value = [(7497,)]
+        conn = mock.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        connect = mock.MagicMock()
+        connect.return_value.__enter__.return_value = conn
+
+        with (
+            mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True),
+            mock.patch.object(dc, "_pg_connect", connect, create=True),
+        ):
+            dc.update_parked_proposal_status(
+                [{"proposal_id": 7497, "rows": [{"id": 3384, "status": "rejected"}]}]
+            )
+
+        sql, params = executed[0]
+        self.assertIn("reviewed_by = %s", sql)
+        self.assertNotIn("reviewed_at", sql)
+        self.assertEqual(params[1], dc._PARKED_PATTERN_ACTOR)
+        # The id stays last: the positional pin above must survive the added parameter.
+        self.assertEqual(params[-1], 7497)
+
     def test_should_raise_when_the_proposal_write_helper_is_absent(self) -> None:
         with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", False), self.assertRaises(RuntimeError):
             dc.update_parked_proposal_status(

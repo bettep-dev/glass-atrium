@@ -258,6 +258,45 @@ dryrun_log_path() {
 }
 
 # ---------------------------------------------------------------------------
+# P1a (b2) — H8 provenance: the terminal drain names its mover and adjudicates nothing
+# ---------------------------------------------------------------------------
+
+@test "P1a: the terminal drain stamps the drain actor and assigns no reviewed_at" {
+  make_probe
+  STUB_STALE_VERDICT="drained"
+  run_single "ok"
+
+  grep -q 'stale_attempt_count' "${PSQL_LOG}" || {
+    echo "the drain CTE never reached psql, so nothing below is observable" >&2
+    return 1
+  }
+  # reviewed_at answers WHEN the row was adjudicated. The drain terminates a fossil and
+  # adjudicates nothing, so no statement this run sends may assign it — the whole log is the
+  # haystack because the single lookup names the column nowhere either.
+  run grep -nE "reviewed_at[[:space:]]*=" "${PSQL_LOG}"
+  [[ "${status}" -ne 0 ]] || {
+    echo "a statement assigned reviewed_at: ${output}" >&2
+    return 1
+  }
+  # reviewed_by answers WHO moved it, and only the terminal arm of the CASE stamps: an
+  # increment leaves the status where it was, so it names no new mover.
+  grep -qF "reviewed_by = CASE" "${PSQL_LOG}" || {
+    echo "the drain CTE stamps no actor" >&2
+    return 1
+  }
+  grep -qF "actor=daemon-apply-drain" "${PSQL_LOG}" || {
+    echo "the drain actor is not bound as a psql variable" >&2
+    return 1
+  }
+  # The token travels as a binding, never concatenated into the quoted heredoc.
+  run grep -nE "reviewed_by[[:space:]]*=.*'daemon-apply" "${PSQL_LOG}"
+  [[ "${status}" -ne 0 ]] || {
+    echo "the drain actor is interpolated into the SQL text: ${output}" >&2
+    return 1
+  }
+}
+
+# ---------------------------------------------------------------------------
 # P1a (c) — no_column verdict prints the migration-pending WARN (tolerant degrade)
 # ---------------------------------------------------------------------------
 

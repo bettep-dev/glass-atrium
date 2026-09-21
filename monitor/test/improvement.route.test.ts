@@ -18,9 +18,10 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import "dotenv/config";
 
@@ -67,6 +68,21 @@ function writeStderrStub(name: string, code: number, stderrLine: string): string
   );
   chmodSync(scriptPath, 0o755);
   return scriptPath;
+}
+
+// Like writeExitStub but records the argv it was handed. The approve route's actor
+// hand-off never reaches the HTTP response, so the spawn boundary is the only place
+// it is observable.
+function writeArgvCaptureStub(name: string, code: number): { script: string; argvPath: string } {
+  const scriptPath = path.join(stubDir, name);
+  const argvPath = `${scriptPath}.argv`;
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >${JSON.stringify(argvPath)}\nexit ${code}\n`,
+    "utf8",
+  );
+  chmodSync(scriptPath, 0o755);
+  return { script: scriptPath, argvPath };
 }
 
 before(async () => {
@@ -815,4 +831,58 @@ test("POST reject: non-integer :id → 400 { status: 'invalid_param' }", async (
   const body = res.json() as { status: string; param: string };
   assert.strictEqual(body.status, "invalid_param");
   assert.strictEqual(body.param, "id");
+});
+
+// --- Review provenance (core.autoagent_proposals.reviewed_by) ---------------
+// The operator token of the closed actor set declared at
+// monitor/prisma/schema.prisma -> AutoagentProposal. The reject route stamps this
+// same literal directly in SQL; the approve route has to carry it across the spawn
+// boundary into daemon-apply.sh, which is the leg asserted below.
+const OPERATOR_ACTOR = "monitor-user";
+
+test("POST approve: hands the operator actor to daemon-apply instead of letting the machine default stand", async () => {
+  const stub = writeArgvCaptureStub("apply-argv.sh", 0);
+  process.env.AUTOAGENT_APPLY_SCRIPT = stub.script;
+
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 200);
+
+  const argv = readFileSync(stub.argvPath, "utf8").split("\n").filter((a) => a.length > 0);
+  const at = argv.indexOf("--actor");
+  assert.notStrictEqual(at, -1, `approve argv carries --actor (got: ${argv.join(" ")})`);
+  assert.strictEqual(
+    argv[at + 1],
+    OPERATOR_ACTOR,
+    "an operator approval is filed under the operator, never the daemon default",
+  );
+});
+
+// Source-contract assertion over the route's own SQL. Precedent for reading route
+// source rather than rendering it: test/daemon-status.enum-parity.test.ts.
+const ROUTE_SRC = readFileSync(
+  fileURLToPath(new URL("../src/server/routes/improvement.ts", import.meta.url)),
+  "utf8",
+);
+
+// Every SELECT ... FROM core.autoagent_proposals in the route, narrowed to the
+// tightest SELECT preceding each FROM so one projection never swallows its neighbour.
+function proposalProjections(src: string): string[] {
+  return src
+    .split("FROM core.autoagent_proposals")
+    .slice(0, -1)
+    .map((before) => before.slice(before.lastIndexOf("SELECT")))
+    .filter((sql) => sql.startsWith("SELECT"));
+}
+
+test("every proposal projection selecting the verdict instant selects its actor beside it", () => {
+  const withInstant = proposalProjections(ROUTE_SRC).filter((sql) => /\breviewed_at\b/.test(sql));
+  assert.ok(withInstant.length > 0, "the route still projects reviewed_at somewhere");
+
+  for (const sql of withInstant) {
+    assert.match(
+      sql,
+      /\breviewed_by\b/,
+      `a projection carries the instant without the actor:\n${sql}`,
+    );
+  }
 });

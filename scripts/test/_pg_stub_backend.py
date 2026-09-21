@@ -269,15 +269,27 @@ def create_proposals_table(db_path: Path) -> None:
         db.commit()
 
 
-def read_proposal(db_path: Path, key: tuple[str, str, str]) -> dict[str, str] | None:
-    """The stored status and rationale for one identity triple, or None."""
+def read_proposal(
+    db_path: Path,
+    key: tuple[str, str, str],
+    columns: tuple[str, ...] = ("status", "rationale"),
+) -> dict[str, str] | None:
+    """The stored `columns` for one identity triple, or None.
+
+    Default projection is the verdict pair; a caller pinning provenance widens it
+    rather than reaching past this reader into raw sqlite.
+    """
     with closing(sqlite3.connect(db_path)) as db:
         row = db.execute(
-            "SELECT status, rationale FROM %s WHERE %s"
-            % (_PROPOSALS_TABLE, " AND ".join("%s = ?" % c for c in _PROPOSALS_KEY)),
+            "SELECT %s FROM %s WHERE %s"
+            % (
+                ", ".join(columns),
+                _PROPOSALS_TABLE,
+                " AND ".join("%s = ?" % c for c in _PROPOSALS_KEY),
+            ),
             key,
         ).fetchone()
-    return None if row is None else {"status": row[0], "rationale": row[1]}
+    return None if row is None else dict(zip(columns, row))
 
 
 @contextmanager

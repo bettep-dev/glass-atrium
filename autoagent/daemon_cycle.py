@@ -8297,6 +8297,11 @@ _SUPERSEDE_REASON_SAME_CYCLE = (
     f"{_SUPERSEDE_REASON} (current-file-anchored, same-cycle label drift)"
 )
 
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy. Its own token, never a review one: these rows were
+# terminated for duplicate accumulation, never adjudicated.
+_SUPERSEDE_ACTOR = "daemon-cycle-supersede"
+
 
 def supersede_prior_pending_for_agent(
     target_agent: str,
@@ -8320,9 +8325,9 @@ def supersede_prior_pending_for_agent(
     under a drifted label.
 
     monitor has no dedicated supersede enum, so this is marked 'rejected' +
-    rationale (ProposalStatus enum preserved — no schema change). The stamp is
-    per row: the run's own cycle date carries the same-cycle tail, an older row
-    the cross-day tail.
+    rationale + the supersede actor (ProposalStatus enum preserved — no schema
+    change). The stamp is per row: the run's own cycle date carries the
+    same-cycle tail, an older row the cross-day tail.
 
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
@@ -8360,7 +8365,8 @@ def supersede_prior_pending_for_agent(
     update_sql = (
         "UPDATE core.autoagent_proposals "
         "SET status = 'rejected', "
-        "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END "
+        "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END, "
+        "reviewed_by = %s "
         "WHERE status = 'pending' "
         "AND target_agent = %s AND target_file = %s "
         "AND NOT (cycle_date = %s::date AND pattern_label = %s "
@@ -8371,6 +8377,7 @@ def supersede_prior_pending_for_agent(
         cycle_date,
         _SUPERSEDE_REASON_SAME_CYCLE,
         _SUPERSEDE_REASON_CROSS_DAY,
+        _SUPERSEDE_ACTOR,
         target_agent,
         target_file,
         cycle_date,
@@ -9990,6 +9997,10 @@ def _report_uncovered_proposal(
 # the monitor reject-bucket route stores it as a LIKE marker — compose tails onto it.
 _PARKED_PATTERN_REASON = "covering pattern parked before apply"
 
+# Actor token from the same closed set. The guard stamps WHO moved the row; the
+# verdict instant stays unwritten, since nothing here adjudicated it.
+_PARKED_PATTERN_ACTOR = "daemon-cycle-parked-guard"
+
 
 def find_parked_proposals(
     triples: list[dict],
@@ -10018,8 +10029,9 @@ def find_parked_proposals(
 def update_parked_proposal_status(parked: list[dict]) -> list[int]:
     """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
 
-    Same shape as the same-agent supersede: status + rationale, no enum change, one
-    transaction. A row that left pending/snoozed since selection is left untouched.
+    Same shape as the same-agent supersede: status + rationale + actor, no enum
+    change, one transaction. A row that left pending/snoozed since selection is
+    left untouched.
     """
     if not parked:
         return []
@@ -10027,7 +10039,7 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
         raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', rationale = %s "
+        "SET status = 'rejected', rationale = %s, reviewed_by = %s "
         "WHERE status IN ('pending', 'snoozed') AND id = %s "
         "RETURNING id"
     )
@@ -10037,7 +10049,9 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
             for entry in parked:
                 rows = _build_row_status_text(entry["rows"])
                 rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
-                cur.execute(update_sql, (rationale, entry["proposal_id"]))
+                cur.execute(
+                    update_sql, (rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"])
+                )
                 rejected.extend(row[0] for row in cur.fetchall())
         conn.commit()
     return rejected

@@ -499,6 +499,10 @@ print(json.dumps({
         # the operator awaiting-decision count for a row awaiting nothing.
         "approval_tier": "auto",
         "status": "applied" if landed else "rejected",
+        # Born terminal, so no later transition stamps it: the actor arrives with
+        # the insert. Its own token — this row is an updater accountability
+        # record, never a daemon push.
+        "reviewed_by": "updater-resolved-gap",
         "proposed_diff": diff_text,
         # No cost guard runs on the updater path — there is no model spend to
         # guard. "ok" is the non-warning state of the same VARCHAR(16) vocabulary.
