@@ -61,7 +61,8 @@ teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# install_psql_stub — the status flip logs its bindings and returns one id; the backlog SELECT answers
+# install_psql_stub — the status flip logs its bindings AND its statement text (the provenance rows
+# below read both) and returns one id; the backlog SELECT answers
 # from its fixture file. The Nth single lookup answers from single.rows.N when scripted (a
 # single.rows.N.rc file scripts a query failure instead), else from single.rows.
 install_psql_stub() {
@@ -71,6 +72,7 @@ sql="$(cat)"
 case "${sql}" in
   *"'applied'::core"*)
     printf 'flip: %s\n' "$*" >>"${STUB_PSQL_LOG:?}"
+    printf 'flip-sql<<<\n%s\n>>>\n' "${sql}" >>"${STUB_PSQL_LOG}"
     printf '1\n'
     ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
@@ -528,6 +530,83 @@ print(json.dumps({"patches": [patch]}))
   [[ "${output}" == *"parked-pattern guard unavailable"* ]] || {
     echo "the report source applied unguarded without saying so" >&2
     dump_state
+    return 1
+  }
+}
+
+@test "provenance: the apply flip keeps its verdict instant and stamps the machine actor by default" {
+  proposal_row 104 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply
+
+  [[ "${status}" -eq 0 ]] && was_flipped 104 || {
+    dump_state
+    return 1
+  }
+  # The apply flip IS a verdict instant under H8, so it keeps stamping reviewed_at ...
+  grep -qF "reviewed_at         = now()," "${PSQL_LOG}" || {
+    echo "the apply flip stopped stamping its verdict instant" >&2
+    dump_state
+    return 1
+  }
+  # ... and now also names the mover, bound as a psql variable rather than concatenated.
+  grep -qF "reviewed_by         = :'actor'," "${PSQL_LOG}" || {
+    echo "the apply flip stamps no actor" >&2
+    dump_state
+    return 1
+  }
+  grep -q -- "^flip: .*actor=daemon-apply-flip" "${PSQL_LOG}" || {
+    echo "the flip did not bind the machine-default actor" >&2
+    dump_state
+    return 1
+  }
+}
+
+@test "provenance: --actor carries the operator token into the flip binding" {
+  single_row 205 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply --proposal-id 205 --actor monitor-user
+
+  [[ "${status}" -eq 0 ]] && was_flipped 205 || {
+    dump_state
+    return 1
+  }
+  grep -q -- "^flip: .*actor=monitor-user" "${PSQL_LOG}" || {
+    echo "the approve seam did not carry its actor to the flip" >&2
+    dump_state
+    return 1
+  }
+  grep -q -- "^flip: .*actor=daemon-apply-flip" "${PSQL_LOG}" && {
+    echo "the machine default overrode the operator token" >&2
+    dump_state
+    return 1
+  }
+  return 0
+}
+
+@test "provenance: an actor outside the closed token set is a named refusal before any statement" {
+  proposal_row 106 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  answer_guard 1 0 "${NO_GUARD}"
+  run_apply --actor daemon-apply-drain
+
+  # The drain token is a real member of the schema's set but names no verdict, so the flip seam
+  # refuses it exactly as it refuses a typo — the set is checked in the shell, never left to the
+  # psql binding, which makes a wrong token safe rather than correct.
+  [[ "${status}" -eq 24 ]] || {
+    echo "expected the named unknown-actor exit 24, got ${status}" >&2
+    dump_state
+    return 1
+  }
+  [[ "${output}" == *"unknown review actor daemon-apply-drain"* ]] || {
+    echo "the refusal does not name the rejected token: ${output}" >&2
+    return 1
+  }
+  is_unchanged probe-a || {
+    echo "the refused run still edited an agent body" >&2
+    return 1
+  }
+  [[ ! -f "${PSQL_LOG}" ]] || {
+    echo "the refused run reached psql: $(cat -- "${PSQL_LOG}")" >&2
     return 1
   }
 }

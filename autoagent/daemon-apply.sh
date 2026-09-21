@@ -61,6 +61,10 @@
 #                                     # use; 0 (default) = unbounded process-all
 #     daemon-apply.sh --report PATH   # explicit JSON path (fallback / testing)
 #     daemon-apply.sh --agents-dir P  # explicit agents repo (testing)
+#     daemon-apply.sh --actor TOKEN   # who to record as the mover of the rows
+#                                     # this run flips (default: the machine
+#                                     # token); the operator approve route
+#                                     # passes its own. See "Review actor" below.
 #     daemon-apply.sh --proposal-id N # apply EXACTLY proposal N (single mode);
 #                                     # see "Single-proposal mode" below
 #     daemon-apply.sh --proposal-id N --auto-regen
@@ -81,6 +85,19 @@
 #   only this explicit path bypasses). Selection: id=N only; the shell then
 #   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
+#
+# Review actor (core.autoagent_proposals.reviewed_by):
+#   Every status writer records WHO moved the row. The two columns answer
+#   different questions and are asymmetric on purpose — reviewed_at is the
+#   instant of the review VERDICT that settled the row, reviewed_by is the actor
+#   that produced its current status whatever kind of transition it was. The
+#   closed token set is declared at monitor/prisma/schema.prisma ->
+#   AutoagentProposal; this script stamps two of it. The apply flip IS a verdict,
+#   so it writes both; the stale drain terminates a fossil nobody adjudicated, so
+#   it writes the actor alone. --actor overrides the flip token only (the
+#   operator approve route passes `monitor-user`) and is checked against the
+#   flip-eligible set HERE, in the shell: the psql binding makes a wrong token
+#   injection-safe, not correct.
 #
 # Auto-regen mode (regen-on-accept path):
 #   --auto-regen modifies --proposal-id N ONLY when the normal single-mode apply
@@ -212,6 +229,13 @@
 #          nothing. Checked before the status branch, so an unreadable row is never
 #          judged terminal. Nothing applied; batch lands one abort row (reason
 #          proposal_row_unreadable). Does NOT collide with 0/2-22.
+#
+# Review-actor exit code (assert_review_actor — see "Review actor" above):
+#     24 — --actor named a token outside the flip-eligible set. Refused BEFORE
+#          the lock and before any statement, so nothing is applied and no row is
+#          stamped: a row filed under the wrong mover is worse than one filed
+#          under none, and a silent fall back to the machine default would file
+#          an operator's approval as the daemon's. Does NOT collide with 0/2-23.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -309,6 +333,27 @@ STALE_DRAIN_THRESHOLD="${AUTOAGENT_STALE_DRAIN_THRESHOLD:-3}"
 # field for backward-compat with existing report consumers — no commit exists).
 APPLY_PREFIX="[AUTO]"
 
+# Review-actor tokens this script may stamp, from the closed set declared at
+# monitor/prisma/schema.prisma -> AutoagentProposal. One per arm: a shared default
+# would file the drain's terminations under the apply flip.
+REVIEW_ACTOR_FLIP='daemon-apply-flip'
+REVIEW_ACTOR_DRAIN='daemon-apply-drain'
+readonly REVIEW_ACTOR_FLIP REVIEW_ACTOR_DRAIN
+
+# assert_review_actor TOKEN CONTEXT — die (exit 24) on a token outside the
+# FLIP-eligible subset. The drain token is deliberately absent: it is a real member
+# of the schema's set but names no verdict, so routing it to the flip would file a
+# machine drain as an apply.
+assert_review_actor() {
+    case "$1" in
+        "${REVIEW_ACTOR_FLIP}" | monitor-user) return 0 ;;
+        *) ;;
+    esac
+    printf '[daemon-apply] FATAL: unknown review actor %s (%s) — the flip-eligible set is %s, monitor-user\n' \
+        "$1" "$2" "${REVIEW_ACTOR_FLIP}" >&2
+    exit 24
+}
+
 # -- CLI parse -------------------------------------------------------------
 
 DRY_RUN=0
@@ -325,6 +370,9 @@ PROPOSAL_ID=""
 # Auto-regen: 0 = off (default — stale path keeps exit 9); 1 = on (regen +
 # re-apply on the stale/needs_regen path). Only meaningful with --proposal-id.
 AUTO_REGEN=0
+# Who this run records as the mover of the rows it flips. The machine token is the
+# default because the batch cycle has no operator; the approve route passes its own.
+REVIEW_ACTOR="${REVIEW_ACTOR_FLIP}"
 # daemon_cycle.py path for the regen call (env-overridable for test isolation).
 # Default is facade-safe: SCRIPT_DIR is the realpathed self dir (real tree).
 DAEMON_CYCLE_PY="${AUTOAGENT_DAEMON_CYCLE_PY:-${SCRIPT_DIR}/daemon_cycle.py}"
@@ -367,6 +415,14 @@ while [[ $# -gt 0 ]]; do
             AGENTS_DIR="${2:?--agents-dir requires a value}"
             shift 2
             ;;
+        --actor)
+            REVIEW_ACTOR="${2:?--actor requires a value}"
+            shift 2
+            ;;
+        --actor=*)
+            REVIEW_ACTOR="${1#--actor=}"
+            shift
+            ;;
         --agents-dir=*)
             AGENTS_DIR="${1#--agents-dir=}"
             shift
@@ -381,6 +437,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Checked once, here, then frozen: a readonly value carries its verdict to the stamp
+# site, so the flip needs no second check to know what it is binding.
+assert_review_actor "${REVIEW_ACTOR}" '--actor'
+readonly REVIEW_ACTOR
 
 if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]]; then
     printf '[daemon-apply] FATAL: --limit must be a non-negative integer, 0=unbounded (got %s)\n' \
@@ -1838,8 +1899,10 @@ get_model_id() {
 }
 
 # update_db_status — transition core.autoagent_proposals.status
-# pending/snoozed → 'applied' (+ reviewed_at = now()) for the
-# (pattern_label, target_file, cycle_date) tuple of the just-committed patch.
+# pending/snoozed → 'applied' (+ reviewed_at = now(), + reviewed_by = the run's
+# REVIEW_ACTOR) for the (pattern_label, target_file, cycle_date) tuple of the
+# just-committed patch. The flip IS a review verdict — it accepts the proposal —
+# so it is one of the two writers that may stamp the instant.
 # (snoozed is included so a user-approved snoozed proposal also lands; the
 # backlog/report paths only ever select pending rows, so this is a no-op widen
 # for them.)
@@ -1930,11 +1993,12 @@ update_db_status() {
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
             -v "lbl=${label}" -v "tgt=${target}" -v "cd=${cycle}" -v "pid=${proposal_id}" \
-            -v "bh=${body_hash}" -v "mid=${model_id}" \
+            -v "bh=${body_hash}" -v "mid=${model_id}" -v "actor=${REVIEW_ACTOR}" \
             2>"${psql_err}" <<'PSQL'
 UPDATE core.autoagent_proposals
 SET status              = 'applied'::core."ProposalStatus",
     reviewed_at         = now(),
+    reviewed_by         = :'actor',
     applied_body_sha256 = nullif(:'bh', ''),
     applied_model_id    = nullif(:'mid', '')
 WHERE pattern_label = :'lbl'
@@ -2051,7 +2115,10 @@ mark_stale_attempt() {
     #   bumped— increment + conditional terminal flip, ONLY when the column exists.
     #           The increment lands first; the same statement flips status to
     #           'snoozed' once the NEW count >= threshold (so attempt N is the one
-    #           that drains). reviewed_at stamps the terminal transition.
+    #           that drains). The terminal arm stamps reviewed_by, the mover; it leaves
+    #           reviewed_at alone, because a bounded-retry drain terminates a fossil and
+    #           adjudicates nothing, and the instant answers WHEN a verdict settled the
+    #           row. An increment stamps neither — the status did not move.
     # The final SELECT emits exactly one verdict token. When the column is absent
     # `bumped` is empty (the UPDATE is gated on `col`), so the SELECT returns
     # 'no_column' and NOTHING is mutated — the row stays pending (column-absent path).
@@ -2061,6 +2128,7 @@ mark_stale_attempt() {
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
             -v "lbl=${label}" -v "tgt=${target}" -v "cd=${cycle}" \
             -v "pid=${proposal_id}" -v "thr=${STALE_DRAIN_THRESHOLD}" \
+            -v "actor=${REVIEW_ACTOR_DRAIN}" \
             2>"${psql_err}" <<'PSQL'
 WITH col AS (
     SELECT count(*) > 0 AS present
@@ -2077,10 +2145,10 @@ bumped AS (
             THEN 'snoozed'::core."ProposalStatus"
             ELSE p.status
         END,
-        reviewed_at = CASE
+        reviewed_by = CASE
             WHEN coalesce(p.stale_attempt_count, 0) + 1 >= :'thr'::int
-            THEN now()
-            ELSE p.reviewed_at
+            THEN :'actor'
+            ELSE p.reviewed_by
         END
     FROM col
     WHERE col.present
