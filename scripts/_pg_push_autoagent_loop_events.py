@@ -127,8 +127,8 @@ def _build_envelope(obj: dict[str, Any]) -> dict[str, Any] | None:
             "changes_added": changes_added,
             "changes_removed": changes_removed,
             "rice": obj.get("rice"),
-            # Blank → None: "" passes a presence test but keys the verdict arm on
-            # a value no subject owns, and falls outside both partial uniques.
+            # Blank → None: "" is NOT NULL, so it lands inside the verdict partial
+            # unique and keys it on a value no subject owns.
             "subject": str(obj.get("subject") or "").strip() or None,
         },
     }

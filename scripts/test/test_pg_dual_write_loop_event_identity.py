@@ -62,6 +62,10 @@ class _LoopEvents:
     def get_causes(self) -> list[str]:
         return [row["eval_result"] for row in backend.read_loop_events(self._db_path)]
 
+    def get_subjects(self) -> list[str]:
+        rows = backend.read_loop_events(self._db_path, columns=("subject",))
+        return [row["subject"] for row in rows]
+
 
 @pytest.fixture
 def events(tmp_path):
@@ -105,6 +109,19 @@ def test_when_one_subject_is_re_adjudicated_then_its_verdict_holds_one_row(
     events.emit(_CORRECTED_CAUSE, subject=_SUBJECT)
 
     assert events.get_causes() == [_CORRECTED_CAUSE]
+
+
+def test_when_a_subject_differs_only_by_surrounding_space_then_it_is_one_verdict(
+    events: _LoopEvents,
+):
+    # The verdict arm keys on the stored text, so an untrimmed subject splits one
+    # subject's history across two rows — the split the class exists to prevent.
+    events.emit(_STALE_CAUSE, subject=_SUBJECT)
+
+    events.emit(_CORRECTED_CAUSE, subject="  %s  " % _SUBJECT)
+
+    assert events.get_causes() == [_CORRECTED_CAUSE]
+    assert events.get_subjects() == [_SUBJECT]
 
 
 def test_when_a_verdict_cause_carries_no_subject_then_it_is_refused(

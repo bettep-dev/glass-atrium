@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -54,17 +55,27 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 
 # The writer owns the cause-token→class map; the gate-invariance case compares the
 # daemon's own tokens against it rather than restating the set a second time.
-_SCRIPTS_DIR = _REPO_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+# Read through the stdlib stand-in, NEVER by a direct import: the writer re-raises
+# ImportError wherever psycopg is absent, which is every merge-gating leg — a direct
+# import resolves to nothing there and the class-authority pin would skip on exactly
+# the leg it exists to fail.
+_SCRIPTS_TEST_DIR = _REPO_ROOT / "scripts" / "test"
+if str(_SCRIPTS_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_TEST_DIR))
 
-try:
-    from _pg_dual_write_daemon import LOOP_EVENT_VERDICT_CAUSES
-except Exception as exc:  # noqa: BLE001 — same skip contract as daemon_cycle
-    LOOP_EVENT_VERDICT_CAUSES = None  # type: ignore[assignment]
-    _WRITER_IMPORT_ERROR: Exception | None = exc
-else:
-    _WRITER_IMPORT_ERROR = None
+import _pg_stub_backend as stub_backend  # noqa: E402 — scripts/test pinned above
+
+
+def _get_writer_verdict_causes() -> tuple[str, ...]:
+    """The writer's verdict cause tokens, read under the fabricated driver.
+
+    The stand-in connects lazily, so the database name below is carried and never
+    opened — no table is needed to read a module constant.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with stub_backend.load_helper(Path(tmp_dir) / "loop_events.sqlite") as writer:
+            return writer.LOOP_EVENT_VERDICT_CAUSES
+
 
 # Loop-event envelopes the module-level seal captured instead of writing them.
 _EMITTED: list[dict] = []
@@ -687,18 +698,15 @@ class RegressionGateInvarianceTest(unittest.TestCase):
         self.assertIn("WHERE eval_result = %s", sql)
         self.assertNotIn("subject", sql)
 
-    @unittest.skipIf(
-        LOOP_EVENT_VERDICT_CAUSES is None,
-        "writer import failed: %s" % (_WRITER_IMPORT_ERROR,),
-    )
     def test_when_the_writer_classifies_the_gate_token_then_it_is_census(self):
         # A verdict-classified gate token would re-key the very rows the gate
         # reads back, so the class authority must keep it census.
-        self.assertNotIn(dc.POST_APPLY_REGRESSION_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
-        self.assertNotIn(dc.CONFOUND_SIGNATURE_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
-        self.assertNotIn(dc.DWC_SHARE_ALARM_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
+        verdict_causes = _get_writer_verdict_causes()
+        self.assertNotIn(dc.POST_APPLY_REGRESSION_EVAL_RESULT, verdict_causes)
+        self.assertNotIn(dc.CONFOUND_SIGNATURE_EVAL_RESULT, verdict_causes)
+        self.assertNotIn(dc.DWC_SHARE_ALARM_EVAL_RESULT, verdict_causes)
         self.assertEqual(
-            sorted(LOOP_EVENT_VERDICT_CAUSES),
+            sorted(verdict_causes),
             sorted(
                 (
                     dc.DISCHARGE_EVENT_READ_FAILED,

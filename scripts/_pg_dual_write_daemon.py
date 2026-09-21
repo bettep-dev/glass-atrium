@@ -711,9 +711,11 @@ def _check_loop_event_class(eval_result, subject):
 
     The token set NAMES the class, so the subject agrees with it in BOTH
     directions or nothing is written. A blank string is neither absence nor an
-    identity: it passes an `is None` test, keys the verdict arm on `""` so two
-    subjects collapse onto one row, and under the census arm falls outside both
-    partial uniques, where nothing dedups it at all.
+    identity: `'' IS NOT NULL` holds, so it survives the `is None` test, keys the
+    verdict arm on `""` where two adjudications collapse onto one row, and under a
+    census cause lands inside the VERDICT partial unique — which that row's own
+    conflict target (`WHERE subject IS NULL`) cannot match, so a duplicate raises
+    unique_violation instead of updating. Refused either way.
     """
     if eval_result in LOOP_EVENT_VERDICT_CAUSES:
         if subject is None or not str(subject).strip():
@@ -776,6 +778,10 @@ def write_autoagent_loop_event(
     under the other class — see _check_loop_event_class.
     """
     start_ns = time.monotonic_ns()
+    # Trim before classing → a subject differing only by surrounding space is ONE
+    # adjudication, which the verdict arm would otherwise key as two.
+    if subject is not None:
+        subject = str(subject).strip()
     _check_loop_event_class(eval_result, subject)
     columns = (
         "event_ts",
