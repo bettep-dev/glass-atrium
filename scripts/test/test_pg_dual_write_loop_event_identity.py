@@ -7,12 +7,10 @@ verdict must supersede the verdict it corrects — which the three-column key ca
 express, because the subject it would key on is not among those columns. Two rows
 in the live table already record one adjudication twice for exactly that reason.
 
-The proof case below is that supersession, and it is INEXPRESSIBLE today: the
-writer takes six parameters and none of them is a subject. It is held off on the
-writer's own signature rather than on a date, so the identity split switches it on
-by landing, and its red is a ROW COUNT — the stand-in reads its columns from the
-Prisma model and its indexes from the migration SQL, so the column exists before
-the key moves and the failure cannot degrade into UndefinedColumn.
+The cause token names the class, so the subject has to agree with it in both
+directions; the refusal cases below pin that choke point, including the blank
+string, which is neither absence nor an identity and silently keys the verdict arm
+on "" where two subjects collapse onto one row.
 
 Every case drives the helper's REAL statement text through a stdlib SQL engine (see
 _pg_stub_backend), so it runs on the test-python-pytest gating leg and can fail the
@@ -22,52 +20,37 @@ predicate-bearing arm, timestamptz typing, and concurrent upserts.
 
 from __future__ import annotations
 
-import inspect
-import tempfile
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import _pg_stub_backend as backend
 
+_HELPER = Path(backend.__file__).resolve().parent.parent / "_pg_dual_write_daemon.py"
+_TIMEOUT_S = 30
+
 _EVENT_TS = "2026-09-18T04:12:00+00:00"
 _AGENT = "glass-atrium-dev-python"
-_SUBJECT_PARAM = "subject"
 _SUBJECT = "clauded-docs/39785"
 _STALE_CAUSE = "discharge-unresolved"
 _CORRECTED_CAUSE = "discharge-covered-terminal"
 _CENSUS_CAUSES = ("verified", "unverified")
-
-
-def _get_writer_params() -> frozenset[str]:
-    """Parameter names of the shipped loop-event writer, read off the function.
-
-    Probed rather than assumed: the hold-off below is a capability question, and
-    the writer's own signature is the only thing that answers it.
-    """
-    with tempfile.TemporaryDirectory() as probe_dir:
-        with backend.load_helper(Path(probe_dir) / "unused.sqlite") as helper:
-            signature = inspect.signature(helper.write_autoagent_loop_event)
-    return frozenset(signature.parameters)
-
-
-_WRITER_PARAMS = _get_writer_params()
-
-_needs_subject = pytest.mark.skipif(
-    _SUBJECT_PARAM not in _WRITER_PARAMS,
-    reason="the writer takes no subject — the identity split switches this case on",
-)
+_BLANK_SUBJECTS = ("", "   ")
 
 
 class _LoopEvents:
     """Emit through the real statement; read back what the key let persist."""
 
     def __init__(self, helper, db_path: Path) -> None:
-        self._helper = helper
+        self.helper = helper
         self._db_path = db_path
 
     def emit(self, cause: str, changes_added: int = 1, **identity: str) -> None:
-        self._helper.write_autoagent_loop_event(
+        self.helper.write_autoagent_loop_event(
             event_ts=_EVENT_TS,
             agent=_AGENT,
             eval_result=cause,
@@ -111,7 +94,6 @@ def test_when_two_causes_share_a_date_and_agent_then_each_keeps_its_row(
     assert events.get_causes() == list(_CENSUS_CAUSES)
 
 
-@_needs_subject
 def test_when_one_subject_is_re_adjudicated_then_its_verdict_holds_one_row(
     events: _LoopEvents,
 ):
@@ -123,3 +105,75 @@ def test_when_one_subject_is_re_adjudicated_then_its_verdict_holds_one_row(
     events.emit(_CORRECTED_CAUSE, subject=_SUBJECT)
 
     assert events.get_causes() == [_CORRECTED_CAUSE]
+
+
+def test_when_a_verdict_cause_carries_no_subject_then_it_is_refused(
+    events: _LoopEvents,
+):
+    # The census arm would take it silently and file an adjudication under the
+    # recurrence census — the one corruption the choke point exists to stop.
+    with pytest.raises(events.helper.VerdictSubjectMissing):
+        events.emit(_STALE_CAUSE)
+
+    assert events.get_causes() == []
+
+
+@pytest.mark.parametrize("blank", _BLANK_SUBJECTS)
+def test_when_a_verdict_cause_carries_a_blank_subject_then_it_is_refused(
+    events: _LoopEvents, blank: str
+):
+    # A blank string passes an `is None` guard and keys the verdict arm on "",
+    # so two subjects supersede each other across the class boundary.
+    with pytest.raises(events.helper.VerdictSubjectMissing):
+        events.emit(_STALE_CAUSE, subject=blank)
+
+    assert events.get_causes() == []
+
+
+def test_when_a_census_cause_carries_a_subject_then_it_is_refused(
+    events: _LoopEvents,
+):
+    # The other direction of the same disagreement: the token names the class and
+    # the subject contradicts it, so the row would be keyed on a column its class
+    # never adjudicates.
+    with pytest.raises(events.helper.CensusSubjectPresent):
+        events.emit(_CENSUS_CAUSES[0], subject=_SUBJECT)
+
+    assert events.get_causes() == []
+
+
+def test_when_the_cli_refuses_a_classless_verdict_then_it_exits_6(tmp_path: Path):
+    # Exit 6 is the caller-contract code, not the exit-4 write-failure path: a
+    # refusal must not book a hook_failures row against a database nothing reached.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(tmp_path), env["PYTHONPATH"]] if env.get("PYTHONPATH") else [str(tmp_path)]
+    )
+    env[backend.SQLITE_PATH_ENV] = str(tmp_path / "unreached.sqlite")
+    backend.create_psycopg_package(tmp_path)
+    envelope = json.dumps(
+        {
+            "op": "write_autoagent_loop_event",
+            "args": {
+                "event_ts": _EVENT_TS,
+                "agent": _AGENT,
+                "eval_result": _STALE_CAUSE,
+                "changes_added": 0,
+                "changes_removed": 0,
+            },
+        }
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(_HELPER)],
+        input=envelope,
+        text=True,
+        capture_output=True,
+        timeout=_TIMEOUT_S,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 6
+    assert "pg_write=refused" in result.stderr
+    assert result.stdout.strip() == ""

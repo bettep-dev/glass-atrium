@@ -31,10 +31,11 @@
 #   4 = PG write failure after the retry (structured JSON + pg_write=fail stderr)
 #   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
 #   6 = caller contract violation — an unsupported apply_status token, or a
-#       verdict-class loop-event cause carrying no subject. Refused BEFORE
-#       connecting, so nothing was written and no retry runs; a silent
-#       fall-through would report apply health the cycle never recorded, or file
-#       an adjudication under the recurrence census.
+#       loop-event cause whose class disagrees with its subject (verdict cause
+#       without one, census cause with one). Refused BEFORE connecting, so
+#       nothing was written and no retry runs; a silent fall-through would report
+#       apply health the cycle never recorded, or file an adjudication under the
+#       recurrence census.
 #
 # CLI contract (single-line JSON envelope on stdin):
 #   {"op": "write_wiki_note",            "args": {"path": "...", "title": "...", ...}}
@@ -683,6 +684,10 @@ class VerdictSubjectMissing(CallerContractViolation):
     """A verdict-class cause arrived with no subject to adjudicate."""
 
 
+class CensusSubjectPresent(CallerContractViolation):
+    """A census-class cause arrived carrying a subject no arm can key it on."""
+
+
 # Cause tokens whose row adjudicates ONE subject, so a correction of that subject
 # supersedes its predecessor. Declared here rather than in daemon_cycle.py, which
 # re-uses it beside its DISCHARGE_EVENT_* constants: the reverse import is circular.
@@ -701,21 +706,45 @@ _LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % LOOP_EVENT_SUBJECT_COLUMN
 _LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % LOOP_EVENT_SUBJECT_COLUMN
 
 
-def _get_loop_event_conflict_arm(subject):
-    """The ON CONFLICT arm for one row class — census when subject is absent.
+def _check_loop_event_class(eval_result, subject):
+    """Refuse a row whose cause token and its subject disagree about the class.
+
+    The token set NAMES the class, so the subject agrees with it in BOTH
+    directions or nothing is written. A blank string is neither absence nor an
+    identity: it passes an `is None` test, keys the verdict arm on `""` so two
+    subjects collapse onto one row, and under the census arm falls outside both
+    partial uniques, where nothing dedups it at all.
+    """
+    if eval_result in LOOP_EVENT_VERDICT_CAUSES:
+        if subject is None or not str(subject).strip():
+            raise VerdictSubjectMissing(
+                "op=write_autoagent_loop_event refused eval_result=%r with subject=%r "
+                "(verdict causes: %s) — nothing written, the adjudication is NOT recorded"
+                % (eval_result, subject, " ".join(LOOP_EVENT_VERDICT_CAUSES))
+            )
+    elif subject is not None:
+        raise CensusSubjectPresent(
+            "op=write_autoagent_loop_event refused eval_result=%r with subject=%r — a "
+            "census cause is keyed on the cause itself, so its row carries no subject "
+            "(verdict causes: %s)" % (eval_result, subject, " ".join(LOOP_EVENT_VERDICT_CAUSES))
+        )
+
+
+def _get_loop_event_conflict_arm(eval_result):
+    """The ON CONFLICT arm for one row class, named by the cause token.
 
     Each arm carries the predicate of the partial unique index it targets: both
     uniques are predicate-bearing, so a bare column-list target infers neither.
     """
-    if subject is None:
-        key = ("event_ts", "agent", "eval_result")
-        predicate = _LOOP_EVENT_CENSUS_PREDICATE
-        updated = ("rice", "changes_added", "changes_removed")
-    else:
+    if eval_result in LOOP_EVENT_VERDICT_CAUSES:
         key = ("event_ts", "agent", LOOP_EVENT_SUBJECT_COLUMN)
         predicate = _LOOP_EVENT_VERDICT_PREDICATE
         # A correction is exactly a new cause for a settled subject → the arm updates it.
         updated = ("rice", "eval_result", "changes_added", "changes_removed")
+    else:
+        key = ("event_ts", "agent", "eval_result")
+        predicate = _LOOP_EVENT_CENSUS_PREDICATE
+        updated = ("rice", "changes_added", "changes_removed")
     return "ON CONFLICT (%s) WHERE %s DO UPDATE SET %s" % (
         ", ".join(key),
         predicate,
@@ -742,17 +771,12 @@ def write_autoagent_loop_event(
     on (event_ts, agent, subject), so a correction carrying a new cause supersedes
     the verdict it corrects instead of landing beside it.
 
-    A verdict-class cause (LOOP_EVENT_VERDICT_CAUSES) arriving with subject=None is
-    REFUSED before connecting (VerdictSubjectMissing, CLI exit 6): the census arm
-    would take it silently and file an adjudication under the recurrence census.
+    The cause token names the class and the subject must agree with it, either way
+    round: a mismatch is REFUSED before connecting (CLI exit 6) rather than filed
+    under the other class — see _check_loop_event_class.
     """
     start_ns = time.monotonic_ns()
-    if subject is None and eval_result in LOOP_EVENT_VERDICT_CAUSES:
-        raise VerdictSubjectMissing(
-            "op=write_autoagent_loop_event refused eval_result=%r with no subject "
-            "(verdict causes: %s) — nothing written, the adjudication is NOT recorded"
-            % (eval_result, " ".join(LOOP_EVENT_VERDICT_CAUSES))
-        )
+    _check_loop_event_class(eval_result, subject)
     columns = (
         "event_ts",
         "agent",
@@ -765,7 +789,7 @@ def write_autoagent_loop_event(
     sql = "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
         ", ".join(columns),
         ", ".join(["%s"] * len(columns)),
-        _get_loop_event_conflict_arm(subject),
+        _get_loop_event_conflict_arm(eval_result),
     )
     with _connect() as conn:
         with conn.cursor() as cur:

@@ -54,6 +54,7 @@ _PROPOSALS_TABLE = "autoagent_proposals"
 _PROPOSALS_KEY = ("cycle_date", "pattern_label", "target_file")
 _LOOP_EVENTS_TABLE = "autoagent_loop_events"
 
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
@@ -61,10 +62,13 @@ _MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
 # One alternation, so CREATE and DROP keep their relative order within a file.
+# Identifier quoting is OPTIONAL at every position: the corpus already carries an
+# unquoted `CREATE INDEX notes_ts_gin ON wiki.notes`, and a quoted-only pattern would
+# read a future unquoted DROP on THIS table as absent and pin a dropped key silently.
 _INDEX_STMT = re.compile(
-    r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?:"\w+"\.)?"(?P<dropped>\w+)"\s*;'
+    r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?:"?\w+"?\.)?"?(?P<dropped>\w+)"?\s*;'
     r'|CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?'
-    r'(?:"\w+"\.)?"(?P<name>\w+)"\s+ON\s+(?:"\w+"\.)?"(?P<table>\w+)"'
+    r'(?:"?\w+"?\.)?"?(?P<name>\w+)"?\s+ON\s+(?:"?\w+"?\.)?"?(?P<table>\w+)"?'
     r'(?P<tail>[^;]*);',
     re.I,
 )
@@ -316,10 +320,12 @@ def _get_table_indexes(table: str) -> dict[str, str]:
     """
     live: dict[str, str] = {}
     for migration in sorted(_MIGRATIONS.glob("*/migration.sql")):
-        # Line comments are stripped first: the repo states a migration's reversal as a
-        # commented statement block, and reading those back as live DDL would replay a
-        # down-migration nobody ran.
-        sql = _LINE_COMMENT.sub("", migration.read_text(encoding="utf-8"))
+        # Comments are stripped first — both forms: the repo states a migration's reversal
+        # as a commented statement block, and reading those back as live DDL would replay a
+        # down-migration nobody ran. Block first, so a `--` inside one is not left orphaned.
+        sql = _LINE_COMMENT.sub(
+            "", _BLOCK_COMMENT.sub("", migration.read_text(encoding="utf-8"))
+        )
         for stmt in _INDEX_STMT.finditer(sql):
             if stmt.group("dropped") is not None:
                 live.pop(stmt.group("dropped"), None)
