@@ -693,8 +693,10 @@ class SubjectTooLong(CallerContractViolation):
 
 
 # Cause tokens whose row adjudicates ONE subject, so a correction of that subject
-# supersedes its predecessor. Declared here rather than in daemon_cycle.py, which
-# re-uses it beside its DISCHARGE_EVENT_* constants: the reverse import is circular.
+# supersedes its predecessor. Declared here, not in daemon_cycle.py: that module
+# imports this one, so the reverse edge would be circular — and it does NOT read
+# this tuple, restating the same four tokens as its own DISCHARGE_EVENT_* names.
+# Sole reader outside this module: autoagent/test/test_discharge_wiring.py.
 LOOP_EVENT_VERDICT_CAUSES = (
     "discharge-read-failed",
     "discharge-unresolved",
