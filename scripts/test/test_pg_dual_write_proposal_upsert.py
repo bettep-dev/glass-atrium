@@ -43,6 +43,7 @@ Two rules sit above the co-movement arms:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -65,13 +66,40 @@ _REVIEWED_AT = "2026-07-26 03:51:48"
 _MARKER = "skipped:chronic-timeout-backoff"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DAEMON_CYCLE = _REPO_ROOT / "autoagent" / "daemon_cycle.py"
+_DAEMON_APPLY = _REPO_ROOT / "autoagent" / "daemon-apply.sh"
 _SCHEMA = _REPO_ROOT / "monitor" / "prisma" / "schema.prisma"
 
-# Actor tokens from the closed set declared at the schema column. One source per
-# token: a shared default would file an updater row as a daemon push.
-_ENVELOPE_ACTORS = {
-    "updater-resolved-gap": _REPO_ROOT / "scripts" / "update.sh",
-    "daemon-cycle-push": _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
+# Every token of the closed set declared at the schema column, paired with the
+# declaration that spells it. One source per token: a shared default would file an
+# updater row as a daemon push. The provenance detector counts rows naming NO actor,
+# never a wrong one, so a literal drifting out of the set passes it unseen.
+_ACTOR_DECLARATIONS = {
+    "monitor-user": (
+        _REPO_ROOT / "monitor" / "src" / "server" / "routes" / "improvement.ts",
+        "reviewed_by = 'monitor-user'",
+    ),
+    "daemon-apply-flip": (_DAEMON_APPLY, "REVIEW_ACTOR_FLIP='daemon-apply-flip'"),
+    "daemon-apply-drain": (_DAEMON_APPLY, "REVIEW_ACTOR_DRAIN='daemon-apply-drain'"),
+    "daemon-cycle-parked-guard": (
+        _DAEMON_CYCLE,
+        '_PARKED_PATTERN_ACTOR = "daemon-cycle-parked-guard"',
+    ),
+    "daemon-cycle-supersede": (
+        _DAEMON_CYCLE,
+        '_SUPERSEDE_ACTOR = "daemon-cycle-supersede"',
+    ),
+    "daemon-cycle-push": (
+        _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
+        '"reviewed_by": "daemon-cycle-push"',
+    ),
+    "updater-resolved-gap": (
+        _REPO_ROOT / "scripts" / "update.sh",
+        '"reviewed_by": "updater-resolved-gap"',
+    ),
+    "status-backfill": (
+        _REPO_ROOT / "scripts" / "autoagent-status-backfill.py",
+        '_BACKFILL_ACTOR = "status-backfill"',
+    ),
 }
 _STORED_ACTOR = "daemon-cycle-parked-guard"
 _INCOMING_ACTOR = "daemon-cycle-push"
@@ -169,9 +197,17 @@ class _Proposals:
             **content,
         )
 
-    def push_outcome(self, status: str, rationale: str, haiku_status) -> None:
+    def push_outcome(
+        self, status: str, rationale: str, haiku_status, actor: str = ""
+    ) -> None:
         self.push_row(
-            status, dict(_SEEDED, rationale=rationale, haiku_status=haiku_status)
+            status,
+            dict(
+                _SEEDED,
+                rationale=rationale,
+                haiku_status=haiku_status,
+                reviewed_by=actor,
+            ),
         )
 
     def set_review(self, status: str) -> None:
@@ -334,8 +370,8 @@ def test_when_a_reviewed_row_is_terminal_then_no_re_push_changes_any_column(
 def test_when_a_reviewed_row_is_not_terminal_then_the_re_push_replaces_it(
     proposals: _Proposals, stored_status: str
 ):
-    # The stale-drain stamps reviewed_at on a snooze; a freeze keyed on the stamp
-    # alone would pin that row against the proposal that should resume it.
+    # A stamp under a non-terminal status survives only on legacy rows, and a freeze
+    # keyed on the stamp alone would pin one against the proposal that should resume it.
     proposals.push_row("pending", _SEEDED)
     proposals.set_review(stored_status)
 
@@ -379,6 +415,26 @@ def test_when_an_unreviewed_row_is_re_pushed_then_only_a_marker_yields_to_a_non_
     assert proposals.get_stored() == expected
 
 
+def test_when_a_marker_yields_to_a_non_marker_then_its_actor_yields_with_it(
+    proposals: _Proposals,
+):
+    # The exemption's own arm for the third column: stored terminal + non-terminal
+    # incoming preserves on the status conjuncts alone, so the marker conjunct is the
+    # only thing sending this row down the refreshing arm — drop it from the
+    # reviewed_by copy alone and the status and rationale move while the actor does not.
+    proposals.push_outcome("rejected", _stamp("rejected"), _MARKER, _STORED_ACTOR)
+
+    proposals.push_outcome(
+        "pending", _generation_text("pending"), "ok", _INCOMING_ACTOR
+    )
+
+    assert proposals.get_provenance() == {
+        "status": "pending",
+        "rationale": _generation_text("pending"),
+        "reviewed_by": _INCOMING_ACTOR,
+    }
+
+
 def test_when_an_unreviewed_rejected_marker_is_re_pushed_then_the_newer_rationale_lands(
     proposals: _Proposals,
 ):
@@ -407,14 +463,28 @@ def test_when_a_reviewed_rejected_marker_is_re_pushed_then_no_column_changes(
     assert proposals.get_row() == reviewed
 
 
-@pytest.mark.parametrize(("token", "source"), sorted(_ENVELOPE_ACTORS.items()))
-def test_each_envelope_source_carries_its_own_declared_actor_token(
-    token: str, source: Path
+def _schema_actor_tokens() -> set[str]:
+    """The closed set as the schema declares it — the block's backticked entries."""
+    block = _SCHEMA.read_text(encoding="utf-8").split("Closed token set", 1)[1]
+    return set(re.findall("`([a-z-]+)` — ", block.split("reviewedAt", 1)[0]))
+
+
+@pytest.mark.parametrize(("token", "declaration"), sorted(_ACTOR_DECLARATIONS.items()))
+def test_each_writer_carries_its_own_declared_actor_token(
+    token: str, declaration: tuple
 ):
-    # The helper cannot import either caller, so the one-token-per-source rule and
-    # the closed set it is drawn from are tied to their spellings here.
-    assert '"reviewed_by": "%s"' % token in source.read_text(encoding="utf-8")
-    assert "`%s`" % token in _SCHEMA.read_text(encoding="utf-8")
+    # The helper can import no caller, and neither the shell flip nor the reject
+    # route is reachable from python at all, so the one-token-per-writer rule and
+    # the closed set the tokens are drawn from are tied to their spellings here.
+    source, spelling = declaration
+    assert spelling in source.read_text(encoding="utf-8")
+    assert token in _schema_actor_tokens()
+
+
+def test_every_token_the_schema_declares_names_a_writer():
+    # The opposite direction: a token in the set that no writer spells is a column
+    # value nothing can produce, and one writer short of the set is an unpinned literal.
+    assert _schema_actor_tokens() == set(_ACTOR_DECLARATIONS)
 
 
 def test_the_exempted_marker_is_the_outcome_the_daemon_writes():
