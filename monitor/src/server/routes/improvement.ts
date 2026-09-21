@@ -163,6 +163,10 @@ interface ProposalListDbRow {
   status: string;
   cost_guard_state: string | null;
   reviewed_at: Date | null;
+  // The actor that produced the row's current status. Asymmetric with the instant
+  // above by design: reviewed_at answers WHEN a verdict settled the row, reviewed_by
+  // answers WHO moved it, and a machine-drained row has the second without the first.
+  reviewed_by: string | null;
   // Provenance columns surfacing the pre-verify chain to the UI.
   rationale: string | null;
   pre_verify_rationale: string | null;
@@ -729,6 +733,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -762,6 +767,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -1736,6 +1742,13 @@ export function resolveApplyScript(): string {
   return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
+// Who an approval through this route files the row under. One member of the closed
+// actor set declared at monitor/prisma/schema.prisma -> AutoagentProposal, and the
+// same literal handleReject stamps: both routes are the same operator, so both name
+// one actor. daemon-apply.sh defaults to its own machine token, which would file an
+// operator's decision as the daemon's — hence the explicit hand-off.
+const REVIEW_ACTOR_OPERATOR = "monitor-user";
+
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
 //   8  = no-op, already terminal (status applied/rejected/approved/reverted)
@@ -1760,6 +1773,8 @@ export function resolveApplyScript(): string {
 //   23 = proposal row unreadable (the lookup answered but the row did not reassemble
 //        or answered for another id; nothing applied) — stored data, so a retry reads
 //        the same bytes; stderr names the row — Reject is the way out
+//   24 = unknown --actor token — unreachable from here (the actor above is a fixed
+//        literal, not request input), so it falls to the generic apply_error 500
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1813,7 +1828,13 @@ async function handleApprove(
   let exitCode: number;
   let stderr: string;
   try {
-    await execFileAsync(resolveApplyScript(), ["--proposal-id", String(id), "--auto-regen"]);
+    await execFileAsync(resolveApplyScript(), [
+      "--proposal-id",
+      String(id),
+      "--auto-regen",
+      "--actor",
+      REVIEW_ACTOR_OPERATOR,
+    ]);
     // Resolved promise → exit 0.
     exitCode = APPLY_EXIT_APPLIED;
     stderr = "";
