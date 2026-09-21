@@ -1551,7 +1551,7 @@
     "scripts/test/glass-atrium-install.bats": "350f0c0afb80c6517bbb6f645cf8e9c88fb5b65017496c4b2d99b0689f3ea77b",
     "scripts/test/glass-atrium-update-e2e.bats": "b3c695dff64dd47c870753129e29d62758281e557395d23764be5b02413509f7",
     "scripts/test/glass-atrium-update-idempotency.bats": "4224ae011945cd725e18071fc9582f2c214417ed65be63afb038c41ac0433986",
-    "scripts/test/glass-atrium-update.bats": "3a57d9f090ea8b0149e4249b9d389ec2e0ff369e6169c0fd499632165d1d7ab0",
+    "scripts/test/glass-atrium-update.bats": "11294fe5bc6ee21f12eab50abda4e66088be7c9041204405a9514dd8c4335cef",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
     "scripts/test/manifest-check-clean.bats": "225a031698873f182a5b80f43d67e6c5b2316c55b07cb5303a9d5353d3149f76",
     "scripts/test/manifest-drift-exclusion.bats": "3d448527d59bf3721c3c28d8c9baec907253d772d4cd5c0127a5304007b84afe",
