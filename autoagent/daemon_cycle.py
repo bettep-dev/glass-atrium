@@ -9648,9 +9648,6 @@ def _emit_gate_loop_event(
 
     Lives once so a schema change to core.autoagent_loop_events cannot land on the
     skip path and miss the fail-open path.
-
-    The cause token picks the row class, not this helper: a verdict cause without
-    event_subject is REFUSED at the writer, never filed under the census arm.
     """
     _invoke_pg_helper(
         {

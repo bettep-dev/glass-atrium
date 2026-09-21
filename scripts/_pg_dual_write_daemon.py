@@ -698,12 +698,13 @@ LOOP_EVENT_VERDICT_CAUSES = (
     "discharge-intake-miss",
 )
 
-# The column whose presence selects the row class. Both arms' predicates compose from
-# this one name, so a rename cannot leave one arm pointing at a column the other
-# abandoned — and a drift from the migration's own predicates reds the identity pin.
-LOOP_EVENT_SUBJECT_COLUMN = "subject"
-_LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % LOOP_EVENT_SUBJECT_COLUMN
-_LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % LOOP_EVENT_SUBJECT_COLUMN
+# The column whose presence selects the row class. Both arms' predicates, the verdict
+# key and the INSERT column list compose from this one name, so a rename cannot leave
+# one of them pointing at a column the others abandoned — and a drift from the
+# migration's own predicates reds the identity pin.
+_LOOP_EVENT_SUBJECT_COLUMN = "subject"
+_LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % _LOOP_EVENT_SUBJECT_COLUMN
+_LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 
 
 def _check_loop_event_class(eval_result, subject):
@@ -739,7 +740,7 @@ def _get_loop_event_conflict_arm(eval_result):
     uniques are predicate-bearing, so a bare column-list target infers neither.
     """
     if eval_result in LOOP_EVENT_VERDICT_CAUSES:
-        key = ("event_ts", "agent", LOOP_EVENT_SUBJECT_COLUMN)
+        key = ("event_ts", "agent", _LOOP_EVENT_SUBJECT_COLUMN)
         predicate = _LOOP_EVENT_VERDICT_PREDICATE
         # A correction is exactly a new cause for a settled subject → the arm updates it.
         updated = ("rice", "eval_result", "changes_added", "changes_removed")
@@ -790,7 +791,7 @@ def write_autoagent_loop_event(
         "eval_result",
         "changes_added",
         "changes_removed",
-        "subject",
+        _LOOP_EVENT_SUBJECT_COLUMN,
     )
     sql = "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
         ", ".join(columns),

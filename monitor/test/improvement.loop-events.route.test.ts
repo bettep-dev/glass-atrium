@@ -59,10 +59,11 @@ const REGISTRY_FIXTURE = {
 
 // Far-future sentinel instants: a production emitter writes a real cycle time, so
 // these can never collide with one. OLDER/NEWER differ so the event_ts leg is also
-// exercised; the within-instant leg needs 3 rows on ONE instant.
-const SUITE_HOURS = Number.parseInt(SUITE_MARKER.slice(-4), 16) % 20;
-const NEWER_TS = `2999-01-02T${String(SUITE_HOURS).padStart(2, "0")}:00:00.000Z`;
-const OLDER_TS = `2999-01-01T${String(SUITE_HOURS).padStart(2, "0")}:00:00.000Z`;
+// exercised; the within-instant leg needs 3 rows on ONE instant. A concurrent run of
+// this suite differs in agent, which both the registry gate and the census unique
+// key on — so the instants need no per-run offset.
+const NEWER_TS = "2999-01-02T00:00:00.000Z";
+const OLDER_TS = "2999-01-01T00:00:00.000Z";
 
 // Distinct eval_result per row on the shared instant: the census partial unique is
 // (event_ts, agent, eval_result) WHERE subject IS NULL, so equal tokens would
@@ -141,8 +142,8 @@ async function insertEvent(eventTs: string, evalResult: string): Promise<bigint>
   return created.id;
 }
 
-async function fetchEvents(query = "?limit=200"): Promise<LoopEventPayload> {
-  const res = await app.inject({ method: "GET", url: `/api/improvement/loop-events${query}` });
+async function fetchEvents(): Promise<LoopEventPayload> {
+  const res = await app.inject({ method: "GET", url: "/api/improvement/loop-events?limit=200" });
   assert.strictEqual(res.statusCode, 200, "must be 200 — the route must exist and answer");
   return res.json() as LoopEventPayload;
 }
