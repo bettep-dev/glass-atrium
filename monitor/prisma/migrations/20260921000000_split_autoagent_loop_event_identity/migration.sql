@@ -19,10 +19,15 @@
 ALTER TABLE "core"."autoagent_loop_events"
     ADD COLUMN IF NOT EXISTS "subject" VARCHAR(128);
 
--- Insertion instant, so a superseded verdict's replacement stays distinguishable in time once
--- the row itself is overwritten in place. NOT NULL with a stable default rather than nullable:
--- every row has an insertion instant, and a NULL would only ever mean "written before this
--- column existed", which the default already stamps uniformly.
+-- Stamps INSERTION and nothing else: the writer's DO UPDATE arms omit this column
+-- (scripts/_pg_dual_write_daemon.py -> _get_loop_event_conflict_arm), so it is CONSTANT across a
+-- supersede -- a correction overwrites the verdict row in place, the original instant survives,
+-- and no column here records when the correction landed.
+-- Backfill stamps every pre-existing row with the one migration instant, so those rows carry no
+-- ordering in this column and `id` stays their only history -- which is why the loop-event read
+-- orders on id rather than on inserted_at.
+-- NOT NULL with a stable default rather than nullable: every row has an insertion instant, and a
+-- NULL would only ever mean "written before this column existed", which the default stamps.
 ALTER TABLE "core"."autoagent_loop_events"
     ADD COLUMN IF NOT EXISTS "inserted_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now();
 

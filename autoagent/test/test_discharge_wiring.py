@@ -12,8 +12,12 @@ constituent's nested parentheses sit inside the haystack rather than being
 parsed, and the zero-match mode of a label-first parse cannot arise.
 
 Every test here is DATABASE-FREE: the CI python leg provisions no database, and
-a skip-only class reports as a pass. Fixtures are the REAL stored strings frozen
-below, never invented.
+a skip-only class reports as a pass — so the ``daemon_cycle`` import below is
+deliberately UNGUARDED and an import regression reds the leg instead of hiding
+the class-authority pin behind a skip. Its import surface is stdlib plus
+repo-local modules (psycopg absence is absorbed inside daemon_cycle itself), so
+no environment makes that import legitimately fail. Fixtures are the REAL stored
+strings frozen below, never invented.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_discharge_wiring.py -v
@@ -45,13 +49,7 @@ if str(_HOOKS_DIR) not in sys.path:
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
 
-try:
-    import daemon_cycle as dc
-
-    _IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
-    dc = None  # type: ignore[assignment]
-    _IMPORT_ERROR = exc
+import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
 
 # The writer owns the cause-token→class map; the gate-invariance case compares the
 # daemon's own tokens against it rather than restating the set a second time.
@@ -251,7 +249,6 @@ def _capture_stderr():
         yield buf
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class CoverageResolutionTest(unittest.TestCase):
     """find_covered_pattern_rows — pattern-first, per-agent, untruncated source."""
 
@@ -392,7 +389,6 @@ class CoverageResolutionTest(unittest.TestCase):
         self.assertEqual(covered, [])
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class DischargeStageTest(unittest.TestCase):
     """discharge_applied_patterns — dry-run default, tri-state, no lockout."""
 
@@ -617,7 +613,6 @@ class DischargeStageTest(unittest.TestCase):
         )
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class CensusEmitClassTest(unittest.TestCase):
     """Census emitters carry no subject, so they keep the (day, agent, cause) key."""
 
@@ -663,7 +658,6 @@ class CensusEmitClassTest(unittest.TestCase):
         self.assertEqual(envelopes[0]["args"]["changes_added"], 6)
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class RegressionGateInvarianceTest(unittest.TestCase):
     """The class split must not move the regression gate — it is a CONTROL path.
 
@@ -718,7 +712,6 @@ class RegressionGateInvarianceTest(unittest.TestCase):
         )
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class DischargeDefaultTest(unittest.TestCase):
     """Live transitioning is opt-in and never the default."""
 
