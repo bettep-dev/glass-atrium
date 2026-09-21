@@ -16,7 +16,10 @@
 // literals), so its rows are tracked by RETURNING id and deleted by id — never a
 // timestamp-window scrub that could delete production rows.
 //
-// DB: real Postgres. Skips gracefully when unreachable.
+// DB: real Postgres. The skip gate covers ONLY an unreachable/unprovisioned
+// database — a seed failure or a non-200 route answer reds this suite, because it
+// is the sole guard on the T10 registry gate and a self-skipping guard guards
+// nothing.
 //
 // Runner: npx tsx --test test/improvement.learning-loop-gate.route.test.ts
 
@@ -66,14 +69,24 @@ before(async () => {
   await registerImprovementRoutes(app);
   await app.ready();
 
+  // The skip gate covers exactly ONE condition: no database available. Everything
+  // past this probe — both seeds and both route calls — propagates as a FAILURE.
+  // This suite is the only guard on the T10 registry gate, so a gate wide enough to
+  // catch a unique violation or a 500 would let a broken route report green by
+  // skipping itself.
   try {
-    await seedLearningLog();
-    await seedLoopEvents();
+    const prisma = getPrisma();
+    await prisma.$queryRaw`SELECT 1 FROM core.learning_log LIMIT 1`;
+    await prisma.$queryRaw`SELECT 1 FROM core.autoagent_loop_events LIMIT 1`;
     dbReady = true;
   } catch (error) {
-    dbReady = false;
-    console.error("[impr-llgate] DB seed failed — tests will skip:", error);
+    console.error("[impr-llgate] Postgres unreachable or unprovisioned — tests will skip:", error);
+    return;
   }
+
+  // Deliberately UNGUARDED — a seed failure reds the suite instead of skipping it.
+  await seedLearningLog();
+  await seedLoopEvents();
 });
 
 after(async () => {
