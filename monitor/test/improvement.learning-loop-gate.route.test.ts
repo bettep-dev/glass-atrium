@@ -131,9 +131,10 @@ async function seedLearningLog(): Promise<void> {
 }
 
 // autoagent_loop_events: 2 canonical + one row per noise token. agent is NOT NULL.
-// eval_result is free-text VarChar(32) (mirror daemon-emitted values). Dedup
-// UNIQUE is (event_ts, agent, eval_result) → vary event_ts per row. RETURNING id
-// so cleanup deletes precisely (no window scrub that could hit production).
+// eval_result is free-text VarChar(32) (mirror daemon-emitted values). Dedup is two
+// partial UNIQUEs; subject is left NULL here, so these are census rows under
+// (event_ts, agent, eval_result) WHERE subject IS NULL → vary event_ts per row.
+// RETURNING id so cleanup deletes precisely (no window scrub that could hit production).
 async function seedLoopEvents(): Promise<void> {
   const prisma = getPrisma();
   const rows: Array<{ agent: string; result: string }> = [
