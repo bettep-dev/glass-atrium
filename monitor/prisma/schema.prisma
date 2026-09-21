@@ -660,8 +660,16 @@ model AutoagentLoopEvent {
   evalResult     String   @map("eval_result") @db.VarChar(32)
   changesAdded   Int      @map("changes_added")
   changesRemoved Int      @map("changes_removed")
+  // Identity token of the subject a verdict adjudicates; NULL = census class.
+  subject        String?  @db.VarChar(128)
+  insertedAt     DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
 
-  @@unique([eventTs, agent, evalResult], map: "autoagent_loop_events_dedup")
+  // Dedup is two partial UNIQUE indexes — census (event_ts, agent, eval_result)
+  // WHERE subject IS NULL, verdict (event_ts, agent, subject) WHERE subject IS NOT
+  // NULL. Prisma 7 schema cannot declare partial-index predicates → migration raw
+  // SQL only (20260921000000_split_autoagent_loop_event_identity). NOT mirrored here
+  // intentionally — declaring as a plain @@unique would cause prisma migrate diff to
+  // drop both predicates and recreate one full index.
   @@index([eventTs], map: "autoagent_loop_events_ts_idx")
   @@index([agent, eventTs], map: "autoagent_loop_events_agent_ts_idx")
   @@map("autoagent_loop_events")

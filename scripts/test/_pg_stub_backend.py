@@ -54,6 +54,7 @@ _PROPOSALS_TABLE = "autoagent_proposals"
 _PROPOSALS_KEY = ("cycle_date", "pattern_label", "target_file")
 _LOOP_EVENTS_TABLE = "autoagent_loop_events"
 
+_LINE_COMMENT = re.compile(r"--[^\n]*")
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
 _MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
@@ -315,7 +316,11 @@ def _get_table_indexes(table: str) -> dict[str, str]:
     """
     live: dict[str, str] = {}
     for migration in sorted(_MIGRATIONS.glob("*/migration.sql")):
-        for stmt in _INDEX_STMT.finditer(migration.read_text(encoding="utf-8")):
+        # Line comments are stripped first: the repo states a migration's reversal as a
+        # commented statement block, and reading those back as live DDL would replay a
+        # down-migration nobody ran.
+        sql = _LINE_COMMENT.sub("", migration.read_text(encoding="utf-8"))
+        for stmt in _INDEX_STMT.finditer(sql):
             if stmt.group("dropped") is not None:
                 live.pop(stmt.group("dropped"), None)
             elif stmt.group("table") == table:

@@ -10,7 +10,8 @@
 #       - write_autoagent_proposal   -> core.autoagent_proposals UPSERT
 #                                       key (cycle_date, pattern_label, target_file)
 #       - write_autoagent_loop_event -> core.autoagent_loop_events UPSERT
-#                                       key (event_ts, agent, eval_result)
+#                                       key (event_ts, agent, eval_result) for a census
+#                                       row, (event_ts, agent, subject) for a verdict row
 #       - write_autoagent_corpus_audit -> core.autoagent_corpus_audits UPSERT
 #                                       key (cycle_date)
 #
@@ -29,10 +30,11 @@
 #   3 = unknown op (not in OP_TABLE)
 #   4 = PG write failure after the retry (structured JSON + pg_write=fail stderr)
 #   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
-#   6 = unsupported apply_status token — a caller contract violation the database
-#       cannot store. Refused BEFORE connecting, so nothing was written and no
-#       retry runs; a silent fall-through here would report apply health the
-#       cycle never recorded.
+#   6 = caller contract violation — an unsupported apply_status token, or a
+#       verdict-class loop-event cause carrying no subject. Refused BEFORE
+#       connecting, so nothing was written and no retry runs; a silent
+#       fall-through would report apply health the cycle never recorded, or file
+#       an adjudication under the recurrence census.
 #
 # CLI contract (single-line JSON envelope on stdin):
 #   {"op": "write_wiki_note",            "args": {"path": "...", "title": "...", ...}}
@@ -228,11 +230,15 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
-class UnsupportedApplyStatus(ValueError):
-    """apply_status outside APPLY_STATUS_TOKENS — a contract violation, not a PG fault.
+class CallerContractViolation(ValueError):
+    """An argument the database cannot store — a caller bug, not a PG fault.
 
-    Non-retryable by construction: the token is wrong on every attempt, and _retry's
+    Non-retryable by construction: the argument is wrong on every attempt, and _retry's
     backoff would only delay the named exit."""
+
+
+class UnsupportedApplyStatus(CallerContractViolation):
+    """apply_status outside APPLY_STATUS_TOKENS."""
 
 
 # Statuses the apply stage OWNS — the composable set of compose_daemon_run_apply_status
@@ -673,6 +679,50 @@ def write_autoagent_proposal(
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
+class VerdictSubjectMissing(CallerContractViolation):
+    """A verdict-class cause arrived with no subject to adjudicate."""
+
+
+# Cause tokens whose row adjudicates ONE subject, so a correction of that subject
+# supersedes its predecessor. Declared here rather than in daemon_cycle.py, which
+# re-uses it beside its DISCHARGE_EVENT_* constants: the reverse import is circular.
+LOOP_EVENT_VERDICT_CAUSES = (
+    "discharge-read-failed",
+    "discharge-unresolved",
+    "discharge-covered-terminal",
+    "discharge-intake-miss",
+)
+
+# The column whose presence selects the row class. Both arms' predicates compose from
+# this one name, so a rename cannot leave one arm pointing at a column the other
+# abandoned — and a drift from the migration's own predicates reds the identity pin.
+LOOP_EVENT_SUBJECT_COLUMN = "subject"
+_LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % LOOP_EVENT_SUBJECT_COLUMN
+_LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % LOOP_EVENT_SUBJECT_COLUMN
+
+
+def _get_loop_event_conflict_arm(subject):
+    """The ON CONFLICT arm for one row class — census when subject is absent.
+
+    Each arm carries the predicate of the partial unique index it targets: both
+    uniques are predicate-bearing, so a bare column-list target infers neither.
+    """
+    if subject is None:
+        key = ("event_ts", "agent", "eval_result")
+        predicate = _LOOP_EVENT_CENSUS_PREDICATE
+        updated = ("rice", "changes_added", "changes_removed")
+    else:
+        key = ("event_ts", "agent", LOOP_EVENT_SUBJECT_COLUMN)
+        predicate = _LOOP_EVENT_VERDICT_PREDICATE
+        # A correction is exactly a new cause for a settled subject → the arm updates it.
+        updated = ("rice", "eval_result", "changes_added", "changes_removed")
+    return "ON CONFLICT (%s) WHERE %s DO UPDATE SET %s" % (
+        ", ".join(key),
+        predicate,
+        ", ".join("%s = EXCLUDED.%s" % (c, c) for c in updated),
+    )
+
+
 def write_autoagent_loop_event(
     event_ts,
     agent,
@@ -680,26 +730,43 @@ def write_autoagent_loop_event(
     changes_added,
     changes_removed,
     rice=None,
+    subject=None,
 ):
-    """UPSERT core.autoagent_loop_events on (event_ts, agent, eval_result).
+    """UPSERT core.autoagent_loop_events under the identity class `subject` selects.
 
-    Returns elapsed_ms. The autoagent-loop.jsonl file is append-only, so the
-    natural idempotency key is the dedup unique index defined in the schema
-    (event_ts, agent, eval_result). On conflict we update changes_added /
-    changes_removed / rice — covering the rare backfill rerun where the same
-    line appears twice (e.g. from log rotation overlap).
+    Returns elapsed_ms. Two row classes share the table, so there is no one
+    idempotency key. A census row (subject absent) counts how often one cause fired
+    for one agent on one day, keyed on (event_ts, agent, eval_result) — the
+    append-only autoagent-loop.jsonl replays a line on log-rotation overlap, and the
+    conflict update covers that rerun. A verdict row adjudicates ONE subject, keyed
+    on (event_ts, agent, subject), so a correction carrying a new cause supersedes
+    the verdict it corrects instead of landing beside it.
+
+    A verdict-class cause (LOOP_EVENT_VERDICT_CAUSES) arriving with subject=None is
+    REFUSED before connecting (VerdictSubjectMissing, CLI exit 6): the census arm
+    would take it silently and file an adjudication under the recurrence census.
     """
     start_ns = time.monotonic_ns()
-    sql = """
-        INSERT INTO core.autoagent_loop_events
-            (event_ts, agent, rice, eval_result, changes_added, changes_removed)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (event_ts, agent, eval_result) DO UPDATE SET
-            rice = EXCLUDED.rice,
-            changes_added = EXCLUDED.changes_added,
-            changes_removed = EXCLUDED.changes_removed
-        RETURNING id
-    """
+    if subject is None and eval_result in LOOP_EVENT_VERDICT_CAUSES:
+        raise VerdictSubjectMissing(
+            "op=write_autoagent_loop_event refused eval_result=%r with no subject "
+            "(verdict causes: %s) — nothing written, the adjudication is NOT recorded"
+            % (eval_result, " ".join(LOOP_EVENT_VERDICT_CAUSES))
+        )
+    columns = (
+        "event_ts",
+        "agent",
+        "rice",
+        "eval_result",
+        "changes_added",
+        "changes_removed",
+        "subject",
+    )
+    sql = "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
+        ", ".join(columns),
+        ", ".join(["%s"] * len(columns)),
+        _get_loop_event_conflict_arm(subject),
+    )
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -711,6 +778,7 @@ def write_autoagent_loop_event(
                     eval_result,
                     changes_added,
                     changes_removed,
+                    subject,
                 ),
             )
             cur.fetchone()
@@ -842,7 +910,7 @@ def _retry(func, args_dict, hook_name, target_table, payload_ref):
         try:
             elapsed_ms = func(**args_dict)
             return elapsed_ms, attempt, None
-        except UnsupportedApplyStatus as exc:
+        except CallerContractViolation as exc:
             return None, attempt, (exc, False)
         except Exception as exc:  # noqa: BLE001 — intentional broad catch
             last_exc = exc
@@ -899,7 +967,7 @@ def main():
         sys.exit(0)
 
     last_exc, retry_attempted = fail
-    if isinstance(last_exc, UnsupportedApplyStatus):
+    if isinstance(last_exc, CallerContractViolation):
         # Named exit 6, not the pg_write=fail path: nothing was written and nothing failed
         # in PG, so a hook_failures row would misattribute a caller bug to the database.
         sys.stderr.write(
