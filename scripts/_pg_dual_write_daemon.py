@@ -688,6 +688,10 @@ class CensusSubjectPresent(CallerContractViolation):
     """A census-class cause arrived carrying a subject no arm can key it on."""
 
 
+class SubjectTooLong(CallerContractViolation):
+    """A subject arrived wider than the column that keys the verdict arm."""
+
+
 # Cause tokens whose row adjudicates ONE subject, so a correction of that subject
 # supersedes its predecessor. Declared here rather than in daemon_cycle.py, which
 # re-uses it beside its DISCHARGE_EVENT_* constants: the reverse import is circular.
@@ -705,6 +709,8 @@ LOOP_EVENT_VERDICT_CAUSES = (
 _LOOP_EVENT_SUBJECT_COLUMN = "subject"
 _LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 _LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % _LOOP_EVENT_SUBJECT_COLUMN
+# Declared width of that column in the split migration — the refusal boundary below.
+_LOOP_EVENT_SUBJECT_MAX_CHARS = 128
 
 
 def _check_loop_event_class(eval_result, subject):
@@ -783,6 +789,15 @@ def write_autoagent_loop_event(
     # adjudication, which the verdict arm would otherwise key as two.
     if subject is not None:
         subject = str(subject).strip()
+        if len(subject) > _LOOP_EVENT_SUBJECT_MAX_CHARS:
+            # Refused, never truncated — the subject KEYS the verdict arm, so a
+            # silent trim collapses two adjudications onto one row. Raising here
+            # keeps a caller bug on exit 6 instead of a PG string-overflow on 4.
+            raise SubjectTooLong(
+                "op=write_autoagent_loop_event refused subject of %d chars "
+                "(column width %d): %r — nothing written"
+                % (len(subject), _LOOP_EVENT_SUBJECT_MAX_CHARS, subject[:80])
+            )
     _check_loop_event_class(eval_result, subject)
     columns = (
         "event_ts",

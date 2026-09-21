@@ -80,15 +80,32 @@ _EMITTED: list[dict] = []
 _EMIT_PATCHER = None
 
 
+def _seal_loop_event(envelope: dict) -> bool:
+    """Capture one loop-event envelope instead of writing it, refusing any whose
+    class is not STATED.
+
+    The ``subject`` key selects the row class, and the writer defaults an absent
+    key into the census arm — so a capture-only seal would let an emitter added
+    without a class be censused silently. PRESENCE is the check, never the value:
+    ``None`` states census, a subject token states verdict.
+    """
+    args = envelope.get("args")
+    if not isinstance(args, dict) or "subject" not in args:
+        raise AssertionError(
+            "loop-event envelope states no class — 'subject' missing from "
+            "envelope['args']; state it at the emit site (None = census, a "
+            "subject token = verdict) instead of defaulting into the census "
+            "arm. envelope=%r" % (envelope,)
+        )
+    _EMITTED.append(envelope)
+    return True
+
+
 def setUpModule() -> None:
     """Seal the loop-event writer for every test in this file — an unresolved
     proposal reaches the emit, and an unsealed run writes live PG rows."""
     global _EMIT_PATCHER
-    if dc is None:
-        return
-    _EMIT_PATCHER = mock.patch.object(
-        dc, "_invoke_pg_helper", lambda envelope: _EMITTED.append(envelope) or True
-    )
+    _EMIT_PATCHER = mock.patch.object(dc, "_invoke_pg_helper", _seal_loop_event)
     _EMIT_PATCHER.start()
 
 
@@ -725,6 +742,55 @@ class DischargeDefaultTest(unittest.TestCase):
     def test_when_env_set_true_then_live_transitioning_is_enabled(self):
         with mock.patch.dict("os.environ", {dc.DISCHARGE_LIVE_ENV: "true"}):
             self.assertTrue(dc.discharge_live_enabled())
+
+
+class SubjectWidthGuardTest(unittest.TestCase):
+    """A subject wider than its column is a caller bug, refused before connecting.
+
+    Truncating would key two adjudications onto ONE verdict row; letting it through
+    defers the failure into PG, where a caller bug is filed as a database one.
+    """
+
+    def _migration_declared_width(self) -> int:
+        """The subject column's width as the migration SQL declares it."""
+        widths = set()
+        migrations = _REPO_ROOT / "monitor" / "prisma" / "migrations"
+        for sql_path in migrations.glob("*/migration.sql"):
+            for line in sql_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("--") or '"subject"' not in stripped:
+                    continue
+                if "VARCHAR(" not in stripped:
+                    continue
+                widths.add(int(stripped.split("VARCHAR(")[1].split(")")[0]))
+        self.assertEqual(len(widths), 1, "expected ONE subject column declaration")
+        return widths.pop()
+
+    def test_when_the_refusal_boundary_leaves_the_column_width_then_it_reds(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with stub_backend.load_helper(
+                Path(tmp_dir) / "loop_events.sqlite"
+            ) as writer:
+                self.assertEqual(
+                    writer._LOOP_EVENT_SUBJECT_MAX_CHARS,
+                    self._migration_declared_width(),
+                )
+
+    def test_when_a_subject_exceeds_the_column_then_nothing_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with stub_backend.load_helper(
+                Path(tmp_dir) / "loop_events.sqlite"
+            ) as writer:
+                over = "p:" + "9" * writer._LOOP_EVENT_SUBJECT_MAX_CHARS
+                with self.assertRaises(writer.CallerContractViolation):
+                    writer.write_autoagent_loop_event(
+                        "2026-09-21",
+                        "glass-atrium-dev-react",
+                        writer.LOOP_EVENT_VERDICT_CAUSES[0],
+                        0,
+                        0,
+                        subject=over,
+                    )
 
 
 if __name__ == "__main__":
