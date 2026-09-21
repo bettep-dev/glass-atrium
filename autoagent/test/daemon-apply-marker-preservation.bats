@@ -4,9 +4,9 @@
 # TWO deliverables share one file, so one suite covers both:
 #
 #   (1) verify_patched gains a SIXTH check — editable-region marker COUNTS.
-#       The five existing checks (non-empty · one heading · present-before
-#       frontmatter · present-before `> Rules:` anchor · proportional shrink
-#       floor) never look at `<!-- EDITABLE:BEGIN/END -->`, so a patch that
+#       The four existing checks (non-empty · one heading · present-before
+#       frontmatter · proportional shrink floor) never look at
+#       `<!-- EDITABLE:BEGIN/END -->`, so a patch that
 #       deletes one END marker of several verifies clean while silently merging
 #       two regions into one. Counting (not mere presence) is the point: a
 #       presence test passes exactly the case worth catching.
@@ -24,7 +24,7 @@
 #     selected on the fourth at HEAD (the verify-fail branch never advances the
 #     stale counter, so the row never reaches 'snoozed').
 #
-# REGRESSION PINS (green at HEAD and after): the five existing checks each still
+# REGRESSION PINS (green at HEAD and after): the four existing checks each still
 # fail their own case; a marker-count-preserving result still passes; a target
 # that never carried markers is not penalized; the verify failure still hands off
 # to the atomic restore; the verify-fail branch keeps counting ERRORS (NOT
@@ -32,7 +32,8 @@
 # helper's --auto-regen skip gate applies on the newly-wired branch too.
 #
 # HERMETIC: the predicate is extracted and driven in isolation; the end-to-end
-# rows run against a temp tree with a stateful psql stand-in prepended to PATH.
+# rows run against a temp tree with a stateful psql stand-in prepended to PATH
+# and the daemon_cycle.py seam pointed at a guard pass-through.
 # No live PG, no live install, no live agents dir.
 #
 # Run via: bats autoagent/test/daemon-apply-marker-preservation.bats
@@ -67,12 +68,11 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 # write_two_region_body PATH — a body carrying TWO editable regions (2 begin
-# markers, 2 end markers) plus frontmatter, a heading and a `> Rules:` anchor.
+# markers, 2 end markers) plus frontmatter and a heading.
 write_two_region_body() {
   printf '%s\n' \
     '---' 'name: probe-agent' '---' \
     '# Probe Agent' \
-    '> Rules: comment-logging' \
     '## Goal' "${BEGIN_MARK}" 'goal line one' 'goal line two' "${END_MARK}" \
     '## Work Rules' "${BEGIN_MARK}" 'work rule one' 'work rule two' "${END_MARK}" \
     >"$1"
@@ -166,14 +166,6 @@ verify() {
   [[ "${status}" -ne 0 ]] || { echo "stripping present-before frontmatter must fail" >&2; return 1; }
 }
 
-@test "existing check: a result removing a present-before \`> Rules:\` anchor still fails" {
-  local before="${WORK}/before.md" after="${WORK}/after.md"
-  write_two_region_body "${before}"
-  grep -v '^> Rules:' "${before}" >"${after}"
-  verify "${before}" "${after}"
-  [[ "${status}" -ne 0 ]] || { echo "removing a present-before anchor must fail" >&2; return 1; }
-}
-
 @test "existing check: a result shrunk past the proportional floor still fails" {
   local before="${WORK}/before.md" after="${WORK}/after.md"
   {
@@ -194,7 +186,8 @@ verify() {
 # and stale_attempt_count in a state file so the drain can be observed ACROSS
 # successive daemon-apply invocations (the fossilization scenario is inherently
 # multi-cycle). It honors the batch SELECT's status='pending' predicate and the
-# mark_stale_attempt CTE's increment-then-flip-at-threshold semantics.
+# mark_stale_attempt CTE's increment-then-flip-at-threshold semantics; the id-only
+# single lookup returns the row with its stored status and an ok generation outcome.
 install_psql_stub() {
   cat >"$1/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -213,10 +206,16 @@ sql="$(cat)"
 row_status="$(sed -n 's/^status=//p' "${state}")"
 row_count="$(sed -n 's/^count=//p' "${state}")"
 
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+# emit_row [EXTRA] — the backlog's 6-field row, free text base64-encoded as the SELECT does; EXTRA
+# appends the single lookup's fields.
 emit_row() {
-  printf '%s|%s|%s|%s|%s|%s\n' \
-    "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "${STUB_LABEL:?}" \
-    "${STUB_AGENT:?}" "${STUB_TARGET:?}" "${STUB_DIFF_B64:?}"
+  printf '%s|%s|%s|%s|%s|%s%s\n' \
+    "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "$(b64 "${STUB_LABEL:?}")" \
+    "$(b64 "${STUB_AGENT:?}")" "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}" "${1:-}"
 }
 
 case "${sql}" in
@@ -234,7 +233,7 @@ case "${sql}" in
     [[ "${row_status}" == "pending" ]] && emit_row
     ;;
   *"id::text = :'pid'"*)
-    case "${row_status}" in pending | snoozed) emit_row ;; *) : ;; esac
+    emit_row "|${row_status}|ok"
     ;;
   *) : ;;
 esac
@@ -243,7 +242,27 @@ STUB
   chmod +x "$1/psql"
 }
 
-# setup_e2e — temp tree, stub PATH, probe fixture, and the unverifiable diff.
+# build_guard_passthrough PATH — Python stand-in for the
+# AUTOAGENT_DAEMON_CYCLE_PY seam (run as `python3 <seam>`): the parked-pattern
+# guard reads through psycopg, which no psql stub isolates, so it answers "no
+# guard fires" (stdin drained for the piping printf); every other mode — the
+# removal-evidence call these rows reach — execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
+# setup_e2e — temp tree, stub PATH, guard seam, probe fixture, and the unverifiable diff.
 setup_e2e() {
   STUB="${WORK}/bin"
   AGENTS="${WORK}/agents"
@@ -251,8 +270,10 @@ setup_e2e() {
   FAKE_HOME="${WORK}/home"
   PSQL_LOG="${WORK}/psql-invocations.log"
   STATE="${WORK}/row-state"
+  GUARD_SEAM="${WORK}/daemon_cycle_passthrough.py"
   mkdir -p "${STUB}" "${AGENTS}" "${REPORTS}" "${FAKE_HOME}"
   install_psql_stub "${STUB}"
+  build_guard_passthrough "${GUARD_SEAM}"
   printf 'status=pending\ncount=0\n' >"${STATE}"
 
   PROBE="${AGENTS}/probe.md"
@@ -299,6 +320,7 @@ run_apply() {
     AUTOAGENT_REMOVAL_LIVE=1 \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 \
+    AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     STUB_PSQL_LOG="${PSQL_LOG}" \
     STUB_STATE="${STATE}" \
     STUB_ROW_ID="2762" \

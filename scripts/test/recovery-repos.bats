@@ -14,9 +14,10 @@
 # runs doctor against a bare mktemp GA target, where any target-relative path
 # resolves to nothing.
 #
-# EVERY assertion carries `|| return 1`: a bare `[[ ... ]]` that fails mid-body
-# does NOT fail the test on bats 1.13 (only the final command's status is
-# consulted), so an unguarded mid-body assertion is silently vacuous.
+# EVERY assertion carries `|| return 1`: @test bodies run under errexit, but a bare
+# mid-body `[[ ... ]]` is exempt from it under bash 3.2 (the macOS default) while
+# bash 5.3 on CI gates it (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on both legs),
+# so an unguarded mid-body assertion is vacuous on macOS and reds only on Linux.
 #
 # Run via: bats scripts/test/recovery-repos.bats
 # Requires: bats >= 1.5.0, bash 3.2+, git

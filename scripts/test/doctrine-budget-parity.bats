@@ -135,10 +135,20 @@ sot_path_from_doctrine() {
 
 preset_names() { grep -o 'doc-diagram-[a-z]*' "$1" | LC_ALL=C sort -u; }
 
+# Every path handed to this helper is a repository-shipped source — the two doctrine markdown
+# files, and the monitor sources the doctrine itself NAMES. A vanished one is the most complete
+# form of the drift this suite exists to catch, so it FAILS: `skip` scores as `ok` and the run
+# still exits 0, which would let a deleted or renamed source pass unnoticed. A path DERIVED from
+# the doctrine text is covered by the same rule — if the doctrine names a path that does not
+# exist, that is the drift, not a thin tree.
 require_files() {
   local f
   for f in "$@"; do
-    [[ -f "${f}" ]] || skip "source not present in this tree: ${f#"${GA}"/}"
+    [[ -f "${f}" ]] || {
+      printf 'named source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+        "${f#"${GA}"/}" >&2
+      return 1
+    }
   done
 }
 

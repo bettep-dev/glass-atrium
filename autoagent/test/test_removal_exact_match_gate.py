@@ -72,17 +72,18 @@ from test_removal_discard_refusal import (  # noqa: E402
 BEGIN_MARK = "<!-- EDITABLE:BEGIN -->"
 END_MARK = "<!-- EDITABLE:END -->"
 
-# A probe body carrying frontmatter, a heading, a `> Rules:` anchor and ONE
+# A probe body carrying frontmatter, a heading, a header quote line and ONE
 # editable region — every member of the protected set is present exactly once, so
 # a removal aimed at any of them is a single-match removal that must STILL refuse
-# on the protected rule rather than on match count.
+# on the protected rule rather than on match count. The header quote line is the
+# one line here that is NOT a protected member: it is refused by position.
 PROBE_BODY = "\n".join(
     [
         "---",
         "name: probe-agent",
         "---",
         "# Probe Agent",
-        "> Rules: comment-logging",
+        "> scope-dev pointers: Context Engineering",
         "",
         "## Work Rules",
         BEGIN_MARK,
@@ -281,6 +282,16 @@ class TestEvidenceRuleRefuses(unittest.TestCase):
         self.assertFalse(evidence.ok)
         self.assertEqual(evidence.verdict, dc.REMOVAL_VERDICT_OUT_OF_REGION)
 
+    def test_when_header_quote_line_removed_then_refused_out_of_region(self) -> None:
+        # The header quote block carries no protected-class member of its own —
+        # its safety comes from position: every such line sits above the first
+        # EDITABLE:BEGIN, so the region rule is what refuses the removal.
+        evidence = dc.verify_removal_evidence(
+            _diff("-> scope-dev pointers: Context Engineering"), PROBE_BODY
+        )
+        self.assertFalse(evidence.ok)
+        self.assertEqual(evidence.verdict, dc.REMOVAL_VERDICT_OUT_OF_REGION)
+
     def test_when_target_unreadable_then_refused(self) -> None:
         evidence = dc.verify_removal_evidence(_diff("-- removable line"), "")
         self.assertFalse(evidence.ok)
@@ -315,9 +326,6 @@ class TestProtectedSet(unittest.TestCase):
         # generation-side pre-filter provably cannot see this member.
         self.assertIn("frontmatter", self._refuse("---").detail)
 
-    def test_when_rules_anchor_removed_then_refused(self) -> None:
-        self.assertIn("rules-anchor", self._refuse("> Rules: comment-logging").detail)
-
     def test_when_region_marker_removed_then_refused(self) -> None:
         self.assertIn("region-marker", self._refuse(BEGIN_MARK).detail)
 
@@ -331,15 +339,15 @@ class TestProtectedSet(unittest.TestCase):
 
 
 class TestDeclaredSetDerivation(unittest.TestCase):
-    """Enumeration is from the RAW hunk lines, which is what makes the
-    frontmatter-delimiter and `-- `-prefixed members visible at all."""
+    """Enumeration is from the RAW hunk lines, so the frontmatter-delimiter and
+    `-- `-prefixed removals are declared members."""
 
-    def test_when_frontmatter_delimiter_removed_then_fragment_partition_is_blind(
+    def test_when_frontmatter_delimiter_removed_then_fragment_partition_sees_it(
         self,
     ) -> None:
         diff = _diff("----")
         _context, _added, removed = dc._split_fragment_lines(diff)
-        self.assertEqual(removed, [])  # the partition drops it as a file header
+        self.assertEqual(removed, ["----"])  # in-hunk body line, as git apply --recount reads it
         declared, bearing = dc._get_declared_removals(diff)
         self.assertTrue(bearing)
         self.assertEqual(declared, ("---",))

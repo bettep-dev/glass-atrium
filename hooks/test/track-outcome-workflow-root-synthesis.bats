@@ -25,10 +25,15 @@
 # (never budget-truncation) so the pollution-case RED assertion is deterministic. Decision channel
 # = the '[outcome-record] ...' diagnostics on stderr (captured via 2>&1). No live hook input.
 #
-# Assertion helpers (NOT bare [[ ]]): bats 1.x runs the body under errexit, but bash exempts a
-# standalone [[ ]] / [ ] from errexit, so a failed bare conditional mid-body is SILENTLY MASKED
-# (only the last command's status decides pass/fail). The helpers below are simple commands whose
-# non-zero return DOES trip errexit → every assertion is enforced regardless of position.
+# Assertion helpers (NOT bare [[ ]]): bats runs the body under errexit on both platforms, but macOS
+# bash 3.2.57 exempts a standalone [[ ]] mid-body — the [ ] builtin form aborts on every bash version
+# — so a failed bare conditional is SILENTLY MASKED there while bash 4.4 onward reds it (measured
+# 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15; CI runs 5.3.9, bats 1.13.0 on both operational legs, so bash is
+# the variable, not bats). The helpers below are simple commands whose non-zero return trips errexit
+# on every bash version — no platform exemption. Two version-independent exemptions still apply,
+# though, and they are distinct kinds: POSITION — a bare call gates, while a call heading an `&&`
+# list does not; CONTEXT — an `if` condition is exempt at every position. Every call site below is
+# a bare mid-body call, which is the gating shape.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"

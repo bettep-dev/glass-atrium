@@ -8,7 +8,8 @@
 # Fixtures mirror the sibling [PLAN-SUBSET] suite: a [SIZE-EST] attestation and a pre-stamped
 # qa-code-reviewer marker keep the other two surfaces from preempting this one.
 #
-# BATS GATING NOTE: only the LAST command gates a test — every assertion carries `|| return 1`.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
+# not on macOS bash 3.2 — every assertion carries `|| return 1`, which gates on both.
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'
@@ -113,7 +114,15 @@ plain_paths() {
 
 @test "the skill's Deep-review file threshold matches the hook constant" {
   local skill="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
-  [[ -f "${skill}" ]] || skip "skill not found: ${skill}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${skill}" ]] || {
+    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${skill}" >&2
+    return 1
+  }
   local from_skill from_hook
   from_skill="$(grep -o 'lists ≥ [0-9][0-9]* paths' "${skill}" | head -1 | sed 's/[^0-9]//g')"
   from_hook="$(grep -o '^readonly DEEP_REVIEW_FILE_THRESHOLD=[0-9][0-9]*' "${HOOK_SH}" | sed 's/.*=//')"

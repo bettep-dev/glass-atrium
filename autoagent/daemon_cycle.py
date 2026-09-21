@@ -40,9 +40,11 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from itertools import groupby
+from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
 # -- Constants --------------------------------------------------------------
@@ -114,6 +116,7 @@ try:
             count_outcomes_since as _pg_count_outcomes_since,
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
+            read_coverage_learning_patterns as _pg_read_coverage_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
             discharge_learning_pattern as _pg_discharge_learning_pattern,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
@@ -252,7 +255,7 @@ OUTCOME_SAMPLE_LIMIT = 5
 # GENERATION-side chronic timeout had NO back-off at all. This threshold bounds
 # it: after N CONSECUTIVE Haiku-timeouts on the SAME target_file (counted from the
 # persisted core.autoagent_proposals rows), the generation path STOPS re-invoking
-# Haiku for that target and instead emits a loud, observable 'snoozed' reject row
+# Haiku for that target and instead emits a loud, observable 'rejected' marker row
 # (no Haiku spend, no `error` → no spurious 'partial'). A single non-timeout row
 # (e.g. an 'ok' generation) breaks the streak and re-arms the candidate, so a
 # transiently-flaky-but-occasionally-generatable target recovers on its own.
@@ -277,6 +280,9 @@ TIMEOUT_BACKOFF_RATIONALE_TEMPLATE = (
     "(threshold {thr}) — generation snoozed to stop burning budget; recovers on "
     "the next non-timeout generation. Resolve the candidate or raise the timeout."
 )
+# haiku_status of a back-off row — both all-reject counters exclude it: a marker is
+# neither pipeline output nor a rejection.
+TIMEOUT_BACKOFF_HAIKU_STATUS = "skipped:chronic-timeout-backoff"
 TIMEOUT_BACKOFF_PROBE_ENV = "AUTOAGENT_TIMEOUT_BACKOFF_PROBE_CYCLES"
 # Self-lock guard: the documented recovery ("a non-timeout row breaks the streak")
 # names an actor the closed gate suppresses, so the state is unreachable from
@@ -312,6 +318,7 @@ FAILURE_CLASS_TRANSIENT = "transient-overload"  # Overloaded / 529 / reset blip
 FAILURE_CLASS_TIMEOUT = "chronic-timeout"    # Haiku call timed out
 FAILURE_CLASS_SUPERSEDE = "supersede"        # mechanical cross-day supersede
 FAILURE_CLASS_AUTH = "auth-failure"          # 401/credential — expired OAuth token
+FAILURE_CLASS_PARKED_PATTERN = "parked-pattern"  # apply guard: covering rows all terminal
 # ADJUDICATING (advances the streak, like quality) but named apart from it so an
 # operator can filter the pattern rows a removal refusal terminalizes: a pattern
 # whose only expressible fix needs a removal the loop cannot evidence is one the
@@ -334,6 +341,8 @@ _NON_ADJUDICATION_CLASSES = frozenset(
         # outage never advances the reject streak (fossilizing healthy agents
         # like dev-shell / dev-front on a credential-expired night).
         FAILURE_CLASS_AUTH,
+        # A guarded reject judges the pattern's state, never the candidate diff.
+        FAILURE_CLASS_PARKED_PATTERN,
     }
 )
 # FAILURE_CLASS_REMOVAL_REFUSAL is deliberately ABSENT from the set above — the
@@ -382,6 +391,10 @@ HAIKU_PROBE_TIMEOUT_SEC = 2.0
 # pipeline yields nothing actionable — a systemic gate regression, not N
 # independent quality rejects (the R1 containment break presented exactly this
 # way: a layout change silently rejected 100% of proposals every cycle).
+# Both walks therefore count only ADJUDICATING rejects, through the same
+# classify_failure_rationale + _NON_ADJUDICATION_CLASSES SoT the per-pattern kill
+# streak uses: a supersede, parked, quota, auth or back-off row is not a gate
+# verdict, so a date holding only those drops out like a quiet night.
 # run_cycle counts the CURRENT in-memory cycle plus the leading run of persisted
 # all-reject cycle_dates; any cycle with >=1 non-rejected proposal breaks the
 # streak. Default 3 mirrors TIMEOUT_BACKOFF_THRESHOLD; env-overridable.
@@ -423,6 +436,9 @@ CYCLE_REGRESSION_EXIT_CODE = 6
 # surfaces a distinct code (NOT silent absorption) so the operator/monitor can
 # tell a backfill DB fault apart from a generation regression.
 BACKFILL_PG_EXIT_CODE = 7
+# Parked-pattern guard mode failed (read, input or write) — stdout stays empty and the
+# apply path applies nothing that run.
+PARKED_GUARD_FAILURE_EXIT_CODE = 8
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
@@ -758,9 +774,8 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
     # Optional `Sync` group → the bare and execSync call forms both fire
-    # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
-    # → a proposal re-adding that bullet routes to safety
-    # Cleaning that live copy is an operator follow-up, outside this branch
+    # Fail-closed cost, accepted: a prohibition naming the call form with a paren
+    # (`execSync (`) matches too → a proposal adding such prose routes to safety
     # execFile / execFileSync stay uncovered — named as a limit, not a claim
     re.compile(r"\bexec(?:Sync)?\s*\("),
     # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
@@ -823,14 +838,52 @@ def match_sensitive_path(path: str) -> str | None:
     return None
 
 
+DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
+
+
+def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
+    """Classify each diff line — the one body reading of the safety/count sites.
+
+    A strict superset of ``git apply --recount`` in daemon-apply.sh: after the first
+    ``@@`` every ``+``/``-`` line is body, ``+++ ``/``--- `` included, and hunk counts
+    are ignored.
+    A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
+    """
+    lines = (diff or "").splitlines()
+    kinds: list[tuple[DiffLineKind, str]] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        kind: DiffLineKind = "other"
+        if line.startswith("@@"):
+            in_hunk = True
+            kind = "hunk"
+        elif not in_hunk and _is_diff_header_line(lines, idx):
+            kind = "header"
+        elif line.startswith("+"):
+            kind = "added"
+        elif line.startswith("-"):
+            kind = "removed"
+        kinds.append((kind, line))
+    return kinds
+
+
+def _is_diff_header_line(lines: list[str], idx: int) -> bool:
+    line = lines[idx]
+    if line.startswith("--- "):
+        return idx + 1 < len(lines) and lines[idx + 1].startswith("+++ ")
+    if line.startswith("+++ "):
+        return idx > 0 and lines[idx - 1].startswith("--- ")
+    return False
+
+
 def match_sensitive_diff(diff: str) -> str | None:
     """Return the source of the first sensitive-diff pattern matching an ADDED
-    line of ``diff``, else ``None``. Only ``+``-prefixed lines are inspected
-    (excluding the ``+++`` file header) — context lines are current file state,
-    not the patch's introduction.
+    line of ``diff``, else ``None``. Added lines are read by
+    ``_get_diff_line_kinds`` — context lines are current file state, not the
+    patch's introduction.
     """
-    for line in (diff or "").splitlines():
-        if not line.startswith("+") or line.startswith("+++"):
+    for kind, line in _get_diff_line_kinds(diff):
+        if kind != "added":
             continue
         body = line[1:]  # strip leading '+'
         for pat in _SAFETY_SENSITIVE_DIFF_PATTERNS:
@@ -1045,6 +1098,318 @@ def _get_target_path(target_file: str) -> Path | None:
         )
         return None
     return candidate
+
+
+# -- injected turn-budget text (the pre-verify source the 4 C-slots cannot reach) --
+#
+# The four compliance slots resolve the matrix, GLOBAL_RULES, one scope-*.md and
+# the target body. None of them can reach the turn-budget text the SubagentStart
+# injector delivers: _AGENT_SCOPE_MAP resolves ONLY to scope-*.md files, and no
+# slot resolves hooks/inject-scope-rules.sh. So a patch duplicating an already
+# injected budget bullet reads to C4 as "a NEW rule consistent with the existing
+# ones" — a clean PASS. This section attaches that text, budget-family only, so a
+# non-budget prompt pays none of its tokens, and labels each block with whether the
+# hook rosters actually inject it into the target agent.
+
+# Marker literals — verbatim copies of BUDGET_DEV_MARKER_START/END and
+# BUDGET_ANALYSIS_MARKER_START/END in hooks/inject-scope-rules.sh, which
+# daemon_cycle.py cannot source (shell). Same keep-in-sync convention as the
+# learning-aggregator label literals above; drift fails OPEN — an extraction that
+# matches nothing is loud and attaches no block, never a wrong one.
+BUDGET_BLOCK_MARKERS: tuple[tuple[str, str, str], ...] = (
+    (
+        "BUDGET-DEV",
+        "<!-- AGENT-INJECT:BUDGET-DEV:START -->",
+        "<!-- AGENT-INJECT:BUDGET-DEV:END -->",
+    ),
+    (
+        "BUDGET-ANALYSIS",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->",
+        "<!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->",
+    ),
+)
+TURN_BUDGET_SRC_NAME = "shared-turn-budget.md"
+
+# Receiving roster of each marker block, by the hook's declaration NAME. Members are
+# read from that declaration at assembly time — the hook arrays are the only
+# runtime source of who receives a block, and the registry carries no budget field.
+BUDGET_BLOCK_ROSTERS: dict[str, str] = {
+    "BUDGET-DEV": "BUDGET_DEV_AGENTS",
+    "BUDGET-ANALYSIS": "BUDGET_ANALYSIS_AGENTS",
+}
+TURN_BUDGET_ROSTER_SRC = Path("hooks") / "inject-scope-rules.sh"
+TURN_BUDGET_NOT_INJECTED_SIGNAL = "TURN-BUDGET-NOT-INJECTED"
+TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL = "TURN-BUDGET-DELIVERY-UNVERIFIED"
+
+# Named signal for an unreadable injected-text source, carried on BOTH channels —
+# the reason C3/C4 each carry one: a silently empty slot reads to the verifier as
+# "nothing is injected", which is the misjudgement this source exists to prevent.
+TURN_BUDGET_UNREADABLE_SIGNAL = "TURN-BUDGET-TEXT-UNREADABLE"
+
+# Attached to every non-budget-family prompt, so the slot always states whether
+# the harness looked rather than leaving an unexplained empty block.
+TURN_BUDGET_NOT_APPLICABLE = (
+    "(not a budget-family patch — no injected turn-budget text is attached for it)"
+)
+
+# LABEL leg. Membership is containment against the STABLE pattern_signature core,
+# never the free-text label tail: learning-aggregator.py emits
+# "size-est under-estimate concentration (avg overrun +N tool_uses)", so equality
+# (the NON_PROMPTABLE_LABELS shape) would miss every live row, and a display remap
+# or a multi-signal "(a / b)" join moves the core off position 0, so startswith
+# (the _FAIL_COUNT_LABEL_PREFIXES shape) would miss those. Copied verbatim from
+# SIZE_EST_UNDER_LABEL there (daemon_cycle.py does not import the aggregator).
+#
+# BUDGET_OVERAGE_LABEL is deliberately NOT a member. It reports a different axis —
+# an operational counter — and it is already a NON_PROMPTABLE_LABELS member, i.e.
+# an exclusion set that drops the row BEFORE proposal generation; a row carrying
+# it therefore never reaches pre-verify at all, so naming it here could only
+# suppress the very patterns this source exists to serve.
+BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
+
+# SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
+# against the declared target AND the paths _get_diff_header_paths reads.
+#
+# GLASS_ATRIUM_GLOBAL_RULES.md is deliberately absent: its Turn Budget section
+# already reaches the verifier WHOLE in the C2 slot, so a row for it would attach
+# these blocks to every GLOBAL_RULES patch and buy nothing.
+_TURN_BUDGET_SITE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(^|/)shared-turn-budget\.md$"),
+    re.compile(r"(^|/)inject-scope-rules\.sh$"),
+)
+_GIT_QUOTE_ESCAPES: dict[str, int] = {
+    "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92,
+}
+_GIT_OCTAL_ESCAPE_RE = re.compile(r"[0-3][0-7]{2}")
+
+
+def _get_diff_header_paths(diff: str) -> list[str]:
+    """Return the file paths a diff's header pairs name — path extraction only, never a body reading."""
+    paths: list[str] = []
+    for _idx, old_text, new_text in _get_diff_header_pairs(diff):
+        for text, prefix in ((old_text, "a/"), (new_text, "b/")):
+            path = _get_header_path(text, prefix)
+            if path:
+                paths.append(path)
+    return paths
+
+
+def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
+    """Return ``(--- line index, old path text, new path text)`` per header pair.
+
+    Before any hunk (or after ``diff --git``) a ``--- `` line directly followed by
+    ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
+    because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
+    """
+    lines = (diff or "").splitlines()
+    pairs: list[tuple[int, str, str]] = []
+    in_hunk = False
+    for idx, line in enumerate(lines):
+        if line.startswith(("@@", "diff --git ")):
+            in_hunk = line.startswith("@@")
+            continue
+        if not (line.startswith("--- ") and _is_diff_header_line(lines, idx)):
+            continue
+        if in_hunk and not (idx + 2 < len(lines) and lines[idx + 2].startswith("@@")):
+            continue
+        pairs.append((idx, line[4:], lines[idx + 1][4:]))
+    return pairs
+
+
+def _get_header_path(text: str, prefix: str) -> str | None:
+    """One header's path: cut at the first tab, git-unquoted, ``prefix`` stripped once."""
+    path = text.split("\t", 1)[0]
+    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
+        unquoted = _get_unquoted_git_path(path[1:-1])
+        path = path if unquoted is None else unquoted
+    if path == "/dev/null":
+        return None
+    return path.removeprefix(prefix) or None
+
+
+def _get_unquoted_git_path(body: str) -> str | None:
+    """Undo git's C-style path quoting, or None where git's ``unquote_c_style`` fails.
+
+    Mirrors git: an octal escape takes a first digit 0-3 (so every byte fits), and an
+    out-of-range, truncated, unknown or trailing escape fails the whole unquote, after
+    which ``git apply`` reads the header text raw, quotes included.
+    """
+    out = bytearray()
+    idx = 0
+    while idx < len(body):
+        if body[idx] != "\\":
+            out += body[idx].encode()
+            idx += 1
+            continue
+        escape = body[idx + 1 : idx + 4]
+        if _GIT_OCTAL_ESCAPE_RE.fullmatch(escape):
+            out.append(int(escape, 8))
+            idx += 4
+        elif (named := _GIT_QUOTE_ESCAPES.get(escape[:1])) is not None:
+            out.append(named)
+            idx += 2
+        else:
+            return None
+    return out.decode("utf-8", errors="replace")
+
+
+def _get_turn_budget_src() -> Path:
+    """Resolve the injected turn-budget source (``<base>/scoped/shared-turn-budget.md``).
+
+    Through the C3/C4 ga_paths seam, never a HOME-hardcoded constant like the C1/C2
+    file constants: the source is then cwd-independent and follows a redirected
+    base root, the same guarantee _get_target_path documents.
+    """
+    return _get_scoped_dir() / TURN_BUDGET_SRC_NAME
+
+
+def _read_marker_block(path: Path, start: str, end: str) -> str:
+    """Return the lines BETWEEN a marker pair in ``path``, or "" on any miss.
+
+    Deliberately mirrors hooks/inject-scope-rules.sh ``extract_block``, so two
+    readers of one marker contract cannot drift apart unnoticed:
+      - range selection is CONTAINMENT on a line (its ``sed -n /start/,/end/p``);
+      - marker lines are dropped by WHOLE-LINE equality (its ``grep -vxF``);
+      - a start with no end runs to EOF, as a sed range does;
+      - absent file, unreadable file, or absent start marker → "" (fail-open).
+
+    ONE divergence, stated rather than silent: a sed range RESTARTS, so a repeated
+    marker pair yields every occurrence there and only the FIRST here. The source
+    carries one pair per name, and a second pair is a corpus defect rather than a
+    shape worth mirroring.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+
+    opened = False
+    kept: list[str] = []
+    for line in lines:
+        if not opened:
+            opened = start in line
+            continue
+        if end in line:
+            break
+        kept.append(line)
+    return "\n".join(line for line in kept if line != start)
+
+
+def _get_budget_rosters() -> dict[str, frozenset[str]] | None:
+    """Read each receiving roster from its one-line ``readonly <NAME>="..."`` hook declaration.
+
+    ``None`` when the hook is unreadable or any declaration is missing, so no caller
+    claims a delivery it could not read. A line-anchored local parse:
+    scripts/agent_lifecycle/readers.py uses package-relative imports the daemon cannot take.
+    """
+    try:
+        text = (ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    rosters: dict[str, frozenset[str]] = {}
+    for roster in BUDGET_BLOCK_ROSTERS.values():
+        match = re.search(rf'^readonly {roster}="([^"]*)"$', text, re.MULTILINE)
+        if match is None:
+            return None
+        rosters[roster] = frozenset(match.group(1).split())
+    return rosters
+
+
+def _get_agent_body_name(target_file: str) -> str | None:
+    """The agent an ``agents/<name>.md`` target is the body of; ``None`` for any other target."""
+    path = PurePosixPath(target_file or "")
+    if path.parent.name != "agents" or path.suffix != ".md" or path.name == GLOBAL_RULES_FILE.name:
+        return None
+    return path.stem
+
+
+def _injected_budget_excerpt(target_file: str) -> str:
+    """Compose the budget blocks the hook injects, each labelled with its delivery to ``target_file``."""
+    agent = _get_agent_body_name(target_file)
+    if agent is None:
+        return _compose_budget_blocks(
+            BUDGET_BLOCK_MARKERS, lambda name: f"every {BUDGET_BLOCK_ROSTERS[name]} member"
+        )
+    rosters = _get_budget_rosters()
+    if rosters is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL} — budget rosters "
+            f"unreadable in {ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC}; "
+            f"no block attached for {agent}\n"
+        )
+        return _get_delivery_unverified_line(agent)
+    received = tuple(m for m in BUDGET_BLOCK_MARKERS if agent in rosters[BUDGET_BLOCK_ROSTERS[m[0]]])
+    if not received:
+        return (
+            f"{TURN_BUDGET_NOT_INJECTED_SIGNAL}: {agent} is in no budget injection roster, so "
+            "the hook delivers no budget block to it. Budget text in its own body is its "
+            "designed path, and there is no injected text to compare a restatement against."
+        )
+    return _compose_budget_blocks(
+        received, lambda name: f"THIS target agent ({agent}, a {BUDGET_BLOCK_ROSTERS[name]} member)"
+    )
+
+
+def _get_delivery_unverified_line(agent: str) -> str:
+    """The slot line for rosters that could not be read — never a delivery claim."""
+    src = ga_paths.get_base_root() / TURN_BUDGET_ROSTER_SRC
+    return (
+        f"{TURN_BUDGET_DELIVERY_UNVERIFIED_SIGNAL}: the injection rosters in {src} could "
+        f"not be read, so whether any budget block reaches {agent} is unknown. No block "
+        "is attached and none is claimed injected."
+    )
+
+
+def _compose_budget_blocks(
+    markers: tuple[tuple[str, str, str], ...], recipient: Callable[[str], str]
+) -> str:
+    """Read each marker block and label it with the ``recipient`` the hook injects it into."""
+    src = _get_turn_budget_src()
+    parts: list[str] = []
+    for name, start, end in markers:
+        block = _read_marker_block(src, start, end)
+        if not block.strip():
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: {TURN_BUDGET_UNREADABLE_SIGNAL} — {name} block "
+                f"empty or markers absent in {src}\n"
+            )
+            continue
+        parts.append(f"[{name} — injected at spawn into {recipient(name)}]\n{block}")
+    if not parts:
+        return (
+            f"{TURN_BUDGET_UNREADABLE_SIGNAL}: no injected turn-budget block resolved "
+            f"from {src}, so this prompt cannot show what the target agent receives at spawn."
+        )
+    return "\n\n".join(parts)
+
+
+def match_turn_budget_site(target_file: str, diff: str) -> str | None:
+    """Return the source of the first turn-budget site pattern the patch touches.
+
+    The declared target AND the diff's own header paths are both inspected — a
+    patch can be filed against one path and carry hunks against another.
+    """
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
+    for candidate in candidates:
+        for pat in _TURN_BUDGET_SITE_PATTERNS:
+            if pat.search(candidate):
+                return pat.pattern
+    return None
+
+
+def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str | None:
+    """Return the leg identifying a budget-family proposal, else ``None``.
+
+    An OR of two legs, each covering the other's blind spot: the LABEL leg misses
+    a patch editing budget text under an unrelated label, and the SITE leg misses
+    a budget-family label patching an agent body.
+    """
+    label = pattern_label or ""
+    for core in sorted(BUDGET_FAMILY_SIGNATURE_CORES):
+        if core in label:
+            return f"label:{core}"
+    site = match_turn_budget_site(target_file, diff)
+    return f"site:{site}" if site else None
 
 
 # -- Promotion ladder config ------------------------------------------------
@@ -1890,11 +2255,11 @@ class PreVerifyResult:
 
     Axes:
         C1: compliance-matrix — Tier 1/2/3 loading policy not subverted.
-        C2: GLOBAL_RULES — ALL-scope absolute rules (Korean reply / security /
-                           position bias / etc.) not violated.
-        C3: scope-* — target agent's scope file Absolute Rules not violated.
-        C4: self-consistency — patch does not contradict the target agent's
-                               own existing Absolute Rules.
+        C2: GLOBAL_RULES — ALL-scope rules, as delivered in the prompt
+                           excerpt, not violated.
+        C3: scope-* — target agent's scope-file rules not violated.
+        C4: self-consistency — patch does not contradict a rule the target
+                               agent file already states.
 
     `passed` is True iff ALL 4 axes pass.
 
@@ -3961,11 +4326,14 @@ def _recount_hunk_header(diff_text: str) -> str:
     Start-offset drift is handled by the full difflib re-derivation against the
     current file.
 
-    Line classification per hunk body (mirrors unified-diff semantics):
-      - ' ' prefix  → context  → counts toward BOTH old (b) and new (d)
-      - '-' prefix  → removed  → counts toward old (b) only
-      - '+' prefix  → added    → counts toward new (d) only
-      - file headers (---/+++) and nested @@ end the current hunk body
+    Line classification per hunk body — the ``_get_diff_line_kinds`` body reading,
+    so the counts agree with what ``git apply --recount`` applies:
+      - '-' prefix  → removed  → counts toward old (b) only, ``--- `` included
+      - '+' prefix  → added    → counts toward new (d) only, ``+++ `` included
+      - any other line → context → counts toward BOTH old (b) and new (d)
+      - the next ``@@ `` or ``diff --git `` line ends the current hunk body; any other
+        ``@@``-prefixed line is a prefix-less body line, as git's ``recount_diff`` ends a
+        body at ``@@ `` and at no other ``@@``-prefixed line
       - '\\ No newline at end of file' markers are ignored (not a content line)
 
     FU-3 reuses this helper to re-stamp difflib output defensively.
@@ -3977,6 +4345,7 @@ def _recount_hunk_header(diff_text: str) -> str:
         return diff_text
 
     lines = diff_text.splitlines(keepends=True)
+    kinds = _get_diff_line_kinds(diff_text)
     out: list[str] = []
     i = 0
     n = len(lines)
@@ -3989,28 +4358,20 @@ def _recount_hunk_header(diff_text: str) -> str:
             continue
 
         start_old, _, start_new, _, trailer = m.groups()
-        # Scan the body following this hunk header until the next hunk / header.
-        body: list[str] = []
         j = i + 1
-        while j < n:
-            bl = lines[j]
-            stripped_bl = bl.rstrip("\n")
-            if _UNIFIED_HUNK_CAPTURE_RE.match(stripped_bl):
-                break
-            if stripped_bl.startswith("--- ") or stripped_bl.startswith("+++ "):
-                break
-            body.append(bl)
+        while j < n and not lines[j].startswith(("@@ ", "diff --git ")):
             j += 1
+        body = lines[i + 1 : j]
 
         old_count = 0
         new_count = 0
-        for bl in body:
+        for kind, bl in kinds[i + 1 : j]:
             if bl.startswith("\\"):
                 # "\ No newline at end of file" — not a content line.
                 continue
-            if bl.startswith("+"):
+            if kind == "added":
                 new_count += 1
-            elif bl.startswith("-"):
+            elif kind == "removed":
                 old_count += 1
             else:
                 # ' ' context OR a prefix-less line difflib never emits but the
@@ -4075,24 +4436,21 @@ def _unified_diff_counts_valid(diff_text: str) -> bool:
 def _split_fragment_lines(body: str) -> tuple[list[str], list[str], list[str]]:
     """Partition a diff fragment body into (context, added, removed) lines.
 
+    - Added / removed lines: the '+' / '-' body lines of `_get_diff_line_kinds`.
     - Context lines: start with single space OR are plain text lines (no prefix).
-    - Added lines: start with '+' (NOT '+++').
-    - Removed lines: start with '-' (NOT '---').
-    - Lines starting with '@@' or that look like markdown decorations are dropped.
+    - File header pairs and '@@' lines are dropped.
 
     Returns raw line content WITH prefix preserved — caller decides how to use.
     """
     context: list[str] = []
     added: list[str] = []
     removed: list[str] = []
-    for raw_line in body.splitlines():
-        if raw_line.startswith("+++") or raw_line.startswith("---"):
+    for kind, raw_line in _get_diff_line_kinds(body):
+        if kind in ("header", "hunk"):
             continue
-        if raw_line.startswith("@@"):
-            continue
-        if raw_line.startswith("+"):
+        if kind == "added":
             added.append(raw_line)
-        elif raw_line.startswith("-"):
+        elif kind == "removed":
             removed.append(raw_line)
         elif raw_line.startswith(" "):
             context.append(raw_line)
@@ -4381,12 +4739,10 @@ def get_removal_live() -> bool:
 def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
     """Removal set declared by a stored diff, plus whether it LOOKS removal-bearing.
 
-    Enumerated from the RAW hunk lines — every line after an `@@` header — rather
-    than through `_split_fragment_lines`, which drops any `---`-prefixed line as a
-    file header. That partition cannot see the two removals that matter most here:
-    a deleted frontmatter delimiter (`---` → the diff line `----`) and a deleted
-    `-- `-prefixed line (→ `--- `). Inside a hunk those ARE removals, so the file
-    header is recognised only in the pre-hunk preamble.
+    Enumerated from the RAW hunk lines — every line after an `@@` header — so the
+    two removals that matter most here are members: a deleted frontmatter
+    delimiter (`---` → the diff line `----`) and a deleted `-- `-prefixed line
+    (→ `--- `). The file header is recognised only in the pre-hunk preamble.
 
     The second element is the AMBIGUITY probe: a diff whose preamble carries a
     removal-shaped line while no hunk exists to declare it (a header-less
@@ -4424,14 +4780,17 @@ def _get_protected_kind(line: str) -> str | None:
     not an edit but a change to what the later guards can still reason about. The
     blank member is protected because a blank line carries no identity — it can
     never be evidenced as "exactly one" anything.
+
+    The leading `> ...` header quote block is deliberately NOT a member: every
+    one of its lines sits above the body's first EDITABLE:BEGIN marker, so the
+    region rule below already refuses their removal, and a `> `-prefixed member
+    would over-reach onto the ordinary prose blockquotes bodies use throughout.
     """
     body = line.rstrip("\n")
     if not body.strip():
         return "blank"
     if body.strip() == "---":
         return "frontmatter-delimiter"
-    if body.startswith("> Rules:"):
-        return "rules-anchor"
     if "<!-- EDITABLE:BEGIN -->" in body or "<!-- EDITABLE:END -->" in body:
         return "region-marker"
     if _heading_level(body) > 0:
@@ -4910,20 +5269,35 @@ def _validate_unified_diff(
 
 
 def _diff_header_target_basename(diff: str) -> str | None:
-    """Return the basename declared by the diff's first ``+++`` header, or None.
+    """Return the basename declared by the diff's first ``+++`` line, or None.
 
-    None is returned when the diff carries no ``+++`` header (a header-less
-    append-only fragment asserts no target file — valid by construction). Strips
-    a leading ``a/``/``b/`` prefix and any trailing tab-separated timestamp, then
-    returns the final path component.
+    None is returned when the diff carries no ``+++`` line (a header-less
+    append-only fragment asserts no target file — valid by construction). A line
+    that is the new side of a header pair is read by ``_get_header_path``. Any
+    other ``+++`` line takes the raw reading (prefix-stripped, cut at a tab), so a
+    header-less fragment carrying one still fails the gate's basename match.
     """
-    for line in diff.splitlines():
-        if line.startswith("+++"):
-            rest = line[3:].strip().split("\t", 1)[0].strip()
-            if rest.startswith(("a/", "b/")):
-                rest = rest[2:]
-            return rest.rsplit("/", 1)[-1] if rest else None
+    new_header_texts = {
+        idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    }
+    for idx, line in enumerate(diff.splitlines()):
+        if not line.startswith("+++"):
+            continue
+        if idx in new_header_texts:
+            path = _get_header_path(new_header_texts[idx], "b/")
+        else:
+            path = line[3:].strip().split("\t", 1)[0].strip()
+            path = path[2:] if path.startswith(("a/", "b/")) else path
+        return path.rsplit("/", 1)[-1] if path else None
     return None
+
+
+def _diff_deletes_file(diff: str) -> bool:
+    """True iff any header pair's new path is ``/dev/null`` — a whole-file delete."""
+    return any(
+        new_text.split("\t", 1)[0] == "/dev/null"
+        for _idx, _old_text, new_text in _get_diff_header_pairs(diff)
+    )
 
 
 def _gate_validated_diff(
@@ -4946,6 +5320,9 @@ def _gate_validated_diff(
          caller stores an EMPTY diff (caught downstream as nothing-to-apply)
          rather than a known-broken one that funnels to rc=128 on every drain.
 
+    Before step 1 a diff whose header pair names ``/dev/null`` as the new path is
+    rejected: no agent-body proposal legitimately deletes its own file.
+
     Step 3 refuses a REPLACE diff outright: its builder takes added lines only,
     so rebuilding one drops the removal silently.
 
@@ -4958,6 +5335,14 @@ def _gate_validated_diff(
     """
     if not diff.strip():
         return diff
+
+    if _diff_deletes_file(diff):
+        sys.stderr.write(
+            f"[daemon-cycle] F2 GATE: diff header deletes a file ('+++ /dev/null') "
+            f"for proposal target {target_file.name!r} — an agent-body proposal "
+            f"never deletes its file, rejected (stored empty)\n"
+        )
+        return ""
 
     # Basename-match assertion — a '+++' header declares the file the diff
     # targets. If its basename diverges from target_file, `git apply` (run under
@@ -5251,24 +5636,17 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     )
 
 
-def _count_marker_lines(diff: str, marker: str) -> int:
-    """Count lines starting with `marker`, skipping the `marker * 3` file header."""
-    if not diff:
-        return 0
-    header = marker * 3
-    return sum(
-        1
-        for line in diff.splitlines()
-        if line.startswith(marker) and not line.startswith(header)
-    )
+def _count_kind_lines(diff: str, kind: DiffLineKind) -> int:
+    """Count body lines of `kind` under the single diff body reading."""
+    return sum(1 for line_kind, _line in _get_diff_line_kinds(diff) if line_kind == kind)
 
 
 def _count_added_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "+")
+    return _count_kind_lines(diff, "added")
 
 
 def _count_removed_lines(diff: str) -> int:
-    return _count_marker_lines(diff, "-")
+    return _count_kind_lines(diff, "removed")
 
 
 def _diff_touches_frontmatter(diff: str) -> bool:
@@ -5597,17 +5975,9 @@ _HOOK_PATH_RE = re.compile(r"(^|/)hooks/.*\.(sh|py|bats)$")
 
 
 def _diff_touches_hook_file(diff: str, target_file: str) -> bool:
-    """True iff the patch target OR any diff ``+++``/``---`` header is a hook file."""
-    if target_file and _HOOK_PATH_RE.search(target_file):
-        return True
-    for line in diff.splitlines():
-        if line.startswith(("+++", "---")):
-            # strip the 'a/'/'b/' diff prefix before matching
-            path = line[3:].strip()
-            path = re.sub(r"^[ab]/", "", path)
-            if _HOOK_PATH_RE.search(path):
-                return True
-    return False
+    """True iff the patch target OR any path a diff header pair names is a hook file."""
+    candidates = [target_file or "", *_get_diff_header_paths(diff)]
+    return any(_HOOK_PATH_RE.search(path) for path in candidates if path)
 
 
 # -- reference-resolution guard ---------------------------------------------
@@ -5640,6 +6010,7 @@ _EXAMPLE_CONTEXT_RE = re.compile(
 def _iter_added_reference_lines(diff: str) -> list[str]:
     """Added ('+') diff lines OUTSIDE any fenced code block, diff-prefix stripped.
 
+    Added lines are the ``_get_diff_line_kinds`` body reading, ``+++ `` included.
     A ``` fence toggles collection off: fenced content is an illustrative snippet
     (a rule QUOTE / worked example), not a live pointer. Fence state is tracked
     across context AND added lines so a fence opened on a context line still
@@ -5647,8 +6018,8 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
     """
     out: list[str] = []
     in_fence = False
-    for raw_line in (diff or "").splitlines():
-        if raw_line.startswith(("+++", "---", "@@")):
+    for kind, raw_line in _get_diff_line_kinds(diff):
+        if kind in ("header", "hunk"):
             continue
         marker = raw_line[:1]
         content = raw_line[1:] if marker in "+- " else raw_line
@@ -5657,7 +6028,7 @@ def _iter_added_reference_lines(diff: str) -> list[str]:
             continue
         if in_fence:
             continue
-        if marker == "+":
+        if kind == "added":
             out.append(content)
     return out
 
@@ -5866,11 +6237,16 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 # -- pre-verify (4-axis meta-prompt-engineer review) ---------------------------
 
 
+# The C2-C4 axes name no specific rule or section heading — a rule named inside a
+# prompt string is a corpus copy that nothing greps and nothing updates when the
+# corpus moves. Each axis judges against the excerpt this prompt delivers, read
+# whole from the SoT file at assembly time.
+# The NOTE ON THE EXCERPTS spells the `[TRUNCATED:` prefix _read_sections emits
+# when it drops heading blocks at the bound — a drift the test suite pins.
 _PRE_VERIFY_PROMPT_TEMPLATE = """You are meta-prompt-engineer acting as a compliance verifier for AutoAgent.
 
-A patch has been proposed for a target agent's instruction file. Your job is
-to evaluate the patch against 4 independent compliance axes and emit a
-strict, parseable verdict.
+A patch has been proposed for a target agent's instruction file. Judge it on 4
+independent compliance axes and emit a parseable verdict.
 
 PATCH METADATA:
 - target_agent: {target_agent}
@@ -5882,12 +6258,11 @@ PROPOSED DIFF (unified-diff fragment):
 {diff}
 ---
 
-NOTE ON THE DIFF: the fragment above may be a bounded EXCERPT. A line opening
-`[DIFF-EXCERPT-` marks where the harness stopped, and the hunks past it were
-withheld before you ever saw them. Judge every axis ONLY on the hunks shown, and
-NEVER FAIL an axis because the fragment ends early, reads as partial, or carries
-such a marker — that is a harness bound, not a defect in the patch. With no such
-marker the fragment is the COMPLETE diff.
+NOTE ON THE DIFF: a line opening `[DIFF-EXCERPT-` marks where the harness cut
+the fragment; the hunks past it were withheld. Judge every axis ONLY on the hunks
+shown, and NEVER FAIL an axis because the fragment ends early or carries that
+marker — it is a harness bound, not a patch defect. With no such marker the
+fragment is the COMPLETE diff.
 
 RATIONALE FROM PATCH GENERATOR:
 {patch_rationale}
@@ -5914,23 +6289,41 @@ COMPLIANCE SOURCES (excerpts):
 {target_agent_excerpt}
 ---
 
+NOTE ON THE EXCERPTS: C2 and C3 are judged ONLY against their excerpt. With no
+`[TRUNCATED:` line the excerpt is COMPLETE, so a rule you recall but cannot find
+there is not a ground for FAIL. A line opening `[TRUNCATED:` marks where the
+harness withheld whole heading blocks; under it a rule you recall but cannot
+find IS a ground for FAIL — name it in the RATIONALE, because this gate applies
+edits unattended.
+
+[INJECTED TURN-BUDGET TEXT — hook-injected at spawn, in NO excerpt above; each block states its recipient]
+---
+{turn_budget_excerpt}
+---
+
+NOTE ON THE INJECTED TEXT: a block labelled as injected into THIS target agent
+reaches it at every spawn through the SubagentStart hook, without appearing in
+any excerpt above.
+
 VERIFICATION TASK:
 
 For each of the 4 axes, decide PASS or FAIL:
   C1: Does the patch subvert / remove / weaken any Tier-1, Tier-2, or Tier-3
       rule loading policy in compliance-matrix? (FAIL if it removes a rule
       reference the target agent's scope must load.)
-  C2: Does the patch violate any GLOBAL_RULES absolute rule (Korean reply
-      requirement / secret protection / Position Bias / System Prompt
-      Protection / etc.)?
-  C3: Does the patch violate any Absolute Rule in the target agent's
-      scope file?
-  C4: Does the patch CONTRADICT (not merely add to) the target agent's
-      OWN existing Absolute Rules / Guardrails / Prohibitions sections?
-      (Adding a NEW guardrail consistent with existing ones = PASS.
-       Reversing or weakening an existing rule = FAIL.)
+  C2: Does the patch violate any ALL-scope rule the GLOBAL_RULES excerpt
+      above states? Every section it carries counts equally.
+  C3: Does the patch violate any rule the target agent's scope excerpt above
+      states? A rule counts under any heading or none — read the excerpt,
+      not its titles.
+  C4: Does the patch CONTRADICT (not merely add to) a rule the target agent
+      file above ALREADY states, under any heading or none?
+      (Adding a NEW rule consistent with the existing ones = PASS.
+       Reversing or weakening an existing rule = FAIL.
+       Restating text from a block labelled as injected into THIS target
+       agent = FAIL — the agent already receives it, so it is a duplicate.)
 
-OUTPUT STRICT FORMAT (no preamble, no markdown fences, exactly these lines):
+OUTPUT FORMAT (exactly these lines, each on its own line):
 C1: PASS|FAIL
 C2: PASS|FAIL
 C3: PASS|FAIL
@@ -6139,7 +6532,20 @@ def _build_pre_verify_prompt(
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
         target_agent_excerpt=target_agent_excerpt,
+        turn_budget_excerpt=_turn_budget_excerpt_for(patch, pattern),
     )
+
+
+def _turn_budget_excerpt_for(patch: PatchProposal, pattern: Pattern) -> str:
+    """Attach the injected turn-budget blocks for a budget-family patch only.
+
+    Every other prompt gets the not-applicable line instead: the blocks are only
+    ever relevant to a patch that could duplicate them, and attaching them to all
+    prompts would spend the excerpt budget on text no axis would use.
+    """
+    if match_budget_family(pattern.label, patch.target_file, patch.proposed_diff) is None:
+        return TURN_BUDGET_NOT_APPLICABLE
+    return _injected_budget_excerpt(patch.target_file)
 
 
 def _parse_pre_verify_response(stdout: str) -> tuple[dict[str, bool], bool, str]:
@@ -6556,32 +6962,84 @@ def emit_loop_events(report: CycleReport) -> int:
 
 # -- cycle-level all-reject alert --------------------------------------------
 
+# Statuses every all-reject discriminator reads as terminal-negative. Named once
+# so the in-memory and the persisted walk cannot drift apart on the set.
+_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted"})
+
+
+def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
+    """A 'rejected' row the classifier SoT says was never genuinely adjudicated.
+
+    The single discriminator both all-reject walks and consecutive_reject_count
+    set a row aside on, delegated to classify_failure_rationale — never a
+    parallel rationale.startswith(...) test, and never a status/agent carve-out
+    per infra class.
+
+    Status-gated deliberately: ONLY a 'rejected' row is classifiable. A
+    'pending'/'snoozed'/'applied' row is pipeline output and is judged by status
+    alone — classifying it would let a blank-rationale queued row vanish instead
+    of breaking the streak, silently extending it over a night that shipped.
+    'reverted' is terminal by status for the same reason, in the other direction.
+    """
+    return (
+        status == "rejected"
+        and classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
+    )
+
+
+def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
+    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
+
+    Rows arrive newest-date-first, so equal dates are contiguous. Per date:
+    any row that is not terminal-negative breaks the walk (a queued or applied
+    row is pipeline output); a date whose rejects ALL classify non-adjudicating
+    drops out like a quiet night — neither extending nor breaking; a date
+    carrying >=1 adjudicating reject extends.
+    """
+    streak = 0
+    for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0]):
+        extends = False
+        for _date, status, rationale in date_rows:
+            if status not in _TERMINAL_NEGATIVE_STATUSES:
+                return streak
+            if _is_non_adjudication_reject(status, rationale):
+                continue
+            extends = True
+        if extends:
+            streak += 1
+    return streak
+
 
 def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
-    """Leading run of persisted cycles whose proposals were ALL rejected.
+    """Leading run of persisted cycles whose proposals were ALL adjudicating rejects.
 
-    Groups core.autoagent_proposals by cycle_date STRICTLY BEFORE the current
-    cycle (the current cycle is judged from the in-memory report — excluding it
-    here prevents a same-day re-run from double-counting today) and counts how
-    many of the most recent cycle_dates carry zero non-rejected rows. Stops at
-    the first cycle with >=1 non-rejected proposal. Bounded LIMIT mirrors
-    consecutive_timeout_count. PG unavailable / read error → 0 (fail-open: a
-    read failure must never fabricate an alert).
+    Reads (cycle_date, status, rationale) for every proposal on the most recent
+    cycle_dates STRICTLY BEFORE the current cycle (the current cycle is judged
+    from the in-memory report — excluding it here prevents a same-day re-run from
+    double-counting today) and hands them to _all_reject_streak_from_rows, which
+    applies the classify_failure_rationale SoT: the read cannot call it, so the
+    grouping and the classification happen in Python. A supersede / quota / auth /
+    chronic-timeout / skipped / below-floor / parked-pattern date drops out like a
+    quiet night, so a back-off marker date needs no status carve-out of its own.
+    PG unavailable / read error → 0 (fail-open: a read failure must never
+    fabricate an alert).
     """
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
     select_sql = (
-        "SELECT count(*) FILTER (WHERE status::text <> 'rejected') "
+        "SELECT cycle_date, status::text, rationale "
         "FROM core.autoagent_proposals "
+        # The bound is on DISTINCT DATES, not rows — the table carries several
+        # rows per cycle_date, so a row-count LIMIT of the same size would
+        # quietly shrink the horizon and flatten a genuinely long streak. The
+        # walk still short-circuits at the first non-rejected cycle, so this
+        # only bounds the worst case (a genuinely long all-reject run).
+        "WHERE cycle_date IN ("
+        "SELECT cycle_date FROM core.autoagent_proposals "
         "WHERE cycle_date < %s::date "
-        "GROUP BY cycle_date "
-        "ORDER BY cycle_date DESC "
-        # LIMIT high enough not to flatten a long real streak — the prior
-        # LIMIT 10 capped a 20-day regression at a misreported 10. The walk
-        # still short-circuits at the first non-rejected cycle, so this only
-        # bounds the worst case (a genuinely long all-reject run).
-        "LIMIT 400"
+        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT 400) "
+        "ORDER BY cycle_date DESC"
     )
     try:
         with _pg_connect() as conn:
@@ -6595,12 +7053,7 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         )
         return 0
 
-    streak = 0
-    for (non_rejected,) in rows:
-        if int(non_rejected or 0) > 0:
-            break
-        streak += 1
-    return streak
+    return _all_reject_streak_from_rows(rows)
 
 
 def _days_since_last_applied(current_cycle_date: str | None) -> int:
@@ -6651,18 +7104,30 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
 def _all_rejected_this_cycle(report: CycleReport) -> bool:
     """Shared discriminator: this cycle INGESTED input and rejected ALL of it.
 
-    True iff report.patches is non-empty AND every patch is terminal-negative.
-    A quiet night (patches=[]) is False — the single SoT for the
+    A rejected patch whose OWN rationale classifies non-adjudicating is set aside
+    first (_is_non_adjudication_reject) — it is neither output nor a rejection: a
+    marker row carries TIMEOUT_BACKOFF_RATIONALE_PREFIX, so the classifier looks
+    past it and the back-off marker needs no status carve-out of its own.
+    Keys on the rationale, never failure_class: the class is filled only on the
+    failure branches while the rationale rides every row. True iff >=1 patch
+    remains AND every remaining patch is terminal-negative. A quiet night
+    (patches=[] or set-aside-only) is False — the single SoT for the
     "all-reject-this-cycle" precondition both alert_all_reject_streak and
     is_systemic_regression gate on (a 'snoozed'/'pending'/'applied' row is
-    non-rejected pipeline output → False). 'reverted' counts as
-    rejected-equivalent: a backed-out apply is terminal-non-resurrectable, NOT
-    live pipeline output, so it must never resurrect the healthy-output claim.
+    non-rejected pipeline output → False, whatever its rationale). 'reverted'
+    counts as rejected-equivalent regardless of rationale: a backed-out apply is
+    terminal-non-resurrectable, NOT live pipeline output, so it must never
+    resurrect the healthy-output claim.
     """
-    if not report.patches:
+    counted_patches = [
+        patch
+        for patch in report.patches
+        if not _is_non_adjudication_reject(patch.status, patch.rationale)
+    ]
+    if not counted_patches:
         return False
     return all(
-        patch.status in ("rejected", "reverted") for patch in report.patches
+        patch.status in _TERMINAL_NEGATIVE_STATUSES for patch in counted_patches
     )
 
 
@@ -6670,9 +7135,11 @@ def is_systemic_regression(report: CycleReport) -> bool:
     """True only for a systemic zero-output regression, never a quiet night.
 
     The discriminator is unchanged from alert_all_reject_streak: this cycle must
-    have INGESTED input (report.patches non-empty) AND produced zero non-rejected
-    output (every patch 'rejected'). A legitimately quiet night yields
-    patches=[] → False here (caller stays clean exit 0). On top of that, ONE of
+    have INGESTED input (a patch carrying a real quality verdict) AND produced
+    zero non-rejected output (every such patch 'rejected'). A legitimately quiet
+    night (patches=[], or only rejects the classifier reads as non-adjudicating —
+    back-off markers, quota, auth, supersede) → False here (caller stays clean
+    exit 0). On top of that, ONE of
     two corroborating crits must hold: the all-reject streak reached
     ALL_REJECT_ALERT_THRESHOLD, OR the days-since-last-applied gap exceeds
     DAYS_SINCE_APPLIED_CRIT_THRESHOLD (the slow-bleed leg). The days leg widens
@@ -6690,11 +7157,12 @@ def is_systemic_regression(report: CycleReport) -> bool:
 def alert_all_reject_streak(report: CycleReport) -> None:
     """3-consecutive-all-reject-cycle WARN — stderr + loop event, never silent.
 
-    Fires only when the CURRENT cycle produced >=1 proposal and ALL of them are
-    'rejected' AND the prior persisted cycles extend the streak to
+    Fires only when the CURRENT cycle produced >=1 adjudicating proposal and ALL
+    of them are 'rejected' AND the prior persisted cycles extend the streak to
     ALL_REJECT_ALERT_THRESHOLD. 'snoozed'/'pending' rows count as non-rejected
-    (a back-off or queued proposal is still pipeline output) and break the
-    streak. Precondition Loud-Fail: the alert is the observable surface for a
+    (a queued proposal is still pipeline output) and break the streak whatever
+    their rationale; a reject the classifier reads as non-adjudicating counts as
+    neither. Precondition Loud-Fail: the alert is the observable surface for a
     systemic reject regression that individual reject rows cannot convey.
     """
     if not _all_rejected_this_cycle(report):
@@ -7542,7 +8010,6 @@ def _added_content_lines(diff_text: str) -> list[str]:
     for line in added:
         if _REGEN_BLANK_ADDED_RE.match(line):
             continue
-        # Strip only one '+' ('+++' added lines already filtered by _split).
         out.append(line[1:] if line.startswith("+") else line)
     return out
 
@@ -7830,6 +8297,11 @@ _SUPERSEDE_REASON_SAME_CYCLE = (
     f"{_SUPERSEDE_REASON} (current-file-anchored, same-cycle label drift)"
 )
 
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy. Its own token, never a review one: these rows were
+# terminated for duplicate accumulation, never adjudicated.
+_SUPERSEDE_ACTOR = "daemon-cycle-supersede"
+
 
 def supersede_prior_pending_for_agent(
     target_agent: str,
@@ -7853,9 +8325,9 @@ def supersede_prior_pending_for_agent(
     under a drifted label.
 
     monitor has no dedicated supersede enum, so this is marked 'rejected' +
-    rationale (ProposalStatus enum preserved — no schema change). The stamp is
-    per row: the run's own cycle date carries the same-cycle tail, an older row
-    the cross-day tail.
+    rationale + the supersede actor (ProposalStatus enum preserved — no schema
+    change). The stamp is per row: the run's own cycle date carries the
+    same-cycle tail, an older row the cross-day tail.
 
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
@@ -7893,7 +8365,8 @@ def supersede_prior_pending_for_agent(
     update_sql = (
         "UPDATE core.autoagent_proposals "
         "SET status = 'rejected', "
-        "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END "
+        "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END, "
+        "reviewed_by = %s "
         "WHERE status = 'pending' "
         "AND target_agent = %s AND target_file = %s "
         "AND NOT (cycle_date = %s::date AND pattern_label = %s "
@@ -7904,6 +8377,7 @@ def supersede_prior_pending_for_agent(
         cycle_date,
         _SUPERSEDE_REASON_SAME_CYCLE,
         _SUPERSEDE_REASON_CROSS_DAY,
+        _SUPERSEDE_ACTOR,
         target_agent,
         target_file,
         cycle_date,
@@ -8078,7 +8552,7 @@ def backoff_skip_proposal(target_file: str, streak: int) -> PatchProposal:
     No Haiku call was made — this is the loud, persisted record of the back-off
     decision (per shared-self-improve-hygiene Precondition Loud-Fail: the skip is
     surfaced in the proposal row, never silent). Empty diff + a back-off rationale
-    + parse_mode='skipped'. run_cycle maps this to a 'snoozed'/reject row whose
+    + parse_mode='skipped'. run_cycle maps this to a terminal 'rejected' row whose
     `error` field stays EMPTY, so the cycle does not flip to 'partial'.
 
     Args:
@@ -8584,7 +9058,12 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_REMOVAL_REFUSAL
     if text.startswith(_SUPERSEDE_REASON):
         return FAILURE_CLASS_SUPERSEDE
-    if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
+    if text.startswith(_PARKED_PATTERN_REASON):
+        return FAILURE_CLASS_PARKED_PATTERN
+    # Back-off marker (stored 'rejected') ran no Haiku call → no verdict, as a timeout.
+    if text.startswith(
+        (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)
+    ):
         return FAILURE_CLASS_TIMEOUT
     if text.startswith("haiku auth failure"):
         # 401/credential — INFRA, looked PAST by the kill streak (must precede
@@ -8692,24 +9171,26 @@ def consecutive_reject_count(
         the candidate was never genuinely adjudicated, so it MUST NOT advance
         the kill streak (the de-conflation root-cause fix);
       - 'rejected' classifying as a genuine QUALITY reject → streak += 1;
-      - 'snoozed' (back-off, stale-drain) / 'pending' (not yet adjudicated) /
+      - 'snoozed' (stale-drain, legacy back-off) / 'pending' (not yet adjudicated) /
         'reverted' (human/CLI back-out — terminal-non-resurrectable: it must
         NOT re-arm the candidate the way an accepted change does; pattern
         exclusion is owned by drop_reverted_patterns) → looked past;
       - anything else ('applied' / 'approved') → break — an accepted change
         re-arms the candidate, mirroring consecutive_timeout_count recovery.
 
-    The non-adjudication discrimination is delegated to classify_failure_rationale
-    (the single SoT) so a future infra-rationale variant has exactly one place to
-    be taught — never re-introduce a parallel rationale.startswith(...) test here.
+    The non-adjudication discrimination is delegated to _is_non_adjudication_reject
+    → classify_failure_rationale (the single SoT) so a future infra-rationale
+    variant has exactly one place to be taught — never re-introduce a parallel
+    rationale.startswith(...) test here, and never an open-coded twin of the
+    shared predicate.
     """
     streak = 0
     for status, proposal_label, rationale in proposal_rows:
         if not _covers_pattern_label(pattern_label, proposal_label):
             continue
+        if _is_non_adjudication_reject(status, rationale):
+            continue
         if status == "rejected":
-            if classify_failure_rationale(rationale) in _NON_ADJUDICATION_CLASSES:
-                continue
             streak += 1
             continue
         if status in ("snoozed", "pending", "reverted"):
@@ -8994,8 +9475,8 @@ def _render_landed_history_block(
     for label, diff in rows:
         added = [
             line[1:].strip()
-            for line in (diff or "").splitlines()
-            if line.startswith("+") and not line.startswith("+++")
+            for kind, line in _get_diff_line_kinds(diff)
+            if kind == "added"
         ]
         added_text = " / ".join(text for text in added if text)
         rendered = (
@@ -9191,14 +9672,53 @@ _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
 )
 
 
+# Terminal learning_log statuses — the set _LEARNING_LOG_DISCHARGE_SQL's guard excludes.
+PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
+
+
+def _build_row_status_text(rows: list[dict]) -> str:
+    """`3384:rejected, 6:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
+    return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
+
+
+# Why an applied proposal matched no intake row — one eval_result per cause.
+DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
+DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
+DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
+DISCHARGE_EVENT_INTAKE_MISS = "discharge-intake-miss"
+
+_UNCOVERED_WARN_REASONS = {
+    DISCHARGE_EVENT_READ_FAILED: (
+        "applied proposal id={proposal_id} matched no intake row and the "
+        "status-agnostic pattern read failed — cause unknown, nothing discharged"
+    ),
+    DISCHARGE_EVENT_UNRESOLVED: (
+        "applied proposal id={proposal_id}: no stored pattern row matches the "
+        "label, nothing discharged"
+    ),
+    DISCHARGE_EVENT_INTAKE_MISS: (
+        "applied proposal id={proposal_id} covers non-terminal row(s) [{rows}] "
+        "absent from the intake read (intake read failed, or row outside the "
+        "intake tier band), nothing discharged"
+    ),
+}
+
+
 class DischargeReport(NamedTuple):
-    """Outcome of one discharge stage — an outage is never an empty result."""
+    """Outcome of one discharge stage — an outage is never an empty result.
+
+    The last four fields partition the proposals that matched no intake row by
+    cause; `unresolved` holds only those whose label matches no stored row.
+    """
 
     outage: bool
     would_discharge: list[int]
     discharged: list[int]
     failed: list[int]
     unresolved: list[int]
+    covered_terminal: list[int]
+    intake_miss: list[int]
+    read_failed: list[int]
 
 
 def _canon_agent_key(agent: str) -> str:
@@ -9236,6 +9756,27 @@ def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
     rows = _pg_read_pending_patterns()
     if rows is None:
         return None
+    return _index_rows_by_agent(rows)
+
+
+def get_coverage_rows_by_agent() -> dict[str, list[dict]] | None:
+    """Status-agnostic core.learning_log rows indexed by bare agent key.
+
+    The intake index answers "which covered rows may still be discharged"; this
+    one answers "which rows does the label cover at all", terminal rows included.
+    Helper import absent or read failure → None, never an empty index, so an
+    outage cannot read as "no stored row".
+    """
+    if not HAS_PG_PATTERN_READ:
+        return None
+    rows = _pg_read_coverage_patterns()
+    if rows is None:
+        return None
+    return _index_rows_by_agent(rows)
+
+
+def _index_rows_by_agent(rows: list[dict]) -> dict[str, list[dict]]:
+    """Single keying site for both indexes — a key drift silently matches nothing."""
     index: dict[str, list[dict]] = {}
     for row in rows:
         index.setdefault(_canon_agent_key(row.get("agent") or ""), []).append(row)
@@ -9309,13 +9850,19 @@ def discharge_applied_patterns(
     applied_rows: list[tuple] | None,
     rows_by_agent: dict[str, list[dict]] | None,
     *,
+    coverage_reader: Callable[[], dict[str, list[dict]] | None],
     live: bool = False,
 ) -> DischargeReport:
     """Discharge the pattern rows covered by each proposal applied this window.
 
-    Ambiguity discharges NOTHING: an unreadable input is an outage and an
-    unresolvable label is a loud skip, so the stage can never fall back to
-    terminalizing an agent's whole row set.
+    Ambiguity discharges NOTHING: an unreadable input is an outage and a proposal
+    matching no intake row is a skip reported under its cause, so the stage can
+    never fall back to terminalizing an agent's whole row set. Only intake-index
+    rows are ever transitioned.
+
+    coverage_reader: the status-agnostic index loader (get_coverage_rows_by_agent
+    in production) — called at most once, and only when some proposal matches no
+    intake row.
     """
     if applied_rows is None or rows_by_agent is None:
         sys.stderr.write(
@@ -9323,28 +9870,35 @@ def discharge_applied_patterns(
             "(applied-proposal or pattern read unavailable); this is NOT "
             "'nothing to discharge', and no row was transitioned\n"
         )
-        return DischargeReport(True, [], [], [], [])
+        return DischargeReport(True, [], [], [], [], [], [], [])
 
     event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
     would: list[int] = []
     discharged: list[int] = []
     failed: list[int] = []
-    unresolved: list[int] = []
+    uncovered: dict[str, list[int]] = {
+        cause: []
+        for cause in (
+            DISCHARGE_EVENT_UNRESOLVED,
+            DISCHARGE_EVENT_COVERED_TERMINAL,
+            DISCHARGE_EVENT_INTAKE_MISS,
+            DISCHARGE_EVENT_READ_FAILED,
+        )
+    }
 
-    for proposal_id, agent, label in applied_rows:
-        covered = find_covered_pattern_rows(label or "", agent or "", rows_by_agent)
+    matches = [
+        (proposal_id, agent or "", label or "",
+         find_covered_pattern_rows(label or "", agent or "", rows_by_agent))
+        for proposal_id, agent, label in applied_rows
+    ]
+    has_uncovered = any(not covered for _, _, _, covered in matches)
+    coverage_by_agent = coverage_reader() if has_uncovered else None
+
+    for proposal_id, agent, label, covered in matches:
         if not covered:
-            unresolved.append(proposal_id)
-            _warn_pattern_skip(
-                agent or "",
-                label or "",
-                event_ts,
-                eval_result="discharge-unresolved",
-                reason=(
-                    f"applied proposal id={proposal_id} covers no stored pattern "
-                    "row — label shape unrecognized, nothing discharged"
-                ),
-            )
+            cause, covering = _get_uncovered_cause(label, agent, coverage_by_agent)
+            uncovered[cause].append(proposal_id)
+            _report_uncovered_proposal(proposal_id, agent, label, cause, covering, event_ts)
             continue
         if not live:
             would.extend(covered)
@@ -9363,19 +9917,177 @@ def discharge_applied_patterns(
                     "call never completed, retried next cycle\n"
                 )
 
+    unresolved = uncovered[DISCHARGE_EVENT_UNRESOLVED]
+    covered_terminal = uncovered[DISCHARGE_EVENT_COVERED_TERMINAL]
+    intake_miss = uncovered[DISCHARGE_EVENT_INTAKE_MISS]
+    read_failed = uncovered[DISCHARGE_EVENT_READ_FAILED]
+    uncovered_summary = (
+        f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}, "
+        f"{len(covered_terminal)} covered-terminal {sorted(covered_terminal)}, "
+        f"{len(intake_miss)} intake-miss {sorted(intake_miss)}, "
+        f"{len(read_failed)} read-failed {sorted(read_failed)}"
+    )
     if live:
         sys.stderr.write(
             f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
             f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
     else:
         sys.stderr.write(
             f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
             f"would-discharge {len(would)} row(s) {sorted(would)}; "
-            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+            f"{uncovered_summary}\n"
         )
-    return DischargeReport(False, would, discharged, failed, unresolved)
+    return DischargeReport(
+        False, would, discharged, failed, unresolved, covered_terminal, intake_miss, read_failed
+    )
+
+
+def _get_uncovered_cause(
+    label: str,
+    agent: str,
+    coverage_by_agent: dict[str, list[dict]] | None,
+) -> tuple[str, list[dict]]:
+    """Cause token for a proposal that matched no intake row, plus the rows it covers.
+
+    Terminal-only coverage is the expected aftermath of a pattern parked before
+    its proposal applied; a non-terminal covering row means the intake read lost it.
+    """
+    if coverage_by_agent is None:
+        return DISCHARGE_EVENT_READ_FAILED, []
+    covered_ids = set(find_covered_pattern_rows(label, agent, coverage_by_agent))
+    covering = [
+        row
+        for row in coverage_by_agent.get(_canon_agent_key(agent), ())
+        if row["id"] in covered_ids
+    ]
+    if not covering:
+        return DISCHARGE_EVENT_UNRESOLVED, []
+    if all(row.get("status") in PATTERN_TERMINAL_STATUSES for row in covering):
+        return DISCHARGE_EVENT_COVERED_TERMINAL, covering
+    return DISCHARGE_EVENT_INTAKE_MISS, covering
+
+
+def _report_uncovered_proposal(
+    proposal_id: int,
+    agent: str,
+    label: str,
+    cause: str,
+    covering: list[dict],
+    event_ts: str,
+) -> None:
+    """One stderr line + one loop event per uncovered proposal; covered-terminal is info."""
+    rows = _build_row_status_text(covering)
+    if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+        reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
+        _warn_pattern_skip(agent, label, event_ts, eval_result=cause, reason=reason)
+        return
+    sys.stderr.write(
+        f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
+        f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
+        f"row(s) [{rows}], nothing left to discharge\n"
+    )
+    _emit_gate_loop_event(agent, event_ts, cause)
+
+
+# -- Parked-pattern apply guard ----------------------------------------------
+
+# Head of every guarded-reject rationale. classify_failure_rationale prefix-tests it and
+# the monitor reject-bucket route stores it as a LIKE marker — compose tails onto it.
+_PARKED_PATTERN_REASON = "covering pattern parked before apply"
+
+# Actor token from the same closed set. The guard stamps WHO moved the row; the
+# verdict instant stays unwritten, since nothing here adjudicated it.
+_PARKED_PATTERN_ACTOR = "daemon-cycle-parked-guard"
+
+
+def find_parked_proposals(
+    triples: list[dict],
+    coverage_by_agent: dict[str, list[dict]],
+) -> list[dict]:
+    """Selected proposals whose covered pattern rows are all terminal, with those rows.
+
+    Same rule as discharge's covered-terminal cause, so the two cannot drift: an empty
+    covered set or any non-terminal covered row applies as before.
+    """
+    parked: list[dict] = []
+    for triple in triples:
+        proposal_id = int(triple["proposal_id"])
+        cause, covering = _get_uncovered_cause(
+            triple.get("pattern_label") or "",
+            triple.get("pattern_agent") or "",
+            coverage_by_agent,
+        )
+        if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
+            continue
+        rows = [{"id": row["id"], "status": row["status"]} for row in covering]
+        parked.append({"proposal_id": proposal_id, "rows": rows})
+    return parked
+
+
+def update_parked_proposal_status(parked: list[dict]) -> list[int]:
+    """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
+
+    Same shape as the same-agent supersede: status + rationale + actor, no enum
+    change, one transaction. A row that left pending/snoozed since selection is
+    left untouched.
+    """
+    if not parked:
+        return []
+    if not HAS_PG_LOOP_WRITE:
+        raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
+    update_sql = (
+        "UPDATE core.autoagent_proposals "
+        "SET status = 'rejected', rationale = %s, reviewed_by = %s "
+        "WHERE status IN ('pending', 'snoozed') AND id = %s "
+        "RETURNING id"
+    )
+    rejected: list[int] = []
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            for entry in parked:
+                rows = _build_row_status_text(entry["rows"])
+                rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
+                cur.execute(
+                    update_sql, (rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"])
+                )
+                rejected.extend(row[0] for row in cur.fetchall())
+        conn.commit()
+    return rejected
+
+
+def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
+    """CLI arm: one JSON verdict line `{"guarded": [...], "rejected": [...]}` on stdout.
+
+    stdin = the apply stage's PATCH_ROWS JSON lines (proposal_id, pattern_agent,
+    pattern_label read; other keys ignored). Any failure → empty stdout + a named exit,
+    and the stderr line names the interpreter, since one without psycopg fails every read.
+    """
+    try:
+        triples = [json.loads(line) for line in stdin_text.splitlines() if line.strip()]
+        coverage_by_agent = get_coverage_rows_by_agent()
+        if coverage_by_agent is None:
+            raise RuntimeError("status-agnostic pattern read failed or is unavailable")
+        parked = find_parked_proposals(triples, coverage_by_agent)
+        rejected = update_parked_proposal_status(parked) if reject_parked else []
+    except Exception as exc:  # noqa: BLE001 — loud-fail: named exit code, nothing applies
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard FAILED: {type(exc).__name__}: "
+            f"{str(exc)[:200]} (interpreter={sys.executable} "
+            f"python {sys.version.split()[0]}, pattern read import ok="
+            f"{HAS_PG_PATTERN_READ}) — nothing applies this run\n"
+        )
+        return PARKED_GUARD_FAILURE_EXIT_CODE
+    for entry in parked:
+        rows = _build_row_status_text(entry["rows"])
+        outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
+        sys.stderr.write(
+            f"[daemon-cycle] parked-pattern guard: proposal id={entry['proposal_id']} "
+            f"covers only terminal row(s) [{rows}] — {outcome}\n"
+        )
+    sys.stdout.write(json.dumps({"guarded": parked, "rejected": rejected}) + "\n")
+    return 0
 
 
 # -- Post-apply regression gate ---------------------------------------------
@@ -10185,6 +10897,7 @@ def run_cycle(
     discharge_applied_patterns(
         _fetch_applied_for_discharge(),
         pattern_rows_by_agent,
+        coverage_reader=get_coverage_rows_by_agent,
         live=discharge_live_enabled(),
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
@@ -10385,7 +11098,7 @@ def run_cycle(
             # can flag a backed-off candidate vs. a generic empty/error. Branch
             # FIRST among the non-test cases (it always yields an empty diff and
             # must not collapse into 'skipped:empty-or-error').
-            haiku_status = "skipped:chronic-timeout-backoff"
+            haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
         elif proposal.parse_mode == "budget-too-low":
             # Local budget-config failure — distinct from external quota. Like quota,
             # it always yields an empty diff, so branch before empty-or-error to
@@ -10505,18 +11218,11 @@ def run_cycle(
             approval_tier = "safety"
             status_value = "pending"
         elif is_backoff_skip:
-            # Chronic-timeout back-off — persist as 'snoozed' (reusing the existing
-            # ProposalStatus enum, same terminal-but-recoverable semantics as the
-            # apply-side stale-drain). 'snoozed' (not 'rejected') keeps the row
-            # visible as a backed-off candidate distinct from a quality reject. The
-            # auto-batch apply path (daemon-apply.sh extract_backlog_patches) excludes
-            # this row because it fails ALL THREE of that SELECT's predicates:
-            # approval_tier='auto' / pre_verify_passed=true / status='pending' — the
-            # back-off row carries approval_tier='', pre_verify_passed=NULL,
-            # status='snoozed', so no empty diff is ever auto-applied.
+            # Terminal 'rejected' — no apply or stale-drain selector re-picks a marker
+            # Told apart from a quality reject by haiku_status + the rationale prefix
             verify = None
             approval_tier = ""
-            status_value = "snoozed"
+            status_value = "rejected"
         else:
             # 'reject' classification — no further gating. Persist 'rejected'
             # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
@@ -10862,7 +11568,28 @@ def _main(argv: list[str]) -> int:
         help="Agent body the --removal-evidence query resolves its removal set "
         "against.",
     )
+    parser.add_argument(
+        "--parked-pattern-guard",
+        action="store_true",
+        help="Apply guard query: read selected proposal JSON lines on stdin and print "
+        "one JSON verdict naming proposals whose covered pattern rows are all terminal. "
+        "Read-only unless --reject-parked.",
+    )
+    parser.add_argument(
+        "--reject-parked",
+        action="store_true",
+        help="With --parked-pattern-guard: transition guarded pending/snoozed proposals "
+        "to rejected.",
+    )
     args = parser.parse_args(argv)
+
+    if args.reject_parked and not args.parked_pattern_guard:
+        parser.error("--reject-parked requires --parked-pattern-guard")
+
+    if args.parked_pattern_guard:
+        # Answered BEFORE the pause gate: the gate's clean exit 0 with empty stdout would
+        # read as a verdict. The caller holds the apply lock the updater also takes.
+        return _emit_parked_pattern_guard(sys.stdin.read(), reject_parked=args.reject_parked)
 
     if args.removal_evidence:
         # Answered BEFORE the pause gate below: this arm is a read-only query

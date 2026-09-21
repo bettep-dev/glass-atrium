@@ -1,167 +1,93 @@
 # REPORT Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-intel-reporter}
-> **Inherits**: Tier 1 (Core)
-> **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
+Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A section that names `agents/glass-atrium-intel-reporter.md` as canonical states the rule's shape here and leaves its detail in that body.
 
-Rules specific to REPORT agents: glass-atrium-intel-reporter.
+Maintainer material — co-edit rosters, drift reports, the machine-read byte contract and the server-400 gate list — is in `scoped/maintainers/scope-report.md`.
 
 ## Absolute Rules [REPORT]
 
-- **Summary table REQUIRED**: Every report MUST include a summary table at the top (skim-friendly format)
-- **Save location**: Reports MUST be emitted via `POST /api/clauded-docs` to the monitor-internal store (per this file's Output Format Routing → Emission contract), not `memory/`
-- **Citation format**: External sources MUST cite `URL + collected_at(YYYY-MM-DD)`; date-unknown sources → label `[Date Unknown]` and never treat as current information.
+- **Citation format**: cite every external source as `URL + collected_at(YYYY-MM-DD)`; label a date-unknown source `[Date Unknown]` and never treat it as current.
 
 ## Output Format Routing [REPORT]
 
-> **CANONICAL SoT (request-driven model)** — this section is the source-of-truth for document emission format. `scope-planning.md` Output Format Routing and the agent/orchestrator files mirror this contract. There is **NO document category/prefix**. Format is decided by two request signals only — **did the user request a document, and did the user explicitly ask for a shareable HTML artifact?** The wiki domain is a permanent exception to this policy (the wiki is an Atrium-internal, git-ignored, LLM-only markdown store at `~/.glass-atrium/wiki/` managed by the wiki daemon — see `scope-wiki.md`).
+Format follows two request signals — did the user request a document, and did the user explicitly ask for a shareable HTML artifact. There is no document category or prefix. The wiki store is a permanent exception (`scoped/scope-wiki.md`).
 
-**Two emission modes** (request-driven decision — evaluate in order):
+### Three emission modes
 
-| Mode | Trigger | Format | Storage / Exposure |
-|------|---------|--------|--------------------|
-| **Agent-only record (DEFAULT fallback)** | User did NOT request a document, but the agent judges a record is worth keeping (Case 1) | LLM autonomous selection from {md, yaml, json, txt} per content shape (token-optimized · see `glass-atrium-intel-reporter.md` Format Selection Matrix · no silent default) | monitor-internal (via POST API) · viewer default-hidden (not-exposed bit) |
-| **User-requested HTML** | User explicitly requested HTML / a shareable artifact (Case 2 + HTML trigger — see "HTML request test" below) | HTML primary (single self-contained output) | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.glass-atrium/monitor/data/documents/` — outside the vault) · viewer-exposed (visual artifact) |
-| **User-requested non-HTML** | User requested a document but did NOT specify HTML / a shareable artifact (Case 2, no HTML trigger) | the form the user asked for · unspecified (a bare "organize/summarize this" with no form) → **md default** (when in doubt, non-HTML — asymmetric cost) | monitor-internal (via POST API) · exposure follows the format (md/yaml/json/txt → default-hidden) |
+Agent-only record (default fallback) · user-requested HTML · user-requested non-HTML. The trigger/format/storage triple and the evaluation order are canonical at `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`; declaring the mode before body composition is `### Turn-0 Format Guard` in the same body.
 
-**HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)**: HTML primary is produced ONLY when 1+ of these explicit signals is present —
-- **Explicit format request (HTML/web/PDF form ONLY)**: the user explicitly names an HTML / web / PDF output form — e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF" (HTML-via-export). A generic document/report/plan request ("보고서로 정리", "문서로 작성", "write it up as a report", "make a plan") is **NOT** an HTML signal — it routes to user-requested non-HTML (md default) per the 3-mode table above.
-- **Explicit share intent**: the user makes third-party sharing or direct human review/presentation clear — e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing".
+### HTML request test
 
-Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare document/report/plan request are **NOT triggers**. EARS: `When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a document was requested).`
+- HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent.
+- Not triggers: visual richness, or an LLM's own "this looks visual" judgment. A bare document request routes to non-HTML md.
+- The signal literals — Korean included, where translating one disables the detector — are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
 
-**HTML primary requirements** (user-requested HTML only — full authoring contract in `glass-atrium-intel-reporter.md` "Output Format Routing"):
-- Single-file self-contained (no external CSS, no build step)
-- Tailwind CDN inline + semantic HTML5 landmarks (`<header><main><article><section><footer>`)
-- Inline JS auto-ToC + `@media print` for PDF export
+### Visual-Maximization Floor
 
-**Visual-Maximization Floor (exposed HTML primary — CANONICAL policy SoT)**: an exposed HTML doc MUST maximize visual communication; a headings-plus-paragraphs text dump FAILS. TIERED, NOT a flat quota — applies only to exposed HTML primaries (never forces a doc TO HTML; HTML request test above unchanged). Deep visual patterns + exact CSS snippets: cite `wiki/raw/` note [[visual-expression-exposed-html-docs]] (do NOT inline here).
+The baseline requirement list, the d8 validator-safe color rule and the content-driven escalation are canonical at `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor`.
 
-- **BASELINE (always)**: semantic landmarks + `aria-labelledby` per `<section>` + correct heading order (single h1, no level skip) · no-print `<nav>` ToC · the **Dark base default** below as the REQUIRED canvas · OKLCH 2-tier color tokens (primitive + semantic; near-black/near-white perceptual darks, never pure `#000`/`#fff` — halation), authored validator-safe per the d8 rule below · Tailwind v4 CDN dark mode the v4 way (`<style type="text/tailwindcss">` + `@variant dark`; the v3 script-config `darkMode` silently FAILS on v4 CDN) · `@media print` PDF reset layer REQUIRED not optional (hide nav/aside, `break-inside: avoid`) · WCAG 2.2 AA incl. the two NEW criteria — SC 2.4.11 focus appearance (`:focus-visible` ring, ≥3:1 change-of-contrast) + SC 2.5.8 target size (interactive ≥24×24px) · all status dual-encoded (color + symbol/text + `aria-label`, never color-only) · `prefers-reduced-motion` SUBSTITUTES a gentle fade (does not merely remove) · **≥1 primary visual structure beyond prose** (Mermaid diagram OR comparison table OR KPI/stat-card row).
-- **d8 validator-safe color rule (HARD — the live monitor `d8_style_violation` / `inline-color-literal` gate rejects the idiom research otherwise mandates)**: deliver ALL dark colors as `oklch()` (or `hsl()`/`lab()`/`lch()`/`var(--token)`) — none match the validator's `COLOR_LITERAL_PATTERN`. Put the palette in `:root` custom properties + reference via `var()` (`:root{ --bg: oklch(0.16 0.01 260); --fg: oklch(0.96 0.005 260) } body{ background: var(--bg); color: var(--fg) }`). In ANY screen context — inline `style=` attributes, screen-context `<style>` rules, AND screen-context CSS `/* … */` comments — NEVER use hex (`#fff`/`#000`/`#1a2b3c`), `rgb()`/`rgba()`, or the words `white`/`black` (`near-black`/`near-white` trip the match — `-` is a word boundary; HTML `<!-- … -->` comments are dropped pre-scan and are safe). Hex + the words `white`/`black` are permitted ONLY inside a `<style>` `@media print { body{ background: white; color: black } }` block (the print branch is range-scan-exempt) — keep the print reset there, never inline `style=` (inline has no `@media` notion → always raises). Separately, `bg-{slate,zinc,neutral,gray}-{50,100,200}` / `bg-white` / `background:white|#fff` / `color-scheme:light` on `<html>`/`<body>` trip the `light-default-body` rule — use a dark Tailwind class (`bg-zinc-950`) or `oklch` background + optional `color-scheme:dark`. From [[visual-expression-exposed-html-docs]] apply the OKLCH `:root` idiom + its near-black/near-white token NAMES (fine; its print-block `#fff`/`#000` is print-exempt), but never lift any hex/`white`/`black`/`rgba()` into a screen-context rule or comment.
-- **CONTENT-DRIVEN ESCALATION (apply the matching visual only)**: process/flow/relationship/state/sequence → Mermaid MANDATORY (block + external UMD CDN runtime per `## Diagram Standard`; hand-built div-arrow flows / ASCII / hand-drawn SVG / inline-ESM init FORBIDDEN — the sanitizer strips inline scripts), select the type per `## Pre-drawing Doctrine` Type step (adopted set only — SoT `diagram-types.json`; excluded shapes become a table or prose) + add `accTitle` + `accDescr` inside the block + an adjacent visible text description (3-layer a11y) · 2+ alternatives → comparison table (semantic `thead/tbody/th scope`, JetBrains Mono numerics) · real quantified claim → KPI/stat card (5-component, dual-encoded delta, optional `aria-hidden` inline-SVG sparkline — no invented numbers) · described UI/screen → structural mockup with labeled placeholders · CSS-only bar charts (flex-height / horizontal table inlay) for the matching data shapes.
-- **RESTRAINT (part of the standard, via an EXPLICIT PROHIBITION LIST — prohibition lowers the LLM default-trope probability better than positive description)**: match density to content + audience — do NOT force 5 KPI cards / 3 diagrams onto a short human-facing brief. Prohibited: purple/indigo/lavender AI-brand gradients · glassmorphism / `backdrop-filter` (also an a11y exclusion) · gradient text on headings · centered body text (left-align ragged-right) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · decoration stacking (one treatment per element) · emoji-as-icons · unverified stat banners · Inter/Roboto/Arial as the sole font · max 1 gradient per layer, 2-stop max. The mandated zinc/OKLCH dark canvas is the REQUIRED base — this anti-slop guard targets zinc-ONLY accent monotony + uniform `rounded-lg` EVERYWHERE (no-shadcn-ification), NOT the dark canvas itself.
+- **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max · decoration stacking (one treatment per element).
+  - The SoT, which carries none of these six: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
+  - Glassmorphism is not on this list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
-Author-side authoring detail: `glass-atrium-intel-reporter.md` → Visual Design Spec → Visual-Maximization Floor.
+### Dark base default
 
-**Dark base default** — HTML primary body defaults to dark mode (aligns with the user's dark homepage · reduces eye strain):
-- Set `color-scheme: dark` + a dark background on `<html>` or `<body>` (Tailwind `bg-zinc-950` / `bg-slate-950` / `bg-neutral-950`, or an `oklch` background var — NEVER `bg-white` / `bg-{slate,zinc,neutral,gray}-{50,100,200}` / `color-scheme:light` → trips `light-default-body`)
-- text light (`text-zinc-100` / `text-slate-100`) — AAA contrast recommended (≥ 7:1) · WCAG AA minimum 4.5:1 guaranteed
-- semantic badges (T1 dual-encoded) — dark-friendly hues: `bg-green-900/40 text-green-200` (✓) / `bg-yellow-900/40 text-yellow-200` (⚠) / `bg-red-900/40 text-red-200` (✕) / `bg-blue-900/40 text-blue-200` (ℹ)
-- code blocks / tables — `bg-zinc-900` + `border-zinc-800` light hint
-- environment alignment — monitor dark viewer + dark document body = visual consistency + zero eye strain
-- the `@media print` (S-7) branch keeps a forced light theme — `@media print{ body{ background: white; color: black } }` inside a `<style>` block (the validator-exempt print branch; per the d8 rule above, the ONLY place `white`/`black`/hex are permitted — never a screen rule or inline `style=`)
-- **Anti-pattern**: light-default body · silent dark/light branching (beyond the single dark default) · screen-context hex / `rgb()`/`rgba()` / `white`/`black` (use `oklch`/`var()` dark tokens — see the d8 validator-safe color rule above)
+The dark canvas, light text, the dual-encoded semantic badge palette and the print-branch carve-out are canonical at `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)`.
 
-**Agent-only record authoring guide (token-optimized fallback)**:
+### Threshold SoT
 
-The agent-only record mode is the DEFAULT fallback (no user document request). The author LLM chooses autonomously based on content shape — {md, yaml, json, txt} 4 formats are equally adoptable. **User readability explicitly abandoned** (viewer default-hide). HTML · markdown formatting flourishes (toc · emphasis · decorative tables) forbidden — useless beyond aiding LLM parsing. Format-selection decision matrix + POST API body field mapping (`md_body`/`yaml_body`/`json_body`/`txt_body`) canonical: `glass-atrium-intel-reporter.md` Authoring Contract → Format Selection Matrix.
+- The D8 numeric thresholds live in `monitor/src/server/clauded-docs/d8-thresholds.json`, which the HTML validator `JSON.parse`-loads at module init.
+- Every prose number in the corpus is a mirror of that JSON: editing a prose number without editing the JSON is FORBIDDEN.
 
-Agent-only documents MUST minimize token cost and use the language system / format easiest for an LLM to parse — user readability is fully abandoned (plain token-optimized output), since the user rarely inspects an LLM-targeted reference document. MD MUST NOT be forced as a silent default — the LLM selects the most readable, token-efficient format per content shape.
+### Emission contract
 
-The server `/api/clauded-docs` `parseCreateBody` natively accepts md/yaml/json/txt 4 formats — the format is determined by the body-field kind supplied (`md_body`/`yaml_body`/`json_body`/`txt_body`), with NO `prefix` field. The author LLM chooses autonomously based on content shape (glass-atrium-intel-reporter.md Format Selection Matrix · explicit per-content-shape selection required). Token-efficiency rationale: improvingagents YAML 62.1% · MD 34-38% savings.
+- Every emission mode POSTs to `POST /api/clauded-docs` (`127.0.0.1:16145`). "Agent-only record" names the body FORMAT, never a filesystem target.
+- **Required tuple** (route source: `monitor/src/server/routes/clauded-docs.ts`): `title` (non-empty, ≤500) + `author` (non-empty, ≤64) + EXACTLY ONE of `{html_body, md_body, yaml_body, json_body, txt_body}`.
+  - There is no `prefix` field: the supplied body field IS the format discriminator.
+  - Optional: `audience`, `supersedes_id`, `folder_id`, `doc_status`.
+  - Zero body fields or two or more → `400`; a missing or over-length `title`/`author` → `400 invalid_body`; success → `201`.
+- An HTML primary is stored as a single file in the monitor-internal root, with no MD companion generated (`md_copy_path` null).
+- `memory/` is never a deliverable store — it holds session-internal `progress-*.md` state only, so writing any deliverable there is a hard violation.
+- Delegation phrasing does not override this routing.
+- **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the USER explicitly asked for that local destination. Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
+  - Stamping without an actual user request is a violation.
+  - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands unchanged.
+- On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is FORBIDDEN.
+- **Sensitivity self-check before the POST of an exposed HTML primary** — one triggered by either HTML request test signal, an explicit format request included.
+  - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
+  - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is FORBIDDEN.
+  - The report is count + category + locator only — never the flagged text, in the narrative, the `[COMPLETION]`, `concerns` or any log, so the scanner cannot become the leak path.
+  - Honor-system semantic judgment: no hook reads it.
 
-- **Storage location**: POST API via monitor-internal storage — all clauded-docs document bodies route through `POST /api/clauded-docs` to the monitor-internal root (see the Emission contract above + `orchestrator-role.md` Harness Path Protection). The POST body carries NO `prefix` field.
-- **Owner = glass-atrium-intel-reporter** (glass-atrium-intel-researcher handles only `wiki/raw/` · orchestrator self-execution violates the no-execution principle · glass-atrium-intel-planner out of CQRS scope · a new agent costs more than extending the existing one)
-- **Exposure bit (2 values)**: a single exposure bit driven by the one question "did the user request a shareable HTML artifact?" —
-  - **user-requested HTML** → viewer-exposed (visual artifact); HTML primary carries no YAML frontmatter — metadata lives on the monitor.ClaudedDoc DB row (server-managed)
-  - **agent-only record** → viewer default-hidden (not-exposed); carries the minimal identity fields (`agent` author declaration + `tokens_estimate` for cost visibility) in a format-adaptive carrier (MD=YAML frontmatter / YAML/JSON=top-level keys / TXT=POST body fields)
-- **agent-only body recommended patterns** (a guide, not mandatory — author chooses by LLM-efficiency judgment):
-  - prefer key-value pairs (drop unnecessary verbose prose)
-  - table / YAML / JSON preferred over prose (higher LLM token efficiency — improvingagents benchmark: YAML 62.1% · Markdown 34-38% token savings)
-  - 5+ token repeated expressions → reference (e.g., cite a previous record)
-  - compress 4-6 lines of prose → 3-5 bullets
-  - conclusion → 1 line (Pyramid alignment)
-- **agent-only selection trigger**: the agent-only record is the DEFAULT — emit it whenever the user did NOT request a document but a record is worth keeping (U1 explicit user instruction to record · U2 intermediate deliverable in a multi-agent chain · U3 cross-session search catalog · U4 token-heavy raw-source synthesis). Prefer an existing mechanism when it can substitute (`memory/progress` session self-resume · one-off in-prompt handoff · `~/.claude/data/outcomes` after-action · `learning-log` accumulated patterns). Detailed use-cases + boundary definition: `glass-atrium-intel-reporter.md` Authoring Contract → `Use-Case Triggers` section canonical.
-- **monitor UI exposure policy (no regression)**:
-  - agent-only record → frontend filter default hidden (prevents UX confusion)
-  - user-requested HTML → shown in UI
-- **silent fallback forbidden**:
-  - on user-requested HTML generation failure, any automatic non-HTML fallback is forbidden — halt + scope clarification
-  - HTML · visual decoration forbidden for an agent-only record (token waste → audit fail)
-- **HTML vs agent-only branching spec**:
-  - **user-requested HTML** → HTML primary single contract (dark base + D8 visual invariants (dual-encoding · column-cap · sandbox-safe interactivity · WCAG-AA contrast · typography-levels) + compliance with the glass-atrium-intel-reporter.md "Canonical HTML Skeleton" inline skeleton)
-  - **agent-only record** → LLM autonomous {md, yaml, json, txt} selection · decision matrix canonical `glass-atrium-intel-reporter.md` Format Selection Matrix — HTML · TOC · visual-decoration toggle FORBIDDEN · viewer default-hide
-  - branching decision order MUST: apply the HTML request test (§ above — explicit format/share signal?) → if no signal, fall back to agent-only and apply content shape → format matrix → body composition. Reversing the order FORBIDDEN (entering body silently = audit fail)
+### Document Lifecycle — completion + exposure routing
 
-**Emission contract**:
-- Agents MUST emit via `POST /api/clauded-docs` (`127.0.0.1:16145`). The POST body carries NO `prefix` field — format is determined by the supplied body-field kind (`html_body` → HTML primary; `md_body`/`yaml_body`/`json_body`/`txt_body` → agent-only record). The monitor stores HTML as a single file in the monitor-internal root (no MD companion generated — `md_copy_path` response NULL)
-- **Required POST tuple** (source: `monitor/src/server/routes/clauded-docs.ts`): `title` (non-empty, ≤500) + `author` (non-empty, ≤64) + EXACTLY ONE body field of `{html_body, md_body, yaml_body, json_body, txt_body}` (the supplied field IS the format discriminator). 0 body fields → `400`; ≥2 → `400` (`mutually exclusive`); missing/over-length `title`/`author` → `400 invalid_body`. Optional: `audience` (`exposed`/`hidden`), `supersedes_id`, `folder_id`, `doc_status` (`progress`/`done`, default `progress`). Success → `201`. Copy-paste curl (both modes): `glass-atrium-intel-reporter.md` → Output Format Routing.
-- **EVERY emission mode POSTs — no exceptions (self-enforcing, delegation-phrasing-proof)**: ALL three modes (user-requested HTML · user-requested non-HTML · agent-only token-optimized record) are emitted via `POST /api/clauded-docs`. The agent-only record is NOT a file write — "token-optimized record" / "md record" names the BODY FORMAT, never the storage target. Writing any deliverable to a path under `memory/` (or any other filesystem location) instead of POSTing is a HARD VIOLATION (audit fail). Sole sanctioned carve-out: an explicit user request for a local destination, carried ONLY by the `[DOC-ROUTE]` stamp (see "Delegation phrasing does NOT override this routing" below).
-- **`memory/` is NEVER a deliverable store**: `memory/` holds ONLY session-internal state — `progress-*.md` cross-session resume files (per `GLASS_ATRIUM_GLOBAL_RULES.md` Cross-Session Continuity). A report / spec / plan / reference / ADR — any deliverable — MUST NOT be written to `memory/` under any framing.
-- **Delegation phrasing does NOT override this routing (self-enforce)**: a delegation prompt that says "agent-only md/yaml record", "where stored", "save it as an md", or similar does NOT authorize a file write — it still POSTs to the monitor. The agent's own Output Format Routing is BINDING and overrides any orchestrator phrasing about storage location; only the user explicitly redirecting away from the monitor (rare, explicit) is honored — and the ONE sanctioned delegation-side carrier of that exception is the stamp `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting the USER explicitly requested that local destination (new file OR edit of an existing user file); the stamped path is then honored as the destination. Stamping without an actual explicit user request is a violation (token consumed by the `enforce-workflow-verify-stage.sh` static gate — mechanics live in the hook, not here). When delegation phrasing seems to ask for a `memory/` write without this stamp, treat it as a request for an agent-only token-optimized BODY and POST it — never resolve the ambiguity toward a filesystem write.
-- **silent fallback forbidden**: on user-requested HTML generation failure, any automatic non-HTML fallback is forbidden
-- **Sensitivity self-check before POST (every exposed HTML primary — CANONICAL policy SoT; `scope-planning.md` carries a pointer)**: immediately before the single POST of EVERY exposed HTML primary — triggered by EITHER HTML request test signal (explicit format request OR share intent), never share-intent only — the author judges whether the body contains HR/personnel content, undisclosed deal terms, or personally identifying content, and records ONE line in its turn-0 narrative BEFORE the POST: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)` — e.g. `sensitivity_scan: 2 items (HR §3, deal-terms §5)`. Any finding → POST is FORBIDDEN until the user confirms; the confirmation ask names the category + paragraph locator ONLY. The report format is COUNT + category + locator and nothing else: NEVER quote or paraphrase flagged content into the narrative, `[COMPLETION]`, `concerns`, or any log — the scanner must not become the leak path (`core-security.md` Secret Management [LLM02:2025]). Zero findings = silent pass — a generic "may contain sensitive data" caveat is FORBIDDEN. Honest backing: honor-system semantic judgment (no hook reads it); NEVER describe it as enforced.
-- **Monitor schema gates (server-enforced 400 if violated)**:
-  - **Gate 1 (HTML5 baseline)**: `html_body` MUST contain `<!doctype html>` + `<meta charset>` + `<meta viewport>`. Missing any → code `html_structure_invalid`. The dark-base skeleton already includes these in canonical form — DO NOT strip them when authoring.
-  - **Gate 2 (D8 column-cap server enforcement)**: comparison tables ≤5 columns hard-enforced server-side, not just glass-atrium-qa-code-reviewer LLM judgment. Multi-config measurement tables exceeding 5 columns MUST be split per config (e.g., 2-config 4-peak grid → 2 tables of 5 columns). Violation → code `d8_p2_violation`.
-
-**Document Lifecycle — completion + exposure routing (B + C canonical)**:
-
-> Canonical authority — `scope-planning.md` Output Format Routing mirrors this lifecycle (done-transition · supersede-vs-new · exposure routing).
-
-The monitor already implements the mechanism (`doc_status` enum `progress`/`done` · `PUT /api/clauded-docs/:id` transition · `supersedes_id` revision chain with predecessor auto-`done`) — no monitor code change. These rules govern *when* the authoring agent acts.
-
-- **Done transition (B)**: when a document's work is fully finished (no remaining work), glass-atrium-intel-reporter (the completing agent) transitions `doc_status→done`. The completing agent owns the transition — it knows the completion point most precisely. The `PUT /api/clauded-docs/:id` endpoint requires the document body (`html_body` for HTML primary; the corresponding body field for an agent-only record) + an optimistic-lock `expected_hash` re-sent alongside `doc_status` — a bare `{"doc_status":"done"}` PUT is rejected `400 invalid_body`; the no-op (body-unchanged) path then fires a status-only cascade. Primary human path = the monitor viewer done-toggle button (auto re-sends body+hash); agent/CLI path = GET → re-PUT the unchanged body with the lock hash. Operational curl in `skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion` Step 1. The orchestrator backstops omissions during its Monitoring phase (fallback only).
-- **Supersede vs new document (B)**: supersede is keyed on **topic sameness** (no prefix exists), plus the Stage-2 revise-cycle carve-out below — the one case where a still-`progress` predecessor supersedes rather than being edited in place. When new content arises —
-  - **same topic** revision of a `done` document → **supersede** (new POST with `supersedes_id` set); rely on the monitor's auto-transition of the predecessor. A supersede may chain documents of differing formats (an agent-only record superseded by a user-requested HTML revision, etc.) — only topic sameness gates it.
-  - **unrelated topic** → **new-document POST** (`supersedes_id` omitted) — never reopen/edit a `done` document (reopening causes progress regression).
-  - **uncertain topic-relatedness → default to a new POST, never reopen a done document** (decisive tiebreaker — asymmetric cost: a surplus document is cheap + recoverable; reopening a done document is high-cost).
-- **Stage-2 revise cycle → supersede-POST (B, carve-out to the branch above)**: a plan/spec returned `revise` or `infeasible` by the Plan Direction Verification gate persists as a **new supersede-POST** (`supersedes_id` = the reviewed document), NEVER an in-place PUT-edit, even though the predecessor is still `progress`. What the carve-out buys: the reviewed revision becomes an immutable, fetchable chain root the revising actor cannot rewrite, so the next pass has a comparand that is not the declaration that actor just authored. **Refusal duty (self-enforcing, same shape as "Delegation phrasing does NOT override this routing" above)**: an instruction to PUT-edit a document under Stage-2 revision — from a delegation prompt or any other agent — is REFUSED and the refusal surfaced in the reply; only the USER explicitly directing otherwise is honored.
-- **Chain-root content (B) — immutability guarantees the root EXISTS, never what it CONTAINS**: the FIRST version of a plan/spec (the chain root of any supersede chain it later grows) carries as a distinct labeled body element BOTH of —
-  - the **original user instruction VERBATIM**, in the user's own words and language: never a translation, paraphrase or tidied restatement, because a paraphrase is itself the first link of the growth this element exists to freeze;
-  - the **instruction-NAMED file set** — the paths the instruction itself names, never the draft's own target-file list; freezing the draft's list freezes the already-grown state, and the first link's growth then reads as none.
-  - The named file set **MAY be EMPTY, and that is the common shape** — rule-fixing, research and review instructions routinely name no path. The empty case is NOT zero-baselined: the root instead records the instruction's **named SUBJECT set** — the artifacts, surfaces or behaviours the instruction designates by any means other than a path (a named rule, a named hook, a cited document id, a named behaviour) — as the fallback comparand, and the numeric file-count leg is SKIPPED rather than measured against zero. A zero baseline manufactures maximal drift out of an absent comparand: a false-positive generator, not a control.
-  - Consumption is the reviewer's, not the author's: drift is judged cumulatively from the ROOT, never as per-link deltas (each link is locally inside the reference it is checked against, so a per-link test always passes) and never against the current `[SCOPE]` or target list. Reviewer-side duty text: `scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
-- **Residual — the persist-path choice is HONOR-SYSTEM and fails OPEN silently (B)**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error anywhere — the chain root is simply never created, the reviewer's revision-cycle comparand does not exist, and the scope-fidelity check degrades back to the current declaration it exists to replace. That fail-open is why the duty is written HERE, in the completing agent's own loaded rules, instead of being left to the delegation that asks for the edit.
-- **Exposure routing test (C)**: at turn-0, decide exposure by the single question **"did the user request a shareable HTML artifact?"** — YES → viewer-exposed user-requested HTML (the user directly reviews/decides) · NO (no document request, or a request the user does not directly review — agent-to-agent handoff · intermediate spec · internal working doc) → agent-only record (viewer default-hidden · token-saving). This applies the existing `agent-only selection trigger` U2 (intermediate deliverable in a multi-agent chain), which explicitly **includes intermediate planning-domain output**. Order is unchanged (HTML request test → exposure bit → finalize format → body composition).
-- **Uncertain exposure → default per the asymmetric-cost rule**: when the user asked for a document but the form is ambiguous (a bare "organize/summarize this"), default to **non-HTML md** (when in doubt, non-HTML — surplus HTML = token waste). The exposure bit only flips to viewer-exposed on an explicit HTML/share signal.
-- **Lifecycle coherence (C↔B)**: an agent-only record follows B's done-transition + supersede-vs-new rules identically — agent-only is an exposure choice, not a lifecycle exemption.
-
-**HTML Visual Decision Requirements (D8)**: HTML primary outputs MUST satisfy badge dual-encoding (color + symbol — color-blind safety), comparison tables ≤5 columns (rows=criteria / columns=alternatives — SoT: d8-thresholds.json), sandbox-safe interactivity only (`<details>` / CSS-only tabs / inline SVG — Chart.js · D3 · Plotly forbidden — they need `allow-scripts` = a security regression), WCAG AA contrast (text 4.5:1 / UI 3:1 — SoT: d8-thresholds.json), typography 3-level (H1 / H2 / Body — SoT: d8-thresholds.json) + Pretendard for Korean. Detail authoring contract: see `glass-atrium-intel-reporter.md` "HTML Visual Decision Requirements" section.
-
-**Threshold SoT**: the canonical D8 numeric thresholds (comparison-table maxColumns=5, WCAG contrast text 4.5:1 / UI 3:1, typography ≤3 levels) are defined in `monitor/src/server/clauded-docs/d8-thresholds.json` — the server-enforced source-of-truth the validator `JSON.parse`-loads at module init. The literals quoted in prose throughout this file are a documented MIRROR synced at review time — do NOT treat a prose number as the source · editing a prose number without updating the JSON FORBIDDEN.
+- **Done transition**: the completing agent transitions `doc_status→done` through `PUT /api/clauded-docs/:id`, re-sending the document body plus the optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` is rejected `400 invalid_body`.
+- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` (the monitor auto-transitions the predecessor) · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
+- **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede POST even though the predecessor is still `progress`, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
+- **Chain-root content**: the first version carries the original user instruction VERBATIM plus the instruction-NAMED file set. An empty named set is the common shape and falls back to the instruction's named SUBJECT set, the file-count leg being skipped rather than measured against a zero baseline.
+- **Exposure routing**: viewer-exposed only on an explicit HTML/share signal; everything else is viewer default-hidden, and an ambiguous form defaults to non-HTML md.
+- An agent-only record follows the same done-transition and supersede rules — exposure is a routing choice, not a lifecycle exemption.
+- The reviewer-side consumer of the chain root is `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
 
 ## Diagram Standard [REPORT]
 
-All diagrams in user-requested HTML primary documents MUST use **Mermaid** — a single mandated diagram format (diagram representation is unified on Mermaid).
-
-**Canonical syntax**: `<pre class="mermaid">...</pre>` block in HTML primary. Triple-backtick `` ```mermaid `` fenced blocks ONLY in an MD agent-only record — HTML primary has no markdown parser → fenced blocks do not render.
-
-**Runtime load REQUIRED (HARD — a `<pre class="mermaid">` block without the runtime renders as RAW LITERAL TEXT, not a diagram)**: "process to Mermaid MANDATORY" means **block + external CDN runtime** — the block alone is a defect. Any exposed HTML doc with ≥1 `<pre class="mermaid">` block MUST load the **external UMD build** via an allowlisted `<script src>` — it survives the monitor sanitizer AND auto-renders every block via `startOnLoad` (default true), so NO inline init is needed:
-```html
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-```
-Do NOT use an inline `<script>` / ESM-module + `mermaid.initialize()`/`mermaid.run()` init — the monitor sanitizer STRIPS ALL inline `<script>` blocks (only external CDN-allowlisted `<script src>` survives), so an inline ESM init is removed on POST and the diagram ships as raw text standalone. (The monitor ALSO renders Mermaid host-side for its own viewer/export, so it renders inside the monitor regardless; the external `min.js` covers the standalone/exported raw-HTML case.) This external Mermaid `<script src>` is the **ONLY permitted non-Tailwind `<script>`** in an exposed HTML primary (D8 sandbox-safe interactivity otherwise bars third-party JS — Chart.js · D3 · Plotly). No `<pre class="mermaid">` block → do NOT load it. Author-side skeleton + 3-layer a11y: cite [[visual-expression-exposed-html-docs]] (Tier 2 Mermaid external UMD CDN).
-
-**Permitted Mermaid types** (the adopted set — 7 types · SoT: `monitor/src/server/clauded-docs/diagram-types.json`): `flowchart` (header `flowchart TD` · `LR` only per the `## Pre-drawing Doctrine` Direction step · `RL`/`BT` forbidden) · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context`/`C4Container`/`C4Component`). Any other type is excluded (doctrine Type step) — express that content as a table or prose.
-
-**FORBIDDEN**:
-- Ad-hoc HTML graph notation in prose (e.g., free-form text "graph TD A --> B" outside a `<pre class="mermaid">` block)
-- Hand-drawn inline SVG diagrams (Mermaid auto-generates SVG as a host-side library)
-- Third-party JS chart libraries (Chart.js · D3 · Plotly · ECharts) — D8 sandbox-safe interactivity prohibition
-- ASCII art diagrams in a `<pre>` block (low fidelity · breaks on narrow viewport · screen-reader incompatible)
-- `<iframe>` embeds for diagrams (sandbox bypass = security regression)
-
-**Rationale**:
-- Mermaid is text-source — LLM authoring-friendly + git diff readable + reproducible
-- monitor viewer (screen 08) + clauded-docs viewer (mermaid.run hook) both render natively in the host context without sandbox bypass
-- a single diagram authoring API → consistent visual idiom across all user-requested HTML primary documents
-
-**Agent-only record branch**: even when a diagram is needed, token efficiency takes priority — bullet · table · ASCII tree (within LLM-parseable range) preferred. When using a Mermaid block, the ` ```mermaid ` fence is allowed (the MD parser handles it on the LLM side). For a diagram whose purpose is visual fidelity → the user should be asked to request an HTML artifact.
-
-**Reference**: D8 sandbox-safe interactivity (existing prohibition) · `glass-atrium-intel-reporter.md` "Sandbox-Safe Interactivity" Mermaid CDN exception (host-context render path specified).
+- Every diagram in a user-requested HTML primary is Mermaid, authored as a `<pre class="mermaid">` block; a triple-backtick fence renders only inside an MD agent-only record.
+- A block requires the external UMD runtime `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`: the monitor sanitizer strips every inline `<script>`, so an inline `mermaid.initialize()` init ships the diagram as raw literal text standalone. No block → no runtime.
+- That tag is the only permitted non-Tailwind `<script>` in an exposed HTML primary.
+- **FORBIDDEN as the diagram primitive**: ad-hoc graph notation in prose · hand-drawn inline SVG · third-party chart libraries (Chart.js · D3 · Plotly · ECharts) · ASCII art in a `<pre>` block · `<iframe>` embeds.
+- **Permitted types** = the adopted set in `monitor/src/server/clauded-docs/diagram-types.json`, enumerated at the Type step below; renderable by Mermaid is not the same as adopted.
+- Drawing an excluded type is a doctrine violation, not a server rejection: the validator's diagram scan is report-only and attaches an exclusion notice to a document that still passes.
+- **Agent-only branch**: prefer a bullet, table or ASCII tree; a Mermaid block there uses the fence, and a diagram whose purpose is visual fidelity belongs in a requested HTML artifact.
 
 ## Pre-drawing Doctrine [REPORT]
 
-> **CANONICAL SoT** — `scope-planning.md` → `## Pre-drawing Doctrine [PLANNING]` is a pointer to this section; the type lists and the budget numbers live here ONCE. Apply the order below to EVERY Mermaid block in a user-requested HTML primary, not only the first. An agent-only record stays on the Diagram Standard agent-only branch.
+<!-- Machine-read section. scripts/test/doctrine-budget-parity.bats parses this section's own cap line, band line and preset class names. Byte contract: scoped/maintainers/scope-report.md -->
 
-Decision order before drawing (each step builds on the previous):
+Apply the order below to EVERY Mermaid block in a user-requested HTML primary, not only the first; an agent-only record stays on the Diagram Standard agent-only branch. Each step builds on the previous.
 
 1. **Type** — SoT: `monitor/src/server/clauded-docs/diagram-types.json`.
    - Adopted (draw): `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`).
    - Excluded (do not draw — presentation shapes, not development judgment): `quadrantChart` · `radar` · `pie` · `timeline` · `journey` · `mindmap` · `sankey` · `xychart` · `gantt` · `block`; express that content as a table or prose.
-   - The Diagram Standard "Permitted Mermaid types" list enumerates this same adopted set: renderable by Mermaid is not the same as adopted.
 2. **Direction** — hold ONE primary flow per diagram; a single held direction is what makes rank alignment readable.
    - `TD` is the default.
    - `LR` only after re-measuring the rendered width against the preset container (Preset step).
@@ -169,17 +95,17 @@ Decision order before drawing (each step builds on the previous):
 3. **Budget** — SoT: `BUDGET_CAPS.balanced` in `monitor/src/server/architecture/content-budget.ts`; the numbers here are a mirror, never the source.
    - Caps: nodes ≤ 9 · edges ≤ 6 · label chars ≤ 45 · subgraph depth ≤ 1.
    - Band: ≥ 0.9 of a cap warns, > 1.0 fails; depth is an invariant (equal passes, over fails).
-   - Census rules an author must respect: every arrow token counts (a chained `A --> B --> C` line is 2 edges) · quoted spans are stripped before arrows are counted · a `name(` / `name[` / `name{` token counts as a node · a `---` line counts as an edge.
+   - Census rules an author respects when counting against those caps: every arrow token counts, so a chained `A --> B --> C` line is 2 edges · quoted spans are stripped before arrows are counted · a `name(` / `name[` / `name{` token counts as a node · a `---` line counts as an edge.
    - Over budget: split into one overview diagram plus detail diagram(s), each inside the caps on its own; never raise a cap, never trim a label below its meaning.
 4. **Preset** — attach the size preset as a second class on the block: `<pre class="mermaid doc-diagram-body">`.
    - `doc-diagram-body` — default, column width.
    - `doc-diagram-wide` — ranks ≥ 4 along the primary flow OR a label overflows the column width.
    - `doc-diagram-full` — zones (subgraphs) ≥ 3.
-   - The three width rules are the same three selectors in `monitor/public/src/screens/clauded-docs.jsx` (viewer) and `monitor/src/server/clauded-docs/html-export.ts` (export).
-5. **Semantic-role `classDef`** — exactly five role classes: `focal` · `external` · `store` · `optional` · `security`.
+   - Those width rules are the same selectors carried by `monitor/public/src/screens/clauded-docs.jsx` (viewer) and `monitor/src/server/clauded-docs/html-export.ts` (export).
+5. **Semantic-role `classDef`** — the closed role-class set, nothing outside it: `focal` · `external` · `store` · `optional` · `security`.
    - `focal` is the accent: assigned to ≤ 2 nodes.
-   - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block; a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
-   - Scope of hex-only: mermaid `classDef` / `themeVariables` values ONLY — they sit in the diagram source, outside the d8 `inline-color-literal` scan surface (`style=` attributes + `<style>` blocks); the d8 no-hex rule keeps governing every CSS surface.
+   - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
+   - Hex-only is scoped to mermaid `classDef` / `themeVariables` values, which sit in the diagram source outside the d8 `inline-color-literal` scan surface; the d8 no-hex rule keeps governing every CSS surface.
 6. **Layout** — ELK is the global layout default from the shared mermaid init; a diagram carries no layout configuration of its own.
    - Never a YAML frontmatter block in a mermaid source: each `---` line is counted as an edge (Budget step).
    - Never encode the engine into the type keyword: the header is `flowchart TD`, never a `flowchart-<engine>` variant.
@@ -187,58 +113,35 @@ Decision order before drawing (each step builds on the previous):
 
 ## Designer Co-Emission Trigger [REPORT]
 
-> Canonical authority — `scope-planning.md` Designer Co-Emission Trigger mirrors this section.
+Gated on "is this a user-requested HTML primary?" — an agent-only record never triggers it. At 2+ co-occurring indicators the deliverable routes to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` Pre-draft consultation mode; at 1 or fewer, glass-atrium-intel-reporter solo.
 
-When a **user-requested HTML primary** deliverable exceeds the visually-heavy threshold, route automatically to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` 2-agent Pre-draft consultation mode. Below the threshold, glass-atrium-intel-reporter solo (default). The probe is gated only on "is this a user-requested HTML artifact?" — an agent-only record never triggers it (LLM-readability-first · no visual-fidelity need).
-
-**T1-T5 indicator table** (co-emission MUST when 2+ co-occur · 1 or fewer = solo):
-
-| Code | indicator | Threshold |
+| Code | Indicator | Threshold |
 |------|-----------|-----------|
 | T1 | Mermaid diagrams | ≥ 3 (or ≥ 4 with 2+ mixed types — strict variant) |
 | T2 | comparison tables | ≥ 3 instances AND each ≥ 4 rows (or ≥ 20 cells total) |
 | T3 | KPI cards / dashboard-class sections | ≥ 5 |
 | T4 | non-canonical status badges | palette expansion beyond the canonical 4-badge (✓/⚠/✕/ℹ) needed |
-| T5 | user explicitly states design quality matters OR explicit external-share intent declared | 1+ |
+| T5 | user states design quality matters OR declares explicit external-share intent | 1+ |
 
-**Workflow mode (A) — Pre-draft consultation adopted**:
-- order: glass-atrium-intel-reporter self-assesses T1-T5 at the turn-0 outline stage → if 2+ met, gets 1-2 turns of advance consultation from glass-atrium-design-designer → receives glass-atrium-design-designer verdict → glass-atrium-intel-reporter solo HTML composition → 1 POST
-- R2 reject (full parallel co-emission): POST `/api/clauded-docs` atomic contract (1 doc = 1 emission) · parallel stitching causes inline-Tailwind self-contained HTML token-position conflicts · 2× revision_count cost
-- R3 reject (post-draft visual review pass): editing the emitted HTML = a 2nd POST (creates a new DB row) OR PATCH (out of contract) · violates the Self-Eval 4-Dim flow
-
-**2-agent team composition**:
-- adopted: `{glass-atrium-intel-reporter, glass-atrium-design-designer}` ONLY
-- excluded from the DEFAULT team — glass-atrium-dev-front: an exposed HTML primary is self-contained Tailwind CDN and not a design-token-consumption surface, so glass-atrium-dev-front is NOT a default co-author and is NEVER probe-composed (default-adding duplicates glass-atrium-design-designer's anti-slop/craft role, breaks the atomic 1-doc-1-POST contract — R2/R3 — and inflates tokens). **Narrow exception (governed EXTEND, not a new seat · orchestrator-judged, minimal human involvement)**: a bespoke component / hand-authored CSS beyond Tailwind-CDN utilities AND beyond glass-atrium-design-designer's verdict scope (e.g. CSS-only tab system, complex `:has()`/container-query layout — rare for a decision/report doc). TRIGGER PATH (NOT user-surface): the author does NOT ask the user — at turn-0 self-assessment it emits `needs_devfront_markup: true` + a 1-line justification in its `[COMPLETION]`, signaling the ORCHESTRATOR; the orchestrator, during its Monitoring phase, JUDGES capability-based (truly beyond Tailwind-CDN + glass-atrium-design-designer scope?) and, if warranted, composes a NON-parallel skeleton-first handoff (glass-atrium-dev-front drafts the styled skeleton INLINE — no `memory/` write → author fills content + the SINGLE POST); it surfaces to the user only if genuinely ambiguous. R2 (parallel stitching) / R3 (second POST) remain FORBIDDEN; default team stays `{glass-atrium-intel-reporter, glass-atrium-design-designer}` (glass-atrium-design-designer verdict-only, no markup). Governance + boundary: `scope-dev.md` → DEV Agent Fleet Governance.
-- excluded scope — agent-only record (LLM-readability-first · visual fidelity 100% abandoned · never a user-requested HTML artifact)
-
-**Designer contribution scope**:
-- PRIMARY — Mermaid type mapping (7 adopted types → information shape · see Diagram Standard) · section composition (Pyramid skim/scan/read 3-layer rhythm)
-- CONDITIONAL — non-canonical badge palette expansion (T4 trigger) · table-splitting axis selection (when D8 column-cap ≤ 5-col split is needed)
-- excluded (mechanical-deterministic) — H1/H2/Body typography (D8 typography-levels) · canonical 4-badge palette
-
-**Token break-even guidance**: solo + 1 revision ≈ 12-18K · +glass-atrium-design-designer adds 6-10K → break-even ≈ 18-22K total team budget · below it, solo is cheaper · above it, glass-atrium-design-designer nets savings by preventing cascading rework.
-
-**AC (EARS)**: When 2+ T1-T5 indicators co-occur AND the deliverable is a user-requested HTML primary artifact, the system shall route to `{glass-atrium-intel-reporter, glass-atrium-design-designer}` parallel team via Pre-draft consultation mode (A).
+- **Pre-draft consultation order**: the author self-assesses T1-T5 at the turn-0 outline stage → 1-2 turns of advance consultation from glass-atrium-design-designer → verdict received → author composes the HTML solo → one POST. Full parallel co-emission and a post-draft edit pass are both rejected: the POST contract is atomic (1 doc = 1 emission).
+- **Designer contribution scope**: Mermaid type mapping and section composition are primary; non-canonical badge palette expansion (T4) and table-splitting axis selection are conditional; typography levels and the canonical 4-badge palette are mechanical and excluded.
+- **glass-atrium-dev-front is never probe-composed**: an exposed HTML primary is self-contained Tailwind CDN, not a design-token-consumption surface.
+- **Markup exception (narrow)**: markup genuinely beyond Tailwind-CDN utilities AND beyond the designer's verdict scope routes through the author's `needs_devfront_markup: true` signal and the orchestrator's Monitoring-phase judgment, at `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`.
+- **Who counts against this table**: glass-atrium-intel-reporter, declaring the result per `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract`. The planner counts against its own body copy, the designer holds `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, and the orchestrator counts at the Visual-Weight Probe.
 
 ## Report Structure [REPORT]
 
-Every report MUST be navigable in skim-only mode (layers are format-agnostic — a user-requested HTML primary uses `<section>` landmarks; an agent-only record (md/yaml/json/txt) uses `## Heading` or author-chosen structure):
-- **Skim layer**: summary table + 3-line conclusion (decision-ready without further reading) — HTML `<section id="summary">` / MD `## Summary` (heading text in the deliverable locale). **Agent-only record exempt** (user readability abandoned → keep only the 1-line Pyramid conclusion).
-- **Scan layer**: per-section digest + recommendation list — HTML `<section>` per topic / MD `##` headings.
-- **Read layer**: full analysis + complete source list — HTML `<article>` body / MD body sections.
+Every user-requested report is navigable in skim-only mode through the layers below — an HTML primary carries them as `<section>` landmarks, a non-HTML document as headings.
 
-The summary table requirement (Absolute Rules) is the entry point of the Skim layer. Reports MUST NOT bury the conclusion in body paragraphs.
+An agent-only record is not required to carry any layer or the summary table: add a layer or a table only where the record would otherwise be hard to understand.
+
+- **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
+- **Scan layer**: per-section digest + recommendation list.
+- **Read layer**: full analysis + complete source list.
+- Burying the conclusion in body paragraphs is FORBIDDEN.
 
 ## Self-Evaluation Obligation [REPORT]
 
-After completing a report, apply the G-Eval-style 4-dimension self-assessment (rubric canonical: `scope-qa.md` Deliverable Quantitative Evaluation):
+- After completing a report, self-assess on the G-Eval-style 4 dimensions — Coverage / Insight / Instruction-following / Clarity, each 1-5. Rubric canonical: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`.
 - Total < 12 → rework before delivery.
-- Record scores at the report bottom — a user-requested HTML primary embeds as `<section id="self-evaluation">`; an agent-only record embeds as a `## Self-Evaluation` section (for agent-only, LLM parsing efficiency takes priority — a simple key-value form is allowed).
-
-> Cross-ref: the `core-outcome-record.md` Field Input Guide `metric_pass` row's per-task-type deterministic check matrix operates as the Code-Based grader tier — author-side outcomes only (infra attribution failures out-of-scope) · this 4-Dim self-evaluation stacks on top as a self-applied variant of the Model-Based grader tier
-
-> Detailed rubric: See `scope-qa.md` Deliverable Quantitative Evaluation section (canonical source).
-
-## LLM-as-Judge 4 Dimensions [QA+REPORT]
-
-> Detailed rules: See `scope-qa.md` Deliverable Quantitative Evaluation section (Coverage / Insight / Instruction-following / Clarity, each 1-5; <12 → rework)
+- Record the scores at the report bottom — an HTML primary as a `<section id="self-evaluation">`, an agent-only record as a `## Self-Evaluation` section in whatever form parses most cheaply.

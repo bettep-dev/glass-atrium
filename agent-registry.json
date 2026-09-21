@@ -3,6 +3,7 @@
   "version": "1.1",
   "dual_phase_definition": "true = agent has a distinct PLAN phase followed by an EXECUTE phase (e.g., reads codebase, proposes approach, then implements). false = agent is single-phase execution: it receives a task and executes directly without an internal plan-then-act split. Agents without explicit internal planning (pure analysis, pure retrieval, pure review) are false.",
   "compatibility_schema": "v1: optional free-form string per agent declaring runtime preconditions (e.g., 'Requires monitor running at 127.0.0.1:16145 for HTML primary emission'). Absent/null/undefined → agent is always available (backwards-compatible default). Orchestrator Compatibility Probe checks this field pre-delegation and halts with remediation hint when preconditions are unmet. Frontmatter `compatibility:` on the agent .md is the per-agent canonical source; registry entries mirror it for routing-time lookup.",
+  "rules_schema": "v1: per-agent resolved rule membership, AUTHORED from rules/glass-atrium/core-compliance-matrix.md (the SoT) and never read as a runtime selector. `scope` = the single Tier-2 scope file governing the agent. `shared` = the Tier-3 cross-cutting files that bind it UNCONDITIONALLY. `conditional` = {file, when} pairs meaning 'applies when the task meets the condition', never standing membership. Tier-1 core files bind every agent and so carry no per-agent value. ORCHESTRATOR is a deliberate carve-out: it owns a Tier-2 file PAIR and no agent row, so its membership stays in the matrix. Injected-block membership is NOT mirrored here — it stays in hooks/inject-scope-rules.sh until the injector rewrite settles its direction.",
   "phases": {
     "research": 1,
     "analysis": 2,
@@ -37,6 +38,30 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-angular": {
@@ -62,6 +87,30 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-animator": {
@@ -87,6 +136,30 @@
       "phase": "implementation",
       "dual_phase": true,
       "compatibility": "Scope: Canvas 2D game animation (camera, cinematic sequences, easing/spring physics, phase state machines). Not for: React (→glass-atrium-dev-react), GSAP (→glass-atrium-dev-gsap), CSS (→glass-atrium-dev-front), 3D/WebGL, planning (→glass-atrium-intel-planner), reports (→glass-atrium-intel-reporter). Capability Probe routes mis-fits.",
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-qa-code-reviewer": {
@@ -106,6 +179,21 @@
       ],
       "phase": "review",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-qa.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task reviews a hook change or analyses a hook failure"
+          }
+        ]
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-db": {
@@ -133,6 +221,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-qa-debugger": {
@@ -152,6 +263,19 @@
       ],
       "phase": "review",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-qa.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-investigation-discipline.md"
+        ],
+        "conditional": [
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task reviews a hook change or analyses a hook failure"
+          }
+        ]
+      },
       "origin": "shipped"
     },
     "glass-atrium-design-designer": {
@@ -178,6 +302,11 @@
       ],
       "phase": "analysis",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-design.md",
+        "shared": [],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-front": {
@@ -201,6 +330,30 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-gsap": {
@@ -224,6 +377,30 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-meta-agent": {
@@ -245,6 +422,13 @@
       ],
       "phase": "analysis",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-meta.md",
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-nestjs": {
@@ -273,6 +457,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-node": {
@@ -297,6 +504,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-intel-planner": {
@@ -321,6 +551,13 @@
       "phase": "planning",
       "dual_phase": false,
       "compatibility": "Requires monitor running at 127.0.0.1:16145 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.",
+      "rules": {
+        "scope": "scoped/scope-planning.md",
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-meta-prompt-engineer": {
@@ -343,6 +580,18 @@
       ],
       "phase": "analysis",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-meta.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-authoring-hygiene.md"
+        ],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-python": {
@@ -385,6 +634,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-rag": {
@@ -412,6 +684,29 @@
       "phase": "implementation",
       "dual_phase": false,
       "dual_phase_rationale": "RAG pipeline is a sequential single-phase execution chain: query rewrite → embedding → hybrid search (BM25+vector) → RRF rerank → return. Each step is a direct transformation with no internal plan-then-execute split. Unlike glass-atrium-dev-android or glass-atrium-dev-nestjs that must read architecture and design an approach before coding, glass-atrium-dev-rag receives a retrieval task and immediately executes code changes to the retrieval module — no separate planning phase exists.",
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-dev-react": {
@@ -438,6 +733,30 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md",
+          "scoped/shared-design-token-consumption.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-intel-reporter": {
@@ -465,6 +784,13 @@
       "phase": "report",
       "dual_phase": false,
       "compatibility": "Requires monitor running at 127.0.0.1:16145 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.",
+      "rules": {
+        "scope": "scoped/scope-report.md",
+        "shared": [
+          "scoped/shared-authoring-hygiene.md"
+        ],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-intel-researcher": {
@@ -487,6 +813,11 @@
       ],
       "phase": "research",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-research.md",
+        "shared": [],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-sec-guard": {
@@ -508,6 +839,11 @@
       ],
       "phase": "analysis",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-security.md",
+        "shared": [],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-shell": {
@@ -537,6 +873,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     },
     "glass-atrium-wiki-curator": {
@@ -562,6 +921,11 @@
       ],
       "phase": "implementation",
       "dual_phase": false,
+      "rules": {
+        "scope": "scoped/scope-wiki.md",
+        "shared": [],
+        "conditional": []
+      },
       "origin": "shipped"
     },
     "glass-atrium-dev-swift": {
@@ -590,6 +954,29 @@
       ],
       "phase": "implementation",
       "dual_phase": true,
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes ~/.glass-atrium/autoagent/ paths or the self-improvement launchd configuration"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      },
       "origin": "user"
     }
   }

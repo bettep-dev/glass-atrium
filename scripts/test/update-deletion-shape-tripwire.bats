@@ -15,6 +15,11 @@
 #   T4 advisory — the function always returns 0 and writes NOTHING outside its own ledger, so
 #                 the confirm-gate flow is byte-identical.
 #   T5 counting — only lines INSIDE EDITABLE regions count (markers + vendor prose excluded).
+#   T6 sanctioned — reset-to-release WITH a request id → INFO + an editable-resets.log row naming
+#                 the request, and NO deletion-shape-warnings.log row (that ledger stays defect-only).
+#   T6b unmeasured — the sanctioned row is written even when the delta cannot be measured.
+#   T6c retain  — a sanctioned row that cannot be written returns non-zero, so the caller retains.
+#   T7 defect   — reset-to-release with `none` → the defect WARN + a deletion-shape-warnings.log row.
 #
 # Hermetic: update.sh is SOURCED (its main guard skips orchestration), the two collaborators
 # are stubbed (update_log → stdout, update_agents_bak_base → the sandbox), and every path
@@ -43,7 +48,7 @@ set -Eeuo pipefail
 source "${UPDATE_SH}" >/dev/null 2>&1
 update_log() { printf '%s\n' "$*"; }
 update_agents_bak_base() { printf '%s\n' "${BAK_PARENT}/agents-bak"; }
-update_check_deletion_shape "${ROOT}" "agents/alpha.md" "${VERDICT}" "${LOCAL_FILE}" "${CANDIDATE}"
+update_check_deletion_shape "${ROOT}" "agents/alpha.md" "${VERDICT}" "${LOCAL_FILE}" "${CANDIDATE}" ${RESET_ID+"${RESET_ID}"}
 DRV
   chmod +x "${DRIVER}"
 }
@@ -76,6 +81,7 @@ trip() {
     VERDICT="${VERDICT:-take-release}" \
     LOCAL_FILE="${WORK}/local.md" \
     CANDIDATE="${WORK}/candidate.md" \
+    ${RESET_ID+RESET_ID="${RESET_ID}"} \
     bash "${DRIVER}"
 }
 
@@ -164,4 +170,57 @@ trip() {
   trip
   [ "${status}" -eq 0 ] || return 1
   no "deletion-shape tripwire" "${output}" || return 1
+}
+
+@test "T6 a reset-to-release with a request id is recorded as sanctioned, never as a defect" {
+  seed_body "${WORK}/local.md" 'daemon line 1' 'daemon line 2' 'daemon line 3'
+  seed_body "${WORK}/candidate.md" 'release line 1'
+  VERDICT="reset-to-release"
+  RESET_ID="er-20260913-a"
+  trip
+  [ "${status}" -eq 0 ] || return 1
+  oc "sanctioned editable reset — agents/alpha.md drops 2 EDITABLE-region line(s) (request er-20260913-a)" "${output}" || return 1
+  no "deletion-shape tripwire" "${output}" || return 1
+  [ ! -e "${LEDGER_DIR}/deletion-shape-warnings.log" ] || return 1
+  local record
+  record="$(cat "${LEDGER_DIR}/editable-resets.log")"
+  oc "agents/alpha.md" "${record}" || return 1
+  oc "outcome=queued" "${record}" || return 1
+  oc "deleted_lines=2" "${record}" || return 1
+  oc "request=er-20260913-a" "${record}" || return 1
+}
+
+@test "T6b the sanctioned row is written even when the line delta cannot be measured" {
+  seed_body "${WORK}/local.md" 'daemon line 1'
+  # No candidate file: the counter fails, which must not skip the record.
+  VERDICT="reset-to-release"
+  RESET_ID="er-20260913-b"
+  trip
+  [ "${status}" -eq 0 ] || return 1
+  oc "deleted_lines=unmeasured" "$(cat "${LEDGER_DIR}/editable-resets.log")" || return 1
+}
+
+@test "T6c an unwritable sanctioned ledger returns non-zero so the caller retains the body" {
+  seed_body "${WORK}/local.md" 'daemon line 1' 'daemon line 2'
+  seed_body "${WORK}/candidate.md"
+  # The declines dir is a FILE, so the ledger cannot be created under it.
+  printf 'not a dir' >"${WORK}/bak-parent/update-declines"
+  VERDICT="reset-to-release"
+  RESET_ID="er-20260913-c"
+  trip
+  [ "${status}" -ne 0 ] || return 1
+  oc "could not write the editable-resets.log row" "${output}" || return 1
+}
+
+@test "T7 a reset-to-release without a request is still reported as a defect" {
+  seed_body "${WORK}/local.md" 'daemon line 1' 'daemon line 2' 'daemon line 3'
+  seed_body "${WORK}/candidate.md" 'release line 1'
+  VERDICT="reset-to-release"
+  RESET_ID="none"
+  trip
+  [ "${status}" -eq 0 ] || return 1
+  oc "deletion-shape tripwire" "${output}" || return 1
+  oc "reset verdict without a request — defect" "${output}" || return 1
+  oc "deleted_lines=2" "$(cat "${LEDGER_DIR}/deletion-shape-warnings.log")" || return 1
+  [ ! -e "${LEDGER_DIR}/editable-resets.log" ] || return 1
 }

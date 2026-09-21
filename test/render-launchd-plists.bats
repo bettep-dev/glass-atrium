@@ -116,8 +116,9 @@ run_render() {
   [[ "${output}" != *"launchctl"* ]]
 }
 
-# bats 1.13 checks ONLY the last command's status, so intermediate `[[ ]]` assertions
-# are non-gating — the new tests below carry `|| return 1` on every gating assertion.
+# An intermediate `[[ ]]` is non-gating under bash 3.2 (the macOS default) while CI's
+# bash 5.3 gates it (measured: 3.2.57 vs 5.3.9, bats 1.13.0 on both legs) — the tests
+# below carry `|| return 1` on every gating assertion.
 
 @test "rendered PATH carries the Homebrew bin dir (config-derived from claude_bin)" {
   # Point node_bin at a NON-Homebrew dir so NODE_DIR alone cannot supply

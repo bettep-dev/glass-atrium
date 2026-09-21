@@ -1,29 +1,25 @@
 # Search-First Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents.
-
 ## Principles
 
-**Searching for existing solutions is REQUIRED before implementing new functionality**:
+Searching for an existing solution is REQUIRED before implementing new functionality.
 
-- **Within the project**: search for similar implementations via Grep/Glob → prevent duplication
-- **Packages**: check existing libraries on npm/pub/maven → minimize custom implementations
-- **Official docs**: verify framework built-in features → avoid reinventing the wheel
-- **Pattern recognition** (Search → Read → Mirror — see scope-dev.md → Pre-Execution Verification → Project Convention Probe):
-  - **Step 1 — Search**: Glob sibling files in the same directory + same extension as the planned Write/Edit target
-  - **Step 2 — Read**: read 1 most-recently-modified sibling file before any new write (mandatory — Karpathy "Surgical Changes" alignment)
-  - **Step 3 — Mirror**: apply the 3 extracted axes (`naming case` / `import order` / `error+log pattern`) to the new code — these axes govern code style only; comment LANGUAGE **and comment density / header length** defer to `shared-comment-logging.md` (a sibling is never a precedent for reproducing a non-compliant comment block — author compliant comments per the comment rules; tooling-directive / pragma comments are the exception — they are code-form and ARE mirrored)
+- **In the project**: Grep/Glob for a similar implementation or an existing utility before writing one.
+- **Packages**: check what npm / pub / maven already ships → minimize custom implementations.
+- **Official docs**: verify the framework's built-in feature before reinventing it.
+- **Pattern recognition** (Search → Read → Mirror):
+  - **Step 1 — Search**: Glob the siblings of the planned `Write`/`Edit` target — same directory, same extension.
+  - **Step 2 — Read**: read the most-recently-modified sibling before any new write.
+  - **Step 3 — Mirror**: apply the extracted CODE-FORM axes — `naming case` / `import order` / `error+log pattern` / layout.
+    - Identifier FORM is not a mirrored axis. The canonical verb set and the boolean / stative forms come from the naming canon (`scoped/shared-naming.md`), and a sibling whose identifiers diverge from it is NOT a precedent — the sibling settles case and separator convention only.
+    - Comment language, comment density and header length are not mirrored either: `shared-comment-logging.md` governs them, and a sibling's non-compliant comment block is never a precedent — author compliant comments instead.
+    - Tooling / pragma directives ARE code-form and ARE reproduced (`// @ts-expect-error`, `/* eslint-disable */`, prettier-ignore, region / fold / codegen anchors).
+  - **Inconclusive probe** — more than ~50 sibling hits, 3+ divergent conventions, or axes you cannot extract with confidence: do NOT guess a convention. Narrow the search (retrieve → evaluate → refine, at most 3 rounds), adopt what the narrowed set supports, and declare that choice on the turn-0 `Assumptions:` line.
 
 ## When to Apply
 
-- When adding features, writing utilities, or integrating external APIs
-- **During bug fixes for root cause analysis** — search for similar patterns, prior fix history, and related tests
-
-## Prohibitions
-
-- Starting implementation without searching first
-- Duplicating functionality that already exists in existing utilities
-- Reimplementing features already built into the framework
+- Adding a feature, writing a utility, or integrating an external API.
+- **During a bug fix, for root-cause analysis** — search for similar patterns, prior fix history, and the related tests.
 
 ## Rationalization Rejection (Search)
 
@@ -32,11 +28,3 @@ Applies to all DEV agents.
 | "I already know how to implement this" | Knowledge ≠ awareness of existing implementations · project may already have a utility · 5 min searching saves hours of duplication |
 | "It's faster to just write it" | Writing is fast, maintaining duplicates is slow · search first, write only if nothing exists |
 | "This is too simple to search for" | Simple utilities are the most commonly duplicated code · grep the function name before creating one |
-
-## Escalation to Iterative Codebase Retrieval
-
-Opt-in escalation path — applies when the 3-step Pattern recognition chain (Search → Read → Mirror, see `## Principles`) yields ambiguous, oversized (>50 hits), or unrelated results. Single-pass exact-match cases (known file path, unique symbol name) remain on the 3-step chain — escalation is NOT a default upgrade.
-
-- **Trigger**: Step 1 Glob returns >50 sibling hits OR Step 2 Read of the most-recent sibling reveals inconsistent conventions (3+ divergent patterns) OR Step 3 Mirror axes cannot be extracted with confidence → escalate to the iterative Retrieve → Evaluate → Refine → Stop loop.
-- **Reference**: `scope-research.md` → `## Iterative Codebase Retrieval [RESEARCH]` (canonical loop spec + 4-dimension EVALUATE rubric + Stop-RAG cap=3 ceiling). DEV agents invoke the loop directly when triggered; full delegation to glass-atrium-intel-researcher only when codebase exploration scope exceeds current-task surface area.
-- **Non-replacement**: the 3-step Mirror chain remains the default Project Convention Probe — escalation supplements it for ambiguous cases, never substitutes.

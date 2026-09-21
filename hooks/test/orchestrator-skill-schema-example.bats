@@ -37,7 +37,15 @@ DEFECT_LITERAL="findings: 'string(maxLength)'"
 WITHDRAWN_FLOOR_LITERAL="300-400"
 
 setup() {
-  [[ -f "${SKILL}" ]] || skip "skill file not found: ${SKILL}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${SKILL}" ]] || {
+    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL}" >&2
+    return 1
+  }
 }
 
 # helper: fixed-string, case-insensitive presence assertion with a legible failure message

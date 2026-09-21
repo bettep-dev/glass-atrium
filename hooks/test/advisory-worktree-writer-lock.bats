@@ -13,8 +13,9 @@
 # GA_DATA_ROOT sandboxes the lock store into BATS_TEST_TMPDIR; the fake worktrees carry a `.git`
 # FILE, the shape a linked worktree actually has.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e` — only the LAST command gates the verdict, so
-# every assertion carries `|| return 1`.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+# bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured, bats
+# 1.13.0 on both legs, so bash is the variable, not bats). Every assertion carries `|| return 1`.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-worktree-writer-lock.sh"
 TRACKER_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"

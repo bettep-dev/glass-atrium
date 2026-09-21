@@ -16,8 +16,9 @@
 # FAIL-BEFORE (the bug this pins): pre-fix, restore reverts ONLY the live body and the
 # base store keeps the RELEASE body → next 3-way merge anchors on the wrong base.
 #
-# Every assertion is gated `|| return 1`: this bats version fails a test ONLY on the
-# LAST command's status, so a bare mid-body `[[ ]]` would be silently ignored.
+# Every assertion is gated `|| return 1`: a bare mid-body `[[ ]]` is exempt from errexit
+# under bash 3.2 (the macOS default) and so silently ignored there, while CI's bash 5.3
+# gates it (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on both legs).
 #
 # Run via: bats test/update-restore-base-reversal.bats
 # Requires: bats (brew install bats-core), python3 (update_realpath / prune mtime), bash 3.2+

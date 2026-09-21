@@ -14,8 +14,8 @@
 # are `env -u`-cleared so the DEFAULT resolves; no live ~/.claude or ~/.glass-atrium state touched.
 # Hooks are invoked DIRECTLY as commands (shebang + exec bit) — never interpreter-prefixed.
 #
-# Each assertion uses `|| return 1` fail-fast: bats gates only the test body's LAST command, so an
-# unguarded intermediate assertion would be silently masked by a later passing one.
+# Each assertion uses `|| return 1` fail-fast: an unguarded intermediate `[[ ]]` is silently masked
+# on macOS bash 3.2 while Linux bash 5 aborts on it (measured, bats 1.13.0 on both legs).
 
 bats_require_minimum_version 1.5.0
 

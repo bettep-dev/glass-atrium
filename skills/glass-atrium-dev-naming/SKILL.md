@@ -1,66 +1,54 @@
 ---
 name: glass-atrium-dev-naming
-description: Naming conventions for DEV agents — 5 conciseness principles (no-stutter context removal + identifier-kind verb-form scoping nouns-on-data/verbs-on-functions, with intention-revealing reduction floor), variables (scope-proportional, collections, maps), booleans (stative-first), functions (inverse-scope, layer-specific, 17-category verb taxonomy), classes/types, enums/constants, greppability, anti-pattern prohibition
+description: Naming conventions for DEV agents — conciseness principles (no-stutter context removal, identifier-kind verb form with nouns on data and verbs on functions) and their reduction floor, variables (scope-proportional, collections, maps), booleans (stative-first), functions (inverse-scope, layer-specific, verb taxonomy), classes/types, enums/constants, greppability, anti-patterns
 ---
 
-## Agent Injection Core
-
-> The block below (between the `AGENT-INJECT:NAMING` markers) is the compressed injected core extracted verbatim by a SubagentStart hook and injected into DEV + glass-atrium-qa-code-reviewer subagents. Edit it here only — the full skill (User Dictionary, 5 Conciseness Principles, Quick rules, References) remains below as the on-demand detail.
-
-<!-- AGENT-INJECT:NAMING:START -->
-**Naming delta-core (auto-injected for DEV + glass-atrium-qa-code-reviewer) — non-inferable subset; qa-code-reviewer = enforcement surface.**
-
-1. **Canonical verb set (PRIMARY)** — prefer `get/set/find/create/update/delete/put/build` for ~all functions; domain verb ONLY when the set cannot express the op · mappings (keep): storeTranscript→`setTranscript` · resolveUrl→`getURL` · convertImage→`getImage` · combineFileEmbeddings→`getFileEmbeddings`.
-2. **`get` contract (diverges from AIP-130)** — `get` = acquisition, null/undefined POSSIBLE, NOT throws-on-miss · non-null ONLY via `*OrFail`/`*OrThrow` suffix · a suffix-less `get*` that throws violates the contract.
-3. **`put` vs `update`** — `put*` = internal domain-transition pipeline (layer marker) · `update*` = public CRUD update.
-4. **Layer-verb map** — Controller = REST verbs · Repository = Prisma verbs (`find*` glob), non-null via `*OrThrow`/`*OrFail` · Service = small set (noun-form OK on vendor-adapter surfaces).
-5. **One verb per purpose per layer** — never mix get/find/fetch/retrieve in one layer; never rename an op across layers (create ≠ add ≠ insert — breaks call-chain grep).
-6. **Identifier-kind binary** — data identifier (var/property/field/param/class/type) = NOUN (what it IS) · function/method = direct verb (what it DOES); no noun↔verb cross-form. (Generic padding verbs + noise nouns Data/Info/Manager are model-inferable — see skill.)
-7. **No-stutter** — strip the domain the enclosing class/module/receiver/type already supplies (`User.userName`→`User.name` · `getBucketImage`→`getImage` in a bucket service).
-8. **Reduction-floor guardrail [NON-COMPRESSIBLE — never trim; counterweight to no-stutter]** — never collapse to a generic terminal (`data`/`value`/`status`/`result`/`count`-unqualified); on sibling collision KEEP the qualifier (`userCount`/`projectCount`); KEEP the verb when it is the sole compute-vs-stored-field signal (`calculateTotal` ≠ stored `total`).
-
-Detail below: 17-category verb taxonomy, scope-proportional length table, abbreviations, anti-pattern tables, boolean stative-first.
-<!-- AGENT-INJECT:NAMING:END -->
+> Core rules: the compressed non-inferable naming rules are in `scoped/shared-naming.md` → `## Agent Injection Core` and `## Core rules outside the delta-core`, a rule file DEV agents and glass-atrium-qa-code-reviewer receive through registry membership. This file is the on-demand detail those rules defer to.
 
 ## When to Use
 
-Any identifier — variable, function, class, type, enum, constant — including renames. Excludes prose, commit messages, and comments (see shared-comment-logging.md).
+Any identifier — variable, function, class, type, enum, constant — including renames. Excludes prose, commit messages, and comments (`scoped/shared-comment-logging.md`).
 
 ## User Dictionary (Canonical)
 
-The user's personal convention — it OVERRIDES the broad verb taxonomy (taxonomy = fallback only; lineage + citations in references/VERB-TAXONOMY.md preamble).
+- **Precedence**: the dictionary OVERRIDES the verb taxonomy, which is the fallback only. Lineage and citations: `references/VERB-TAXONOMY.md` → `## User Dictionary Precedence (read first)`.
+- **Where its rules live**: the canonical verb set with its worked mappings, the `get` contract, `put` vs `update` and the layer-verb map are the rule file's delta-core. The rows below are the worked detail it does not carry.
 
-- **Small fixed verb set (PRIMARY)**: prefer `get/set/find/create/update/delete/put/build` for nearly all functions · domain verbs only when the set genuinely cannot express the operation — storeTranscript→`setTranscript` · resolveUrl→`getURL` · convertImage→`getImage` · combineFileEmbeddings→`getFileEmbeddings`
-- **`get` contract**: simple acquisition, null/undefined possible (JS `Map.get` lineage) — NOT "throws on miss" · non-null guarantee carried by suffix `*OrFail`/`*OrThrow` (Prisma/Kotlin style)
-- **`put` vs `update`**: `update*` = public CRUD update · `put*` = internal domain-transition pipeline (HTTP metaphor reused as a layer marker)
 - **Noun-form methods allowed on vendor-adapter surfaces** ("give me the X" resource feel): `recognition` · `transcript` · `timestamp` · `speaker` · `parse`
 - **Family alignment**: shared prefix/suffix across related functions — `build*Embedding` siblings · `find/update/delete/put + Generating` lifecycle · `get/set + Embed` pairs
-- **Layer mapping**: Controller = REST verbs (create/find/update/delete) · Repository = Prisma verbs (`find*`/create/update/delete + `*OrThrow`)
+- **Controller REST verbs, spelled out**: `create` · `find` · `update` · `delete`
 
 ## Core Principles
 
-**Consistency > cleverness** — existing patterns first.
-
 **5 Conciseness Principles**:
 
-1. Remove context aggressively — **no-stutter**: strip the domain the enclosing class/module/package/receiver/type ALREADY supplies; name length is scope-proportional (echo nothing already in scope) — `http.HTTPServer` → `http.Server` · `User.userName` → `User.name` · `getBucketImage` → `getImage` (bucket service) · roundBillingTime → `bill` (Clova adapter)
-2. Remove type (type system already expresses it) — `strName`/`userList` → `name`/`users`
-3. Remove noise (Data/Info/Result/Manager) — `loadEventData` → `loadEvent`
-4. Trim affixes — `categoryFilePath` → `categoryPath`
-5. **Verb-form is identifier-kind-scoped** — *data identifiers* (variables · properties · fields · parameters · classes · types) = NOUN/noun-phrase, strip verb-form padding (`processedData` → `normalized`/`output`) · *functions/methods* = concise direct verb (small set first, domain verb only when the set cannot express it — see User Dictionary), strip helper-verb padding + nominalization (`performDeletion` → `delete()`, `handleRequest` → `route()`). This does NOT make functions nouns — verbs belong on functions, nouns on data/types.
+- **Remove context aggressively — no-stutter**: strip the domain the enclosing class/module/package/receiver/type ALREADY supplies; name length is scope-proportional.
+  - `http.HTTPServer` → `http.Server` · roundBillingTime → `bill` (Clova adapter)
+- **Remove type** (the type system already expresses it) — `strName`/`userList` → `name`/`users`
+- **Remove noise** (Data/Info/Result/Manager) — `loadEventData` → `loadEvent`
+- **Trim affixes** — `categoryFilePath` → `categoryPath`
+- **Verb-form is identifier-kind-scoped** — verbs belong on functions, nouns on data/types; this does NOT make functions nouns.
+  - *Data identifiers* (variables · properties · fields · parameters · classes · types) = NOUN/noun-phrase; strip verb-form padding (`processedData` → `normalized`/`output`).
+  - *Functions/methods* = concise direct verb, canonical set first; strip helper-verb padding + nominalization (`performDeletion` → `delete()`, `handleRequest` → `route()`).
+  - Exception: noun-form methods on vendor-adapter surfaces (`## User Dictionary (Canonical)`).
 
-**Reduction floor (guardrail)** — never reduce below the intention-revealing/searchable floor: strip context only when the enclosing scope provides it unambiguously (sibling collision → keep the qualifier: `userCount`/`projectCount`); never collapse to a generic terminal (`data`·`value`·`status`·`result`·`count`-unqualified); keep the verb when it is the sole signal of a computation vs stored field (`calculateTotal` ≠ `total`); evaluate domain-strip first, then verb-strip — apply both at once only when each passes alone. Detail + rows: references/ANTI-PATTERNS.md.
+**Reduction floor (guardrail)** — the floor itself is the rule file's **Reduction-floor guardrail**. Worked detail it does not carry:
 
-**Quick rules**:
+- Strip context only when the enclosing scope provides it unambiguously.
+- Strip order → references/ANTI-PATTERNS.md → `## Reduction Floor — over-reduction is also a violation`.
 
-- Variables: S-I-D (Short + Intuitive + Descriptive) · **noun/noun-phrase only** (no verb-form padding) · scope-proportional length · plural for collections · `userById` for maps
-- Booleans: stative-first with `is`/`has`/`can`/`should`
-- Functions: **small-set verb + object** (see User Dictionary) · concise direct verb, no padding (perform/do/handle/process/execute/manage) · inverse-scope (wide → short) · one verb per purpose per layer
-- Classes/Types: allowed `*Repository`·`*Service`·`*Controller`·`*Builder`·`*Factory`·`*Provider`·`*Validator` · I-prefix forbidden
-- Greppability: public identifiers greppable · **scope non-redundancy** (no repeating parent scope)
+**Where the quick rules live**:
+
+- Booleans, class/type suffixes, the `I`-prefix ban, greppability and scope non-redundancy → the rule file's `## Core rules outside the delta-core`.
+- Variable length, collections and maps → references/VARIABLES-BOOLEANS.md.
+- Function verb choice → the rule file's **Canonical verb set (PRIMARY)**, **One verb per purpose per layer** and **Identifier-kind binary**, plus the padding-verb list in references/ANTI-PATTERNS.md → `### Verb-form padding & helper-verb wrappers (functions — forbidden)`.
+- Function name length (wide scope → short name) → references/VERB-TAXONOMY.md **Inverse scope rule**.
 
 ## References (Progressive Disclosure)
 
 - **[references/VARIABLES-BOOLEANS.md](references/VARIABLES-BOOLEANS.md)** — scope-proportional length table, allowed abbreviations, collections/maps, boolean prefix semantics, classes/types/enums/greppability
-- **[references/VERB-TAXONOMY.md](references/VERB-TAXONOMY.md)** — User Dictionary precedence preamble (lineage citations) + 17-category verb taxonomy as FALLBACK (Read/Create/Update/Delete/Batch/Suffix/State/Transform/Compute/Validate/Init-Shutdown/Flow/Events/Compose/Cache/Security/Logging) + layer-specific verbs
-- **[references/ANTI-PATTERNS.md](references/ANTI-PATTERNS.md)** — vague-verb prohibition, violation table, synonym-mixing ban, forbidden mixing pairs, inverse get/find-school warning, Common Rationalizations, Red Flags, Verification checklist
+- **[references/VERB-TAXONOMY.md](references/VERB-TAXONOMY.md)** — User Dictionary precedence preamble (lineage citations) + verb taxonomy as FALLBACK + layer-specific verbs
+- **[references/ANTI-PATTERNS.md](references/ANTI-PATTERNS.md)** — naming anti-patterns, by section:
+  - padding verbs and the violation table · circular naming · synonym mixing · forbidden mixing pairs · the inverse get/find school
+  - no-stutter · the reduction floor · forbidden class/type suffixes · dynamic identifiers · cross-layer rename
+  - Common Rationalizations · Red Flags · Verification checklist

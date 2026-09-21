@@ -103,9 +103,25 @@ SKILL_SECTION='Resilient Workflow Authoring'
 SKILL_RULES_HEADING='Absolute schema-cap rules'
 
 setup() {
-  [[ -f "${CHARTER}" ]] || skip "owner site not found: ${CHARTER}"
-  [[ -f "${SKILL}" ]] || skip "owner site not found: ${SKILL}"
-  [[ -f "${META_AGENT}" ]] || skip "owner site not found: ${META_AGENT}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${CHARTER}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${CHARTER}" >&2
+    return 1
+  }
+  [[ -f "${SKILL}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${SKILL}" >&2
+    return 1
+  }
+  [[ -f "${META_AGENT}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${META_AGENT}" >&2
+    return 1
+  }
 }
 
 # helper: fixed-string presence assertion with a legible failure message
@@ -224,9 +240,10 @@ assert_absent_in() {
 
 @test "ALL schema-cap authority is stated once — skill prescribes, charter + META body point (gate)" {
   # NOTE ON FORM: every check below uses an `if` condition, never `cmd && { ... }`. Under the
-  # errexit bats runs each test with, a failing `grep` heading an AND-list makes the list itself
-  # return non-zero and aborts the test — which for an ABSENCE check would invert the gate (a
-  # CLEAN charter would abort as a failure). Condition context is the only safe form here.
+  # errexit each test body runs with, a failing `grep` heading an AND-list leaves the list
+  # non-zero — inert mid-body on every bash, but GATING in FINAL position, where an ABSENCE
+  # check would invert the verdict (a CLEAN charter reading as a failure). An `if` condition
+  # is exempt at every position, so reordering these checks can never acquire that hazard.
   local failures=0
 
   # charter side: no prescription, pointer present in all three prescriptive parts

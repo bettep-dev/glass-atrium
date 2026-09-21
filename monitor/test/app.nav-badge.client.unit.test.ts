@@ -1,7 +1,7 @@
 // Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the live signal and the
 // KPI fail count both land on the ONE architecture (System map) nav slot — the map owns the
 // health readings now, so the Health entry point is gone (T13a) and mergeHealthBadge's source
-// tags keep the three contributors (kpi · drift · daemon) from clobbering each other on
+// tags keep the two contributors (kpi · daemon) from clobbering each other on
 // re-poll. The ALL SYSTEMS footer derives its three states from that same slot, and
 // liveToBadge counts daemons down by `effective_status` (the verdict of record) rather than
 // the transitional `status` duplicate.
@@ -35,10 +35,7 @@ interface Rollup {
   label: string;
 }
 interface AppHelpers {
-  liveToBadge: (live: unknown) => {
-    drift: Badge | null;
-    daemonDown: Badge | null;
-  };
+  liveToBadge: (live: unknown) => { daemonDown: Badge | null };
   mergeHealthBadge: (
     prevHealth: { badges?: Badge[] } | null,
     source: string,
@@ -123,7 +120,7 @@ test("routing: '#health' gets no alias — the unknown-hash fallback takes it to
   app.setHash("");
 });
 
-// --- liveToBadge: both signals aimed at the one map slot ---
+// --- liveToBadge: the daemon signal aimed at the map slot ---
 
 // deepStrictEqual trips on cross-realm prototype mismatch for vm-realm objects — assert fields.
 function assertBadge(b: Badge | null | undefined, badge: string, badgeTone: string): void {
@@ -132,23 +129,26 @@ function assertBadge(b: Badge | null | undefined, badge: string, badgeTone: stri
   assert.strictEqual(b.badgeTone, badgeTone);
 }
 
-test("liveToBadge: stale → drift info badge; non-ok daemons → warn count", () => {
+test("liveToBadge: non-ok daemons → warn count", () => {
   const out = app.liveToBadge({
-    stale: true,
     daemons: [
       { effective_status: "error" },
       { effective_status: "ok" },
       { effective_status: "stale" },
     ],
   });
-  assertBadge(out.drift, "Update needed", "info");
   assertBadge(out.daemonDown, "2", "warn");
 });
 
-test("liveToBadge: no stale + all-ok daemons → both badges null", () => {
-  const out = app.liveToBadge({ stale: false, daemons: [{ effective_status: "ok" }] });
-  assert.strictEqual(out.drift, null);
+test("liveToBadge: all-ok daemons → daemonDown null", () => {
+  const out = app.liveToBadge({ daemons: [{ effective_status: "ok" }] });
   assert.strictEqual(out.daemonDown, null);
+});
+
+// A legacy `stale` field on the payload must not resurrect the retired drift slot.
+test("liveToBadge: the drift slot is gone — daemonDown is the only key", () => {
+  const out = app.liveToBadge({ stale: true, daemons: [] });
+  assert.deepStrictEqual([...Object.keys(out)], ["daemonDown"]);
 });
 
 test("liveToBadge: effective_status wins over a disagreeing transitional status", () => {
@@ -161,7 +161,7 @@ test("liveToBadge: effective_status wins over a disagreeing transitional status"
   assertBadge(out.daemonDown, "1", "warn");
 });
 
-// --- mergeHealthBadge: KPI + drift + daemon coexistence on one slot ---
+// --- mergeHealthBadge: KPI + daemon coexistence on one slot ---
 
 test("mergeHealthBadge: KPI and daemon badges coexist (no clobber)", () => {
   let slot = app.mergeHealthBadge(null, "kpi", { badge: "3", badgeTone: "warn" });
@@ -217,17 +217,6 @@ test("systemsRollup: polled with a warn badge → ISSUES DETECTED", () => {
   assert.strictEqual(r.label, "ISSUES DETECTED");
 });
 
-// The drift badge shares the slot but reports staleness of the drawing, not a system issue.
-test("systemsRollup: a lone drift info badge does not raise ISSUES", () => {
-  const r = app.systemsRollup({
-    architecture: {
-      badges: [{ badge: "Update needed", badgeTone: "info", source: "drift" }],
-    },
-  });
-  assert.strictEqual(r.tone, "ok");
-  assert.strictEqual(r.label, "ALL SYSTEMS");
-});
-
 test("systemsRollup: the retired health slot no longer feeds the footer", () => {
   const r = app.systemsRollup({
     health: { badges: [{ badge: "3", badgeTone: "warn", source: "kpi" }] },
@@ -237,25 +226,22 @@ test("systemsRollup: the retired health slot no longer feeds the footer", () => 
 
 // --- end-to-end: the two effects feeding one navBadges.architecture slot ---
 
-test("effect composition: KPI, drift and daemon badges share the map slot", () => {
+test("effect composition: KPI and daemon badges share the map slot", () => {
   const kpi = app.kpiToBadges({ last_1h_fail_count: 4 });
   assertBadge(kpi.architecture, "4", "warn");
   assert.ok(!("health" in kpi), "kpiToBadges must not emit a health slot key");
   assert.strictEqual(kpi.cost, null);
 
-  const { drift, daemonDown } = app.liveToBadge({
-    stale: true,
+  const { daemonDown } = app.liveToBadge({
     daemons: [{ effective_status: "error" }],
   });
   let slot = app.mergeHealthBadge(null, "kpi", kpi.architecture);
-  slot = app.mergeHealthBadge(slot, "drift", drift);
   slot = app.mergeHealthBadge(slot, "daemon", daemonDown);
-  assert.strictEqual(slot?.badges.length, 3);
+  assert.strictEqual(slot?.badges.length, 2);
   const bySource = new Map(slot.badges.map((b) => [b.source, b.badge]));
   assert.strictEqual(bySource.get("kpi"), "4");
-  assert.strictEqual(bySource.get("drift"), "Update needed");
   assert.strictEqual(bySource.get("daemon"), "1");
 
-  // Two warns out of the three badges — the footer reads the slot the map now owns.
+  // Both warns — the footer reads the slot the map now owns.
   assert.strictEqual(app.systemsRollup({ architecture: slot }).label, "ISSUES DETECTED");
 });

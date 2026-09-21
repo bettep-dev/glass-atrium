@@ -6,11 +6,12 @@ HALTed at the shared gates. These pin the closed bypass:
 
   - the shared gated read (missing / empty / whitespace-only / credential) now
     refuses a section exactly as it refuses a body;
-  - the two append-specific structural terms (a `---` fence, a second `> Rules:`
-    anchor) refuse post-hoc breakage of invariants only render-time asserts;
-  - a section carrying frontmatter-shaped prose is ACCEPTED — the ADD-path
-    smuggle gate is deliberately NOT reused (it would read an anchorless section
-    as pre-anchor head and refuse prose the ADD path tolerates below the anchor);
+  - the two append-specific structural terms (a `---` fence, the retired
+    `> Rules:` header line) refuse post-hoc breakage of invariants only
+    render-time asserts;
+  - a section carrying a frontmatter-shaped key is REFUSED at the same strength
+    as the ADD body gate — the guarded-key scan is shared, so a body the ADD path
+    turns away cannot be smuggled in through --append-section instead;
   - every refusal exits EXIT_HALT with the target .md byte-unchanged.
 
 Self-contained: every write lands in an isolated `--ga-root` temp (conftest.py
@@ -31,7 +32,7 @@ import pytest
 from agent_lifecycle.cli import EXIT_HALT, EXIT_OK, main
 
 _AGENT = "glass-atrium-dev-fixture"
-_ANCHOR = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)"
+_RETIRED_ANCHOR = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)"
 _FIXTURE_MD = (
     "---\n"
     f"name: {_AGENT}\n"
@@ -39,8 +40,6 @@ _FIXTURE_MD = (
     "tools: [Read, Glob, Grep, Edit, Write, Bash]\n"
     "maxTurns: 40\n"
     "---\n"
-    "\n"
-    f"{_ANCHOR}\n"
     "\n"
     f"# {_AGENT}\n"
 )
@@ -97,7 +96,8 @@ def _extend(root: Path, section: Path, *extra: str) -> int:
         ("whitespace_only", "   \n\t\n"),
         ("fence", "## Probe\n\n---\n\nname: attacker\n"),
         ("lone_thematic_break", "## Probe\n\n---\n"),
-        ("second_anchor", f"{_ANCHOR}\n\n## Probe\n"),
+        ("retired_anchor", f"{_RETIRED_ANCHOR}\n\n## Probe\n"),
+        ("guarded_key", "## Tool policy\n\ntools: [Read, Bash]\n"),
     ],
 )
 def test_when_section_fails_a_gate_then_halts_and_md_unchanged(
@@ -176,17 +176,18 @@ def test_when_section_is_clean_then_appends_below_existing_bytes(
     assert after.endswith("## Probe\n\nA clean appended section.\n")
 
 
-def test_when_section_carries_frontmatter_shaped_prose_then_appends(
+def test_when_section_mentions_a_guarded_word_in_prose_then_appends(
     tmp_path: Path,
 ) -> None:
-    # Containment pin for the deliberate non-reuse of the ADD smuggle gate: the
-    # section lands BELOW the anchor, where these tokens are ordinary prose, so
-    # refusing them here would make EXTEND stricter than ADD rather than equal.
+    # Containment pin: the guarded scan is line-anchored, so the same word
+    # mid-sentence is ordinary prose on BOTH paths — parity does not mean the
+    # gate turns away every occurrence of the word.
     md = _seed_store(tmp_path)
     section_file = tmp_path / "section.md"
     section_file.write_text(
-        "## Tool policy\n\ntools: the allowlist is frozen at spawn.\n", encoding="utf-8"
+        '## Tool policy\n\nThe "tools" allowlist is frozen at spawn.\n',
+        encoding="utf-8",
     )
 
     assert _extend(tmp_path, section_file) == EXIT_OK
-    assert "tools: the allowlist is frozen at spawn." in md.read_text(encoding="utf-8")
+    assert '"tools" allowlist is frozen at spawn.' in md.read_text(encoding="utf-8")

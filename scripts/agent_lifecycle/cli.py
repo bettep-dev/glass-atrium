@@ -61,8 +61,7 @@ from .scaffold import (
     BodyAnchorError,
     BodyFrontmatterError,
     PreflightError,
-    assert_body_no_smuggled_frontmatter,
-    reconcile_body_anchor,
+    assert_body_no_smuggled_structure,
 )
 from .secret_scan import SecretDetected
 from .stanza import StanzaError
@@ -142,24 +141,20 @@ def _run_transactional(thunk: Callable[[], str]) -> int:
     return EXIT_OK
 
 
-def _load_validated_body(body_file: str, scope: str) -> str:
+def _load_validated_body(body_file: str) -> str:
     """Read + gate an authored body file at the CLI boundary (the single chokepoint).
 
     Runs the shared gated read (exists / non-empty / fail-closed secret-scan —
-    the same core EXTEND's --append-section goes through), then the two ADD-only
-    body terms IN THE SAME CALL (never a follow-up): (1) no smuggled frontmatter
-    — HALT a body that begins with a `---` fence or carries a frontmatter-shaped
-    name/tools/scope/maxTurns key above the anchor (privilege-escalation guard);
-    (2) `> Rules:` anchor reconciliation against `scope` — injected if absent,
-    HALT on a wrong-scope anchor. Raises ValidationError / BodyFrontmatterError /
-    BodyAnchorError / SecretDetected, all mapped to EXIT_HALT by the caller.
+    the same core EXTEND's --append-section goes through), then the structure
+    gate IN THE SAME CALL (never a follow-up): HALT a body that begins with a
+    `---` fence, carries a frontmatter-shaped name/tools/scope/maxTurns key
+    (privilege-escalation guard), or carries the retired `> Rules:` header line.
+    Raises ValidationError / BodyFrontmatterError / BodyAnchorError /
+    SecretDetected, all mapped to EXIT_HALT by the caller.
     """
     raw = read_gated_text(Path(body_file), label="--body-file")
-    # smuggle gate on the RAW body (before the anchor is stripped) — a body must
-    # not carry its own frontmatter block shadowing the canonical one.
-    assert_body_no_smuggled_frontmatter(raw)
-    # anchor reconcile: inject if absent, HALT on scope mismatch (BodyAnchorError).
-    return reconcile_body_anchor(raw, scope)
+    assert_body_no_smuggled_structure(raw)
+    return raw
 
 
 def _handle_add(args: argparse.Namespace) -> int:
@@ -217,7 +212,7 @@ def _handle_add(args: argparse.Namespace) -> int:
     body_md: str | None = None
     if args.body_file is not None:
         try:
-            body_md = _load_validated_body(args.body_file, args.scope)
+            body_md = _load_validated_body(args.body_file)
         except (
             ValidationError,
             BodyAnchorError,
@@ -300,7 +295,7 @@ def _handle_orphan_scan(args: argparse.Namespace) -> int:
 
 
 def _handle_sync_inject(args: argparse.Namespace) -> int:
-    """Reconcile the 5 tracked inject-scope-rules.sh arrays with the DEV roster.
+    """Reconcile the 2 tracked roster arrays with the DEV roster.
 
     Reuses orphan-scan's inject-list-mismatch detection to report the diff, then
     delegates the transactional write to inject_sync.apply (`.bak` backup +
@@ -456,7 +451,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "authored agent body markdown (mutually exclusive with --description; "
-            "non-empty + `> Rules:` anchor reconciled + secret-scanned at this gate)"
+            "non-empty + structure-gated + secret-scanned at this gate — a body "
+            "carrying a retired `> Rules:` header line is REFUSED)"
         ),
     )
     p_add.add_argument(
@@ -528,8 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync = sub.add_parser(
         "sync-inject",
         help=(
-            "reconcile the 5 tracked inject-scope-rules.sh arrays with the DEV "
-            "roster (transactional: .bak backup + atomic write + rollback)"
+            "reconcile the 2 tracked roster arrays (BUDGET_DEV_AGENTS, "
+            "STYLEREF_AGENTS) with the DEV roster "
+            "(transactional: .bak backup + atomic write + rollback)"
         ),
     )
     p_sync.set_defaults(func=_handle_sync_inject)

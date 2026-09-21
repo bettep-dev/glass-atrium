@@ -27,9 +27,10 @@
 # carries a [SIZE-EST] marker so the VGATE-SIZE-001 gate never masks the branch
 # under test. Run via: bats hooks/test/enforce-verification-gate-reviewer-block.bats
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command
-# gates pass/fail. Every assertion is routed through a helper that `return 1`s on
-# mismatch, so each independently fails the test.
+# BATS GATING NOTE (measured, bats 1.13.0 on both legs): @test bodies run under
+# errexit. A mid-body `[[ ]]` is exempt on macOS bash 3.2.57 but gates on CI's bash
+# 5.3.9; a plain command or `[ ]` gates on both. Every assertion is routed through a
+# helper that `return 1`s on mismatch, so each independently fails the test anywhere.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"

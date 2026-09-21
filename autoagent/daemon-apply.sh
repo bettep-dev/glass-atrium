@@ -38,8 +38,11 @@
 # the target from that before-image. The persistent before-image is the
 # post-hoc rollback anchor (one before-image = one patch); no VCS commit/revert.
 #
-# A JSONL log of applied patches is appended to:
+# A JSONL log of applied patches is appended, under the data root that
+# AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME resolves, to:
 #     ~/.glass-atrium/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
+# A --dry-run writes its rows to the `.dryrun.jsonl` sibling in that same
+# directory — a suffix every real applied-log reader's filename filter rejects.
 #
 # Idempotency: re-running on the same JSON skips patches whose
 # (pattern_label, target_file) tuple already appears in today's applied log.
@@ -52,11 +55,16 @@
 # Usage:
 #     daemon-apply.sh                 # drain the ENTIRE auto-tier pending
 #                                     # backlog oldest-first (no processing cap)
-#     daemon-apply.sh --dry-run       # simulate; log to /tmp/, no file writes
+#     daemon-apply.sh --dry-run       # simulate; log to the data root's
+#                                     # .dryrun.jsonl, no agent file writes
 #     daemon-apply.sh --limit 5       # OPTIONAL manual cap for ad-hoc operator
 #                                     # use; 0 (default) = unbounded process-all
 #     daemon-apply.sh --report PATH   # explicit JSON path (fallback / testing)
 #     daemon-apply.sh --agents-dir P  # explicit agents repo (testing)
+#     daemon-apply.sh --actor TOKEN   # who to record as the mover of the rows
+#                                     # this run flips (default: the machine
+#                                     # token); the operator approve route
+#                                     # passes its own. See "Review actor" below.
 #     daemon-apply.sh --proposal-id N # apply EXACTLY proposal N (single mode);
 #                                     # see "Single-proposal mode" below
 #     daemon-apply.sh --proposal-id N --auto-regen
@@ -74,8 +82,18 @@
 #   Because that click IS the human-in-the-loop decision, this path BYPASSES
 #   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
 #   safety/user-tier proposal here (the auto-batch path still excludes safety;
-#   only this explicit path bypasses). Selection: id=N AND status IN
-#   ('pending','snoozed'). Reuses the SAME apply_diff + update_db_status path.
+#   only this explicit path bypasses). Selection: id=N only; the shell then
+#   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
+#   Reuses the SAME apply_diff + update_db_status path.
+#
+# Review actor — the reviewed_at/reviewed_by contract and the closed token set are
+# declared at monitor/prisma/schema.prisma -> AutoagentProposal:
+#   This script stamps two tokens of that set, one per arm. The apply flip IS a
+#   verdict, so it writes the actor AND the instant; the stale drain terminates a
+#   fossil nobody adjudicated, so it writes the actor alone. --actor overrides the
+#   flip token only (the operator approve route passes `monitor-user`) and is
+#   checked against the flip-eligible set HERE, in the shell: the psql binding
+#   makes a wrong token injection-safe, not correct.
 #
 # Auto-regen mode (regen-on-accept path):
 #   --auto-regen modifies --proposal-id N ONLY when the normal single-mode apply
@@ -103,7 +121,7 @@
 #   explicit FATAL: the batch backlog NEVER auto-regens, by design).
 #
 # Exit codes:
-#     0 — success (batch: drained/empty-backlog · single: proposal applied)
+#     0 — success (batch: drained/empty-backlog/absent report · single: proposal applied)
 #     2 — argument / config error
 #     3 — required tool missing
 #     4 — lock contention (another apply already running)
@@ -114,9 +132,9 @@
 #     7 — backlog anomaly: eligible-pending count exceeds ANOMALY_THRESHOLD
 #         (loud-fail tripwire — a proposal-generation bug must NOT trigger a
 #         runaway mass-apply; nothing is applied, operator must investigate)
-#     8 — --proposal-id: NOT actionable (id not found, OR status not in
-#         pending/snoozed = already applied/rejected/approved). No-op,
-#         idempotent: nothing changed. Scriptable "nothing to do" signal.
+#     8 — --proposal-id: already TERMINAL (status applied/rejected/approved/
+#         reverted). No-op, idempotent: nothing changed. Scriptable "nothing
+#         to do" signal.
 #     9 — --proposal-id: apply FAILED (diff rejected by git apply --recount →
 #         needs_regen; row left pending). Scriptable "could not apply".
 #
@@ -147,18 +165,73 @@
 #
 # Test-suite preflight exit code (verify_test_harness — loud-fail BEFORE the
 # lock, so the daemon never mutates a harness it cannot verify):
-#     16 — test-suite preflight failed. ONE abort semantic for three causes,
+#     16 — test-suite preflight failed. ONE abort semantic for four causes,
 #          named distinctly on stderr: (a) a test root is absent (T1a — the
 #          install carries no executable tests); (b) a suite prerequisite
 #          (bats / GNU parallel) is absent (T22); (c) the suite ran and exited
-#          non-zero (T22 — a RED suite, distinct from absence). Bypassed by
+#          non-zero (T22 — a RED suite, distinct from absence); (d) the runner
+#          refused to start on an unusable toolchain (T22 — it exited the
+#          reserved BATS_RUNNER_TOOLCHAIN_RC, so the suite never ran at all;
+#          distinct from the RED suite of (c)). Bypassed by
 #          AUTOAGENT_ALLOW_UNVERIFIED=1 (operator override, logged), exempted
 #          under --dry-run, and skipped when AUTOAGENT_PREFLIGHT_ACTIVE=1 (the
 #          re-entry sentinel the green-suite run exports so nested daemon-apply
 #          calls do not recurse). Root presence (a) runs on BOTH the batch and
-#          single-proposal paths; the heavy green-suite run (b/c) is batch/cron
+#          single-proposal paths; the heavy green-suite run (b/c/d) is batch/cron
 #          ONLY — the single-proposal (--proposal-id) approve path is exempt.
 #          Does NOT collide with 0/2-15.
+#
+# Parked-pattern guard exit codes (set_parked_verdict — daemon_cycle.py
+# --parked-pattern-guard judges the selected backlog/single rows at the head of
+# EVERY drain, the --auto-regen re-attempt included; report rows carry no
+# proposal id, so that source is announced on stderr, never guarded):
+#     17 — the guard gave no verdict: the mode exited non-zero, printed nothing
+#          (e.g. the update-pause gate's clean exit), or printed anything but one
+#          verdict line. Nothing is applied; stderr names the python3 interpreter
+#          and an abort row lands in the applied log. Not the bats runner's
+#          reserved toolchain rc (also 17), which this script maps to 16.
+#     18 — --proposal-id: REFUSED — every pattern row covering the proposal is
+#          terminal (rejected/applied). Nothing applied and the row is left as it
+#          was (a refusal is not a human rejection); stderr names the parked rows.
+#          Batch rows in that state are skipped instead, and the live batch has
+#          the guard transition them to rejected. Does NOT collide with 0/2-16.
+#
+# Patch-source read exit codes. Single path: select_single_proposal, then
+# assert_generation_outcome after the parked guard, checked in the order
+# 21 → 19 → 23 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# source read itself (21 backlog · 23 backlog row · 22 report), before any row is
+# judged — a source that could not be read never lands the zero-eligible heartbeat:
+#     19 — --proposal-id: no proposal with that id. No-op.
+#     20 — --proposal-id: REFUSED — the stored generation outcome (haiku_status)
+#          is not ok-prefixed (skipped / error / NULL), so the diff was never
+#          quality-screened. Nothing applied, row left as it was; Reject is the
+#          way out, AUTOAGENT_ALLOW_HAIKU_SKIP=1 the operator override (loud WARN).
+#     21 — the proposal query FAILED. --proposal-id: the lookup errored. Batch: the
+#          backlog query errored, and one abort row lands (reason
+#          proposal_query_failed); only reachable with psql present and no
+#          --dry-run. Infra failure, never read as not-found, an empty backlog or a
+#          no-op; nothing applied.
+#     22 — report source: the report exists but is unreadable — not JSON, not an
+#          object, its patches field is not a list of objects, nested too deeply to
+#          decode, a path that cannot be opened or read, or a non-regular path
+#          (directory, dangling link, FIFO) — so it is never read as zero patches.
+#          Nothing applied; one abort row lands (reason report_unreadable). Only a
+#          report ABSENT from the filesystem stays exit 0. Only reachable on the
+#          report fallback (psql absent, or --dry-run). Does NOT collide with 0/2-21.
+#     23 — a proposal ROW is unreadable: the query answered, but a row did not
+#          reassemble (wrong field count, a field that is not base64 UTF-8, or —
+#          --proposal-id — a row carrying another id). Stored data or a
+#          producer/reader grammar mismatch, not a DB outage, so a retry changes
+#          nothing. Checked before the status branch, so an unreadable row is never
+#          judged terminal. Nothing applied; batch lands one abort row (reason
+#          proposal_row_unreadable). Does NOT collide with 0/2-22.
+#
+# Review-actor exit code (assert_review_actor — see "Review actor" above):
+#     24 — --actor named a token outside the flip-eligible set. Refused BEFORE
+#          the lock and before any statement, so nothing is applied and no row is
+#          stamped: a row filed under the wrong mover is worse than one filed
+#          under none, and a silent fall back to the machine default would file
+#          an operator's approval as the daemon's. Does NOT collide with 0/2-23.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -256,6 +329,27 @@ STALE_DRAIN_THRESHOLD="${AUTOAGENT_STALE_DRAIN_THRESHOLD:-3}"
 # field for backward-compat with existing report consumers — no commit exists).
 APPLY_PREFIX="[AUTO]"
 
+# Review-actor tokens this script may stamp, from the closed set declared at
+# monitor/prisma/schema.prisma -> AutoagentProposal. One per arm: a shared default
+# would file the drain's terminations under the apply flip.
+REVIEW_ACTOR_FLIP='daemon-apply-flip'
+REVIEW_ACTOR_DRAIN='daemon-apply-drain'
+readonly REVIEW_ACTOR_FLIP REVIEW_ACTOR_DRAIN
+
+# assert_review_actor TOKEN CONTEXT — die (exit 24) on a token outside the
+# FLIP-eligible subset. The drain token is deliberately absent: it is a real member
+# of the schema's set but names no verdict, so routing it to the flip would file a
+# machine drain as an apply.
+assert_review_actor() {
+    case "$1" in
+        "${REVIEW_ACTOR_FLIP}" | monitor-user) return 0 ;;
+        *) ;;
+    esac
+    printf '[daemon-apply] FATAL: unknown review actor %s (%s) — the flip-eligible set is %s, monitor-user\n' \
+        "$1" "$2" "${REVIEW_ACTOR_FLIP}" >&2
+    exit 24
+}
+
 # -- CLI parse -------------------------------------------------------------
 
 DRY_RUN=0
@@ -272,6 +366,9 @@ PROPOSAL_ID=""
 # Auto-regen: 0 = off (default — stale path keeps exit 9); 1 = on (regen +
 # re-apply on the stale/needs_regen path). Only meaningful with --proposal-id.
 AUTO_REGEN=0
+# Who this run records as the mover of the rows it flips. The machine token is the
+# default because the batch cycle has no operator; the approve route passes its own.
+REVIEW_ACTOR="${REVIEW_ACTOR_FLIP}"
 # daemon_cycle.py path for the regen call (env-overridable for test isolation).
 # Default is facade-safe: SCRIPT_DIR is the realpathed self dir (real tree).
 DAEMON_CYCLE_PY="${AUTOAGENT_DAEMON_CYCLE_PY:-${SCRIPT_DIR}/daemon_cycle.py}"
@@ -314,6 +411,14 @@ while [[ $# -gt 0 ]]; do
             AGENTS_DIR="${2:?--agents-dir requires a value}"
             shift 2
             ;;
+        --actor)
+            REVIEW_ACTOR="${2:?--actor requires a value}"
+            shift 2
+            ;;
+        --actor=*)
+            REVIEW_ACTOR="${1#--actor=}"
+            shift
+            ;;
         --agents-dir=*)
             AGENTS_DIR="${1#--agents-dir=}"
             shift
@@ -328,6 +433,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Checked once, here, then frozen: a readonly value carries its verdict to the stamp
+# site, so the flip needs no second check to know what it is binding.
+assert_review_actor "${REVIEW_ACTOR}" '--actor'
+readonly REVIEW_ACTOR
 
 if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]]; then
     printf '[daemon-apply] FATAL: --limit must be a non-negative integer, 0=unbounded (got %s)\n' \
@@ -642,10 +752,14 @@ REPORT_PATH="${REPORT_PATH:-${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json}"
 
 # -- Output destinations ---------------------------------------------------
 
+# Both sinks derive from REPORTS_DIR, so the override every caller already sets
+# (AUTOAGENT_REPORTS_DIR → GA_DATA_ROOT → $HOME) reaches the dry-run too. The SOLE
+# creation site: it serves the dry-run (which skips the apply lock) and LOCK_DIR's
+# parent, since the lib's acquire mkdir is atomic — no -p, so no parent creation.
+mkdir -p "${REPORTS_DIR}"
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-    APPLIED_LOG="/tmp/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
+    APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.dryrun.jsonl"
 else
-    mkdir -p "${REPORTS_DIR}"
     APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.jsonl"
 fi
 
@@ -697,6 +811,12 @@ GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
 # The bats parallel runner (env-overridable so a test can point it at a stub and
 # never shell the real suite recursively).
 BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
+# The rc scripts/run-bats-parallel.sh RESERVES for a toolchain precondition failure —
+# a tool present but unusable (an unaccepted Xcode licence leaving every `git init`
+# broken), which reds the whole suite while nothing is wrong with the harness itself.
+# MIRRORED rather than read from the runner, which is env-overridable to a stub;
+# autoagent/test/daemon-apply-preflight.bats pins the two copies equal.
+readonly BATS_RUNNER_TOOLCHAIN_RC=17
 
 # preflight_abort_row — serialise ONE abort row for the JSONL sink. Every field
 # is built and checked separately: a nested `$(… | json_escape)` inside the
@@ -713,13 +833,14 @@ preflight_abort_row() {
         "${ts_json}" "${clause_json}" "${runner_json}"
 }
 
-# preflight_fatal — the four verify_test_harness abort sites share one framing
+# preflight_fatal — the verify_test_harness abort sites share one framing
 # ([daemon-apply] FATAL: <clause> Override: AUTOAGENT_ALLOW_UNVERIFIED=1.); pass
 # only the distinct clause so the shared prefix/suffix live in one place.
 # The abort also lands ONE row in the JSONL sink: stderr scrolls past on the
 # launchd path with no reader, so a gate that only prints degrades to silence
-# once the cycle ends. Emitting from the SHARED helper covers all four sites at
-# once — a per-site emit would inherit the same blindness the incident had.
+# once the cycle ends. Emitting from the SHARED helper covers EVERY site at once —
+# a per-site emit would inherit the same blindness the incident had, and would have
+# to be remembered again each time a cause is added.
 # The emit can NEVER change the exit: exit 16 is what the callers' tests assert,
 # so a failed row is a loud WARN and the named code is preserved.
 # The gate fires BEFORE the apply lock, so this is the sink's one unlocked write.
@@ -798,10 +919,17 @@ verify_test_harness() {
     if [[ -n "${PROPOSAL_ID}" ]]; then
         return 0
     fi
+    verify_green_suite
+}
 
-    # Prerequisites probed HERE (not delegated to the runner) so a non-zero
-    # runner exit unambiguously means a RED suite, not a missing tool — absence
-    # and failure abort on DISTINCT stderr lines.
+# The batch-path green-suite run: toolchain presence, the full suite with one flaky
+# retry, then a fatal clause picked by the runner's exit VALUE.
+verify_green_suite() {
+    # bats and GNU parallel are probed HERE rather than read off the runner's rc, so
+    # their ABSENCE aborts on its own stderr line. The runner separately probes what
+    # only it can see — a tool present but unusable — and reports that through the
+    # reserved BATS_RUNNER_TOOLCHAIN_RC, so a non-zero runner exit is disambiguated
+    # BY VALUE below rather than assumed to mean a RED suite.
     local tool
     for tool in bats parallel; do
         if ! command -v "${tool}" >/dev/null 2>&1; then
@@ -820,11 +948,22 @@ verify_test_harness() {
     # fails BOTH runs and hits the unchanged preflight_fatal. Full-suite re-run
     # (not scoped): no target→suite mapping exists and a scoped run would weaken
     # the harness-green invariant.
-    if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
+    # The rc is CAPTURED rather than tested, because the clause below is chosen by its
+    # VALUE: a boolean test collapses a toolchain refusal into the red-suite clause,
+    # which is the mislabel this branch exists to prevent. The retry still fires on any
+    # non-zero: a toolchain refusal fails before stage 1, so its second run is as cheap.
+    local suite_rc=0
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2 || suite_rc=$?
+    if [[ "${suite_rc}" -ne 0 ]]; then
         printf '[daemon-apply] WARN: green_gate_flaky_retry — test suite failed once; re-running the full suite once to rule out a flake\n' >&2
-        if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
-            preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
-        fi
+        suite_rc=0
+        AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2 || suite_rc=$?
+    fi
+    if [[ "${suite_rc}" -eq "${BATS_RUNNER_TOOLCHAIN_RC}" ]]; then
+        preflight_fatal "test-suite toolchain precondition FAILED (runner exit ${suite_rc}) — a required tool is present but unusable, so the suite never ran; refusing to apply onto an unverified harness."
+    fi
+    if [[ "${suite_rc}" -ne 0 ]]; then
+        preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
     fi
     return 0
 }
@@ -855,7 +994,6 @@ fi
 # Skip lock entirely in dry-run so parallel test runs don't collide.
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-    mkdir -p "${REPORTS_DIR}"
     # A crashed/SIGKILLed prior holder (no EXIT trap) left a stranded lock; the
     # lib reclaims it only when the holder is BOTH not-live AND aged past the TTL.
     # A genuinely LIVE holder still blocks here (mutual exclusion preserved).
@@ -943,8 +1081,8 @@ PY
 # Delegates to python3 to avoid jq-dependence (jq is optional).
 #
 # Requires classification == "body-auto" AND approval_tier == "auto" AND a
-# haiku_status of 'ok*' (the JSON-side mirror of the single-proposal SELECT's
-# `haiku_status LIKE 'ok%'` gate), so only patches that BOTH passed pre-verify
+# haiku_status of 'ok*' (the JSON-side mirror of the single path's generation-
+# outcome check, assert_generation_outcome), so only patches that BOTH passed pre-verify
 # (4-axis verification in daemon_cycle.py) AND were Haiku quality-screened reach
 # auto-apply. "auto" tier routes other values upstream:
 #   - "safety"  → monitor #improvement safety queue (explicit user approval)
@@ -953,9 +1091,9 @@ PY
 #                 generate a user-approval row)
 #
 # haiku_status gate (P3b fail-open CLOSE): historically this JSON-fallback path
-# omitted the Haiku gate the single-proposal SELECT enforces, so in psql-absent
+# omitted the Haiku gate the single-proposal path enforces, so in psql-absent
 # (degraded) mode a non-ok haiku_status body-auto patch could still auto-apply.
-# It now mirrors extract_single_proposal: a 'ok*' haiku_status (ok / ok:retried /
+# It now mirrors assert_generation_outcome: a 'ok*' haiku_status (ok / ok:retried /
 # ok:fuzzy-parsed) is required, fail-CLOSED on skipped:*/error:/empty/missing
 # (NULL → ineligible, never an implicit pass). Operator carve-out: an operator
 # who sets AUTOAGENT_ALLOW_HAIKU_SKIP=1 may force-admit haiku-skipped patches
@@ -964,27 +1102,36 @@ PY
 # heredoc is the runtime enforcer for).
 extract_body_auto_patches() {
     local report="$1"
-
-    # Operator carve-out parse — mirrors extract_single_proposal so the two patch
-    # sources behave identically. Default 0 (fail-closed); 1 when the env var is
-    # truthy, with a LOUD WARN so the bypass is never silent.
     local allow_haiku_skip=0
-    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
-        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
-        *) allow_haiku_skip=0 ;;
-    esac
-    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — body-auto patches in %s may apply with a non-ok haiku_status (pre-verify skipped/failed)\n' \
-            "${report}" >&2
+    if is_haiku_skip_override_set "body-auto patches in ${report}"; then
+        allow_haiku_skip=1
     fi
 
     python3 - "${report}" "${allow_haiku_skip}" <<'PY'
-import json, sys
+import json, os, stat, sys
 report_path = sys.argv[1]
 allow_haiku_skip = sys.argv[2] == "1"
-with open(report_path, "r", encoding="utf-8") as fh:
-    data = json.load(fh)
-for patch in data.get("patches", []):
+# Every unreadable shape exits with ONE named line (exit 22 upstream), never an uncaught traceback.
+# Classes enumerated by exception hierarchy, not by content shape: OSError (open/read, a dangling
+# link included), ValueError (decode), RecursionError (decoder depth).
+try:
+    # Refused BEFORE open, on link-following stat: a FIFO names a cause instead of blocking on a
+    # writer that never comes, while a symlink to a real report stays readable.
+    if not stat.S_ISREG(os.stat(report_path).st_mode):
+        sys.exit("[daemon-apply] report %s: not a regular file" % report_path)
+    with open(report_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except OSError as exc:
+    sys.exit("[daemon-apply] report %s: cannot be opened or read (%s)" % (report_path, exc))
+except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError both subclass it
+    sys.exit("[daemon-apply] report %s: not UTF-8 JSON (%s)" % (report_path, exc))
+except RecursionError as exc:
+    sys.exit("[daemon-apply] report %s: nested too deeply to decode (%s)" % (report_path, exc))
+# `{}` as patches would otherwise iterate as zero patches.
+patches = data.get("patches", []) if isinstance(data, dict) else None
+if not isinstance(patches, list) or not all(isinstance(patch, dict) for patch in patches):
+    sys.exit("[daemon-apply] report %s: not a JSON object with a patches list of objects" % report_path)
+for patch in patches:
     if patch.get("classification") != "body-auto":
         continue
     if patch.get("approval_tier") != "auto":
@@ -996,16 +1143,27 @@ for patch in data.get("patches", []):
     # operator haiku-skip carve-out — pre-verify is a hard gate on both paths.
     if patch.get("pre_verify_passed") is not True:
         continue
-    # Haiku-skip gate (P3b, fail-CLOSED): the diff's Haiku pre-verify MUST have
-    # produced an 'ok*' verdict. A missing/empty/None/skipped:*/error: status is
+    # Haiku-skip gate (P3b, fail-CLOSED): the diff's Haiku generation outcome MUST
+    # be an 'ok*' verdict. A missing/empty/None/skipped:*/error: status is
     # excluded UNLESS the operator carve-out is engaged. `or ""` coerces an
     # explicit JSON null so str(None) -> "None" can never slip past startswith.
-    # Mirrors daemon_cycle.is_apply_eligible_haiku_status + the SELECT `LIKE 'ok%'`.
+    # Mirrors daemon_cycle.is_apply_eligible_haiku_status + assert_generation_outcome.
     haiku_status = str(patch.get("haiku_status", "") or "")
     if not allow_haiku_skip and not haiku_status.startswith("ok"):
         continue
     sys.stdout.write(json.dumps(patch, ensure_ascii=False) + "\n")
 PY
+}
+
+# is_haiku_skip_override_set SUBJECT — 0 when the operator carve-out is truthy (default off = fail-closed),
+# WARNing that SUBJECT bypasses the haiku-skip guard so the bypass is never silent. Both patch sources call it.
+is_haiku_skip_override_set() {
+    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
+        1 | true | TRUE | yes | YES) ;;
+        *) return 1 ;;
+    esac
+    printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — %s may apply with a non-ok haiku_status (generation outcome skipped/failed)\n' \
+        "$1" >&2
 }
 
 # backlog_source_available — 0 (true) when PG backlog selection is usable.
@@ -1019,31 +1177,42 @@ backlog_source_available() {
 
 # reassemble_proposal_rows — shared transform for BOTH the batch backlog SELECT
 # and the single-proposal SELECT: reads pipe-separated psql rows on stdin
-# (6 fields: id|cycle_date|pattern_label|target_agent|target_file|diff_b64) and
+# (6 fields: id|cycle_date|label_b64|agent_b64|target_b64|diff_b64) and
 # emits one canonical patch JSON object per row on stdout. The two selectors
 # differ only in their WHERE clause; the row shape + reassembly is identical, so
 # this lives once (DRY) and both call it.
-# base64 arrives un-wrapped (SELECT-side translate strips PG's 76-char wrap).
+# Every free-text column arrives as un-wrapped base64 (SELECT-side translate strips PG's 76-char
+# wrap), so no '|' or newline in stored text can shift a field. Returns non-zero on a row that does
+# not decode — skipping it would read as a smaller backlog, blanking it would apply garbage.
 # SC2259: python source captured in a var, psql rows passed via here-string.
 reassemble_proposal_rows() {
     local rows_in="$1"
     local _py_reassemble
     _py_reassemble="$(cat <<'PY'
 import base64, json, sys
+
+def decode(name, value, row_id):
+    try:
+        return base64.b64decode(value, validate=True).decode("utf-8")
+    except ValueError as exc:  # binascii.Error and UnicodeDecodeError both subclass it
+        sys.exit("[daemon-apply] ERROR proposal row unreadable id=%r: %s is not base64 UTF-8 (%s)"
+                 % (row_id[:20], name, exc))
+
 for raw in sys.stdin:
     raw = raw.rstrip("\n")
     if not raw:
         continue
-    # split on '|' — all 6 fields are psql-controlled and the 6th (base64)
-    # contains no '|', so a plain split is unambiguous.
     parts = raw.split("|")
     if len(parts) != 6:
-        continue
-    row_id, cycle_date, pattern_label, target_agent, target_file, diff_b64 = parts
-    try:
-        proposed_diff = base64.b64decode(diff_b64).decode("utf-8") if diff_b64 else ""
-    except (ValueError, UnicodeDecodeError):
-        proposed_diff = ""
+        sys.exit("[daemon-apply] ERROR proposal row unreadable id=%r: %d fields, expected 6"
+                 % (parts[0][:20], len(parts)))
+    row_id, cycle_date = parts[0], parts[1]
+    pattern_label, target_agent, target_file, proposed_diff = (
+        decode(name, value, row_id)
+        for name, value in zip(
+            ("pattern_label", "target_agent", "target_file", "proposed_diff"), parts[2:]
+        )
+    )
     sys.stdout.write(
         json.dumps(
             {
@@ -1086,9 +1255,10 @@ PY
 #                                 in-loop processing throttle, NOT a SQL cap, so
 #                                 the anomaly detector always sees the full count.
 #
-# psql emits one pipe-separated row per patch; proposed_diff is base64-encoded
+# psql emits one pipe-separated row per patch; every free-text column is base64-encoded
 # to survive embedded newlines/pipes across the psql→shell→python boundary.
 # python re-assembles each row into the canonical patch JSON object.
+# Returns 1 when the query fails, 2 when a row is unreadable (exit 21 vs 23 upstream).
 # Unix socket auth via -d glass_atrium (no -h, no host=).
 extract_backlog_patches() {
     local psql_out psql_err psql_rc
@@ -1101,9 +1271,9 @@ extract_backlog_patches() {
             2>"${psql_err}" <<'PSQL'
 SELECT id,
        cycle_date,
-       pattern_label,
-       coalesce(target_agent, ''),
-       target_file,
+       translate(encode(convert_to(pattern_label, 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(coalesce(target_agent, ''), 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
        translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', '')
 FROM core.autoagent_proposals
 WHERE approval_tier      = 'auto'::core."ApprovalTier"
@@ -1152,88 +1322,44 @@ PSQL
     fi
 
     # Reassemble pipe-separated rows into canonical patch JSON (shared transform).
-    reassemble_proposal_rows "${psql_out}"
+    reassemble_proposal_rows "${psql_out}" || return 2
 }
 
-# extract_single_proposal — single-proposal mode. Emit the ONE proposal with
-# id=PROPOSAL_ID on stdout (same row shape as extract_backlog_patches via the
-# shared reassembler), or nothing if the id is absent / not actionable.
+# extract_single_proposal — single-proposal lookup. Print the psql row for id=PROPOSAL_ID on stdout
+# (nothing when the id is absent); return 1 when the query fails. Row grammar: the backlog's 6 fields,
+# then status and haiku_status (NULL → ''), which select_single_proposal branches on.
 #
 # Selection contract (DELIBERATELY different from the batch backlog):
-#   id     = :'pid'                       (exactly one proposal)
-#   status IN ('pending','snoozed')       (only non-terminal rows are actionable;
-#                                          already applied/rejected/approved → 0 rows
-#                                          → caller exits 8 no-op)
-#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY
-#                               via an explicit user button-click (the human-in-
-#                               the-loop substitute for the safety gate), so a
-#                               user MAY apply a safety/user-tier proposal here.
-#   NO pre_verify_passed filter → user judgment takes priority over the 4-axis
-#                               pre-verify gate.
-#   haiku_status LIKE 'ok%'   → P3b fail-open CLOSE. UNLIKE approval_tier /
-#                               pre_verify_passed (bypassed by-design above), the
-#                               diff's Haiku pre-verify MUST have produced an 'ok*'
-#                               verdict: the human click is NOT a substitute for that
-#                               quality screen. A 401/credential outage leaves
-#                               haiku_status skipped/empty/NULL — those rows were the
-#                               2 live fossils that silently applied here, so they are
-#                               now EXCLUDED (NULL is fail-closed, not admitted). LIKE
-#                               'ok%' (never ='ok') keeps ok / ok:retried /
-#                               ok:fuzzy-parsed. Operator carve-out: an operator who
-#                               sets AUTOAGENT_ALLOW_HAIKU_SKIP=1 may still force-apply
-#                               a haiku-skipped row (loud WARN), for the rare
-#                               deliberate override — the human-override escape hatch.
-# The auto-batch path (extract_backlog_patches) STILL excludes safety — only this
-# explicit single path bypasses. Unix socket auth via -d glass_atrium.
+#   id = :'pid' ONLY          → no status / haiku_status predicate: a not-found, a terminal row and a
+#                               non-ok generation outcome each keep their own exit instead of all
+#                               reading as zero rows.
+#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY via an explicit user
+#                               button-click (the human-in-the-loop substitute for the safety gate),
+#                               so a user MAY apply a safety/user-tier proposal here.
+#   NO pre_verify_passed filter → user judgment takes priority over the 4-axis pre-verify gate.
+# The generation outcome is NOT bypassed — assert_generation_outcome enforces it. Every field before
+# haiku_status is a psql scalar, base64 or an enum, so none can hold a '|'; haiku_status is last, so a
+# '|' inside it can only widen its own field. Unix socket auth via -d glass_atrium.
 extract_single_proposal() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-single.XXXXXX)"
     # shellcheck disable=SC2064
     trap "rm -f '${psql_err}'" RETURN
 
-    # -- haiku-skip fail-open guard (single human-override path) --------------
-    # POLICY DECISION (explicit — P3b option (a): guard-WITH-carve-out). The
-    # documented Tier-1 apply condition requires haiku_status to be 'ok*' (the
-    # Haiku pre-verify actually RAN and passed). This single path bypasses the
-    # auto-tier + pre_verify_passed gates BY DESIGN (the click is the human gate),
-    # but that bypass is SCOPED to those two axes — it does NOT cover haiku_status.
-    # A non-ok haiku_status (skipped/empty/error/NULL) means the diff was never
-    # quality-screened (e.g. a 401 credential outage) — the documented-but-
-    # unenforced fail-open that let 2 fossils apply. The SELECT below now requires
-    # haiku_status LIKE 'ok%' (NULL excluded → fail-closed) UNLESS an operator
-    # explicitly engages the carve-out. The carve-out is LOUD so it is never silent.
-    local allow_haiku_skip=0
-    case "${AUTOAGENT_ALLOW_HAIKU_SKIP:-0}" in
-        1 | true | TRUE | yes | YES) allow_haiku_skip=1 ;;
-        *) allow_haiku_skip=0 ;;
-    esac
-    if [[ "${allow_haiku_skip}" -eq 1 ]]; then
-        printf '[daemon-apply] WARN haiku-skip guard BYPASSED by operator (AUTOAGENT_ALLOW_HAIKU_SKIP set) — id=%s may apply with a non-ok haiku_status (pre-verify skipped/failed)\n' \
-            "${PROPOSAL_ID}" >&2
-    fi
-
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' \
             -v "pid=${PROPOSAL_ID}" \
-            -v "allow_haiku_skip=${allow_haiku_skip}" \
             2>"${psql_err}" <<'PSQL'
 SELECT id,
        cycle_date,
-       pattern_label,
-       coalesce(target_agent, ''),
-       target_file,
-       translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', '')
+       translate(encode(convert_to(pattern_label, 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(coalesce(target_agent, ''), 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
+       translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', ''),
+       status,
+       coalesce(haiku_status, '')
 FROM core.autoagent_proposals
-WHERE id::text = :'pid'
-  AND status IN ('pending'::core."ProposalStatus", 'snoozed'::core."ProposalStatus")
-  -- haiku-skip fail-open guard (P3b): admit ONLY a row whose Haiku pre-verify
-  -- produced an 'ok*' verdict, UNLESS the operator carve-out is engaged
-  -- (:'allow_haiku_skip' = '1', warned loudly in the shell above). LIKE 'ok%'
-  -- keeps ok / ok:retried / ok:fuzzy-parsed; a NULL haiku_status yields NULL
-  -- (not TRUE) so it stays EXCLUDED — fail-closed. Pure SELECT-predicate add: no
-  -- absorption idiom (no stderr-to-null, no forced-success), ON_ERROR_STOP=1
-  -- loud-fail intact.
-  AND (:'allow_haiku_skip' = '1' OR haiku_status LIKE 'ok%');
+WHERE id::text = :'pid';
 PSQL
     )"; then
         psql_rc=0
@@ -1248,8 +1374,43 @@ PSQL
             "${psql_rc}" "${PROPOSAL_ID}" "${err_msg}" >&2
         return 1
     fi
+    printf '%s' "${psql_out}"
+}
 
-    reassemble_proposal_rows "${psql_out}"
+# select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
+# generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
+# terminal. The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
+# for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
+# return code. The row is reassembled before its status is trusted: a row that does not decode, or
+# answers for another id, has no status worth branching on.
+select_single_proposal() {
+    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status haiku_status
+    if ! lookup_out="$(extract_single_proposal)"; then
+        printf '[daemon-apply] FATAL: proposal id=%s lookup failed — nothing applied (DB query error, not a no-op)\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 21
+    fi
+    if [[ -z "${lookup_out}" ]]; then
+        printf '[daemon-apply] proposal id=%s not found — no-op\n' "${PROPOSAL_ID}" >&2
+        exit 19
+    fi
+    IFS='|' read -r row_id cycle_date label agent target diff_b64 status haiku_status <<<"${lookup_out}"
+    if [[ "${row_id}" != "${PROPOSAL_ID}" ]] \
+        || ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")"; then
+        printf '[daemon-apply] FATAL: proposal id=%s row is unreadable — nothing applied (stored row data, not a DB outage)\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 23
+    fi
+    case "${status}" in
+        applied | rejected | approved | reverted)
+            printf '[daemon-apply] proposal id=%s already terminal (status=%s) — no-op\n' \
+                "${PROPOSAL_ID}" "${status}" >&2
+            exit 8
+            ;;
+        *) ;;
+    esac
+    PATCH_ROWS=("${patch_row}")
+    SINGLE_HAIKU_STATUS="${haiku_status}"
 }
 
 # verify_target_in_agents — sanity check: target_file MUST live under agents_dir.
@@ -1583,13 +1744,12 @@ sys.stdout.write("\n".join(out))
 # (Precondition Loud-Fail, shared-self-improve-hygiene).
 #
 # Preservation semantics — present-before implies present-after, NOT unconditional
-# presence: a target that never had frontmatter or a `> Rules:` anchor is not
-# penalized for its continued absence (the rules files and the global-rules file
-# never carried frontmatter). Checks: non-empty · one heading · present-before
-# frontmatter kept · present-before `> Rules:` anchor kept · editable-region
-# marker COUNTS not reduced · the multiset of lines absent after the apply equal
-# to the declared removal set (gate-armed patches only) · not shrunk below half
-# the before-image line count.
+# presence: a target that never had frontmatter is not penalized for its continued
+# absence (the rules files and the global-rules file never carried frontmatter).
+# Checks: non-empty · one heading · present-before frontmatter kept · editable-
+# region marker COUNTS not reduced · the multiset of lines absent after the apply
+# equal to the declared removal set (gate-armed patches only) · not shrunk below
+# half the before-image line count.
 #
 # Why the marker check COUNTS rather than tests presence: a patch that deletes one
 # END marker of several leaves markers present while silently merging two regions
@@ -1633,15 +1793,10 @@ verify_patched() {
         return 1
     fi
 
-    # `> Rules:` anchor: present-before implies present-after.
-    if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${target}"; then
-        return 1
-    fi
-
     # Editable-region markers: present-before implies present-after, per-marker
     # COUNT (rationale in the header). A marker-less before-image counts 0 and so
-    # is never penalized, inheriting the same present-before semantics as the two
-    # checks above. awk (not `grep -c`) does the counting because it exits 0 on a
+    # is never penalized, inheriting the same present-before semantics as the
+    # frontmatter check above. awk (not `grep -c`) counts because it exits 0 on a
     # zero count — no `|| true` suppression to reason about under set -e, and no
     # `grep -c` no-match exit-1 trap.
     local marker before_markers after_markers
@@ -1740,8 +1895,10 @@ get_model_id() {
 }
 
 # update_db_status — transition core.autoagent_proposals.status
-# pending/snoozed → 'applied' (+ reviewed_at = now()) for the
-# (pattern_label, target_file, cycle_date) tuple of the just-committed patch.
+# pending/snoozed → 'applied' (+ reviewed_at = now(), + reviewed_by = the run's
+# REVIEW_ACTOR) for the (pattern_label, target_file, cycle_date) tuple of the
+# just-committed patch. The flip IS a review verdict — it accepts the proposal — so
+# it stamps both provenance columns.
 # (snoozed is included so a user-approved snoozed proposal also lands; the
 # backlog/report paths only ever select pending rows, so this is a no-op widen
 # for them.)
@@ -1832,11 +1989,12 @@ update_db_status() {
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
             -v "lbl=${label}" -v "tgt=${target}" -v "cd=${cycle}" -v "pid=${proposal_id}" \
-            -v "bh=${body_hash}" -v "mid=${model_id}" \
+            -v "bh=${body_hash}" -v "mid=${model_id}" -v "actor=${REVIEW_ACTOR}" \
             2>"${psql_err}" <<'PSQL'
 UPDATE core.autoagent_proposals
 SET status              = 'applied'::core."ProposalStatus",
     reviewed_at         = now(),
+    reviewed_by         = :'actor',
     applied_body_sha256 = nullif(:'bh', ''),
     applied_model_id    = nullif(:'mid', '')
 WHERE pattern_label = :'lbl'
@@ -1953,7 +2111,9 @@ mark_stale_attempt() {
     #   bumped— increment + conditional terminal flip, ONLY when the column exists.
     #           The increment lands first; the same statement flips status to
     #           'snoozed' once the NEW count >= threshold (so attempt N is the one
-    #           that drains). reviewed_at stamps the terminal transition.
+    #           that drains). The terminal arm stamps the actor ALONE — a bounded-retry
+    #           drain terminates a fossil and adjudicates nothing, so it may not stamp
+    #           the verdict instant. An increment stamps neither: the status did not move.
     # The final SELECT emits exactly one verdict token. When the column is absent
     # `bumped` is empty (the UPDATE is gated on `col`), so the SELECT returns
     # 'no_column' and NOTHING is mutated — the row stays pending (column-absent path).
@@ -1963,6 +2123,7 @@ mark_stale_attempt() {
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
             -v "lbl=${label}" -v "tgt=${target}" -v "cd=${cycle}" \
             -v "pid=${proposal_id}" -v "thr=${STALE_DRAIN_THRESHOLD}" \
+            -v "actor=${REVIEW_ACTOR_DRAIN}" \
             2>"${psql_err}" <<'PSQL'
 WITH col AS (
     SELECT count(*) > 0 AS present
@@ -1979,10 +2140,10 @@ bumped AS (
             THEN 'snoozed'::core."ProposalStatus"
             ELSE p.status
         END,
-        reviewed_at = CASE
+        reviewed_by = CASE
             WHEN coalesce(p.stale_attempt_count, 0) + 1 >= :'thr'::int
-            THEN now()
-            ELSE p.reviewed_at
+            THEN :'actor'
+            ELSE p.reviewed_by
         END
     FROM col
     WHERE col.present
@@ -2093,6 +2254,38 @@ VERIFY_BEFORE_IMAGE=""
 REMOVAL_DECLARED_FILE=""
 REMOVAL_VERDICT=""
 
+# Guarded proposals of the drain in progress, one `id<US>rejected<US>rows` line each (US = \x1f) —
+# SET at the head of every drain by set_parked_verdict, read per row in the loop.
+PARKED_VERDICT=""
+
+# emit_abort_row LABEL BUILDER [ARG...] — land the row `BUILDER ARG...` prints, or say out loud that it
+# could not be landed. The exit is NEVER the emit's to change: each caller's named exit code is what its
+# tests assert, so a failed row degrades to a named WARN. The builder runs in its own `$()`, so a build
+# failure takes the WARN branch too.
+emit_abort_row() {
+    local label="$1" row=""
+    shift
+    if row="$("$@")" && emit_log "${row}"; then
+        printf '[daemon-apply] %s abort recorded → %s\n' "${label}" "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: %s abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${label}" "${APPLIED_LOG}" >&2
+    fi
+}
+
+# source_read_abort_row REASON EXIT_CODE — the ONE row a batch source that could not be read lands.
+# `abort` for the reasons at the backlog_anomaly_row header; `reason` names the failed read. Every field
+# is a closed producer literal, so no escaping.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
+source_read_abort_row() {
+    local ts_json
+    ts_json="$(ts_now_json)" || return 1
+    [[ -n "${ts_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"%s","exit_code":%d,"patch_source":"%s"}' \
+        "${ts_json}" "$1" "$2" "${PATCH_SOURCE}"
+}
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -2101,8 +2294,13 @@ REMOVAL_VERDICT=""
 # PATCH_SOURCE drives the loud-fail contract: backlog AND single sources enforce
 # the status UPDATE (exit 6 on failure); report-sourced patches stay best-effort.
 # bash 3.2 compat: mapfile is bash 4+, so we use IFS=$'\n' + read loop.
+# Both batch extractors are captured, not read through `< <(…)`, which drops the return code and turns a
+# failed read into "0 patches" plus a heartbeat that supersedes a live abort.
 PATCH_ROWS=()
 PATCH_SOURCE="report"
+BATCH_PATCH_LINES=""
+# Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
+SINGLE_HAIKU_STATUS=""
 
 if [[ -n "${PROPOSAL_ID}" ]]; then
     # Single-proposal mode. Requires psql (the row lives in PG). enforce=1
@@ -2112,26 +2310,42 @@ if [[ -n "${PROPOSAL_ID}" ]]; then
         exit 3
     fi
     PATCH_SOURCE="single"
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_single_proposal)
+    select_single_proposal
 elif backlog_source_available; then
     PATCH_SOURCE="backlog"
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_backlog_patches)
+    if BATCH_PATCH_LINES="$(extract_backlog_patches)"; then
+        backlog_rc=0
+    else
+        backlog_rc=$?
+    fi
+    if [[ "${backlog_rc}" -eq 2 ]]; then
+        printf '[daemon-apply] FATAL: a backlog row is unreadable — nothing applied (stored row data, not a DB outage)\n' >&2
+        emit_abort_row 'backlog row' source_read_abort_row proposal_row_unreadable 23
+        exit 23
+    elif [[ "${backlog_rc}" -ne 0 ]]; then
+        printf '[daemon-apply] FATAL: backlog query failed — nothing applied (DB query error, not an empty backlog)\n' >&2
+        emit_abort_row 'backlog query' source_read_abort_row proposal_query_failed 21
+        exit 21
+    fi
 else
     # Fallback path only: an absent report = nothing to apply. (Relocated from
     # the old line-219 guard so it no longer short-circuits the backlog path,
     # which is the PRIMARY source and needs no today-dated report.)
-    if [[ ! -f "${REPORT_PATH}" ]]; then
+    # Absent = nothing at the path, link included — a present non-regular path is unreadable, not missing.
+    if [[ ! -e "${REPORT_PATH}" && ! -L "${REPORT_PATH}" ]]; then
         printf '[daemon-apply] no report at %s — nothing to apply\n' "${REPORT_PATH}" >&2
         exit 0
     fi
-    while IFS= read -r _row; do
-        [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-    done < <(extract_body_auto_patches "${REPORT_PATH}")
+    if ! BATCH_PATCH_LINES="$(extract_body_auto_patches "${REPORT_PATH}")"; then
+        printf '[daemon-apply] FATAL: report %s is unreadable — nothing applied (not read as zero patches)\n' \
+            "${REPORT_PATH}" >&2
+        emit_abort_row 'report source' source_read_abort_row report_unreadable 22
+        exit 22
+    fi
 fi
+while IFS= read -r _row; do
+    [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
+done <<<"${BATCH_PATCH_LINES}"
 
 # zero_eligible_row — serialise the ONE post-gate row a cycle with nothing to apply writes. Built
 # field-by-field for the same reason preflight_abort_row is: a nested `$(… | json_escape)` inside the
@@ -2173,16 +2387,10 @@ emit_zero_eligible_row() {
     fi
 }
 
+# Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
+# source exits 21/19/23/8 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
-    if [[ "${PATCH_SOURCE}" == "single" ]]; then
-        # Idempotent no-op: id absent OR status not in pending/snoozed
-        # (already applied/rejected/approved). Distinct exit 8 so the API can
-        # report "nothing to do" vs an apply failure. NO post-gate row: this path is
-        # human-gated, not a scheduled cycle, and the window reasons about cycles.
-        printf '[daemon-apply] proposal id=%s not actionable (not found, or status not in pending/snoozed) — no-op\n' \
-            "${PROPOSAL_ID}" >&2
-        exit 8
-    elif [[ "${PATCH_SOURCE}" == "backlog" ]]; then
+    if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
         emit_zero_eligible_row backlog
     else
@@ -2210,6 +2418,8 @@ fi
 # is what separates this post-gate refusal from the pre-gate one, and §14 reads it to pick the remedy.
 # $1 = the observed eligible-pending count. Both counts are shell-side integers (an array length, and
 # a threshold already regex-validated at parse time), so they add no escaping failure path.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
 backlog_anomaly_row() {
     local eligible="$1" ts_json
     ts_json="$(ts_now_json)" || return 1
@@ -2218,27 +2428,127 @@ backlog_anomaly_row() {
         "${ts_json}" "${eligible}" "${ANOMALY_THRESHOLD}"
 }
 
-# emit_backlog_anomaly_row — land that row, or say out loud that it could not be landed. The exit is
-# NEVER the emit's to change: exit 7 is what the caller's tests assert, so a failed row degrades to a
-# named WARN and the exit code stands.
-emit_backlog_anomaly_row() {
-    local row=""
-    if row="$(backlog_anomaly_row "$1")" && emit_log "${row}"; then
-        printf '[daemon-apply] backlog-anomaly abort recorded → %s\n' "${APPLIED_LOG}" >&2
-    else
-        printf '[daemon-apply] WARN: backlog-anomaly abort row NOT persisted (%s) — this abort is stderr-only\n' \
-            "${APPLIED_LOG}" >&2
-    fi
-}
-
 if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ ${#PATCH_ROWS[@]} -gt ${ANOMALY_THRESHOLD} ]]; then
     printf '[daemon-apply] FATAL: backlog anomaly — %d eligible-pending rows exceed ANOMALY_THRESHOLD=%d; applying nothing (likely proposal-generation runaway, investigate core.autoagent_proposals)\n' \
         "${#PATCH_ROWS[@]}" "${ANOMALY_THRESHOLD}" >&2
     # stderr alone is silence on the launchd path (Precondition Loud-Fail's third leg): this was the
     # one terminal path in the file whose FATAL left no durable trace behind the cycle.
-    emit_backlog_anomaly_row "${#PATCH_ROWS[@]}"
+    emit_abort_row backlog-anomaly backlog_anomaly_row "${#PATCH_ROWS[@]}"
     exit 7
 fi
+
+# -- Parked-pattern guard --------------------------------------------------
+# A proposal queued before its covering pattern rows all turned terminal must not land. The verdict
+# rule and the reject write live in daemon_cycle.py; this side feeds it the selected rows and acts on
+# the answer.
+
+# get_parked_guard_verdict — run the guard mode over PATCH_ROWS; print one `id<US>rejected<US>rows`
+# line per guarded proposal. Non-zero on ANY answer other than exactly one verdict line, so a missing
+# verdict can never read as "nothing guarded". The reject write is requested on the live batch only:
+# a single-mode refusal is not a human rejection, and a dry-run writes nothing.
+get_parked_guard_verdict() {
+    local guard_args=(--parked-pattern-guard)
+    if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ "${DRY_RUN}" -eq 0 ]]; then
+        guard_args+=(--reject-parked)
+    fi
+    local guard_out guard_rc
+    if guard_out="$(printf '%s\n' "${PATCH_ROWS[@]}" | python3 "${DAEMON_CYCLE_PY}" "${guard_args[@]}")"; then
+        guard_rc=0
+    else
+        guard_rc=$?
+    fi
+    if [[ "${guard_rc}" -ne 0 ]]; then
+        printf '[daemon-apply] parked-pattern guard mode exited rc=%d\n' "${guard_rc}" >&2
+        return 1
+    fi
+    local _py_verdict
+    _py_verdict="$(cat <<'PY'
+import json, sys
+try:
+    lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError("expected one verdict line, got %d" % len(lines))
+    verdict = json.loads(lines[0])
+    rejected = {int(pid) for pid in verdict["rejected"]}
+    out = []
+    for entry in verdict["guarded"]:
+        pid = int(entry["proposal_id"])
+        rows = ", ".join("%s:%s" % (row["id"], row["status"]) for row in entry["rows"])
+        out.append("%d\x1f%d\x1f%s\n" % (pid, pid in rejected, rows))
+except (ValueError, KeyError, TypeError) as exc:
+    sys.exit("[daemon-apply] parked-pattern guard output is not a verdict: %s: %s" % (type(exc).__name__, exc))
+sys.stdout.write("".join(out))
+PY
+)"
+    python3 -c "${_py_verdict}" <<<"${guard_out}"
+}
+
+# parked_guard_abort_row — the ONE row a guard failure lands. `abort` for the reasons at the
+# backlog_anomaly_row header; `reason` separates it. PATCH_SOURCE is a closed literal, so no escaping.
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the builder emit_abort_row runs.
+parked_guard_abort_row() {
+    local ts_json
+    ts_json="$(ts_now_json)" || return 1
+    [[ -n "${ts_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"parked_guard_failed","exit_code":17,"patch_source":"%s","selected":%d}' \
+        "${ts_json}" "${PATCH_SOURCE}" "${#PATCH_ROWS[@]}"
+}
+
+# set_parked_verdict — guard the rows about to drain into PARKED_VERDICT. No verdict → apply nothing
+# (exit 17); a guarded single proposal → refuse it (exit 18). Report rows carry no proposal id, so that
+# source is announced before it drains, never judged.
+set_parked_verdict() {
+    PARKED_VERDICT=""
+    if [[ "${PATCH_SOURCE}" == "report" ]]; then
+        printf '[daemon-apply] NOTICE parked-pattern guard unavailable on the report source (dry-run, or psql absent) — %d row(s) drain without the covering-pattern check\n' \
+            "${#PATCH_ROWS[@]}" >&2
+        return 0
+    fi
+    local verdict interpreter
+    if ! verdict="$(get_parked_guard_verdict)"; then
+        interpreter="$(command -v python3)"
+        printf '[daemon-apply] FATAL: parked-pattern guard gave no verdict (interpreter=%s daemon_cycle=%s) — applying nothing this run\n' \
+            "${interpreter}" "${DAEMON_CYCLE_PY}" >&2
+        emit_abort_row 'parked-pattern guard' parked_guard_abort_row
+        exit 17
+    fi
+    if [[ "${PATCH_SOURCE}" == "single" ]] && [[ -n "${verdict}" ]]; then
+        printf '[daemon-apply] parked-pattern guard REFUSED proposal id=%s — every covering pattern row is terminal (rows %s); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.\n' \
+            "${PROPOSAL_ID}" "${verdict##*$'\x1f'}" >&2
+        exit 18
+    fi
+    PARKED_VERDICT="${verdict}"
+}
+
+# get_parked_verdict_line ID — `rejected<US>rows` for guarded proposal ID, or nothing.
+get_parked_verdict_line() {
+    local pid rejected rows
+    while IFS=$'\x1f' read -r pid rejected rows; do
+        if [[ -n "${pid}" ]] && [[ "${pid}" == "$1" ]]; then
+            printf '%s\x1f%s\n' "${rejected}" "${rows}"
+            return 0
+        fi
+    done <<<"${PARKED_VERDICT}"
+}
+
+# assert_generation_outcome — single source only: exit 20 unless the stored generation outcome is
+# ok-prefixed (ok / ok:retried / ok:fuzzy-parsed; '' = NULL fails closed) or the operator carve-out is
+# set. The click bypasses the tier and pre_verify_passed gates, never this one: a non-ok outcome means
+# the diff was never quality-screened. Runs after the parked guard, so exit 18 wins for a row tripping both.
+assert_generation_outcome() {
+    if [[ "${PATCH_SOURCE}" != "single" ]]; then
+        return 0
+    fi
+    if is_haiku_skip_override_set "id=${PROPOSAL_ID}"; then
+        return 0
+    fi
+    if [[ "${SINGLE_HAIKU_STATUS}" != ok* ]]; then
+        printf '[daemon-apply] use Reject — proposal id=%s generation outcome haiku_status=%s is not ok-prefixed, so its diff was never quality-screened; nothing applied, row left as it was (operator override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)\n' \
+            "${PROPOSAL_ID}" "${SINGLE_HAIKU_STATUS:-<none>}" >&2
+        exit 20
+    fi
+}
 
 # apply_patch_rows — drain the global PATCH_ROWS array, applying each patch and
 # mutating the shared counters (PROCESSED/APPLIED/SKIPPED/ERRORS/NEEDS_REGEN).
@@ -2249,6 +2559,9 @@ fi
 # column-0 `PY` delimiter inward — breaking heredoc termination.
 apply_patch_rows() {
 local row
+# Head of EVERY drain, so the auto-regen re-attempt is guarded as well as the first pass.
+set_parked_verdict
+assert_generation_outcome
 for row in "${PATCH_ROWS[@]}"; do
     # LIMIT=0 = unbounded (drain all). LIMIT>0 = optional manual processing
     # throttle for ad-hoc operator use (NOT the anomaly guard, which already
@@ -2290,6 +2603,27 @@ PY
     patch_id="${PATCH_ID:-}"
 
     timestamp="$(ts_now)"
+
+    # -- Sanity 0: parked-pattern guard verdict ----------------------------
+    # Every covering pattern row is terminal. Any reject already ran inside the guard mode, so the
+    # row only has to stay unapplied; `rejected` records whether that write moved it.
+    parked_line=""
+    if [[ -n "${PARKED_VERDICT}" ]]; then
+        parked_line="$(get_parked_verdict_line "${patch_id}")"
+    fi
+    if [[ -n "${parked_line}" ]]; then
+        SKIPPED=$((SKIPPED + 1))
+        parked_rejected=false
+        [[ "${parked_line%%$'\x1f'*}" != "1" ]] || parked_rejected=true
+        emit_log "$(printf '{"ts":%s,"status":"skip","reason":"parked_pattern","pattern_label":%s,"target_file":%s,"proposal_id":%s,"rejected":%s,"parked_rows":%s}' \
+            "$(printf '%s' "${timestamp}" | json_escape)" \
+            "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
+            "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
+            "$(printf '%s' "${patch_id}" | json_escape)" \
+            "${parked_rejected}" \
+            "$(printf '%s' "${parked_line#*$'\x1f'}" | json_escape)")"
+        continue
+    fi
 
     # -- Sanity 1: target inside agents/ ----------------------------------
     if ! verify_target_in_agents "${PATCH_TARGET}"; then
@@ -2634,18 +2968,13 @@ if [[ "${PATCH_SOURCE}" == "single" ]] && [[ "${APPLIED}" -eq 0 ]] \
             # second drain's verdict reads cleanly.
             printf '[daemon-apply] auto-regen: id=%s regenerated — re-attempting apply\n' \
                 "${PROPOSAL_ID}" >&2
-            PATCH_ROWS=()
-            while IFS= read -r _row; do
-                [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
-            done < <(extract_single_proposal)
+            select_single_proposal
             PROCESSED=0
             APPLIED=0
             SKIPPED=0
             ERRORS=0
             NEEDS_REGEN=0
-            if [[ ${#PATCH_ROWS[@]} -gt 0 ]]; then
-                apply_patch_rows
-            fi
+            apply_patch_rows
             if [[ "${APPLIED}" -ge 1 ]]; then
                 printf '[daemon-apply] auto-regen: id=%s RE-APPLIED after regen\n' \
                     "${PROPOSAL_ID}" >&2
@@ -2693,7 +3022,7 @@ printf '[daemon-apply] processed=%d applied=%d skipped=%d needs_regen=%d errors=
 # row either applied (APPLIED=1 → success, fall through to exit 0) or failed to
 # land (needs_regen, or an error path) leaving it pending. The API must see
 # a NON-zero exit to report "could not apply" to the user → exit 9 (distinct
-# from exit 8 "not actionable / no-op"). Batch/report modes are unaffected.
+# from exit 8 "already terminal / no-op"). Batch/report modes are unaffected.
 # (--auto-regen replaces this exit-9 stale path above; this block stays the
 # default for --auto-regen-off OR a non-stale single failure (hard error).)
 if [[ "${PATCH_SOURCE}" == "single" ]] && [[ "${APPLIED}" -eq 0 ]]; then

@@ -14,7 +14,6 @@
 #   2 = measurement failure (missing dep, IO error)
 #
 # Thresholds: ~/.claude/skills/glass-atrium-ops-token-audit/thresholds.yaml (SSoT)
-# Methodology: ECC C4 audit citation only — implementation independent
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -128,7 +127,7 @@ def scan_skills(skills_root: Path):
     rows = []
     if not skills_root.is_dir():
         return rows
-    # top-level .md files (e.g. glass-atrium-ops-orchestrator.md, SKILL-od-extension-pattern.md)
+    # top-level .md files (e.g. glass-atrium-ops-orchestrator.md)
     for p in sorted(skills_root.glob("*.md")):
         text = p.read_text(encoding="utf-8", errors="replace")
         rows.append({
@@ -206,7 +205,6 @@ def scan_registry(root: Path):
 
 def main():
     agents = scan_dir(ROOT / "agents", ".md", capture_frontmatter=True)
-    # add description to rule rows
     # scan_dir is NON-recursive — rules live foldered under rules/glass-atrium/
     rules = scan_dir(ROOT / "rules" / "glass-atrium", ".md", capture_frontmatter=False)
     for r in rules:

@@ -131,8 +131,10 @@ count_bound_matcher() {
 
 @test "Workflow matcher -> BOTH Workflow hooks EMITTED by the wire loop as independent leaves" {
   # EMISSION axis — the one property no other suite owns. Three axes are in play.
-  # roster MEMBERSHIP is owned: hook-bindings-complete.bats :: per-event leaf count
-  # (it splits the roster's matcher column into a field it never asserts).
+  # roster MEMBERSHIP is owned: doctor-hook-bindings.bats :: write_full_settings is the general
+  # guard (it names every roster leaf), and the hook-bindings-complete.bats membership test pins
+  # the security-critical subset (it splits the roster's matcher column into a field it never
+  # asserts); no per-event leaf count is asserted anywhere.
   # roster MATCHER VALUE is owned only for OTHER matchers — doctor-hook-bindings.bats
   # still pins per-tuple matcher reporting for Bash / Agent / Write|Edit|MultiEdit /
   # <none>, but it carries no Workflow-matcher case, so the jq select and the
@@ -162,8 +164,9 @@ count_bound_matcher() {
     | sort | join(",")' "${SETTINGS}")"
 
   # ONE && chain: every clause decides the test. Written as separate mid-body
-  # [[ ]] lines they would be inert — bash errexit does not fire on a failing
-  # [[ ]] keyword conditional, so only the LAST line of a test can red it.
+  # [[ ]] lines they would be inert on macOS — bash 3.2 errexit does not fire on a
+  # failing [[ ]] keyword conditional, so only the LAST line reds the test there;
+  # CI's bash 5.3 does fire (measured: 3.2.57 vs 5.3.9, bats 1.13.0 on both legs).
   [[ "$(count_bound "${a}")" -eq 1 ]] &&
     [[ "$(count_bound "${b}")" -eq 1 ]] &&
     [[ "$(count_bound_matcher "${a}" 'Workflow')" -eq 1 ]] &&
@@ -307,9 +310,10 @@ JSON
   [[ "${status}" -eq 0 ]] || return 1
   GA_TARGET_HOME="${TARGET}" run "${REAL_GA}" doctor
   # ONE && chain so the DORMANCY claim — the whole point of this case — actually
-  # decides it. As three separate mid-body [[ ]] lines the first two were inert:
-  # bash errexit does not fire on a failing [[ ]] keyword conditional, so only the
-  # last line could red the case and the reconciliation claim asserted nothing.
+  # decides it. As three separate mid-body [[ ]] lines the first two were inert on
+  # macOS: bash 3.2 errexit does not fire on a failing [[ ]] keyword conditional, so
+  # only the last line could red the case there and the reconciliation claim asserted
+  # nothing (CI's bash 5.3 does fire; measured 3.2.57 vs 5.3.9, bats 1.13.0 both legs).
   [[ "${output}" != *"dormant hook binding(s)"* ]] &&
     [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]] &&
     [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]

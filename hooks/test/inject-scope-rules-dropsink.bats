@@ -22,8 +22,10 @@
 #   preserved fail-open invariant — it guards that the new overage arithmetic + counter write never
 #   trip the spawn-suppressing ERR trap.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
-#   assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion `return 1`s on
+#   mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 
@@ -38,45 +40,42 @@ setup() {
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 
-  # A comment fixture that injects one small block well under the 9984 ceiling → no drop.
-  COMMENT_FIT="${BATS_TEST_TMPDIR}/comment-fit.md"
+  # A BUDGET-DEV fixture that injects one small block well under the 9984 ceiling → no drop.
+  BUDGET_FIT="${BATS_TEST_TMPDIR}/budget-fit.md"
   printf '%s\n' \
     'preamble (must not reach the child)' \
-    '<!-- AGENT-INJECT:START -->' \
-    '**Comment-rule core (test block)**' \
+    '<!-- AGENT-INJECT:BUDGET-DEV:START -->' \
+    '**Budget sizing (test block)**' \
     'body line' \
-    '<!-- AGENT-INJECT:END -->' \
-    'trailer (must not reach the child)' >"${COMMENT_FIT}"
+    '<!-- AGENT-INJECT:BUDGET-DEV:END -->' \
+    'trailer (must not reach the child)' >"${BUDGET_FIT}"
 
-  # An oversized (~12 KB) comment fixture whose block alone exceeds the ceiling → forces the drop loop.
-  COMMENT_BIG="${BATS_TEST_TMPDIR}/comment-big.md"
+  # An oversized (~11 KB) BUDGET-DEV fixture whose block alone exceeds the ceiling → forces the drop loop.
+  BUDGET_BIG="${BATS_TEST_TMPDIR}/budget-big.md"
   {
-    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:START -->' '**Comment-rule core (test block)**'
+    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:BUDGET-DEV:START -->' '**Budget sizing (test block)**'
     head -c 11000 /dev/zero | tr '\0' 'x'
-    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:END -->' 'trailer'
-  } >"${COMMENT_BIG}"
+    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:BUDGET-DEV:END -->' 'trailer'
+  } >"${BUDGET_BIG}"
 }
 
-# Drive the hook's SubagentStart injection path for agent_type $1 with comment source $2. All other
-# scope sources are sandboxed to /nonexistent and the meter is off, isolating the comment block; the
+# Drive the hook's SubagentStart injection path for agent_type $1 with BUDGET-DEV source $2 ($1 must be
+# a BUDGET_DEV_AGENTS member for the block to extract). The meter is off, isolating the budget-dev block; the
 # drop sink + spawn counter are redirected into the Bats tmpdir. Invokes the hook DIRECTLY (executable,
 # never interpreter-prefixed).
 run_inject() {
-  local agent="${1}" comment_src="${2}"
+  local agent="${1}" budget_src="${2}"
   run bash -c '
-    agent="$1"; hook="$2"; comment="$3"; droplog="$4"; counter="$5"
+    agent="$1"; hook="$2"; budget="$3"; droplog="$4"; counter="$5"
     printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-      INJECT_SCOPE_RULES_SRC="${comment}" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${comment_src}" "${DROPLOG}" "${COUNTER}"
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${DROPLOG}" "${COUNTER}"
 }
 
 # Drive the named aggregation-query mode directly. stdin is /dev/null so a pre-T7 hook (no mode
@@ -101,9 +100,6 @@ run_inject_lesson() {
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-      INJECT_SCOPE_RULES_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
       INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
@@ -120,9 +116,6 @@ measure_base_bytes() {
   printf '%s' "{\"agent_type\":\"${agent}\"}" | env \
     SUBAGENT_BUDGET_METER_OFF=1 \
     INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-    INJECT_SCOPE_RULES_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
     INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
     INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
@@ -145,7 +138,7 @@ write_lessons() {
   }' >"${out}"
 }
 
-# Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
+# Per-assertion gate helpers — an explicit `return 1` gates on every bash (see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2
@@ -163,18 +156,18 @@ assert_contains() {
 # ── AC1 — dropped block appends a record naming agent, block, and byte overage ──────────────────────
 
 @test "AC1: a dropped block appends a structured record naming agent, block, and byte overage" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   [[ -f "${DROPLOG}" ]] || {
     echo "drop sink not written after a drop" >&2
     return 1
   }
-  grep -q 'agent=glass-atrium-dev-shell' "${DROPLOG}" || {
+  grep -q 'agent=glass-atrium-dev-front' "${DROPLOG}" || {
     echo "record missing agent (log: $(cat "${DROPLOG}"))" >&2
     return 1
   }
-  grep -q 'block=comment ' "${DROPLOG}" || {
-    echo "record missing block=comment (log: $(cat "${DROPLOG}"))" >&2
+  grep -q 'block=budget-dev ' "${DROPLOG}" || {
+    echo "record missing block=budget-dev (log: $(cat "${DROPLOG}"))" >&2
     return 1
   }
   # byte overage present AND positive (= pre_drop_bytes − ceiling) — the field HEAD does not emit.
@@ -189,7 +182,7 @@ assert_contains() {
 # ── AC2 — no drop → no record, yet the denominator still advances ────────────────────────────────
 
 @test "AC2: a no-drop spawn writes no drop record but advances the injection-attempted denominator" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   # Injection was attempted → the denominator counter advanced to exactly 1.
   [[ -f "${COUNTER}" ]] || {
@@ -212,11 +205,11 @@ assert_contains() {
 # ── AC3 — named aggregation query, denominator = spawns with injection attempted ───────────────────
 
 @test "AC3: the named aggregation query reports drops over spawns-with-injection-attempted" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   run_drop_rate
   assert_status 0
@@ -243,8 +236,8 @@ assert_contains() {
   : >"${blocker}"
   DROPLOG="${blocker}/sub/drop.log"
   COUNTER="${blocker}/sub/spawns.count"
-  # COMMENT_BIG forces the drop path → append_drop_log runs against the unwritable sink.
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  # BUDGET_BIG forces the drop path → append_drop_log runs against the unwritable sink.
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   # The injection is unaltered: the JSON envelope + the always-on emit block still reach the child.
   assert_contains 'additionalContext'
@@ -252,6 +245,63 @@ assert_contains() {
 }
 
 # ── AC5 — lesson truncate-and-keep records a PARTIAL row; DROP semantics untouched ─────────────────
+
+# Drive one injection with an overridable ceiling — the only way to put the assembly in the state
+# where a block sheds AND the resulting marker no longer fits, which is what writes a MARKERLOST row.
+run_inject_ceiling() {
+  local agent="${1}" budget_src="${2}" ceiling="${3}"
+  run bash -c '
+    agent="$1"; hook="$2"; budget="$3"; droplog="$4"; counter="$5"; ceiling="$6"
+    printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
+      INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
+      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
+      INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
+      SUBAGENT_BUDGET_METER_OFF=1 \
+      INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+      "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${DROPLOG}" "${COUNTER}" "${ceiling}"
+}
+
+@test "AC3: a MARKERLOST row records the omitted marker without inflating the DROP numerator" {
+  # The marker is budgeted inside the size check, so when the non-droppable blocks alone leave no
+  # room it is omitted rather than emitted over the cap — and the omission is recorded. MARKERLOST is
+  # a second row for the SAME shed, so the risk it carries is double-counting: the aggregation greps
+  # ' DROP ', and a MARKERLOST row written as a DROP row would report two drops for one shed.
+  #
+  # The ceiling is DERIVED, never a literal. A literal would make this case host-dependent in exactly
+  # the way the marker suite already was: the marker embeds the fixture's own source path, so its
+  # rendered size grows with TMPDIR, and a ceiling chosen on one host can leave room for it on
+  # another. base + 2 removes the variable outright — once budget-dev sheds, the surviving assembly
+  # is exactly `base` bytes and the join alone consumes the remaining 2, so the marker cannot fit at
+  # ANY path length (its shortest possible rendering is still one byte longer than nothing).
+  local base ceiling drop_rows
+  base="$(measure_base_bytes glass-atrium-dev-front)"
+  [[ -n "${base}" && "${base}" -gt 0 ]] || {
+    echo "could not measure base bytes" >&2
+    return 1
+  }
+  ceiling=$((base + 2))
+  run_inject_ceiling "glass-atrium-dev-front" "${BUDGET_BIG}" "${ceiling}"
+  assert_status 0
+  grep -q ' MARKERLOST agent=glass-atrium-dev-front block=marker ' "${DROPLOG}" || {
+    echo "no MARKERLOST row for an omitted marker (log: $(cat "${DROPLOG}"))" >&2
+    return 1
+  }
+  # Exactly one DROP row — the shed itself. The MARKERLOST row is not one.
+  drop_rows="$(grep -c ' DROP ' "${DROPLOG}" || true)"
+  [[ -z "${drop_rows}" ]] && drop_rows=0
+  [[ "${drop_rows}" -eq 1 ]] || {
+    echo "expected 1 DROP row, got ${drop_rows} (log: $(cat "${DROPLOG}"))" >&2
+    return 1
+  }
+  run_drop_rate
+  assert_status 0
+  assert_contains "drops=1"
+  assert_contains "injection_attempted=1"
+}
 
 @test "AC5: a truncated-and-kept lesson appends a PARTIAL sink row with kept_bytes, never DROP" {
   local base residual ceiling ov

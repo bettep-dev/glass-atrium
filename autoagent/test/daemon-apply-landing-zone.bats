@@ -242,7 +242,7 @@ applied_log_path() {
   # (the guard rejected BEFORE any apply, so NOTHING was written).
   cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md"
   # And the injected line never reached the file (SC2314-safe negative assertion:
-  # run grep + status check, NOT a bare `! grep` which Bats ignores).
+  # run grep + status check, not a bare `! grep`).
   run grep -q 'injected protected rule' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
 }

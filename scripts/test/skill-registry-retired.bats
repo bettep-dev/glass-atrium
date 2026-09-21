@@ -15,8 +15,10 @@
 # CLEARING — once a regeneration drops the files[] row the condition is false forever after.
 # The divergence window itself is covered by scripts/test/manifest-check-clean.bats.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate a test's verdict (bash 3.2 under
-# bats keeps going and the LAST command decides), so the assertion `return 1`s explicitly.
+# BATS GATING NOTE: @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))`
+# does not gate on macOS bash 3.2.57 — it DOES on Linux bash 5.3.9 in CI (measured, bats
+# 1.13.0 both legs, so bash is the variable, not bats) — so the assertion `return 1`s
+# explicitly and gates the same way on both.
 #
 # Run via: bats scripts/test/skill-registry-retired.bats
 # Requires: bats >= 1.5.0, git, jq, bash 3.2+

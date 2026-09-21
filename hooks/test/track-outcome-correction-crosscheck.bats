@@ -62,9 +62,10 @@ teardown() {
   fi
 }
 
-# bats checks only the LAST command's status, so a bare intermediate assertion is silently ignored.
+# A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) while bash 5.3
+# (CI) aborts on it — measured, bats 1.13.0 on both legs, so bash is the variable, not bats.
 # Each helper echoes a diagnostic and returns non-zero so the caller's `|| return 1` aborts AT the
-# failing assertion.
+# failing assertion on both.
 eq() { [[ "${2}" == "${1}" ]] || { printf 'assert-eq FAILED: expected [%s], got [%s]\n' "${1}" "${2}" >&2; return 1; }; }
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in:\n%s\n' "${1}" "${2}" >&2; return 1; }; }

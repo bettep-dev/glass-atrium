@@ -1,0 +1,59 @@
+# Suite census — one row per test root per occasion. Append-only; never rewrite a row.
+# Columns: iso8601_utc	short_sha	root	bats	python	ts
+# Occasion: the pre-merge live-deploy gate (orchestrator-role.md -> Document-Driven Workflow step 6),
+#   at the point the combined tree is deployed and run-bats-parallel.sh is run before the PR opens.
+# Five roots, not four: run-bats-parallel.sh recurses only the first four and monitor/test is absent
+#   from the live install, so a census keyed to the runner reproduces the blind spot it exists to watch.
+# This is a RECORD, never a gate: no threshold, no CI failure on growth. Honor-system, like the rest of step 6.
+# Command: see .claude/prompt-audit/evidence/ledger.md -> "Suite census" (single copy, not duplicated here).
+# The first three rows are a BACKFILL of the CI diet, computed with git grep over each commit's tree.
+2026-09-07T03:07:32Z	8229b66	test	776	0	0
+2026-09-07T03:07:32Z	8229b66	hooks/test	1509	290	0
+2026-09-07T03:07:32Z	8229b66	scripts/test	676	145	0
+2026-09-07T03:07:32Z	8229b66	autoagent/test	172	796	0
+2026-09-07T03:07:32Z	8229b66	monitor/test	0	0	1305
+2026-09-08T09:36:48Z	88cee9f	test	691	0	0
+2026-09-08T09:36:48Z	88cee9f	hooks/test	1509	290	0
+2026-09-08T09:36:48Z	88cee9f	scripts/test	634	140	0
+2026-09-08T09:36:48Z	88cee9f	autoagent/test	172	796	0
+2026-09-08T09:36:48Z	88cee9f	monitor/test	0	0	1165
+2026-09-09T15:34:53Z	8ac62b8	test	691	0	0
+2026-09-09T15:34:53Z	8ac62b8	hooks/test	1512	290	0
+2026-09-09T15:34:53Z	8ac62b8	scripts/test	634	140	0
+2026-09-09T15:34:53Z	8ac62b8	autoagent/test	172	796	0
+2026-09-09T15:34:53Z	8ac62b8	monitor/test	0	0	1173
+2026-09-10T01:56:00Z	11a849c	test	691	0	0
+2026-09-10T01:56:00Z	11a849c	hooks/test	1512	290	0
+2026-09-10T01:56:00Z	11a849c	scripts/test	634	140	0
+2026-09-10T01:56:00Z	11a849c	autoagent/test	172	796	0
+2026-09-10T01:56:00Z	11a849c	monitor/test	0	0	1173
+2026-09-10T02:09:04Z	f6b4957	test	691	0	0
+2026-09-10T02:09:05Z	f6b4957	hooks/test	1512	290	0
+2026-09-10T02:09:05Z	f6b4957	scripts/test	634	140	0
+2026-09-10T02:09:05Z	f6b4957	autoagent/test	172	796	0
+2026-09-10T02:09:05Z	f6b4957	monitor/test	0	0	1173
+2026-09-10T03:13:47Z	ded38ea	test	691	0	0
+2026-09-10T03:13:47Z	ded38ea	hooks/test	1512	290	0
+2026-09-10T03:13:47Z	ded38ea	scripts/test	634	140	0
+2026-09-10T03:13:47Z	ded38ea	autoagent/test	172	796	0
+2026-09-10T03:13:47Z	ded38ea	monitor/test	0	0	1173
+2026-09-10T03:56:09Z	a8c395e	test	691	0	0
+2026-09-10T03:56:09Z	a8c395e	hooks/test	1512	290	0
+2026-09-10T03:56:09Z	a8c395e	scripts/test	634	140	0
+2026-09-10T03:56:09Z	a8c395e	autoagent/test	172	796	0
+2026-09-10T03:56:09Z	a8c395e	monitor/test	0	0	1173
+2026-09-10T06:15:19Z	c5ce807	test	691	0	0
+2026-09-10T06:15:19Z	c5ce807	hooks/test	1512	290	0
+2026-09-10T06:15:19Z	c5ce807	scripts/test	636	140	0
+2026-09-10T06:15:19Z	c5ce807	autoagent/test	172	796	0
+2026-09-10T06:15:19Z	c5ce807	monitor/test	0	0	1173
+2026-09-10T06:27:48Z	6933a64	test	691	0	0
+2026-09-10T06:27:48Z	6933a64	hooks/test	1512	290	0
+2026-09-10T06:27:48Z	6933a64	scripts/test	636	140	0
+2026-09-10T06:27:48Z	6933a64	autoagent/test	172	796	0
+2026-09-10T06:27:48Z	6933a64	monitor/test	0	0	1173
+2026-09-10T08:37:35Z	4d0e27b	test	691	0	0
+2026-09-10T08:37:35Z	4d0e27b	hooks/test	1512	290	0
+2026-09-10T08:37:35Z	4d0e27b	scripts/test	636	140	0
+2026-09-10T08:37:35Z	4d0e27b	autoagent/test	172	796	0
+2026-09-10T08:37:35Z	4d0e27b	monitor/test	0	0	1173

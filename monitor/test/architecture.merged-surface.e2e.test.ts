@@ -9,7 +9,7 @@
 //
 // App: stripped Fastify (fastify-static + two hand-registered routes) on an
 // ephemeral port. registerArchitectureRoutes is NOT called — it stands up the real
-// /live handler (Prisma + home-directory drift read), which would redden this
+// /live handler (Prisma + home-directory reads), which would redden this
 // harness on daemon/settings state and would collide with the fixture route.
 // Browser: Playwright chromium headless, NO mocking.
 //
@@ -40,7 +40,6 @@ import {
 } from "../src/server/architecture/diagrams-source.js";
 import type {
 	ArchitectureLiveResponse,
-	ArchDriftDiff,
 	DaemonLiveStatus,
 	WriterLiveStatus,
 } from "../src/server/types/architecture.js";
@@ -112,8 +111,6 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 			agent_events_last_hour: 0,
 			last_outcome_at: null,
 		},
-		stale: false,
-		diffs: [],
 		governance: { absent: [], sourceMissing: false },
 		// 서버가 실제로 싣는 표 그대로 — 이 하네스의 기본 payload 는 /live 응답의 본이어야 함.
 		// `{}` 면 부품 링을 재는 AC-B2-3d 가 바인딩 부재로 공허 통과함. overrides 뒤에 있으므로
@@ -234,10 +231,6 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 		failedStores: [],
 		...overrides,
 	};
-}
-
-function getDriftDiff(key: string): ArchDriftDiff {
-	return { key, claimed: 1, actual: 2 };
 }
 
 // 공백 정규화 — 연속 공백·개행을 단일 공백으로 접고 양끝 trim (길이 비교 전제).
@@ -611,6 +604,11 @@ function getWriter(name: string, dualWriteActive: boolean): WriterLiveStatus {
 	};
 }
 
+// 거버넌스 배너를 급전하는 부재 목록 — 배지가 이름을 실으므로 countAlertsNaming 으로 잴 수 있음.
+function getGovernance(absentDoc: string): ArchitectureLiveResponse["governance"] {
+	return { absent: [absentDoc], sourceMissing: false };
+}
+
 // 이름을 본문에 담은 alert 만 셈 — 트리에 role=alert 가 이미 여럿이라 총수는 무엇도 재지 못함.
 async function countAlertsNaming(needle: string): Promise<number> {
 	return await page.evaluate(
@@ -683,21 +681,20 @@ test("AC-T18(b) no writer alert exists while dual-write is active", async () => 
 
 // 새 경보가 기존 배너를 밀어내지 않았음을 잠금 — 둘이 동시에 뜨는 픽스처로 잼.
 // 오늘 초록인 불변식 다리이고, 변위가 일어나야만 붉어짐.
-test("AC-T18(c) the drift banner survives beside the writer alert", async () => {
-	const driftKey = "T18_DRIFT_KEY";
+test("AC-T18(c) the governance banner survives beside the writer alert", async () => {
+	const absentDoc = "T18_ABSENT_DOC.md";
 
 	await openMap(
 		getLiveFixture({
-			stale: true,
-			diffs: [getDriftDiff(driftKey)],
+			governance: getGovernance(absentDoc),
 			writers: [getWriter(OFF_WRITER, false)],
 		}),
 	);
 
 	assert.equal(
-		await countAlertsNaming(driftKey),
+		await countAlertsNaming(absentDoc),
 		1,
-		`writer alert must not displace the drift banner carrying ${driftKey}`,
+		`writer alert must not displace the governance banner naming ${absentDoc}`,
 	);
 });
 
@@ -1080,14 +1077,13 @@ test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", a
 });
 
 // 링이 기존 경보를 밀어내지 않았음을 잠금 — 셋이 동시에 뜨는 픽스처로 잼.
-test("AC-T5 the ring displaces neither the drift banner nor the writer alert", async () => {
-	const driftKey = "T5_DRIFT_KEY";
+test("AC-T5 the ring displaces neither the governance banner nor the writer alert", async () => {
+	const absentDoc = "T5_ABSENT_DOC.md";
 
 	await openMap(
 		getLiveFixture({
 			daemons: [getDaemon(BOUND_DAEMON, "stale")],
-			stale: true,
-			diffs: [getDriftDiff(driftKey)],
+			governance: getGovernance(absentDoc),
 			writers: [getWriter(OFF_WRITER, false)],
 		}),
 	);
@@ -1097,9 +1093,9 @@ test("AC-T5 the ring displaces neither the drift banner nor the writer alert", a
 		"fault fixture must light a node — otherwise the two legs below prove nothing",
 	);
 	assert.equal(
-		await countAlertsNaming(driftKey),
+		await countAlertsNaming(absentDoc),
 		1,
-		`drift banner carrying ${driftKey} must survive beside the ring`,
+		`governance banner naming ${absentDoc} must survive beside the ring`,
 	);
 	assert.equal(
 		await countAlertsNaming(OFF_WRITER),
@@ -1633,7 +1629,7 @@ test("AC-B2-6a no always-on fact strip stands between the page top and the map",
 
 	// 계기가 그 자리를 정말 보는지 반증 — 배너 하나를 심으면 같은 계기에 잡혀야 함.
 	// 없으면 위의 빈 읽기는 '아무것도 못 보는 탐침' 의 산물일 수 있음.
-	await openMap(getLiveFixture({ stale: true, diffs: [getDriftDiff("B2_6A_DRIFT")] }));
+	await openMap(getLiveFixture({ governance: getGovernance("B2_6A_ABSENT_DOC.md") }));
 	await waitForPartVerdict("pg");
 
 	assert.equal(

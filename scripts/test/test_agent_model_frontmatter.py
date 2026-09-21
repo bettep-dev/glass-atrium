@@ -36,25 +36,22 @@ from agent_lifecycle.scaffold import render_agent_md  # noqa: E402
 
 
 def test_when_model_none_stub_then_no_model_line() -> None:
-    out = render_agent_md(name="dev-x", scope="DEV", domains=["a"], model=None)
+    out = render_agent_md(name="dev-x", domains=["a"], model=None)
     assert "model:" not in out
     # frontmatter closes directly after maxTurns when no model is injected.
     assert "maxTurns: 40\n---\n" in out
 
 
 def test_when_model_set_stub_then_line_right_after_maxturns() -> None:
-    out = render_agent_md(
-        name="dev-x", scope="DEV", domains=["a"], model="claude-opus-4-8"
-    )
+    out = render_agent_md(name="dev-x", domains=["a"], model="claude-opus-4-8")
     # model line lands immediately after maxTurns and before the closing fence.
     assert "maxTurns: 40\nmodel: claude-opus-4-8\n---\n" in out
 
 
 def test_when_model_set_with_authored_body_then_line_present() -> None:
-    body = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n\n# dev-x\n\nAuthored body.\n"
+    body = "# dev-x\n\nAuthored body.\n"
     out = render_agent_md(
         name="dev-x",
-        scope="DEV",
         domains=["a"],
         body=body,
         model="claude-opus-4-8",
@@ -62,20 +59,25 @@ def test_when_model_set_with_authored_body_then_line_present() -> None:
     assert "maxTurns: 40\nmodel: claude-opus-4-8\n---\n" in out
 
 
+def test_when_rendered_then_no_rules_header_emitted() -> None:
+    # Per-agent rule membership lives on the registry row, so a rendered body
+    # carries no header claiming it — on the stub branch and the authored one.
+    stub = render_agent_md(name="dev-x", domains=["a"])
+    authored = render_agent_md(name="dev-x", domains=["a"], body="# dev-x\n")
+    assert "> Rules:" not in stub
+    assert "> Rules:" not in authored
+
+
 def test_when_model_none_with_authored_body_then_no_model_line() -> None:
     body = "# dev-x\n\nAuthored body.\n"
-    with_default = render_agent_md(name="dev-x", scope="DEV", domains=["a"], body=body)
-    explicit_none = render_agent_md(
-        name="dev-x", scope="DEV", domains=["a"], body=body, model=None
-    )
+    with_default = render_agent_md(name="dev-x", domains=["a"], body=body)
+    explicit_none = render_agent_md(name="dev-x", domains=["a"], body=body, model=None)
     assert "model:" not in with_default
     assert with_default == explicit_none
 
 
 def test_when_research_scope_model_set_then_line_present() -> None:
-    out = render_agent_md(
-        name="intel-researcher", scope="RESEARCH", domains=["a"], model="sonnet"
-    )
+    out = render_agent_md(name="intel-researcher", domains=["a"], model="sonnet")
     assert "maxTurns: 40\nmodel: sonnet\n---\n" in out
 
 

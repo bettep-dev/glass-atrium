@@ -9,6 +9,10 @@
 # assertion cannot (the earlier round shipped on bats-structure alone and a regression
 # slipped through).
 #
+# DO NOT EXECUTE unless kill, rm AND lsof are all shadowed — the GA_PG_SOCKET seam below does NOT
+# make this safe: at D4 the scratch socket is absent, so the port-scoped `lsof -ti tcp:5432`
+# fallback (socket-scope-blind) reaches the live postgres.
+#
 # Faithful to production: the real preflight runs under `set +e; trap - ERR` (run_gate_quiet
 # wraps it — see preflight_bracket's own comment), so this harness runs it identically.
 #
@@ -32,6 +36,13 @@ set -uo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
+
+# PG_SOCKET redirect (GA_PG_SOCKET test seam) — export BEFORE the source line
+# ga_init_env makes PG_SOCKET readonly at source time → a later export is inert
+# (D4) drives the REAL clear_unmanaged_pg_orphan → its socket path resolves under this scratch dir
+# Covers the socket-scoped lsof + the stale-socket rm — NOT the port-scoped `lsof -ti tcp:5432` fallback
+GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
+export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
 
 # --- source the launcher as a library (main skipped by the source-guard) --------------
 # shellcheck source=/dev/null
@@ -461,7 +472,7 @@ echo "==========================================================================
 # above replaced it; bash function defs do not stack, so unset -f cannot restore it).
 eval "$(awk '/^ga_pg_wait_ready\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA_DIR_ROOT}/lib/ga-deps.sh")"
 STEP2_BIN="$(mktemp -d "${TMPDIR:-/tmp}/ga-step2.XXXXXX")"
-# PG_SOCKET is already readonly "/tmp" (set by ga_init_env at source time) — the value we want.
+# PG_SOCKET is readonly (the GA_PG_SOCKET scratch dir, frozen at source time); the PATH pg_isready stub ignores -h.
 # (i) ready after N failures then success — a pg_isready that fails 3x then succeeds.
 printf '#!/usr/bin/env bash\nf="%s/n"; c=$(cat "$f" 2>/dev/null||echo 0); c=$((c+1)); echo "$c">"$f"; [[ "$c" -ge 4 ]] && exit 0; exit 1\n' \
   "${STEP2_BIN}" >"${STEP2_BIN}/pg_isready"
@@ -665,4 +676,5 @@ echo "==========================================================================
 printf 'HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
 rm -f "${GA_REC}"
+rm -rf -- "${GA_PG_SOCK_DIR}"
 [[ "${FAILS}" -eq 0 ]]

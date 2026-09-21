@@ -126,11 +126,15 @@ _DIFF_SENSITIVE: tuple[str, ...] = (
     "+ git clean -fd",
     "+ git rebase --onto main feature",  # published-history rewrite
     "+ const out = execSync(cmd);",  # the Sync call form the bare exec row missed
+    # Raw `+++ ` body lines (content `++ <cmd>`) — git apply --recount applies them.
+    f"+++ {_RM} -rf /tmp/x",
+    f"--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n--- old\n+++ {_RM} -rf /tmp/x\n",
+    "+++git push --force origin main",  # no space after the marker — never a header
 )
 _DIFF_CLEAN: tuple[str, ...] = (
     "+ this confirms the farm output",  # 'confirm'/'farm' must NOT match \brm\b
     f"- {_RM} -rf /tmp/x",  # removed line, not added → ignored
-    "+++ b/path.md",  # diff header, not body
+    "+++ b/path.md",  # read as body, but a path line carries no sensitive command
     "+ a perfectly ordinary documentation line",
     f"+ {_RM} file.txt",  # flagless deletion — outside the cluster claim
     # The SAFE tagged-stash recipe (I1) must NEVER trip the detector — the
@@ -388,6 +392,8 @@ _REFUSED_MANIFEST_ROWS: frozenset[str] = frozenset(
         "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
         "monitor/.env.example",
         "scoped/scope-security.md",
+        "scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md",
+        "scoped/maintainers/scope-security.md",
     }
 )
 

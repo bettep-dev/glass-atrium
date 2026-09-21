@@ -27,7 +27,8 @@ Success Criteria:
 
 - Each criterion MUST specify HOW it will be verified (command output / test name / metric threshold / artifact diff) — `core-outcome-record.md` Field Input Guide `metric_pass` 와 정렬
 - Stage 0 emission is REQUIRED before any Write/Edit operation in scope; missing emission → halt + redesign
-- **Loop termination cap** (ADR 4-D-2 R1): "Loop until verified" intent absorbed, but bounded — same-stage 2 consecutive fail → immediate escalate to glass-atrium-qa-debugger (Iron Law absolute · `glass-atrium-core-iron-laws` skill Debugger Escalation 정합 · Unbounded Consumption Stop 최우선) · Outcome Record emit: `result: fail` (glass-atrium-qa-debugger escalation target per `core-outcome-record.md` result values)
+- **Loop termination cap** (ADR 4-D-2 R1): "Loop until verified" intent absorbed, but bounded — same-stage 2 consecutive fail → immediate escalate to glass-atrium-qa-debugger · Outcome Record emit: `result: fail` (glass-atrium-qa-debugger escalation target per `core-outcome-record.md` result values)
+  - Escalation per `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`; bound per `rules/glass-atrium/core-security.md` → Unbounded consumption.
 - Rationale: pre-stated success criteria are the mechanical anchor Stages 1-6 verify against
 - **Exclusions inheritance**: Stage 0 inherits the `## When to Use` Exclusion list (doc-only / config-only / memory/-only edits) — Karpathy Goal-Driven intent is code-change correctness, not documentation precision
 

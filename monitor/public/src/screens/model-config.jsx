@@ -914,21 +914,13 @@ function DriftBannerMC({ sync, domains }) {
 						? "Config rows still carry their pre-rename names"
 						: "Saved config not yet fully live"}
 				</div>
-				<div className="fs-meta text-dim mt-1">
-					{pendingMigration ? (
-						<>
-							Values below are read from the old rows. Run{" "}
-							<span className="font-mono">glass-atrium db-setup</span> to
-							complete the rename.
-						</>
-					) : (
-						<>
-							Run{" "}
-							<span className="font-mono">/glass-atrium-ops-model-config</span>{" "}
-							to apply.
-						</>
-					)}
-				</div>
+				{pendingMigration && (
+					<div className="fs-meta text-dim mt-1">
+						Values below are read from the old rows. Run{" "}
+						<span className="font-mono">glass-atrium db-setup</span> to complete
+						the rename.
+					</div>
+				)}
 				{driftedDomains.length > 0 && (
 					<div className="fs-meta text-dim mt-2">
 						{driftedDomains.length} domain

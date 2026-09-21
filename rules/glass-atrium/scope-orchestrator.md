@@ -4,30 +4,24 @@
 > **Inherits**: Tier 1 (Core)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-Rules specific to ORCHESTRATOR: Global agent / coordinator.
-
-## Delegation Enforcement [ORCHESTRATOR]
-
-> Detailed rules: See `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
-
 ## LLM-led Routing [ORCHESTRATOR]
 
-> Detailed rules: See the "Capability-Based Agent Selection" section in `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
+- **3-Layer Safety** REQUIRED — dropping any layer destabilizes team composition:
+  - conservative deterministic selection: stability-first routing, no speculative agent picks;
+  - auto-halt when routing confidence < 0.7 — a self-assessed heuristic, not a measured probability;
+  - clarification fallback: present 2-3 candidates for the user to choose.
+- **Skip condition**: an obvious single-agent case MAY skip the full routing protocol.
+  - Obvious means no compound verb structure and none of the multi-agent conditions met: context contamination · parallelizable · specialization benefit (`skills/glass-atrium-ops-orchestrator.md` → Multi-agent Conditions).
+  - Skipping the protocol never skips the one-line routing judgment that `orchestrator-role.md` → `## Delegation Workflow` still requires of a simple delegation.
 
-- Agent selection MUST follow: **task decomposition → capability consultation → team composition → phase ordering** (Claude judgment)
-- Registry (`~/.glass-atrium/agent-registry.json`) `domains` array and each agent's description are consumed only as **capability hints** — keyword / prefix-matching forced-branching is FORBIDDEN
-- Routing results return the team schema (`agents` · `reason` · `order`) regardless of single vs. compound — single-agent = size-1 array (special form, not a separate path)
-- **3-Layer Safety** REQUIRED: ①conservative deterministic selection (stability-first routing — no speculative agent picks) ②auto-halt when confidence < 0.7 (self-assessed heuristic, not a measured probability) ③clarification fallback (2-3 candidates for user to choose)
-- Obvious single-agent cases (no compound verbs + none of the 3 multi-agent conditions met) → routing protocol MAY be skipped
+## Plan-Based Work [ORCHESTRATOR]
 
-## Orchestrator Rules [ORCHESTRATOR]
+- **PLAN_FILE Setup Obligation**: when starting plan-based work, set the `PLAN_FILE` environment variable to the plan path.
+  - Reader: `hooks/validate-scope-drift.sh` compares each Edit/Write target against the plan's target-file list and warns on a miss (`SCOPE-070`, advisory, never a block).
+  - Unset → the hook falls back to the newest in-progress clauded-doc's target-file section via the monitor API; an explicit `PLAN_FILE` takes priority.
 
-**PLAN_FILE Setup Obligation**: When starting plan-based work, set the `PLAN_FILE` environment variable to the plan path. The scope-drift-detector references this variable to detect scope deviation. Auto-search (today's date plan) works if unset, but explicit setting takes priority.
+## Detail Reference [ORCHESTRATOR]
 
-> Detailed rules: See `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
-
-Delegation enforcement, team composition, delegation communication, Wave Execution, Agent Teams, **Cost-Tier Routing** (multi-agent spawn ≈4× tokens per agent / ≈15× for full teams — simple queries MUST NOT trigger multi-agent spawn), quality gates, **Monitoring & Completion** ([COMPLETION] block parsing + blocked/fail escalation, see `orchestrator-role.md` Monitoring Phase), architecture patterns, numerical tuning, feature-dev scope, entropy management, performance metrics, consensus protocol, experimental features
-
-## Iron Law & Debugging Escalation [DEV+ORCHESTRATOR]
-
-> Detailed rules: See `glass-atrium-core-iron-laws` skill
+- `skills/glass-atrium-ops-orchestrator.md` holds the detail behind this file and `orchestrator-role.md`. It is a flat reference file, not a Skill-loadable SKILL.md, so it never arrives on its own: Read the path when a topic below applies.
+- Core-process sections: Capability-Based Agent Selection · Team Composition Rules · Delegation/Communication Rules · Cost Optimization · Quality Gates · Architecture Patterns (Wave Execution, Agent Teams) · Delegation Enforcement.
+- Standing policies: Entropy Management (Janitor) · Initializer Agent Pattern · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.

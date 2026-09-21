@@ -346,6 +346,30 @@ class MarkdownAndShellAdapterTest(unittest.TestCase):
             _shell_names(got.text, array="BUDGET_DEV_AGENTS"), [_VENDOR[0]]
         )
 
+    def test_a_release_retired_array_the_base_and_live_carry_is_dropped_without_error(
+        self,
+    ):
+        # the live copy of the retired slot holds a name outside the vocabulary,
+        # so a merge that still resolved that slot would refuse instead of passing
+        retired = [*_VENDOR, _LIVE_ONLY, "glass-atrium-dev-unregistered"]
+
+        def build(retired_names):
+            head = _SH_HEAD
+            if retired_names is not None:
+                head += f'readonly MINIMALISM_AGENTS=" {" ".join(retired_names)} "\n'
+            return head + f'readonly BUDGET_DEV_AGENTS=" {" ".join(_VENDOR)} "\n' + _SH_TAIL
+
+        release = build(None)
+        got = rm.build_roster_candidate(
+            "hooks/inject-scope-rules.sh",
+            build(retired),
+            release,
+            [*_VENDOR, _LIVE_ONLY],
+            base_text=build(_VENDOR),
+        )
+        self.assertNotIn("MINIMALISM_AGENTS", got.text)
+        self.assertEqual(got.text, release)
+
     def test_each_rewritten_array_declares_its_name_exactly_once_on_one_line(self):
         got = rm.build_roster_candidate(
             "hooks/lib/styleref-roster.sh",

@@ -191,9 +191,13 @@ ga_init_env() {
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
-  # COMMENT LINES INSIDE THE ARRAY ARE FORBIDDEN: the awk parsers in test/hook-bindings-complete.bats +
-  # test/hook-bindings-executable.bats print EVERY line between the `(` and the `)`, so a comment counts as a
-  # leaf and breaks the total. Any note about a row belongs in THIS block, above the array.
+  # COMMENT LINES INSIDE THE ARRAY ARE FORBIDDEN: array_rows in test/hook-bindings-complete.bats — and its
+  # byte-verbatim copy in test/doctor-hook-bindings.bats — print EVERY line between the `(` and the `)`, so a
+  # comment enters the row stream. Measured: a tab-free comment is inert in every parser, but a TAB-BEARING one
+  # adds a junk basename to doctor-hook-bindings.bats::wired_basenames, failing its exec-bit and
+  # manifest-membership rows, and adds one to test/install-acceptance.sh's derived EXPECTED_BINDING_COUNT, which
+  # then exceeds the bindings actually wired. test/hook-matcher-shape-invariant.bats::binding_matchers is the
+  # one parser that skips comments. Any note about a row belongs in THIS block, above the array.
   # MATCHER CONVENTION — a Write/Edit-family row is "Write|Edit", NEVER "Write|Edit|MultiEdit". MultiEdit has
   # ZERO registrations on the recorded host, so adding it to a NEW row registers a token that guards nothing;
   # test/hook-matcher-shape-invariant.bats pins a ONE-token legacy allowlist (MultiEdit) whose stated purpose is
@@ -246,6 +250,17 @@ ga_init_env() {
     "Stop	post-edit-typecheck.sh	"
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
+    "SubagentStart	inject-scope-part-01.sh	"
+    "SubagentStart	inject-scope-part-02.sh	"
+    "SubagentStart	inject-scope-part-03.sh	"
+    "SubagentStart	inject-scope-part-04.sh	"
+    "SubagentStart	inject-scope-part-05.sh	"
+    "SubagentStart	inject-scope-part-06.sh	"
+    "SubagentStart	inject-scope-part-07.sh	"
+    "SubagentStart	inject-scope-part-08.sh	"
+    "SubagentStart	inject-scope-part-09.sh	"
+    "SubagentStart	inject-scope-part-10.sh	"
+    "SubagentStart	inject-scope-part-11.sh	"
     "SubagentStart	telemetry-activation.sh	"
     "SubagentStop	agent-tracker.sh	"
     "SubagentStop	post-edit-typecheck.sh	"
@@ -259,6 +274,9 @@ ga_init_env() {
   # (not file-scope) so a re-source never re-runs `readonly` → fatal under set -e.
   readonly PRUNE_EXIT_NO_TARGET=2
   readonly PRUNE_EXIT_NO_MANIFEST=3
+  # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
+  # refused before any manifest loop by install / agents-only / uninstall / prune.
+  readonly MANIFEST_EXIT_ESCAPING_KEY=25
 
   # bootstrap exit-code semantics (distinct from die's generic 1):
   #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)

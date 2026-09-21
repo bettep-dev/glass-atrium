@@ -21,11 +21,14 @@
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-zero-eligible-row.bats) with psql replaced
 # by a stub answering every query with a fixed row set, a git shim that allows only `git apply`, an
-# echo-OK claude stub, and AUTOAGENT_REPORTS_DIR pointed at a temp dir. No PG, no live agents dir,
-# no ~/.glass-atrium state is read or written.
+# echo-OK claude stub, AUTOAGENT_REPORTS_DIR pointed at a temp dir, and the daemon_cycle.py seam at a
+# guard pass-through. No PG, no live agents dir, no ~/.glass-atrium state is read or written.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
+#   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
+#   on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on BOTH legs — bash is the variable,
+#   not bats), while `[ ]`, `let` and a failing `grep -q` abort on both.
+#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 #
 # Run via: bats autoagent/test/daemon-apply-backlog-anomaly-row.bats
 # Requires: bats >= 1.5.0, bash 3.2+, git (for `git apply` only), python3
@@ -91,16 +94,20 @@ SH
 
 # make_backlog_psql — a psql present on PATH (so backlog_source_available() is true) that answers
 # EVERY query with $2 eligible rows in the producer's own 6-field pipe grammar
-# (id|cycle_date|pattern_label|target_agent|target_file|diff_b64). The diff field is empty: the
+# (id|cycle_date|label_b64|agent_b64|target_b64|diff_b64). The diff field is empty: the
 # tripwire fires on the COUNT before any patch is read, so a real diff would only add fixture noise.
 make_backlog_psql() {
   local dir="$1" rows="$2"
   rm -f -- "${dir}/psql"
   cat >"${dir}/psql" <<SH
 #!/usr/bin/env bash
+b64() {
+  printf '%s' "\$1" | base64 | tr -d '\n'
+}
 i=1
 while [[ "\${i}" -le ${rows} ]]; do
-  printf '%s|2026-08-0%s|probe-pattern-%s|probe|/tmp/anomaly-probe-%s.md|\n' "\${i}" 1 "\${i}" "\${i}"
+  printf '%s|2026-08-01|%s|%s|%s|\n' "\${i}" "\$(b64 "probe-pattern-\${i}")" "\$(b64 probe)" \
+    "\$(b64 "/tmp/anomaly-probe-\${i}.md")"
   i=\$((i + 1))
 done
 exit 0
@@ -108,14 +115,34 @@ SH
   chmod +x "${dir}/psql"
 }
 
+# build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
+# `python3 <seam>`): the parked-pattern guard reads through psycopg, which no psql stub isolates, so
+# it answers "no guard fires" (stdin drained for the piping printf); every other mode execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
 setup_file() {
   MIRROR="${BATS_FILE_TMPDIR}/bin"
+  GUARD_SEAM="${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
   if [[ -f "${REAL_SCRIPT}" ]]; then
     mirror_path "${MIRROR}"
     build_git_apply_shim "${MIRROR}"
     make_claude_stub "${MIRROR}"
+    build_guard_passthrough "${GUARD_SEAM}"
   fi
-  export MIRROR
+  export MIRROR GUARD_SEAM
 }
 
 setup() {
@@ -144,7 +171,7 @@ run_apply() {
   make_backlog_psql "${BACKLOG_BIN}" "${rows}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${BACKLOG_BIN}:${MIRROR}" HOME="${WORK}/home" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    AUTOAGENT_ANOMALY_THRESHOLD="${threshold}" \
+    AUTOAGENT_ANOMALY_THRESHOLD="${threshold}" AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
 

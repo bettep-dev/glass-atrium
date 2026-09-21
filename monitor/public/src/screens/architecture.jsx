@@ -485,12 +485,6 @@ function ScreenArchitecture(
 
 	const closeDetail = useCallbackAR(() => setDetail(null), []);
 
-	// 설계도 카운트 드리프트(구조 정합성) — daemon status(런타임 헬스)와 별개 신호.
-	//   live 응답 ready 시점에만 신뢰. diffs = [{ key, claimed, actual }].
-	const driftStale =
-		liveState.status === "ready" && liveState.data?.stale === true;
-	const driftDiffs = driftStale ? liveState.data?.diffs || [] : [];
-
 	// 이중기록이 끊긴 writer — 상시 칩을 대신하는 조건부 경보의 유일한 근거.
 	//   live 응답 ready 시점에만 신뢰. 빈 배열이면 배너가 DOM 에 없음.
 	const offWriters =
@@ -645,13 +639,9 @@ function ScreenArchitecture(
 			</div>
 
 			<div className="arch-page">
-				{/* 구조 드리프트 배너(설계도 카운트 mismatch) — daemon LiveStrip(런타임 헬스)과
-            별개 영역. stale 일 때만 노출, info-tone 으로 daemon-down warn-tone 과 구별. */}
 				{offWriters.length > 0 && <DualWriteBannerAR writers={offWriters} />}
 
-				{driftStale && <DriftBannerAR diffs={driftDiffs} />}
-
-				{/* 거버넌스 문서 부재 — 이름을 부르는 경고. 카운트 드리프트보다 상위 심각도(warn-tone). */}
+				{/* 거버넌스 문서 부재 — 이름을 부르는 경고(warn-tone). */}
 				{(absentDocs.length > 0 || governance?.sourceMissing) && (
 					<MembershipBannerAR
 						absent={absentDocs}
@@ -1208,7 +1198,7 @@ function ArchIconTargetAR() {
 }
 
 // Top live strip — live 페치의 상태 표면. 정상이면 비어 있고(칩 없음), 로딩/실패만 자리를 씀.
-//   같은 페치가 드리프트·거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 셋의 예고이기도 함.
+//   같은 페치가 거버넌스·이중기록 배너를 함께 먹이므로 로딩 표시는 그 둘의 예고이기도 함.
 
 // 로드 실패 줄 — live 스트립과 표의 health 저장소 경보가 같은 모양을 씀. 컨테이너 클래스는
 // 호출부가 정함: 두 경보는 각자의 클래스(.arch-live-strip / .arch-queue-error)로 구별돼야 함.
@@ -1815,7 +1805,7 @@ const TONE_TEXT_CLASS = {
 };
 
 /**
- * 경보 배너 셸 — 세 배너(거버넌스 warn · 이중기록 crit · 드리프트 info)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
+ * 경보 배너 셸 — 두 배너(거버넌스 warn · 이중기록 crit)가 tone·아이콘·문구·배지만 달리한 같은 상자라서 한 몸으로 둠.
  * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
  */
 function AlertBannerAR({ tone, icon, title, note, badges }) {
@@ -1874,7 +1864,7 @@ function MembershipBannerAR({ absent, sourceMissing }) {
 }
 
 /**
- * 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 드리프트 info-tone 과 구별.
+ * 이중기록 중단 배너 — role=alert 재사용 · crit-tone(런타임 결함)으로 거버넌스 warn-tone 과 구별.
  * 상시 칩을 대신함 — 정상이면 DOM 에 없고, 끊긴 writer 가 있을 때만 그 이름을 부름.
  */
 function DualWriteBannerAR({ writers }) {
@@ -1890,29 +1880,6 @@ function DualWriteBannerAR({ writers }) {
 			/* 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음. */
 			note="Marker scan found no dual-write block, or could not read the file."
 			badges={names}
-		/>
-	);
-}
-
-// 설계도 카운트 드리프트 배너 — role=alert 재사용 · info-tone(구조 정합성 nudge)으로 daemon-down crit/warn(런타임 헬스)과 시각 분리.
-// diffs = [{ key, claimed, actual }] — mismatch 항목별 주장↔실측 노출.
-function DriftBannerAR({ diffs }) {
-	const items = (diffs || []).map((d) => ({
-		key: d.key,
-		label: `${d.key} ${d.claimed}→${d.actual}`,
-	}));
-	return (
-		<AlertBannerAR
-			tone="info"
-			icon="git"
-			title="Map out of date — live counts don't match"
-			note={
-				<>
-					Run{" "}
-					<span className="font-mono">/glass-atrium-ops-verify-arch</span> for a deeper check.
-				</>
-			}
-			badges={items}
 		/>
 	);
 }

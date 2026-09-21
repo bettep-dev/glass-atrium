@@ -124,7 +124,7 @@ class StorePaths:
     @property
     def styleref_roster(self) -> Path:
         # Declaration-only lib holding STYLEREF_AGENTS — the one tracked array that does NOT
-        # live in the inject hook (both the hook and the flag predicate source it).
+        # live in the inject hook (only style-ref-consts.sh, the flag predicate, sources it).
         return self.ga_root / "hooks" / "lib" / "styleref-roster.sh"
 
     @property

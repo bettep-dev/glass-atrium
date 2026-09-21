@@ -373,8 +373,9 @@ PY
   # event LANDS structuredoutput-derived even where the widened token would be rejected by the row
   # INSERT below. This is the portable proof; the DB-row assertions are the extra confirmation.
   # Routed through oc/no (|| return 1) so each is load-bearing regardless of position — a bare
-  # intermediate [[ ]] is silently ignored (only the last command sets status), and these run BEFORE
-  # the skip gate, so the regression stays enforced even when the live CHECK/token is absent.
+  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS (bash 5.3 on CI does abort), and
+  # these run BEFORE the skip gate, so the regression stays enforced even when the live CHECK/token
+  # is absent.
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
@@ -413,8 +414,8 @@ PY
   # heuristic on the stderr channel, computed BEFORE the PG INSERT — a hard-kill cannot leave a
   # paired non-error tool_result in terminal position, and successful schema runs routinely sit
   # at/over 40 (the 40-52 band), so structuredoutput-derived (not budget-truncation) must win.
-  # Routed through oc/no (|| return 1) so each is load-bearing before the skip gate (bare
-  # intermediate [[ ]] is silently ignored — only the last command sets status).
+  # Routed through oc/no (|| return 1) so each is load-bearing before the skip gate (a bare
+  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=budget-truncation" "${output}" || return 1
@@ -483,8 +484,8 @@ PY
   # DB-free rescue regression (unconditional): the consumed emit supersedes the rate-limit keyword
   # heuristic on the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS
   # structuredoutput-derived even in a token-absent CHECK env where the row INSERT below is rejected.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (bare intermediate
-  # [[ ]] is silently ignored — only the last command sets status).
+  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
@@ -507,8 +508,8 @@ PY
   # DB-free rescue regression (unconditional): adjacency-pairing would read the errored foreign-id
   # decoy → completion-synthesized; strict tool_use_id pairing finds the real success result. This
   # rides the stderr channel, computed BEFORE the PG INSERT, so it survives a token-absent CHECK.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (bare intermediate
-  # [[ ]] is silently ignored — only the last command sets status).
+  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
@@ -565,7 +566,8 @@ PY
   no "attribution=completion-synthesized" "${output}" || return 1
 
   # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the token.
-  # bats checks only the last command, so each `[ ]` carries `|| return 1` to gate.
+  # The `[ ]` builtin form already aborts under errexit on both platforms; the `|| return 1` on
+  # each is kept for the diagnostic — it names the failing line rather than the test.
   skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ] || return 1
@@ -643,10 +645,11 @@ PY
 # of editor encoding. result=done is the distinguishing recovery signal — the synthesis branch can
 # only ever produce done_with_concerns (or blocked), never done.
 
-# bats 1.13 checks only the LAST command's status, so a bare intermediate `[[ ]]` assertion is
-# silently ignored (a false one never fails the test). oc/no echo a diagnostic + return non-zero
-# so each caller's `|| return 1` aborts the test AT the failing assertion. Explicit output arg
-# keeps them independent of the `run`-set global.
+# A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) — a false one
+# never fails the test there — while bash 5.3 (CI) aborts on it (measured, bats 1.13.0 on both
+# legs: bash is the variable, not bats). oc/no echo a diagnostic + return non-zero so each caller's
+# `|| return 1` aborts the test AT the failing assertion on both. Explicit output arg keeps them
+# independent of the `run`-set global.
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 

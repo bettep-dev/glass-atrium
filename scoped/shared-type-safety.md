@@ -1,16 +1,9 @@
 # Type Safety Rules (Cross-Cutting Concern)
 
-Applies to all DEV agents.
+Each rule names the construct it binds on. Where the language has no such construct, that rule is inert — it is never generalized to a near-equivalent.
 
 ## Core Principles
 
-- Using the `any` type is **FORBIDDEN** — replace with `unknown` + type guards
-- `as` type assertions SHOULD be minimized — prefer type inference; when unavoidable, a justifying comment is REQUIRED
-- Leverage generics — apply type parameters to reusable functions and components
-- `!` non-null assertion — a runtime check MUST precede its use
-
-## Framework-Specific Rules
-
-- **Angular**: `any` / `as` are completely FORBIDDEN · prefer type guards and unknown + narrowing
-- **React/Next.js**: Props interfaces are REQUIRED for components · children type MUST be explicit
-- **NestJS**: DTOs MUST use class-validator decorators · enums SHOULD be separated by feature
+- **Escape-hatch type (`any`)** — the `glass-atrium-dev-patterns` skill forbids it; the replacement is `unknown` plus a type guard at the boundary, never a widened signature.
+- **Type assertion (`as`)** — minimize, prefer inference. Unavoidable → a comment stating why the assertion holds is REQUIRED, and that comment is a sanctioned non-obvious "why" the comment-density ceiling does not delete.
+- **Force unwrap / non-null assertion (`!`)** — a runtime check MUST precede its use.

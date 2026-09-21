@@ -143,8 +143,9 @@ spine() {
     "agents/sub/nested.md" "hooks/a.sh"
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
-  # `|| return 1` is load-bearing: under bats a FAILING bare `[[ ]]` that is not
-  # the test's final command does not fail the test.
+  # `|| return 1` is load-bearing: a mid-body bare `[[ ]]` is inert on bash 3.2.57
+  # but GATES on CI's bash 5.3.9 (measured, bats 1.13.0 on both legs, so bash is
+  # the variable, not bats).
   # the E4 merge CLAIMS a top-level agent body → the spine must never touch it
   [[ "${output}" != *"agents/dev-shell.md"* ]] || return 1
   # the merge reaches NEITHER the charter nor a nested doc (basename skip / the
@@ -183,9 +184,11 @@ spine() {
 
 # T13 — spine_find_removed_files (retirement selection off the manifest `retired` map)
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates
-# pass/fail. Every assertion below `return 1`s on mismatch, so each one fails the test
-# on its own rather than being skipped past by the one after it.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is
+# inert on bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on
+# BOTH (measured, bats 1.13.0 on both legs, so bash is the variable, not bats). Every
+# assertion below `return 1`s on mismatch, so each one fails the test on its own rather
+# than being skipped past by the one after it.
 
 # Build a manifest at $1 over root $2 whose `retired` map is the raw JSON object $3
 # and whose files[] are $4.. (relative to $2). The map is passed as JSON rather than
@@ -204,6 +207,14 @@ build_manifest_retired() {
 # the file it describes by hand-copying a hash.
 retired_live_map() {
   jq -n --arg p "$1" --arg h "$(sha256_of "${LIVE}/$1")" '{($p): [$h]}'
+}
+
+# Echo a JSON object mapping $1 to a placeholder 64-hex hash of repeated char $2 — for
+# keys whose live target is absent or not a regular file, so no real hash exists.
+absent_hash_map() {
+  local hash
+  hash="$(printf '%064d' 0)"
+  printf '{"%s":["%s"]}' "$1" "${hash//0/$2}"
 }
 
 @test "#13 retired: a pristine retired file is selected" {
@@ -267,7 +278,7 @@ retired_live_map() {
 @test "#13 retired: a path already absent from the live install is a silent no-op" {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    '{"scripts/lib/never-here.sh":["'"$(printf 'a%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+    "$(absent_hash_map "scripts/lib/never-here.sh" a)" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"never-here.sh"* ]] || return 1
@@ -277,7 +288,7 @@ retired_live_map() {
   seed_file "${NEW}" "hooks/keep.sh" "kept"
   seed_link "${LIVE}" "scripts/lib/linked.sh" "../../elsewhere.sh"
   build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
-    '{"scripts/lib/linked.sh":["'"$(printf 'b%.0s' $(seq 64))"'"]}' "hooks/keep.sh"
+    "$(absent_hash_map "scripts/lib/linked.sh" b)" "hooks/keep.sh"
   run spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"not a regular file (symlink)"* ]] || return 1
@@ -308,10 +319,137 @@ retired_live_map() {
   [[ -f "${LIVE}/scripts/lib/stale.sh" ]] || return 1
 }
 
+# Containment: a retired key naming a real, hash-matching file OUTSIDE the install root
+# must be refused, so each physical-check escape fixture below seeds that file with its
+# real hash — a fixture whose target is absent would pass without the refusal ever running.
+
+# Echo the one stderr row a refused retired key $1 produces.
+unsafe_row() {
+  printf 'apply-spine: retired UNSAFE — %s escapes install root; skipped' "$1"
+}
+
+@test "#13 retired: an absolute key is refused with its UNSAFE row, never selected" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "x" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "/x")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "/x")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot key reaching a real file beside the install root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${STATE}" "request/pending.json" "operator-request"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "../state/request/pending.json")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/request/pending.json")"* ]] || return 1
+}
+
+@test "#13 retired: a key through a symlinked directory to a file outside the root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${WORK}" "elsewhere/secret.json" "outside-body"
+  ln -s -- "${WORK}/elsewhere" "${LIVE}/linked"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "linked/secret.json")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "linked/secret.json")"* ]] || return 1
+}
+
+@test "#13 retired: top-level and one-level keys stay selected under an aliased install root" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "top.txt" "top-body"
+  seed_file "${LIVE}" "scripts/one.sh" "one-body"
+  ln -s -- "${LIVE}" "${WORK}/live-alias"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(jq -n --argjson a "$(retired_live_map "top.txt")" \
+      --argjson b "$(retired_live_map "scripts/one.sh")" '$a + $b')" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${WORK}/live-alias"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = $'scripts/one.sh\ntop.txt' ] || return 1
+  [[ "${stderr}" != *"UNSAFE"* ]] || return 1
+}
+
+@test "#13 retired: a refused key does not stop a contained key in the same map" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${STATE}" "pending.json" "operator-request"
+  seed_file "${LIVE}" "scripts/lib/good.sh" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(jq -n --argjson a "$(retired_live_map "../state/pending.json")" \
+      --argjson b "$(retired_live_map "scripts/lib/good.sh")" '$a + $b')" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = "scripts/lib/good.sh" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/pending.json")"* ]] || return 1
+}
+
+# The next two keys only the spelling check refuses: their target is inside the root or
+# absent, so the physical check would select the first and silently skip the second.
+@test "#13 retired: a dot-dot key resolving back inside the install root is refused" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "hooks/x.sh" "vendor-body"
+  mkdir -p -- "${LIVE}/scripts"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "scripts/../hooks/x.sh")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "scripts/../hooks/x.sh")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot key with no target still emits its UNSAFE row" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(absent_hash_map "../state/absent.json" c)" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ -z "${output}" ] || return 1
+  [[ "${stderr}" == *"$(unsafe_row "../state/absent.json")"* ]] || return 1
+}
+
+@test "#13 retired: a dot-dot inside a segment name is not an escape and is selected" {
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  seed_file "${LIVE}" "scripts/foo..bar" "vendor-body"
+  build_manifest_retired "${WORK}/manifest.json" "${NEW}" \
+    "$(retired_live_map "scripts/foo..bar")" "hooks/keep.sh"
+  run --separate-stderr spine spine_find_removed_files "${WORK}/manifest.json" "${LIVE}"
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = "scripts/foo..bar" ] || return 1
+  [[ "${stderr}" != *"UNSAFE"* ]] || return 1
+}
+
 @test "#13 retired: the un-moved record path is the baseline state dir's own" {
   run spine spine_retired_unmoved_path
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "${STATE}/retired-unmoved.txt" ]] || return 1
+}
+
+@test "#13 key: the spelling predicate refuses exactly empty, absolute and dot-dot-segment keys, under both names" {
+  local fn key
+  local -a escaping=("" "/" "/scripts/x.sh" ".." "../x" "a/../b" "a/b/..")
+  local -a contained=("a" "scripts/lib/x.sh" "foo..bar" "a/.../b" ".hidden/x")
+  for fn in spine_is_escaping_key spine_is_escaping_retired_key; do
+    for key in "${escaping[@]}"; do
+      run spine "${fn}" "${key}"
+      [ "${status}" -eq 0 ] || {
+        printf '%s accepted escaping key "%s" (status %s)\n' "${fn}" "${key}" "${status}"
+        return 1
+      }
+    done
+    for key in "${contained[@]}"; do
+      run spine "${fn}" "${key}"
+      [ "${status}" -eq 1 ] || {
+        printf '%s refused contained key "%s" (status %s)\n' "${fn}" "${key}" "${status}"
+        return 1
+      }
+    done
+  done
 }
 
 # T11 — spine_stage_and_verify
@@ -378,9 +516,10 @@ retired_live_map() {
     printf "%s\n" "rules/glass-atrium/CHARTER.md" \
       | spine_stage_and_verify "$1" "$2" "$3"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
-  # One && chain: a bats verdict is its LAST command's status, so a mid-body
-  # bracket would pass silently. The trailing member is the danglingness inside
-  # the staging dir, which is why the hash is read at the source position.
+  # One && chain: a mid-body bare bracket is inert on bash 3.2.57 (on CI's bash
+  # 5.3.9 it gates), so the chain keeps every member live on both legs. The
+  # trailing member is the danglingness inside the staging dir, which is why the
+  # hash is read at the source position.
   [[ "${status}" -eq 0 ]] \
     && [[ -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
     && [[ "$(readlink "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
@@ -407,8 +546,8 @@ retired_live_map() {
       | spine_stage_and_verify "$1" "$2" "$3" || rc=$?
     exit "${rc}"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
-  # One && chain: a bats verdict is its LAST command's status, so a mid-body
-  # bracket would pass silently.
+  # One && chain: a mid-body bare bracket is inert on bash 3.2.57 (on CI's bash
+  # 5.3.9 it gates), so the chain keeps every member live on both legs.
   [[ "${status}" -eq 1 ]] \
     && [[ "${output}" == *"staging copy failed"* ]] \
     && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
@@ -899,4 +1038,80 @@ t6_build_jqless_toolbin() {
     printf '%s' "${widened}"
   fi
   [ "${n_widened}" -eq 4 ]
+}
+
+# E5 — a directory symlink already inside the root: spelling passes, the write escapes
+
+@test "E5 commit: a row through a symlinked directory rolls back and creates nothing outside" {
+  mkdir -p "${WORK}/outside"
+  ln -s "${WORK}/outside" "${LIVE}/ext"
+  seed_file "${WORKDIR}/staging" "hooks/a.sh" "NEW-a"
+  seed_file "${WORKDIR}/staging" "ext/new/x.sh" "ESCAPED"
+  seed_file "${LIVE}" "hooks/a.sh" "ORIGINAL-a"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "hooks/a.sh" "ext/new/x.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [ "${status}" -eq 1 ] || {
+    printf '%s\n' "${output}"
+    return 1
+  }
+  [[ "${output}" == *"write target escapes install root — ext/new/x.sh"* ]] || return 1
+  [[ "${output}" == *"commit FAILED at ext/new/x.sh"* ]] || return 1
+  # checked before mkdir -p: not even the empty directory lands outside
+  [ ! -e "${WORK}/outside/new" ] || return 1
+  [ "$(cat "${LIVE}/hooks/a.sh")" = "ORIGINAL-a" ] || return 1
+}
+
+# write-target walk — every input terminates; a relative walk with no existing ancestor fails closed
+
+# write_target_verdict CWD INPUT ROOT — echoes rc 0 (escaping) / 1 (contained), or `hang` when
+# the predicate has not returned within ~5s. Backgrounded so a spinning walk reads RED, never hangs the suite.
+write_target_verdict() {
+  local verdict="${WORK}/verdict" pid tick
+  rm -f -- "${verdict}"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    cd -- "$2"
+    rc=0
+    spine_is_escaping_write_target "$3" "$4" || rc=$?
+    printf "%s" "${rc}" >"$5.tmp" && mv -- "$5.tmp" "$5"
+  ' _ "${REAL_LIB}" "$1" "$2" "$3" "${verdict}" &
+  pid=$!
+  for ((tick = 0; tick < 50; tick++)); do
+    [[ -s "${verdict}" ]] && break
+    sleep 0.1
+  done
+  if [[ ! -s "${verdict}" ]]; then
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    printf 'hang\n'
+    return 0
+  fi
+  wait "${pid}" || true
+  cat -- "${verdict}"
+}
+
+@test "write target: a relative path with no existing ancestor terminates and fails closed" {
+  local input got
+  for input in "missing/a/b" "missing/a" "missing" "missing/"; do
+    got="$(write_target_verdict "${WORK}" "${input}" "${LIVE}")"
+    [ "${got}" = "0" ] || {
+      printf 'input=%s verdict=%s (expected 0 = escaping)\n' "${input}" "${got}"
+      return 1
+    }
+  done
+}
+
+@test "write target: a relative path under an existing in-root directory stays contained" {
+  mkdir -p "${LIVE}/hooks"
+  local got
+  got="$(write_target_verdict "${LIVE}" "hooks/new/x.sh" "${LIVE}")"
+  [ "${got}" = "1" ] || {
+    printf 'verdict=%s (expected 1 = contained)\n' "${got}"
+    return 1
+  }
 }

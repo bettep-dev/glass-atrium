@@ -30,8 +30,9 @@
 # writer actually emitted survives whichever matcher runs first. TWO is the minimum: one trailing
 # space leaves `(.+)` nothing to take, which the boundary row below pins from the other side.
 #
-# bats-1.13 LAST-COMMAND SEMANTICS (load-bearing, mirrors the sibling suites): a test fails ONLY on
-#   its final command exit, so every table test ends on one gate over an accumulated failure list.
+# BASH GATING SEMANTICS (load-bearing, mirrors the sibling suites): a mid-body bare `[[ ]]` / `(( ))`
+#   is inert on macOS bash 3.2.57 but GATES on CI's bash 5.3.9 (measured, bats 1.13.0 both legs — bash
+#   is the variable, not bats), so every table test ends on one gate over an accumulated failure list.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"

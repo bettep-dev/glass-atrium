@@ -285,8 +285,11 @@ TOML
 # the rule under test, and GA_DATA_ROOT is pinned into WORK so "the default
 # location" is a directory these tests own.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict, so every
-# assertion below `return 1`s with its own message and fails independently.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# Every assertion below `return 1`s with its own message, so each fails independently on every version.
 
 BK_CFG_ABSENT="__no_key__"
 
@@ -537,8 +540,9 @@ backup_resolve() {
 # canonicalizer and 6b reports the link instead of its target, drop the safety
 # predicate and 6c/6d/6e adopt a directory a second local user can write.
 #
-# BATS GATING NOTE (as above): a bare non-final `[[ ]]` does NOT gate the verdict, so
-# every assertion `return 1`s with its own message.
+# BATS GATING NOTE (as above — the flip is at bash 4.4, not 5.x): a bare non-final `[[ ]]` does NOT
+# gate the verdict on macOS bash 3.2.57 but DOES from bash 4.4 onward, so every assertion
+# `return 1`s with its own message.
 
 @test "AC-C2(6a) a '..' or '.' segment is declined with its own reason" {
   local value

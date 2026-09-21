@@ -2,9 +2,7 @@
 
 Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when ordering class members, organizing files, or laying out directories.
 
-## Code Structure [DEV]
-
-**Newspaper Metaphor** — Top of file = high-level public API, bottom = low-level private implementation.
+The principles — Newspaper Metaphor, Stepdown Rule, the member-order and `readonly` summary — are in `scoped/shared-code-structure.md` → `## Core Principles`. This file keeps the lookup detail.
 
 ## Member Ordering
 
@@ -19,16 +17,14 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when ordering
 | 7 | static methods | public → protected → private |
 | 8 | instance methods | public → protected → private |
 
-- **readonly** fields SHOULD be placed first within the same category
-- **Framework-specific**: Component ordering follows the respective style guide (Angular/React etc.)
+- **Framework-specific**: component ordering follows the framework's style guide (Angular, React, etc.).
 
 ## Ordering Principles
 
 | Principle | Description |
 |-----------|-------------|
-| **Stepdown Rule** | Place callee directly below caller — "caller-before-callee" |
 | **Feature Sections** | Group related public + dependent private together |
-| **Section Comments** | `// ===== Section =====` format. Use in classes with 10+ methods |
+| **Section Comments** | A one-line `// <Section>` label, no banner or ASCII decoration (`scoped/shared-comment-logging.md` → `## Comment Language & Style`). Use in classes with 10+ methods |
 | **NestJS Service** | CRUD → domain-specific operations → private helpers |
 
 ## Files/Directories
@@ -36,4 +32,3 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when ordering
 - **Single responsibility per file** — 1 file = 1 class / 1 module
 - **Import order**: standard → external → internal (separated by blank lines)
 - **Directories**: lowercase + dashes (`components/auth-wizard`)
-- **Large classes**: 500+ lines → consider splitting first (SRP violation signal)

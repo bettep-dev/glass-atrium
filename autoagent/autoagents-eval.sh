@@ -67,7 +67,6 @@ diagnose_failure() {
     [ "$delta_pct" -gt 20 ] && delta_class="major_rewrite"
     echo "DIAG: ${file} — +${added}/-${removed} (${delta_pct}% delta) → ${delta_class}"
   done
-  echo "$issues_text" | grep -qi "section" && echo "DIAG-FIX: section → Restore from git HEAD"
   echo "$issues_text" | grep -qi "Korean" && echo "DIAG-FIX: language → Translate to English"
   echo "$issues_text" | grep -qi "frontmatter\|YAML" && echo "DIAG-FIX: YAML → Fix structure"
   [ "$delta_class" = "major_rewrite" ] && recommendation="ROLLBACK"
@@ -140,6 +139,15 @@ PREFLIGHT_REASON=$(llm_preflight 10.00) || {
 }
 log "LLM preflight passed"
 
+# Background-worker model id from the daemon-config.json SoT, via atrium_resolve_worker_model
+# (lib/atrium-config.sh) — the same resolver every other daemon path uses. Sourced explicitly
+# rather than leaning on llm-preflight.sh's own source of it: that script's contract is a cost
+# gate, not a model provider. DAEMON_CONFIG override hook → canonical default when empty.
+# shellcheck source=/dev/null
+source "$HOME/.glass-atrium/scripts/lib/atrium-config.sh"
+WORKER_MODEL="$(atrium_resolve_worker_model "${DAEMON_CONFIG:-}")"
+log "eval model resolved: ${WORKER_MODEL}"
+
 # ── 2. run regression eval via claude -p ────────────────────────
 
 EVAL_PROMPT="You are reviewing agent instruction files in ~/.claude/agents/.
@@ -150,17 +158,26 @@ Do not guess. If a file cannot be read, treat that as FAIL.
 Evaluate each file on these 5 checks:
 1. Consistency with GLASS_ATRIUM_GLOBAL_RULES.md
 2. No role boundary violations between agents
-3. Required sections present exactly: Goal, Guardrails, Prohibitions
-4. skills array matches the agent group (DEV / QA / non-DEV)
-5. All instruction content is written in English only
+3. Frontmatter is valid YAML and carries both name and description
+4. A skills key, where the file carries one, is a well-formed list
+5. Instruction content is written in English, outside the carve-outs named below
+
+A changed file is an agent instruction file only when it opens with a YAML frontmatter
+block carrying a name key. Checks 3 and 4 apply to those files alone — a shared rule doc,
+a reference or a template under the same directory is still checked on 1, 2 and 5.
+
+Body section headings are a ceiling, not a floor. Do not require any heading to
+be present, and do not fail a file for a heading another agent file happens to carry.
 
 FAIL conditions:
 - Any one of the 5 checks fails for any file
 - GLASS_ATRIUM_GLOBAL_RULES.md or any target file is not readable
-- The agent group cannot be determined confidently
-- The skills array is missing or ambiguous
-- A required section heading is missing exactly as written
-- Korean text appears anywhere in agent instructions except file paths, code, or proper nouns
+- Frontmatter is unparseable, or name or description is absent
+- A skills key is present but is not a well-formed list
+- Korean text appears outside the carve-outs of the Output Language rule you read in
+  GLASS_ATRIUM_GLOBAL_RULES.md. Read that list there and apply it as written — it is
+  wider than \"file paths and proper nouns\", and it exempts text the file REPRODUCES
+  rather than authors. Never flag against a paraphrase of it.
 
 When checking role boundary violations:
 - Mark FAIL only for explicit responsibility overlap, explicit instruction conflict, or explicit scope leakage
@@ -180,7 +197,7 @@ Output format rules:
 # --setting-sources project,local: load agents-dir project rules so eval has GLASS_ATRIUM_GLOBAL_RULES.md context.
 EVAL_RESULT=$(OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none CLAUDE_CODE_ENABLE_TELEMETRY=0 \
   "$CLAUDE" -p \
-  --model claude-sonnet-4-6 \
+  --model "$WORKER_MODEL" \
   --setting-sources project,local \
   --tools "Read,Glob,Grep" \
   --permission-mode bypassPermissions \

@@ -102,6 +102,17 @@ write_full_settings() {
     "SubagentStart": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/agent-tracker.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-rules.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-01.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-02.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-03.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-04.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-05.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-06.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-07.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-08.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-09.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-10.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-11.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] }
     ],
     "SubagentStop": [
@@ -139,6 +150,14 @@ make_ga_sandbox() {
   cp "${REAL_GA}" "${GA_SANDBOX}/glass-atrium"
   chmod 755 "${GA_SANDBOX}/glass-atrium"
   ln -s "${GA}/lib" "${GA_SANDBOX}/lib"
+  # hooks/lib carries the chunker core the split-channel rows below ask for its slot constant.
+  # COPIED from the producer rather than stubbed — the constant and the audit grammar are the
+  # producer's, and a stub would let a rename here pass while the live reader went blind. A
+  # SYMLINK would carry that authority too, but the sandbox is a write surface: a sibling row
+  # writes its own file into hooks/lib, and through a link that write lands in the source tree
+  # beside the chunker core. Real directory, copied contents.
+  mkdir -p "${GA_SANDBOX}/hooks/lib"
+  cp "${GA}/hooks/lib/inject_chunk.py" "${GA}/hooks/lib/inject-chunk.sh" "${GA_SANDBOX}/hooks/lib/"
   ln -s "${GA}/scripts" "${GA_SANDBOX}/scripts"
   ln -s "${GA}/config.toml.example" "${GA_SANDBOX}/config.toml.example"
   local src name
@@ -281,8 +300,8 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 49-binding set across all 7 events
-  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 60-binding set across all 7 events
+  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 14 /
   # SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
   # advisory-egress-secret.sh + advisory-raw-store-read.sh). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
@@ -293,28 +312,31 @@ drop_group() {
   # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
-  # leaf is unwired, so all 49 report dormant.
+  # leaf is unwired, so all 60 report dormant. SubagentStart carries 14 because the scope-rule
+  # channel is split across twelve slots: inject-scope-rules.sh keeps the marker blocks and
+  # inject-scope-part-01.sh .. -11.sh each carry one part, alongside agent-tracker.sh and
+  # telemetry-activation.sh.
   #
   # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
-  # unrelated reasons, and a simultaneous remove-and-add holds it at 49. The membership pin is
-  # write_full_settings in THIS file — it enumerates all 49 leaves by NAME, so a swapped roster row
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 60. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 60 leaves by NAME, so a swapped roster row
   # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
-  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 42 roster
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 53 roster
   # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
   # is one of those 7.
   #
   # Measured, not assumed: swapping "PreToolUse<TAB>validate-scope-drift.sh<TAB>Write|Edit" for
   # style-ref-verify.sh in EXPECTED_HOOK_BINDINGS — one real deployed hook silently unwired, total
-  # held at 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
+  # held at the then-current 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
   # reddening 6 rows in this file.
   #
   # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
   # is rewritten in the same composition, so a count taken from any single branch goes stale on
   # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
-  # which is smaller than the 49 leaves because a basename can bind under several event/matcher
+  # which is smaller than the 60 leaves because a basename can bind under several event/matcher
   # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
   # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
-  [[ "${output}" == *"49 dormant hook binding(s)"* ]]
+  [[ "${output}" == *"60 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {
@@ -432,6 +454,204 @@ array_rows() {
 # surfaces via the count>0 guard, not a phantom "hooks/" lookup.
 wired_basenames() {
   array_rows | awk -F'\t' 'NF >= 2 && $2 != "" { print $2 }' | LC_ALL=C sort -u
+}
+
+# --- §10b, the split scope-rule channel ---------------------------------------
+#
+# Twelve SubagentStart slots carry what one injector used to: inject-scope-rules.sh keeps the
+# marker blocks and inject-scope-part-01.sh .. -11.sh carry one part each. §6 asks settings.json
+# about each declared row on its own and knows nothing about the chunker, so three conditions are
+# invisible to it and are pinned here instead.
+#
+# The one that motivated the section: the deploy wires bindings through update.sh ->
+# update_wire_hooks_post_apply -> the launcher's wire-hooks subcommand, and a missing or
+# non-executable launcher there is a WARN with exit 0. Files applied, bindings NOT reconciled —
+# every wrapper on disk, none bound, every agent receiving the marker-block slot alone. §6 reports
+# that as eleven dormant lines indistinguishable from any other unwired hook.
+#
+# The slot constant and the envelope threshold are read FROM the chunker core (--audit), never
+# restated here: a fixture carrying its own copy of a producer's constant can only ever agree with
+# itself. make_ga_sandbox symlinks hooks/lib for exactly that reason.
+
+# A one-agent registry so the core's audit has something to plan. The member is deliberately
+# absent from the sandbox — the audit still reports a slot constant and a total, which is all
+# these rows read, and the absent member exercises the degrade path rather than hiding it.
+write_chunk_registry() {
+  cat >"${GA_SANDBOX}/agent-registry.json" <<'JSON'
+{ "agents": { "probe-agent": { "rules": { "scope": "scoped/probe.md", "shared": [], "conditional": [] } } } }
+JSON
+}
+
+# Every part-slot group, dropped from the wired settings — the launcher-skipped shape.
+drop_all_part_groups() {
+  local n
+  for n in 01 02 03 04 05 06 07 08 09 10 11; do
+    drop_group "" "inject-scope-part-${n}.sh" SubagentStart
+  done
+}
+
+@test "split channel: every part slot bound -> slot count agrees and all slots report bound" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"injector slot count agrees"* ]] || {
+    echo "no slot-count agreement line: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"scope-rule part slots bound"* ]] || {
+    echo "no bound-slots line: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"NONE of the"* ]] || {
+    echo "a fully-bound channel reported the unbound signature: ${output}"
+    return 1
+  }
+  [[ "${status}" -eq 0 ]] || {
+    echo "doctor failed on a healthy channel: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: no part slot bound -> ONE named warn for the launcher-skipped shape" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  drop_all_part_groups
+  run_doctor_ga_sandbox
+  # The shape, not the count: what distinguishes this from eleven ordinary dormant hooks is that
+  # the surviving marker-block slot makes every agent look injected while carrying no rule body.
+  [[ "${output}" == *"NONE of the 11 scope-rule part slots is bound"* ]] || {
+    echo "no named unbound-channel warn: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"marker-block slot ALONE"* ]] || {
+    echo "the warn does not name the consequence: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"wire-hooks"* ]] || {
+    echo "the warn carries no remedy: ${output}"
+    return 1
+  }
+  # and it feeds the aggregate rather than being a decorative line
+  [[ "${output}" == *"inject-slot"* ]] || {
+    echo "the warn does not reach the PASS summary aggregate: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: some part slots bound -> partial warn naming the ratio, not the NONE shape" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  drop_group "" "inject-scope-part-09.sh" SubagentStart
+  drop_group "" "inject-scope-part-10.sh" SubagentStart
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"9 of 11 scope-rule part slots bound"* ]] || {
+    echo "no partial-binding warn naming the ratio: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"NONE of the"* ]] || {
+    echo "a partial gap was reported as a total one: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: an absent part wrapper -> presence warn naming the ratio" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  rm -f "${GA_SANDBOX}/hooks/inject-scope-part-07.sh"
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"10 of 11 scope-rule part wrapper(s) present"* ]] || {
+    echo "no wrapper-presence warn: ${output}"
+    return 1
+  }
+  # §6 keeps its deliberate partition: an absent file is NOT reported as an executability defect.
+  [[ "${output}" != *"NOT executable"* ]] || {
+    echo "an absent wrapper was double-reported as non-executable: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: a member set past the envelope warns on demand AND on slot overflow" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  # ~120,000 units of heading-bounded source, i.e. past the soft envelope and past what eleven
+  # 10,000-unit slots can carry. The figure is derived from the core's OWN header (soft= and
+  # slots= x cap=) rather than pinned: a fixture that hardcodes a producer's threshold agrees
+  # only with itself. Sections stay well inside one part so nothing trips the cannot-fit path.
+  mkdir -p "${GA_SANDBOX}/scoped"
+  local section i
+  section="$(head -c 600 /dev/zero | tr '\0' 'x')"
+  : >"${GA_SANDBOX}/scoped/probe.md"
+  for ((i = 0; i < 200; i++)); do
+    printf '## S%d\n%s\n\n' "${i}" "${section}" >>"${GA_SANDBOX}/scoped/probe.md"
+  done
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"source demand at or above the 110000-unit soft envelope"* ]] || {
+    echo "no envelope warn for an over-envelope member set: ${output}"
+    return 1
+  }
+  # DELIVERY IS NOT DEMAND: the delivered sum is bounded by slots x cap, so a reader keyed on it
+  # could never cross this threshold. This row fails if the doctor ever goes back to reading it.
+  [[ "${output}" == *"probe-agent(12"* ]] || {
+    echo "the envelope warn does not name the agent's source demand: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"exceed the 11 available slot(s)"* ]] || {
+    echo "no slot-overflow warn: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"recoverable by Read, not lost"* ]] || {
+    echo "the overflow warn overstates the loss: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: a member set inside the envelope warns on neither" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  mkdir -p "${GA_SANDBOX}/scoped"
+  local section i
+  section="$(head -c 600 /dev/zero | tr '\0' 'x')"
+  : >"${GA_SANDBOX}/scoped/probe.md"
+  for ((i = 0; i < 20; i++)); do
+    printf '## S%d\n%s\n\n' "${i}" "${section}" >>"${GA_SANDBOX}/scoped/probe.md"
+  done
+  run_doctor_ga_sandbox
+  [[ "${output}" != *"soft envelope"* ]] || {
+    echo "a small member set tripped the envelope warn: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"available slot(s)"* ]] || {
+    echo "a small member set tripped the overflow warn: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"injector slot count agrees"* ]] || {
+    echo "the healthy path did not report agreement: ${output}"
+    return 1
+  }
+}
+
+@test "split channel: an unreachable chunker core is BLIND, never an ok" {
+  make_ga_sandbox
+  write_chunk_registry
+  write_full_settings
+  # the core FILE, not the directory: that path is what the doctor opens, so removing it states
+  # the unreachable condition exactly and needs no recursive delete on a real sandbox directory.
+  rm -f "${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"split scope-rule channel BLIND"* ]] || {
+    echo "an unreadable core did not report blind: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"injector slot count agrees"* ]] || {
+    echo "a blind read still claimed agreement: ${output}"
+    return 1
+  }
 }
 
 @test "every wired hook basename is git-tracked at index mode 100755" {

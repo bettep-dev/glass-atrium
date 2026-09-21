@@ -219,8 +219,8 @@ first_manifest_path_under() {
     echo "manifest path(s) claimed by BOTH consumers:"
     printf '%s' "${double}"
   fi
-  # One assertion per line: a `[[ a ]] && [[ b ]]` compound whose FIRST half
-  # fails is exempt from set -e, so it would read green while asserting nothing.
+  # One assertion per line — a `[[ a ]] && [[ b ]]` first-half failure reads green mid-body on every bash.
+  # Positional, not platform: the same compound in FINAL position gates everywhere.
   [ -z "${uncovered}" ]
   [ -z "${double}" ]
 
@@ -397,9 +397,10 @@ first_manifest_path_under() {
   printf '{"version":"t","files":[],"hashes":{}}\n' >"${new}/manifest.json"
   run update_merge_agent_editable_regions "${new}" "${new}/manifest.json" "${live}"
   [ "${status}" -eq 0 ]
-  # `|| return 1` is load-bearing: under bats a FAILING bare `[[ ]]` that is not
-  # the test's final command does not fail the test, so a glob assertion written
-  # bare would read green while asserting nothing.
+  # `|| return 1` is load-bearing: a mid-body bare `[[ ]]` is inert on bash 3.2.57
+  # but GATES on CI's bash 5.3.9 (measured, bats 1.13.0 on both legs, so bash is
+  # the variable, not bats), so a glob assertion written bare would read green on
+  # macOS while asserting nothing.
   [[ "${output}" == *'no agent files to merge'* ]] || return 1
   [[ "${output}" != *'GLASS_ATRIUM_GLOBAL_RULES'* ]] || return 1
   # untouched: the charter is moved to the OTHER consumer, not handed to a merge

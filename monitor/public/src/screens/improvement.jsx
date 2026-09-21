@@ -2189,7 +2189,10 @@ function ProseOnlyAddCardI({ state, summary }) {
 //   - per-agent rate null 시 "—" 표시 (denominator = 0)
 //
 // graduation gate: overall_emission_rate ≥ 0.50 AND
-//   (1 - overall_verified_rate) < 0.10 (fake_rate = 1 - verified_rate).
+//   overall_uncorroborated_rate < 0.10 — the uncorroborated share of the rows the
+//   cross-check ADJUDICATED. Route-side denominator excludes the unverifiable rows,
+//   so this gate cannot be passed by widening the blind spot; the unverifiable count
+//   is rendered beside it as the coverage reading.
 // dual-encoded indicator.
 
 function StyleRefCardI({ state, styleRef }) {
@@ -2221,25 +2224,25 @@ function StyleRefCardI({ state, styleRef }) {
 	}
 
 	const overallEmission = styleRef.overall_emission_rate;
-	const overallVerified = styleRef.overall_verified_rate;
+	const overallUncorroborated = styleRef.overall_uncorroborated_rate;
 	const agentRows = Array.isArray(styleRef.agents) ? styleRef.agents : [];
 	const hasData = agentRows.some((r) => Number(r.emission_count ?? 0) > 0);
 
 	// 격상 게이트 — null-safe (데이터 부재 → 회색 pending indicator).
-	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallVerified);
+	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
 
 	// C3: 격상 임계치 대비 rate 를 BulletBar(척도상 위치 + target 마커)로 — % 텍스트는 유지.
 	//   - emission: target=0.5 (격상 게이트 ≥50%) · ≥0.5 구간을 ok 밴드로.
-	//   - verified: target=0.9 (fake<10% ⟺ verified≥90% 등가 변환 — UI 는 fake 대신 verified 노출).
-	//     ≥0.9 가 good band(ok) · <0.9 는 fake≥10% → warn.
+	//   - uncorroborated: target=0.1 (격상 게이트 < 10%) · <0.1 이 ok 밴드, 이상은 warn.
+	//     verified 로 뒤집지 않는다 — 뒤집은 값은 adjudicated 분모를 숨겨 unverifiable 을 함께 읽게 만든다.
 	const hasEmission =
 		overallEmission !== null &&
 		overallEmission !== undefined &&
 		!Number.isNaN(Number(overallEmission));
-	const hasVerified =
-		overallVerified !== null &&
-		overallVerified !== undefined &&
-		!Number.isNaN(Number(overallVerified));
+	const hasUncorroborated =
+		overallUncorroborated !== null &&
+		overallUncorroborated !== undefined &&
+		!Number.isNaN(Number(overallUncorroborated));
 	const emissionBar = hasEmission ? (
 		<BulletBar
 			value={Number(overallEmission)}
@@ -2252,16 +2255,16 @@ function StyleRefCardI({ state, styleRef }) {
 			ariaLabel={`Reported rate ${(Number(overallEmission) * 100).toFixed(0)}% (graduation target 50%)`}
 		/>
 	) : null;
-	const verifiedBar = hasVerified ? (
+	const uncorroboratedBar = hasUncorroborated ? (
 		<BulletBar
-			value={Number(overallVerified)}
-			target={0.9}
+			value={Number(overallUncorroborated)}
+			target={0.1}
 			showValue
 			zones={[
-				{ upTo: 0.9, tone: "warn" },
-				{ upTo: 1, tone: "ok" },
+				{ upTo: 0.1, tone: "ok" },
+				{ upTo: 1, tone: "warn" },
 			]}
-			ariaLabel={`Verified rate ${(Number(overallVerified) * 100).toFixed(0)}% (target 90% · fake under 10%)`}
+			ariaLabel={`Uncorroborated share ${(Number(overallUncorroborated) * 100).toFixed(0)}% of adjudicated rows (graduation target under 10%)`}
 		/>
 	) : null;
 
@@ -2285,10 +2288,10 @@ function StyleRefCardI({ state, styleRef }) {
 		[
 			"ℹ",
 			"text-info",
-			"Verified rate (overall)",
-			formatRateI(overallVerified),
-			"",
-			verifiedBar,
+			"Uncorroborated share",
+			formatRateI(overallUncorroborated),
+			"of adjudicated rows only",
+			uncorroboratedBar,
 		],
 	];
 
@@ -2321,13 +2324,14 @@ function StyleRefCardI({ state, styleRef }) {
 					</div>
 				))}
 			</div>
-			{/* verified/unverified/greenfield split + fake_rate (P13) — 데이터 부재 시 미렌더(placeholder 로 위임). */}
+			{/* 3-count partition + greenfield (P13) — 데이터 부재 시 미렌더(placeholder 로 위임). */}
 			{hasData && (
 				<StyleRefSplitI
-					verified={styleRef.overall_verified_count}
-					unverified={styleRef.overall_unverified_count}
+					corroborated={styleRef.overall_corroborated_count}
+					uncorroborated={styleRef.overall_uncorroborated_count}
+					unverifiable={styleRef.overall_unverifiable_count}
 					greenfield={styleRef.overall_greenfield_count}
-					fakeRate={styleRef.overall_fake_rate}
+					uncorroboratedRate={styleRef.overall_uncorroborated_rate}
 				/>
 			)}
 			{/* per-agent breakdown — 데이터 부재 시 "누적 중" 안내. */}
@@ -2347,7 +2351,8 @@ function StyleRefCardI({ state, styleRef }) {
 }
 
 function StyleRefAgentTableI({ rows }) {
-	// 행=agent (가변) / 열=5 (agent · emission · emission_rate · verified · verified_rate)
+	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
+	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
 	// 헤더는 dim text + uppercase tracking · 본문은 mono.
 	return (
 		<div className="px-3 pb-3">
@@ -2357,16 +2362,19 @@ function StyleRefAgentTableI({ rows }) {
 						<th className="text-left py-1.5 pl-1.5">Agent</th>
 						<th className="text-right py-1.5">Reported</th>
 						<th className="text-right py-1.5">Rate</th>
-						<th className="text-right py-1.5">Verified</th>
-						<th className="text-right py-1.5 pr-1.5">Verified rate</th>
+						<th className="text-right py-1.5">Corrob.</th>
+						<th className="text-right py-1.5">Uncorrob.</th>
+						<th className="text-right py-1.5 pr-1.5">Unverifiable</th>
 					</tr>
 				</thead>
 				<tbody>
 					{rows.map((r) => {
 						const emCount = Number(r.emission_count ?? 0);
 						const emTotal = Number(r.emission_total ?? 0);
-						const vrCount = Number(r.verified_true_count ?? 0);
-						const vrEligible = Number(r.verified_eligible ?? 0);
+						const corroborated = Number(r.corroborated_count ?? 0);
+						const uncorroborated = Number(r.uncorroborated_count ?? 0);
+						const unverifiable = Number(r.unverifiable_count ?? 0);
+						const eligible = Number(r.eligible_count ?? 0);
 						return (
 							<tr key={r.agent} className="border-t border-line/50">
 								<td className="text-left py-1.5 pl-1.5 text-ink">{r.agent}</td>
@@ -2376,11 +2384,14 @@ function StyleRefAgentTableI({ rows }) {
 								<td className="text-right py-1.5 text-ink">
 									{formatRateI(r.emission_rate)}
 								</td>
-								<td className="text-right py-1.5 text-dim">
-									{formatIntI(vrCount)} / {formatIntI(vrEligible)}
+								<td className="text-right py-1.5 text-ok">
+									{formatIntI(corroborated)} / {formatIntI(eligible)}
 								</td>
-								<td className="text-right py-1.5 pr-1.5 text-ink">
-									{formatRateI(r.verified_rate)}
+								<td className="text-right py-1.5 text-warn">
+									{formatIntI(uncorroborated)}
+								</td>
+								<td className="text-right py-1.5 pr-1.5 text-faint">
+									{formatIntI(unverifiable)}
 								</td>
 							</tr>
 						);
@@ -2391,12 +2402,19 @@ function StyleRefAgentTableI({ rows }) {
 	);
 }
 
-// verified/unverified/greenfield 분해 + fake_rate 도표 (P13 · Gaming-the-Judge).
-// fake_rate = unverified / verify-eligible — eligible=0 → "—" (가짜 0 금지).
-function StyleRefSplitI({ verified, unverified, greenfield, fakeRate }) {
+// corroborated/uncorroborated/unverifiable 3-count + greenfield 도표 (P13).
+// 비율 하나로 접지 않는다 — 판정 가능했던 row 와 아예 보지 못한 row 가 한 숫자에 섞인다.
+function StyleRefSplitI({
+	corroborated,
+	uncorroborated,
+	unverifiable,
+	greenfield,
+	uncorroboratedRate,
+}) {
 	const cells = [
-		["Verified", verified, "text-ok"],
-		["Unverified", unverified, "text-warn"],
+		["Corroborated", corroborated, "text-ok"],
+		["Uncorroborated", uncorroborated, "text-warn"],
+		["Unverifiable", unverifiable, "text-faint"],
 		["Greenfield", greenfield, "text-info"],
 	];
 	return (
@@ -2413,10 +2431,12 @@ function StyleRefSplitI({ verified, unverified, greenfield, fakeRate }) {
 				<span className="inline-flex items-baseline gap-1 ml-auto">
 					<span
 						className="text-faint uppercase tracking-wider"
-						title="Fake rate = unverified / verify-eligible (graduation gate < 10%)">
-						Fake rate
+						title="Uncorroborated / (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate < 10%)">
+						Uncorroborated share
 					</span>
-					<span className="text-ink font-semibold">{formatRateI(fakeRate)}</span>
+					<span className="text-ink font-semibold">
+						{formatRateI(uncorroboratedRate)}
+					</span>
 				</span>
 			</div>
 		</div>
@@ -2424,12 +2444,12 @@ function StyleRefSplitI({ verified, unverified, greenfield, fakeRate }) {
 }
 
 // v1.1 격상 게이트 dual-encoded badge — null-safe.
-// PASS: emission ≥ 0.50 AND (1 - verified) < 0.10 → ✓ + text-ok
-// WARN: emission ≥ 0.50 AND fake ≥ 0.10                 → ⚠ + text-warn
+// PASS: emission ≥ 0.50 AND uncorroborated < 0.10 → ✓ + text-ok
+// WARN: emission ≥ 0.50 AND uncorroborated ≥ 0.10 → ⚠ + text-warn
 // BLOCK: emission < 0.50 (데이터 부족 외)              → ⛔ + text-crit
 // PEND: 전체 NULL (데이터 부재)                          → ℹ + text-info
-function styleRefGradeBadgeI(emissionRate, verifiedRate) {
-	if (emissionRate === null && verifiedRate === null) {
+function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
+	if (emissionRate === null && uncorroboratedRate === null) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
@@ -2453,30 +2473,30 @@ function styleRefGradeBadgeI(emissionRate, verifiedRate) {
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
 		};
 	}
-	// emission ≥ 50% — verified_rate 평가.
-	if (verifiedRate === null) {
-		// 모든 emission 이 STYLE_REF_GREENFIELD (cross-layer SoT — routes/improvement.ts) → verify N/A · 격상 보류 (data 누적 필요).
+	// emission ≥ 50% — uncorroborated share 평가.
+	if (uncorroboratedRate === null) {
+		// adjudicated = 0 · 모든 emission 이 STYLE_REF_GREENFIELD (cross-layer SoT — routes/improvement.ts)
+		// 이거나 전부 unverifiable → 판정 근거 없음 · 격상 보류.
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
 			label: "pending",
-			hint: "Verify-eligible: 0 (all greenfield)",
+			hint: "Adjudicated: 0 (greenfield or unverifiable)",
 		};
 	}
-	const fakeRate = 1 - verifiedRate;
-	if (fakeRate < 0.1) {
+	if (uncorroboratedRate < 0.1) {
 		return {
 			symbol: "✓",
 			tone: "text-ok",
 			label: "pass",
-			hint: `emission ${formatRateI(emissionRate)} · fake ${formatRateI(fakeRate)}`,
+			hint: `emission ${formatRateI(emissionRate)} · uncorroborated ${formatRateI(uncorroboratedRate)}`,
 		};
 	}
 	return {
 		symbol: "⚠",
 		tone: "text-warn",
 		label: "warn",
-		hint: `fake ${formatRateI(fakeRate)} ≥ 10%`,
+		hint: `uncorroborated ${formatRateI(uncorroboratedRate)} ≥ 10%`,
 	};
 }
 

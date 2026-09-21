@@ -15,8 +15,10 @@
 #   * LOUD-FAIL on a malformed settings.json (original left intact);
 #   * be IDEMPOTENT — a re-run retires nothing; DRY_RUN reports intent only.
 #
-# Every assertion is gated `|| return 1`: this bats version fails a test ONLY on the LAST
-# command's status, so a bare mid-body `[[ ]]` would be silently ignored.
+# Every assertion is gated `|| return 1`: @test bodies run under errexit, but a bare
+# mid-body `[[ ]]` / `(( ))` is exempt on macOS bash 3.2.57 and DOES gate on Linux
+# bash 5.3.9 in CI (measured, bats 1.13.0 both legs — bash is the variable, not
+# bats), so an unguarded assertion would be silently ignored locally.
 #
 # Run via: bats test/retire-hook-binding.bats
 # Requires: bats (brew install bats-core), jq, bash 3.2+

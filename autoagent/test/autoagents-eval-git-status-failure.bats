@@ -9,8 +9,11 @@
 # the legitimate no-match path, the changed-file data path, and the mode-2
 # (--unstaged) runner contract the conversion must not touch.
 #
-# Assertion idiom: `[[ ... ]] || return 1`. Bats does NOT catch a bare non-final
-# `[[ ]]` failure, so every assertion is routed through `|| return 1`.
+# Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
+# bare non-final `[[ ]]` is exempt under macOS bash 3.2.57 and DOES gate from bash
+# 4.4 onward (measured 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15; CI runs 5.3.9, bats 1.13.0
+# on both operational legs — bash is the variable, not bats), so every assertion is
+# routed through `|| return 1` to gate on both legs.
 #
 # Hermetic: a per-test fake HOME supplies both the AGENTS_DIR the script cd's
 # into and the sourced llm-preflight stub, so nothing under the live tree is read

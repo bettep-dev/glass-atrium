@@ -1,6 +1,6 @@
 // Content-budget tests (AC-1~AC-5, AC-8, AC-9) — the counting gate for the ONE drawn diagram.
 // Target artifact is CANONICAL_MAP.mermaid_drawn, never mermaid_source: the 7 sources stay complete
-// so daemon-binding / flow-extractor / verify-arch Stage-2 keep their subject.
+// so daemon-binding / flow-extractor keep their subject.
 // Runner: npx tsx --test test/architecture.budget.test.ts
 
 import test from "node:test";

@@ -56,6 +56,10 @@ setup() {
   # shellcheck source=/dev/null
   source "${DEPS_SH}"
   SANDBOX="$(mktemp -d -t ga-deps-bats.XXXXXX)"
+  # PG_SOCKET redirect (GA_PG_SOCKET test seam) — INERT under the current form: this file sources
+  # only ga-deps.sh, so ga_init_env never runs and neither pg-orphan function enters scope. Kept so a
+  # later conversion to launcher-sourcing inherits the scratch redirect instead of the live /tmp.
+  export GA_PG_SOCKET="${SANDBOX}"
 }
 
 teardown() {
@@ -846,10 +850,11 @@ extract_launcher_fn() {
 
 @test "G7(static): _preflight_fakechat_boxed frames the plugin install as a panel step, marketplace-add carrying the slow-clone label" {
   # BOTH claims below were TERMINAL (live) assertions in the pre-diet G7 block and went out together
-  # with an inert mid-body sibling. The first is a WIRING claim — the fakechat plugin install is engaged
-  # through preflight_panel_step at all, not a copy snapshot; the second pins the present-progressive
-  # ACTIVE cue flagging the ~30s marketplace clone. They share ONE terminal && chain so neither can be
-  # re-inerted by a later mid-body append.
+  # with a sibling that bash 3.2.57 left inert mid-body (on CI's bash 5.3.9 it gates). The first is a
+  # WIRING claim — the fakechat plugin install is engaged through preflight_panel_step at all, not a
+  # copy snapshot; the second pins the present-progressive ACTIVE cue flagging the ~30s marketplace
+  # clone. They share ONE terminal && chain so neither can be re-inerted on bash 3.2.57 by a later
+  # mid-body append.
   local body
   body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]] || return 1
@@ -1152,8 +1157,9 @@ SH
   local home="${SANDBOX}/home"
   mkdir -p "${home}/.claude" # empty → no creds file
   export GA_STUB_SEC_RC=44   # errSecItemNotFound — no Keychain item
-  # bats 1.13.0 masks mid-body [[ ]] failures → re-source the lib in a clean child (also the direct
-  # subshell cross-check) and assert the verdict via a terminal `run`+`[ ]` (last-command status).
+  # bash 3.2.57 leaves a mid-body [[ ]] failure inert (on CI's bash 5.3.9 it gates; measured, bats
+  # 1.13.0 on both legs) → re-source the lib in a clean child (also the direct subshell cross-check)
+  # and assert the verdict via a terminal `run`+`[ ]`, which gates on both legs.
   export GA_TEST_HOME="${home}" GA_TEST_PATH="${stub}" GA_TEST_DEPS="${DEPS_SH}"
   run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
   [ "${status}" -eq 0 ] && [ "${output}" = "present-but-down" ]
@@ -1251,8 +1257,9 @@ SH
   # secondary: security invoked WITHOUT -w and WITH the exact service (attributes-only, no secret read);
   # checked BEFORE the terminal verdict so the last-command status remains the authoritative assertion.
   export GA_TEST_HOME="${home}" GA_TEST_PATH="${stub}" GA_TEST_DEPS="${DEPS_SH}"
-  # bats 1.13.0 masks mid-body [[ ]] failures → re-source the lib in a clean child (also the direct
-  # subshell cross-check) with claude OFF PATH and assert the verdict via a terminal `run`+`[ ]`.
+  # bash 3.2.57 leaves a mid-body [[ ]] failure inert (on CI's bash 5.3.9 it gates; measured, bats
+  # 1.13.0 on both legs) → re-source the lib in a clean child (also the direct subshell cross-check)
+  # with claude OFF PATH and assert the verdict via a terminal `run`+`[ ]`.
   run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
   local argv
   argv="$(cat "${SANDBOX}/security-argv" 2>/dev/null || true)"

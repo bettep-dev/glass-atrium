@@ -36,6 +36,11 @@ setup() {
   # the libs are not strict-mode when sourced alone, but suspend any inherited ERR trap defensively.
   trap - ERR
   SANDBOX="$(mktemp -d -t ga-poll-wallclock.XXXXXX)"
+  # PG_SOCKET redirect (GA_PG_SOCKET test seam) — INERT under the current form: this file sources
+  # the libs directly, so ga_init_env — the sole reader of GA_PG_SOCKET — never runs. The per-test
+  # inline PG_SOCKET='${SANDBOX}' below is what scopes the socket paths. Kept so a later conversion
+  # to launcher-sourcing inherits the scratch redirect instead of the live /tmp.
+  export GA_PG_SOCKET="${SANDBOX}"
 }
 
 teardown() {

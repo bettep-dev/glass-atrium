@@ -12,8 +12,9 @@
 # bash -c wrapper only wires stdin redirection + stderr merge. HOME is sandboxed so no
 # live ~/.claude or ~/.glass-atrium state is read or written.
 #
-# Each assertion carries a `|| return 1` fail-fast guard — bats enforces only the test
-# body's LAST command status, so an unguarded intermediate assertion is silently masked.
+# Each assertion carries a `|| return 1` fail-fast guard — an unguarded mid-body `[[ ]]`
+# is silently masked under bash 3.2 (macOS) though bash 5.3 (CI) aborts on it; measured,
+# bats 1.13.0 on both legs, so bash is the variable, not bats.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # styleref-roster.sh — the STYLEREF_AGENTS roster, declared once. Declaration-only, sourced by
-# inject-scope-rules.sh (which agents receive the Project Convention Probe block) and by
-# lib/style-ref-consts.sh (which agents the omission flag may hold responsible), so the delivered
-# set and the responsible set cannot drift apart. Bash 3.2+ (macOS stock).
+# lib/style-ref-consts.sh: the agents that receive scoped/scope-dev.md (Project Convention Probe)
+# through registry membership, so the style_ref omission flag may hold them responsible. Not an
+# injection roster — the set equals the registry rows whose rules.scope is scoped/scope-dev.md.
+# Bash 3.2+ (macOS stock).
 #
-# Reconciled by agent_lifecycle sync-inject as one of the five tracked arrays: the writer edits
-# THIS file for STYLEREF_AGENTS and inject-scope-rules.sh for the other four.
+# Reconciled by agent_lifecycle sync-inject as one of its tracked arrays: the writer edits THIS
+# file for STYLEREF_AGENTS and inject-scope-rules.sh for BUDGET_DEV_AGENTS.
 
 # Double-source guard.
 if [[ -n "${_STYLEREF_ROSTER_LOADED:-}" ]]; then

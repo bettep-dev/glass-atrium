@@ -69,7 +69,7 @@ export async function getMembershipAt(
 	return { absent, sourceMissing: false };
 }
 
-// 파일 존재 확인은 희소하게만 변하는데 /api/architecture/live 는 고빈도 → 드리프트와 같은 TTL 로 캐시.
+// 파일 존재 확인은 희소하게만 변하는데 /api/architecture/live 는 고빈도 → 오버레이와 같은 30s TTL 로 캐시.
 const membershipCache = createTtlCache(30_000, (log: MembershipLogger) =>
 	getMembershipAt(ATRIUM_ROOT, log),
 );

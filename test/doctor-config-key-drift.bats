@@ -16,8 +16,11 @@
 # Hermetic: template and live config are sandbox files under a throwaway GA_ROOT; the manifest
 # generator path does not exist and the monitor port is dead, so no live install state is read.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate the verdict — every assertion here
-# `return 1`s on mismatch so each fails the test independently.
+# BATS GATING NOTE (measured on bash 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 — bash is the variable, not
+# bats): @test bodies run under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS
+# bash 3.2.57 and DOES gate from bash 4.4 onward, CI's bash 5.3.9 included — whereas `[ ]`, `let`, a
+# plain command and any final command gate on EVERY version.
+# Every assertion here `return 1`s on mismatch, so each fails the test independently on every version.
 #
 # Run via: bats test/doctor-config-key-drift.bats
 # Requires: bats >= 1.5.0, bash 3.2+

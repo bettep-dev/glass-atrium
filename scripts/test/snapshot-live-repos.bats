@@ -7,11 +7,12 @@
 # Every case runs against a synthetic GA_ROOT with fabricated repos — the live
 # ~/.glass-atrium repositories are structurally unreachable from here.
 #
-# EVERY assertion carries `|| return 1`: a bare `[[ ... ]]` that fails mid-body
-# does NOT fail the test on bats 1.13 (only the final command's status is
-# consulted), so an unguarded mid-body assertion is silently vacuous. Plain
-# commands used as assertions (`git diff --cached --quiet`) are given the same
-# suffix for uniformity.
+# EVERY assertion carries `|| return 1`: @test bodies run under errexit, but a bare
+# mid-body `[[ ... ]]` is exempt from it under bash 3.2 (the macOS default) while
+# bash 5.3 on CI gates it (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on both legs),
+# so an unguarded mid-body assertion is vacuous on macOS and reds only on Linux. Plain
+# commands used as assertions (`git diff --cached --quiet`) abort on both platforms;
+# they carry the same suffix for uniformity.
 #
 # Run via: bats scripts/test/snapshot-live-repos.bats
 # Requires: bats (brew install bats-core), bash 3.2+, git

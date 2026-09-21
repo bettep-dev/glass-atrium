@@ -13,7 +13,7 @@
 //
 // App: stripped Fastify (fastify-static + two hand-registered routes) on an
 // ephemeral port. registerArchitectureRoutes is NOT called — it stands up the real
-// /live handler (Prisma + home-directory drift read), which would redden this
+// /live handler (Prisma + home-directory reads), which would redden this
 // harness on daemon/settings state and would collide with the fixture route.
 // Browser: Playwright chromium headless, NO mocking.
 //
@@ -92,8 +92,6 @@ function getLiveFixture(
 			agent_events_last_hour: 0,
 			last_outcome_at: null,
 		},
-		stale: false,
-		diffs: [],
 		governance: { absent: [], sourceMissing: false },
 		// 서버 표 그대로 각인함 — `{}` 로 두면 AC-B2-3c 가 공허해짐. 그 AC 는 `pg_db` 와
 		// `hook_pipeline` 이 비어 있지 않게 각인된 것을 먼저 단언한 뒤 그 두 노드에 링이

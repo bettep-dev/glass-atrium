@@ -84,7 +84,7 @@ function Sidebar({ active, onNav, dynamicBadges }) {
 								onClick={() => onNav(n.id)}
 							>
 								<Icon name={n.icon} size={14} />
-								{/* min-w-0 + truncate — 영문 라벨 + "Update needed" 류 와이드 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
+								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
 								<span className="flex-1 min-w-0 truncate">{n.label}</span>
 								{badges.map((b, i) => (
 									<span
@@ -130,29 +130,20 @@ function kpiToBadges(kpi) {
 	};
 }
 
-// live 신호 두 개가 architecture(System map) 한 슬롯에 병치:
-//   · 구조 드리프트(stale)              → info "Update needed" (설계도 카운트 mismatch)
-//   · 데몬 다운(effective_status≠ok)    → warn 카운트 (런타임 헬스)
-// 목적지가 같아졌으므로 KPI 배지까지 세 소스가 mergeHealthBadge 의 소스 태그로 공존함.
+// 데몬 다운(effective_status≠ok) → architecture(System map) 슬롯 warn 카운트, KPI 배지와 소스 태그로 공존.
 // 계수 근거는 effective_status — 전환용 status 중복이 아니라 판정 필드가 기록의 근거임.
 function liveToBadge(live) {
-	const drift =
-		live?.stale === true
-			? { badge: "Update needed", badgeTone: "info" }
-			: null;
-
 	const badDaemons = (live?.daemons || []).filter(
 		(d) => d.effective_status !== "ok",
 	).length;
 	const daemonDown =
 		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
 
-	return { drift, daemonDown };
+	return { daemonDown };
 }
 
 // ALL SYSTEMS 풋터 도트 = architecture nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
 // 미폴링(architecture 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · warn 0 → ok · warn N → warn.
-// 같은 슬롯의 드리프트 info 배지는 세지 않음 — 설계도 갱신 필요는 런타임 이상이 아님.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
 function systemsRollup(dynamicBadges) {
 	const polled =
@@ -166,7 +157,7 @@ function systemsRollup(dynamicBadges) {
 	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 }
 
-// nav 슬롯 배지 병합 — 독립 세 소스(KPI 실패 카운트 · 구조 드리프트 · 데몬 다운)가 한 슬롯에 병치.
+// nav 슬롯 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운)가 한 슬롯에 병치.
 // 소스 태그로 자기 기여분만 교체 → 한 소스 재폴링이 다른 소스 배지를 덮지 않음.
 // badges-array-coexistence 관용(Sidebar 가 배열/단일 양쪽 호환) 재사용.
 function mergeHealthBadge(prevHealth, source, badge) {
@@ -221,7 +212,7 @@ function App() {
 			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
 			setNavBadges((prev) => {
 				const kpi = kpiToBadges(kpiR[0].value);
-				// architecture 는 드리프트·데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
+				// architecture 는 데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
 				return {
 					...prev,
 					cost: kpi.cost,
@@ -247,14 +238,11 @@ function App() {
 		fetchJson("/api/architecture/live")
 			.then((live) => {
 				if (cancelled) return;
-				const { drift, daemonDown } = liveToBadge(live);
-				setNavBadges((prev) => {
-					const withDrift = mergeHealthBadge(prev.architecture, "drift", drift);
-					return {
-						...prev,
-						architecture: mergeHealthBadge(withDrift, "daemon", daemonDown),
-					};
-				});
+				const { daemonDown } = liveToBadge(live);
+				setNavBadges((prev) => ({
+					...prev,
+					architecture: mergeHealthBadge(prev.architecture, "daemon", daemonDown),
+				}));
 			})
 			.catch(() => {
 				// 무시 — 직전 navBadges/동기화 시각 보존

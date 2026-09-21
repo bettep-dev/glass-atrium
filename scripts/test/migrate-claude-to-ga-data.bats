@@ -14,8 +14,10 @@
 # Run via: bats scripts/test/migrate-claude-to-ga-data.bats
 # Hermetic: HOME + all three migrate seams point at a per-test mktemp sandbox.
 #
-# Each assertion uses a `|| return 1` fail-fast guard: bats gates only the test body's LAST command
-# status, so an unguarded intermediate assertion would be silently masked by a later passing one.
+# Each assertion uses a `|| return 1` fail-fast guard: @test bodies run under errexit, but a bare
+# mid-body `[[ ]]` / `(( ))` is exempt on macOS bash 3.2.57 and DOES gate on Linux bash 5.3.9 in CI
+# (measured, bats 1.13.0 both legs — bash is the variable, not bats), so an unguarded intermediate
+# assertion would be silently masked locally by a later passing one.
 
 bats_require_minimum_version 1.5.0
 

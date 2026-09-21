@@ -19,6 +19,9 @@
 #   AC3  preflight abort               → the abort row and NO post-gate row (never self-supersede)
 #   AC4  one eligible patch            → per-patch rows only, no extra heartbeat (no double count)
 #   AC5  the row's status literal is inside the set §14's producer pin already fixes
+#   AC9  a failed backlog query / an unreadable backlog row / an unreadable report → exit 21 / 23 / 22,
+#        one abort row, NO heartbeat; a present-but-unreadable PATH SHAPE (a directory, a dangling
+#        link) is unreadable too, while a report absent from the filesystem is still a clean exit 0
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-landing-zone.bats) with psql either MASKED
 # (report fallback) or replaced by a zero-row STUB (backlog fallback with an empty eligible set), a
@@ -26,8 +29,11 @@
 # like a claude-bearing one, and AUTOAGENT_REPORTS_DIR pointed at a temp dir. No PG, no live agents
 # dir, no ~/.glass-atrium state is read or written.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
+#   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
+#   on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on BOTH legs — bash is the variable,
+#   not bats), while `[ ]`, `let` and a failing `grep -q` abort on both.
+#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 #
 # Run via: bats autoagent/test/daemon-apply-zero-eligible-row.bats
 # Requires: bats >= 1.5.0, bash 3.2+, git (for `git apply` only), python3
@@ -106,6 +112,30 @@ make_empty_backlog_psql() {
   rm -f -- "${1}/psql" # never redirect onto an inherited symlink
   cat >"${1}/psql" <<'SH'
 #!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "${1}/psql"
+}
+
+# make_failing_backlog_psql — a psql that fails EVERY query the way an unreachable server does. Present
+# on PATH, so the daemon still takes the BACKLOG source; the outage must never read as an empty backlog.
+make_failing_backlog_psql() {
+  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
+  cat >"${1}/psql" <<'SH'
+#!/usr/bin/env bash
+echo 'psql: error: connection to server on socket failed: No such file or directory' >&2
+exit 2
+SH
+  chmod +x "${1}/psql"
+}
+
+# make_unreadable_backlog_psql — a psql whose backlog answer is one raw, unencoded row whose
+# '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
+make_unreadable_backlog_psql() {
+  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
+  cat >"${1}/psql" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '7|2026-09-01|probe|pipe|probe|/tmp/unreadable-probe.md|'
 exit 0
 SH
   chmod +x "${1}/psql"
@@ -404,6 +434,116 @@ run_apply_gate() {
   observed="$(grep -o '"status":"[a-z_]*"' "${REAL_SCRIPT}" | sed 's/^"status":"//;s/"$//' | sort -u | tr '\n' ' ')"
   [[ "${observed}" == "abort applied dryrun error needs_regen reject skip " ]] || {
     echo "producer status-literal set changed: ${observed}" >&2
+    return 1
+  }
+}
+
+# ── AC9 — a patch source that could not be READ is an abort, never a zero-eligible cycle ────────
+#
+# The heartbeat supersedes an earlier abort, so writing it for a cycle that never saw its source
+# would clear a live condition with a false "nothing to do": a DB outage or a corrupt report must
+# exit non-zero with an abort row, never print "0 … patches" and write the heartbeat.
+
+# assert_one_abort_row REASON EXIT_CODE SOURCE — the log holds exactly ONE row, and it is that abort
+# (so no heartbeat rode along with it).
+assert_one_abort_row() {
+  [[ -f "${APPLIED_LOG}" && "$(wc -l <"${APPLIED_LOG}" | tr -d ' ')" -eq 1 ]] \
+    && grep '"status":"abort"' "${APPLIED_LOG}" | grep "\"reason\":\"$1\"" \
+    | grep "\"exit_code\":$2," | grep -q "\"patch_source\":\"$3\"" || {
+    echo "expected exactly one abort row: reason=$1 exit_code=$2 patch_source=$3" >&2
+    dump_log
+    return 1
+  }
+}
+
+@test "AC9: a failed BACKLOG query exits 21 with one abort row and no heartbeat" {
+  make_failing_backlog_psql "${BACKLOG_BIN}"
+  run_apply "${BACKLOG_BIN}:${MIRROR}"
+  [[ "${status}" -eq 21 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "${output}" == *"backlog_query failed rc=2"* && "${output}" != *"0 pending backlog patches"* ]] || {
+    echo "the outage is not named, or still reads as an empty backlog" >&2
+    dump_log
+    return 1
+  }
+  assert_one_abort_row proposal_query_failed 21 backlog
+}
+
+@test "AC9: an unreadable BACKLOG row exits 23 with one abort row and no heartbeat, never as an outage" {
+  make_unreadable_backlog_psql "${BACKLOG_BIN}"
+  run_apply "${BACKLOG_BIN}:${MIRROR}"
+  [[ "${status}" -eq 23 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "${output}" == *"FATAL: a backlog row is unreadable"* && "${output}" == *"7 fields, expected 6"* &&
+    "${output}" != *"backlog query failed"* && "${output}" != *"0 pending backlog patches"* ]] || {
+    echo "the unreadable row is not named, or reads as an outage or an empty backlog" >&2
+    dump_log
+    return 1
+  }
+  assert_one_abort_row proposal_row_unreadable 23 backlog
+}
+
+@test "AC9: an unreadable REPORT exits 22 with one abort row, no heartbeat and no traceback" {
+  printf '%s\n' '{"patches": [' >"${WORK}/report.json" # a truncated write
+  run_apply "${MIRROR}"
+  [[ "${status}" -eq 22 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
+    "${output}" != *"0 body-auto patches"* && "${output}" != *Traceback* ]] || {
+    echo "the unreadable report is not named, reads as zero patches, or leaks a traceback" >&2
+    dump_log
+    return 1
+  }
+  assert_one_abort_row report_unreadable 22 report
+}
+
+@test "AC9: every unreadable report PATH SHAPE exits 22 with one abort row, never a silent exit 0" {
+  # Absence is about presence, not file kind: each shape is AT the path and resolves to nothing
+  # readable (a dangling link exists as a link), so none may read as absent or as zero patches.
+  local shape
+  for shape in directory dangling-link; do
+    rm -rf -- "${WORK}/report.json" # removes a directory, and a link without following it
+    rm -f -- "${APPLIED_LOG}"       # a fresh log per shape: assert_one_abort_row counts rows
+    case "${shape}" in
+      directory) mkdir -- "${WORK}/report.json" ;;
+      dangling-link) ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json" ;;
+    esac
+    run_apply "${MIRROR}"
+    [[ "${status}" -eq 22 ]] || {
+      echo "report shape ${shape} exited ${status}" >&2
+      dump_log
+      return 1
+    }
+    [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
+      "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
+      "${output}" != *Traceback* ]] || {
+      echo "report shape ${shape} reads as absent, as zero patches, or leaks a traceback" >&2
+      dump_log
+      return 1
+    }
+    assert_one_abort_row report_unreadable 22 report || {
+      echo "report shape ${shape}" >&2
+      return 1
+    }
+  done
+}
+
+@test "AC9: an ABSENT report stays a clean exit 0 with no abort row" {
+  rm -f -- "${WORK}/report.json"
+  run_apply "${MIRROR}"
+  [[ "${status}" -eq 0 && "${output}" == *"no report at ${WORK}/report.json"* ]] || {
+    dump_log
+    return 1
+  }
+  [[ "$(row_count '"status":"abort"')" -eq 0 ]] || {
+    echo "an absent report was recorded as an abort — there was nothing to read" >&2
+    dump_log
     return 1
   }
 }

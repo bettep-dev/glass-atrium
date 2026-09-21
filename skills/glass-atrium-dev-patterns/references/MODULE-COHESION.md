@@ -2,9 +2,7 @@
 
 Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designing module boundaries, evaluating coupling, or auditing DI graphs.
 
-## Module Structure [DEV]
-
-**Import direction**: Controller → Service → Repository — reverse direction forbidden.
+The principles — Controller → Service → Repository import direction, high cohesion + low coupling, and the DI rules (depend on interfaces, the God Class constructor threshold, no circular DI) — are in `scoped/shared-code-structure.md` → `## Core Principles`. This file keeps the lookup detail.
 
 ## Barrel File (index.ts) Criteria
 
@@ -27,10 +25,6 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designin
 | **Feature Module** | Domain-scoped module | NestJS default structure |
 | **Layer Structure** | Controller/Service/Repository | Internal module structure |
 
-## Cohesion/Coupling [DEV]
-
-**High cohesion + low coupling** — split on violation.
-
 ## LCOM4 Metric
 
 - LCOM4 >= 2 → class split signal
@@ -50,14 +44,6 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designin
 
 - Implementation meaningfully uses < 50% of interface → **split**
 - `throw new Error('Not implemented')` = ISP violation signal
-
-## DI (Dependency Injection)
-
-| Rule | Description |
-|------|-------------|
-| **Depend on interfaces** | Depend on interfaces, not concrete classes |
-| **Constructor parameters** | 7+ = God Class warning → consider splitting |
-| **Circular DI** | Forbidden — forwardRef is a design flaw signal |
 
 ## Common Rationalizations
 
@@ -82,8 +68,8 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designin
 
 ## Verification
 
-- [ ] **Member ordering**: Spot-check 2-3 classes — members follow the 8-category accessibility order
+- [ ] **Member ordering**: Spot-check 2-3 classes — members follow the member-ordering table in `references/CODE-STRUCTURE.md`
 - [ ] **Function size**: `Grep` for functions exceeding 20 lines — each has a justification or extraction plan
 - [ ] **Import direction**: No reverse imports (Repository → Controller) found via `Grep`
-- [ ] **Type safety**: `Grep` for `any` in `*.ts` files (excluding test files) — zero matches or each has a justifying comment
+- [ ] **Type safety**: `Grep` for `any` in `*.ts` files (excluding test files) — zero matches
 - [ ] **Circular dependency**: ESLint `import/no-cycle` enabled and passing

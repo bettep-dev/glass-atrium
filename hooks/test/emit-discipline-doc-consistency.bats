@@ -25,9 +25,25 @@ INJECT_HOOK="${REPO_ROOT}/hooks/inject-scope-rules.sh"
 QA_REVIEWER="${REPO_ROOT}/agents/glass-atrium-qa-code-reviewer.md"
 
 setup() {
-  [[ -f "${GLOBAL_RULES}" ]] || skip "owner site not found: ${GLOBAL_RULES}"
-  [[ -f "${INJECT_HOOK}" ]] || skip "owner site not found: ${INJECT_HOOK}"
-  [[ -f "${QA_REVIEWER}" ]] || skip "owner site not found: ${QA_REVIEWER}"
+  # A pin target that VANISHED is the most complete form of the drift this suite exists to
+  # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
+  # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
+  # Every path below is one the repository always ships, so its absence is drift and FAILS.
+  [[ -f "${GLOBAL_RULES}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${GLOBAL_RULES}" >&2
+    return 1
+  }
+  [[ -f "${INJECT_HOOK}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${INJECT_HOOK}" >&2
+    return 1
+  }
+  [[ -f "${QA_REVIEWER}" ]] || {
+    printf 'owner site absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${QA_REVIEWER}" >&2
+    return 1
+  }
 }
 
 # ── Per-site presence (case-insensitive) ────────────────────────────────────────────────
@@ -107,8 +123,16 @@ EMITTER_NAMES="LLM09 zero-evidence guard
 total transcript-authorship contradiction"
 
 @test "EMITTER grader source and guide declare the same verified_fail emitter count" {
-  [[ -f "${GRADER_SRC}" ]] || skip "grader source not found: ${GRADER_SRC}"
-  [[ -f "${GRADER_GUIDE}" ]] || skip "grader guide not found: ${GRADER_GUIDE}"
+  [[ -f "${GRADER_SRC}" ]] || {
+    printf 'grader source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${GRADER_SRC}" >&2
+    return 1
+  }
+  [[ -f "${GRADER_GUIDE}" ]] || {
+    printf 'grader guide absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${GRADER_GUIDE}" >&2
+    return 1
+  }
 
   # Source side: one anchored comment line per emitter site. Guide side: the enumerated marker
   # list lives inside a single table row, so occurrences are counted, not lines.
@@ -126,8 +150,16 @@ total transcript-authorship contradiction"
 }
 
 @test "EMITTER each named verified_fail emitter appears in the grader source and the guide" {
-  [[ -f "${GRADER_SRC}" ]] || skip "grader source not found: ${GRADER_SRC}"
-  [[ -f "${GRADER_GUIDE}" ]] || skip "grader guide not found: ${GRADER_GUIDE}"
+  [[ -f "${GRADER_SRC}" ]] || {
+    printf 'grader source absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${GRADER_SRC}" >&2
+    return 1
+  }
+  [[ -f "${GRADER_GUIDE}" ]] || {
+    printf 'grader guide absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+      "${GRADER_GUIDE}" >&2
+    return 1
+  }
 
   local name
   while IFS= read -r name; do

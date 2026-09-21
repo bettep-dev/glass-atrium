@@ -1,30 +1,29 @@
 # Turn-Budget Injection Text (Cross-Cutting Concern)
 
-Single-source SoT for the INJECTED turn-budget discipline TEXT — the two marker blocks below, delivered by the `inject-scope-rules.sh` SubagentStart hook. Policy SoT is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`; this file owns only the compressed injection variants, never the policy — a policy change lands there first, then is manually re-compressed here (sync is a manual obligation, not a mechanically enforced guarantee).
+Source file for the two marker blocks below, which the `inject-scope-rules.sh` SubagentStart hook extracts verbatim. Nothing else here is delivered, so a duty homed in this file reaches no agent. The policy SoT is `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`: a policy change lands there first and is then re-compressed into the blocks below by hand, an obligation no test checks.
 
-## Rosters (delivery — `hooks/inject-scope-rules.sh`)
+## Meter block (NOT sourced here yet — the third injected turn-budget text)
 
-- `BUDGET_DEV_AGENTS` (9) = DEV(13) − daemon-carrier exclusions {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell}. The four carriers keep daemon-evolved in-body budget bullets (the daemon rewrites agent BODIES, never hook sources) — injecting on top would double-deliver.
-- `BUDGET_ANALYSIS_AGENTS` (6) = glass-atrium-intel-planner, glass-atrium-intel-reporter, glass-atrium-qa-code-reviewer, glass-atrium-design-designer, glass-atrium-meta-agent, glass-atrium-wiki-curator (glass-atrium-intel-researcher excluded — carrier).
+A third turn-budget text reaches every subagent at spawn and is not in this file: the meter, `hooks/inject-scope-rules.sh` → `build_meter_block`. It delivers the 80%-ceiling / `needs_context` half of the discipline, which is exactly why both blocks below omit that half. It is a `printf` literal in shell, so an edit to the policy section does not reach a running agent and nothing greps a shell literal — this pointer is what makes that copy visible from the corpus side. Do not park a dormant second copy of the meter text here while it is unsourced.
 
 ## BUDGET-DEV block
 
-> The block below (between the `AGENT-INJECT:BUDGET-DEV` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the `BUDGET_DEV_AGENTS` roster. It is sizing-only ON PURPOSE: the 80%-ceiling / `needs_context` half of the canonical discipline is intentionally OMITTED — the non-droppable turn-budget meter block already delivers it on every spawn, so restating it here would be intra-assembly duplication. The marker name differs from every other `AGENT-INJECT` block so the sed ranges never collide.
+Injected to `BUDGET_DEV_AGENTS`. Sizing-only on purpose — the non-droppable meter block already carries the ceiling half on every spawn.
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=300 B hard, <=260 B target (nodrop.bats pins the source-contract); any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-DEV:START -->
 **Budget sizing (auto-injected DEV · full: `~/.glass-atrium/scoped/shared-turn-budget.md`)**
-- Estimate `tool_uses ~= files x 4.5`; >~30 → report for decomposition before accepting.
-- >4-file or >2-module work → stage 1-2 files at a time, verify each.
+- Estimate `tool_uses ~= files x 4.5`; >~30 → report to split before accepting.
+- >4 files or >2 modules → stage 1-2 files at a time, verify each.
 <!-- AGENT-INJECT:BUDGET-DEV:END -->
 
 ## BUDGET-ANALYSIS block
 
-> The block below (between the `AGENT-INJECT:BUDGET-ANALYSIS` markers) is extracted verbatim by the same hook and injected into the `BUDGET_ANALYSIS_AGENTS` roster. It mirrors the canonical analysis bullet (allowlist reads · reserve the emit tail · partial-on-ceiling) in full — analysis-consumer assemblies are small, so no compression beyond the byte contract is needed.
+Injected to `BUDGET_ANALYSIS_AGENTS`, a roster with no DEV member. It carries the analysis bullet — allowlist reads · reserve the emit tail · partial on ceiling — and omits the ceiling rationale for the same reason as BUDGET-DEV.
 
 <!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh — <=364 B; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats. -->
 <!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->
 **Budget sizing (auto-injected analysis · full: `~/.glass-atrium/scoped/shared-turn-budget.md`)**
-- Bound reads to an explicit allowlist (no repo sweep); reserve the emit tail — the final `[COMPLETION]`/StructuredOutput IS the deliverable.
-- Broad scope (>~20 reads) or near the 80% ceiling → STOP, emit a partial cited result (a partial beats a lost run).
+- Bound reads to an explicit allowlist (no repo sweep); reserve the emit tail — `[COMPLETION]`/StructuredOutput IS the deliverable.
+- Broad scope (>~20 reads) or near the ceiling → STOP, emit a partial cited result.
 <!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->

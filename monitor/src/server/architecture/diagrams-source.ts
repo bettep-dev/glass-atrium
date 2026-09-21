@@ -468,7 +468,7 @@ export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
 export type DiagramSlug = (typeof DIAGRAMS)[number]["slug"];
 
 // 화면에 실제로 그려지는 단일 canonical 맵. 예산(content-budget)은 이 drawn 문자열에만 걸리고 source 7편은 무수정으로 남음
-// — daemon-binding · flow-extractor parity · verify-arch Stage-2 · 7-카운트 불변식이 계속 source 를 대상으로 함.
+// — daemon-binding · flow-extractor parity 가 계속 source 를 대상으로 함.
 // 편집 규칙: 라벨/산문 수정은 언제나 mermaid_source 에 적용하고 drawn 은 감축을 다시 적용해 재생성함.
 export interface CanonicalMap {
 	slug: DiagramSlug;

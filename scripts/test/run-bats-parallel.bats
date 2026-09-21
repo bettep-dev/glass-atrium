@@ -7,7 +7,10 @@
 # that verdict trustworthy:
 #   - the stages RUN rather than `exec`, so a later stage can still be reached and
 #     the rc folds to the MAXIMUM stage rc, never to the last one;
-#   - stage 3 is conditional on pytest being importable, and its absence is loud
+#   - the two unittest roots BOTH run — hooks/test and autoagent/test — because
+#     `unittest discover` takes a single -s and a root left out of the runner is a
+#     root the daemon's green gate never sees;
+#   - stage 4 is conditional on pytest being importable, and its absence is loud
 #     (one stderr line) rather than silent;
 #   - the bytecode-suppression variable is exported into every child, so a
 #     daemon-driven run leaves no __pycache__ for the live recovery-repo snapshot
@@ -30,14 +33,31 @@
 # env misses, and the two legs are pinned together because neither is sufficient alone.
 # The eighth then pins those ignore files as manifest-eligible, so they actually ship.
 #
-# The ninth pins BOTH python stages' environment. Redirecting HOME does not sandbox a
-# python suite on its own — ga_paths.get_base_root PREFERS GA_DATA_ROOT — so each stage
+# The ninth pins ALL THREE python stages' environment. Redirecting HOME does not sandbox
+# a python suite on its own — ga_paths.get_base_root PREFERS GA_DATA_ROOT — so each stage
 # scrubs that variable and its update-side twin, and the stub records what it actually
-# inherited. The sandbox HOME is asserted for stage 2 ONLY: stage 3 deliberately keeps the
-# caller's, because psycopg lives in the user site-packages dir under $HOME and a redirect
-# there silently turns pinned exit-contract branches into skips. That asymmetry is left
-# UNPINNED rather than frozen — pinning the caller's HOME would red the day someone fixes
-# it. Dropping any asserted leg from the runner reds this test.
+# inherited. A sandbox HOME is asserted for the two unittest stages, and they must be
+# DISTINCT: a shared one would hand stage 3 whatever stage 2's suites left behind. Stage 4
+# deliberately keeps the caller's HOME, because psycopg lives in the user site-packages dir
+# under $HOME and a redirect there silently turns pinned exit-contract branches into skips.
+# That asymmetry is left UNPINNED rather than frozen — pinning the caller's HOME would red
+# the day someone fixes it. Dropping any asserted leg from the runner reds this test.
+#
+# The eleventh pins the toolchain preflight probe. git being ON PATH is not git being
+# USABLE — an unaccepted Xcode licence answers `git --version` and fails every `git init`
+# — and the daemon consumes only this runner's rc, so the distinction survives to it only
+# as a RESERVED exit code. Both halves are pinned: the VALUE (a later move into a
+# WORST_RC-folding position could otherwise promote it silently) and the PLACEMENT ahead
+# of stage 1 (asserted by stage 1 never having run), against the healthy leg in the same
+# scenario, which is what makes the probe's no-op claim falsifiable.
+#
+# The tenth pins the daemon-exported env out of EVERY stage, stage 1 included.
+# daemon-cycle.sh exports its apply-scope trio and the resolved claude binary before
+# daemon-apply.sh shells this runner, so an unscrubbed stage verifies the suite under the
+# daemon's ambient config instead of each suite's own fixture. That is measured on
+# AUTOAGENT_GIT_ROOT, which daemon_cycle._resolve_apply_git_scope short-circuits on by
+# documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
+# identical discover runs, so no probe can read green under conditions its stage lacks.
 
 bats_require_minimum_version 1.5.0
 
@@ -53,6 +73,18 @@ CORPUS_IGNORE_FILES=(
   "scripts/test/.gitignore"
   "autoagent/.gitignore"
 )
+
+# The variables autoagent/daemon-cycle.sh exports on the way to this runner, and the
+# python3 env-log field each lands in. Two parallel arrays rather than one associative
+# array: bash 3.2 has no `declare -A`.
+DAEMON_ENV_NAMES=(
+  AUTOAGENT_GIT_ROOT
+  AUTOAGENT_GIT_PATHSPEC
+  AUTOAGENT_AGENTS_DIR
+  AUTOAGENT_CLAUDE_BIN
+  CLAUDE_BIN
+)
+DAEMON_ENV_PY_FIELDS=(6 7 8 5 9)
 
 # Writes stdin to an executable stub of the given name in the stub bin dir.
 write_stub() {
@@ -75,12 +107,24 @@ run_runner_expecting() {
   }
 }
 
-# Asserts one stage inherited NEITHER data-root variable, identifying the stage by a
-# substring of its argv. Call it as `assert_stage_scrubbed … || return 1`, matching the
+# Prints one TAB-separated field of the row a stage recorded, identifying the stage by a
+# substring of its argv. Empty output means no such row, which every caller checks.
+# $1 = argv substring identifying the stage · $2 = 1-based field index
+stage_env_field() {
+  local row
+  row="$(grep -m1 -- "${1}" "${STUB_LOG_DIR}/python3-env.log" || true)"
+  [[ -n "${row}" ]] || return 0
+  printf '%s\n' "${row}" | cut -f"${2}"
+}
+
+# Asserts one python stage recorded every named variable as unset, identifying the stage
+# by a substring of its argv. Call it as `assert_stage_unset … || return 1`, matching the
 # gating discipline of every other assertion here.
-# $1 = argv substring identifying the stage · $2 = human label for the failure message
-assert_stage_scrubbed() {
-  local pattern="${1}" label="${2}" row seen_data_root seen_update_dir
+# $1 = argv substring identifying the stage · $2 = human label for the failure message ·
+# $3.. = NAME:FIELD pairs, FIELD being the 1-based python3 env-log field NAME lands in
+assert_stage_unset() {
+  local pattern="${1}" label="${2}" row pair name seen
+  shift 2
   row="$(grep -m1 -- "${pattern}" "${STUB_LOG_DIR}/python3-env.log" || true)"
   [[ -n "${row}" ]] || {
     printf 'no %s row in the python3 env log:\n%s\n' "${label}" \
@@ -88,19 +132,59 @@ assert_stage_scrubbed() {
     return 1
   }
 
-  seen_data_root="$(printf '%s\n' "${row}" | cut -f2)"
-  [[ "${seen_data_root}" == "__UNSET__" ]] || {
-    printf '%s inherited GA_DATA_ROOT=%s; the scrub is missing\n' \
-      "${label}" "${seen_data_root}" >&2
+  for pair in "$@"; do
+    name="${pair%%:*}"
+    seen="$(printf '%s\n' "${row}" | cut -f"${pair##*:}")"
+    [[ "${seen}" == "__UNSET__" ]] || {
+      printf '%s inherited %s=%s; the scrub is missing\n' "${label}" "${name}" "${seen}" >&2
+      return 1
+    }
+  done
+}
+
+# Asserts one stage inherited NEITHER data-root variable.
+# $1 = argv substring identifying the stage · $2 = human label for the failure message
+assert_stage_scrubbed() {
+  assert_stage_unset "${1}" "${2}" GA_DATA_ROOT:2 ATRIUM_UPDATE_STATE_DIR:3
+}
+
+# Gives every daemon-exported variable an ambient value, so a runner that scrubbed NOTHING
+# is distinguishable from one that scrubbed correctly — with them unset the two look alike.
+export_daemon_env() {
+  export AUTOAGENT_GIT_ROOT="${TMPROOT}/ambient-git-root"
+  export AUTOAGENT_GIT_PATHSPEC=ambient-pathspec/
+  export AUTOAGENT_AGENTS_DIR="${TMPROOT}/ambient-agents"
+  export AUTOAGENT_CLAUDE_BIN="${TMPROOT}/ambient-claude"
+  export CLAUDE_BIN="${TMPROOT}/ambient-claude-bin"
+}
+
+# Asserts one PYTHON stage inherited none of DAEMON_ENV_NAMES.
+# $1 = argv substring identifying the stage · $2 = human label for the failure message
+assert_daemon_env_scrubbed() {
+  local pairs=() i=0
+  while [[ "${i}" -lt "${#DAEMON_ENV_NAMES[@]}" ]]; do
+    pairs+=("${DAEMON_ENV_NAMES[${i}]}:${DAEMON_ENV_PY_FIELDS[${i}]}")
+    i=$((i + 1))
+  done
+  assert_stage_unset "${1}" "${2}" "${pairs[@]}"
+}
+
+# The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
+# all.
+assert_stage1_daemon_env_scrubbed() {
+  local log="${STUB_LOG_DIR}/bats-daemon-env.log" name
+  [[ -s "${log}" ]] || {
+    printf 'no stage 1 env record — the bats stub never ran\n' >&2
     return 1
   }
 
-  seen_update_dir="$(printf '%s\n' "${row}" | cut -f3)"
-  [[ "${seen_update_dir}" == "__UNSET__" ]] || {
-    printf '%s inherited ATRIUM_UPDATE_STATE_DIR=%s; the scrub is missing\n' \
-      "${label}" "${seen_update_dir}" >&2
-    return 1
-  }
+  for name in "${DAEMON_ENV_NAMES[@]}"; do
+    grep -qx -- "${name}=__UNSET__" "${log}" || {
+      printf 'stage 1 inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
+        "${name}" "$(cat "${log}")" >&2
+      return 1
+    }
+  done
 }
 
 setup() {
@@ -134,6 +218,11 @@ setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
+# Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
+# A separate log because scenario 1 asserts bats-env.log as a whole file.
+for n in AUTOAGENT_GIT_ROOT AUTOAGENT_GIT_PATHSPEC AUTOAGENT_AGENTS_DIR AUTOAGENT_CLAUDE_BIN CLAUDE_BIN; do
+  printf '%s=%s\n' "${n}" "${!n-__UNSET__}"
+done >>"${STUB_LOG_DIR}/bats-daemon-env.log"
 if [[ -n "${STUB_BATS_IMPORT_PROBE:-}" ]]; then
   cd -- "${STUB_LOG_DIR}/pyprobe" && "${REAL_PYTHON3}" -c 'import ga_probe_mod'
 fi
@@ -145,11 +234,15 @@ STUB
   write_stub python3 <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/python3-args.log"
-# One TAB-separated row per call: the argv is what identifies the stage, and the three
-# path variables are what stage 2 claims to control. The sentinel distinguishes "unset"
-# from "set to empty", which is the whole distinction `env -u` makes.
-printf '%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
+# One TAB-separated row per call: the argv is what identifies the stage, and the rest are
+# what the python stages claim to control. The sentinel distinguishes "unset" from "set to
+# empty", which is the whole distinction `env -u` makes. Field order is APPEND-ONLY —
+# DAEMON_ENV_PY_FIELDS indexes into it by position.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
   "${ATRIUM_UPDATE_STATE_DIR-__UNSET__}" "${HOME-__UNSET__}" \
+  "${AUTOAGENT_CLAUDE_BIN-__UNSET__}" "${AUTOAGENT_GIT_ROOT-__UNSET__}" \
+  "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
+  "${CLAUDE_BIN-__UNSET__}" \
   >>"${STUB_LOG_DIR}/python3-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
@@ -188,17 +281,18 @@ teardown() {
   # python stages are paid TWICE on a red cycle and the per-stage duration is what makes
   # that cost visible in the daemon log. The pattern matches the banner's FULL shape, so
   # dropping only the `(Ns)` fails here as loudly as dropping the banner itself would —
-  # without it, the narrower regression is silent. All three stages run in this scenario
-  # (the stub pytest import returns 0), hence 3. `grep -c` prints 0 AND exits 1 on zero
+  # without it, the narrower regression is silent. All four stages run in this scenario
+  # (the stub pytest import returns 0), hence 4 — and the count is what catches a unittest
+  # root silently dropped back out of the runner. `grep -c` prints 0 AND exits 1 on zero
   # matches, so `|| true` (never `|| echo 0`, which would append a second zero to grep's own).
   local banners
   banners="$(printf '%s\n' "${stderr}" \
-    | grep -cE '^run-bats-parallel: \[stage [0-9]+/3 [^]]+\] rc=[0-9]+ \([0-9]+s\)$' || true)"
+    | grep -cE '^run-bats-parallel: \[stage [0-9]+/4 [^]]+\] rc=[0-9]+ \([0-9]+s\)$' || true)"
   if [[ -z "${banners}" ]]; then
     banners=0
   fi
-  [[ "${banners}" -eq 3 ]] || {
-    printf 'duration-carrying stage banners=%s (want 3, one per stage) stderr:\n%s\n' \
+  [[ "${banners}" -eq 4 ]] || {
+    printf 'duration-carrying stage banners=%s (want 4, one per stage) stderr:\n%s\n' \
       "${banners}" "${stderr}" >&2
     return 1
   }
@@ -217,22 +311,40 @@ teardown() {
   }
 }
 
-@test "(3) a failing hooks unittest stage fails the runner even when bats passes" {
+@test "(3) a failing unittest stage fails the runner even when bats passes" {
   export STUB_BATS_RC=0
   export STUB_UNITTEST_RC=1
   run --separate-stderr env "PATH=${STUB_PATH}" "${RUNNER}"
   [[ "${status}" -ne 0 ]] || {
-    printf 'runner rc=0 despite a failing hooks stage; stderr:\n%s\n' "${stderr}" >&2
+    printf 'runner rc=0 despite a failing unittest stage; stderr:\n%s\n' "${stderr}" >&2
     return 1
   }
 }
 
-@test "(4) an unimportable pytest skips stage 3 loudly on one line and keeps rc 0" {
+# The gap this closes: `unittest discover` takes ONE -s, so a root omitted from the runner
+# is simply never discovered — the run stays green and says nothing. CI loops over both
+# roots; the runner is what the daemon's green gate and the pre-merge deploy gate reach,
+# so a root missing HERE is a regression those two gates cannot see. Asserted per ROOT
+# rather than by call count: a count would pass on the same root discovered twice.
+@test "(3b) both unittest roots are discovered, each as its own stage" {
+  run_runner_expecting 0 || return 1
+
+  local root
+  for root in hooks/test autoagent/test; do
+    grep -q -- "-m unittest discover -s ${root} " "${STUB_LOG_DIR}/python3-args.log" || {
+      printf 'no unittest discover recorded for %s; recorded python3 calls:\n%s\n' \
+        "${root}" "$(cat "${STUB_LOG_DIR}/python3-args.log" 2>/dev/null)" >&2
+      return 1
+    }
+  done
+}
+
+@test "(4) an unimportable pytest skips stage 4 loudly on one line and keeps rc 0" {
   export STUB_PYTEST_IMPORT_RC=1
   run_runner_expecting 0 || return 1
 
   if grep -q -- '-m pytest' "${STUB_LOG_DIR}/python3-args.log"; then
-    printf 'stage 3 ran despite an unimportable pytest:\n%s\n' \
+    printf 'stage 4 ran despite an unimportable pytest:\n%s\n' \
       "$(cat "${STUB_LOG_DIR}/python3-args.log")" >&2
     return 1
   fi
@@ -249,7 +361,7 @@ teardown() {
   }
 }
 
-@test "(5) an importable pytest runs stage 3 against scripts/test" {
+@test "(5) an importable pytest runs stage 4 against scripts/test" {
   run_runner_expecting 0 || return 1
 
   grep -q -- '-m pytest.*scripts/test' "${STUB_LOG_DIR}/python3-args.log" || {
@@ -405,23 +517,88 @@ teardown() {
 # skips (measured 2026-09-01). Its HOME is therefore left unasserted rather than pinned to
 # the caller's — pinning the status quo would red the day that dependency is solved, which
 # is the opposite of what this test is for.
-@test "(9) both python stages run with the data-root env scrubbed, stage 2 also sandboxed" {
+@test "(9) every python stage runs data-root-scrubbed; each unittest stage is sandboxed" {
   export GA_DATA_ROOT="${TMPROOT}/ambient-data-root"
   export ATRIUM_UPDATE_STATE_DIR="${TMPROOT}/ambient-update-state"
   run_runner_expecting 0 || return 1
 
-  # `-m pytest` identifies stage 3 alone: the import probe's argv is `-c import pytest`.
-  assert_stage_scrubbed '-m unittest discover' 'stage 2' || return 1
-  assert_stage_scrubbed '-m pytest' 'stage 3' || return 1
+  # Each stage is identified by its OWN root, never by `-m unittest discover` alone: with
+  # two unittest stages that substring matches whichever ran first and the second would go
+  # unasserted. `-m pytest` identifies stage 4 alone — the import probe's argv is
+  # `-c import pytest`.
+  assert_stage_scrubbed 'discover -s hooks/test' 'stage 2' || return 1
+  assert_stage_scrubbed 'discover -s autoagent/test' 'stage 3' || return 1
+  assert_stage_scrubbed '-m pytest' 'stage 4' || return 1
 
-  # The redirect is the third leg of stage 2's claim: scrubbing the two variables while
-  # leaving HOME at the operator's own would put the fallback root back on the live install.
-  local row seen_home
-  row="$(grep -m1 -- '-m unittest discover' "${STUB_LOG_DIR}/python3-env.log" || true)"
-  seen_home="$(printf '%s\n' "${row}" | cut -f4)"
-  [[ "${seen_home}" != "__UNSET__" && "${seen_home}" != "${HOME}" ]] || {
-    printf 'stage 2 ran under HOME=%s (want a sandbox, not the caller HOME and not unset)\n' \
-      "${seen_home}" >&2
+  # The redirect is the third leg of each unittest stage's claim: scrubbing the two
+  # variables while leaving HOME at the operator's own would put the fallback root back on
+  # the live install. The two sandboxes must also DIFFER — sharing one would hand stage 3
+  # whatever stage 2's suites wrote, which is the isolation the separate dirs exist for.
+  local hooks_home autoagent_home
+  hooks_home="$(stage_env_field 'discover -s hooks/test' 4)"
+  autoagent_home="$(stage_env_field 'discover -s autoagent/test' 4)"
+  local label seen
+  for label in "stage 2:${hooks_home}" "stage 3:${autoagent_home}"; do
+    seen="${label#*:}"
+    [[ -n "${seen}" && "${seen}" != "__UNSET__" && "${seen}" != "${HOME}" ]] || {
+      printf '%s ran under HOME=%s (want a sandbox, not the caller HOME and not unset)\n' \
+        "${label%%:*}" "${seen}" >&2
+      return 1
+    }
+  done
+  [[ "${hooks_home}" != "${autoagent_home}" ]] || {
+    printf 'both unittest stages shared HOME=%s; each needs its own sandbox\n' \
+      "${hooks_home}" >&2
+    return 1
+  }
+}
+
+# Asserted per STAGE rather than once over the whole log: stage 1 has its own env wrapper,
+# so a whole-log check could pass on a stage-1 leak.
+@test "(10) every stage runs with the daemon-exported env scrubbed" {
+  export_daemon_env
+  run_runner_expecting 0 || return 1
+
+  assert_stage1_daemon_env_scrubbed || return 1
+  assert_daemon_env_scrubbed 'discover -s hooks/test' 'stage 2' || return 1
+  assert_daemon_env_scrubbed 'discover -s autoagent/test' 'stage 3' || return 1
+  assert_daemon_env_scrubbed '-m pytest' 'stage 4' || return 1
+}
+
+# The value is a LITERAL here on purpose: this is the contract that DEFINES it, so reading
+# it out of the runner would assert only that the runner agrees with itself. The daemon's
+# mirror of the same number is pinned against the runner's source separately
+# (autoagent/test/daemon-apply-preflight.bats).
+@test "(11) an unusable git exits the reserved toolchain rc before stage 1, and is a no-op otherwise" {
+  # Exit 69 is what the Xcode licence gate itself returns; any non-zero reproduces the
+  # condition, since the probe reads only whether `git init` succeeded.
+  write_stub git <<'STUB'
+#!/usr/bin/env bash
+printf 'You have not agreed to the Xcode license agreements\n' >&2
+exit 69
+STUB
+
+  run_runner_expecting 17 || return 1
+  [[ "${stderr}" == *"toolchain precondition FAILED"* ]] || {
+    printf 'no toolchain clause on stderr:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+  # Placement: the probe sits in main's preflight block, so NO stage ran. The bats stub
+  # writes this log on every invocation, which makes its absence the placement assertion.
+  [[ ! -e "${STUB_LOG_DIR}/bats-args.log" ]] || {
+    printf 'stage 1 ran before the toolchain probe:\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log")" >&2
+    return 1
+  }
+
+  # The healthy leg, in the SAME scenario: with the real git back, the probe changes
+  # nothing. Asserted here rather than left to the other scenarios so that a probe which
+  # ALWAYS refused would fail this test rather than pass its own half.
+  rm -f -- "${STUB_BIN}/git"
+  run_runner_expecting 0 || return 1
+  grep -q -- '--no-parallelize-within-files' "${STUB_LOG_DIR}/bats-args.log" || {
+    printf 'stage 1 did not run on a healthy toolchain; recorded bats calls:\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log" 2>/dev/null)" >&2
     return 1
   }
 }

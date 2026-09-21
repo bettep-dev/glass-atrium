@@ -11,8 +11,9 @@
 # path is set — the DEFAULT resolution is exactly what is under test; HOME is sandboxed and
 # GA_DATA_ROOT is neutralized so HOOK_DATA_DIR resolves to ${SANDBOX_HOME}/.glass-atrium/data.
 #
-# Each assertion carries a `|| return 1` fail-fast guard — bats enforces only the test body's LAST
-# command status, so an unguarded intermediate assertion would be silently masked.
+# Each assertion carries a `|| return 1` fail-fast guard — a mid-body bare `[[ ]]` / `(( ))` is inert
+# on macOS bash 3.2.57 but GATES on CI's bash 5.3.9 (measured, bats 1.13.0 on both legs, so bash is
+# the variable, not bats), so an unguarded intermediate assertion would be silently masked on macOS.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 EGRESS_SH="${HOOKS_DIR}/advisory-egress-secret.sh"

@@ -1,12 +1,16 @@
 """READ helpers for the GA stores the CLI reasons over (registry / roster / inject).
 
 Responsibilities:
-    Load the registry agents dict, parse the scope-dev.md Tier-2 brace-list DEV
-    roster (anchored regex over prose, NOT a clean array — dev-note 1), and
-    parse the five tracked inject-scope-rules.sh bash arrays (INJECT_AGENTS =
-    DEV+QA, STYLEREF_AGENTS = DEV, MINIMALISM_AGENTS = DEV, NAMING_AGENTS =
-    DEV − {dev-swift} + qa-code-reviewer — B4, BUDGET_DEV_AGENTS = DEV − the
-    daemon-carrier exclusions). All are READ-ONLY; no helper mutates a store.
+    Load the registry agents dict and its per-agent `rules` membership object,
+    parse the scope-dev.md Tier-2 brace-list DEV roster (anchored regex over
+    prose, NOT a clean array — dev-note 1), and parse the tracked space-padded
+    inject-scope-rules.sh bash arrays. All are READ-ONLY; no helper mutates a
+    store.
+
+The tracked-array set is declared ONCE, in `_TRACKED_INJECT_ARRAYS`: the regexes,
+the parse result and every caller's key set are derived from it, so retiring or
+adding a tracked array is a one-line edit here rather than an arity change that
+every destructuring caller has to mirror.
 
 The brace-list and bash-array parsers are anchored + round-trip-checkable so a
 later-wave editor can re-parse after an insert to confirm the edit is coherent.
@@ -29,7 +33,7 @@ _ROSTER_STANZA_RE = re.compile(
 
 
 # A single inject-scope-rules.sh array assignment:
-#   readonly INJECT_AGENTS=" dev-front dev-react ... qa-debugger "
+#   readonly STYLEREF_AGENTS=" dev-front dev-react ... dev-swift "
 # Capture the space-padded body between the quotes; tolerate single or double.
 def _array_re(var_name: str) -> re.Pattern[str]:
     return re.compile(
@@ -38,20 +42,25 @@ def _array_re(var_name: str) -> re.Pattern[str]:
     )
 
 
-_INJECT_AGENTS_RE = _array_re("INJECT_AGENTS")
-_STYLEREF_AGENTS_RE = _array_re("STYLEREF_AGENTS")
-_MINIMALISM_AGENTS_RE = _array_re("MINIMALISM_AGENTS")
-# NAMING_AGENTS = DEV roster − {dev-swift} ∪ {qa-code-reviewer}, EXCLUDING
-# qa-debugger — a deliberately NARROWER roster than the other three arrays
-# (the naming delta-core injects to the review-enforcement surface, not the
-# read-only debugger). Auto-reconciled as the 4th array under the HYBRID fix.
-_NAMING_AGENTS_RE = _array_re("NAMING_AGENTS")
-# BUDGET_DEV_AGENTS = DEV roster − the daemon-carrier exclusions (agents whose
-# in-body budget bullet the daemon owns; exclusion SoT =
-# inject_sync._BUDGET_DAEMON_CARRIERS). The 5th tracked array. The sibling
-# BUDGET_ANALYSIS_AGENTS array is deliberately UNTRACKED (manual-curated) and
-# has no regex here.
-_BUDGET_DEV_AGENTS_RE = _array_re("BUDGET_DEV_AGENTS")
+# The tracked arrays, declared ONCE. An array is tracked while something still
+# reads it — a shipped block, or the style_ref review_flag predicate — and its
+# membership is DERIVABLE from the DEV roster, so a reconcile can write it
+# without a second copy of the list. An array nothing reads any more is
+# untracked, and a stale copy left in a live hook is neither parsed nor
+# rewritten. BUDGET_ANALYSIS_AGENTS and WIKI_UNTRUSTED_AGENTS are governance
+# memberships no predicate reproduces, so tracking them would mean declaring
+# them twice. STYLEREF_AGENTS gates the style_ref review_flag predicate
+# (hooks/lib/style-ref-consts.sh reads it); BUDGET_DEV_AGENTS gates the
+# BUDGET-DEV sizing block against the daemon-carrier exclusions.
+_TRACKED_INJECT_ARRAYS: tuple[str, ...] = (
+    "STYLEREF_AGENTS",
+    "BUDGET_DEV_AGENTS",
+)
+
+_INJECT_ARRAY_RES: dict[str, re.Pattern[str]] = {
+    name: _array_re(name) for name in _TRACKED_INJECT_ARRAYS
+}
+
 
 # enforce-{verification-gate,workflow-verify-stage}.sh carry an UNPADDED
 # `readonly DEV_SET="dev-front dev-react ... dev-swift"` bash string (single-space
@@ -125,6 +134,42 @@ def registry_domains(paths: StorePaths) -> dict[str, list[str]]:
     return out
 
 
+def load_registry_rules(paths: StorePaths) -> dict[str, dict]:
+    """Return name -> the registry row's `rules` membership object.
+
+    `rules` carries `{scope, shared, conditional}`: the Tier-2 file, the
+    unconditional Tier-3 files and the task-conditional ones. A row without a
+    `rules` object is omitted rather than defaulted, so a pre-backfill row is
+    visible to the caller as an absence instead of as an empty membership it
+    never declared.
+
+    Raises ReaderError on a present-but-malformed object — a non-dict `rules`,
+    or one missing `scope`. A membership reader that coerced either into an
+    empty set would let a reconcile pass on data it never compared.
+    """
+    out: dict[str, dict] = {}
+    for name, entry in load_registry_agents(paths).items():
+        if not isinstance(entry, dict):
+            raise ReaderError(
+                f"{paths.registry}: agent `{name}` entry is "
+                f"{type(entry).__name__}, expected dict"
+            )
+        rules = entry.get("rules")
+        if rules is None:
+            continue
+        if not isinstance(rules, dict):
+            raise ReaderError(
+                f"{paths.registry}: agent `{name}` has a non-dict `rules` field "
+                f"({type(rules).__name__})"
+            )
+        if not isinstance(rules.get("scope"), str):
+            raise ReaderError(
+                f"{paths.registry}: agent `{name}` `rules` has no `scope` string"
+            )
+        out[name] = rules
+    return out
+
+
 def parse_scope_dev_roster(paths: StorePaths) -> list[str]:
     """Parse the DEV roster from the scope-dev.md Tier-2 brace list (dev-note 1).
 
@@ -149,20 +194,16 @@ def parse_roster_text(text: str, *, source: str = "<text>") -> list[str]:
     return [tok for tok in names if tok]
 
 
-def parse_inject_arrays(
-    paths: StorePaths,
-) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
-    """Parse the 5 tracked inject-scope-rules.sh arrays from the hook file (B4).
+def parse_inject_arrays(paths: StorePaths) -> dict[str, list[str]]:
+    """Parse the tracked inject arrays, keyed by bash variable name.
 
-    INJECT_AGENTS = DEV + QA, STYLEREF_AGENTS = DEV-only,
-    MINIMALISM_AGENTS = DEV-only, NAMING_AGENTS = DEV − {dev-swift} + qa-code-reviewer
-    (narrower roster, EXCLUDES qa-debugger), BUDGET_DEV_AGENTS = DEV − the
-    daemon-carrier exclusions. Returns all five as ordered name lists, in that
-    order. Raises ReaderError when any array is absent.
+    Raises ReaderError when a tracked array is absent. The keys are exactly
+    `_TRACKED_INJECT_ARRAYS`, so a caller iterates rather than destructures.
 
-    Four arrays live in the inject hook; STYLEREF_AGENTS lives in the
-    declaration-only roster lib the hook sources. Both texts are parsed as one
-    surface — the array regexes are line-anchored, so concatenation is safe.
+    BUDGET_DEV_AGENTS lives in the inject hook; STYLEREF_AGENTS lives in the
+    declaration-only roster lib, which only style-ref-consts.sh (the style_ref
+    flag predicate) sources. Both texts are parsed as one surface — the array
+    regexes are line-anchored, so concatenation is safe.
     """
     return parse_inject_text(
         "\n".join(
@@ -175,38 +216,20 @@ def parse_inject_arrays(
     )
 
 
-def parse_inject_text(
-    text: str, *, source: str = "<text>"
-) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
-    """Parse all 5 tracked inject-scope-rules.sh arrays out of raw bash text.
+def parse_inject_text(text: str, *, source: str = "<text>") -> dict[str, list[str]]:
+    """Parse every tracked inject array out of raw bash text (testable core).
 
-    Returns (inject, styleref, minimalism, naming, budget_dev) — the 5-tuple
-    order every destructuring caller mirrors. NAMING_AGENTS is the narrower
-    4th array (DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger);
-    BUDGET_DEV_AGENTS is the 5th (DEV − daemon carriers). The untracked
-    BUDGET_ANALYSIS_AGENTS array is intentionally NOT parsed here.
+    Returns `{array_name: ordered_names}` over `_TRACKED_INJECT_ARRAYS`. An
+    untracked array present in the same text is not parsed and not reported —
+    the reconcile never touches one.
     """
-    inject = _INJECT_AGENTS_RE.search(text)
-    styleref = _STYLEREF_AGENTS_RE.search(text)
-    minimalism = _MINIMALISM_AGENTS_RE.search(text)
-    naming = _NAMING_AGENTS_RE.search(text)
-    budget_dev = _BUDGET_DEV_AGENTS_RE.search(text)
-    if inject is None:
-        raise ReaderError(f"INJECT_AGENTS array not found in {source}")
-    if styleref is None:
-        raise ReaderError(f"STYLEREF_AGENTS array not found in {source}")
-    if minimalism is None:
-        raise ReaderError(f"MINIMALISM_AGENTS array not found in {source}")
-    if naming is None:
-        raise ReaderError(f"NAMING_AGENTS array not found in {source}")
-    if budget_dev is None:
-        raise ReaderError(f"BUDGET_DEV_AGENTS array not found in {source}")
-    inject_names = inject.group("body").split()
-    styleref_names = styleref.group("body").split()
-    minimalism_names = minimalism.group("body").split()
-    naming_names = naming.group("body").split()
-    budget_dev_names = budget_dev.group("body").split()
-    return inject_names, styleref_names, minimalism_names, naming_names, budget_dev_names
+    out: dict[str, list[str]] = {}
+    for array_name, pattern in _INJECT_ARRAY_RES.items():
+        match = pattern.search(text)
+        if match is None:
+            raise ReaderError(f"{array_name} array not found in {source}")
+        out[array_name] = match.group("body").split()
+    return out
 
 
 def parse_scope_legend_names(paths: StorePaths) -> set[str]:

@@ -11,7 +11,8 @@
 # silent for a non-commit git command.
 #
 # GA_DATA_ROOT sandboxes the marker dir into BATS_TEST_TMPDIR.
-# BATS GATING NOTE: only the LAST command gates a test — every assertion carries `|| return 1`.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
+# not on macOS bash 3.2 — every assertion carries `|| return 1`, which gates on both.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-commit-guard.sh"
 

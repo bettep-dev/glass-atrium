@@ -109,7 +109,8 @@ spooled_body() {
   write_transcript '[SIZE-EST] bundles=1 tool_uses~=22 — one file group'
   run_hook
   # `run` overwrites $output, so the first channel is captured before the second runs and both are
-  # asserted in one trailing && chain — the test's verdict is its LAST command.
+  # asserted in one trailing && chain — split onto separate lines the first `[[ ]]` would not gate
+  # under bash 3.2 on macOS (bash 5.3 on CI does abort; measured, bats 1.13.0 on both legs).
   local diag="${output}"
   run spooled_body
   [[ "${diag}" == *"tool_use actual=48 declared=22"* ]] \

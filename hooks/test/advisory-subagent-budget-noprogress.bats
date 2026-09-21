@@ -13,8 +13,13 @@
 #
 # Hermetic: the per-agent state dir is redirected (SUBAGENT_TOOL_BUDGET_DIR) so the streak accumulates
 # in a sandbox, and the advisory limit is shrunk (SUBAGENT_NOPROGRESS_LIMIT=3) so a crossing is reached
-# in 3 invocations. No live DB is touched. Every assertion gates the test via `|| return 1` — a bare
-# non-terminal [[ ]] would be swallowed (bats fails only on the final command).
+# in 3 invocations. No live DB is touched. Every assertion gates the test via `|| return 1`.
+#
+# BASH GATING NOTE: @test bodies run under errexit, but a bare mid-body `[[ ]]` / `(( ))` is inert on
+# macOS bash 3.2.57 and LIVE from bash 4.4 onward (CI runs 5.3.9) — `[ ]` and plain commands gate on
+# every version (measured 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15, bats 1.13.0 on both operational legs, so
+# bash is the variable, not bats). The `|| return 1` tail returns from the @test body itself, so each
+# assertion gates at any position on every version.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-subagent-budget.sh"
 

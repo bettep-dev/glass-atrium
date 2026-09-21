@@ -106,8 +106,6 @@ function getLiveFixture(): ArchitectureLiveResponse {
 			agent_events_last_hour: 0,
 			last_outcome_at: null,
 		},
-		stale: false,
-		diffs: [],
 		governance: { absent: [], sourceMissing: false },
 		part_bindings: PART_NODE_BINDINGS,
 	};

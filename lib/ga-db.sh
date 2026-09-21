@@ -92,7 +92,7 @@ get_migration_states() {
 #     throwaway name (DB_NAME != glass_atrium). Mirrors oss-db-setup.sh's recreate_database guard
 #     — defense in depth (both layers refuse).
 #   * operator-approve: a TTY prompt defaulting to No, or --recreate-yes for non-interactive
-#     (CI/sandbox) runs. Never default-yes (irreversible single-sink data loss — Excessive-Agency iron-law).
+#     (CI/sandbox) runs. Never default-yes (irreversible single-sink data loss — core-security.md LLM06).
 # The backup-before-drop + connection-drain HOW lives in oss-db-setup.sh (recreate_database),
 # invoked here with GA_DB_RECREATE=1.
 recreate_db_gate() {

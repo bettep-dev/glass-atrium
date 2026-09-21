@@ -13,8 +13,9 @@
 # bypasses the shared /tmp compile lock for the leaf stages. No live ~/.claude or
 # ~/.glass-atrium state is read or written.
 #
-# Every assertion carries a `|| return 1` fail-fast guard: bats enforces only the test
-# body's LAST command status, so an unguarded intermediate assertion would be masked.
+# Every assertion carries a `|| return 1` fail-fast guard: an unguarded intermediate
+# `[[ ]]` is masked under bash 3.2 (the macOS default) though CI's bash 5.3 gates it
+# (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on both legs).
 
 bats_require_minimum_version 1.5.0
 

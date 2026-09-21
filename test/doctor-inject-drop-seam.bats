@@ -23,6 +23,12 @@
 #        does NOT feed the warning aggregate — designed shedding of the lowest-priority block.
 #   AC3  a log whose rows all predate the window is OK, and still reports the historical total.
 #   AC4  no log at the seam is OK.
+#   AC5  the split scope-rule channel's own aggregate stays SEPARATE from inject-drop: the two
+#        surfaces answer different questions (a block shed from the marker-block slot vs. the
+#        twelve-slot channel's wiring and capacity) and share a section, so a folded counter would
+#        let a live shed be reported as a wiring warn or the reverse.
+#   AC6  a BOUND part slot that cannot deliver — no runnable python3, or an unreadable agent-registry —
+#        WARNs and names the blocker; a healthy bound channel and an unbound broken one stay silent.
 #
 # Run via: bats test/doctor-inject-drop-seam.bats
 # Requires: bats, jq, bash 3.2+
@@ -33,8 +39,11 @@
 # `claude -p` probe. Every producer run sandboxes each scope source to /nonexistent. No ~/.claude or
 # ~/.glass-atrium state is read or written.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
+#   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
+#   on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on BOTH legs — bash is the variable,
+#   not bats), while `[ ]`, `let` and a failing `grep -q` abort on both.
+#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 
 bats_require_minimum_version 1.5.0
 
@@ -62,14 +71,14 @@ SH
   export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p probe
   export DOCTOR_AUTH_REPORTS_DIR="${TARGET}/empty-reports"     # empty dir → trivial daemon-report scan
 
-  # An oversized (~12 KB) comment fixture whose block alone exceeds the ceiling → forces a
-  # non-lesson (block=comment) full drop at the production ceiling.
-  COMMENT_BIG="${TARGET}/comment-big.md"
+  # An oversized (~11 KB) BUDGET-DEV fixture whose block alone exceeds the ceiling → forces a
+  # non-lesson (block=budget-dev) full drop at the production ceiling for a BUDGET_DEV_AGENTS member.
+  BUDGET_BIG="${TARGET}/budget-big.md"
   {
-    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:START -->' '**Comment-rule core (test block)**'
+    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:BUDGET-DEV:START -->' '**Budget sizing (test block)**'
     head -c 11000 /dev/zero | tr '\0' 'x'
-    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:END -->' 'trailer'
-  } >"${COMMENT_BIG}"
+    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:BUDGET-DEV:END -->' 'trailer'
+  } >"${BUDGET_BIG}"
 }
 
 teardown() {
@@ -91,18 +100,15 @@ run_doctor_seam() {
 
 # Drive the REAL producer's SubagentStart injection path so the shed rows under test are
 # emitter-authored. Every scope source is sandboxed to /nonexistent except the two the caller
-# names, isolating which block sheds. $1=agent $2=ceiling $3=comment src $4=lessons src.
+# names, isolating which block sheds. $1=agent $2=ceiling $3=BUDGET-DEV src $4=lessons src.
 emit_shed_row() {
-  local agent="${1}" ceiling="${2}" comment_src="${3}" lessons_src="${4}"
+  local agent="${1}" ceiling="${2}" budget_src="${3}" lessons_src="${4}"
   printf '%s' "{\"agent_type\":\"${agent}\"}" | env \
     INJECT_SCOPE_RULES_DROP_LOG="${DROPLOG}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${SPAWN_COUNTER}" \
     SUBAGENT_BUDGET_METER_OFF=1 \
     INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-    INJECT_SCOPE_RULES_SRC="${comment_src}" \
-    INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_BUDGET_SRC="${budget_src}" \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
     INJECT_SCOPE_RULES_LESSONS_SRC="${lessons_src}" \
     INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
@@ -117,9 +123,6 @@ measure_base_bytes() {
   printf '%s' "{\"agent_type\":\"${agent}\"}" | env \
     SUBAGENT_BUDGET_METER_OFF=1 \
     INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-    INJECT_SCOPE_RULES_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-    INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
     INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
     INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
@@ -181,9 +184,9 @@ assert_output_lacks() {
 # ── AC1 — in-window non-lesson drop → WARN at the seam path ────────────────────────────────────
 
 @test "AC1: an in-window non-lesson drop WARNs, names the seam path, and feeds the warning count" {
-  emit_shed_row "glass-atrium-dev-shell" 9984 "${COMMENT_BIG}" /nonexistent
-  grep -q 'block=comment ' "${DROPLOG}" || {
-    echo "producer wrote no block=comment row — log: $(cat "${DROPLOG}" 2>&1)" >&2
+  emit_shed_row "glass-atrium-dev-front" 9984 "${BUDGET_BIG}" /nonexistent
+  grep -q 'block=budget-dev ' "${DROPLOG}" || {
+    echo "producer wrote no block=budget-dev row — log: $(cat "${DROPLOG}" 2>&1)" >&2
     return 1
   }
   run_doctor_seam
@@ -223,7 +226,7 @@ assert_output_lacks() {
 # ── AC3 — rows outside the window are history, not a present condition ─────────────────────────
 
 @test "AC3: a log whose rows all predate the window is OK and still reports the historical total" {
-  emit_shed_row "glass-atrium-dev-shell" 9984 "${COMMENT_BIG}" /nonexistent
+  emit_shed_row "glass-atrium-dev-front" 9984 "${BUDGET_BIG}" /nonexistent
   age_log_out_of_window
   run_doctor_seam
   assert_output_has "no inject-scope-rules shed events in the last" || return 1
@@ -238,4 +241,73 @@ assert_output_lacks() {
   [[ ! -e "${DROPLOG}" ]] || return 1
   run_doctor_seam
   assert_output_has "no inject-scope-rules drop log"
+}
+
+@test "AC5: the split-channel aggregate is its own counter, never folded into inject-drop" {
+  # Drives the REAL producer, per this file's fixture discipline: one emitter-authored non-lesson
+  # drop, which AC1 already pins as exactly 1 inject-drop. What is new here is that the §10b
+  # split-channel counter carries its own name in the same rollup, so neither can absorb the other.
+  emit_shed_row "glass-atrium-dev-front" 9984 "${BUDGET_BIG}" /nonexistent
+  grep -q 'block=budget-dev ' "${DROPLOG}" || {
+    echo "producer wrote no block=budget-dev row — log: $(cat "${DROPLOG}" 2>&1)" >&2
+    return 1
+  }
+  run_doctor_seam
+  assert_output_has "1 inject-drop"
+  assert_output_has "inject-slot"
+  # A shed of a marker block says nothing about the slot wiring, so the two totals must differ in
+  # KIND: this run has a live shed and a healthy channel.
+  [[ "${output}" == *"0 inject-slot"* ]] || {
+    echo "a live block shed inflated the split-channel counter — output:" >&2
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
+}
+
+# ── AC6 — a bound part slot that cannot deliver ─────────────────────────────────────────────────
+
+# Bind every part wrapper present under the tree in the sandbox settings.json, so §10b counts them bound.
+bind_part_slots() {
+  local wrappers=()
+  local w
+  for w in "${GA}"/hooks/inject-scope-part-[0-9][0-9].sh; do
+    [[ -f "${w}" ]] && wrappers+=("${w##*/}")
+  done
+  [[ "${#wrappers[@]}" -gt 0 ]] || return 1
+  BOUND_COUNT="${#wrappers[@]}"
+  printf '%s\n' "${wrappers[@]}" | jq -R '{hooks: [{type: "command", command: ("~/.claude/hooks/" + .)}]}' \
+    | jq -s '{hooks: {SubagentStart: .}}' >"${TARGET}/settings.json"
+}
+
+UNDELIVERABLE='scope-rule part slot(s) bound but undeliverable'
+
+@test "AC6: bound part slots with no runnable python3 WARN that no scope-rule body is delivered" {
+  bind_part_slots || skip "no part wrappers under ${GA}/hooks"
+  # A python3 that exists on PATH but cannot run: `command -v` finds it, the probe must not trust it.
+  printf '#!/bin/sh\nexit 127\n' >"${TARGET}/bin/python3"
+  chmod +x "${TARGET}/bin/python3"
+  PATH="${TARGET}/bin:${PATH}" run_doctor_seam
+  assert_output_has "${UNDELIVERABLE} — no runnable python3" || return 1
+  assert_output_lacks "the agent-registry is unreadable"
+}
+
+@test "AC6: bound part slots with an unreadable agent-registry WARN and name the registry path" {
+  bind_part_slots || skip "no part wrappers under ${GA}/hooks"
+  printf '{ not json\n' >"${TARGET}/registry.json"
+  GA_CHUNK_REGISTRY="${TARGET}/registry.json" run_doctor_seam
+  assert_output_has "${UNDELIVERABLE} — the agent-registry is unreadable (${TARGET}/registry.json)" || return 1
+  assert_output_lacks "no runnable python3"
+}
+
+@test "AC6: a healthy bound channel and an unbound broken one both stay silent" {
+  bind_part_slots || skip "no part wrappers under ${GA}/hooks"
+  run_doctor_seam
+  # Anchored, not vacuous: the fixture really is a bound channel.
+  assert_output_has "ok   : all ${BOUND_COUNT} scope-rule part slots bound" || return 1
+  assert_output_lacks "${UNDELIVERABLE}" || return 1
+  # Unbound: the same broken registry reaches no agent through a slot, so it is not this warning.
+  mv -f "${TARGET}/settings.json" "${TARGET}/settings.unbound.json"
+  printf '{ not json\n' >"${TARGET}/registry.json"
+  GA_CHUNK_REGISTRY="${TARGET}/registry.json" run_doctor_seam
+  assert_output_lacks "${UNDELIVERABLE}"
 }

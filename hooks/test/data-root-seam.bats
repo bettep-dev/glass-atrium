@@ -11,9 +11,9 @@
 # ~/.glass-atrium state is read or written. Each source runs in a fresh `bash -c`
 # subshell so the sourced library never trips the test's own ERR handling.
 #
-# Every assertion uses a `|| return 1` fail-fast guard: bats enforces only the
-# test body's LAST command status, so an unguarded intermediate assertion would be
-# silently masked by a later passing one.
+# Every assertion uses a `|| return 1` fail-fast guard: on macOS bash 3.2 an
+# unguarded intermediate `[[ ]]` is silently masked by a later passing command,
+# while Linux bash 5 aborts on it (bats 1.13.0 on both legs).
 
 bats_require_minimum_version 1.5.0
 

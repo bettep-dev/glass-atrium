@@ -19,8 +19,10 @@
 # Run via: bats hooks/test/h2-untrusted-ingest.bats
 # Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command (or an explicit
-# `return 1`) gates pass/fail — every assertion below `return 1`s on mismatch.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+# bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured, bats
+# 1.13.0 on both legs, so bash is the variable, not bats). Every assertion below `return 1`s on
+# mismatch.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
@@ -29,9 +31,6 @@ INJECT_HOOK="${HOOKS_DIR}/inject-scope-rules.sh"
 READ_HOOK="${HOOKS_DIR}/advisory-raw-store-read.sh"
 
 # Real repo sources for the injection assembly (single source of truth for the injected blocks).
-COMMENT_SRC="${REPO_ROOT}/scoped/shared-comment-logging.md"
-STYLEREF_SRC="${REPO_ROOT}/scoped/scope-dev.md"
-NAMING_SRC="${REPO_ROOT}/skills/glass-atrium-dev-naming/SKILL.md"
 BUDGET_SRC="${REPO_ROOT}/scoped/shared-turn-budget.md"
 WIKI_UNTRUSTED_SRC="${REPO_ROOT}/rules/glass-atrium/core-wiki-reference.md"
 AGENTS_DIR="${REPO_ROOT}/agents"
@@ -85,9 +84,6 @@ raw_write_payload() {
 inject_ctx() {
   local agent="${1}"
   printf '%s' "$(jq -nc --arg a "${agent}" '{agent_type:$a}')" | env \
-    INJECT_SCOPE_RULES_SRC="${COMMENT_SRC}" \
-    INJECT_SCOPE_RULES_STYLEREF_SRC="${STYLEREF_SRC}" \
-    INJECT_SCOPE_RULES_NAMING_SRC="${NAMING_SRC}" \
     INJECT_SCOPE_RULES_BUDGET_SRC="${BUDGET_SRC}" \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${WIKI_UNTRUSTED_SRC}" \
     INJECT_SCOPE_RULES_AGENTS_DIR="${AGENTS_DIR}" \
@@ -145,13 +141,15 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${output}" == *"SCOPE-001"* ]] || { echo "expected SCOPE-001 (V1) block: ${output}" >&2; return 1; }
 }
 
-# ---- V4 locale portability (Linux CI parity) ---------------------------------------------------
-# The V4 Korean-heading grep must be locale-independent: a [가-힣] collation range makes GNU grep
-# leak "Invalid collation character" on stderr under the runner locale (and silently disables the
-# detection). Both polarities are pinned under a forced C locale.
+# ---- Silent permit path under a forced locale (Linux CI parity) --------------------------------
+# A conforming write must permit SILENTLY whatever the runner locale — exit 0, zero output, and no
+# stderr leak from any body-scanning grep. Both cases run under a forced C locale because that is
+# where a locale-sensitive body scan breaks: the retired language check matched a [가-힣] collation
+# range, which made GNU grep leak "Invalid collation character" on the permit path. The property
+# outlives that check — nothing scanning the body may reintroduce a locale-dependent read.
 
-# Permit polarity: zero output (no collation stderr leak) under LC_ALL=C.
-@test "R5/V4: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)" {
+# Permit polarity: zero output (no stderr leak) under LC_ALL=C.
+@test "R5: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'English-only preserved content.' \
     '<!-- /UNTRUSTED-SOURCE -->')"
@@ -161,15 +159,19 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ -z "${output}" ]] || { echo "expected zero output under LC_ALL=C: ${output}" >&2; return 1; }
 }
 
-# Detect polarity: the Korean-heading detection still FIRES under LC_ALL=C.
-@test "R5/V4: Korean heading in body under LC_ALL=C → blocked, SCOPE-004 (detection preserved)" {
+# This assertion was flipped when the language check was removed: a language signal cannot separate
+# a translated source from a source written in that language, so the check blocked the preservation
+# it existed to enforce. Preserving a Korean source in Korean is the REQUIRED behaviour, not a
+# violation — SCOPE-004 is retired and must never fire again.
+@test "R5: a Korean-language source keeping its Korean headings is permitted → exit 0 (language is not a violation)" {
   local body content
   body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' '## 한국어 섹션 제목' 'content' \
     '<!-- /UNTRUSTED-SOURCE -->')"
   content="$(raw_doc "${body}")"
   run env LC_ALL=C LANG=C bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
-  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
-  [[ "${output}" == *"SCOPE-004"* ]] || { echo "expected SCOPE-004 (V4) block: ${output}" >&2; return 1; }
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0 (permit), got ${status}: ${output}" >&2; return 1; }
+  [[ -z "${output}" ]] || { echo "expected zero output on a Korean permit under LC_ALL=C: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-004"* ]] || { echo "SCOPE-004 is retired, must not fire: ${output}" >&2; return 1; }
 }
 
 # Non-raw path is untouched (regression baseline for the trigger gate).
@@ -199,7 +201,7 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${ctx}" == *"untrusted by the SAME rule"* ]] || { echo "clause missing legacy-untrusted framing" >&2; return 1; }
 }
 
-# Byte-invariant guard (nodrop): a near-ceiling code-DEV agent is NOT in the wiki-untrusted roster,
+# Byte-invariant guard (nodrop): a code-DEV agent is NOT in the wiki-untrusted roster,
 # so it receives NO clause, drops NO block, and stays within the ceiling — the code-DEV nodrop
 # invariant is untouched by this change.
 @test "R2: code-DEV agent gets NO clause, ZERO drops, within ceiling (nodrop invariant intact)" {
@@ -208,14 +210,12 @@ bytelen() { wc -c | tr -cd '0-9'; }
     # Full run (stderr merged) to catch any drop diagnostic.
     run bash -c '
       printf "%s" "$(jq -nc --arg a "$1" '\''{agent_type:$a}'\'')" | env \
-        INJECT_SCOPE_RULES_SRC="$2" INJECT_SCOPE_RULES_STYLEREF_SRC="$3" \
-        INJECT_SCOPE_RULES_NAMING_SRC="$4" INJECT_SCOPE_RULES_BUDGET_SRC="$5" \
-        INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$6" INJECT_SCOPE_RULES_AGENTS_DIR="$7" \
-        INJECT_SCOPE_RULES_DROP_LOG="$8" INJECT_SCOPE_RULES_SPAWN_COUNTER="$9" \
-        INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent bash "${10}" 2>&1
-    ' _ "${agent}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${BUDGET_SRC}" \
-      "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" "${INJECT_SCOPE_RULES_DROP_LOG}" \
-      "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
+        INJECT_SCOPE_RULES_BUDGET_SRC="$2" INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$3" \
+        INJECT_SCOPE_RULES_AGENTS_DIR="$4" INJECT_SCOPE_RULES_DROP_LOG="$5" \
+        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+        bash "$7" 2>&1
+    ' _ "${agent}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" \
+      "${INJECT_SCOPE_RULES_DROP_LOG}" "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
     [[ "${output}" != *"injected context exceeded"* ]] || { echo "FAIL ${agent}: a block was DROPPED" >&2; return 1; }
     [[ "${output}" != *"${CLAUSE_NEEDLE}"* ]] || { echo "FAIL ${agent}: clause leaked to code-DEV roster" >&2; return 1; }
     local ctx bytes

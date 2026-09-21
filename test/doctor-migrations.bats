@@ -20,9 +20,10 @@
 # per-scenario code. The one row that needs psql to be ABSENT (AC2) runs against a PATH rebuilt as
 # a symlink farm of the real one with psql omitted.
 #
-# BATS GATING NOTE: a bare non-final `[[ ]]` does NOT gate — the keyword is read as a tested
-# condition — whereas a plain command's non-zero return IS caught mid-body. Every assertion here
-# `return 1`s on mismatch, so each one independently fails the test.
+# BATS GATING NOTE (measured, bats 1.13.0 both legs — bash is the variable, not bats): @test bodies run
+# under errexit, but a bare non-final `[[ ]]` / `(( ))` does NOT gate on macOS bash 3.2.57 — it DOES on
+# Linux bash 5.3.9 (CI) — whereas a plain command (`[ ]`, `grep -q`, `let`) and any final command gate on
+# BOTH. Every assertion here `return 1`s on mismatch, so each one independently fails the test.
 #
 # Run via: bats test/doctor-migrations.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+

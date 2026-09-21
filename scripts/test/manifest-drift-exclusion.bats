@@ -177,6 +177,51 @@ pin_model_key() {
   [[ "$(doctor_drift_detail)" == *"listed file missing on disk: agents/evolvable.md"* ]] || return 1
 }
 
+# The split scope-rule channel's claim partition, asserted BY NAME. The row above proves the two
+# sides of the exclusion agree with each other; it cannot prove that a given family sits on the
+# side it was designed for, because it derives both verdicts from the same predicate.
+#
+# Why the partition is load-bearing in both directions:
+#   * inject-scope-rules.sh is one of the four merge-claimed roster paths, and
+#     autoagent/lib/roster_merge.py::_get_shell_slots raises ShapeError when a claimed shell file
+#     declares no space-padded `readonly NAME=" … "` array. The updater DECLINES that path on a
+#     ShapeError and silently keeps the LIVE file — so the deploy would ship eleven new wrappers
+#     and leave slot 1 at the old revision, which is the failure this row exists to make loud.
+#   * the eleven wrappers and the shared library must stay UNCLAIMED: they carry no roster, so a
+#     claim would route them through a merge that has nothing to merge, and it would move them out
+#     of the deterministic hash-verified sync that is what actually guarantees they land.
+
+@test "split-channel claim partition: slot 1 is claimed, the wrappers and library are not" {
+  local n rel
+  claim_verdict "hooks/inject-scope-rules.sh" || {
+    echo "hooks/inject-scope-rules.sh is NOT merge-claimed — roster_merge no longer owns slot 1" >&2
+    return 1
+  }
+  for n in 01 02 03 04 05 06 07 08 09 10 11; do
+    rel="hooks/inject-scope-part-${n}.sh"
+    if claim_verdict "${rel}"; then
+      echo "${rel} is merge-claimed — a wrapper carries no roster, so the merge has nothing to merge" >&2
+      return 1
+    fi
+  done
+  for rel in hooks/lib/inject-chunk.sh hooks/lib/inject_chunk.py; do
+    if claim_verdict "${rel}"; then
+      echo "${rel} is merge-claimed — the shared library carries no roster" >&2
+      return 1
+    fi
+  done
+}
+
+@test "split-channel claim partition: slot 1 still declares a space-padded roster array" {
+  # The ShapeError precondition, read from the real file rather than inferred from the claim.
+  # roster_merge selects a slot by this exact shape; losing every one of them turns a successful
+  # deploy into a silently declined path.
+  grep -Eq '^[[:space:]]*readonly [A-Z_]+=" .* "$' "${GA}/hooks/inject-scope-rules.sh" || {
+    echo "hooks/inject-scope-rules.sh declares no space-padded roster array — roster_merge would raise ShapeError and the updater would DECLINE the path, keeping the live file" >&2
+    return 1
+  }
+}
+
 @test "the exclusion and the claim predicate agree on every manifest row" {
   local rel reported claimed claimed_rows=0 compared_rows=0
   while IFS= read -r rel; do

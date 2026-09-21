@@ -112,6 +112,7 @@ GATED_2WAY = "gated-2way-present-both"  # base content unavailable, sides differ
 STRUCTURAL = "structural-change"  # region-count mismatch -> manual ceremony
 REFUSED = "sensitive-refused"  # target path / diff matched a sensitive pattern
 NO_OP = "no-op"  # candidate identical to current local file
+RESET_TO_RELEASE = "reset-to-release"  # operator request -> release region taken
 
 # MERGE_ARBITER_RESOLVED and MERGE_PENDING_ARBITRATION split the contested-gap
 # branch by whether an answer was reached, not by how the gap looked: an answered
@@ -568,6 +569,46 @@ def _resolve_region(
     )
 
 
+def _reset_region(index: int, local: list[str], release: list[str]) -> RegionResolution:
+    """Resolve one region of an operator-reset body to the release content."""
+    if local == release:
+        return RegionResolution(
+            index, KEEP_LOCAL, local, reason="reset: already at release"
+        )
+    return RegionResolution(
+        index,
+        RESET_TO_RELEASE,
+        release,
+        reason="operator reset: EDITABLE region reset to release",
+    )
+
+
+def reset_region_changes(
+    resolution: FileResolution,
+) -> tuple[list[int], list[str], int]:
+    """Reset regions, the local lines they dropped, and the release lines they added.
+
+    Read per region from a line diff against the release, so a line the release
+    also carries is never quoted as dropped.
+    """
+    _, local_regions = _region_contents(resolution.local_text)
+    indices: list[int] = []
+    dropped: list[str] = []
+    added = 0
+    for region in resolution.regions:
+        if region.verdict != RESET_TO_RELEASE:
+            continue
+        local = local_regions[region.index][2]
+        indices.append(region.index)
+        matcher = difflib.SequenceMatcher(a=local, b=region.content, autojunk=False)
+        for tag, a_lo, a_hi, b_lo, b_hi in matcher.get_opcodes():
+            if tag in ("replace", "delete"):
+                dropped.extend(local[a_lo:a_hi])
+            if tag in ("replace", "insert"):
+                added += b_hi - b_lo
+    return indices, dropped, added
+
+
 def _gap_line_split(
     hunk: ConflictHunk, outcome: GapOutcome
 ) -> tuple[list[str], list[str]]:
@@ -777,8 +818,15 @@ def resolve_file(
     *,
     resolve_conflicting_gaps: bool = True,
     arbiter: GapArbiter | None = None,
+    reset_to_release: bool = False,
 ) -> FileResolution:
     """T17 three-anchor resolver — pure, makes NO LLM call.
+
+    ``reset_to_release`` is set only for a body an operator reset request names:
+    every differing region then takes the release without consulting base or the
+    arbiter, because the daemon-evolved lines the request removes sit in gaps the
+    release left alone, which the anchor rules keep by design. Frontmatter still
+    follows the real base, so an operator ``model`` / ``effort`` pin survives.
 
     ``resolve_conflicting_gaps`` has exactly two settings — arbiter (the default)
     and report-only — and no environment reads it. A mode carried in the process
@@ -827,6 +875,9 @@ def resolve_file(
         base_c: list[str] | None = None
         if base_regions is not None and idx < len(base_regions):
             base_c = base_regions[idx][2]
+        if reset_to_release:
+            resolutions.append(_reset_region(idx, local_c, release_c))
+            continue
         resolutions.append(
             _resolve_region(
                 idx,
@@ -855,6 +906,7 @@ def resolve_file(
         MERGE_PENDING_ARBITRATION,
         MERGE_ARBITER_RESOLVED,
         MERGE_CLEAN,
+        RESET_TO_RELEASE,
         TAKE_RELEASE,
         KEEP_LOCAL,
     ]
@@ -1275,6 +1327,7 @@ class MergeCandidate:
     agent: str
     verify_fn: VerifyFn
     skip_pre_verify: bool = False
+    reset_request_id: str | None = None  # operator reset request marking this body
 
     @property
     def target_file(self) -> str:
@@ -1435,7 +1488,14 @@ def build_merge_candidate(
     ``arbiter_mode`` defaults to replay so the verify shell-out — which names no
     mode and receives no candidate path — consumes the plan process's record
     instead of deriving a second decision from the same anchors.
+
+    The operator reset request is read from the state root HERE, not passed in, so
+    the plan and the verify shell-out resolve the same body the same way; raises
+    ``editable_reset.ResetRequestError`` on an unreadable request.
     """
+    import editable_reset  # deferred: editable_reset imports this module
+
+    reset_request_id = editable_reset.get_pending_request(target_file, state_dir)
     agent_name = agent or Path(target_file).stem
     # The PATH verdict is reached BEFORE the resolver, because the resolver is what
     # crosses the model seam: a refused target that built its arbiter first would
@@ -1449,11 +1509,12 @@ def build_merge_candidate(
         resolve_conflicting_gaps=resolve_conflicting_gaps,
         arbiter=(
             None
-            if sensitive_hit is not None
+            if sensitive_hit is not None or reset_request_id is not None
             else GapArbiter(
                 target_file, agent_name, mode=arbiter_mode, state_dir=state_dir
             )
         ),
+        reset_to_release=reset_request_id is not None,
     )
     diff = _unified_diff(local_text, resolution.candidate_text, target_file)
 
@@ -1467,6 +1528,7 @@ def build_merge_candidate(
         agent=agent_name,
         verify_fn=verify_fn or dc.run_pre_verify,
         skip_pre_verify=skip_pre_verify,
+        reset_request_id=reset_request_id,
     )
 
 
@@ -1476,6 +1538,7 @@ EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_USAGE = 2
 EXIT_REFUSED = 3
+EXIT_RESET_INVALID = 4  # a pending reset request is unreadable or malformed
 
 
 def _read(path: str) -> str:
@@ -1489,16 +1552,25 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     )
     local_text = _read(args.local)
     release_text = _read(args.release)
-    cand = build_merge_candidate(
-        args.target,
-        local_text,
-        release_text,
-        base_text=base_text,
-        agent=args.agent,
-        skip_pre_verify=True,  # planning is structural only; verify runs in the txn
-        arbiter_mode=ARBITER_PLAN,  # the one process permitted to reach the model
-        state_dir=args.state_dir,
-    )
+    import editable_reset  # deferred: editable_reset imports this module
+
+    try:
+        cand = build_merge_candidate(
+            args.target,
+            local_text,
+            release_text,
+            base_text=base_text,
+            agent=args.agent,
+            skip_pre_verify=True,  # planning is structural only; verify runs in the txn
+            arbiter_mode=ARBITER_PLAN,  # the one process permitted to reach the model
+            state_dir=args.state_dir,
+        )
+    except editable_reset.ResetRequestError as exc:
+        sys.stderr.write(
+            f"editable_merge: RESET REQUEST INVALID — {args.target} not planned "
+            f"(state root {state_root(args.state_dir)}): {exc}\n"
+        )
+        return EXIT_RESET_INVALID
     if cand.refused:
         sys.stderr.write(
             f"editable_merge: REFUSED — {args.target} matched /{cand.sensitive_hit}/\n"
@@ -1529,6 +1601,22 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         Path(f"{args.out}.dropped").write_text(
             "".join(dropped_lines), encoding="utf-8"
         )
+    reset_regions, reset_dropped, reset_added = reset_region_changes(cand.resolution)
+    if cand.reset_request_id is not None:
+        # The only record of the removed daemon lines as a diff once the body lands;
+        # the updater's outcome record quotes this rather than re-deriving one.
+        Path(f"{args.out}.reset.json").write_text(
+            json.dumps(
+                {
+                    "agent": cand.agent,
+                    "request_id": cand.reset_request_id,
+                    "regions": reset_regions,
+                    "dropped": reset_dropped,
+                    "added_count": reset_added,
+                }
+            ),
+            encoding="utf-8",
+        )
     sys.stdout.write(
         f"verdict={cand.resolution.verdict} needs_llm={cand.resolution.needs_llm} "
         f"base_available={cand.resolution.base_available} "
@@ -1538,6 +1626,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         f"resolved_dropped_lines={gaps['dropped_lines']} "
         f"resolved_added_lines={gaps['added_lines']} "
         f"resolved_regions={gaps['regions']} "
+        f"reset={cand.reset_request_id or 'none'} "
+        f"reset_dropped_lines={len(reset_dropped)} "
+        f"reset_added_lines={reset_added} "
         f"out={args.out}\n"
     )
     return EXIT_OK

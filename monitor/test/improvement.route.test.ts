@@ -18,9 +18,10 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import "dotenv/config";
 
@@ -67,6 +68,21 @@ function writeStderrStub(name: string, code: number, stderrLine: string): string
   );
   chmodSync(scriptPath, 0o755);
   return scriptPath;
+}
+
+// Like writeExitStub but records the argv it was handed. The approve route's actor
+// hand-off never reaches the HTTP response, so the spawn boundary is the only place
+// it is observable.
+function writeArgvCaptureStub(name: string, code: number): { script: string; argvPath: string } {
+  const scriptPath = path.join(stubDir, name);
+  const argvPath = `${scriptPath}.argv`;
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >${JSON.stringify(argvPath)}\nexit ${code}\n`,
+    "utf8",
+  );
+  chmodSync(scriptPath, 0o755);
+  return { script: scriptPath, argvPath };
 }
 
 before(async () => {
@@ -492,14 +508,15 @@ test("POST approve: exit 0 → 200 { status: 'applied' }", async () => {
   assert.strictEqual(body.status, "applied");
 });
 
-test("POST approve: exit 8 → 409 { status: 'noop' } (not actionable / idempotent)", async () => {
+test("POST approve: exit 8 → 409 { status: 'noop' } (already terminal / idempotent)", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-noop.sh", 8);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
   assert.strictEqual(res.statusCode, 409);
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "noop");
   assert.strictEqual(body.id, 4242);
-  assert.ok(body.reason.length > 0, "noop carries a human reason");
+  assert.match(body.reason, /already terminal/, "exit 8 means already terminal only");
+  assert.doesNotMatch(body.reason, /not found/, "a missing id is exit 19, never folded into exit 8");
 });
 
 test("POST approve: exit 9 → 422 { status: 'apply_failed', reason: 'needs_regen' }", async () => {
@@ -584,6 +601,121 @@ test("POST approve: exit 14 → 422 { status: 'unrecoverable' }", async () => {
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "unrecoverable");
   assert.ok(body.reason.length > 0, "unrecoverable carries a human reason");
+});
+
+// --- parked-pattern guard refusal (exit 18) ----------------------------------
+
+test("POST approve: exit 18 → 409 { status: 'parked_pattern' } naming the parked rows and the Reject way out", async () => {
+  // daemon-apply.sh set_parked_verdict's refusal line verbatim — a drifted parse fails here.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-parked-pattern.sh",
+    18,
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 3384:rejected, 6:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "parked_pattern");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.includes("3384:rejected, 6:applied"), "reason names every parked row");
+  assert.match(body.reason, /\bReject\b/, "reason points to the Reject action");
+});
+
+test("POST approve: exit 18 with no parseable rows → 409 { status: 'parked_pattern' } still pointing to Reject", async () => {
+  // A rows tail that is not id:status tokens — stderr text must not ride into the reason.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-parked-pattern-norows.sh",
+    18,
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows <unreadable>); nothing applied",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; reason: string };
+  assert.strictEqual(body.status, "parked_pattern");
+  assert.match(body.reason, /\bReject\b/, "the way out survives a garbled line");
+  assert.doesNotMatch(body.reason, /\(rows /, "no rows tail is appended from an unparseable line");
+});
+
+// --- single-path lookup and generation-outcome exits (19/20/21/23) -----------
+
+test("POST approve: exit 19 → 404 { status: 'not_found' }", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-not-found.sh", 19);
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 404);
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "not_found");
+  assert.strictEqual(body.id, 4242);
+  assert.match(body.reason, /not found/);
+});
+
+test("POST approve: exit 20 → 409 { status: 'generation_not_ok' } leading with Reject and naming the stored outcome", async () => {
+  // assert_generation_outcome's refusal line verbatim; <none> is how it prints a NULL haiku_status
+  const outcomes = ["skipped:chronic-timeout-backoff", "<none>"];
+  for (const [index, outcome] of outcomes.entries()) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-generation-not-ok-${index}.sh`,
+      20,
+      `[daemon-apply] use Reject — proposal id=4242 generation outcome haiku_status=${outcome} is not ok-prefixed, so its diff was never quality-screened; nothing applied, row left as it was (operator override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 409, `outcome ${outcome}`);
+    const body = res.json() as { status: string; id: number; reason: string };
+    assert.strictEqual(body.status, "generation_not_ok");
+    assert.strictEqual(body.id, 4242);
+    assert.ok(body.reason.startsWith("use Reject"), "the way out leads, since the approve toast truncates");
+    assert.ok(body.reason.includes(`haiku_status=${outcome}`), `reason names outcome ${outcome}`);
+    assert.ok(body.reason.includes("AUTOAGENT_ALLOW_HAIKU_SKIP"), "reason names the operator override");
+  }
+});
+
+test("POST approve: exit 20 with no parseable outcome → 409 { status: 'generation_not_ok' } still leading with Reject", async () => {
+  // A value token the parser rejects — stderr text must not ride into the reason.
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-generation-not-ok-garbled.sh",
+    20,
+    "[daemon-apply] use Reject — proposal id=4242 generation outcome haiku_status=skipped garbled tail is not ok-prefixed",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; reason: string };
+  assert.strictEqual(body.status, "generation_not_ok");
+  assert.ok(body.reason.startsWith("use Reject"), "the way out survives a garbled line");
+  assert.ok(body.reason.includes("AUTOAGENT_ALLOW_HAIKU_SKIP"), "the override survives a garbled line");
+  assert.doesNotMatch(body.reason, /garbled/, "no stderr text is copied from an unparseable line");
+});
+
+test("POST approve: exit 21 → 503 { status: 'apply_error' } naming the failed DB query", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-query-failed.sh",
+    21,
+    "[daemon-apply] FATAL: proposal id=4242 lookup failed — nothing applied (DB query error, not a no-op)",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 503, "a DB outage is unavailable, not the generic infra 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "apply_error");
+  assert.strictEqual(body.id, 4242);
+  assert.match(body.reason, /DB query failed/);
+  assert.match(body.reason, /\bretry\b/, "an outage clears, so retrying is the remedy");
+  assert.ok(body.reason.includes("lookup failed"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 23 → 422 { status: 'row_unreadable' } leading with Reject, never retry", async () => {
+  // select_single_proposal's unreadable-row line verbatim — the row answered, so a retry reads the same bytes
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-row-unreadable.sh",
+    23,
+    "[daemon-apply] FATAL: proposal id=4242 row is unreadable — nothing applied (stored row data, not a DB outage)",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 422, "stored row data is unprocessable, not an outage or the generic 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "row_unreadable");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.startsWith("use Reject"), "the way out leads, since the approve toast truncates");
+  assert.match(body.reason.slice(0, 80), /not a DB outage/, "the cause survives the 80-char toast cut");
+  assert.doesNotMatch(body.reason, /\bretry/i, "a data problem is never offered a retry");
+  assert.ok(body.reason.includes("row is unreadable"), "the daemon's stderr rides along for diagnosis");
 });
 
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
@@ -699,4 +831,58 @@ test("POST reject: non-integer :id → 400 { status: 'invalid_param' }", async (
   const body = res.json() as { status: string; param: string };
   assert.strictEqual(body.status, "invalid_param");
   assert.strictEqual(body.param, "id");
+});
+
+// --- Review provenance (core.autoagent_proposals.reviewed_by) ---------------
+// The operator token of the closed actor set declared at
+// monitor/prisma/schema.prisma -> AutoagentProposal. The reject route stamps this
+// same literal directly in SQL; the approve route has to carry it across the spawn
+// boundary into daemon-apply.sh, which is the leg asserted below.
+const OPERATOR_ACTOR = "monitor-user";
+
+test("POST approve: hands the operator actor to daemon-apply instead of letting the machine default stand", async () => {
+  const stub = writeArgvCaptureStub("apply-argv.sh", 0);
+  process.env.AUTOAGENT_APPLY_SCRIPT = stub.script;
+
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 200);
+
+  const argv = readFileSync(stub.argvPath, "utf8").split("\n").filter((a) => a.length > 0);
+  const at = argv.indexOf("--actor");
+  assert.notStrictEqual(at, -1, `approve argv carries --actor (got: ${argv.join(" ")})`);
+  assert.strictEqual(
+    argv[at + 1],
+    OPERATOR_ACTOR,
+    "an operator approval is filed under the operator, never the daemon default",
+  );
+});
+
+// Source-contract assertion over the route's own SQL. Precedent for reading route
+// source rather than rendering it: test/daemon-status.enum-parity.test.ts.
+const ROUTE_SRC = readFileSync(
+  fileURLToPath(new URL("../src/server/routes/improvement.ts", import.meta.url)),
+  "utf8",
+);
+
+// Every SELECT ... FROM core.autoagent_proposals in the route, narrowed to the
+// tightest SELECT preceding each FROM so one projection never swallows its neighbour.
+function proposalProjections(src: string): string[] {
+  return src
+    .split("FROM core.autoagent_proposals")
+    .slice(0, -1)
+    .map((before) => before.slice(before.lastIndexOf("SELECT")))
+    .filter((sql) => sql.startsWith("SELECT"));
+}
+
+test("every proposal projection selecting the verdict instant selects its actor beside it", () => {
+  const withInstant = proposalProjections(ROUTE_SRC).filter((sql) => /\breviewed_at\b/.test(sql));
+  assert.ok(withInstant.length > 0, "the route still projects reviewed_at somewhere");
+
+  for (const sql of withInstant) {
+    assert.match(
+      sql,
+      /\breviewed_by\b/,
+      `a projection carries the instant without the actor:\n${sql}`,
+    );
+  }
 });

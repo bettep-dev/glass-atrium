@@ -129,9 +129,11 @@ untrack_in_scope() {
   # live macOS host, which then chmod'd the real GLASS_ATRIUM_GLOBAL_RULES.md
   # target (the tree's one symlink) to 755. This row FAILS at HEAD (recorded=755
   # != 644) and passes once mode_of dereferences via `stat -L`.
-  # Assertions are `|| return 1` gated: bats fails a test only on its LAST
-  # command, so a bare intermediate `[[ ]]` would not gate the recorded==644
-  # check (mirrors the sibling manifest-mode-integrity.bats convention).
+  # Assertions are `|| return 1` gated: @test bodies run under errexit, but a bare
+  # intermediate `[[ ]]` does NOT gate on macOS bash 3.2.57 — it DOES from bash 4.4
+  # onward, CI's bash 5.3.9 included (measured on 3.2.57 / 4.4.23 / 5.0.18 / 5.3.15 —
+  # bash is the variable, not bats) — so unguarded the recorded==644 check would assert
+  # nothing locally (mirrors the sibling manifest-mode-integrity.bats convention).
   printf '# real rule target\n' >"${WORK}/rules/target.md"
   chmod 644 "${WORK}/rules/target.md"
   ln -s target.md "${WORK}/rules/link.md"
@@ -404,6 +406,89 @@ ship_lib_a() {
   [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
 }
 
+# Stamp one retired entry into a freshly generated manifest, then run --check. The
+# default value is a REAL shipped hash, so only the entry's shape can fail the gate.
+check_with_retired_entry() {
+  local key="$1" value="${2:-}"
+  "${SCRIPT}" >/dev/null
+  [[ -n "${value}" ]] || value="$(jq -r '.hashes["LICENSE"]' "${MANIFEST}")"
+  jq --arg k "${key}" --arg v "${value}" '.retired = {($k): [$v]}' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  run "${SCRIPT}" --check
+}
+
+@test "--check: exit 1 names a dot-dot escaping retired key" {
+  check_with_retired_entry "../../escape"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "../../escape"'* ]] || return 1
+}
+
+@test "--check: exit 1 names an absolute retired key" {
+  check_with_retired_entry "/scripts/lib/gone.sh"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "/scripts/lib/gone.sh"'* ]] || return 1
+}
+
+@test "--check: exit 1 names a retired key with a mid-path dot-dot segment" {
+  check_with_retired_entry "a/../../x"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "a/../../x"'* ]] || return 1
+}
+
+@test "--check: exit 1 names a retired key whose value is not 64-hex" {
+  check_with_retired_entry "scripts/lib/gone.sh" \
+    "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"RETIRED shape INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "scripts/lib/gone.sh"'* ]] || return 1
+}
+
+# Rewrite the generated manifest with jq filter $1 applied. The LICENSE entry it
+# rewrites carries its real generated hash and mode, so only the key shape can fail.
+rewrite_manifest() {
+  "${SCRIPT}" >/dev/null
+  jq "$1" "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+}
+
+readonly MODES_KEY_SWAP_JQ='.modes["../../x"] = .modes["LICENSE"] | del(.modes["LICENSE"])'
+readonly FILES_KEY_ESCAPE_JQ='.files |= map(if . == "LICENSE" then "../../x" else . end)
+  | .hashes["../../x"] = .hashes["LICENSE"] | del(.hashes["LICENSE"])
+  | .modes["../../x"] = .modes["LICENSE"] | del(.modes["LICENSE"])'
+
+@test "--check: exit 1 lists both keys of a modes entry swapped out of the files set" {
+  rewrite_manifest "${MODES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --check
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"MODES key set differs from files:"* ]] || return 1
+  [[ "${output}" == *'+ "../../x"'* ]] || return 1
+  [[ "${output}" == *'- "LICENSE"'* ]] || return 1
+}
+
+@test "--validate: rejects a modes entry swapped out of the files set" {
+  rewrite_manifest "${MODES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [ "${status}" -eq 6 ] || return 1
+}
+
+@test "--check: exit 1 names an escaping files entry" {
+  rewrite_manifest "${FILES_KEY_ESCAPE_JQ}"
+  run "${SCRIPT}" --check
+  [ "${status}" -eq 1 ] || return 1
+  [[ "${output}" == *"FILES key INVALID:"* ]] || return 1
+  [[ "${output}" == *'! "../../x"'* ]] || return 1
+}
+
+@test "--validate: rejects an escaping files entry whose hashes and modes keys agree" {
+  rewrite_manifest "${FILES_KEY_ESCAPE_JQ}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [ "${status}" -eq 6 ] || return 1
+}
+
 @test "--validate: rejects a retired key that is also a files[] entry" {
   "${SCRIPT}"
   local victim
@@ -436,6 +521,44 @@ ship_lib_a() {
     "${MANIFEST}" >"${WORK}/scalar.json"
   run "${SCRIPT}" --validate "${WORK}/scalar.json"
   [[ "${status}" -eq 6 ]] || return 1
+}
+
+@test "--validate: rejects an absolute, a dot-dot-segment and an empty retired key" {
+  "${SCRIPT}"
+  local key
+  for key in "/scripts/lib/gone.sh" "../../.claude/data/update/pending.json" ""; do
+    jq --arg k "${key}" \
+      '.retired = {($k): ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+      "${MANIFEST}" >"${WORK}/bad.json"
+    run "${SCRIPT}" --validate "${WORK}/bad.json"
+    [ "${status}" -eq 6 ] || {
+      printf 'retired key accepted: "%s" (status %s)\n' "${key}" "${status}"
+      return 1
+    }
+  done
+}
+
+@test "--validate: accepts a dot-dot inside a retired key segment name" {
+  "${SCRIPT}"
+  jq '.retired = {"scripts/lib/foo..bar": ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${WORK}/ok.json"
+  run "${SCRIPT}" --validate "${WORK}/ok.json"
+  [ "${status}" -eq 0 ] || return 1
+}
+
+@test "generate: a committed dot-dot retired key stops regeneration and leaves the manifest unchanged" {
+  "${SCRIPT}"
+  jq '.retired = {"../../.claude/data/update/pending.json": ["aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"]}' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+  # a newly shipped file makes a swapped-in regeneration differ from the committed bytes
+  printf '# lib c\n' >"${WORK}/scripts/lib/c.sh"
+  git -C "${WORK}" add manifest.json scripts/lib/c.sh
+  git -C "${WORK}" commit -qm 'carry an escaping retired key'
+  cp -- "${MANIFEST}" "${WORK}/before.json"
+  run "${SCRIPT}"
+  [ "${status}" -eq 6 ] || return 1
+  cmp -s -- "${WORK}/before.json" "${MANIFEST}" || return 1
 }
 
 @test "--validate: accepts the manifest the generator just wrote" {

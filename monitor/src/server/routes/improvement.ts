@@ -21,6 +21,7 @@ import {
   buildAgentMembershipFragment,
   loadCanonicalAgentKeys,
 } from "../agents/registry.js";
+import { STRUCTUREDOUTPUT_COMPLETION_SOURCE } from "../attribution-sources.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { parseIdParam } from "../route-params.js";
@@ -122,6 +123,29 @@ const STYLE_REF_GREENFIELD = 'greenfield' as const;
 // Legend. No hardcoded DEV_AGENTS array.
 const DEV_AGENT_PREFIX = 'glass-atrium-dev-';
 
+// The task_types the probe-omission charging function holds a writer responsible on.
+// Cross-layer mirror of the in-function case-glob in hooks/lib/style-ref-consts.sh
+// (style_ref_compute_review_flag) — that glob is deliberately not an exported bash
+// constant, so this list is a manual-sync mirror, not an import. TASK_TYPES cannot
+// supply it: that SoT is the full 9-type set, and 6 of them carry no probe obligation.
+const STYLE_REF_CHARGEABLE_TASK_TYPES: readonly string[] = [
+  'feature',
+  'bug-fix',
+  'refactor',
+];
+
+// The attribution channels that carry a complete writer [COMPLETION] emission — the
+// only rows a writer-side omission may be charged against. Mirror of
+// WRITER_ATTRIBUTION_SOURCES in hooks/lib/review-flag-reasons.sh; the one member with
+// an existing TS declaration is imported rather than re-spelled. A NULL
+// attribution_source never matches, which is the intended exclusion: a row with no
+// recorded channel has no writer emission to hold responsible.
+const WRITER_ATTRIBUTION_SOURCES: readonly string[] = [
+  'hook-input',
+  'cron-derived',
+  STRUCTUREDOUTPUT_COMPLETION_SOURCE,
+];
+
 interface TierCountDbRow {
   approval_tier: string;
   count: bigint;
@@ -139,6 +163,10 @@ interface ProposalListDbRow {
   status: string;
   cost_guard_state: string | null;
   reviewed_at: Date | null;
+  // Contract + closed token set: monitor/prisma/schema.prisma -> AutoagentProposal.
+  // Nullable independently of reviewed_at above — a machine-drained row carries one
+  // and not the other, so neither column's presence implies the other's.
+  reviewed_by: string | null;
   // Provenance columns surfacing the pre-verify chain to the UI.
   rationale: string | null;
   pre_verify_rationale: string | null;
@@ -228,12 +256,19 @@ interface GraderCrosscheckDbRow {
 // Per-agent style_ref aggregation row shape — feeds rowToStyleRefAgentSummary.
 // All counts are bigint from PG COUNT()/FILTER. `agent` matches
 // core.outcomes.agent (TEXT, free-form — no PG enum).
+//
+// The three verify buckets are each COUNTED under the same eligibility predicate
+// rather than one being derived by subtracting another. Subtraction cannot express
+// a third state: a row the cross-check never adjudicated (style_ref_verified NULL)
+// would land in whichever bucket the subtraction produced, and read as a row the
+// cross-check examined and failed to corroborate.
 interface StyleRefAgentDbRow {
   agent: string;
   emission_count: bigint;
   emission_total: bigint;
-  verified_true_count: bigint;
-  verified_eligible: bigint;
+  corroborated_count: bigint;
+  uncorroborated_count: bigint;
+  unverifiable_count: bigint;
 }
 
 // 3-Tier baseline cohort split row — single-row PG result (3 parallel COUNT()
@@ -508,6 +543,9 @@ const REJECT_BUCKET_QUALITY = "quality";
 // reuses 'rejected' — which is why the rationale text is the only discriminator available.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
+// Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede
+const PARKED_PATTERN_RATIONALE_LIKE = "covering pattern parked before apply%";
+
 // The daemon's own apply gate (is_apply_eligible_haiku_status / the daemon-apply
 // `haiku_status LIKE 'ok%'` SELECT) reads an ok-prefixed status as "the model produced a
 // usable diff". The quality bucket reuses that reading rather than enumerating skip
@@ -650,10 +688,15 @@ async function handleImprovement(
     name,
     `dev-${name.slice(DEV_AGENT_PREFIX.length)}`,
   ]);
+  // Chargeable-population gate appended to BOTH branches — the fail-soft empty-DEV
+  // branch publishes the same rates, so exempting it would leave one path measuring a
+  // different population from the other.
+  const styleRefChargeable = buildStyleRefChargeableFilter();
+  const styleRefEligible = buildStyleRefEligibleFilter();
   const styleRefWhere =
     devAgents.length === 0
-      ? buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys)
-      : Prisma.sql`${buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent)} AND agent IN (${Prisma.join(devTelemetryAgents)})`;
+      ? Prisma.sql`${buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys)} ${styleRefChargeable}`
+      : Prisma.sql`${buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent)} AND agent IN (${Prisma.join(devTelemetryAgents)}) ${styleRefChargeable}`;
 
   const prisma = getPrisma();
   try {
@@ -690,6 +733,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -723,6 +767,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -778,21 +823,35 @@ async function handleImprovement(
               AND p.target_agent = o.agent
           )
       `,
-      // style_ref telemetry — per-agent 7-day rolling aggregation, two ratios:
-      //   1. emission_rate = emission_count / emission_total (style_ref IS NOT NULL — path OR 'greenfield')
-      //   2. verified_rate = verified_true_count / verified_eligible (excludes 'greenfield' rows —
-      //      structurally no path to cross-verify against tool_use Read history)
-      // ${STYLE_REF_GREENFIELD} is auto-parameterized (bound at execute time), so the partial
-      // index outcomes_style_ref_agent_ts_idx stays usable.
+      // style_ref telemetry — per-agent 7-day rolling aggregation over the CHARGEABLE
+      // population only (styleRefWhere carries buildStyleRefChargeableFilter), so every
+      // figure below shares one population: the rows the probe-omission charging
+      // function could hold a writer responsible on.
+      //   emission_rate = emission_count / emission_total (style_ref IS NOT NULL — path OR 'greenfield')
+      // The remaining three are a COUNTED partition of the verify-eligible rows
+      // (style_ref IS NOT NULL AND <> 'greenfield'), each keyed on style_ref_verified so
+      // the column's three states survive into the published payload:
+      //   corroborated_count   — TRUE  (the path appeared in the session Read history)
+      //   uncorroborated_count — FALSE (a Read history existed and did not carry it)
+      //   unverifiable_count   — NULL  (nothing to adjudicate against; see the
+      //                           withhold-on-empty-history branch in
+      //                           hooks/track-outcome.sh _compute_style_ref_verified)
+      // A greenfield row carries NULL too, so every bucket shares the eligibility
+      // fragment — it is what keeps a greenfield row out of the unverifiable bucket.
       prisma.$queryRaw<StyleRefAgentDbRow[]>`
         SELECT
           agent,
           COUNT(*) FILTER (WHERE style_ref IS NOT NULL)::bigint AS emission_count,
           COUNT(*)::bigint AS emission_total,
-          COUNT(*) FILTER (WHERE style_ref_verified = TRUE)::bigint AS verified_true_count,
           COUNT(*) FILTER (
-            WHERE style_ref IS NOT NULL AND style_ref <> ${STYLE_REF_GREENFIELD}
-          )::bigint AS verified_eligible
+            WHERE ${styleRefEligible} AND style_ref_verified = TRUE
+          )::bigint AS corroborated_count,
+          COUNT(*) FILTER (
+            WHERE ${styleRefEligible} AND style_ref_verified = FALSE
+          )::bigint AS uncorroborated_count,
+          COUNT(*) FILTER (
+            WHERE ${styleRefEligible} AND style_ref_verified IS NULL
+          )::bigint AS unverifiable_count
         FROM core.outcomes
         ${styleRefWhere}
         GROUP BY agent
@@ -817,9 +876,9 @@ async function handleImprovement(
       `,
       // Reject lifecycle split. Tier is omitted for the same reason as the prose-only-add
       // count above — the split is tier-independent.
-      //   - CASE order is the contract: a superseded row carries haiku_status 'ok', so the
-      //     lifecycle arm must precede the quality arm or the mechanical rows book as
-      //     quality rejects (the defect).
+      //   - CASE order is the contract: a superseded or parked-pattern row carries
+      //     haiku_status 'ok', so the lifecycle arms must precede the quality arm or the
+      //     mechanical rows book as quality rejects (the defect).
       //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
       //     compares NULL against LIKE and would otherwise fall through untyped.
       //   - The provenance filter drops updater-written release rows, which are not
@@ -830,6 +889,8 @@ async function handleImprovement(
         SELECT
           CASE
             WHEN COALESCE(rationale, '') LIKE ${SUPERSEDE_RATIONALE_LIKE}
+              THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN COALESCE(rationale, '') LIKE ${PARKED_PATTERN_RATIONALE_LIKE}
               THEN ${REJECT_BUCKET_LIFECYCLE}
             WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
               THEN ${REJECT_BUCKET_QUALITY}
@@ -1681,9 +1742,16 @@ export function resolveApplyScript(): string {
   return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
+// Who an approval through this route files the row under. One member of the closed
+// actor set declared at monitor/prisma/schema.prisma -> AutoagentProposal, and the
+// same literal handleReject stamps: both routes are the same operator, so both name
+// one actor. daemon-apply.sh defaults to its own machine token, which would file an
+// operator's decision as the daemon's — hence the explicit hand-off.
+const REVIEW_ACTOR_OPERATOR = "monitor-user";
+
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
-//   8  = no-op / not actionable (id not found OR status not pending/snoozed)
+//   8  = no-op, already terminal (status applied/rejected/approved/reverted)
 //   9  = apply failed without auto-regen (won't occur on this route — we always
 //        pass --auto-regen — but kept as a defensive fallback branch)
 //   10 = applied-after-regen (stale diff → regenerated + pre-verify passed →
@@ -1695,7 +1763,20 @@ export function resolveApplyScript(): string {
 //   13 = regen-invalid (regenerated but 4-axis pre-verify failed; row left
 //        pending; failing axes on stderr — "axes: C1=..,C2=..,C3=..,C4=..")
 //   14 = regen-unrecoverable (no landable diff could be produced; row left pending)
-//   2 = bad arg · 3 = no psql · 6 = DB update failed (infra-class failures)
+//   18 = parked-pattern refusal (every covering pattern row is terminal; nothing
+//        applied, row untouched; stderr names the rows — Reject is the way out)
+//   19 = not found (no proposal with that id; no-op)
+//   20 = generation-outcome refusal (stored haiku_status not ok-prefixed; nothing
+//        applied, row untouched; stderr names the outcome — Reject is the way out)
+//   21 = proposal DB query failed (the lookup errored; nothing applied) — infra,
+//        answered 503 rather than the generic 500, and a retry can succeed
+//   23 = proposal row unreadable (the lookup answered but the row did not reassemble
+//        or answered for another id; nothing applied) — stored data, so a retry reads
+//        the same bytes; stderr names the row — Reject is the way out
+//   24 = unknown --actor token — unreachable from here (the actor above is a fixed
+//        literal, not request input), so it falls to the generic apply_error 500
+//   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
+//       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
 const APPLY_EXIT_NOOP = 8;
 const APPLY_EXIT_FAILED = 9;
@@ -1704,6 +1785,18 @@ const APPLY_EXIT_REGEN_FAILED = 11;
 const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
+const APPLY_EXIT_PARKED_PATTERN = 18;
+const APPLY_EXIT_NOT_FOUND = 19;
+const APPLY_EXIT_GENERATION_NOT_OK = 20;
+const APPLY_EXIT_QUERY_FAILED = 21;
+const APPLY_EXIT_ROW_UNREADABLE = 23;
+
+// Approve-only exit-18 refusal — route-local like RestoreErrorBody
+interface ApproveRefusalBody {
+  status: "parked_pattern";
+  id: number;
+  reason: string;
+}
 
 // SECURITY (LLM06 — Excessive Agency): approve mutates agent .md files via daemon-apply.sh
 // (high-impact). What actually constrains a caller: (1) the loopback-only bind in main.ts;
@@ -1721,7 +1814,7 @@ const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 async function handleApprove(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply,
-): Promise<ApproveProposalResponse | ImprovementMutationErrorBody> {
+): Promise<ApproveProposalResponse | ImprovementMutationErrorBody | ApproveRefusalBody> {
   const start = Date.now();
   const id = parseIdParam(request.params.id);
   if (id === null) {
@@ -1735,7 +1828,13 @@ async function handleApprove(
   let exitCode: number;
   let stderr: string;
   try {
-    await execFileAsync(resolveApplyScript(), ["--proposal-id", String(id), "--auto-regen"]);
+    await execFileAsync(resolveApplyScript(), [
+      "--proposal-id",
+      String(id),
+      "--auto-regen",
+      "--actor",
+      REVIEW_ACTOR_OPERATOR,
+    ]);
     // Resolved promise → exit 0.
     exitCode = APPLY_EXIT_APPLIED;
     stderr = "";
@@ -1767,14 +1866,9 @@ async function handleApprove(
     return { id, status: "applied", already_applied: true };
   }
   if (exitCode === APPLY_EXIT_NOOP) {
-    // Idempotent no-op: id absent OR already terminal/approved — nothing changed.
-    request.log.warn({ ...logBase, stderr }, "approve no-op (id not found or already terminal)");
+    request.log.warn({ ...logBase, stderr }, "approve no-op (already terminal)");
     reply.code(409);
-    return {
-      status: "noop",
-      id,
-      reason: "proposal not found or not in an actionable (pending/snoozed) state",
-    };
+    return { status: "noop", id, reason: "proposal already terminal — nothing to apply" };
   }
   if (exitCode === APPLY_EXIT_FAILED) {
     // Defensive fallback: with --auto-regen the stale path no longer emits exit 9
@@ -1825,6 +1919,60 @@ async function handleApprove(
       status: "unrecoverable",
       id,
       reason: "no applyable diff could be regenerated",
+    };
+  }
+  if (exitCode === APPLY_EXIT_PARKED_PATTERN) {
+    // Refusal, not a rejection — row stays queued; way out first since the approve toast truncates
+    const parkedRows = parseParkedRows(stderr);
+    request.log.warn(
+      { ...logBase, stderr, parkedRows },
+      "approve refused (every covering pattern row is terminal — row left as it was)",
+    );
+    reply.code(409);
+    const reason = "all covering pattern rows are terminal, nothing applied — use Reject instead";
+    return {
+      status: "parked_pattern",
+      id,
+      reason: parkedRows ? `${reason} (rows ${parkedRows})` : reason,
+    };
+  }
+  if (exitCode === APPLY_EXIT_NOT_FOUND) {
+    request.log.warn({ ...logBase, stderr }, "approve no-op (proposal not found)");
+    reply.code(404);
+    return { status: "not_found", id, reason: "proposal not found" };
+  }
+  if (exitCode === APPLY_EXIT_GENERATION_NOT_OK) {
+    // Refusal, not a rejection — way out first since the approve toast truncates
+    const outcome = parseGenerationOutcome(stderr);
+    request.log.warn(
+      { ...logBase, stderr, outcome },
+      "approve refused (generation outcome not ok-prefixed — row left as it was)",
+    );
+    reply.code(409);
+    const outcomeText = outcome ? ` haiku_status=${outcome}` : "";
+    return {
+      status: "generation_not_ok",
+      id,
+      reason: `use Reject — generation outcome${outcomeText} is not ok-prefixed, nothing applied (override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_QUERY_FAILED) {
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal DB query failed (nothing applied)");
+    reply.code(503);
+    return {
+      status: "apply_error",
+      id,
+      reason: `proposal DB query failed, nothing applied — retry once the database is reachable: ${truncateStderr(stderr)}`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_ROW_UNREADABLE) {
+    // Data problem, not an outage — no retry offered; way out first since the approve toast truncates
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal row unreadable (nothing applied)");
+    reply.code(422);
+    return {
+      status: "row_unreadable",
+      id,
+      reason: `use Reject — stored proposal row is unreadable (row data, not a DB outage), nothing applied: ${truncateStderr(stderr)}`,
     };
   }
 
@@ -2305,6 +2453,34 @@ function buildOutcomeWhere(
   return Prisma.join(fragments, " AND ", "WHERE ");
 }
 
+// Narrows the style_ref telemetry population to the rows the probe-omission charging
+// function (hooks/lib/style-ref-consts.sh style_ref_compute_review_flag) can hold a
+// writer responsible on. Without it the published rates count rows that were never
+// under a probe obligation, so a non-emitting `doc` row or a synthesized row depresses
+// a graduation signal it is not accountable to.
+//
+// Two of the charging function's three conditions live here; its third — agent ∈
+// STYLEREF_AGENTS — is already carried by the caller's registry-derived DEV_AGENT_PREFIX
+// subset, verified name-for-name identical to the bash roster, so re-declaring it would
+// be a second copy of a roster with a live SoT.
+//
+// AND-prefixed for append-after-a-complete-WHERE, matching buildAgentMembershipFilter.
+// Values are bound (LLM05), and the ::text cast avoids a core."TaskType" enum literal.
+export function buildStyleRefChargeableFilter(): Prisma.Sql {
+  return Prisma.sql`AND task_type::text IN (${Prisma.join(STYLE_REF_CHARGEABLE_TASK_TYPES)}) AND attribution_source IN (${Prisma.join(WRITER_ATTRIBUTION_SOURCES)})`;
+}
+
+// Verify-eligibility predicate, shared by all three style_ref verify buckets so they
+// partition ONE population. Held in one fragment rather than repeated per bucket: a
+// greenfield row also carries style_ref_verified NULL, so a bucket that dropped this
+// guard would absorb every greenfield row into `unverifiable` and the three counts
+// would stop summing to the eligible total.
+// The greenfield value is bound (LLM05) and keeps the partial index
+// outcomes_style_ref_agent_ts_idx usable.
+export function buildStyleRefEligibleFilter(): Prisma.Sql {
+  return Prisma.sql`style_ref IS NOT NULL AND style_ref <> ${STYLE_REF_GREENFIELD}`;
+}
+
 // Folds the 4-value DB ApprovalTier into the 2-value public ImprovementTier:
 //   'auto'                          → 'auto'
 //   'user' / 'user-pending' / 'llm' → 'safety'
@@ -2490,17 +2666,9 @@ export function buildGraderCrosscheckSummary(
   };
 }
 
-// style_ref summary builder — folds bigint DB counts into number-typed rates
-// with null-safe denominators. Test-visible export (mirrors rowToProposalSummary
-// pattern) for unit testing via node:test.
+// Test-visible export (mirrors rowToProposalSummary pattern) for unit testing via
+// node:test.
 //
-// Null-rate semantics (FE renders "—" or "no data yet" instead of "0/0"):
-//   - emission_rate null    → no rows for this agent in 7d window
-//   - verified_rate null    → no non-greenfield emissions (all 'greenfield' OR
-//                              all NULL); verify check structurally N/A
-//   - overall_*    null     → no eligible rows ANYWHERE in window (typical
-//                              during v1.0 OPTIONAL phase before style_ref columns
-//                              are populated)
 // NULL target_agent rows are dropped rather than folded into an "unknown" bucket: the
 // count is defined per agent, and an unattributable row answers no per-agent question.
 // Reachable only on the fail-open empty-registry path, where the membership gate is
@@ -2557,6 +2725,13 @@ export function buildRejectBucketSummary(
   };
 }
 
+// style_ref summary builder — folds the bigint DB counts into the published payload.
+// Test-visible export for unit testing via node:test.
+//
+// Null-rate semantics (FE renders "—" instead of a fabricated 0):
+//   - emission_rate null            → no chargeable rows for this agent in the 7d window
+//   - overall_uncorroborated_rate null → nothing was adjudicated (every emission is
+//                                     greenfield, or every eligible row is unverifiable)
 export function buildStyleRefSummary(
   rows: StyleRefAgentDbRow[],
 ): ImprovementStyleRefSummary {
@@ -2567,31 +2742,42 @@ export function buildStyleRefSummary(
   // bounded; row count cap = number of distinct agents in 7d window, ~12 max).
   let emissionCountTotal = 0;
   let emissionTotalTotal = 0;
-  let verifiedTrueTotal = 0;
-  let verifiedEligibleTotal = 0;
+  let corroboratedTotal = 0;
+  let uncorroboratedTotal = 0;
+  let unverifiableTotal = 0;
   for (const row of agents) {
     emissionCountTotal += row.emission_count;
     emissionTotalTotal += row.emission_total;
-    verifiedTrueTotal += row.verified_true_count;
-    verifiedEligibleTotal += row.verified_eligible;
+    corroboratedTotal += row.corroborated_count;
+    uncorroboratedTotal += row.uncorroborated_count;
+    unverifiableTotal += row.unverifiable_count;
   }
 
-  // Split derivation from the same rollup counts:
-  //   greenfield = emitted rows NOT verify-eligible (style_ref = 'greenfield')
-  //   unverified = verify-eligible rows that did NOT cross-verify (fake numerator)
-  const greenfieldTotal = emissionCountTotal - verifiedEligibleTotal;
-  const unverifiedTotal = verifiedEligibleTotal - verifiedTrueTotal;
+  // eligible sums the three buckets rather than carrying its own count, so the
+  // partition holds by construction (same shape as buildRejectBucketSummary): a
+  // verify state outside the SQL's three cannot land in a bucket and inflate the
+  // total behind it. greenfield is then the emitted remainder outside the partition.
+  const eligibleTotal = corroboratedTotal + uncorroboratedTotal + unverifiableTotal;
+  const greenfieldTotal = emissionCountTotal - eligibleTotal;
 
   return {
     window_days: STYLE_REF_WINDOW_DAYS,
     agents,
     overall_emission_rate: safeRatio(emissionCountTotal, emissionTotalTotal),
-    overall_verified_rate: safeRatio(verifiedTrueTotal, verifiedEligibleTotal),
-    overall_verified_count: verifiedTrueTotal,
-    overall_unverified_count: unverifiedTotal,
+    overall_corroborated_count: corroboratedTotal,
+    overall_uncorroborated_count: uncorroboratedTotal,
+    overall_unverifiable_count: unverifiableTotal,
+    overall_eligible_count: eligibleTotal,
     overall_greenfield_count: greenfieldTotal,
-    // fake_rate = unverified / verify-eligible = 1 - verified_rate; null when eligible = 0.
-    overall_fake_rate: safeRatio(unverifiedTotal, verifiedEligibleTotal),
+    // Denominator is the ADJUDICATED subset (corroborated + uncorroborated), never
+    // the full eligible set. Dividing by eligible would fold the unverifiable rows
+    // into the denominator, so the rate would fall as the cross-check's blind spot
+    // widened — the movement no reader could attribute. Null when nothing was
+    // adjudicated, so an all-blind window reads "—" rather than a clean 0.
+    overall_uncorroborated_rate: safeRatio(
+      uncorroboratedTotal,
+      corroboratedTotal + uncorroboratedTotal,
+    ),
   };
 }
 
@@ -2600,16 +2786,18 @@ export function rowToStyleRefAgentSummary(
 ): ImprovementStyleRefAgentRow {
   const emissionCount = bigintToNumber(row.emission_count);
   const emissionTotal = bigintToNumber(row.emission_total);
-  const verifiedTrueCount = bigintToNumber(row.verified_true_count);
-  const verifiedEligible = bigintToNumber(row.verified_eligible);
+  const corroborated = bigintToNumber(row.corroborated_count);
+  const uncorroborated = bigintToNumber(row.uncorroborated_count);
+  const unverifiable = bigintToNumber(row.unverifiable_count);
   return {
     agent: row.agent,
     emission_count: emissionCount,
     emission_total: emissionTotal,
     emission_rate: safeRatio(emissionCount, emissionTotal),
-    verified_true_count: verifiedTrueCount,
-    verified_eligible: verifiedEligible,
-    verified_rate: safeRatio(verifiedTrueCount, verifiedEligible),
+    corroborated_count: corroborated,
+    uncorroborated_count: uncorroborated,
+    unverifiable_count: unverifiable,
+    eligible_count: corroborated + uncorroborated + unverifiable,
   };
 }
 
@@ -2798,6 +2986,21 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
     axes[key] = match[2].toLowerCase() === "true";
   }
   return Object.keys(axes).length > 0 ? axes : undefined;
+}
+
+/**
+ * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 3384:rejected, 6:applied)` line.
+ * Only id:status tokens pass — no other stderr text reaches the reason; undefined when none.
+ */
+function parseParkedRows(stderr: string): string | undefined {
+  const match = /guard REFUSED proposal id=\d+[^\n]*?\(rows (\d+:[a-z]+(?:, \d+:[a-z]+)*)\)/.exec(stderr);
+  return match?.[1];
+}
+
+// Exit-20 outcome token — value charset only, so no free stderr text rides into the reason
+function parseGenerationOutcome(stderr: string): string | undefined {
+  const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
+  return match?.[1];
 }
 
 // Mutation-side DB failure → 500 with the discriminated mutation-error envelope

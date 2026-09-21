@@ -33,7 +33,13 @@ from .gate import GateVerdict, evaluate_gate
 from .lock import mutation_lock
 from .paths import StorePaths, trash_path
 from .readers import registry_domains
-from .registry_ops import add_entry, build_entry, remove_entry
+from .registry_ops import (
+    RegistryMutationError,
+    add_entry,
+    build_entry,
+    get_rules_for_scope,
+    remove_entry,
+)
 from .scaffold import (
     PreflightError,
     assert_add_targets_absent,
@@ -63,9 +69,9 @@ class AddRequest:
     q2_verdict: str | None
     description: str | None = None
     # Authored agent body (from --body-file). None => the minimal scaffold stub
-    # is rendered (backward-compat, byte-identical). When set, the CLI has
-    # already non-empty-validated it, reconciled the `> Rules:` anchor, and
-    # fail-closed secret-scanned it (the CLI boundary owns those gates).
+    # is rendered. When set, the CLI has already non-empty-validated it,
+    # structure-gated it (no smuggled frontmatter, no retired `> Rules:` header)
+    # and fail-closed secret-scanned it (the CLI boundary owns those gates).
     body_md: str | None = None
 
 
@@ -130,15 +136,20 @@ def _run_add_locked(
     model_value = resolve_model_for_scope(req.scope)
     md_text = render_agent_md(
         name=req.name,
-        scope=req.scope,
         domains=req.domains,
         description=req.description,
         body=req.body_md,
         model=model_value,
     )
-    # `scope` is a roster-routing hint only (decides the DEV stanza + scaffold
-    # `> Rules:` header); it is NOT persisted on the registry row.
-    entry = build_entry(domains=req.domains, origin=req.origin)
+    # `scope` reaches the body nowhere: it decides the DEV stanza step and the
+    # registry `rules` defaults, which is where per-agent rule membership lives.
+    # An unknown scope refuses here — still before the transaction's first write.
+    try:
+        entry = build_entry(
+            domains=req.domains, origin=req.origin, scope=req.scope
+        )
+    except RegistryMutationError as exc:
+        raise AddRefused(str(exc)) from exc
 
     tx = Transaction(name=f"add:{req.name}", marker_dir=paths.ga_root)
 
@@ -206,22 +217,28 @@ def _run_add_locked(
         undo=lambda: swap_symlinks(paths.install_script, paths.ga_root),
     )
 
-    # dev-note 5: a freshly-ADDed DEV agent stays inject-list-mismatch until the
-    # five tracked inject-scope-rules.sh arrays are reconciled — surface it, do
-    # not hide it. The reconcile is executable now (skill
-    # glass-atrium-ops-reconcile-inject → sync-inject CLI verb), no longer a
-    # manual hand-edit. NAMING_AGENTS is the 4th array (narrower roster: DEV −
-    # {dev-swift} + qa-code-reviewer) and BUDGET_DEV_AGENTS the 5th (DEV − the
-    # daemon-carrier exclusions); both are auto-reconciled alongside the other
-    # three, so the same sync-inject verb covers the full tracked set (the
-    # manual-curated BUDGET_ANALYSIS_AGENTS array is untracked by design).
+    # dev-note 5: scope-rule membership needs no follow-up — build_entry wrote the
+    # `rules` object this ADD just committed, so the registry carries the new
+    # agent's Tier-2 and Tier-3 files already. What still needs the NAME is the
+    # two tracked rosters: a freshly-ADDed DEV agent stays inject-list-mismatch
+    # until BUDGET_DEV_AGENTS and STYLEREF_AGENTS are reconciled, and until then
+    # it receives no BUDGET-DEV sizing block and the style_ref omission flag does
+    # not hold it responsible.
+    # Surface that, and keep the two claims apart — a note conflating them sends
+    # an operator to the wrong CLI in either direction. The reconcile is
+    # executable now (skill glass-atrium-ops-reconcile-inject → sync-inject CLI
+    # verb), no longer a manual hand-edit. The manual-curated governance rosters
+    # (BUDGET_ANALYSIS_AGENTS, WIKI_UNTRUSTED_AGENTS) are untracked by design,
+    # and the Scope Legend row plus the matrix cells stay a manual follow-up the
+    # updater does not preserve.
     note = ""
     if is_dev:
         note = (
-            " NOTE: inject-scope-rules.sh INJECT_AGENTS/MINIMALISM_AGENTS/"
-            "NAMING_AGENTS/BUDGET_DEV_AGENTS and lib/styleref-roster.sh "
-            "STYLEREF_AGENTS still need this NAME — run skill "
-            "glass-atrium-ops-reconcile-inject (orphan-scan will report this)."
+            " NOTE: inject-scope-rules.sh BUDGET_DEV_AGENTS and "
+            "lib/styleref-roster.sh STYLEREF_AGENTS still need this NAME — run skill "
+            "glass-atrium-ops-reconcile-inject (orphan-scan will report this). "
+            "Rule membership is already on the registry row; the Scope Legend "
+            "row is a separate manual edit."
         )
     return f"added {req.name} ({req.scope}/{req.origin}); {len(tx.written_labels())} steps committed.{note}"
 
@@ -253,8 +270,17 @@ def dry_run_add(paths: StorePaths, req: AddRequest) -> str:
         preflight_clear = False
         reasons.append(str(exc))
 
+    # An unknown scope has no Tier-2 rule file to record, so the real ADD would
+    # HALT at build_entry — preview it here rather than reporting allowed:true.
+    scope_clear = True
+    try:
+        get_rules_for_scope(req.scope)
+    except RegistryMutationError as exc:
+        scope_clear = False
+        reasons.append(str(exc))
+
     out = {
-        "allowed": bool(verdict.allowed and preflight_clear),
+        "allowed": bool(verdict.allowed and preflight_clear and scope_clear),
         "preflight_clear": preflight_clear,
         "reasons": reasons,
         "q3_conflicts": [

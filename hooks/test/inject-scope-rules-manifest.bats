@@ -25,8 +25,10 @@
 #   exceptions — preserved invariants guarding that the new sink never corrupts the drop-rate signal and
 #   that its append can never trip the ERR trap into a spawn-suppressing exit.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
-#   assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
+#   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
+#   bats 1.13.0 on both legs, so bash is the variable, not bats). Every assertion `return 1`s on
+#   mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
 
@@ -39,32 +41,33 @@ setup() {
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
   LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
 
-  # A comment fixture whose one small block sits well under the ceiling → a no-drop spawn.
-  COMMENT_FIT="${BATS_TEST_TMPDIR}/comment-fit.md"
+  # A BUDGET-DEV fixture whose one small block sits well under the ceiling → a no-drop spawn.
+  BUDGET_FIT="${BATS_TEST_TMPDIR}/budget-fit.md"
   printf '%s\n' \
     'preamble (must not reach the child)' \
-    '<!-- AGENT-INJECT:START -->' \
-    '**Comment-rule core (test block)**' \
+    '<!-- AGENT-INJECT:BUDGET-DEV:START -->' \
+    '**Budget sizing (test block)**' \
     'body line' \
-    '<!-- AGENT-INJECT:END -->' \
-    'trailer (must not reach the child)' >"${COMMENT_FIT}"
+    '<!-- AGENT-INJECT:BUDGET-DEV:END -->' \
+    'trailer (must not reach the child)' >"${BUDGET_FIT}"
 
-  # An oversized (~12 KB) comment fixture whose block alone exceeds the ceiling → forces a drop.
-  COMMENT_BIG="${BATS_TEST_TMPDIR}/comment-big.md"
+  # An oversized (~11 KB) BUDGET-DEV fixture whose block alone exceeds the ceiling → forces a drop.
+  BUDGET_BIG="${BATS_TEST_TMPDIR}/budget-big.md"
   {
-    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:START -->' '**Comment-rule core (test block)**'
+    printf '%s\n' 'preamble' '<!-- AGENT-INJECT:BUDGET-DEV:START -->' '**Budget sizing (test block)**'
     head -c 11000 /dev/zero | tr '\0' 'x'
-    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:END -->' 'trailer'
-  } >"${COMMENT_BIG}"
+    printf '\n%s\n%s\n' '<!-- AGENT-INJECT:BUDGET-DEV:END -->' 'trailer'
+  } >"${BUDGET_BIG}"
 }
 
-# Drive the hook's SubagentStart injection path. All scope sources except the comment block are
-# sandboxed to /nonexistent and the meter is off, so the assembly is emit + comment (+ lesson when a
-# store is given). $1=agent $2=comment source $3=lessons store $4=extra env assignment (may be empty).
+# Drive the hook's SubagentStart injection path. All scope sources except the BUDGET-DEV block are
+# sandboxed to /nonexistent and the meter is off, so for a BUDGET_DEV_AGENTS member the assembly is
+# emit + budget-dev (+ lesson when a store is given). $1=agent $2=budget source $3=lessons store
+# $4=extra env assignment (may be empty).
 run_inject() {
-  local agent="${1}" comment_src="${2}" lessons="${3:-/nonexistent}" extra="${4:-IGNORED_BY_HOOK=1}"
+  local agent="${1}" budget_src="${2}" lessons="${3:-/nonexistent}" extra="${4:-IGNORED_BY_HOOK=1}"
   run bash -c '
-    agent="$1"; hook="$2"; comment="$3"; lessons="$4"; extra="$5"
+    agent="$1"; hook="$2"; budget="$3"; lessons="$4"; extra="$5"
     manifest="$6"; droplog="$7"; counter="$8"; ceiling="$9"
     printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"}" | env \
       INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
@@ -73,15 +76,12 @@ run_inject() {
       INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
-      INJECT_SCOPE_RULES_SRC="${comment}" \
-      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
       INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       "${extra}" \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${comment_src}" "${lessons}" "${extra}" \
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${lessons}" "${extra}" \
     "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}"
 }
 
@@ -142,16 +142,16 @@ assert_manifest_has() {
 # ── AC1 — exactly one line per attempted spawn, naming kept labels + assembled bytes ───────────────
 
 @test "AC1: an injection-attempted spawn emits exactly one manifest line naming kept blocks and bytes" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   [[ "$(manifest_lines)" == "1" ]] || {
     echo "expected 1 manifest line, got $(manifest_lines) (log: $(cat "${MANIFEST}" 2>/dev/null))" >&2
     return 1
   }
-  assert_manifest_has 'agent=glass-atrium-dev-shell'
+  assert_manifest_has 'agent=glass-atrium-dev-front'
   assert_manifest_has 'agent_id=sess-A1'
-  # Kept labels carry their source path; the comment block's path is the fixture it was extracted from.
-  assert_manifest_has "comment:${COMMENT_FIT}"
+  # Kept labels carry their source path; the budget-dev block's path is the fixture it was extracted from.
+  assert_manifest_has "budget-dev:${BUDGET_FIT}"
   assert_manifest_has 'blocks=emit:'
   # The recorded size equals the bytes actually delivered to the child.
   local recorded delivered
@@ -166,11 +166,11 @@ assert_manifest_has() {
 }
 
 @test "AC1: three attempted spawns emit exactly three manifest lines" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-node" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-node" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   [[ "$(manifest_lines)" == "3" ]] || {
     echo "expected 3 manifest lines, got $(manifest_lines)" >&2
@@ -179,10 +179,10 @@ assert_manifest_has() {
 }
 
 @test "AC1: a shed block is absent from the manifest's kept-block list" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   assert_manifest_has 'blocks=emit:'
-  ! grep -q 'comment:' "${MANIFEST}" || {
+  ! grep -q 'budget-dev:' "${MANIFEST}" || {
     echo "manifest names a block that was shed (log: $(cat "${MANIFEST}"))" >&2
     return 1
   }
@@ -191,7 +191,7 @@ assert_manifest_has() {
 # ── AC2 — introspection modes emit no manifest line ────────────────────────────────────────────────
 
 @test "AC2: the operator introspection modes emit no manifest line (delta 0)" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   # Anchored, not vacuous: the spawn above must have written exactly one line, and neither query may
   # add to it (an absent sink would fail the anchor rather than pass the delta).
@@ -212,11 +212,11 @@ assert_manifest_has() {
 # ── AC3 — the manifest has its OWN sink: drop-rate numerator and denominator are untouched ─────────
 
 @test "AC3: with manifest emission enabled the drop-rate reports the same numerator and denominator" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   run_query --drop-rate
   assert_status 0
@@ -235,17 +235,17 @@ assert_manifest_has() {
   local blocker="${BATS_TEST_TMPDIR}/blocker"
   : >"${blocker}"
   MANIFEST="${blocker}/sub/manifest.log"
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   assert_contains 'additionalContext'
   assert_contains 'REQUIRED by the outcome recorder'
-  assert_contains 'Comment-rule core (test block)'
+  assert_contains 'Budget sizing (test block)'
 }
 
 # ── AC5 — absent digest tool → line still written, digest field omitted ────────────────────────────
 
 @test "AC5: an absent digest tool writes the manifest line without a digest field" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}" /nonexistent \
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" /nonexistent \
     "INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool"
   assert_status 0
   [[ "$(manifest_lines)" == "1" ]] || {
@@ -257,12 +257,12 @@ assert_manifest_has() {
     return 1
   }
   assert_manifest_has 'ctx_bytes='
-  assert_contains 'Comment-rule core (test block)'
+  assert_contains 'Budget sizing (test block)'
 }
 
 @test "AC5: a present digest tool records a digest field" {
   command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || skip "no digest tool"
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   grep -qE 'digest=[0-9a-f]{64}' "${MANIFEST}" || {
     echo "no hex digest recorded (log: $(cat "${MANIFEST}"))" >&2
@@ -273,8 +273,8 @@ assert_manifest_has() {
 # ── AC6 — kept lesson carries its ids and scores; the flag never over-claims ───────────────────────
 
 @test "AC6: a kept lesson block records its ids and scores with lesson_truncated=0" {
-  write_lessons "glass-atrium-dev-shell" 40
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}" "${LESSONS}"
+  write_lessons "glass-atrium-dev-front" 40
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
   assert_status 0
   assert_manifest_has 'lessons=ctm:bug-fix/keptline-one-whole@5'
   assert_manifest_has 'epm:refactor/epm-never-eval@2'
@@ -284,16 +284,16 @@ assert_manifest_has() {
 
 @test "AC6: a source-capped lesson records lesson_truncated=1 rather than over-claiming" {
   # A filler far past LESSON_MAX_BYTES (1200) forces the in-source cap.
-  write_lessons "glass-atrium-dev-shell" 4000
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}" "${LESSONS}"
+  write_lessons "glass-atrium-dev-front" 4000
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
   assert_status 0
   assert_manifest_has 'lesson_truncated=1'
 }
 
 @test "AC6: a fully shed lesson is named neither as a kept block nor by its ids" {
-  write_lessons "glass-atrium-dev-shell" 40
-  # COMMENT_BIG breaches the ceiling → the lesson is the first real shed for this assembly.
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}" "${LESSONS}"
+  write_lessons "glass-atrium-dev-front" 40
+  # BUDGET_BIG breaches the ceiling → the lesson is the first real shed for this assembly.
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}" "${LESSONS}"
   assert_status 0
   # Anchored: the line must exist and simply lack the lesson fields (an absent sink would pass the two
   # negative assertions below vacuously).
@@ -314,17 +314,17 @@ assert_manifest_has() {
 # ── AC7 — the reader reports per-agent block coverage over the sink ────────────────────────────────
 
 @test "AC7: the reader reports per-agent block coverage matching the fixture" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-node" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-node" "${BUDGET_FIT}"
   assert_status 0
   run_query --manifest-coverage
   assert_status 0
   assert_contains "records=3 agents=2"
-  assert_contains "agent=glass-atrium-dev-shell spawns=2 blocks=emit:2,comment:2"
-  assert_contains "agent=glass-atrium-dev-node spawns=1 blocks=emit:1,comment:1"
+  assert_contains "agent=glass-atrium-dev-front spawns=2 blocks=emit:2,budget-dev:2"
+  assert_contains "agent=glass-atrium-dev-node spawns=1 blocks=emit:1,budget-dev:1"
 }
 
 @test "AC7: the reader reads an absent sink as zero records, not missing data" {
@@ -334,19 +334,19 @@ assert_manifest_has() {
 }
 
 @test "AC7: coverage distinguishes a spawn that kept a block from one that shed it" {
-  run_inject "glass-atrium-dev-shell" "${COMMENT_FIT}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
-  run_inject "glass-atrium-dev-shell" "${COMMENT_BIG}"
+  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}"
   assert_status 0
   run_query --manifest-coverage
   assert_status 0
-  # Two spawns, but the comment block reached the child only once.
-  assert_contains "agent=glass-atrium-dev-shell spawns=2 blocks=emit:2,comment:1"
+  # Two spawns, but the budget-dev block reached the child only once.
+  assert_contains "agent=glass-atrium-dev-front spawns=2 blocks=emit:2,budget-dev:1"
 }
 
 # S5: the roster is single-sourced (MANIFEST_BLOCK_LABELS drives both the writer loop and the
 # reader's awk split), but manifest_block_kept's `case` still enumerates the labels — a case cannot
-# be derived from a list. Pin the two equal: an eleventh block added to the roster without a case
+# be derived from a list. Pin the two equal: a new block added to the roster without a case
 # arm (or the reverse) fails here instead of silently under-reporting in the coverage query.
 @test "AC8: manifest_block_kept case arms equal the MANIFEST_BLOCK_LABELS roster" {
   local roster arms

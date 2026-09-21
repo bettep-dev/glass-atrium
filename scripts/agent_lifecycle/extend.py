@@ -27,7 +27,7 @@ from .registry_ops import RegistryMutationError, add_domain_token
 from .scaffold import (
     BodyAnchorError,
     BodyFrontmatterError,
-    assert_section_no_fence_or_anchor,
+    assert_section_no_smuggled_structure,
 )
 from .secret_scan import SecretDetected
 from .stanza import atomic_write_text
@@ -147,7 +147,7 @@ def _gated_section_text(section: Path) -> str:
     """
     try:
         raw = read_gated_text(section, label="--append-section file")
-        assert_section_no_fence_or_anchor(raw)
+        assert_section_no_smuggled_structure(raw)
     except (
         ValidationError,
         SecretDetected,

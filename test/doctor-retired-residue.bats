@@ -14,6 +14,8 @@
 #   AC2  a recorded path whose file is gone is dropped from the record, and the surviving line stays.
 #   AC3  a record whose every line is resolved is REMOVED and the clearing is reported.
 #   AC4  no record at all is silent — the normal install says nothing.
+#   AC5  a retired-key refusal record is a WARN naming each refused key and its kind, never a FAIL.
+#   AC6  no refusal record (the update cleared it on a refusal-free run) leaves that surface silent.
 #
 # Run via: bats test/doctor-retired-residue.bats
 # Requires: bats, bash 3.2+
@@ -25,8 +27,11 @@
 # under test — so every assertion below reads THIS SECTION's own lines, never an aggregate the rest
 # of the run contributes to.
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
+# BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
+#   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
+#   on CI bash 5.3 (measured: bash 3.2.57 vs 5.3.9, bats 1.13.0 on BOTH legs — bash is the variable,
+#   not bats), while `[ ]`, `let` and a failing `grep -q` abort on both.
+#   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 
 bats_require_minimum_version 1.5.0
 
@@ -55,6 +60,7 @@ SH
   export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
   export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p probe
   RECORD="${STATE}/retired-unmoved.txt"
+  REFUSED_RECORD="${STATE}/retired-refused-keys.txt"
   BACKUP_DIR="${STATE}/agents-bak"
 }
 
@@ -134,4 +140,23 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_lacks "retired file still in place" || return 1
   assert_output_lacks "recorded retired residue is gone" || return 1
+}
+
+# ── AC5 — a recorded retired-key refusal WARNs by key ─────────────────────────────────────────
+
+@test "AC5: a retired-key refusal record is a WARN naming each key and kind, never a FAIL" {
+  printf 'UNSAFE\t../escape.sh\nMALFORMED\tscripts/tool.sh\n' >"${REFUSED_RECORD}"
+  run_doctor_seam
+  assert_output_has "warn : retired manifest key refused by the update sweep (UNSAFE) — ../escape.sh" || return 1
+  assert_output_has "warn : retired manifest key refused by the update sweep (MALFORMED) — scripts/tool.sh" || return 1
+  assert_output_lacks "FAIL : retired manifest key refused" || return 1
+  assert_output_has "record: ${REFUSED_RECORD}" || return 1
+}
+
+# ── AC6 — a cleared refusal record is silent ──────────────────────────────────────────────────
+
+@test "AC6: no refusal record leaves the refusal surface silent" {
+  [[ ! -e "${REFUSED_RECORD}" ]] || return 1
+  run_doctor_seam
+  assert_output_lacks "retired manifest key refused" || return 1
 }

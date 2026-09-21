@@ -56,6 +56,13 @@ run_doctor() {
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" ]]; then
     if jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
       log "  ok   : manifest parseable (${MANIFEST})"
+      # shellcheck disable=SC2310  # verdict branched on — a bad manifest is a FAIL row, never an abort
+      if require_contained_manifest_keys report; then
+        log "  ok   : manifest files[] keys contained in the install root"
+      else
+        log "  FAIL : manifest carries escaping or unreadable files[] key(s) (listed above) — install/uninstall/prune refuse it"
+        fail=1
+      fi
       local rel missing=0
       # read_manifest_files dies on its own failure → masked exit is benign;
       # process substitution keeps the loop in the current shell (var-safe).
@@ -386,9 +393,9 @@ run_doctor() {
   else
     log "  warn : no base@install baseline — run 'glass-atrium install' to capture it (next update falls back to a wider merge base)"
   fi
-  # 10. inject-scope-rules shed surface. inject-scope-rules.sh compresses the AGENT-INJECT source
-  #     blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; when the assembly still
-  #     overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
+  # 10. inject-scope-rules shed surface. inject-scope-rules.sh assembles its droppable AGENT-INJECT
+  #     marker blocks (budget + wiki-untrusted) and the lesson under INJECT_CTX_MAX_BYTES; when the
+  #     assembly still overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
   #     hook persists each shed to a HOME-relative diag log. Two properties of that log decide the
   #     verdict shape here, and getting either wrong emits an unclearable imperative:
   #       · APPEND-ONLY + lifetime-scoped — a count over the whole file asserts a condition that may
@@ -454,6 +461,181 @@ run_doctor() {
           log "  ok   : no inject-scope-rules block-shed events recorded"
         fi
       fi
+    fi
+  fi
+
+  # 10b. The split scope-rule channel — twelve SubagentStart slots (inject-scope-rules.sh keeps the
+  #      marker blocks; inject-scope-part-01.sh .. -11.sh each carry one part). Three questions §6
+  #      structurally cannot answer, because §6 asks settings.json about each DECLARED row one at a
+  #      time and knows nothing about what the chunker itself needs:
+  #        i.   are the part slots BOUND? The deploy wires bindings through update.sh ->
+  #             update_wire_hooks_post_apply -> the launcher's wire-hooks subcommand, and a missing
+  #             or non-executable launcher there is a WARN with exit 0 — files applied, bindings NOT
+  #             reconciled. With eleven part wrappers that lands every wrapper on disk, NONE of them
+  #             bound, and every agent receiving the marker-block slot alone. §6 reports eleven
+  #             unrelated-looking dormant lines; nothing else names that shape.
+  #        ii.  does the declared row count match the chunker's own slot constant? A part addressed
+  #             above the last declared slot is computed and discarded with no slot left to run and
+  #             report its own absence — the one class that MUST be checked from outside.
+  #        iii. is an agent's assembled total approaching the envelope? The per-hook cap is enforced
+  #             per part; the envelope is a whole-spawn property no single part can see.
+  #      Every verdict is a warn: a quiet channel is an investigation, never a reason to abort an
+  #      install through the preflight alias. An unreadable core is BLIND, never ok (§16 precedent).
+  #      The slot constant and the soft envelope are both read FROM the core (--audit), never
+  #      re-declared here: a reader carrying its own copy of a producer's number can only ever
+  #      report clean once the two drift. The core's warning vocabulary is NOT read — this section
+  #      invokes no --print-events and consumes no event token — so a reader that wants to report
+  #      the chunker's own events is REQUIRED to read them from there rather than re-declare them.
+  #      The audit runs against GA_ROOT rather than its own default, so the totals describe the
+  #      install under inspection.
+  local inject_slot_warns=0
+  local chunk_core="${GA_ROOT}/hooks/lib/inject_chunk.py"
+  local slot_declared=0 slot_bound=0 slot_readable=0
+  local slot_binding slot_event slot_hook slot_matcher slot_path
+  for slot_binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
+    IFS=$'\t' read -r slot_event slot_hook slot_matcher <<<"${slot_binding}"
+    [[ "${slot_event}" == "SubagentStart" ]] || continue
+    case "${slot_hook}" in
+      inject-scope-part-[0-9][0-9].sh) ;;
+      *) continue ;;
+    esac
+    slot_declared=$((slot_declared + 1))
+    slot_path="${GA_ROOT}/hooks/${slot_hook}"
+    [[ -f "${slot_path}" ]] && slot_readable=$((slot_readable + 1))
+    if [[ -f "${SETTINGS_JSON}" ]] && command -v jq >/dev/null 2>&1; then
+      # shellcheck disable=SC2310,SC2311,SC2312
+      if [[ "$(is_hook_bound "${slot_event}" "${slot_hook}" "${slot_matcher}")" == "yes" ]]; then
+        slot_bound=$((slot_bound + 1))
+      fi
+    fi
+  done
+
+  # Delivery preconditions a bound slot needs at spawn, probed once for the audit and the bound-slot
+  # check below. RUNNABLE, not merely on PATH: a python3 shim that cannot execute passes `command -v`
+  # yet makes the core exit non-zero, and the slot delivers nothing. The registry is the file the core
+  # itself reads (GA_CHUNK_REGISTRY overrides it there too); without jq only readability is checked.
+  local slot_python_ok=0 slot_registry_ok=0
+  local slot_registry="${GA_CHUNK_REGISTRY:-${GA_ROOT}/agent-registry.json}"
+  python3 -c 'import sys' >/dev/null 2>&1 && slot_python_ok=1
+  if [[ -r "${slot_registry}" ]]; then
+    if ! command -v jq >/dev/null 2>&1 \
+      || jq -e '.agents | type == "object"' "${slot_registry}" >/dev/null 2>&1; then
+      slot_registry_ok=1
+    fi
+  fi
+
+  local slot_audit="" slot_constant=""
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ ! -f "${chunk_core}" ]]; then
+    log "  warn : split scope-rule channel BLIND — the chunker core is absent (${chunk_core}), so the slot constant and the per-agent totals cannot be read; ${slot_declared} part-slot binding row(s) are declared and unverifiable"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  elif [[ "${slot_python_ok}" -ne 1 ]]; then
+    log "  warn : split scope-rule channel BLIND — no runnable python3, so the chunker core cannot be asked for its slot count"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  elif ! slot_audit="$(GA_CHUNK_RULES_ROOT="${GA_ROOT}" python3 "${chunk_core}" --audit 2>/dev/null)" || [[ -z "${slot_audit}" ]]; then
+    log "  warn : split scope-rule channel BLIND — the chunker core produced no audit (${chunk_core} --audit); the agent-registry is likely unreadable, so neither the slot count nor any assembled total can be established"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  else
+    slot_constant="$(printf '%s\n' "${slot_audit}" | awk 'NR==1 { for (i=1;i<=NF;i++) if (substr($i,1,6)=="slots=") print substr($i,7) }')"
+    if [[ ! "${slot_constant}" =~ ^[0-9]+$ ]]; then
+      log "  warn : split scope-rule channel BLIND — the chunker audit header carries no parsable slots= field; the declared/needed comparison cannot be made"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    elif [[ "${slot_declared}" -ne "${slot_constant}" ]]; then
+      log "  warn : injector slot-count drift — ${slot_declared} part-slot binding row(s) in EXPECTED_HOOK_BINDINGS vs the chunker's slots=${slot_constant}; parts above ${slot_declared} reach no slot and are discarded with nothing left to report them"
+      log "         fix: add or remove hooks/inject-scope-part-NN.sh plus its SubagentStart row in lib/ga-env.sh until the two agree"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    else
+      log "  ok   : injector slot count agrees — ${slot_declared} part-slot binding row(s), chunker slots=${slot_constant}"
+    fi
+
+    # Whole-spawn capacity, two reads of the SAME audit and two different questions.
+    #
+    # The envelope read compares each agent's source DEMAND against the core's own soft= field —
+    # never its delivered total. Delivery is bounded by slots x cap by construction, so a
+    # threshold set at the envelope and read off the delivered sum would sit at a number the
+    # channel cannot reach and could only ever report clean, which is the detector-shaped-hole
+    # class this section exists to avoid.
+    #
+    # The overflow read compares chunks (needed) against slots (available). It duplicates no
+    # producer work: the chunker records its own OVERFLOW event on its sink, but that row is
+    # written at spawn time by part 1 alone, so an install that has spawned nothing since the
+    # corpus grew has the condition and no row. This read has neither dependency.
+    local slot_soft slot_over slot_overflow
+    slot_soft="$(printf '%s\n' "${slot_audit}" | awk 'NR==1 { for (i=1;i<=NF;i++) if (substr($i,1,5)=="soft=") print substr($i,6) }')"
+    if [[ "${slot_soft}" =~ ^[0-9]+$ ]]; then
+      slot_over="$(printf '%s\n' "${slot_audit}" | awk -v soft="${slot_soft}" '
+        NR == 1 { next }
+        {
+          agent = ""; demand = -1
+          for (i = 1; i <= NF; i++) {
+            if (substr($i, 1, 6) == "agent=") { agent = substr($i, 7) }
+            else if (substr($i, 1, 7) == "demand=") { demand = substr($i, 8) + 0 }
+          }
+          if (demand >= soft) { printf "%s(%d) ", agent, demand }
+        }')"
+      if [[ -n "${slot_over}" ]]; then
+        log "  warn : scope-rule source demand at or above the ${slot_soft}-unit soft envelope for: ${slot_over% } — a MARGIN, not a measured overflow (the envelope figure rests on one host probe); cut a member source while there is still room"
+        inject_slot_warns=$((inject_slot_warns + 1))
+      fi
+    fi
+    slot_overflow="$(printf '%s\n' "${slot_audit}" | awk -v slots="${slot_constant}" '
+      NR == 1 { next }
+      {
+        agent = ""; chunks = -1
+        for (i = 1; i <= NF; i++) {
+          if (substr($i, 1, 6) == "agent=") { agent = substr($i, 7) }
+          else if (substr($i, 1, 7) == "chunks=") { chunks = substr($i, 8) + 0 }
+        }
+        if (slots ~ /^[0-9]+$/ && chunks > slots + 0) { printf "%s(%d) ", agent, chunks }
+      }')"
+    if [[ -n "${slot_overflow}" ]]; then
+      log "  warn : scope-rule parts needed exceed the ${slot_constant} available slot(s) for: ${slot_overflow% } — the last delivered part names what it displaced, so the content is recoverable by Read, not lost; cut a member source or add a slot"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    fi
+  fi
+
+  # Wrapper presence. §6 deliberately leaves an absent hook file to the §4/§7 deploy-presence class
+  # (test/doctor-hook-bindings.bats pins that partition, so asserting it there would double-report
+  # the same defect). What is new here is the CHANNEL consequence: a part wrapper that missed the
+  # manifest is bound, absent, and costs exactly one part of every agent's scope rules, with the
+  # remaining slots healthy enough that nothing else looks wrong.
+  if [[ "${slot_declared}" -gt 0 && "${slot_readable}" -lt "${slot_declared}" ]]; then
+    log "  warn : ${slot_readable} of ${slot_declared} scope-rule part wrapper(s) present under ${GA_ROOT}/hooks — each absent wrapper costs every agent the part it carries, and the surviving slots still read correctly on their own"
+    log "         fix: redeploy through the sanctioned updater; a wrapper missing from manifest.json .files is never bundled"
+    inject_slot_warns=$((inject_slot_warns + 1))
+  fi
+
+  # Binding reconciliation. Declared-but-unbound is the post-deploy signature above; it is reported
+  # here as ONE named shape rather than left as N unrelated §6 dormant lines.
+  if [[ "${slot_declared}" -gt 0 ]]; then
+    if [[ ! -f "${SETTINGS_JSON}" ]] || ! command -v jq >/dev/null 2>&1; then
+      : # §6 already said settings.json / jq is unavailable; a second line would restate it.
+    elif [[ "${slot_bound}" -eq 0 ]]; then
+      log "  warn : NONE of the ${slot_declared} scope-rule part slots is bound (${slot_readable} of ${slot_declared} wrapper file(s) present on disk) — every agent receives the marker-block slot ALONE and no scope-rule body at all; this is the signature of an apply that landed the files and never reconciled the bindings (update.sh warns and exits 0 when the launcher is missing or non-executable)"
+      log "         fix: run \`glass-atrium wire-hooks\`, then start a NEW session — Claude Code snapshots hook bindings at session start"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    elif [[ "${slot_bound}" -lt "${slot_declared}" ]]; then
+      log "  warn : ${slot_bound} of ${slot_declared} scope-rule part slots bound — parts carried by the unbound slots reach no agent, and each part reads correctly alone so the gap is invisible from the transcript"
+      log "         fix: run \`glass-atrium wire-hooks\`, then start a NEW session"
+      inject_slot_warns=$((inject_slot_warns + 1))
+    else
+      log "  ok   : all ${slot_declared} scope-rule part slots bound"
+    fi
+  fi
+
+  # Bound but undeliverable. The marker-block slot carries no scope-rule text, so the part slots are
+  # the ONLY scope-rule channel: a bound slot that cannot run leaves every agent with no scope-rule
+  # body, and the seam records that on its sink alone, never in front of an operator.
+  if [[ "${slot_bound}" -gt 0 ]]; then
+    local slot_blockers=""
+    [[ "${slot_python_ok}" -eq 1 ]] || slot_blockers="no runnable python3 (the seam skips the slot or the core exits)"
+    if [[ "${slot_registry_ok}" -ne 1 ]]; then
+      slot_blockers="${slot_blockers:+${slot_blockers}; }the agent-registry is unreadable (${slot_registry}), so the core renders a 'Scope rules NOT delivered' prelude instead of any member body"
+    fi
+    if [[ -n "${slot_blockers}" ]]; then
+      log "  warn : ${slot_bound} scope-rule part slot(s) bound but undeliverable — ${slot_blockers}; the marker-block slot carries no scope-rule text, so every agent receives no scope-rule body at all"
+      log "         fix: install a runnable python3 on the hook PATH and restore a parseable agent-registry.json, then start a NEW session"
+      inject_slot_warns=$((inject_slot_warns + 1))
     fi
   fi
 
@@ -640,9 +822,14 @@ run_doctor() {
   #     prescribed remedy is a HAND repair (re-apply the local edit onto the new base, then re-sync),
   #     and a warn leaves a prescribed repair permanently optional. The window is what keeps that from
   #     becoming a forever-red: an aged entry is history and reports `note`, never a failure.
+  #     An in-window entry is RESOLVED when its body now sits at the release anchor — live body equal
+  #     to its base-store entry at the release hash (_get_body_anchor_state), the state a sanctioned
+  #     reset or a later landed merge leaves. Limits, by design: a hand repair that keeps local edits
+  #     and a live-only `model:` pin never equal the base, so both stay FAIL until the entry ages out.
   local decline_fail=0
   local decline_log="" decline_cutoff="" decline_scan="" decline_counts="" decline_body=""
-  local decline_in=0 decline_out=0 decline_malformed=0
+  local decline_in=0 decline_out=0 decline_malformed=0 decline_repaired=0 decline_open=0
+  local decline_open_body="" decline_notes="" decline_note="" anchor_reason="" anchor_rc=0
   # shellcheck disable=SC2310,SC2311
   decline_log="$(_decline_record_path)"
   # shellcheck disable=SC2310,SC2311
@@ -652,18 +839,44 @@ run_doctor() {
     log "  warn : merge-decline entries present but un-windowable (${decline_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so an un-repaired decline cannot be separated from history; install a BSD- or GNU-compatible date(1)"
     decline_fail=1
   else
-    # Two stdout lines: `<in-window> <out-of-window> <malformed>`, then the first declined body.
+    # Line 1: `<in-window> <out-of-window> <malformed>`; each later line: one in-window body.
     # shellcheck disable=SC2311
     decline_scan="$(_decline_scan "${decline_log}" "${decline_cutoff}")"
     decline_counts="$(printf '%s\n' "${decline_scan}" | sed -n '1p')"
-    decline_body="$(printf '%s\n' "${decline_scan}" | sed -n '2p')"
     # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
     # space-joined count line (same reason as the §10 drop-count read).
     IFS=' ' read -r decline_in decline_out decline_malformed <<<"${decline_counts}"
     if [[ "${decline_in}" -gt 0 ]]; then
-      log "  FAIL : ${decline_in} agent body/bodies declined a merge in the last ${DECLINE_WINDOW_DAYS}d and the local copy was kept (${decline_log}) — the live body is diverged from the base store until it is hand-repaired: re-apply the local edit onto the new base, then re-sync the base store"
-      log "         declined body: ${decline_body}"
+      while IFS= read -r decline_body; do
+        anchor_rc=0
+        # shellcheck disable=SC2311
+        anchor_reason="$(_get_body_anchor_state "${decline_body}")" || anchor_rc=$?
+        if [[ "${anchor_rc}" -eq 0 ]]; then
+          decline_repaired=$((decline_repaired + 1))
+          continue
+        fi
+        [[ -n "${decline_open_body}" ]] || decline_open_body="${decline_body}"
+        if [[ "${anchor_rc}" -eq 2 ]]; then
+          decline_notes+="${decline_body} not comparable — ${anchor_reason}"$'\n'
+        fi
+      done <<<"${decline_scan#*$'\n'}"
+    fi
+    # Every row not PROVEN at its release anchor stays open — an unreadable row never clears itself.
+    decline_open=$((decline_in - decline_repaired))
+    if [[ "${decline_open}" -gt 0 ]]; then
+      log "  FAIL : ${decline_open} agent body/bodies declined a merge in the last ${DECLINE_WINDOW_DAYS}d and the local copy was kept (${decline_log}) — the live body is diverged from the base store until it is hand-repaired: re-apply the local edit onto the new base, then re-sync the base store"
+      log "         declined body: ${decline_open_body}"
+      while IFS= read -r decline_note; do
+        if [[ -n "${decline_note}" ]]; then
+          log "  note : ${decline_note}"
+        fi
+      done <<<"${decline_notes}"
       decline_fail=1
+    fi
+    if [[ "${decline_repaired}" -gt 0 ]]; then
+      log "  note : ${decline_repaired} in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed) (${decline_log})"
+    elif [[ "${decline_open}" -gt 0 ]]; then
+      : # verdict already reported above
     elif [[ "${decline_out}" -gt 0 ]]; then
       log "  note : ${decline_out} agent-body merge decline(s) recorded, all older than ${DECLINE_WINDOW_DAYS}d (${decline_log}) — history, not a live divergence (advisory)"
     elif [[ "${decline_malformed}" -eq 0 ]]; then
@@ -779,7 +992,9 @@ run_doctor() {
   #     local run, which is a correct outcome and a silent one, and the silence is what this section
   #     removes. WARN, never fail — an unreachable model seam is a supported state for an unattended
   #     run, so naming it must not abort an install through the preflight alias.
-  local arbiter_warns=0 arbiter_resolved=0
+  #     A failure-class record whose target body now sits at its release anchor (_get_body_anchor_state)
+  #     is SUPERSEDED — a reset or later landed merge replaced the local run it kept — and reports info.
+  local arbiter_warns=0 arbiter_resolved=0 arbiter_superseded=0
   local arbiter_dir="" arbiter_rec="" arbiter_row=""
   local rec_fail="" rec_agent="" rec_region="" rec_target="" rec_choice=""
   # Derived through the producer's OWN state-root helper rather than by restating the default path
@@ -814,17 +1029,21 @@ run_doctor() {
         continue
       fi
       IFS=$'\t' read -r rec_fail rec_agent rec_region rec_target rec_choice <<<"${arbiter_row}"
-      if [[ "${rec_fail}" != "-" ]]; then
-        log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
-        arbiter_warns=$((arbiter_warns + 1))
-      else
+      # shellcheck disable=SC2310  # predicate in an elif condition: the helper returns explicitly
+      if [[ "${rec_fail}" == "-" ]]; then
         log "  info : contested gap arbiter-resolved — ${rec_choice} agent=${rec_agent} region=${rec_region} target=${rec_target}"
         arbiter_resolved=$((arbiter_resolved + 1))
+      elif _get_body_anchor_state "${rec_target}" >/dev/null; then
+        log "  info : contested gap superseded — target body equals its base-store entry at the release hash (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
+        arbiter_superseded=$((arbiter_superseded + 1))
+      else
+        log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
+        arbiter_warns=$((arbiter_warns + 1))
       fi
     done
     if [[ "${arbiter_warns}" -gt 0 ]]; then
       log "         remedy: the named gap(s) kept the local run — re-run the update once the arbiter's model seam is reachable, or hand-merge the region"
-    elif [[ "${arbiter_resolved}" -eq 0 ]]; then
+    elif [[ "${arbiter_resolved}" -eq 0 && "${arbiter_superseded}" -eq 0 ]]; then
       log "  ok   : no contested-gap decision records (${arbiter_dir})"
     fi
   fi
@@ -858,6 +1077,25 @@ run_doctor() {
       rm -f -- "${residue_record}"
       log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
     fi
+  fi
+
+  # 19b. retired-key refusal surface. The sweep skips a retired map key that escapes the install
+  #      root (UNSAFE) or is malformed (MALFORMED); the row is logged but a headless log is read by
+  #      nobody, so the sweep records each refused key and this section names them. WARN, never
+  #      FAIL, for the §19 reason. Not re-checked: a refusal is a property of the release manifest,
+  #      and the next refusal-free update run removes the record.
+  local retired_refused=0
+  local refused_record="" refused_kind="" refused_key=""
+  # spine_retired_refused_path is a pure printf resolver (exits 0) → the masked errexit is vacuous.
+  # shellcheck disable=SC2311
+  refused_record="$(spine_retired_refused_path)"
+  if [[ -f "${refused_record}" ]]; then
+    while IFS=$'\t' read -r refused_kind refused_key; do
+      [[ -n "${refused_key}" ]] || continue
+      log "  warn : retired manifest key refused by the update sweep (${refused_kind}) — ${refused_key} (never moved; the release manifest carries a bad retired entry — report it)"
+      retired_refused=$((retired_refused + 1))
+    done <"${refused_record}"
+    [[ "${retired_refused}" -eq 0 ]] || log "         record: ${refused_record}"
   fi
 
   # 20. settings permissions coverage. Registration kind B (report-only): no counter, no term in the
@@ -1150,6 +1388,57 @@ run_doctor() {
     fi
   fi
 
+  # 25. proposal provenance — terminal rows naming no mover. Registration kind B (report-only): its
+  #     log line ONLY, no counter, no term in the warning total, exit code unchanged. The kind is
+  #     forced, not chosen: every status writer stamps core.autoagent_proposals.reviewed_by from
+  #     this release on, but nothing backfills the rows written before it, so a counted warning
+  #     would be red on every established install forever. Scoping it by id or date to go green
+  #     would be the same false comfort wearing a predicate.
+  #
+  #     SPLIT, not a total: the two populations have different causes and different repairs. A row
+  #     carrying a review instant with NO actor was stamped by a writer that recorded WHEN but not
+  #     WHO — the stale-drain class this release removed at its source. A row carrying NEITHER was
+  #     never stamped at all. Merging them would report one number that names no cause.
+  #
+  #     VOCABULARY: a state this run could not read says `unread`, not §21's `undetermined`. Two
+  #     sections reporting one word for two different unread things is ambiguous to an operator
+  #     grepping the report, and §21's own rows are pinned against the whole output.
+  #
+  #     The branch states below mirror §21's and are kept apart for the same reason: the documented
+  #     opt-out, the documented psql-less mode, a database that does not exist yet, and a read this
+  #     run could not make are four different facts, and folding any of them into "0 rows" would
+  #     report a database nobody read as clean.
+  local prov_probe="" prov_counts="" prov_total=0 prov_stamped=0 prov_bare=0
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : proposal provenance check skipped (GA_SKIP_DB_SETUP set)"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : proposal provenance check skipped — psql not found (supported mode; install PostgreSQL to see actor coverage)"
+  elif ! prov_probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : proposal actor coverage unread — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run read no rows"
+  elif [[ "${prov_probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no proposal rows to check for actor coverage"
+  elif ! prov_counts="$(_pg_proposal_actor_probe "${DB_NAME}")"; then
+    log "  note : proposal actor coverage unread — the terminal-row read against '${DB_NAME}' failed"
+  else
+    # Unit-separator split, never whitespace: the counts are never empty, but the probe's field
+    # separator is the one the reader must agree with, and a whitespace IFS collapses runs.
+    IFS=$'\x1f' read -r prov_total prov_stamped prov_bare <<<"${prov_counts}"
+    # A field that is not a plain integer means the read did not answer THIS question — a NOTICE
+    # riding on the row, a server that replied to something else, a column this schema no longer
+    # carries. Named as unread rather than trusted: `$((…))` over such a value aborts the
+    # whole doctor with a raw shell error, which is the opposite of a report-only row, and reading
+    # it as zero would report a database nobody understood as fully stamped.
+    if ! [[ "${prov_total}" =~ ^[0-9]+$ ]] || ! [[ "${prov_stamped}" =~ ^[0-9]+$ ]] \
+      || ! [[ "${prov_bare}" =~ ^[0-9]+$ ]]; then
+      log "  note : proposal actor coverage unread — the terminal-row read against '${DB_NAME}' answered something other than three counts"
+    elif [[ "$((prov_stamped + prov_bare))" -eq 0 ]]; then
+      log "  ok   : all ${prov_total} terminal proposal row(s) name the actor that moved them"
+    else
+      log "  note : proposal provenance — $((prov_stamped + prov_bare)) of ${prov_total} terminal row(s) name no actor: ${prov_stamped} carry a review instant with no actor, ${prov_bare} carry neither (report-only; every writer stamps reviewed_by from this release on, and no backfill is planned — a guessed actor would fabricate the evidence the column exists to carry)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1157,7 +1446,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + mig_pending))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1165,7 +1454,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${mig_pending} pending-migration — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot — see above) =="
     fi
     return 0
   fi
@@ -1180,6 +1469,25 @@ run_doctor() {
 # burst that was remediated a week earlier, which is the defect this section exists to remove.
 # Env-overridable so an operator can widen it and a test can pin either side of the boundary.
 INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
+
+# Terminal-proposal actor coverage ($1 = database): total terminal rows, rows carrying a review
+# instant but no actor, rows carrying neither — unit-separator delimited, one line. The two gap
+# counts are FILTERed rather than read from three statements so all three describe the same
+# snapshot. psql is the LAST command, so an unreachable server keeps its rc and the caller's
+# capture reports the coverage unread instead of a clean zero.
+# The status list is the terminal set the upsert freeze already uses; a row that is still pending
+# or snoozed has not been moved to a final state by anyone, so it names no missing mover.
+_pg_proposal_actor_probe() {
+  # GA-ABSORB[handled@the terminal-row-read unread branch of doctor section 25]: stderr only — the rc is captured and branched on there
+  psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<'SQL'
+SELECT count(*),
+       count(*) FILTER (WHERE reviewed_at IS NOT NULL AND reviewed_by IS NULL),
+       count(*) FILTER (WHERE reviewed_at IS NULL AND reviewed_by IS NULL)
+FROM core.autoagent_proposals
+WHERE status IN ('applied'::core."ProposalStatus", 'approved'::core."ProposalStatus",
+                 'rejected'::core."ProposalStatus", 'reverted'::core."ProposalStatus")
+SQL
+}
 
 # Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
 # dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
@@ -1378,7 +1686,7 @@ _decline_record_path() {
 # reported rather than dropped: the entry still testifies to a divergence, and dropping it silently
 # would tell an operator the record is clean (Precondition Loud-Fail Principle). A blank separator
 # line is not an entry and is not counted.
-# stdout: line 1 = `<in-window> <out-of-window> <malformed>`, line 2 = the first in-window body.
+# stdout: line 1 = `<in-window> <out-of-window> <malformed>`, then one line per in-window body.
 _decline_scan() {
   awk -F'\t' -v cutoff="${2}" '
     $0 == "" { next }
@@ -1388,11 +1696,73 @@ _decline_scan() {
       if ($1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) {
         in_window = (substr($1, 1, 10) >= cutoff)
       }
-      if (in_window) { inw++; if (body == "") { body = $3 } }
+      if (in_window) { inw++; bodies = bodies $3 "\n" }
       else { aged++ }
     }
-    END { printf "%d %d %d\n%s\n", inw + 0, aged + 0, malformed + 0, body }
+    END { printf "%d %d %d\n%s", inw + 0, aged + 0, malformed + 0, bodies }
   ' "${1}"
+}
+
+# Classify the repo-relative agent body $1 against its RELEASE ANCHOR: the base-store entry the next
+# 3-way merge reads, at the hash the updater recorded for $1 in the state-dir baseline manifest
+# (spine_baseline_path). That manifest — not the install-root one — is the release record paired
+# with the base store: update_capture_baseline writes both in one finalize sequence, while a dev
+# tree's own manifest names the NEXT release. Equality alone is not enough: a hand-synced or
+# contaminated base equals the live body too, so the hash is what ties the base to the release.
+# rc 0 = at the anchor · rc 1 = compared and diverged · rc 2 = not comparable, reason on stdout.
+# Fail-closed and errexit-independent (callers test it in a condition): only rc 0 clears a verdict.
+_get_body_anchor_state() {
+  local rel="$1" live base_entry baseline release_hash base_hash cmp_rc=0
+  local -a sha=()
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/apply-spine.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/apply-spine.sh"
+  live="${GA_ROOT}/${rel}"
+  # shellcheck disable=SC2311
+  base_entry="$(spine_baseline_dir)/base-agents/${rel##*/}"
+  # shellcheck disable=SC2311
+  baseline="$(spine_baseline_path)"
+  if [[ -z "${rel}" ]]; then
+    printf '%s\n' "the record names no body"
+    return 2
+  elif [[ ! -f "${live}" || ! -r "${live}" ]]; then
+    printf '%s\n' "live body missing or unreadable (${live})"
+    return 2
+  elif [[ ! -f "${base_entry}" || ! -r "${base_entry}" ]]; then
+    printf '%s\n' "no base-store entry (${base_entry})"
+    return 2
+  elif ! command -v cmp >/dev/null 2>&1; then
+    printf '%s\n' "cmp(1) absent"
+    return 2
+  elif ! command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "jq absent — the release hash cannot be read"
+    return 2
+  fi
+  release_hash="$(jq -r --arg rel "${rel}" '(.hashes // {})[$rel] // empty' -- "${baseline}" 2>/dev/null)" \
+    || release_hash="" # GA-ABSORB[handled@empty-hash branch below]: absent/unparseable manifest reported as not comparable
+  if [[ -z "${release_hash}" ]]; then
+    printf '%s\n' "no release hash for ${rel} in ${baseline}"
+    return 2
+  fi
+  # shellcheck disable=SC2310
+  IFS=$' \t' read -ra sha < <(_resolve_sha256_cmd) || true
+  if [[ "${#sha[@]}" -eq 0 ]]; then
+    printf '%s\n' "no shasum/sha256sum to hash the base entry"
+    return 2
+  fi
+  cmp -s "${live}" "${base_entry}" || cmp_rc=$?
+  if [[ "${cmp_rc}" -gt 1 ]]; then
+    printf '%s\n' "cmp failed reading ${live} or ${base_entry}"
+    return 2
+  elif [[ "${cmp_rc}" -eq 1 ]]; then
+    return 1
+  fi
+  # shellcheck disable=SC2310,SC2311
+  if ! base_hash="$(_sha_hex "${sha[@]}" -- "${base_entry}")"; then
+    printf '%s\n' "hashing the base entry failed (${base_entry})"
+    return 2
+  fi
+  [[ "${base_hash}" == "${release_hash}" ]]
 }
 
 # sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens
