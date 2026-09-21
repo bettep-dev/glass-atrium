@@ -52,7 +52,9 @@ name: ci
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # feature/pa-epic = the integration branch stage branches PR into → the same
+    # checks gate each stage, not only the final epic→main PR.
+    branches: [main, feature/pa-epic]
 
 # Cancel superseded runs on the same ref to save runner minutes.
 concurrency:
