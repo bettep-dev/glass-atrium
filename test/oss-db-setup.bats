@@ -49,21 +49,42 @@ run_setup() {
   fi
 }
 
-# Parity-pin side A: the raw-SQL partial-index names the migrations create. Statement-level,
-# not line-level - a predicate wraps across lines, and the ClaudedDoc bigm DO $$ guard carries
-# a WHERE that is a pg_extension test, not a predicate. Comments stripped -> $$ blocks opaque
-# -> split on the statement terminator.
-get_migration_partial_index_names() {
+# Parity-pin side A: the raw-SQL partial-index names the migrations create, and the schemas
+# they land in. Statement-level, not line-level - a predicate wraps across lines, and the
+# ClaudedDoc bigm DO $$ guard carries a WHERE that is a pg_extension test, not a predicate.
+# Comments stripped -> $$ blocks opaque -> split on the statement terminator.
+# DROP INDEX is replayed over the CREATEs in migration order, mirroring the python stand-in's
+# _get_table_indexes: a dropped partial index left standing here would force step 7 to keep
+# checking a legitimately absent index, loud-failing every fresh install.
+# Emits "<schema>\t<name>"; an ON clause carrying no schema qualifier emits <unqualified>,
+# which matches no script literal and so reds the schema pin rather than passing silently.
+get_migration_partial_index_ddl() {
   awk '
     { line = $0; sub(/--.*/, "", line); all = all " " line }
-    function emit(s,   u, rest) {
+    function emit(s,   u, rest, nm, tail, sch, q) {
       u = toupper(s)
       if (u ~ /^[ \t]*DO[ \t]*\$\$/) return
+      if (match(u, /DROP[ \t]+INDEX[ \t]+(IF[ \t]+EXISTS[ \t]+)?/)) {
+        rest = substr(s, RSTART + RLENGTH)
+        gsub(/"/, "", rest)
+        sub(/^[A-Za-z0-9_]+\./, "", rest)
+        if (match(rest, /^[A-Za-z0-9_]+/)) delete live[substr(rest, RSTART, RLENGTH)]
+        return
+      }
       if (u !~ /WHERE/) return
       if (!match(u, /CREATE[ \t]+(UNIQUE[ \t]+)?INDEX[ \t]+(IF[ \t]+NOT[ \t]+EXISTS[ \t]+)?/)) return
       rest = substr(s, RSTART + RLENGTH)
       sub(/^"/, "", rest)
-      if (match(rest, /^[A-Za-z0-9_]+/)) print substr(rest, RSTART, RLENGTH)
+      if (!match(rest, /^[A-Za-z0-9_]+/)) return
+      nm = substr(rest, RSTART, RLENGTH)
+      tail = substr(rest, RSTART + RLENGTH)
+      sch = "<unqualified>"
+      if (match(tail, /^[ \t"]*[Oo][Nn][ \t]+"?[A-Za-z0-9_]+"?[ \t]*\./)) {
+        q = substr(tail, RSTART, RLENGTH)
+        gsub(/[ \t".]/, "", q)
+        sch = substr(q, 3)
+      }
+      live[nm] = sch
     }
     END {
       n = length(all); stmt = ""; indollar = 0
@@ -74,8 +95,17 @@ get_migration_partial_index_names() {
         stmt = stmt c
       }
       emit(stmt)
+      for (k in live) print live[k] "\t" k
     }
-  ' "${GA}"/monitor/prisma/migrations/*/migration.sql | sort
+  ' "${GA}"/monitor/prisma/migrations/*/migration.sql
+}
+
+get_migration_partial_index_names() {
+  get_migration_partial_index_ddl | cut -f2 | sort
+}
+
+get_migration_partial_index_schemas() {
+  get_migration_partial_index_ddl | cut -f1 | sort -u
 }
 
 # Parity-pin side B: the script's own hardcoded pg_indexes IN (...) list. It MUST stay
@@ -83,6 +113,12 @@ get_migration_partial_index_names() {
 get_script_partial_index_names() {
   sed -n 's/.*indexname IN (\([^)]*\)).*/\1/p' "${SETUP_SH}" \
     | tr ',' '\n' | tr -d "'\" " | sed '/^$/d' | sort
+}
+
+# Parity-pin side B, schema half: the script's own hardcoded schemaname IN (...) allowlist.
+get_script_partial_index_schemas() {
+  sed -n 's/.*schemaname IN (\([^)]*\)).*/\1/p' "${SETUP_SH}" \
+    | tr ',' '\n' | tr -d "'\" " | sed '/^$/d' | sort -u
 }
 
 # Every count literal step 7 keys on: the log line, the != guard, the failure text.
@@ -273,6 +309,25 @@ get_script_partial_index_counts() {
       return 1
     }
   done
+}
+
+@test "step-7 schemaname filter stays in parity with the migrations' partial-index schemas" {
+  # pg_indexes spans every schema, so the name list alone lets a same-named index elsewhere
+  # count toward the 8 and mask a missing one. Both sides derived mechanically, same as the
+  # name pin: a partial index landing in a third schema reds this until step 7 admits it.
+  local migration_schemas script_schemas
+  migration_schemas="$(get_migration_partial_index_schemas)"
+  script_schemas="$(get_script_partial_index_schemas)"
+  # an empty side would make the comparison tautological -> assert both landed first
+  [[ -n "${migration_schemas}" && -n "${script_schemas}" ]] || {
+    echo "empty enumeration: migrations=[${migration_schemas}] script=[${script_schemas}]" >&2
+    return 1
+  }
+  [[ "${script_schemas}" == "${migration_schemas}" ]] || {
+    echo "step-7 schemaname filter drifted (col 1 = script-only, col 2 = migration-only):" >&2
+    comm -3 <(printf '%s\n' "${script_schemas}") <(printf '%s\n' "${migration_schemas}") >&2
+    return 1
+  }
 }
 
 @test "both DBs absent -> createdb invoked for main AND shadow" {

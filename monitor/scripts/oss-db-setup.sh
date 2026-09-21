@@ -411,13 +411,20 @@ fi
 #   · 2 from 20260921000000_split_autoagent_loop_event_identity — miss drops the loop-event
 #     dedup key entirely, so census rows accumulate and a corrected verdict stops superseding
 # The list stays HARDCODED — the expectation is asserted independently of the migration files
-# A runtime-derived expectation shrinks to zero when a migration is lost or damaged → vacuous pass
-# A stated count of 8 cannot; parity with the migration DDL is pinned by test/oss-db-setup.bats
+# A runtime-derived expectation shrinks with whatever it reads, then passes against the remnant
+#   · one lost or damaged migration file → that file's share goes (8 → 6 for the split migration)
+#   · a lost or unparseable enumeration source → all 8 go, the vacuous extreme
+# A stated count of 8 shrinks by neither; parity with the migration DDL is pinned by
+# test/oss-db-setup.bats
+# schemaname is pinned too — pg_indexes spans every schema, so a name-only match can count a
+# same-named index outside core/monitor and mask a genuinely missing one
+# Schema granularity only — a per-name table mapping would be a second hand-maintained list,
+# which is the drift this pin exists to stop; the schema list is pinned by the same suite
 # Confirm all 8 landed and loud-fail otherwise (aligns with the loud-fail precondition principle;
 # SELECT-only, no mutation). Names MUST byte-match the migration DDL.
 log "verifying 8 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
 idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
-  "SELECT count(*) FROM pg_indexes WHERE indexname IN ('update_job_single_active_uniq','outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup')")" \
+  "SELECT count(*) FROM pg_indexes WHERE schemaname IN ('core','monitor') AND indexname IN ('update_job_single_active_uniq','outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup')")" \
   || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
 if [[ "${idx_present}" != "8" ]]; then
   fail "${EXIT_PARTIAL_IDX}" "expected 8 raw-SQL partial indexes, found ${idx_present} — 20260611000000_init_squashed, 20260718000000_restore_squash_lost_partial_indexes or 20260921000000_split_autoagent_loop_event_identity did not fully apply"
