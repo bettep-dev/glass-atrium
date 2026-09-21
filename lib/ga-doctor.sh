@@ -1426,7 +1426,7 @@ run_doctor() {
     IFS=$'\x1f' read -r prov_total prov_stamped prov_bare <<<"${prov_counts}"
     # A field that is not a plain integer means the read did not answer THIS question — a NOTICE
     # riding on the row, a server that replied to something else, a column this schema no longer
-    # carries. Named as undetermined rather than trusted: `$((…))` over such a value aborts the
+    # carries. Named as unread rather than trusted: `$((…))` over such a value aborts the
     # whole doctor with a raw shell error, which is the opposite of a report-only row, and reading
     # it as zero would report a database nobody understood as fully stamped.
     if ! [[ "${prov_total}" =~ ^[0-9]+$ ]] || ! [[ "${prov_stamped}" =~ ^[0-9]+$ ]] \
@@ -1470,19 +1470,15 @@ run_doctor() {
 # Env-overridable so an operator can widen it and a test can pin either side of the boundary.
 INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 
-# Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
-# dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
-# deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
-# The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
 # Terminal-proposal actor coverage ($1 = database): total terminal rows, rows carrying a review
 # instant but no actor, rows carrying neither — unit-separator delimited, one line. The two gap
 # counts are FILTERed rather than read from three statements so all three describe the same
 # snapshot. psql is the LAST command, so an unreachable server keeps its rc and the caller's
-# capture reports "undetermined" instead of a clean zero.
+# capture reports the coverage unread instead of a clean zero.
 # The status list is the terminal set the upsert freeze already uses; a row that is still pending
 # or snoozed has not been moved to a final state by anyone, so it names no missing mover.
 _pg_proposal_actor_probe() {
-  # GA-ABSORB[handled@the undetermined branch of doctor section 25]: stderr only — the rc is captured and branched on there
+  # GA-ABSORB[handled@the terminal-row-read unread branch of doctor section 25]: stderr only — the rc is captured and branched on there
   psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<'SQL'
 SELECT count(*),
        count(*) FILTER (WHERE reviewed_at IS NOT NULL AND reviewed_by IS NULL),
@@ -1493,6 +1489,10 @@ WHERE status IN ('applied'::core."ProposalStatus", 'approved'::core."ProposalSta
 SQL
 }
 
+# Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
+# dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
+# deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
+# The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
 _drop_window_cutoff_date() {
   local days="${1}"
   date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
