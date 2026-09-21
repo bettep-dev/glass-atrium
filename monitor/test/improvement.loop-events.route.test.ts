@@ -16,7 +16,9 @@
 // autoagent_loop_events carries no scrub-marker column, so rows are tracked by
 // RETURNING id and deleted by id — never a timestamp-window scrub.
 //
-// DB: real Postgres. Skips gracefully when unreachable.
+// DB: real Postgres. The skip gate covers ONLY an unreachable/unprovisioned
+// database — a seed failure or a non-200 route answer reds this suite, because it
+// is the sole guard on the S4a tie-break and a self-skipping guard guards nothing.
 //
 // Runner: npx tsx --test test/improvement.loop-events.route.test.ts
 
@@ -88,13 +90,21 @@ before(async () => {
   await registerImprovementRoutes(app);
   await app.ready();
 
+  // The skip gate covers exactly ONE condition: no database available. Everything
+  // past this probe — the seed and both route calls — propagates as a FAILURE. This
+  // suite is the only guard on the ORDER BY tie-break, so a gate wide enough to catch
+  // a unique violation or a 500 would let a broken route report green by skipping.
   try {
-    await seedLoopEvents();
+    const prisma = getPrisma();
+    await prisma.$queryRaw`SELECT 1 FROM core.autoagent_loop_events LIMIT 1`;
     dbReady = true;
   } catch (error) {
-    dbReady = false;
-    console.error("[impr-loopev] DB seed failed — tests will skip:", error);
+    console.error("[impr-loopev] Postgres unreachable or unprovisioned — tests will skip:", error);
+    return;
   }
+
+  // Deliberately UNGUARDED — a seed failure reds the suite instead of skipping it.
+  await seedLoopEvents();
 });
 
 after(async () => {
