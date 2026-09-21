@@ -1,7 +1,7 @@
 """Identity pin for the core.autoagent_loop_events upsert key in _pg_dual_write_daemon.py.
 
-The table carries two row classes under one key. A census row counts how often a
-cause fired on one day for one agent, so a re-emitted cause must collapse and two
+The table carries two row classes under one key. A census row records one cause for
+one agent at one event_ts, so a re-emitted cause must collapse onto that row and two
 different causes must not. A verdict row adjudicates ONE subject, so a corrected
 verdict must supersede the verdict it corrects — which the three-column key cannot
 express, because the subject it would key on is not among those columns. Two rows
@@ -12,10 +12,12 @@ directions; the refusal cases below pin that choke point, including the blank
 string, which is neither absence nor an identity and silently keys the verdict arm
 on "" where two subjects collapse onto one row.
 
-Every case drives the helper's REAL statement text through a stdlib SQL engine (see
-_pg_stub_backend), so it runs on the test-python-pytest gating leg and can fail the
-merge. What it cannot see stays a live-Postgres step: index inference against a
-predicate-bearing arm, timestamptz typing, and concurrent upserts.
+The four upsert cases drive the helper's REAL statement text through a stdlib SQL
+engine (see _pg_stub_backend); the five refusal cases are refused before a connection
+opens, so no statement reaches an engine there. Both run on the test-python-pytest
+gating leg and can fail the merge. What stays a live-Postgres step: PostgreSQL's own
+inference rules for a predicate-bearing conflict target, timestamptz typing, and
+concurrent upserts.
 """
 
 from __future__ import annotations

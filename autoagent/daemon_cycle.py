@@ -7183,7 +7183,8 @@ def alert_all_reject_streak(report: CycleReport) -> None:
         "proposals; the generation pipeline yields nothing actionable (check "
         "classify_patch_area containment + pre-verify); loop event emitted\n"
     )
-    # Census class — one row per (cycle date, daemon-cycle, cause).
+    # Census class — one row per (cycle instant, daemon-cycle, cause).
+    # event_ts is report.generated_at, so two cycles on one calendar day keep two rows.
     _invoke_pg_helper(
         {
             "op": "write_autoagent_loop_event",

@@ -30,9 +30,10 @@
 #   3 = unknown op (not in OP_TABLE)
 #   4 = PG write failure after the retry (structured JSON + pg_write=fail stderr)
 #   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
-#   6 = caller contract violation — an unsupported apply_status token, or a
+#   6 = caller contract violation — an unsupported apply_status token, a
 #       loop-event cause whose class disagrees with its subject (verdict cause
-#       without one, census cause with one). Refused BEFORE connecting, so
+#       without one, census cause with one), or a loop-event subject wider than
+#       the column that keys the verdict arm. Refused BEFORE connecting, so
 #       nothing was written and no retry runs; a silent fall-through would report
 #       apply health the cycle never recorded, or file an adjudication under the
 #       recurrence census.
@@ -232,7 +233,12 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
 
 
 class CallerContractViolation(ValueError):
-    """An argument the database cannot store — a caller bug, not a PG fault.
+    """An argument the writer refuses — a caller bug, not a PG fault.
+
+    Two grounds: the database cannot store it (an out-of-set enum token, a value
+    past the column width), or the writer's own identity policy rejects it (a
+    subject disagreeing with its cause's class, which would store but key the
+    wrong arm).
 
     Non-retryable by construction: the argument is wrong on every attempt, and _retry's
     backoff would only delay the named exit."""
@@ -775,12 +781,14 @@ def write_autoagent_loop_event(
     """UPSERT core.autoagent_loop_events under the identity class `subject` selects.
 
     Returns elapsed_ms. Two row classes share the table, so there is no one
-    idempotency key. A census row (subject absent) counts how often one cause fired
-    for one agent on one day, keyed on (event_ts, agent, eval_result) — the
-    append-only autoagent-loop.jsonl replays a line on log-rotation overlap, and the
-    conflict update covers that rerun. A verdict row adjudicates ONE subject, keyed
-    on (event_ts, agent, subject), so a correction carrying a new cause supersedes
-    the verdict it corrects instead of landing beside it.
+    idempotency key. A census row (subject absent) records one cause for one agent
+    at one event_ts, keyed on (event_ts, agent, eval_result) at whatever instant the
+    caller stamps — never a day unless the caller truncates to one. A re-emission
+    overwrites that row rather than incrementing it, which is what covers the
+    append-only autoagent-loop.jsonl replaying a line on log-rotation overlap.
+    A verdict row adjudicates ONE subject, keyed on (event_ts, agent, subject),
+    so a correction carrying a new cause supersedes the verdict it corrects
+    instead of landing beside it.
 
     The cause token names the class and the subject must agree with it, either way
     round: a mismatch is REFUSED before connecting (CLI exit 6) rather than filed

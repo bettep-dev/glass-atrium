@@ -12,9 +12,10 @@ sys.modules surface, and a subprocess consumer — which cannot be handed
 sys.modules — takes an on-disk package that re-exports this module. Neither
 restates the other, so they cannot drift.
 
-Every table here is read, never declared: columns come from the Prisma model and
-index DDL from the migration SQL, so a key that leaves the model for a raw-SQL
-predicate is still the key a pin conflicts on.
+Columns are read, never declared: both tables take theirs from the Prisma model.
+The loop-events indexes are read too — replayed from the migration SQL, so a key
+that leaves the model for a raw-SQL predicate is still the key a pin conflicts on.
+The proposals key is the one identity declared by hand here (_PROPOSALS_KEY).
 
 The helper's SQL text is never re-implemented here: two mechanical rewrites
 (PG cast suffixes, pyformat placeholders) hand the REAL statement to a real SQL

@@ -108,8 +108,8 @@ def _build_envelope(obj: dict[str, Any]) -> dict[str, Any] | None:
     ts = obj.get("ts")
     agent = obj.get("agent")
     eval_result = obj.get("eval_result")
-    # WHY: both arms key on event_ts + agent + a NOT NULL third column — a missing
-    # one fails the INSERT with IntegrityError.
+    # WHY: both arms key on event_ts + agent, and the cause token both selects the
+    # class and keys the census arm → a missing one leaves no key, so skip the line.
     if not ts or not agent or not eval_result:
         return None
     try:
@@ -127,8 +127,8 @@ def _build_envelope(obj: dict[str, Any]) -> dict[str, Any] | None:
             "changes_added": changes_added,
             "changes_removed": changes_removed,
             "rice": obj.get("rice"),
-            # Blank → None: "" is NOT NULL, so it lands inside the verdict partial
-            # unique and keys it on a value no subject owns.
+            # Blank → None: "" is not absence to the writer, which refuses it under
+            # either cause → the conversion keeps a blank-subject line pushable.
             "subject": str(obj.get("subject") or "").strip() or None,
         },
     }
