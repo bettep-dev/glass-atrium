@@ -28,8 +28,9 @@ import contextlib
 import io
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -50,6 +51,20 @@ try:
 except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+# The writer owns the cause-token→class map; the gate-invariance case compares the
+# daemon's own tokens against it rather than restating the set a second time.
+_SCRIPTS_DIR = _REPO_ROOT / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+try:
+    from _pg_dual_write_daemon import LOOP_EVENT_VERDICT_CAUSES
+except Exception as exc:  # noqa: BLE001 — same skip contract as daemon_cycle
+    LOOP_EVENT_VERDICT_CAUSES = None  # type: ignore[assignment]
+    _WRITER_IMPORT_ERROR: Exception | None = exc
+else:
+    _WRITER_IMPORT_ERROR = None
 
 # Loop-event envelopes the module-level seal captured instead of writing them.
 _EMITTED: list[dict] = []
@@ -552,6 +567,147 @@ class DischargeStageTest(unittest.TestCase):
         self.assertIn("status::text = 'applied'", sql)
         self.assertIn("reviewed_at IS NOT NULL", sql)
         self.assertNotIn("LIMIT", sql.upper())
+
+
+    def test_when_a_proposal_is_adjudicated_then_its_row_carries_it_as_subject(self):
+        # Verdict class: every discharge cause keys on the proposal, so a later
+        # cause for that proposal supersedes this verdict rather than joining it.
+        react = "glass-atrium-dev-react"
+        cases = (
+            ("discharge-read-failed", {}, None, LABEL_REACT_3, react),
+            ("discharge-unresolved", None, self._UNSET,
+             "some future proposal label form v2", react),
+            ("discharge-intake-miss", {}, self._UNSET, LABEL_REACT_3, react),
+            ("discharge-covered-terminal", _index(PARKED_INTAKE_ROWS), self._UNSET,
+             _SIZE_EST_CORE, _PARKED_AGENT),
+        )
+        for token, intake, coverage, label, agent in cases:
+            with self.subTest(cause=token):
+                _EMITTED.clear()
+                self._run(
+                    [(77, agent, label)], live=True, index=intake, coverage=coverage
+                )
+                self.assertEqual(self._emitted_tokens(), [token])
+                self.assertEqual(
+                    [e["args"]["subject"] for e in _EMITTED], ["proposal:77"]
+                )
+
+    def test_when_one_cause_adjudicates_two_proposals_then_each_keeps_its_subject(self):
+        # The census key would collapse these onto one row; the verdict key keeps
+        # N subjects reaching one cause on one day representable as N rows.
+        react = "glass-atrium-dev-react"
+        self._run(
+            [(77, react, "unrecognized form"), (78, react, "another unrecognized form")],
+            live=True,
+        )
+        self.assertEqual(self._emitted_tokens(), ["discharge-unresolved"] * 2)
+        self.assertEqual(
+            [e["args"]["subject"] for e in _EMITTED], ["proposal:77", "proposal:78"]
+        )
+
+
+@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
+class CensusEmitClassTest(unittest.TestCase):
+    """Census emitters carry no subject, so they keep the (day, agent, cause) key."""
+
+    def setUp(self):
+        _EMITTED.clear()
+
+    def test_when_the_gate_skips_or_fails_open_then_the_row_carries_no_subject(self):
+        with _capture_stderr():
+            dc._warn_pattern_skip(
+                "glass-atrium-dev-react",
+                "some label|glass-atrium-dev-react",
+                "2026-09-21",
+                eval_result="stale-pattern-skip",
+                reason="reobservation window elapsed",
+            )
+            dc._warn_gate_fail_open(
+                "glass-atrium-dev-react",
+                "some label|glass-atrium-dev-react",
+                "2026-09-21",
+                eval_result=dc.STALE_UNKNOWN_FAMILY_EVAL,
+                reason="family unknown to the staleness table",
+            )
+        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None, None])
+
+    def test_when_an_intake_row_is_off_roster_then_the_row_carries_no_subject(self):
+        with _capture_stderr():
+            dc._warn_roster_mismatch("not-an-agent", "sig|not-an-agent", "2026-09-21")
+        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None])
+        self.assertEqual([e["args"]["eval_result"] for e in _EMITTED], ["roster-mismatch"])
+
+    def test_when_the_cycle_aggregate_emits_then_it_states_the_census_class(self):
+        # The aggregate pre-aggregates ONTO the census key (C8), so its envelope
+        # names the column the class turns on rather than leaving it to a default.
+        patch = SimpleNamespace(
+            pattern_agent="glass-atrium-dev-react",
+            estimated_added_lines=3,
+            estimated_removed_lines=1,
+        )
+        report = SimpleNamespace(patches=[patch, patch], generated_at="2026-09-21")
+        with mock.patch.object(dc, "_coerce_eval_result", return_value="verified"):
+            envelopes = dc._aggregate_loop_events(report)
+        self.assertEqual([e["args"]["subject"] for e in envelopes], [None])
+        self.assertEqual(envelopes[0]["args"]["changes_added"], 6)
+
+
+@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
+class RegressionGateInvarianceTest(unittest.TestCase):
+    """The class split must not move the regression gate — it is a CONTROL path.
+
+    The gate reads its own warning rows back out of core.autoagent_loop_events and
+    those rows BLOCK proposal rows, so its key and its join stay where they were.
+    """
+
+    _AGENT = "glass-atrium-dev-react"
+    _APPLIED_TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
+
+    def _blocked(self, warned_at: datetime) -> frozenset:
+        report = dc.find_regression_blocked_rows(
+            [(warned_at, self._AGENT)],
+            [(11, self._AGENT, self._APPLIED_TS, LABEL_REACT_3, "applied")],
+            _index(),
+            now=self._APPLIED_TS + timedelta(days=1),
+        )
+        self.assertFalse(report.indeterminate)
+        return report.blocked_rows
+
+    def test_when_the_warning_shares_the_apply_instant_then_its_rows_stay_blocked(self):
+        self.assertEqual(self._blocked(self._APPLIED_TS), frozenset({7, 1, 5}))
+
+    def test_when_the_warning_instant_differs_then_the_join_matches_nothing(self):
+        self.assertEqual(
+            self._blocked(self._APPLIED_TS + timedelta(seconds=1)), frozenset()
+        )
+
+    def test_when_the_gate_selects_its_warnings_then_it_reads_no_subject(self):
+        sql = " ".join(dc._REGRESSION_WARNINGS_SELECT_SQL.split())
+        self.assertIn("SELECT event_ts, agent FROM core.autoagent_loop_events", sql)
+        self.assertIn("WHERE eval_result = %s", sql)
+        self.assertNotIn("subject", sql)
+
+    @unittest.skipIf(
+        LOOP_EVENT_VERDICT_CAUSES is None,
+        "writer import failed: %s" % (_WRITER_IMPORT_ERROR,),
+    )
+    def test_when_the_writer_classifies_the_gate_token_then_it_is_census(self):
+        # A verdict-classified gate token would re-key the very rows the gate
+        # reads back, so the class authority must keep it census.
+        self.assertNotIn(dc.POST_APPLY_REGRESSION_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
+        self.assertNotIn(dc.CONFOUND_SIGNATURE_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
+        self.assertNotIn(dc.DWC_SHARE_ALARM_EVAL_RESULT, LOOP_EVENT_VERDICT_CAUSES)
+        self.assertEqual(
+            sorted(LOOP_EVENT_VERDICT_CAUSES),
+            sorted(
+                (
+                    dc.DISCHARGE_EVENT_READ_FAILED,
+                    dc.DISCHARGE_EVENT_UNRESOLVED,
+                    dc.DISCHARGE_EVENT_COVERED_TERMINAL,
+                    dc.DISCHARGE_EVENT_INTAKE_MISS,
+                )
+            ),
+        )
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))

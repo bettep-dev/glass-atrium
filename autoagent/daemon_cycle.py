@@ -2528,6 +2528,7 @@ def _warn_roster_mismatch(agent: str, signature: str, event_ts: str) -> None:
         f"an agents/*.md stem (signature: {signature[:80]!r}); pattern skipped, "
         "loop event emitted\n"
     )
+    # Census class — one row per (day, agent, cause); no subject to adjudicate.
     _invoke_pg_helper(
         {
             "op": "write_autoagent_loop_event",
@@ -2538,6 +2539,7 @@ def _warn_roster_mismatch(agent: str, signature: str, event_ts: str) -> None:
                 "changes_added": 0,
                 "changes_removed": 0,
                 "rice": None,
+                "subject": None,
             },
         }
     )
@@ -6837,6 +6839,7 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
         removed_by_key[key] += max(0, int(patch.estimated_removed_lines))
 
     envelopes: list[dict[str, object]] = []
+    # Census class — the pre-aggregation above IS the census key, so it stays.
     for (agent, eval_result), changes_added in added_by_key.items():
         changes_removed = removed_by_key[(agent, eval_result)]
         envelopes.append(
@@ -6849,6 +6852,7 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
                     "changes_added": int(changes_added),
                     "changes_removed": int(changes_removed),
                     "rice": None,  # daemon does not compute RICE
+                    "subject": None,
                 },
             }
         )
@@ -6930,7 +6934,8 @@ def _invoke_pg_helper_subprocess(envelope: dict[str, object]) -> bool:
 def emit_loop_events(report: CycleReport) -> int:
     """CycleReport → core.autoagent_loop_events UPSERT (PG direct, no JSONL).
 
-    Idempotent: the helper's ON CONFLICT (event_ts, agent, eval_result) DO UPDATE
+    Idempotent: every envelope here is census-class, so the helper's census arm —
+    ON CONFLICT (event_ts, agent, eval_result) WHERE subject IS NULL DO UPDATE —
     turns a same-cycle re-run into an UPDATE, not a duplicate INSERT (0 row growth).
 
     The module-import path (HAS_PG_LOOP_WRITE=True) calls the already-loaded
@@ -7178,6 +7183,7 @@ def alert_all_reject_streak(report: CycleReport) -> None:
         "proposals; the generation pipeline yields nothing actionable (check "
         "classify_patch_area containment + pre-verify); loop event emitted\n"
     )
+    # Census class — one row per (cycle date, daemon-cycle, cause).
     _invoke_pg_helper(
         {
             "op": "write_autoagent_loop_event",
@@ -7188,6 +7194,7 @@ def alert_all_reject_streak(report: CycleReport) -> None:
                 "changes_added": 0,
                 "changes_removed": 0,
                 "rice": None,
+                "subject": None,
             },
         }
     )
@@ -7359,14 +7366,16 @@ def alert_post_apply_regression() -> None:
             {
                 "op": "write_autoagent_loop_event",
                 "args": {
-                    # Apply-timestamp key → stable dedup across re-runs (the
-                    # UPSERT's (event_ts, agent, eval_result) natural key).
+                    # Census class, keyed on the apply timestamp → stable dedup
+                    # across re-runs. The regression gate reads (event_ts, agent)
+                    # back out of this table, so event_ts stays applied_ts.
                     "event_ts": applied_ts.isoformat(),
                     "agent": (agent or "")[:64],  # varchar(64) guard
                     "eval_result": POST_APPLY_REGRESSION_EVAL_RESULT,
                     "changes_added": 0,
                     "changes_removed": 0,
                     "rice": None,
+                    "subject": None,
                 },
             }
         )
@@ -9585,18 +9594,22 @@ def _warn_pattern_skip(
     *,
     eval_result: str,
     reason: str,
+    event_subject: str | None = None,
 ) -> None:
     """Skipped/snoozed pattern → stderr WARN + loop-event emit, never silent.
 
     Same observability contract as _warn_roster_mismatch (Precondition
     Loud-Fail): eval_result rows in core.autoagent_loop_events surface the drop
     to the monitor; the stderr line carries the recompute / streak detail.
+
+    Census class by default; event_subject carries the adjudicated subject when
+    the caller passes a verdict cause — the writer refuses either mismatch.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
-    _emit_gate_loop_event(agent, event_ts, eval_result)
+    _emit_gate_loop_event(agent, event_ts, eval_result, event_subject=event_subject)
 
 
 def _warn_gate_fail_open(
@@ -9613,6 +9626,9 @@ def _warn_gate_fail_open(
     happened: that one dropped the pattern, this one kept one it could not judge.
     Precondition Loud-Fail — an unadjudicated pattern gets a named channel rather
     than a silent keep.
+
+    Census class only — its causes count how often the gate failed open, and no
+    single subject was adjudicated, so it takes no event_subject.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: gate fail-open {eval_result} — agent={agent} "
@@ -9621,11 +9637,20 @@ def _warn_gate_fail_open(
     _emit_gate_loop_event(agent, event_ts, eval_result)
 
 
-def _emit_gate_loop_event(agent: str, event_ts: str, eval_result: str) -> None:
+def _emit_gate_loop_event(
+    agent: str,
+    event_ts: str,
+    eval_result: str,
+    *,
+    event_subject: str | None = None,
+) -> None:
     """Shared loop-event envelope for the pattern-gate observability helpers.
 
     Lives once so a schema change to core.autoagent_loop_events cannot land on the
     skip path and miss the fail-open path.
+
+    The cause token picks the row class, not this helper: a verdict cause without
+    event_subject is REFUSED at the writer, never filed under the census arm.
     """
     _invoke_pg_helper(
         {
@@ -9637,6 +9662,7 @@ def _emit_gate_loop_event(agent: str, event_ts: str, eval_result: str) -> None:
                 "changes_added": 0,
                 "changes_removed": 0,
                 "rice": None,
+                "subject": event_subject,
             },
         }
     )
@@ -9977,18 +10003,26 @@ def _report_uncovered_proposal(
     covering: list[dict],
     event_ts: str,
 ) -> None:
-    """One stderr line + one loop event per uncovered proposal; covered-terminal is info."""
+    """One stderr line + one loop event per uncovered proposal; covered-terminal is info.
+
+    All four causes are verdict-class: the row adjudicates ONE proposal, so a later
+    cause for that proposal supersedes this verdict instead of landing beside it.
+    """
     rows = _build_row_status_text(covering)
+    # Namespaced — a learning_log row id and a proposal id collide as bare integers.
+    subject = f"proposal:{proposal_id}"
     if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
         reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
-        _warn_pattern_skip(agent, label, event_ts, eval_result=cause, reason=reason)
+        _warn_pattern_skip(
+            agent, label, event_ts, eval_result=cause, reason=reason, event_subject=subject
+        )
         return
     sys.stderr.write(
         f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
         f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
         f"row(s) [{rows}], nothing left to discharge\n"
     )
-    _emit_gate_loop_event(agent, event_ts, cause)
+    _emit_gate_loop_event(agent, event_ts, cause, event_subject=subject)
 
 
 # -- Parked-pattern apply guard ----------------------------------------------
@@ -10544,14 +10578,15 @@ def alert_attribution_confound(*, now: datetime | None = None) -> None:
             {
                 "op": "write_autoagent_loop_event",
                 "args": {
-                    # Apply-timestamp key → the (event_ts, agent, eval_result)
-                    # UPSERT lands every re-detection on the SAME row.
+                    # Census class — the apply-timestamp surrogate lands every
+                    # re-detection on the SAME (event_ts, agent, cause) row.
                     "event_ts": signature.event_ts.isoformat(),
                     "agent": signature.agent[:64],  # varchar(64) guard
                     "eval_result": CONFOUND_SIGNATURE_EVAL_RESULT,
                     "changes_added": 0,
                     "changes_removed": 0,
                     "rice": None,
+                    "subject": None,
                 },
             }
         )
@@ -10730,14 +10765,15 @@ def alert_dwc_share_regression(*, now: datetime | None = None) -> None:
             {
                 "op": "write_autoagent_loop_event",
                 "args": {
-                    # Week-bucket key → the (event_ts, agent, eval_result) UPSERT
-                    # lands every re-detection of the same week on ONE row.
+                    # Census class — the week-bucket surrogate lands every
+                    # re-detection of that week on ONE (event_ts, agent, cause) row.
                     "event_ts": alarm.week_start.isoformat(),
                     "agent": f"channel:{alarm.channel}"[:64],  # varchar(64) guard
                     "eval_result": DWC_SHARE_ALARM_EVAL_RESULT,
                     "changes_added": 0,
                     "changes_removed": 0,
                     "rice": None,
+                    "subject": None,
                 },
             }
         )

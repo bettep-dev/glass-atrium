@@ -8,15 +8,17 @@
 #
 # JSONL line schema (1 row → 1 envelope):
 #   {"ts":"<iso8601>", "agent":"<str>", "rice":<float|null>,
-#    "eval_result":"<str>", "changes_added":<int>, "changes_removed":<int>}
+#    "eval_result":"<str>", "changes_added":<int>, "changes_removed":<int>,
+#    "subject":"<str>"}   ← subject OPTIONAL: present iff eval_result is a
+#                            verdict cause (LOOP_EVENT_VERDICT_CAUSES)
 #
 # Field mapping: jsonl `ts` → DB column `event_ts`. All others 1:1.
 #
-# Idempotency: the helper's writer (write_autoagent_loop_event) does
-# `ON CONFLICT (event_ts, agent, eval_result) DO UPDATE` keyed by the
-# autoagent_loop_events_dedup UNIQUE INDEX. Re-running this publisher with
-# unchanged lines is therefore a no-op at the DB level — no checkpoint file
-# is needed and re-runs are safe by design.
+# Idempotency: the writer picks its ON CONFLICT arm from the cause token — a
+# census cause keys on (event_ts, agent, eval_result) WHERE subject IS NULL, a
+# verdict cause on (event_ts, agent, subject) WHERE subject IS NOT NULL. Either
+# way, re-running this publisher with unchanged lines is a no-op at the DB level
+# — no checkpoint file is needed and re-runs are safe by design.
 #
 # Backfill: the JSONL is small (mtime-based growth, not a hot loop). Each run
 # scans the entire file end-to-end. Fail-loud-and-skip — exit 0 even on errors
@@ -98,11 +100,16 @@ def _build_envelope(obj: dict[str, Any]) -> dict[str, Any] | None:
 
     Returns None when a required field is missing (skip + stderr).
     Maps jsonl `ts` → helper kwarg `event_ts` (matching the schema column).
+
+    The line's cause token picks the row class, so `subject` is carried through
+    rather than dropped: a verdict cause reaching the writer without it is
+    REFUSED (exit 6), and a census cause carrying one is refused the same way.
     """
     ts = obj.get("ts")
     agent = obj.get("agent")
     eval_result = obj.get("eval_result")
-    # WHY: the 3 dedup index keys are NOT NULL — if missing, the INSERT fails with IntegrityError
+    # WHY: both arms key on event_ts + agent + a NOT NULL third column — a missing
+    # one fails the INSERT with IntegrityError.
     if not ts or not agent or not eval_result:
         return None
     try:
@@ -120,6 +127,9 @@ def _build_envelope(obj: dict[str, Any]) -> dict[str, Any] | None:
             "changes_added": changes_added,
             "changes_removed": changes_removed,
             "rice": obj.get("rice"),
+            # Blank → None: "" passes a presence test but keys the verdict arm on
+            # a value no subject owns, and falls outside both partial uniques.
+            "subject": str(obj.get("subject") or "").strip() or None,
         },
     }
 
