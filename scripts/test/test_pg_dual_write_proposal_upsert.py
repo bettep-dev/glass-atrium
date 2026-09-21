@@ -9,8 +9,12 @@ the reject streak is recomputed from those rows, so an erased stamp advances a k
 counter and inflates a monitor bucket.
 
 The invariant pinned here: whenever the arm preserves the stored status it preserves
-the stored rationale, and whenever it takes the incoming status it takes the incoming
-rationale. The three arms are opposed on purpose. The preserving arm alone closes
+the stored rationale and the stored actor, and whenever it takes the incoming status
+it takes both incoming values. `reviewed_by` is the third column under that one
+predicate — the actor answers who moved the row, so it moves with what it moved.
+Its refreshing arm coalesces: an envelope naming no actor leaves the stored one,
+because the column was unreachable from any push before it joined the SET list.
+The three arms are opposed on purpose. The preserving arm alone closes
 nothing — it is satisfied equally by the correct conditional and by never overwriting
 the rationale at all, which would silently freeze every pending row's text; the
 refreshing arm is what goes red for that. The terminal-incoming arm goes red for a
@@ -59,7 +63,19 @@ _STORABLE = _TERMINAL + _NON_TERMINAL
 _REVIEWED_TERMINAL = (*_TERMINAL, "reverted")
 _REVIEWED_AT = "2026-07-26 03:51:48"
 _MARKER = "skipped:chronic-timeout-backoff"
-_DAEMON_CYCLE = Path(__file__).resolve().parents[2] / "autoagent" / "daemon_cycle.py"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DAEMON_CYCLE = _REPO_ROOT / "autoagent" / "daemon_cycle.py"
+_SCHEMA = _REPO_ROOT / "monitor" / "prisma" / "schema.prisma"
+
+# Actor tokens from the closed set declared at the schema column. One source per
+# token: a shared default would file an updater row as a daemon push.
+_ENVELOPE_ACTORS = {
+    "updater-resolved-gap": _REPO_ROOT / "scripts" / "update.sh",
+    "daemon-cycle-push": _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
+}
+_STORED_ACTOR = "daemon-cycle-parked-guard"
+_INCOMING_ACTOR = "daemon-cycle-push"
+_PROVENANCE = ("status", "rationale", "reviewed_by")
 
 # Every column the conflict arm assigns, distinct per variant → a leaked column shows.
 # pre_verify_axes stays None: the stdlib engine cannot bind the Jsonb adapter.
@@ -116,7 +132,7 @@ class _Proposals:
         self._helper = helper
         self._db_path = db_path
 
-    def push(self, status: str, rationale: str) -> None:
+    def push(self, status: str, rationale: str, actor: str = "") -> None:
         self._helper.write_autoagent_proposal(
             cycle_date=_CYCLE_DATE,
             pattern_label=_PATTERN_LABEL,
@@ -131,10 +147,16 @@ class _Proposals:
             cost_guard_state="ok",
             source_file="autoagent/daemon_cycle.py",
             source_file_mtime=0,
+            reviewed_by=actor,
         )
 
     def get_stored(self) -> dict[str, str]:
         stored = backend.read_proposal(self._db_path, _KEY)
+        assert stored is not None, "the seeding push stored no row"
+        return stored
+
+    def get_provenance(self) -> dict[str, str]:
+        stored = backend.read_proposal(self._db_path, _KEY, _PROVENANCE)
         assert stored is not None, "the seeding push stored no row"
         return stored
 
@@ -234,6 +256,66 @@ def test_when_the_incoming_status_is_terminal_then_its_rationale_comes_with_it(
     }
 
 
+@pytest.mark.parametrize("stored_status", _TERMINAL)
+@pytest.mark.parametrize("incoming_status", _NON_TERMINAL)
+def test_when_a_terminal_status_is_preserved_then_its_actor_is_preserved(
+    proposals: _Proposals, stored_status: str, incoming_status: str
+):
+    # The stored row carries NO reviewed_at — a machine transition stamps the actor
+    # alone — so the freeze never fires and this arm is the whole protection.
+    proposals.push(stored_status, _stamp(stored_status), _STORED_ACTOR)
+
+    proposals.push(incoming_status, _generation_text(incoming_status), _INCOMING_ACTOR)
+
+    assert proposals.get_provenance() == {
+        "status": stored_status,
+        "rationale": _stamp(stored_status),
+        "reviewed_by": _STORED_ACTOR,
+    }
+
+
+@pytest.mark.parametrize("stored_status", _STORABLE)
+@pytest.mark.parametrize("incoming_status", _TERMINAL)
+def test_when_the_incoming_status_is_terminal_then_its_actor_comes_with_it(
+    proposals: _Proposals, stored_status: str, incoming_status: str
+):
+    # The opposed arm: a preservation predicate wider for the actor than for the
+    # status would credit the incoming verdict to whoever produced the old one.
+    proposals.push(stored_status, _stamp(stored_status), _STORED_ACTOR)
+
+    proposals.push(incoming_status, _generation_text(incoming_status), _INCOMING_ACTOR)
+
+    assert proposals.get_provenance() == {
+        "status": incoming_status,
+        "rationale": _generation_text(incoming_status),
+        "reviewed_by": _INCOMING_ACTOR,
+    }
+
+
+def test_when_a_re_push_names_no_actor_then_the_stored_actor_survives(
+    proposals: _Proposals,
+):
+    # No push could reach reviewed_by before it joined the SET list; an envelope
+    # carrying no token must not acquire that power on the way in.
+    proposals.push("pending", _stamp("pending"), _STORED_ACTOR)
+
+    proposals.push("pending", _generation_text("pending"))
+
+    assert proposals.get_provenance()["reviewed_by"] == _STORED_ACTOR
+
+
+def test_a_born_terminal_row_names_its_creator(proposals: _Proposals):
+    # A row terminal from its first push has no later transition to stamp it, so
+    # the actor reaches the table through the insert arm or not at all.
+    proposals.push("rejected", _stamp("rejected"), _STORED_ACTOR)
+
+    assert proposals.get_provenance() == {
+        "status": "rejected",
+        "rationale": _stamp("rejected"),
+        "reviewed_by": _STORED_ACTOR,
+    }
+
+
 @pytest.mark.parametrize("stored_status", _REVIEWED_TERMINAL)
 @pytest.mark.parametrize("incoming_status", _STORABLE)
 def test_when_a_reviewed_row_is_terminal_then_no_re_push_changes_any_column(
@@ -323,6 +405,16 @@ def test_when_a_reviewed_rejected_marker_is_re_pushed_then_no_column_changes(
     proposals.push_row("rejected", dict(_REPUSHED, haiku_status=_MARKER))
 
     assert proposals.get_row() == reviewed
+
+
+@pytest.mark.parametrize(("token", "source"), sorted(_ENVELOPE_ACTORS.items()))
+def test_each_envelope_source_carries_its_own_declared_actor_token(
+    token: str, source: Path
+):
+    # The helper cannot import either caller, so the one-token-per-source rule and
+    # the closed set it is drawn from are tied to their spellings here.
+    assert '"reviewed_by": "%s"' % token in source.read_text(encoding="utf-8")
+    assert "`%s`" % token in _SCHEMA.read_text(encoding="utf-8")
 
 
 def test_the_exempted_marker_is_the_outcome_the_daemon_writes():

@@ -485,6 +485,7 @@ def write_autoagent_proposal(
     confidence_observed=None,
     project_key="",
     promotion_tier="",
+    reviewed_by="",
 ):
     """UPSERT core.autoagent_proposals on (cycle_date, pattern_label, target_file).
 
@@ -503,6 +504,12 @@ def write_autoagent_proposal(
     feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
     promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
     skill-candidate; ""→NULL). All NULLable — older rows omit them.
+
+    Provenance: `reviewed_by` names the actor that produced the row's status, from
+    the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
+    Each envelope source passes its own token; ""→NULL, and a NULL incoming value
+    never clears a stored actor. `reviewed_at` is the review VERDICT instant per
+    that same declaration, and no arm here writes it: a push is not a verdict.
     """
     start_ns = time.monotonic_ns()
     if indexed_at is None:
@@ -525,7 +532,8 @@ def write_autoagent_proposal(
         INSERT INTO core.autoagent_proposals
             (cycle_date, pattern_label, target_file, target_agent,
              classification, rationale, haiku_status, approval_tier, status,
-             proposed_diff, cost_guard_state, source_file, source_file_mtime,
+             proposed_diff, cost_guard_state, reviewed_by,
+             source_file, source_file_mtime,
              indexed_at,
              pre_verify_passed, pre_verify_status, pre_verify_rationale,
              pre_verify_axes,
@@ -534,7 +542,8 @@ def write_autoagent_proposal(
                 %s::core."ProposalClassification", %s, %s,
                 %s::core."ApprovalTier",
                 %s::core."ProposalStatus",
-                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
                 COALESCE(%s, CURRENT_TIMESTAMP),
                 %s, %s, %s, %s,
                 %s, %s, %s)
@@ -547,7 +556,7 @@ def write_autoagent_proposal(
             -- status takes the incoming text. Assigning it unconditionally erased a
             -- supersede stamp on every re-push while the terminal status survived,
             -- leaving a verdict no text explains — and the erased text is live input
-            -- to the reject-streak classifier, not inert history. The two predicates
+            -- to the reject-streak classifier, not inert history. The three predicates
             -- below MUST stay identical; the co-movement is pinned by
             -- scripts/test/test_pg_dual_write_proposal_upsert.py, not by this comment.
             -- Marker exemption — widens the non-terminal-push arm only (cases: test docstring).
@@ -591,6 +600,25 @@ def write_autoagent_proposal(
                        THEN core.autoagent_proposals.status
                        ELSE EXCLUDED.status
                      END,
+            -- Third column under that same predicate: the actor answers who moved
+            -- the row, so it moves with what it moved. COALESCE on the refreshing
+            -- arm — this column was unreachable from any push until it joined the
+            -- SET list, and an envelope naming no actor must not acquire the power
+            -- to clear a stored one.
+            reviewed_by = CASE
+                            WHEN core.autoagent_proposals.status
+                                 IN ('applied', 'approved', 'rejected')
+                                 AND EXCLUDED.status
+                                     NOT IN ('applied', 'approved', 'rejected')
+                                 AND NOT (
+                                     COALESCE(core.autoagent_proposals.haiku_status, '')
+                                         = 'skipped:chronic-timeout-backoff'
+                                     AND COALESCE(EXCLUDED.haiku_status, '')
+                                         <> 'skipped:chronic-timeout-backoff')
+                            THEN core.autoagent_proposals.reviewed_by
+                            ELSE COALESCE(EXCLUDED.reviewed_by,
+                                          core.autoagent_proposals.reviewed_by)
+                          END,
             proposed_diff = EXCLUDED.proposed_diff,
             cost_guard_state = EXCLUDED.cost_guard_state,
             source_file = EXCLUDED.source_file,
@@ -616,6 +644,8 @@ def write_autoagent_proposal(
     # confidence_observed=None → NULL (feature flag off / cold-start not stored).
     project_key_param = project_key or None
     promotion_tier_param = promotion_tier or None
+    # ""→NULL: an unnamed actor is ABSENT, and the conflict arm coalesces it away.
+    reviewed_by_param = reviewed_by or None
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -632,6 +662,7 @@ def write_autoagent_proposal(
                     status,
                     proposed_diff,
                     cost_guard_state,
+                    reviewed_by_param,
                     source_file,
                     source_file_mtime,
                     indexed_at,
