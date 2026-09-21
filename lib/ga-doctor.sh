@@ -1388,6 +1388,57 @@ run_doctor() {
     fi
   fi
 
+  # 25. proposal provenance — terminal rows naming no mover. Registration kind B (report-only): its
+  #     log line ONLY, no counter, no term in the warning total, exit code unchanged. The kind is
+  #     forced, not chosen: every status writer stamps core.autoagent_proposals.reviewed_by from
+  #     this release on, but nothing backfills the rows written before it, so a counted warning
+  #     would be red on every established install forever. Scoping it by id or date to go green
+  #     would be the same false comfort wearing a predicate.
+  #
+  #     SPLIT, not a total: the two populations have different causes and different repairs. A row
+  #     carrying a review instant with NO actor was stamped by a writer that recorded WHEN but not
+  #     WHO — the stale-drain class this release removed at its source. A row carrying NEITHER was
+  #     never stamped at all. Merging them would report one number that names no cause.
+  #
+  #     VOCABULARY: a state this run could not read says `unread`, not §21's `undetermined`. Two
+  #     sections reporting one word for two different unread things is ambiguous to an operator
+  #     grepping the report, and §21's own rows are pinned against the whole output.
+  #
+  #     The branch states below mirror §21's and are kept apart for the same reason: the documented
+  #     opt-out, the documented psql-less mode, a database that does not exist yet, and a read this
+  #     run could not make are four different facts, and folding any of them into "0 rows" would
+  #     report a database nobody read as clean.
+  local prov_probe="" prov_counts="" prov_total=0 prov_stamped=0 prov_bare=0
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : proposal provenance check skipped (GA_SKIP_DB_SETUP set)"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : proposal provenance check skipped — psql not found (supported mode; install PostgreSQL to see actor coverage)"
+  elif ! prov_probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : proposal actor coverage unread — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run read no rows"
+  elif [[ "${prov_probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no proposal rows to check for actor coverage"
+  elif ! prov_counts="$(_pg_proposal_actor_probe "${DB_NAME}")"; then
+    log "  note : proposal actor coverage unread — the terminal-row read against '${DB_NAME}' failed"
+  else
+    # Unit-separator split, never whitespace: the counts are never empty, but the probe's field
+    # separator is the one the reader must agree with, and a whitespace IFS collapses runs.
+    IFS=$'\x1f' read -r prov_total prov_stamped prov_bare <<<"${prov_counts}"
+    # A field that is not a plain integer means the read did not answer THIS question — a NOTICE
+    # riding on the row, a server that replied to something else, a column this schema no longer
+    # carries. Named as undetermined rather than trusted: `$((…))` over such a value aborts the
+    # whole doctor with a raw shell error, which is the opposite of a report-only row, and reading
+    # it as zero would report a database nobody understood as fully stamped.
+    if ! [[ "${prov_total}" =~ ^[0-9]+$ ]] || ! [[ "${prov_stamped}" =~ ^[0-9]+$ ]] \
+      || ! [[ "${prov_bare}" =~ ^[0-9]+$ ]]; then
+      log "  note : proposal actor coverage unread — the terminal-row read against '${DB_NAME}' answered something other than three counts"
+    elif [[ "$((prov_stamped + prov_bare))" -eq 0 ]]; then
+      log "  ok   : all ${prov_total} terminal proposal row(s) name the actor that moved them"
+    else
+      log "  note : proposal provenance — $((prov_stamped + prov_bare)) of ${prov_total} terminal row(s) name no actor: ${prov_stamped} carry a review instant with no actor, ${prov_bare} carry neither (report-only; every writer stamps reviewed_by from this release on, and no backfill is planned — a guessed actor would fabricate the evidence the column exists to carry)"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1423,6 +1474,25 @@ INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 # dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
 # deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
 # The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
+# Terminal-proposal actor coverage ($1 = database): total terminal rows, rows carrying a review
+# instant but no actor, rows carrying neither — unit-separator delimited, one line. The two gap
+# counts are FILTERed rather than read from three statements so all three describe the same
+# snapshot. psql is the LAST command, so an unreachable server keeps its rc and the caller's
+# capture reports "undetermined" instead of a clean zero.
+# The status list is the terminal set the upsert freeze already uses; a row that is still pending
+# or snoozed has not been moved to a final state by anyone, so it names no missing mover.
+_pg_proposal_actor_probe() {
+  # GA-ABSORB[handled@the undetermined branch of doctor section 25]: stderr only — the rc is captured and branched on there
+  psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<'SQL'
+SELECT count(*),
+       count(*) FILTER (WHERE reviewed_at IS NOT NULL AND reviewed_by IS NULL),
+       count(*) FILTER (WHERE reviewed_at IS NULL AND reviewed_by IS NULL)
+FROM core.autoagent_proposals
+WHERE status IN ('applied'::core."ProposalStatus", 'approved'::core."ProposalStatus",
+                 'rejected'::core."ProposalStatus", 'reverted'::core."ProposalStatus")
+SQL
+}
+
 _drop_window_cutoff_date() {
   local days="${1}"
   date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
