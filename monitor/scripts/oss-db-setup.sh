@@ -28,7 +28,7 @@ readonly SCRIPT_DIR
 #   9 = retry after P3009 baseline resolve still failed (manual intervention needed)
 #  10 = post-deploy value-domain CHECK constraint verification failed (a CHECK is absent)
 #  11 = post-deploy core.budget_overages table verification failed (table absent)
-#  12 = post-deploy partial-index verification failed (a restored index is absent)
+#  12 = post-deploy partial-index verification failed (a raw-SQL partial index is absent)
 EXIT_BAD_CWD=3
 EXIT_MISSING_CLI=4
 EXIT_CREATEDB=5
@@ -400,17 +400,21 @@ if [[ "${overage_present}" != "core.budget_overages" ]]; then
 fi
 
 # step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
-# The 5 partial indexes restored by 20260718000000_restore_squash_lost_partial_indexes are raw-SQL
-# (Prisma DSL cannot express a WHERE predicate). migrate deploy applies them, but a silent create
-# miss would degrade to seq-scans (clauded-docs folder cascade + improvement style_ref/tier window)
-# with NO error — so confirm all 5 landed and loud-fail otherwise (aligns with the loud-fail
-# precondition principle; SELECT-only, no mutation). Names MUST byte-match the migration DDL.
-log "verifying 5 restored partial indexes exist (pg_indexes · SELECT-only)"
+# Two migrations create raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate), so
+# neither set is visible to a schema-level check. migrate deploy applies them, but a silent create
+# miss carries NO error:
+#   · 5 from 20260718000000_restore_squash_lost_partial_indexes — miss degrades to seq-scans
+#     (clauded-docs folder cascade + improvement style_ref/tier window)
+#   · 2 from 20260921000000_split_autoagent_loop_event_identity — miss drops the loop-event
+#     dedup key entirely, so census rows accumulate and a corrected verdict stops superseding
+# Confirm all 7 landed and loud-fail otherwise (aligns with the loud-fail precondition principle;
+# SELECT-only, no mutation). Names MUST byte-match the migration DDL.
+log "verifying 7 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
 idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
-  "SELECT count(*) FROM pg_indexes WHERE indexname IN ('outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx')")" \
+  "SELECT count(*) FROM pg_indexes WHERE indexname IN ('outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup')")" \
   || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
-if [[ "${idx_present}" != "5" ]]; then
-  fail "${EXIT_PARTIAL_IDX}" "expected 5 restored partial indexes, found ${idx_present} — 20260718000000_restore_squash_lost_partial_indexes did not fully apply"
+if [[ "${idx_present}" != "7" ]]; then
+  fail "${EXIT_PARTIAL_IDX}" "expected 7 raw-SQL partial indexes, found ${idx_present} — 20260718000000_restore_squash_lost_partial_indexes or 20260921000000_split_autoagent_loop_event_identity did not fully apply"
 fi
 
 # no seed step
