@@ -400,13 +400,15 @@ if [[ "${overage_present}" != "core.budget_overages" ]]; then
 fi
 
 # step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
-# Two migrations create raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate), so
-# neither set is visible to a schema-level check. migrate deploy applies them, but a silent create
-# miss carries NO error:
+# Raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate) are invisible to a
+# schema-level check. migrate deploy applies them, but a silent create miss carries NO error.
+# Three migrations create them; the 7 checked here are the two later sets:
 #   · 5 from 20260718000000_restore_squash_lost_partial_indexes — miss degrades to seq-scans
 #     (clauded-docs folder cascade + improvement style_ref/tier window)
 #   · 2 from 20260921000000_split_autoagent_loop_event_identity — miss drops the loop-event
 #     dedup key entirely, so census rows accumulate and a corrected verdict stops superseding
+#   · outside this list: 20260611000000_init_squashed's update_job_single_active_uniq
+#     (partial UNIQUE, WHERE status = 'in-progress'), documented on schema.prisma's UpdateJob
 # Confirm all 7 landed and loud-fail otherwise (aligns with the loud-fail precondition principle;
 # SELECT-only, no mutation). Names MUST byte-match the migration DDL.
 log "verifying 7 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
