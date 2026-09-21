@@ -410,9 +410,9 @@ fi
 #     (clauded-docs folder cascade + improvement style_ref/tier window)
 #   · 2 from 20260921000000_split_autoagent_loop_event_identity — miss drops the loop-event
 #     dedup key entirely, so census rows accumulate and a corrected verdict stops superseding
-# The list stays HARDCODED — this script ships to installs carrying no prisma/migrations
-# checkout, so deriving it at runtime would break the very installs it provisions. Its parity
-# with the migration DDL is pinned by test/oss-db-setup.bats instead.
+# The list stays HARDCODED — the expectation is asserted independently of the migration files
+# A runtime-derived expectation shrinks to zero when a migration is lost or damaged → vacuous pass
+# A stated count of 8 cannot; parity with the migration DDL is pinned by test/oss-db-setup.bats
 # Confirm all 8 landed and loud-fail otherwise (aligns with the loud-fail precondition principle;
 # SELECT-only, no mutation). Names MUST byte-match the migration DDL.
 log "verifying 8 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"

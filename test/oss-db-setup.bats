@@ -79,7 +79,7 @@ get_migration_partial_index_names() {
 }
 
 # Parity-pin side B: the script's own hardcoded pg_indexes IN (...) list. It MUST stay
-# hardcoded there - oss-db-setup.sh ships to installs carrying no prisma/migrations checkout.
+# hardcoded there - a runtime-derived expectation would collapse with the files it reads.
 get_script_partial_index_names() {
   sed -n 's/.*indexname IN (\([^)]*\)).*/\1/p' "${SETUP_SH}" \
     | tr ',' '\n' | tr -d "'\" " | sed '/^$/d' | sort
@@ -245,8 +245,8 @@ get_script_partial_index_counts() {
 @test "step-7 index list stays in parity with the migrations' raw-SQL partial indexes" {
   # Both sides derived mechanically - the script's hardcoded IN (...) list vs. the migration
   # DDL - so the next raw-SQL partial index added anywhere reds this suite until step 7
-  # verifies it. Script-side derivation is the test's job alone: oss-db-setup.sh ships to
-  # installs with no migrations checkout, so it cannot read them at runtime.
+  # verifies it. Deriving the list here and not in the script is deliberate: this side is
+  # guarded against an empty enumeration below, a runtime-derived step 7 would not be.
   local migration_names script_names expected literals n
   migration_names="$(get_migration_partial_index_names)"
   script_names="$(get_script_partial_index_names)"
