@@ -463,6 +463,26 @@ def _coerce_classification(raw):
     return _CLASSIFICATION_TO_ENUM.get(str(raw), ("reject", "auto"))
 
 
+# Statuses a re-push must not downgrade. The freeze WHERE below carries its own
+# 4-member set including 'reverted' — a different set, deliberately not this one.
+_TERMINAL_STATUS_SQL = "('applied', 'approved', 'rejected')"
+_BACKOFF_MARKER = "skipped:chronic-timeout-backoff"
+
+# Preserve-the-stored-verdict predicate: stored terminal AND incoming non-terminal,
+# minus the marker exemption, which widens the non-terminal-push arm only.
+# COALESCE → a NULL outcome compares as not-the-marker, never as unknown.
+# Status, its rationale and its actor move together, so all three CASE arms read it
+# from here — identical by construction, not by a comment asking for it.
+_PRESERVE_STORED_VERDICT_SQL = f"""
+                            core.autoagent_proposals.status IN {_TERMINAL_STATUS_SQL}
+                            AND EXCLUDED.status NOT IN {_TERMINAL_STATUS_SQL}
+                            AND NOT (
+                                COALESCE(core.autoagent_proposals.haiku_status, '')
+                                    = '{_BACKOFF_MARKER}'
+                                AND COALESCE(EXCLUDED.haiku_status, '')
+                                    <> '{_BACKOFF_MARKER}')"""
+
+
 def write_autoagent_proposal(
     cycle_date,
     pattern_label,
@@ -508,8 +528,8 @@ def write_autoagent_proposal(
     Provenance: `reviewed_by` names the actor that produced the row's status, from
     the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
     Each envelope source passes its own token; ""→NULL, and a NULL incoming value
-    never clears a stored actor. `reviewed_at` is the review VERDICT instant per
-    that same declaration, and no arm here writes it: a push is not a verdict.
+    never clears a stored actor. No arm here writes `reviewed_at`: a push is not a
+    verdict.
     """
     start_ns = time.monotonic_ns()
     if indexed_at is None:
@@ -528,7 +548,7 @@ def write_autoagent_proposal(
         # pending queue.
         status = "rejected" if cls_enum == "reject" else "pending"
 
-    sql = """
+    sql = f"""
         INSERT INTO core.autoagent_proposals
             (cycle_date, pattern_label, target_file, target_agent,
              classification, rationale, haiku_status, approval_tier, status,
@@ -556,21 +576,10 @@ def write_autoagent_proposal(
             -- status takes the incoming text. Assigning it unconditionally erased a
             -- supersede stamp on every re-push while the terminal status survived,
             -- leaving a verdict no text explains — and the erased text is live input
-            -- to the reject-streak classifier, not inert history. The three predicates
-            -- below MUST stay identical; the co-movement is pinned by
-            -- scripts/test/test_pg_dual_write_proposal_upsert.py, not by this comment.
-            -- Marker exemption — widens the non-terminal-push arm only (cases: test docstring).
-            -- COALESCE → a NULL outcome compares as not-the-marker, never as unknown.
+            -- to the reject-streak classifier, not inert history. The co-movement is
+            -- pinned by scripts/test/test_pg_dual_write_proposal_upsert.py.
             rationale = CASE
-                          WHEN core.autoagent_proposals.status
-                               IN ('applied', 'approved', 'rejected')
-                               AND EXCLUDED.status
-                                   NOT IN ('applied', 'approved', 'rejected')
-                               AND NOT (
-                                   COALESCE(core.autoagent_proposals.haiku_status, '')
-                                       = 'skipped:chronic-timeout-backoff'
-                                   AND COALESCE(EXCLUDED.haiku_status, '')
-                                       <> 'skipped:chronic-timeout-backoff')
+                          WHEN {_PRESERVE_STORED_VERDICT_SQL}
                           THEN core.autoagent_proposals.rationale
                           ELSE EXCLUDED.rationale
                         END,
@@ -588,15 +597,7 @@ def write_autoagent_proposal(
             -- accountability row per body per day, so a same-day decline-then-accept
             -- would otherwise leave 'rejected' on content that landed.
             status = CASE
-                       WHEN core.autoagent_proposals.status
-                            IN ('applied', 'approved', 'rejected')
-                            AND EXCLUDED.status
-                                NOT IN ('applied', 'approved', 'rejected')
-                            AND NOT (
-                                COALESCE(core.autoagent_proposals.haiku_status, '')
-                                    = 'skipped:chronic-timeout-backoff'
-                                AND COALESCE(EXCLUDED.haiku_status, '')
-                                    <> 'skipped:chronic-timeout-backoff')
+                       WHEN {_PRESERVE_STORED_VERDICT_SQL}
                        THEN core.autoagent_proposals.status
                        ELSE EXCLUDED.status
                      END,
@@ -606,15 +607,7 @@ def write_autoagent_proposal(
             -- SET list, and an envelope naming no actor must not acquire the power
             -- to clear a stored one.
             reviewed_by = CASE
-                            WHEN core.autoagent_proposals.status
-                                 IN ('applied', 'approved', 'rejected')
-                                 AND EXCLUDED.status
-                                     NOT IN ('applied', 'approved', 'rejected')
-                                 AND NOT (
-                                     COALESCE(core.autoagent_proposals.haiku_status, '')
-                                         = 'skipped:chronic-timeout-backoff'
-                                     AND COALESCE(EXCLUDED.haiku_status, '')
-                                         <> 'skipped:chronic-timeout-backoff')
+                            WHEN {_PRESERVE_STORED_VERDICT_SQL}
                             THEN core.autoagent_proposals.reviewed_by
                             ELSE COALESCE(EXCLUDED.reviewed_by,
                                           core.autoagent_proposals.reviewed_by)
