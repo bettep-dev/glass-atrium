@@ -12,6 +12,10 @@ sys.modules surface, and a subprocess consumer — which cannot be handed
 sys.modules — takes an on-disk package that re-exports this module. Neither
 restates the other, so they cannot drift.
 
+Every table here is read, never declared: columns come from the Prisma model and
+index DDL from the migration SQL, so a key that leaves the model for a raw-SQL
+predicate is still the key a pin conflicts on.
+
 The helper's SQL text is never re-implemented here: two mechanical rewrites
 (PG cast suffixes, pyformat placeholders) hand the REAL statement to a real SQL
 engine, so the conditional arms under test are the ones that ship. The attached
@@ -37,18 +41,32 @@ from types import ModuleType
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 _HELPER = _SCRIPTS_ROOT / "_pg_dual_write_daemon.py"
 _SCHEMA = _SCRIPTS_ROOT.parent / "monitor" / "prisma" / "schema.prisma"
+_MIGRATIONS = _SCRIPTS_ROOT.parent / "monitor" / "prisma" / "migrations"
+
+# The schema a table-creating connection opens its file as — sqlite takes the
+# qualifier on the index NAME, where Postgres puts it on the table.
+_TABLE_SCHEMA = "main"
 
 # The subprocess consumer names its sqlite file here; it cannot be handed one.
 SQLITE_PATH_ENV = "GA_PIN_SQLITE"
 
 _PROPOSALS_TABLE = "autoagent_proposals"
 _PROPOSALS_KEY = ("cycle_date", "pattern_label", "target_file")
+_LOOP_EVENTS_TABLE = "autoagent_loop_events"
 
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
-_MODEL_BLOCK = re.compile(r"^model AutoagentProposal \{$(.*?)^\}$", re.M | re.S)
+_MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
+# One alternation, so CREATE and DROP keep their relative order within a file.
+_INDEX_STMT = re.compile(
+    r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?:"\w+"\.)?"(?P<dropped>\w+)"\s*;'
+    r'|CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?'
+    r'(?:"\w+"\.)?"(?P<name>\w+)"\s+ON\s+(?:"\w+"\.)?"(?P<table>\w+)"'
+    r'(?P<tail>[^;]*);',
+    re.I,
+)
 
 
 def _rewrite(sql: str) -> str:
@@ -223,15 +241,17 @@ def _build_stub_modules(db_path: Path) -> dict[str, object]:
     }
 
 
-def _get_proposal_columns() -> list[str]:
-    """Column names of core.autoagent_proposals, read off the Prisma model.
+def _get_model_columns(model: str) -> list[str]:
+    """Column names of one Prisma model's table, read off the model block.
 
     Read rather than remembered: a hand-copied list agrees with itself forever
     and drifts on the next migration.
     """
-    block = _MODEL_BLOCK.search(_SCHEMA.read_text(encoding="utf-8"))
+    block = re.search(
+        _MODEL_BLOCK % model, _SCHEMA.read_text(encoding="utf-8"), re.M | re.S
+    )
     if block is None:
-        raise AssertionError("AutoagentProposal model not found in %s" % _SCHEMA)
+        raise AssertionError("%s model not found in %s" % (model, _SCHEMA))
 
     columns: list[str] = []
     for line in block.group(1).splitlines():
@@ -252,7 +272,7 @@ def _get_proposal_columns() -> list[str]:
 
 def create_proposals_table(db_path: Path) -> None:
     """Create core.autoagent_proposals with the dedup key the ON CONFLICT names."""
-    columns = _get_proposal_columns()
+    columns = _get_model_columns("AutoagentProposal")
     missing = [c for c in _PROPOSALS_KEY if c not in columns]
     if missing:
         raise AssertionError("schema parse lost the dedup key columns: %s" % missing)
@@ -267,6 +287,73 @@ def create_proposals_table(db_path: Path) -> None:
             % (_PROPOSALS_TABLE, declared, ", ".join(_PROPOSALS_KEY))
         )
         db.commit()
+
+
+def _get_index_ddl(stmt: re.Match) -> str:
+    """One CREATE INDEX statement respelled for sqlite, predicate included.
+
+    sqlite takes `[schema.]index-name ON table-name`, so the Postgres spelling
+    `INDEX "x" ON "core"."t"` is a syntax error there — the qualifier moves to the
+    index name and the column list and any WHERE predicate are handed over untouched.
+    """
+    return 'CREATE %sINDEX "%s"."%s" ON "%s"%s' % (
+        "UNIQUE " if stmt.group("unique") else "",
+        _TABLE_SCHEMA,
+        stmt.group("name"),
+        stmt.group("table"),
+        stmt.group("tail"),
+    )
+
+
+def _get_table_indexes(table: str) -> dict[str, str]:
+    """Live index DDL for one table, replayed over the migrations in order.
+
+    Read from the migration SQL, not from `@@unique`: a predicate-bearing index
+    cannot be spelled in the Prisma model at all, so a model-sourced key goes
+    blind the day one lands. DROP INDEX is replayed too — a replaced key that
+    outlived its own replacement here would pin the wrong identity.
+    """
+    live: dict[str, str] = {}
+    for migration in sorted(_MIGRATIONS.glob("*/migration.sql")):
+        for stmt in _INDEX_STMT.finditer(migration.read_text(encoding="utf-8")):
+            if stmt.group("dropped") is not None:
+                live.pop(stmt.group("dropped"), None)
+            elif stmt.group("table") == table:
+                live[stmt.group("name")] = _get_index_ddl(stmt)
+    return live
+
+
+def create_loop_events_table(db_path: Path) -> None:
+    """Create core.autoagent_loop_events under the indexes the migrations declare."""
+    columns = _get_model_columns("AutoagentLoopEvent")
+    indexes = _get_table_indexes(_LOOP_EVENTS_TABLE)
+    if not any(ddl.startswith("CREATE UNIQUE") for ddl in indexes.values()):
+        raise AssertionError(
+            "no live UNIQUE index for %s under %s — an upsert arm would have no key"
+            " to conflict on" % (_LOOP_EVENTS_TABLE, _MIGRATIONS)
+        )
+
+    declared = ", ".join(
+        "id INTEGER PRIMARY KEY" if column == "id" else "%s TEXT" % column
+        for column in columns
+    )
+    with closing(sqlite3.connect(db_path)) as db:
+        db.execute("CREATE TABLE %s (%s)" % (_LOOP_EVENTS_TABLE, declared))
+        for ddl in indexes.values():
+            db.execute(ddl)
+        db.commit()
+
+
+def read_loop_events(
+    db_path: Path,
+    columns: tuple[str, ...] = ("event_ts", "agent", "eval_result"),
+) -> list[dict[str, str]]:
+    """Every stored loop-event row, insertion order, in the caller's projection."""
+    with closing(sqlite3.connect(db_path)) as db:
+        rows = db.execute(
+            "SELECT %s FROM %s ORDER BY id" % (", ".join(columns), _LOOP_EVENTS_TABLE)
+        ).fetchall()
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def read_proposal(
