@@ -86,18 +86,14 @@
 #   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
-# Review actor (core.autoagent_proposals.reviewed_by):
-#   Every status writer records WHO moved the row. The two columns answer
-#   different questions and are asymmetric on purpose — reviewed_at is the
-#   instant of the review VERDICT that settled the row, reviewed_by is the actor
-#   that produced its current status whatever kind of transition it was. The
-#   closed token set is declared at monitor/prisma/schema.prisma ->
-#   AutoagentProposal; this script stamps two of it. The apply flip IS a verdict,
-#   so it writes both; the stale drain terminates a fossil nobody adjudicated, so
-#   it writes the actor alone. --actor overrides the flip token only (the
-#   operator approve route passes `monitor-user`) and is checked against the
-#   flip-eligible set HERE, in the shell: the psql binding makes a wrong token
-#   injection-safe, not correct.
+# Review actor — the reviewed_at/reviewed_by contract and the closed token set are
+# declared at monitor/prisma/schema.prisma -> AutoagentProposal:
+#   This script stamps two tokens of that set, one per arm. The apply flip IS a
+#   verdict, so it writes the actor AND the instant; the stale drain terminates a
+#   fossil nobody adjudicated, so it writes the actor alone. --actor overrides the
+#   flip token only (the operator approve route passes `monitor-user`) and is
+#   checked against the flip-eligible set HERE, in the shell: the psql binding
+#   makes a wrong token injection-safe, not correct.
 #
 # Auto-regen mode (regen-on-accept path):
 #   --auto-regen modifies --proposal-id N ONLY when the normal single-mode apply
@@ -1901,8 +1897,8 @@ get_model_id() {
 # update_db_status — transition core.autoagent_proposals.status
 # pending/snoozed → 'applied' (+ reviewed_at = now(), + reviewed_by = the run's
 # REVIEW_ACTOR) for the (pattern_label, target_file, cycle_date) tuple of the
-# just-committed patch. The flip IS a review verdict — it accepts the proposal —
-# so it is one of the two writers that may stamp the instant.
+# just-committed patch. The flip IS a review verdict — it accepts the proposal — so
+# it stamps both provenance columns.
 # (snoozed is included so a user-approved snoozed proposal also lands; the
 # backlog/report paths only ever select pending rows, so this is a no-op widen
 # for them.)
@@ -2115,10 +2111,9 @@ mark_stale_attempt() {
     #   bumped— increment + conditional terminal flip, ONLY when the column exists.
     #           The increment lands first; the same statement flips status to
     #           'snoozed' once the NEW count >= threshold (so attempt N is the one
-    #           that drains). The terminal arm stamps reviewed_by, the mover; it leaves
-    #           reviewed_at alone, because a bounded-retry drain terminates a fossil and
-    #           adjudicates nothing, and the instant answers WHEN a verdict settled the
-    #           row. An increment stamps neither — the status did not move.
+    #           that drains). The terminal arm stamps the actor ALONE — a bounded-retry
+    #           drain terminates a fossil and adjudicates nothing, so it may not stamp
+    #           the verdict instant. An increment stamps neither: the status did not move.
     # The final SELECT emits exactly one verdict token. When the column is absent
     # `bumped` is empty (the UPDATE is gated on `col`), so the SELECT returns
     # 'no_column' and NOTHING is mutated — the row stays pending (column-absent path).

@@ -163,9 +163,9 @@ interface ProposalListDbRow {
   status: string;
   cost_guard_state: string | null;
   reviewed_at: Date | null;
-  // The actor that produced the row's current status. Asymmetric with the instant
-  // above by design: reviewed_at answers WHEN a verdict settled the row, reviewed_by
-  // answers WHO moved it, and a machine-drained row has the second without the first.
+  // Contract + closed token set: monitor/prisma/schema.prisma -> AutoagentProposal.
+  // Nullable independently of reviewed_at above — a machine-drained row carries one
+  // and not the other, so neither column's presence implies the other's.
   reviewed_by: string | null;
   // Provenance columns surfacing the pre-verify chain to the UI.
   rationale: string | null;
