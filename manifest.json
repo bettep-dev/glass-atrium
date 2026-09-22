@@ -1330,7 +1330,7 @@
     "monitor/public/src/ui.jsx": "01ebf69c3e9f0cd04543e259fa707b9c46b779270b2318fc660f871a4a478cad",
     "monitor/public/styles/base.css": "172e8360db2773586f581922516d433c448bc91596040c80859e8fe13ff686a7",
     "monitor/public/styles/tokens.css": "f389cb68e2c6194eed2e448c6635566abcc63de6b4e7b33aac80fdccba2b038e",
-    "monitor/scripts/oss-db-setup.sh": "df8504b1a1cd3b0e37b5a43cfdc98b0857a7665e317647cfcaf8e3d838b40421",
+    "monitor/scripts/oss-db-setup.sh": "361cf95e95df5ef5d3f38f900d1f7cb60c25321cec2c70c56915e5a2ab15a34e",
     "monitor/scripts/prune-dist.sh": "32c18313c1012de0a28f9bfb76939b4e207c464c7586513821868f64ebbd9347",
     "monitor/src/server/agents/registry.ts": "43064a7baee3fe803252e99c98ad3b1aedcfac2afe17076cb1299f9f3172df50",
     "monitor/src/server/architecture/content-budget.ts": "8fb9e06df8b5220345996104d82cdd21829ab8b2580f8ab11932e48ee7df7577",
