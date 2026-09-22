@@ -1484,7 +1484,7 @@ async function handleLearningLog(
 // GET /api/improvement/loop-events
 
 // Surfaces core.autoagent_loop_events — the per-cycle stage event stream.
-// Recent events (event_ts DESC) + table-wide eval_result distribution + latest
+// Recent events (event_ts DESC, id DESC) + table-wide eval_result distribution + latest
 // event timestamp.
 async function handleLoopEvents(
   request: FastifyRequest<{ Querystring: OrphanQuerystring }>,
@@ -1522,11 +1522,16 @@ async function handleLoopEvents(
         ORDER BY count DESC
       `,
       // rice (Decimal) cast ::float8 → plain number | null on the raw map.
+      // id DESC tie-breaks a shared event_ts — eval_result is part of the census key,
+      // so one agent stamps a row per result at a single cycle instant and event_ts
+      // alone leaves their order to the scan. id, not inserted_at: the migration's `DEFAULT now()`
+      // stamps every pre-existing row with the one migration instant, so
+      // inserted_at carries no ordering for them and id is their only history.
       prisma.$queryRaw<LoopEventDbRow[]>`
         SELECT id, event_ts, agent, rice::float8 AS rice, eval_result, changes_added, changes_removed
         FROM core.autoagent_loop_events
         ${agentWhere}
-        ORDER BY event_ts DESC
+        ORDER BY event_ts DESC, id DESC
         LIMIT ${limit}
       `,
     ]);
