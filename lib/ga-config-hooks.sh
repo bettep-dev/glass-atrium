@@ -416,7 +416,7 @@ note_hook_rewire() {
   # ~/.glass-atrium and the marker advertises a rewire of an install nobody wired — doctor then
   # reports it for the whole notice window. REDIRECTED, never skipped: the write stays exercised.
   # A suite that redirects GA_DATA_ROOT itself is already sandboxed → real path kept.
-  # Production is byte-identical: BATS_* exists only inside a bats run.
+  # Production BEHAVIOUR is unchanged: no BATS_* is set outside a bats run, so the branch is inert.
   if [[ -n "${BATS_TEST_TMPDIR:-${BATS_RUN_TMPDIR:-}}" && "${marker_dir}" == "${HOME}/.glass-atrium/data" ]]; then
     marker_dir="${BATS_TEST_TMPDIR:-${BATS_RUN_TMPDIR}}/ga-rewire-marker"
     log "  rewire marker REDIRECTED to the bats sandbox (GA_DATA_ROOT left at the live default)"
