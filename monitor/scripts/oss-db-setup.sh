@@ -402,7 +402,7 @@ fi
 # step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
 # raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate) → invisible to a schema-level check
 # migrate deploy applies them, but a silent create miss carries NO error → confirm here, loud-fail otherwise
-# a miss is never merely a seq-scan — a missed partial UNIQUE un-enforces single-active-job
+# a miss is only a seq-scan on the plain indexes — a missed partial UNIQUE un-enforces single-active-job
 # a missed loop-event dedup key lets census rows accumulate → a corrected verdict stops superseding
 log "verifying 8 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
 # schemaname pinned — pg_indexes spans every schema → a name-only match can mask a missing index
