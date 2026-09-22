@@ -400,32 +400,19 @@ if [[ "${overage_present}" != "core.budget_overages" ]]; then
 fi
 
 # step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
-# Raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate) are invisible to a
-# schema-level check. migrate deploy applies them, but a silent create miss carries NO error.
-# Three migrations create them, and all 8 are checked here:
-#   · 1 from 20260611000000_init_squashed — update_job_single_active_uniq (partial UNIQUE,
-#     WHERE status = 'in-progress'), documented on schema.prisma's UpdateJob. A miss does not
-#     merely degrade a scan — it silently un-enforces single-active-job
-#   · 5 from 20260718000000_restore_squash_lost_partial_indexes — miss degrades to seq-scans
-#     (clauded-docs folder cascade + improvement style_ref/tier window)
-#   · 2 from 20260921000000_split_autoagent_loop_event_identity — miss drops the loop-event
-#     dedup key entirely, so census rows accumulate and a corrected verdict stops superseding
-# The list stays HARDCODED — the expectation is asserted independently of the migration files
-# A runtime-derived expectation shrinks with whatever it reads, then passes against the remnant
-#   · one lost or damaged migration file → that file's share goes (8 → 6 for the split migration)
-#   · a lost or unparseable enumeration source → all 8 go, the vacuous extreme
-# A stated count of 8 shrinks by neither; parity with the migration DDL is pinned by
-# test/oss-db-setup.bats
-# schemaname is pinned too — pg_indexes spans every schema, so a name-only match can count a
-# same-named index outside core/monitor and mask a genuinely missing one
-# Schema granularity only — a per-name table mapping would be a second hand-maintained list,
-# which is the drift this pin exists to stop; the schema list is pinned by the same suite
-# Confirm all 8 landed and loud-fail otherwise (aligns with the loud-fail precondition principle;
-# SELECT-only, no mutation). Names MUST byte-match the migration DDL.
+# raw-SQL partial indexes (Prisma DSL cannot express a WHERE predicate) → invisible to a schema-level check
+# migrate deploy applies them, but a silent create miss carries NO error → confirm here, loud-fail otherwise
+# a miss is never merely a seq-scan — a missed partial UNIQUE un-enforces single-active-job
+# a missed loop-event dedup key lets census rows accumulate → a corrected verdict stops superseding
 log "verifying 8 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
+# schemaname pinned — pg_indexes spans every schema → a name-only match can mask a missing index
+# schema granularity only — a per-name table map would be a second hand-maintained list, i.e. more drift
 idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
   "SELECT count(*) FROM pg_indexes WHERE schemaname IN ('core','monitor') AND indexname IN ('update_job_single_active_uniq','outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup')")" \
   || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
+# the name list above and this count are STATED, never derived from the migration files
+# a derived expectation shrinks with a lost or unparseable source, then passes against the remnant
+# names, schemas and count are pinned against the migration DDL by test/oss-db-setup.bats
 if [[ "${idx_present}" != "8" ]]; then
   fail "${EXIT_PARTIAL_IDX}" "expected 8 raw-SQL partial indexes, found ${idx_present} — 20260611000000_init_squashed, 20260718000000_restore_squash_lost_partial_indexes or 20260921000000_split_autoagent_loop_event_identity did not fully apply"
 fi
