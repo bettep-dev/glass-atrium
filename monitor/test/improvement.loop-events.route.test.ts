@@ -5,9 +5,8 @@
 // no scan plan can permute. Without the tie-break the route orders on event_ts alone
 // and the within-instant order is whatever the plan yields.
 //
-// Scope: ordering only. The two production rows that share an event_ts stay double-
-// counted in total_events and result_distribution; a tie-break fixes their ORDER and
-// nothing else.
+// Scope: ordering only. Rows sharing an event_ts stay counted individually in
+// total_events and result_distribution; a tie-break fixes their ORDER and nothing else.
 //
 // Hermetic registry — AGENT_REGISTRY_PATH holds ONLY this suite's uuid-unique agent,
 // so the T10 membership gate collapses the feed to the seeded rows and a concurrent
@@ -37,8 +36,8 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
 
-// Only the two ordering keys are read back — the payload's other columns are pinned
-// by improvement.learning-loop-gate.route.test.ts.
+// Only the two ordering keys are read back; this suite asserts nothing about the
+// other payload columns.
 interface LoopEventPayloadRow {
   id: number;
   event_ts: string;

@@ -1522,9 +1522,9 @@ async function handleLoopEvents(
         ORDER BY count DESC
       `,
       // rice (Decimal) cast ::float8 → plain number | null on the raw map.
-      // id DESC tie-breaks a shared event_ts — the census key is per-day, so one
-      // agent/day routinely carries several rows and event_ts alone leaves their
-      // order to the scan. id, not inserted_at: the migration's `DEFAULT now()`
+      // id DESC tie-breaks a shared event_ts — eval_result is part of the census key,
+      // so one agent stamps a row per result at a single cycle instant and event_ts
+      // alone leaves their order to the scan. id, not inserted_at: the migration's `DEFAULT now()`
       // stamps every pre-existing row with the one migration instant, so
       // inserted_at carries no ordering for them and id is their only history.
       prisma.$queryRaw<LoopEventDbRow[]>`
