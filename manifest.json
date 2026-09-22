@@ -1253,7 +1253,7 @@
     "hooks/validate-scope-drift.sh": "5c2d7f479e11ee479218e46aae7341f2d24d392d34812c8b4b7943e16d671d68",
     "hooks/validate-secret-scan.sh": "9ecbef7faab5d626e706d92e576c60bbfd5757ed8ee2288eeb5d707174e20d0c",
     "hooks/validate-tool-response.sh": "a3c8cb371b789c478996b2ac6e37d5ce0d09e99b3004aa67247f9d95ecee508d",
-    "lib/ga-config-hooks.sh": "722846d5399efbef13a5944fb83bf10400af13fbce007a32880e9aedf1f5147a",
+    "lib/ga-config-hooks.sh": "276d1d22f3a9a8217e52b6d7ed890e30d8658002a543f2e86f3097e0e5943d9d",
     "lib/ga-core.sh": "54526a2fe3a75fc9ea2ec452e15f7f6ceb648887f41ac59c6e5c84d137bdcb39",
     "lib/ga-daemons.sh": "199c3457306851b5eea9a1efe1d71b819dda8fce922bfca9ee263700b8f93b52",
     "lib/ga-db.sh": "9bf3b1fd6cef50729e856f87b27bf2c9d3ad54eebd05ff22c69bed5b6ea94807",
@@ -1759,7 +1759,7 @@
     "test/update-launchd-autoagent.bats": "20e29d990561e0f06a4e297b60d9430374bf90e727d732e37378c66f88d80eb1",
     "test/update-restore-base-reversal.bats": "730a7cd49afdafb95ed442f1b4f381f8a2da42594571fdebbddc2cf2924818b3",
     "test/wire-hooks-merge.bats": "760c0a9907c56de529dcc4296e9842829ec495681ab082efd68db10535fc7bd7",
-    "test/wire-hooks-restart-notice.bats": "5e85e98236133f12976a03b6021cbe3b3f303ae17bc077144227fe6fe56b0d04",
+    "test/wire-hooks-restart-notice.bats": "109301c3ffc0b651a79652308429b7ee3309ee3c8607aab5df48183caf176255",
     "test/workbox-bar-count-visible-during-resolve.bats": "41dfb0658f9fd0176c98f48873b9630206ee318391eca1c04be80244f329fcaa"
   },
   "modes": {
