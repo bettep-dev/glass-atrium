@@ -12,8 +12,12 @@ constituent's nested parentheses sit inside the haystack rather than being
 parsed, and the zero-match mode of a label-first parse cannot arise.
 
 Every test here is DATABASE-FREE: the CI python leg provisions no database, and
-a skip-only class reports as a pass. Fixtures are the REAL stored strings frozen
-below, never invented.
+a skip-only class reports as a pass — so the ``daemon_cycle`` import below is
+deliberately UNGUARDED and an import regression reds the leg instead of hiding
+the class-authority pin behind a skip. Its import surface is stdlib plus
+repo-local modules (psycopg absence is absorbed inside daemon_cycle itself), so
+no environment makes that import legitimately fail. Fixtures are the REAL stored
+strings frozen below, never invented.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_discharge_wiring.py -v
@@ -27,9 +31,11 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -43,28 +49,63 @@ if str(_HOOKS_DIR) not in sys.path:
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
 
-try:
-    import daemon_cycle as dc
+import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
 
-    _IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
-    dc = None  # type: ignore[assignment]
-    _IMPORT_ERROR = exc
+# The writer owns the cause-token→class map; the gate-invariance case compares the
+# daemon's own tokens against it rather than restating the set a second time.
+# Read through the stdlib stand-in, NEVER by a direct import: the writer re-raises
+# ImportError wherever psycopg is absent, which is every merge-gating leg — a direct
+# import resolves to nothing there and the class-authority pin would skip on exactly
+# the leg it exists to fail.
+_SCRIPTS_TEST_DIR = _REPO_ROOT / "scripts" / "test"
+if str(_SCRIPTS_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_TEST_DIR))
+
+import _pg_stub_backend as stub_backend  # noqa: E402 — scripts/test pinned above
+
+
+def _get_writer_verdict_causes() -> tuple[str, ...]:
+    """The writer's verdict cause tokens, read under the fabricated driver.
+
+    The stand-in connects lazily, so the database name below is carried and never
+    opened — no table is needed to read a module constant.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with stub_backend.load_helper(Path(tmp_dir) / "loop_events.sqlite") as writer:
+            return writer.LOOP_EVENT_VERDICT_CAUSES
+
 
 # Loop-event envelopes the module-level seal captured instead of writing them.
 _EMITTED: list[dict] = []
 _EMIT_PATCHER = None
 
 
+def _seal_loop_event(envelope: dict) -> bool:
+    """Capture one loop-event envelope instead of writing it, refusing any whose
+    class is not STATED.
+
+    The ``subject`` key selects the row class, and the writer defaults an absent
+    key into the census arm — so a capture-only seal would let an emitter added
+    without a class be censused silently. PRESENCE is the check, never the value:
+    ``None`` states census, a subject token states verdict.
+    """
+    args = envelope.get("args")
+    if not isinstance(args, dict) or "subject" not in args:
+        raise AssertionError(
+            "loop-event envelope states no class — 'subject' missing from "
+            "envelope['args']; state it at the emit site (None = census, a "
+            "subject token = verdict) instead of defaulting into the census "
+            "arm. envelope=%r" % (envelope,)
+        )
+    _EMITTED.append(envelope)
+    return True
+
+
 def setUpModule() -> None:
     """Seal the loop-event writer for every test in this file — an unresolved
     proposal reaches the emit, and an unsealed run writes live PG rows."""
     global _EMIT_PATCHER
-    if dc is None:
-        return
-    _EMIT_PATCHER = mock.patch.object(
-        dc, "_invoke_pg_helper", lambda envelope: _EMITTED.append(envelope) or True
-    )
+    _EMIT_PATCHER = mock.patch.object(dc, "_invoke_pg_helper", _seal_loop_event)
     _EMIT_PATCHER.start()
 
 
@@ -225,7 +266,6 @@ def _capture_stderr():
         yield buf
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class CoverageResolutionTest(unittest.TestCase):
     """find_covered_pattern_rows — pattern-first, per-agent, untruncated source."""
 
@@ -366,7 +406,6 @@ class CoverageResolutionTest(unittest.TestCase):
         self.assertEqual(covered, [])
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class DischargeStageTest(unittest.TestCase):
     """discharge_applied_patterns — dry-run default, tri-state, no lockout."""
 
@@ -554,7 +593,142 @@ class DischargeStageTest(unittest.TestCase):
         self.assertNotIn("LIMIT", sql.upper())
 
 
-@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
+    def test_when_a_proposal_is_adjudicated_then_its_row_carries_it_as_subject(self):
+        # Verdict class: every discharge cause keys on the proposal, so a later
+        # cause for that proposal supersedes this verdict rather than joining it.
+        react = "glass-atrium-dev-react"
+        cases = (
+            ("discharge-read-failed", {}, None, LABEL_REACT_3, react),
+            ("discharge-unresolved", None, self._UNSET,
+             "some future proposal label form v2", react),
+            ("discharge-intake-miss", {}, self._UNSET, LABEL_REACT_3, react),
+            ("discharge-covered-terminal", _index(PARKED_INTAKE_ROWS), self._UNSET,
+             _SIZE_EST_CORE, _PARKED_AGENT),
+        )
+        for token, intake, coverage, label, agent in cases:
+            with self.subTest(cause=token):
+                _EMITTED.clear()
+                self._run(
+                    [(77, agent, label)], live=True, index=intake, coverage=coverage
+                )
+                self.assertEqual(self._emitted_tokens(), [token])
+                self.assertEqual(
+                    [e["args"]["subject"] for e in _EMITTED], ["proposal:77"]
+                )
+
+    def test_when_one_cause_adjudicates_two_proposals_then_each_keeps_its_subject(self):
+        # The census key would collapse these onto one row; the verdict key keeps
+        # N subjects reaching one cause on one day representable as N rows.
+        react = "glass-atrium-dev-react"
+        self._run(
+            [(77, react, "unrecognized form"), (78, react, "another unrecognized form")],
+            live=True,
+        )
+        self.assertEqual(self._emitted_tokens(), ["discharge-unresolved"] * 2)
+        self.assertEqual(
+            [e["args"]["subject"] for e in _EMITTED], ["proposal:77", "proposal:78"]
+        )
+
+
+class CensusEmitClassTest(unittest.TestCase):
+    """Census emitters carry no subject, so they keep the (event_ts, agent, cause) key."""
+
+    def setUp(self):
+        _EMITTED.clear()
+
+    def test_when_the_gate_skips_or_fails_open_then_the_row_carries_no_subject(self):
+        with _capture_stderr():
+            dc._warn_pattern_skip(
+                "glass-atrium-dev-react",
+                "some label|glass-atrium-dev-react",
+                "2026-09-21",
+                eval_result="stale-pattern-skip",
+                reason="reobservation window elapsed",
+            )
+            dc._warn_gate_fail_open(
+                "glass-atrium-dev-react",
+                "some label|glass-atrium-dev-react",
+                "2026-09-21",
+                eval_result=dc.STALE_UNKNOWN_FAMILY_EVAL,
+                reason="family unknown to the staleness table",
+            )
+        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None, None])
+
+    def test_when_an_intake_row_is_off_roster_then_the_row_carries_no_subject(self):
+        with _capture_stderr():
+            dc._warn_roster_mismatch("not-an-agent", "sig|not-an-agent", "2026-09-21")
+        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None])
+        self.assertEqual([e["args"]["eval_result"] for e in _EMITTED], ["roster-mismatch"])
+
+    def test_when_the_cycle_aggregate_emits_then_it_states_the_census_class(self):
+        # The aggregate pre-aggregates ONTO the census key (C8), so its envelope
+        # names the column the class turns on rather than leaving it to a default.
+        patch = SimpleNamespace(
+            pattern_agent="glass-atrium-dev-react",
+            estimated_added_lines=3,
+            estimated_removed_lines=1,
+        )
+        report = SimpleNamespace(patches=[patch, patch], generated_at="2026-09-21")
+        with mock.patch.object(dc, "_coerce_eval_result", return_value="verified"):
+            envelopes = dc._aggregate_loop_events(report)
+        self.assertEqual([e["args"]["subject"] for e in envelopes], [None])
+        self.assertEqual(envelopes[0]["args"]["changes_added"], 6)
+
+
+class RegressionGateInvarianceTest(unittest.TestCase):
+    """The class split must not move the regression gate — it is a CONTROL path.
+
+    The gate reads its own warning rows back out of core.autoagent_loop_events and
+    those rows BLOCK proposal rows, so its key and its join stay where they were.
+    """
+
+    _AGENT = "glass-atrium-dev-react"
+    _APPLIED_TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
+
+    def _blocked(self, warned_at: datetime) -> frozenset:
+        report = dc.find_regression_blocked_rows(
+            [(warned_at, self._AGENT)],
+            [(11, self._AGENT, self._APPLIED_TS, LABEL_REACT_3, "applied")],
+            _index(),
+            now=self._APPLIED_TS + timedelta(days=1),
+        )
+        self.assertFalse(report.indeterminate)
+        return report.blocked_rows
+
+    def test_when_the_warning_shares_the_apply_instant_then_its_rows_stay_blocked(self):
+        self.assertEqual(self._blocked(self._APPLIED_TS), frozenset({7, 1, 5}))
+
+    def test_when_the_warning_instant_differs_then_the_join_matches_nothing(self):
+        self.assertEqual(
+            self._blocked(self._APPLIED_TS + timedelta(seconds=1)), frozenset()
+        )
+
+    def test_when_the_gate_selects_its_warnings_then_it_reads_no_subject(self):
+        sql = " ".join(dc._REGRESSION_WARNINGS_SELECT_SQL.split())
+        self.assertIn("SELECT event_ts, agent FROM core.autoagent_loop_events", sql)
+        self.assertIn("WHERE eval_result = %s", sql)
+        self.assertNotIn("subject", sql)
+
+    def test_when_the_writer_classifies_the_gate_token_then_it_is_census(self):
+        # A verdict-classified gate token would re-key the very rows the gate
+        # reads back, so the class authority must keep it census.
+        verdict_causes = _get_writer_verdict_causes()
+        self.assertNotIn(dc.POST_APPLY_REGRESSION_EVAL_RESULT, verdict_causes)
+        self.assertNotIn(dc.CONFOUND_SIGNATURE_EVAL_RESULT, verdict_causes)
+        self.assertNotIn(dc.DWC_SHARE_ALARM_EVAL_RESULT, verdict_causes)
+        self.assertEqual(
+            sorted(verdict_causes),
+            sorted(
+                (
+                    dc.DISCHARGE_EVENT_READ_FAILED,
+                    dc.DISCHARGE_EVENT_UNRESOLVED,
+                    dc.DISCHARGE_EVENT_COVERED_TERMINAL,
+                    dc.DISCHARGE_EVENT_INTAKE_MISS,
+                )
+            ),
+        )
+
+
 class DischargeDefaultTest(unittest.TestCase):
     """Live transitioning is opt-in and never the default."""
 
@@ -568,6 +742,55 @@ class DischargeDefaultTest(unittest.TestCase):
     def test_when_env_set_true_then_live_transitioning_is_enabled(self):
         with mock.patch.dict("os.environ", {dc.DISCHARGE_LIVE_ENV: "true"}):
             self.assertTrue(dc.discharge_live_enabled())
+
+
+class SubjectWidthGuardTest(unittest.TestCase):
+    """A subject wider than its column is a caller bug, refused before connecting.
+
+    Truncating would key two adjudications onto ONE verdict row; letting it through
+    defers the failure into PG, where a caller bug is filed as a database one.
+    """
+
+    def _migration_declared_width(self) -> int:
+        """The subject column's width as the migration SQL declares it."""
+        widths = set()
+        migrations = _REPO_ROOT / "monitor" / "prisma" / "migrations"
+        for sql_path in migrations.glob("*/migration.sql"):
+            for line in sql_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("--") or '"subject"' not in stripped:
+                    continue
+                if "VARCHAR(" not in stripped:
+                    continue
+                widths.add(int(stripped.split("VARCHAR(")[1].split(")")[0]))
+        self.assertEqual(len(widths), 1, "expected ONE subject column declaration")
+        return widths.pop()
+
+    def test_when_the_refusal_boundary_leaves_the_column_width_then_it_reds(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with stub_backend.load_helper(
+                Path(tmp_dir) / "loop_events.sqlite"
+            ) as writer:
+                self.assertEqual(
+                    writer._LOOP_EVENT_SUBJECT_MAX_CHARS,
+                    self._migration_declared_width(),
+                )
+
+    def test_when_a_subject_exceeds_the_column_then_nothing_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with stub_backend.load_helper(
+                Path(tmp_dir) / "loop_events.sqlite"
+            ) as writer:
+                over = "p:" + "9" * writer._LOOP_EVENT_SUBJECT_MAX_CHARS
+                with self.assertRaises(writer.CallerContractViolation):
+                    writer.write_autoagent_loop_event(
+                        "2026-09-21",
+                        "glass-atrium-dev-react",
+                        writer.LOOP_EVENT_VERDICT_CAUSES[0],
+                        0,
+                        0,
+                        subject=over,
+                    )
 
 
 if __name__ == "__main__":
