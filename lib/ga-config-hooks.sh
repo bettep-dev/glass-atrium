@@ -411,6 +411,16 @@ note_hook_rewire() {
   [[ "${changed}" -gt 0 ]] || return 0
   log "  RESTART REQUIRED: ${changed} hook binding change(s) (added ${added}, dropped ${removed}, retired ${retired}) — Claude Code snapshots hook bindings at SESSION START, so they are INERT in every already-running session. Start a NEW session to activate them."
   local marker_dir="${GA_DATA_ROOT}/data"
+  # TEST-HARNESS SANDBOX GUARD — a bats suite drives the REAL wire path against a sandboxed
+  # GA_TARGET_HOME while inheriting the operator's $HOME, so GA_DATA_ROOT falls back to the LIVE
+  # ~/.glass-atrium and the marker advertises a rewire of an install nobody wired — doctor then
+  # reports it for the whole notice window. REDIRECTED, never skipped: the write stays exercised.
+  # A suite that redirects GA_DATA_ROOT itself is already sandboxed → real path kept.
+  # Production is byte-identical: BATS_* exists only inside a bats run.
+  if [[ -n "${BATS_TEST_TMPDIR:-${BATS_RUN_TMPDIR:-}}" && "${marker_dir}" == "${HOME}/.glass-atrium/data" ]]; then
+    marker_dir="${BATS_TEST_TMPDIR:-${BATS_RUN_TMPDIR}}/ga-rewire-marker"
+    log "  rewire marker REDIRECTED to the bats sandbox (GA_DATA_ROOT left at the live default)"
+  fi
   local marker="${marker_dir}/hook-rewire-pending"
   mkdir -p -- "${marker_dir}"
   local now
