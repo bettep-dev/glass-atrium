@@ -4,8 +4,7 @@ The table carries two row classes under one key. A census row records one cause 
 one agent at one event_ts, so a re-emitted cause must collapse onto that row and two
 different causes must not. A verdict row adjudicates ONE subject, so a corrected
 verdict must supersede the verdict it corrects — which the three-column key cannot
-express, because the subject it would key on is not among those columns. Two rows
-in the live table already record one adjudication twice for exactly that reason.
+express, because the subject it would key on is not among those columns.
 
 The cause token names the class, so the subject has to agree with it in both
 directions; the refusal cases below pin that choke point, including the blank

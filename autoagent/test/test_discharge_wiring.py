@@ -631,7 +631,7 @@ class DischargeStageTest(unittest.TestCase):
 
 
 class CensusEmitClassTest(unittest.TestCase):
-    """Census emitters carry no subject, so they keep the (day, agent, cause) key."""
+    """Census emitters carry no subject, so they keep the (event_ts, agent, cause) key."""
 
     def setUp(self):
         _EMITTED.clear()

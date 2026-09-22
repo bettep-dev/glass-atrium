@@ -1,16 +1,18 @@
 -- Replace the three-column unique on core.autoagent_loop_events with two predicate-bearing
--- partial uniques: a census row keeps its (date, agent, cause) key, and a verdict row keys on
--- (date, agent, subject) so a re-adjudication supersedes rather than accumulates.
+-- partial uniques: a census row keeps its (event_ts, agent, cause) key, and a verdict row keys
+-- on (event_ts, agent, subject) so a re-adjudication supersedes rather than accumulates.
 -- The old key expressed neither class — verdict rows sharing a cause collided, and a corrected
 -- verdict carrying a NEW cause did not collide with the row it replaces.
--- No row data is touched, and IF [NOT] EXISTS keeps a re-run, or a future pre-release re-squash
--- folding these objects into the init CREATE TABLE, a no-op.
+-- No row data is touched, so every pre-existing row keeps subject NULL and stays census class —
+-- a later verdict row for the same proposal lands beside it rather than superseding it — and
+-- IF [NOT] EXISTS keeps a re-run, or a future pre-release re-squash folding these objects into
+-- the init CREATE TABLE, a no-op.
 
 -- Lock posture: Prisma Migrate wraps the file in ONE transaction, so ACCESS EXCLUSIVE is taken
--- at this first ALTER and held to COMMIT. At 5153 rows the work is sub-second, but the blocking
--- window is what matters — deploy outside 04:00-05:30 KST. CONCURRENTLY is deliberately NOT
--- used and must not be added: it cannot run inside a transaction block, so it would abort the
--- updater's non-interactive migrate-deploy step rather than improve it.
+-- at this first ALTER and held to COMMIT. The blocking window, not the row count, is what
+-- matters — deploy outside 04:00-05:30 KST. CONCURRENTLY is deliberately NOT used and must not
+-- be added: it cannot run inside a transaction block, so it would abort the updater's
+-- non-interactive migrate-deploy step rather than improve it.
 --
 -- Identity token of the subject a verdict adjudicates; NULL means census class.
 -- VARCHAR(128) mirrors the table's VARCHAR idiom (agent 64, eval_result 32) and bounds an
