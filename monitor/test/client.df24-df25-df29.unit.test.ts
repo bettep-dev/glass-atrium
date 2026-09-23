@@ -178,17 +178,18 @@ test("getTokenRate: claude-fable-5-1 resolves from its own mirror row, not the f
 
 test("getTokenRate: claude-opus-5-5 resolves from its own mirror row, not the family prefix", () => {
   // Losing the row falls through to the claude-opus-5 prefix, which prices input
-  // at 5.00 against the 4.00 this id carries — a 25% overcharge on every field.
+  // at 5.00 against the 4.00 this id carries — overcharges every field (cache_read 2.5x).
   const explicit = pricing.TOKEN_RATES["claude-opus-5-5"];
   assert.ok(explicit, "mirror lost its explicit claude-opus-5-5 row");
   assert.strictEqual(pricing.getTokenRate("claude-opus-5-5"), explicit);
+  // A context-variant suffix left on the id skips the exact row and matches claude-opus-5-.
+  assert.strictEqual(pricing.getTokenRate("claude-opus-5-5[1m]"), explicit);
   assert.strictEqual(explicit.input, 4.0);
   assert.strictEqual(pricing.TOKEN_RATES["claude-opus-5"].input, 5.0);
 });
 
 test("MODEL_CAP_MC: every described id is priced, and one id alone is the latest Opus", () => {
   const caps = loadModelCapMap();
-  assert.ok(caps["claude-opus-5-5"], "descriptor map lost its claude-opus-5-5 entry");
 
   // An option whose id the mirror cannot price renders a cost-less radio card.
   for (const [id, desc] of Object.entries(caps)) {

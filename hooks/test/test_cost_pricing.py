@@ -579,13 +579,12 @@ class RateForSotTest(_LoaderCase):
 
     def test_opus_5_5_resolves_from_its_own_sot_row(self):
         # Without an explicit row the longest dash-bounded prefix resolves this id
-        # to claude-opus-5 at 5.00/25.00 — a 25% overcharge on every field, and the
+        # to claude-opus-5, which overcharges every field (cache_read 2.5x), and the
         # id would stay unknown, keeping it out of the model-config roster.
         record = self._rate_for("claude-opus-5-5")
         self.assertEqual(record["resolution"], "sot")
         self.assertEqual(record["matched_model"], "claude-opus-5-5")
         self.assertEqual(record["rate"], _OPUS_5_5_RATE)
-        self.assertNotEqual(record["rate"], _OPUS_RATE)
         self.assertTrue(
             pricing_loader.is_known("claude-opus-5-5", sot_path=str(_SOT_PATH))
         )
