@@ -58,6 +58,17 @@ class VerdictPersisted(unittest.TestCase):
         )
         self.assertIs(axes[dc.PROSE_ONLY_ADD_AXIS_KEY], False)
 
+    def test_when_a_body_line_names_a_hook_then_it_is_not_a_hook_header(self) -> None:
+        diff = (
+            "--- a/agents/x.md\n+++ b/agents/x.md\n@@ -1 +1,2 @@\n ctx\n"
+            "+++ hooks/track-outcome.sh\n"
+        )
+        self.assertIs(_verdict(diff, "agents/x.md"), True)
+
+    def test_when_a_quoted_header_names_a_hook_then_key_false(self) -> None:
+        diff = '--- "a/hooks/x y.sh"\n+++ "b/hooks/x y.sh"\n@@ -1 +1,2 @@\n ctx\n+line\n'
+        self.assertIs(_verdict(diff, "agents/x.md"), False)
+
     def test_compliance_axes_are_untouched_by_the_passenger(self) -> None:
         axes = dc._compose_pre_verify_axes(
             _PASSED_AXES, _verdict(_ADDED_ONLY_DIFF, "agents/x.md")

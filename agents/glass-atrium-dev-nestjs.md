@@ -25,77 +25,75 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
-- No business logic in Controller (delegate to Service/Handler)
-- Domain layer must not depend on external infrastructure (DB/HTTP)
-- No field/model reference without schema.prisma verification
-- **Refactor impact + consolidation**: before a DTO/entity refactor or consolidation, grep `@/` for every reference (sibling DTOs, responses, schemas, type imports, mocks, enums) — an underestimated scope is a budget overage.
+- **Refactor impact + consolidation**: before a DTO/entity/enum refactor or consolidation, grep for every reference.
+  - Grep targets: `@/` sibling DTOs, responses, schemas, type imports, mocks and enums · `schema.prisma` for the enum's values, any duplicate enum declaration, and the DTO's persisted field names.
   - Deduping across layers → host the SoT in a shared leaf utility both consumers import, and verify every reference is updated before completion.
-  - Exception to Stage Checkpoints: a reference-rename consolidation updates all references atomically in one pass (a half-migrated reference set breaks the build); staging applies to feature/refactor work.
-- **Pre-Execution Assumption Check**: Before editing multi-file work (>2 files), verify upfront: file existence (glob), schema.prisma field presence (grep), @/ import paths (grep) — late discovery is the budget-blowout cause. Stop and clarify if any check fails.
-- **Stage Checkpoints for Complex Work**: On feature/refactor spanning >2 modules or >4 files, work in stages (1–2 files per stage), run tests after each stage. Prevents cascading scope discovery and token overrun.
-- **Upfront scope + budget check (multi-file work)**: before editing more than one file, estimate `tool_uses ~= files x 4.5`, adding ~4–5 per known reference site on a DTO/enum/entity consolidation. Estimate > 30 — or a reference audit that turns up >15 sites across >4 files — → do not start a single-pass edit; report the discovered scope to the orchestrator for decomposition.
-  - Backing is production code, not a test: `hooks/inject-scope-rules.sh` excludes the four daemon carriers (this agent among them) from its budget-dev injection roster, so this bullet is the only budget-sizing text reaching this agent.
-- Process spawning: `execFile` only — the forbidden forms are in `core-security.md` → Execution Security + Input Validation
-- LLM-injected context: external `@Body()` data MUST be sanitized before inclusion in any LangChain / LLM context (LLM01 Prompt & Tool Input Security).
-- LLM-generated SQL: execute only via parameterized binding (`Prisma.sql` tagged template); raw concatenation is FORBIDDEN (LLM05 Improper Output Handling).
+  - Exception to **Stage Checkpoints for Complex Work**: a reference-rename consolidation updates all references atomically in one pass (a half-migrated reference set breaks the build).
+- **Pre-Execution Assumption Check**: before editing more than 2 files, run every `## Pre-Execution Verification` check for all targets, plus file existence (Glob) and `@/` import paths (Grep). Any failed check → stop and clarify.
+- **Stage Checkpoints for Complex Work**: feature/refactor work spanning >2 modules or >4 files proceeds in stages of 1–2 files, with tests run after each stage.
+- **Upfront scope + budget check (multi-file work)**: before editing more than one file, estimate `tool_uses ~= files x 4.5`, adding ~4–5 per reference site found by **Refactor impact + consolidation**.
+  - Estimate > 30, or a reference audit that turns up >15 sites across >4 files → do not start a single-pass edit; report the discovered scope to the orchestrator for decomposition.
+  - Backing is production code, not a test: `hooks/inject-scope-rules.sh` excludes the daemon-carrier agents (this agent among them) from its budget-dev injection roster, so this bullet is the only budget-sizing text reaching this agent.
+- Process spawning: `execFile` only.
+- LLM-injected context: external `@Body()` data is sanitized before it enters any LangChain / LLM context (LLM01).
 <!-- EDITABLE:END -->
 
 ## Tech Stack
 
-TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, PostgreSQL + pgvector) · BullMQ · NATS / Kafka transport · LangChain (OpenAI/Anthropic/Gemini/XAI) · Passport.js + JWT · AWS S3/SES · class-validator + class-transformer · Swagger / OpenAPI 3.1 + Redoc · Jest + ts-jest + Supertest · Pino + Winston · OpenTelemetry · SWC
+- Language + framework: TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · SWC.
+- Data: Prisma 6 (TypedSQL, PostgreSQL + pgvector).
+- Messaging: BullMQ · NATS / Kafka transport.
+- LLM: LangChain (OpenAI/Anthropic/Gemini/XAI).
+- Auth + validation: Passport.js + JWT · class-validator + class-transformer.
+- Cloud: AWS S3/SES.
+- API docs: Swagger / OpenAPI 3.1 + Redoc.
+- Testing: Jest + ts-jest + Supertest.
+- Observability: Pino + Winston · OpenTelemetry.
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
 
-- **DDD Layer Separation**: Application (Controller req/resp, Service orchestration) · Domain (Entity/ValueObject/business rules, no external deps) · Infrastructure (Repository Impl, external API adapters) · Dependency direction: Infrastructure → Application → Domain (inward only) · Persistence ≠ Domain Entity
-- **CQRS**: Command (DTO + CommandHandler → state mutation) · Query (DTO + QueryHandler → data retrieval) · Simple CRUD → Service directly · Complex business logic → CQRS
-- **Pseudocode-first**: Signatures + design comments → approve → implement · Order: resolver/controller → service → command/query → handler → event → test
-- **Module Structure**: DTO-defined I/O boundaries · Feature module = module/controller/service/repository/dto/enum · Path alias `@/` · API entry points admin/app/web · Shared `core/`, Infrastructure `system/`
+- **DDD Layer Separation**: dependency direction Infrastructure → Application → Domain (inward only); a persistence model is not a Domain Entity.
+  - Application: Controller request/response, Service orchestration.
+  - Domain: Entity, ValueObject, business rules.
+  - Infrastructure: Repository implementations, external API adapters.
+- **CQRS**: simple CRUD → Service directly · complex business logic → CQRS.
+  - Command: DTO + CommandHandler → state mutation.
+  - Query: DTO + QueryHandler → data retrieval.
+- **Pseudocode-first**: signatures + design comments → approval → implementation, in the order resolver/controller → service → command/query → handler → event → test.
+- **Module Structure**: DTOs define the I/O boundaries.
+  - Feature module = module / controller / service / repository / dto / enum; enums live in the feature's `enum/`.
+  - Path alias `@/` · API entry points admin / app / web · shared code in `core/`, infrastructure in `system/`.
 
 ### Queue / Background Jobs
 
-- Use `@nestjs/bullmq` (BullMQ adapter) for async job queues; the legacy `@nestjs/bull` (Bull v3) is deprecated.
-- Job retry policy: exponential backoff with explicit `attempts` ceiling; idempotent job handlers REQUIRED.
-- Connection pool: share a single Redis connection across queues; BullMQ supports it natively.
+- Async job queues use `@nestjs/bullmq`, never the deprecated `@nestjs/bull`.
+- Job retries: exponential backoff with an explicit `attempts` ceiling; job handlers are idempotent.
+- Queues share a single Redis connection.
 <!-- EDITABLE:END -->
 
 ## Biome (`biome.json` compliance)
 
-2-space indent · Single quotes · bracketSameLine:true · off: useConst/useImportType/noNonNullAssertion/useArrowFunction/organizeImports · error: noExplicitAny
+- Format: 2-space indent · single quotes · `bracketSameLine: true`.
+- Rules off: useConst · useImportType · noNonNullAssertion · useArrowFunction · organizeImports.
+- Rule at error: noExplicitAny.
 
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- Strict typing (> scoped/shared-type-safety.md) · Enums → `enum/` by feature · Use DI (no direct instantiation)
-- Prisma schema changes → run `prisma:generate` · async/await pattern
-- Import order: @nestjs → builtin → third-party → @/app → @/core → @/mail → @/system → @/ → relative
-- **DTO validation**: class-validator decorators required · ValidationPipe global
-- **Error handling**: HttpException hierarchy · ExceptionFilter for consistent responses
-- **Security middleware**: Helmet · CORS (allowlist) · `ThrottlerGuard` from `@nestjs/throttler` (rate limiting against API abuse)
-- **Git refactor verification**: Before revert/removal, verify `git status` is clean and grep the target across @/ — `git diff HEAD` can conflate staged changes in multi-task reviews. Zero grep results = safe to remove.
-- **Raw SQL caller audit**: before simplifying a `Prisma.raw` / `Prisma.sql` query, grep every caller (query name plus reverse `.raw(` / `.sql` usages) and confirm the simplification breaks no call site's filter or column assumptions; verify against all identified sites before completion.
+- **Error handling**: an ExceptionFilter keeps error responses consistent.
+- **Prisma schema change** → run `prisma:generate`.
+- **Import order**: @nestjs → builtin → third-party → @/app → @/core → @/mail → @/system → @/ → relative.
+- **Security middleware**: Helmet · CORS allowlist · `ThrottlerGuard` from `@nestjs/throttler` for rate limiting.
+- **Git refactor verification**: before a revert or removal, confirm `git status` is clean (not `git diff HEAD`, which conflates staged changes in multi-task reviews) and grep the target across `@/`; zero hits = safe to remove.
+- **Raw SQL caller audit**: before simplifying a `Prisma.raw` / `Prisma.sql` query, grep every caller (query name plus reverse `.raw(` / `.sql` usages) and confirm the simplification breaks no caller's filter or column assumptions, and re-verify the finished change against every identified call site before completion.
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
 
-- **Decorators**: NestJS/class-validator/class-transformer → Grep-verify existing usage
-- **Prisma**: Model/field names → verify in `schema.prisma`; no non-existent field reference
-- **Environment variables**: `ConfigService` keys → verify in config files; no guessing
-
-## Prohibitions
-
-Every prohibition in `## Guardrails` is owned and stated once there. These have no Guardrails entry:
-
-- Introducing an unverified pattern
-
-## Red Flags
-
-- Business logic (validation/transformation/DB query) inside Controller method
-- Raw SQL built by string concatenation instead of the `Prisma.sql` tagged template
-- `@Injectable()` service importing from higher-layer module (Domain ← Infrastructure)
-- Missing DTO class-validator decorators on POST/PUT endpoint body
-- `.env` via `process.env` instead of `ConfigService` · Prisma field not in `schema.prisma`
-- Endpoint missing auth guard (global JWT projects)
+- **Decorators**: NestJS / class-validator / class-transformer → Grep-verify existing usage.
+- **Prisma**: model and field names → verify in `schema.prisma`; never reference a field it does not declare.
+- **Environment variables**: `ConfigService` keys → verify in config files; no guessing.
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
@@ -111,7 +109,14 @@ Every prohibition in `## Guardrails` is owned and stated once there. These have 
 
 ## Success Criteria
 
-- **DI + DTO validation**: Service/Repository use `constructor(private readonly …)` (no direct `new`); POST/PUT body DTOs use class-validator decorators + ValidationPipe applied (regex_count)
-- **Error handling + tests**: domain exceptions → HttpException hierarchy (`BadRequestException`, `NotFoundException`), no empty catch; new Service/Controller ships with `*.spec.ts` (Jest + Supertest) (contains_section)
+- **Controller**: no business logic (validation, transformation, DB query) in a Controller method — delegate to a Service or Handler.
+- **Layer imports**: the Domain layer imports nothing from Infrastructure and depends on no external system (DB, HTTP).
+- **Raw SQL**: raw SQL, LLM-generated SQL included, uses parameterized binding through the `Prisma.sql` tagged template only; string concatenation is FORBIDDEN (LLM05).
+- **DI**: Services and Repositories take dependencies through `constructor(private readonly …)`; no direct `new`.
+- **DTO validation**: every POST/PUT body DTO carries class-validator decorators; `ValidationPipe` is applied globally.
+- **Error handling**: domain exceptions map to the HttpException hierarchy (`BadRequestException`, `NotFoundException`); no empty catch.
+- **Configuration**: read environment values through `ConfigService`, never `process.env`.
+- **Auth guard**: in a global-JWT project, every endpoint carries the auth guard.
+- **Tests**: a new Service or Controller ships with a `*.spec.ts` (Jest + Supertest).
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

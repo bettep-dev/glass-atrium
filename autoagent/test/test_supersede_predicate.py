@@ -143,6 +143,25 @@ class TestSupersedePredicate(unittest.TestCase):
         self.assertEqual(row["rationale"], dc._SUPERSEDE_REASON_CROSS_DAY)
 
 
+    def test_when_a_row_transitions_then_the_actor_moves_with_its_status(self) -> None:
+        """Only the rows the predicate matched name the machine arm, and none of them
+        gains a verdict instant — a machine supersede terminates, it does not adjudicate."""
+        for cycle_date, label, actor in (
+            (_RUN_DATE, _DRIFTED_LABEL, dc._SUPERSEDE_ACTOR),
+            (_PRIOR_DATE, _RUN_LABEL, dc._SUPERSEDE_ACTOR),
+            (_RUN_DATE, _RUN_LABEL, None),
+        ):
+            with self.subTest(cycle_date=cycle_date, label=label):
+                self.assertEqual(
+                    stub.read_proposal(
+                        self.db,
+                        (cycle_date, label, _TARGET),
+                        columns=("reviewed_by", "reviewed_at"),
+                    ),
+                    {"reviewed_by": actor, "reviewed_at": None},
+                )
+
+
 class TestSupersedeRationaleConsumers(unittest.TestCase):
     """The head/tail split, asserted through the real consumers of the text."""
 
@@ -234,6 +253,21 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
         self.assertEqual(
             self._row(_RUN_LABEL),
             {"status": "pending", "rationale": _generation_text(2)},
+        )
+
+
+    def test_when_a_stamped_row_is_repushed_then_its_actor_stays_with_its_status(
+        self,
+    ) -> None:
+        # The actor travels under the same preservation arm as the status and the
+        # rationale, so the push cannot re-file a superseded row under its own token.
+        self.assertEqual(
+            stub.read_proposal(
+                self.db,
+                (_RUN_DATE, _DRIFTED_LABEL, _TARGET),
+                columns=("status", "reviewed_by"),
+            ),
+            {"status": "rejected", "reviewed_by": dc._SUPERSEDE_ACTOR},
         )
 
 

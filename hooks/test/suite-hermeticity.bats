@@ -38,7 +38,15 @@ setup() {
   # GA_DATA_ROOT is unset deliberately: with it set, the HOME fallback this probe watches
   # is never taken. PYTHONDONTWRITEBYTECODE keeps a direct `bats hooks/test/...` run from
   # dropping __pycache__ into this tracked corpus; the runner exports it for its own children.
-  env -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
+  #
+  # The daemon-exported env is held in lockstep with this corpus's own runner stage
+  # (DAEMON_ENV_SCRUB + stage 2 in scripts/run-bats-parallel.sh), so the probe cannot read
+  # green under conditions that stage does not share. The matching absence assertion is NOT
+  # duplicated here: .bats files are reached through stage 1 only, so one assertion covers
+  # the process both twins run in, and it lives in autoagent/test/suite-hermeticity.bats.
+  env -u AUTOAGENT_GIT_ROOT -u AUTOAGENT_GIT_PATHSPEC -u AUTOAGENT_AGENTS_DIR \
+    -u AUTOAGENT_CLAUDE_BIN -u CLAUDE_BIN \
+    -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR \
     HOME="${home}" PYTHONDONTWRITEBYTECODE=1 \
     python3 -m unittest discover -s "${BATS_TEST_DIRNAME}" -p 'test_*.py' \
     >"${log}" 2>&1 || rc=$?
