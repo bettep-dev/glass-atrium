@@ -27,6 +27,8 @@
 #
 # Nothing outside the sandbox is written: GA_TARGET_HOME redirects settings.json and GA_DATA_ROOT
 # redirects the marker + artifact roots, so neither ~/.claude nor ~/.glass-atrium is touched.
+# AC9 is the one case that leaves GA_DATA_ROOT UNSET — that is its subject — and redirects HOME
+# into the sandbox instead, so the HOME-anchored fallback still cannot reach the live install.
 #
 # Run via: bats test/wire-hooks-restart-notice.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+
@@ -43,10 +45,13 @@ setup() {
   TARGET="${SANDBOX}/target"
   DATA="${SANDBOX}/dataroot"
   GA_SANDBOX="${SANDBOX}/ga"
+  FAKE_HOME="${SANDBOX}/home"
   MANIFEST="${SANDBOX}/manifest.json"
   SETTINGS="${TARGET}/settings.json"
   MARKER="${DATA}/data/hook-rewire-pending"
-  mkdir -p "${TARGET}" "${DATA}/data" "${DATA}/logs" "${GA_SANDBOX}/agents"
+  # Where an unguarded note_hook_rewire would land with GA_DATA_ROOT unset — the leak path AC9 refutes.
+  LEAK_MARKER="${FAKE_HOME}/.glass-atrium/data/hook-rewire-pending"
+  mkdir -p "${TARGET}" "${DATA}/data" "${DATA}/logs" "${GA_SANDBOX}/agents" "${FAKE_HOME}"
   printf '{"version":"1.0.1","files":[],"hashes":{}}\n' >"${MANIFEST}"
   printf '{"version":"1.0.0","agents":{}}\n' >"${GA_SANDBOX}/agent-registry.json"
 }
@@ -75,6 +80,18 @@ run_retire() {
     ga_init_env "$1"
     retire_hook_binding "$2"
   ' _ "${GA}" "$1"
+}
+
+# Drive the REAL note_hook_rewire in the UNREDIRECTED shape the leaking suites have: GA_DATA_ROOT
+# unset, so it falls back to ${HOME}/.glass-atrium. HOME points into the sandbox, so that fallback
+# can never resolve to the operator's live install whatever the guard does.
+run_rewire_unredirected() {
+  run env -u GA_DATA_ROOT HOME="${FAKE_HOME}" GA_TARGET_HOME="${TARGET}" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    note_hook_rewire 1 0 0
+  ' _ "${GA}"
 }
 
 # Run the REAL run_doctor against the sandbox. GA_SKIP_DB_SETUP takes the documented opt-out branch
@@ -252,4 +269,16 @@ summary_warns() {
   assert_has "hook activity observed since the rewire" || return 1
   [[ "${status}" -eq "${base_status}" ]] || return 1
   [[ "$(summary_warns)" == "${base_warns}" ]] || return 1
+}
+
+# Make-it-red recipe for AC9: drop the TEST-HARNESS SANDBOX GUARD block from note_hook_rewire — the
+# marker then lands under ${HOME}/.glass-atrium/data, which for every suite inheriting the operator's
+# $HOME is the LIVE data root doctor reads.
+@test "AC9: an unredirected GA_DATA_ROOT under bats sends the marker to the bats sandbox" {
+  run_rewire_unredirected
+  [[ "${status}" -eq 0 ]] || return 1
+  local redirected="${BATS_TEST_TMPDIR}/ga-rewire-marker/hook-rewire-pending"
+  [[ -f "${redirected}" ]] || return 1
+  grep -q 'added=1' "${redirected}" || return 1
+  [[ ! -e "${LEAK_MARKER}" ]] || return 1
 }

@@ -339,15 +339,15 @@ class TestProtectedSet(unittest.TestCase):
 
 
 class TestDeclaredSetDerivation(unittest.TestCase):
-    """Enumeration is from the RAW hunk lines, which is what makes the
-    frontmatter-delimiter and `-- `-prefixed members visible at all."""
+    """Enumeration is from the RAW hunk lines, so the frontmatter-delimiter and
+    `-- `-prefixed removals are declared members."""
 
-    def test_when_frontmatter_delimiter_removed_then_fragment_partition_is_blind(
+    def test_when_frontmatter_delimiter_removed_then_fragment_partition_sees_it(
         self,
     ) -> None:
         diff = _diff("----")
         _context, _added, removed = dc._split_fragment_lines(diff)
-        self.assertEqual(removed, [])  # the partition drops it as a file header
+        self.assertEqual(removed, ["----"])  # in-hunk body line, as git apply --recount reads it
         declared, bearing = dc._get_declared_removals(diff)
         self.assertTrue(bearing)
         self.assertEqual(declared, ("---",))

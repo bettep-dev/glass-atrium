@@ -22,5 +22,5 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 ## Readers and coupled tests
 
 - No code reads this file's TEXT. The path is pinned in two places: the `RULE_FILES` closed frozenset in `scripts/agent_lifecycle/registry_ops.py`, pinned by exact equality in `scripts/test/test_agent_lifecycle_overhaul.py`, and the manifest hash. Renaming the file is therefore a three-site edit.
-- Prose citations of the file by name live in `agents/glass-atrium-dev-react.md` and `agents/glass-atrium-dev-nestjs.md`; both cite the file, not a heading, and both still resolve.
+- The one prose citation of the file by name in an agent body lives in `agents/glass-atrium-dev-angular.md`, through the `## Core Principles` heading, and it still resolves.
 - The `## Core Principles` heading is unchanged.

@@ -48,6 +48,7 @@ source "${GA_CORE_SH}" >/dev/null 2>&1
 GA_ROOT="${FAKE_ROOT}"
 spine_baseline_dir() { printf '%s\n' "${FAKE_STATE}"; }
 read_manifest_files() { printf '%s\n' "${MANIFEST_RELS}"; }
+require_contained_manifest_keys() { return 0; }
 log() { printf '%s\n' "$*"; }
 capture_base_agent_store
 DRV
