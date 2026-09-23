@@ -167,6 +167,19 @@ export function getDocStatusFilterSql(filter: DocStatusFilterLiteral): Prisma.Sq
 }
 
 /**
+ * doc_status filter value → its predicate on a group's `min_stage_rank`, the group-level twin of
+ * getDocStatusFilterSql: a group sits at its least-advanced member, so it is open while any
+ * member is and done only when every member is — the same meaning the chip counts use.
+ */
+export function getGroupStageFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
+  const terminalRank = DOC_STAGES.indexOf(TERMINAL_DOC_STAGE) + 1;
+  if (filter === "open") return Prisma.sql`min_stage_rank IS DISTINCT FROM ${terminalRank}`;
+  const stage = normalizeStoredStage(filter);
+  // rank 0 is never assigned → a filter no stage covers matches no group
+  return Prisma.sql`min_stage_rank = ${stage === null ? 0 : DOC_STAGES.indexOf(stage) + 1}`;
+}
+
+/**
  * Whether a status write cascades to the row's group. Only the terminal transition does:
  * closing a chain closes it whole, and every other move touches the one document.
  */
@@ -868,18 +881,13 @@ async function handleListGroups(
   const includeArchived = parseBooleanParam(request.query.include_archived);
   const excludingArchived = !includeArchived;
 
-  // doc-level filter fragments — the same fragments must feed both the grouped and
-  // ungrouped CTE for cluster consistency (Prisma.sql is immutable, so reuse is safe).
-  const fragments: Prisma.Sql[] = [];
-  if (docStatusParam !== null) fragments.push(getDocStatusFilterSql(docStatusParam));
-  if (author !== null) fragments.push(Prisma.sql`author = ${author}`);
-  const filterClause = fragments.length === 0
-    ? Prisma.empty
-    : Prisma.join(fragments, " AND ", "WHERE ");
-
-  // Chip counts are corpus-scoped — the doc_status fragment is dropped so selecting one chip
-  // never zeroes its siblings; the author filter stays, being the operator's standing scope.
+  // Doc-level scope = the author, the operator's standing scope. The stage filter is group-level
+  // (on the whole group's least-advanced rank), so a filtered group keeps its representative and
+  // its stage, and the listed groups match the chip counts.
   const corpusClause = author === null ? Prisma.empty : Prisma.sql`WHERE author = ${author}`;
+  const stageClause = docStatusParam === null
+    ? Prisma.empty
+    : Prisma.sql`WHERE ${getGroupStageFilterSql(docStatusParam)}`;
 
   const prisma = getPrisma();
   try {
@@ -901,14 +909,16 @@ async function handleListGroups(
                  folder_id AS group_key,
                  (SELECT COUNT(*) FROM monitor.documents d2
                   WHERE d2.folder_id = d.folder_id)::bigint AS member_count,
-                 -- least- and most-advanced member ranks: the group row renders the first and
-                 -- says members differ when they disagree.
-                 MIN(${STAGE_RANK_SQL}) OVER (PARTITION BY folder_id) AS min_stage_rank,
-                 MAX(${STAGE_RANK_SQL}) OVER (PARTITION BY folder_id) AS max_stage_rank
+                 -- least- and most-advanced member ranks over the WHOLE group, like member_count:
+                 -- the group row renders the first and says members differ when they disagree.
+                 (SELECT MIN(${STAGE_RANK_SQL}) FROM monitor.documents d2
+                  WHERE d2.folder_id = d.folder_id) AS min_stage_rank,
+                 (SELECT MAX(${STAGE_RANK_SQL}) FROM monitor.documents d2
+                  WHERE d2.folder_id = d.folder_id) AS max_stage_rank
           FROM monitor.documents d
-          ${filterClause === Prisma.empty
+          ${corpusClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NOT NULL`
-            : Prisma.sql`${filterClause} AND folder_id IS NOT NULL`}
+            : Prisma.sql`${corpusClause} AND folder_id IS NOT NULL`}
           -- rep pick: the drag-order-first member (lowest display_order) represents the group.
           --   all-NULL display_order group → NULLS LAST ties → created_at DESC fallback (latest = rep).
           ORDER BY folder_id, display_order ASC NULLS LAST, created_at DESC, id DESC
@@ -921,29 +931,36 @@ async function handleListGroups(
                  1::bigint AS member_count,
                  ${STAGE_RANK_SQL} AS min_stage_rank, ${STAGE_RANK_SQL} AS max_stage_rank
           FROM monitor.documents
-          ${filterClause === Prisma.empty
+          ${corpusClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NULL`
-            : Prisma.sql`${filterClause} AND folder_id IS NULL`}
+            : Prisma.sql`${corpusClause} AND folder_id IS NULL`}
+        ),
+        listed AS (
+          SELECT * FROM grouped_reps
+          UNION ALL
+          SELECT * FROM ungrouped
         )
-        SELECT * FROM grouped_reps
-        UNION ALL
-        SELECT * FROM ungrouped
+        SELECT * FROM listed ${stageClause}
         ORDER BY group_latest_at DESC, rep_id DESC
         LIMIT ${limit} OFFSET ${offset}
       `,
       prisma.$queryRaw<GroupsCountRow[]>`
-        WITH scoped AS (
-          SELECT COALESCE(folder_id, -id) AS group_key, ${HIDDEN_AUDIENCE_SQL} AS is_hidden
-          FROM monitor.documents ${filterClause}
+        WITH ranked AS (
+          SELECT COALESCE(folder_id, -id) AS group_key, author,
+                 ${HIDDEN_AUDIENCE_SQL} AS is_hidden,
+                 MIN(${STAGE_RANK_SQL}) OVER (PARTITION BY COALESCE(folder_id, -id)) AS min_stage_rank
+          FROM monitor.documents
         ),
-        -- corpus rows collapsed to one row per group: open when ANY member is (the group's
-        -- least-advanced stage is not terminal) · hidden only when EVERY member is.
+        corpus AS (SELECT * FROM ranked ${corpusClause}),
+        scoped AS (SELECT * FROM corpus ${stageClause}),
+        -- corpus rows collapsed to one row per group: open by the same predicate the chip
+        -- filter lists with · hidden only when EVERY member is.
         per_group AS (
-          SELECT COALESCE(folder_id, -id) AS group_key,
-                 bool_or(${getDocStatusFilterSql("open")}) AS has_open,
-                 bool_and(${HIDDEN_AUDIENCE_SQL}) AS all_hidden
-          FROM monitor.documents ${corpusClause}
-          GROUP BY COALESCE(folder_id, -id)
+          SELECT group_key,
+                 bool_or(${getGroupStageFilterSql("open")}) AS has_open,
+                 bool_and(is_hidden) AS all_hidden
+          FROM corpus
+          GROUP BY group_key
         )
         SELECT
           (SELECT COUNT(DISTINCT group_key)::bigint FROM scoped) AS total,
