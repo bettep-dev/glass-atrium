@@ -9,6 +9,8 @@ window.TOKEN_RATES = {
   'claude-fable-5':     { input: 10.00, output: 50.00, cache_read: 1.00,  cache_creation: 12.50 },
 
   // claude-opus-5 — opus-4-x 세대와 별개 단가라 family prefix 매칭에 기대지 않고 독립 행 유지
+  // 5-5 는 opus-5 보다 전 필드 저가 — 자체 행이 없으면 opus-5 prefix 로 해소돼 25% 과금
+  'claude-opus-5-5':    { input:  4.00, output: 20.00, cache_read: 0.20,  cache_creation:  5.00 },
   'claude-opus-5':      { input:  5.00, output: 25.00, cache_read: 0.50,  cache_creation:  6.25 },
 
   // claude-opus-4-x family — SoT 행과 1:1 (claude-opus-4 만 예외, 아래 참고)

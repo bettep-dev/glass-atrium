@@ -105,6 +105,8 @@ backfill = _load_backfill()
 _BACKFILL_IMPORT_REMOTE_DISABLE = os.environ.get("PRICING_REMOTE_DISABLE")
 
 _OPUS_RATE = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25}
+# 5.5 is priced BELOW the opus-5 family on every field, so prefix re-inheritance overcharges.
+_OPUS_5_5_RATE = {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_creation": 5.0}
 _FABLE_RATE = {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5}
 # 5.1 differs from the family rate in cache_read only (litellm-fetched, not a vendor quote).
 _FABLE_5_1_RATE = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5}
@@ -573,6 +575,19 @@ class RateForSotTest(_LoaderCase):
         self.assertNotEqual(record["rate"], _FABLE_RATE)
         self.assertTrue(
             pricing_loader.is_known("claude-fable-5-1", sot_path=str(_SOT_PATH))
+        )
+
+    def test_opus_5_5_resolves_from_its_own_sot_row(self):
+        # Without an explicit row the longest dash-bounded prefix resolves this id
+        # to claude-opus-5 at 5.00/25.00 — a 25% overcharge on every field, and the
+        # id would stay unknown, keeping it out of the model-config roster.
+        record = self._rate_for("claude-opus-5-5")
+        self.assertEqual(record["resolution"], "sot")
+        self.assertEqual(record["matched_model"], "claude-opus-5-5")
+        self.assertEqual(record["rate"], _OPUS_5_5_RATE)
+        self.assertNotEqual(record["rate"], _OPUS_RATE)
+        self.assertTrue(
+            pricing_loader.is_known("claude-opus-5-5", sot_path=str(_SOT_PATH))
         )
 
     def test_bracket_variant_resolves_to_base_row(self):
