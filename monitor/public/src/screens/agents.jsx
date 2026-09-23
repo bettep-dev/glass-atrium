@@ -75,6 +75,7 @@ function lowInvocationThresholdForWindow(days) {
 
 // Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
 const TOPN_FAILING_THRESHOLD = 0.95;
+const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
 const TOPN_FAILING_LIMIT = 8;
 
 // 랭킹 최소 표본 floor (A5) — 합산 분모(성공+실패) < 3 쌍은 비율 신뢰 불가 → 랭킹 제외.
@@ -475,9 +476,7 @@ function AgentAlarmLane({ state, onRetry }) {
       <div className="card mb-4">
         <div className="card-body flex items-center gap-2">
           <Badge role="status" tone="warn">unavailable</Badge>
-          <span className="text-faint fs-micro">
-            circuit-breaker state unreadable — check permissions on the hook data dir
-          </span>
+          <span className="text-faint fs-micro">{CIRCUIT_BREAKER_UNREADABLE_COPY}</span>
         </div>
       </div>
     );
@@ -497,14 +496,13 @@ function AgentAlarmLane({ state, onRetry }) {
 
 function AgentAlarmRow({ alarm }) {
   const { Badge } = window.UI;
-  const tone = alarm.suspended ? 'crit' : 'warn';
 
   return (
     <div className="flex items-center gap-2">
-      <Badge role="status" tone={tone}>{alarm.suspended ? 'suspended' : 'fail streak'}</Badge>
+      <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
       <span className="font-mono">{alarm.agent}</span>
       <span className="text-faint fs-micro">
-        {alarm.consecutive_fails} consecutive {alarm.consecutive_fails === 1 ? 'fail' : 'fails'}
+        {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
       </span>
       <span className="text-faint fs-micro">
@@ -543,7 +541,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       <AgentStatusTile
         label="Unsafe to route"
         sub={breaker && breaker.source === 'loaded' ? `of ${breaker.registry_agents} registered agents` : 'circuit-breaker state'}
-        unavailableSub="circuit-breaker state unreadable — check permissions on the hook data dir"
+        unavailableSub={CIRCUIT_BREAKER_UNREADABLE_COPY}
         status={unsafeStatus}
         value={unsafeCount}
         tone={unsafeCount ? (breaker?.suspended_count ? 'crit' : 'warn') : 'ok'}
@@ -1009,7 +1007,7 @@ function LatencyBars({ agents }) {
 
 // AgentDetailDrawer (우측 슬라이드인) — DetailModal(outcomes.jsx) 미러. DetailSurface variant=drawer 위임:
 // focus-trap · scroll-lock · 3 닫기(X·Esc·backdrop) · nav(ArrowUp/Down + Prev/Next) 상속.
-// 5 섹션 (Overview hero / Performance / Reliability / Quality signals / Recent) — 각 섹션 독립 degrade.
+// 5 섹션 (Overview hero / Reliability / Performance / Quality / Recent) — 각 섹션 독립 degrade.
 // Overview hero 가 단일 verdict + 단일 success-rate 소유 (중복 success-rate 폐지) · 섹션 간 top-hairline 리듬.
 // 푸터 Delete 는 origin:user 만 노출 → 같은 surface 안 typed-name confirm 서브상태로 비가역 삭제 게이트.
 
@@ -1171,8 +1169,6 @@ function AgentDetailDrawer({
               drawerAgent={drawerAgent}
               summaryState={summaryState}
               latencyState={latencyState}
-              revisionState={revisionState}
-              reviewByAgentState={reviewByAgentState}
               trendByAgent={trendByAgent}
               onRetry={onRetry}
             />
@@ -1257,18 +1253,29 @@ function AgentCircuitBreakerLine({ agent }) {
     );
   }
 
-  const tone = breaker.suspended ? 'crit' : breaker.consecutive_fails > 0 ? 'warn' : 'ok';
   return (
     <div className="flex items-center gap-2 mb-2">
-      <Badge role="status" tone={tone}>
-        {breaker.suspended ? 'suspended' : breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route'}
-      </Badge>
+      <Badge role="status" tone={getBreakerTone(breaker)}>{getBreakerLabel(breaker)}</Badge>
       <span className="text-faint fs-micro">
-        {breaker.consecutive_fails} consecutive {breaker.consecutive_fails === 1 ? 'fail' : 'fails'}
+        {formatConsecutiveFails(breaker.consecutive_fails)}
         {breaker.suspended_at ? ` · suspended ${breaker.suspended_at}` : ''}
       </span>
     </div>
   );
+}
+
+function getBreakerTone(breaker) {
+  if (breaker.suspended) return 'crit';
+  return breaker.consecutive_fails > 0 ? 'warn' : 'ok';
+}
+
+function getBreakerLabel(breaker) {
+  if (breaker.suspended) return 'suspended';
+  return breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route';
+}
+
+function formatConsecutiveFails(count) {
+  return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
 // 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
