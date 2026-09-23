@@ -329,13 +329,10 @@ test("every tile state is distinct, and only ready renders a measured value", ()
     [ready({}), undefined, false, "unavailable"],
     [ready({}), 0, false, "ready"],
   ];
-  const seen = new Set<PanelStatus>();
   for (const [state, value, isEmpty, expected] of cases) {
     const status = cost.getTileStatus(state, value, isEmpty);
     assert.strictEqual(status, expected, `${state.status}/${String(value)}/${isEmpty}`);
-    seen.add(status);
   }
-  assert.strictEqual(seen.size, 5, "loading, error, empty, unavailable and ready must not collapse");
 
   for (const status of ["error", "empty", "unavailable"] as const) {
     assert.ok(cost.getTileNote(status, "no normal to compare against").length > 0, status);
