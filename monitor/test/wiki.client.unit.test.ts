@@ -73,7 +73,7 @@ function proposalBacklog(hashes: string[], firstSeen?: Record<string, string>): 
   return ready({
     backlog: {
       run_date: isoDaysAgo(0),
-      dedup_proposals: { proposals: hashes.map((h) => ({ cluster_hash: h })) },
+      ...dedup(hashes),
       proposal_first_seen: firstSeen,
     },
   });
@@ -261,6 +261,6 @@ test("a backlog built without a first-seen map carries an empty map, never undef
   assert.deepEqual(backlog.proposal_first_seen, {});
 });
 
-function dedup(hashes: string[]): unknown {
+function dedup(hashes: string[]) {
   return { dedup_proposals: { proposals: hashes.map((h) => ({ cluster_hash: h })) } };
 }
