@@ -78,7 +78,9 @@
 #   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta on
 #                                  orphan/missing paths, VERSION mismatch, per-file
 #                                  HASH mismatch (content changed, path unchanged),
-#                                  an ABSENT retired key, OR a retired-map delta
+#                                  an escaping files[] entry, a modes key set unequal
+#                                  to files, an ABSENT retired key, a retired key or
+#                                  value of invalid shape, OR a retired-map delta
 #   generate-manifest.sh --validate FILE
 #                                  structural validation of an arbitrary manifest
 #                                  against the same invariants the regeneration
@@ -327,13 +329,43 @@ build_retired_json() {
   } | LC_ALL=C sort -u | spine_build_retired_map
 }
 
+# jq definitions shared by --validate and --check. A key escapes when it is empty,
+# absolute or carries a `..` segment (the installers write and the updater removes what
+# a key names) — the same rule as the spine's spine_is_escaping_key.
+# retired_shape_violations: sorted retired keys that escape or whose value is not a
+# non-empty array of 64-hex strings; a non-object map yields [] — the object-type clause
+# is validate's, and --check reports it as a RETIRED delta.
+# files_key_violations: sorted escaping files[] entries. modes keys are held to the same
+# rule through set equality with files; the one-sided lists name a swapped key.
+readonly MANIFEST_SHAPE_JQ_DEF='
+def escaping_key: . == "" or startswith("/") or any(split("/")[]; . == "..");
+def files_list: .files | if type == "array" then map(strings) else [] end;
+def modes_keys: .modes | if type == "object" then keys else [] end;
+def files_key_violations: [files_list[] | select(escaping_key)] | unique;
+def modes_only_keys: modes_keys - files_list;
+def files_only_keys: (files_list | unique) - modes_keys;
+def retired_shape_violations:
+  (.retired // {})
+  | if type == "object" then
+      [to_entries[]
+       | select(
+           (.key | escaping_key)
+           or ((.value | type == "array" and length > 0
+                and all(.[]; type == "string" and test("^[0-9a-f]{64}$"))) | not))
+       | .key]
+      | sort
+    else [] end;
+'
+
 # Structural validation of a manifest FILE against the invariants a regeneration
 # must satisfy before its temp replaces the live manifest: version stamped, files
 # non-empty, one 64-hex hash and one octal mode per file, and a retired map that is
-# an object, disjoint from files[], free of barred migration paths, and whose every
-# value is a non-empty array of 64-hex strings.
+# an object, disjoint from files[], free of barred migration paths, whose every key is
+# a non-empty relative path with no `..` segment (the updater removes what a key names),
+# and whose every value is a non-empty array of 64-hex strings; every files[] entry is a
+# non-escaping key and the modes key set equals the files set.
 validate_manifest_file() {
-  jq -e '
+  jq -e "${MANIFEST_SHAPE_JQ_DEF}"'
     (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
     and (.files | type == "array" and length > 0)
     and (.hashes | type == "object")
@@ -347,10 +379,10 @@ validate_manifest_file() {
          | .retired | keys | all($shipped[.] == null))
     and (.retired | keys
          | all(test("^monitor/prisma/migrations/.*/migration[.]sql$") | not))
-    and (.retired | to_entries | all(
-           (.value | type == "array")
-           and (.value | length > 0)
-           and (.value | all(type == "string" and test("^[0-9a-f]{64}$")))))
+    and (retired_shape_violations | length == 0)
+    and (files_key_violations | length == 0)
+    and (modes_only_keys | length == 0)
+    and (files_only_keys | length == 0)
   ' -- "$1" >/dev/null 2>&1
 }
 
@@ -365,8 +397,8 @@ require_manifest() {
 
 run_check() {
   local orphans missing mismatches manifest_version gen_count rc=0
-  local modes_count mode_mismatches files
-  local committed_retired generated_retired dropped dropped_count
+  local modes_count mode_mismatches files files_invalid modes_key_delta
+  local committed_retired generated_retired dropped dropped_count retired_invalid
   require_manifest
 
   # Single git ls-files pass — the sorted list feeds the count, both comm diffs,
@@ -437,6 +469,24 @@ run_check() {
     rc=1
   fi
 
+  # key gate — the count and join gates above both pass a modes key swapped for an
+  # escaping one; tojson keeps an empty or whitespace key visible.
+  files_invalid="$(jq -r "${MANIFEST_SHAPE_JQ_DEF}"'files_key_violations[] | tojson' \
+    -- "${MANIFEST}")"
+  if [[ -n "${files_invalid}" ]]; then
+    echo "generate-manifest --check: FILES key INVALID:" >&2
+    printf '%s\n' "${files_invalid}" | sed 's/^/  ! /' >&2
+    rc=1
+  fi
+  modes_key_delta="$(jq -r "${MANIFEST_SHAPE_JQ_DEF}"'
+    (modes_only_keys[] | "+ \(tojson)"), (files_only_keys[] | "- \(tojson)")' \
+    -- "${MANIFEST}")"
+  if [[ -n "${modes_key_delta}" ]]; then
+    echo "generate-manifest --check: MODES key set differs from files:" >&2
+    printf '%s\n' "${modes_key_delta}" | sed 's/^/  /' >&2
+    rc=1
+  fi
+
   # retired gate — key presence first (the always-emit rule is what lets every
   # downstream reader assert the key), then the paths this run would add, then the
   # whole-map comparison that also catches a stale entry the carry-forward drops.
@@ -445,6 +495,13 @@ run_check() {
     echo "generate-manifest --check: RETIRED key ABSENT — the manifest must always carry a retired map" >&2
     rc=1
     committed_retired='{}'
+  fi
+  retired_invalid="$(jq -r "${MANIFEST_SHAPE_JQ_DEF}"'retired_shape_violations[] | tojson' \
+    -- "${MANIFEST}")"
+  if [[ -n "${retired_invalid}" ]]; then
+    echo "generate-manifest --check: RETIRED shape INVALID:" >&2
+    printf '%s\n' "${retired_invalid}" | sed 's/^/  ! /' >&2
+    rc=1
   fi
   dropped="$(retired_dropped_lines | cut -f1 | LC_ALL=C sort -u)"
   if [[ -n "${dropped}" ]]; then

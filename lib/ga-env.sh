@@ -274,6 +274,9 @@ ga_init_env() {
   # (not file-scope) so a re-source never re-runs `readonly` → fatal under set -e.
   readonly PRUNE_EXIT_NO_TARGET=2
   readonly PRUNE_EXIT_NO_MANIFEST=3
+  # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
+  # refused before any manifest loop by install / agents-only / uninstall / prune.
+  readonly MANIFEST_EXIT_ESCAPING_KEY=25
 
   # bootstrap exit-code semantics (distinct from die's generic 1):
   #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)

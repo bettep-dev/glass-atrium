@@ -32,6 +32,7 @@ setup() {
   SESSION_MARKER="${TMPROOT}/session-exists"
   SESSION_TRANSIENT="${TMPROOT}/session-transient"
   TMUX_CALLS="${TMPROOT}/tmux-calls.log"
+  TMUX_TOKEN_SEEN="${TMPROOT}/tmux-token-seen.log"
   INJECT_CALLS="${TMPROOT}/inject-calls.log"
   CREATE_WINNER="${TMPROOT}/create-winner"
   BOOT_PIDS="${TMPROOT}/boot-pids"
@@ -41,6 +42,8 @@ setup() {
   cat >"${STUB_BIN}/tmux" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"${TMUX_CALLS}"
+# presence flag only (1 or empty) per subcommand — the token value is never recorded
+printf '%s token_present=%s\n' "\$1" "\${CLAUDE_CODE_OAUTH_TOKEN+1}" >>"${TMUX_TOKEN_SEEN}"
 case "\$1" in
   has-session)
     if [[ -f "${SESSION_TRANSIENT}" ]]; then
@@ -385,6 +388,49 @@ wait_for_log() {
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
   grep -qF -- "claude-auth-env.sh'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model 'claude-sonnet-5'" "${TMUX_CALLS}" || return 1
   kill -0 "${pid}"
+}
+
+# Leaf-only token load: a tmux client that STARTS the default server copies its
+# env into the server's global env, leaking the token into every later session.
+# The stub logs a presence flag from ITS OWN env at every subcommand — never the value.
+# Relationship: the tmux client never carries the token, whatever the launching
+# env or secrets file hold, while the pane command still loads it itself.
+# has-session runs from the bootstrap shell before the `env -u` launch, so it also
+# catches a module-scope token load that `env -u` alone would mask at new-session.
+readonly DUMMY_AUTH_VALUE='dummy01'
+
+# Args: $1=tmux subcommand, $2=presence log → fails unless it ran and never saw the token.
+assert_token_absent_at() {
+  local subcmd="$1" seen_log="$2"
+  grep "^${subcmd} " "${seen_log}" >/dev/null || return 1
+  ! grep -x "${subcmd} token_present=1" "${seen_log}" >/dev/null
+}
+
+@test "token leak: secrets file loads in the pane only, never in the tmux client env" {
+  local s
+  unset CLAUDE_CODE_OAUTH_TOKEN
+  s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+  cp "${REAL_AUTH_LIB}" "${SANDBOX}/lib/claude-auth-env.sh"
+  mkdir -p "${TMPROOT}/secrets"
+  printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "${DUMMY_AUTH_VALUE}" >"${TMPROOT}/secrets/claude-auth.env"
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  grep -qF -- "claude-auth-env.sh'; claude_auth_load_env; exec claude --channels" "${TMUX_CALLS}" || return 1
+  ! grep -qF -- "${DUMMY_AUTH_VALUE}" "${TMUX_CALLS}" || return 1
+  assert_token_absent_at has-session "${TMUX_TOKEN_SEEN}" || return 1
+  assert_token_absent_at new-session "${TMUX_TOKEN_SEEN}"
+}
+
+@test "token leak: a launching env already carrying the token cannot seed the tmux server" {
+  local s
+  s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+  cp "${REAL_AUTH_LIB}" "${SANDBOX}/lib/claude-auth-env.sh"
+  # printf -v rather than a direct NAME=value export: the Write|Edit secret scan (SEC-013) blocks that literal shape.
+  printf -v CLAUDE_CODE_OAUTH_TOKEN '%s' "${DUMMY_AUTH_VALUE}"
+  export CLAUDE_CODE_OAUTH_TOKEN
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  assert_token_absent_at new-session "${TMUX_TOKEN_SEEN}"
 }
 
 # Quota marker on inject rc=2 — written for BOTH roles. A wiki-side session-limit
