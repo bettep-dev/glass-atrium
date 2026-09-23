@@ -33,6 +33,9 @@ const RETIRED_STAGE_ALIAS_CD = "progress";
 // absent value, so the screen renders it distinctly from a model id.
 const OPERATOR_ACTOR_CD = "operator";
 
+// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
+const LEDGER_COLUMN_COUNT_CD = 7;
+
 // Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
 const DOC_STATUS_OPTIONS_CD = [
@@ -664,8 +667,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	//   실패 시 optimistic entry 삭제 = 원래 stage 자동 복귀.
 	const performStageChange = useCallbackCD(
 		async (id, nextStage, cachedRow) => {
-			const entry = stageEntryCD(nextStage);
-			if (!entry || nextStage === RETIRED_STAGE_ALIAS_CD) {
+			const entry = DOC_STAGES_CD.find((stage) => stage.value === nextStage);
+			if (!entry) {
 				showToast("warn", `Unknown stage — can't change (#${id})`);
 				return false;
 			}
@@ -1154,7 +1157,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	);
 }
 
-// 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
+// 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ audience, format }) {
 	const { Badge } = window.UI;
 	return (
@@ -1261,8 +1264,8 @@ function DocListCardCD({
 		const entry = stageEntryCD(rowStageCD(row));
 		return (
 			<tr className="doc-stage-section">
-				<th colSpan={7} scope="colgroup">
-					<span className="doc-stage-section-label">
+				<th colSpan={LEDGER_COLUMN_COUNT_CD} scope="colgroup">
+					<span>
 						{entry ? entry.label : "stage unavailable"}
 					</span>
 					<span className="doc-stage-section-count">
@@ -1511,9 +1514,7 @@ function DocListCardCD({
 													ariaLabel={`Select ${row.title}`}
 												/>
 											</td>
-											{/* doc_status badge 별도 column (title inline 제거). 빈 doc_status 는 — fallback (시각 정렬 보존).
-                          onPickStage 주입 → 클릭 시 optimistic flip.
-                          optimisticStatusOverrides Map 이 row.id entry 보유 시 그 값을 표시값으로 사용 (서버 refresh 도착 전 즉시 반영). */}
+											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											<td>
 													<DocStagePillCD
 														docStatus={
@@ -1845,8 +1846,7 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	// column 구성: checkbox + status + id + title + tags + author + created_at = 7 (검색 모드도 동일 — relevance 컬럼 없음).
-	const colSpan = 7;
+	const colSpan = LEDGER_COLUMN_COUNT_CD;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -2594,9 +2594,7 @@ function DocMetaPanelCD({
 				</span>
 			</div>
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
-				{/* doc_status dual-encoded badge (workflow lifecycle 진행중/완료).
-				    onPickStage 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
-				    cachedRow=doc — viewer state 가 body + content_hash + format 보유 → GET 스킵 (네트워크 절감). */}
+				{/* onPickStage 미주입 → read-only pill · cachedRow=doc → viewer cache 로 GET 스킵. */}
 				<DocStagePillCD
 					docStatus={optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status}
 					onPickStage={
@@ -2729,7 +2727,6 @@ function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders verbatim. Unknown is absent here and stated in the viewer.
 function formatActorCD(model) {
-	if (!model) return null;
 	return model === OPERATOR_ACTOR_CD ? "운영자" : model;
 }
 
@@ -3135,10 +3132,6 @@ function DocListSkeletonCD() {
 	);
 }
 
-// S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
-//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
-//   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
-// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
 // as-of 스탬프 — asOf 는 성공 fetch 만 갱신하므로 첫 fetch 가 실패하면 null 로 남는다.
 // 그 상태를 "loading…" 이라 말하면 에러 배너 옆에서 진행 중이라 거짓말하는 셈.
 function asOfSubCD(asOf, listStatus) {
@@ -3146,6 +3139,7 @@ function asOfSubCD(asOf, listStatus) {
 	return listStatus === "loading" ? "loading…" : "not loaded";
 }
 
+// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
 function emptyHeadlineCD(isSearchMode, docStatusFilter) {
 	if (isSearchMode) return "No documents match this search";
 	// 칩의 한국어 stage 단어만 옮기고 문장은 화면 나머지와 같은 영어 — 한 면 안에서 언어가 갈리지 않게.
@@ -3154,6 +3148,9 @@ function emptyHeadlineCD(isSearchMode, docStatusFilter) {
 	return "No documents";
 }
 
+// S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
+//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
+//   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
 function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	const statusLabel = (
@@ -3248,7 +3245,7 @@ function normalizeGroupToRowCD(group) {
 		author: group.representative_author,
 		doc_status: group.representative_doc_status,
 		// 그룹 행이 렌더하는 stage = 가장 덜 진행된 멤버 (대표 행이 아니라) + 멤버 일치 여부.
-		group_doc_status: group.group_doc_status ?? group.representative_doc_status,
+		group_doc_status: group.group_doc_status,
 		group_stage_uniform: group.group_stage_uniform,
 		last_status_model: group.representative_last_status_model ?? null,
 		audience: group.representative_audience,
