@@ -885,7 +885,7 @@ window.UI = {
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
-  SEVERITY_RANK, worstTone, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
+  worstTone, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
 };
