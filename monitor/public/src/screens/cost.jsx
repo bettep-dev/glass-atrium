@@ -285,13 +285,17 @@ function getHotAlarmText(hot, latestOutsideBand) {
  * Below the rolling window the question has no answer, and "no answer" must not fire the lane.
  */
 function isLatestOutsideBand(trendState) {
-  const points = trendState.status === 'ready'
-    ? (trendState.data?.points ?? trendState.data?.rows ?? [])
-    : [];
+  const points = getTrendPoints(trendState);
   if (points.length < ROLLING_WINDOW) return false;
   const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
   const latest = rows[rows.length - 1];
   return !!(latest && latest.isAnomaly);
+}
+
+// cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존) · 미로드 state → 빈 배열.
+function getTrendPoints(trendState) {
+  if (trendState.status !== 'ready') return [];
+  return trendState.data?.points ?? trendState.data?.rows ?? [];
 }
 
 // Crit days travel with the population they came from — the lane never states a count alone.
@@ -400,7 +404,7 @@ function getHotVerdictText(ratio, paceRatio) {
 // Window total + first-to-last trend over the period the toggle selects.
 function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
-  const points = ready ? (trendState.data?.points ?? trendState.data?.rows ?? []) : [];
+  const points = getTrendPoints(trendState);
   if (points.length === 0) {
     return { total: null, delta: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
   }
@@ -556,7 +560,7 @@ function CostTrendCard({ state, days, onRetry }) {
   const { CardHead } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
-  const points = state.status === 'ready' ? (state.data?.points ?? state.data?.rows ?? []) : [];
+  const points = getTrendPoints(state);
   const bandAvailable = points.length >= ROLLING_WINDOW;
 
   return (
@@ -591,20 +595,15 @@ function CostTrendBody({ state, days, bandOn, onRetry }) {
     return <ErrorBannerC title="Couldn't load cost trend" detail={state.error} onRetry={onRetry}/>;
   }
 
-  const points = state.data?.points ?? state.data?.rows ?? [];
+  const points = getTrendPoints(state);
   if (points.length === 0) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
 
-  // The band rows carry the plain series too, so one row builder serves both chart modes.
+  // Band rows extend buildTrendRow, so both chart modes read one row shape.
   const rows = bandOn
     ? computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA)
-    : points.map((p) => ({
-      date: typeof p.date === 'string' ? p.date.slice(5) : '',
-      fullDate: p.date,
-      actual: pointCostC(p),
-      session_count: Number(p.session_count) || 0,
-    }));
+    : points.map((p) => buildTrendRow(p));
 
   return (
     <div style={{ width: '100%', height: 260 }}>
@@ -732,8 +731,7 @@ function TokenStackedBody({ state, days, onRetry }) {
     return <ErrorBannerC title="Couldn't load token trend" detail={state.error} onRetry={onRetry}/>;
   }
 
-  // cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존).
-  const points = state.data?.points ?? state.data?.rows ?? [];
+  const points = getTrendPoints(state);
   if (points.length === 0) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
@@ -1611,12 +1609,8 @@ function ParseErrorTooltipC({ active, payload }) {
 // points 정렬은 ASC (cost-timeseries API).
 function computeAnomalyRows(points, window, sigma) {
   return points.map((p, i) => {
-    const actual = pointCostC(p);
     const base = {
-      date: typeof p.date === 'string' ? p.date.slice(5) : '',
-      fullDate: p.date,
-      actual,
-      session_count: Number(p.session_count) || 0,
+      ...buildTrendRow(p),
       rollingMean: null,
       upperBand: null,
       lowerBand: null,
@@ -1637,9 +1631,18 @@ function computeAnomalyRows(points, window, sigma) {
     const upperBand = mean + sigma * std;
     // 비용 음수 불가 → lower 클램프. std≈0 시 모두 정상 (isAnomaly=false).
     const lowerBand = Math.max(0, mean - sigma * std);
-    const isAnomaly = std > 0 && (actual > upperBand || actual < lowerBand);
+    const isAnomaly = std > 0 && (base.actual > upperBand || base.actual < lowerBand);
     return { ...base, rollingMean: mean, upperBand, lowerBand, isAnomaly };
   });
+}
+
+function buildTrendRow(p) {
+  return {
+    date: typeof p.date === 'string' ? p.date.slice(5) : '',
+    fullDate: p.date,
+    actual: pointCostC(p),
+    session_count: Number(p.session_count) || 0,
+  };
 }
 
 // cost-timeseries point → daily cost (USD). cost_usd 우선 · split 합산 폴백 보존.
