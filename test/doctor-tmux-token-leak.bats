@@ -35,14 +35,22 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
-# tmux stub: a server "runs" iff the server flag file exists; show-environment -g replays the
+# tmux stub: a server "runs" iff the server flag file exists — otherwise it fails with tmux's own
+# no-server text, or the seeded tmux-error text; show-environment -g replays the
 # seeded global env. launchctl stub: getenv replays a per-name file, exit 0 either way (the real
 # launchctl exits 0 on an unset name too). Every call is logged for the no-server-start assertion.
 seed_stubs() {
   cat >"${STUB}/tmux" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >>"${GA_STUB_STATE}/tmux-calls.log"
-[[ -f "${GA_STUB_STATE}/tmux-server" ]] || exit 1
+if [[ ! -f "${GA_STUB_STATE}/tmux-server" ]]; then
+  if [[ -f "${GA_STUB_STATE}/tmux-error" ]]; then
+    cat -- "${GA_STUB_STATE}/tmux-error" >&2
+  else
+    printf 'no server running on /private/tmp/tmux-501/default\n' >&2
+  fi
+  exit 1
+fi
 case "$1" in
   list-sessions) printf 'daemon: 1 windows\n' ;;
   show-environment) cat -- "${GA_STUB_STATE}/tmux-env" ;;
@@ -172,4 +180,16 @@ assert_leak_delta() {
     printf 'tmux called beyond list-sessions with no server: %s\n' "${unexpected}" >&2
     return 1
   }
+}
+
+@test "unreadable server: a list-sessions failure other than no-server is a note, never a clean pass" {
+  mv -- "${STUB_STATE}/tmux-server" "${SANDBOX}/tmux-server.off"
+  printf 'error connecting to /private/tmp/tmux-501/default (Permission denied)\n' \
+    >"${STUB_STATE}/tmux-error"
+  run_doctor_sandbox
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_output_has "note : default tmux server unreadable" || return 1
+  assert_output_lacks "ok   : no default tmux server running" || return 1
+  assert_output_lacks "ok   : default tmux server global environment carries no" || return 1
+  assert_output_lacks "${DUMMY_VALUE}"
 }

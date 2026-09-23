@@ -204,11 +204,11 @@ daemon_bootstrap_create_session() {
   # the PANE command sources the 0600 secrets file (claude_auth_load_env), so the
   # exec'd claude inherits the token from its OWN shell env. Absent secrets file →
   # claude_auth_load_env warns + returns 0 (never aborts) → claude falls back to the
-  # keychain. The lib path is single-quoted inside the bash -c
-  # program — no token is ever interpolated; only the harness-controlled install path
-  # is embedded. `bash -c` (NOT -lc): a login shell would re-source profiles and could
-  # mutate PATH/env, so a plain non-login shell preserves the tmux-session env the
-  # pane inherits (FAKECHAT_PORT et al.).
+  # keychain. The lib path is single-quoted inside the bash -c program — no token is
+  # ever interpolated; only the harness-controlled install path is embedded. `bash -c`
+  # (NOT -lc): a login shell would re-source profiles and could mutate PATH/env, so a
+  # plain non-login shell preserves the tmux-session env the pane inherits
+  # (FAKECHAT_PORT et al.).
   local auth_lib="${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh"
   local pane_cmd
   # --model pins the channels REPL to the resolved daemon LLM tier (WORKER_MODEL,

@@ -1445,12 +1445,18 @@ run_doctor() {
   #     for every job. Both are queried at the source (server / launchd), so a caller whose own env
   #     was stripped still reads the truth — this is why the interactive-shell env is NOT checked.
   #     Names and counts only, never a value. Neither `list-sessions` nor `show-environment` starts
-  #     a server: no server → clean.
-  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN"
+  #     a server: no server → clean. Any other list-sessions failure (socket permission, a
+  #     TMUX_TMPDIR mismatch) → unreadable note, never a clean pass.
+  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" tmux_ls_err=""
   if ! command -v tmux >/dev/null 2>&1; then
     log "  note : tmux token-leak check skipped — tmux not found"
-  elif ! tmux list-sessions >/dev/null 2>&1; then
-    log "  ok   : no default tmux server running — no global environment to leak ${leak_name} into"
+  elif ! tmux_ls_err="$(tmux list-sessions 2>&1 >/dev/null)"; then
+    case "${tmux_ls_err}" in
+      *"no server running"* | *"error connecting"*"No such file or directory"* | *"error connecting"*"Connection refused"*)
+        log "  ok   : no default tmux server running — no global environment to leak ${leak_name} into"
+        ;;
+      *) log "  note : default tmux server unreadable — list-sessions failed for a reason other than no server running; ${leak_name} check not performed" ;;
+    esac
   else
     # grep to /dev/null, not -q: an early exit could SIGPIPE the producer, which pipefail reads as clean.
     if tmux show-environment -g 2>/dev/null | grep "^${leak_name}=" >/dev/null; then
