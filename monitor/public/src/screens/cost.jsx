@@ -301,8 +301,12 @@ function getTrendPoints(trendState) {
 // Crit days travel with the population they came from — the lane never states a count alone.
 function getParseErrorDayCounts(errorState) {
   const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
-  const crit = rows.reduce((s, r) => s + ((Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD ? 1 : 0), 0);
+  const crit = rows.filter(isParseErrorCritDay).length;
   return { crit, total: rows.length };
+}
+
+function isParseErrorCritDay(row) {
+  return (Number(row.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD;
 }
 
 function AlarmLaneC({ rows }) {
@@ -1488,10 +1492,10 @@ function ParseErrorBody({ state, days, onRetry }) {
     error_count: Number(r.error_count) || 0,
     total_count: Number(r.total_count) || 0,
     error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
-    isCrit: (Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD,
+    isCrit: isParseErrorCritDay(r),
   }));
 
-  const critDays = chartRows.filter((r) => r.isCrit).length;
+  const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
   return (
     <>
@@ -1516,7 +1520,7 @@ function ParseErrorBody({ state, days, onRetry }) {
           {critDays > 0 && (
             <div className="mb-2">
               {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
-              <Badge role="metadata">{critDays} of {chartRows.length} days over threshold</Badge>
+              <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
             </div>
           )}
           <div style={{ width: '100%', height: 200 }}>
