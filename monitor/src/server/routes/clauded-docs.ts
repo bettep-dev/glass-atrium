@@ -104,20 +104,23 @@ export const DOC_STAGES: readonly DocStageLiteral[] = [
   "doc_review", "implementing", "impl_review", "impl_done", "done",
 ];
 
+const INITIAL_DOC_STAGE: DocStageLiteral = "doc_review";
 const TERMINAL_DOC_STAGE: DocStageLiteral = "done";
+// Retired in-flight token — still accepted and read, always normalised to INITIAL_DOC_STAGE.
+const RETIRED_STAGE_ALIAS: DocStatusLiteral = "progress";
 
 // A row's 1-based rank in DOC_STAGES, the retired alias folded onto the first stage so an
 // un-backfilled row ranks as itself rather than as NULL. Window-aggregated per group, it is
 // what lets a group row state its least-advanced member stage instead of the representative's.
 const STAGE_RANK_SQL: Prisma.Sql = Prisma.sql`array_position(
   ARRAY[${Prisma.join(DOC_STAGES.map((stage) => Prisma.sql`${stage}::text`))}],
-  CASE WHEN doc_status::text = 'progress' THEN ${DOC_STAGES[0]}::text ELSE doc_status::text END
+  CASE WHEN doc_status::text = 'progress' THEN ${INITIAL_DOC_STAGE}::text ELSE doc_status::text END
 )`;
 
 // Accepted on a WRITE. The retired in-flight alias stays accepted so a not-yet-updated writer
 // keeps working, but it normalises to the first stage — only stages are ever stored.
 export const WRITE_DOC_STATUSES: ReadonlySet<DocStatusLiteral> = new Set<DocStatusLiteral>([
-  ...DOC_STAGES, "progress",
+  ...DOC_STAGES, RETIRED_STAGE_ALIAS,
 ]);
 
 // Accepted on a READ filter = the write set plus the 'open' pseudo-value. The read set is
@@ -133,7 +136,7 @@ const LAST_STATUS_MODEL_MAX_LENGTH = 128;
  * The retired alias resolves to the first stage rather than being dropped.
  */
 export function normalizeStoredStage(stored: string): DocStageLiteral | null {
-  if (stored === "progress") return DOC_STAGES[0] as DocStageLiteral;
+  if (stored === RETIRED_STAGE_ALIAS) return INITIAL_DOC_STAGE;
   return (DOC_STAGES as readonly string[]).includes(stored) ? (stored as DocStageLiteral) : null;
 }
 
@@ -157,8 +160,8 @@ export function getGroupStage(
  */
 export function getDocStatusFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
   if (filter === "open") return Prisma.sql`doc_status::text <> ${TERMINAL_DOC_STAGE}`;
-  if (filter === DOC_STAGES[0] || filter === "progress") {
-    return Prisma.sql`doc_status::text IN (${DOC_STAGES[0]}, 'progress')`;
+  if (filter === INITIAL_DOC_STAGE || filter === RETIRED_STAGE_ALIAS) {
+    return Prisma.sql`doc_status::text IN (${INITIAL_DOC_STAGE}, 'progress')`;
   }
   return Prisma.sql`doc_status::text = ${filter}`;
 }
@@ -590,7 +593,7 @@ async function handleCreateHtmlBody(
     inserted = await insertClaudedDocRow(prisma, {
       parsed, createdAt, conversion, bodyPath, audience, supersedesId,
       // FK enforced by INSERT constraint (missing folder_id → 23503 → failWithDb → 400 invalid_input).
-      docStatus: parsed.doc_status ?? DOC_STAGES[0],
+      docStatus: parsed.doc_status ?? INITIAL_DOC_STAGE,
       lastStatusModel: parsed.last_status_model ?? null,
       folderId: parsed.folder_id === undefined ? null : BigInt(parsed.folder_id),
     });
@@ -668,7 +671,7 @@ async function handleCreatePlainBody(
   try {
     inserted = await insertClaudedDocRow(prisma, {
       parsed, createdAt, conversion, bodyPath, audience, supersedesId,
-      docStatus: parsed.doc_status ?? DOC_STAGES[0],
+      docStatus: parsed.doc_status ?? INITIAL_DOC_STAGE,
       lastStatusModel: parsed.last_status_model ?? null,
       folderId: parsed.folder_id === undefined ? null : BigInt(parsed.folder_id),
     });
@@ -937,7 +940,7 @@ async function handleListGroups(
         -- least-advanced stage is not terminal) · hidden only when EVERY member is.
         per_group AS (
           SELECT COALESCE(folder_id, -id) AS group_key,
-                 bool_or(doc_status::text <> ${TERMINAL_DOC_STAGE}) AS has_open,
+                 bool_or(${getDocStatusFilterSql("open")}) AS has_open,
                  bool_and(${HIDDEN_AUDIENCE_SQL}) AS all_hidden
           FROM monitor.documents ${corpusClause}
           GROUP BY COALESCE(folder_id, -id)
@@ -2086,7 +2089,7 @@ async function handleSearch(
           snippet: hit.snippet,
           // list-row parity fields — same derivation as the handleList SELECT, so
           // status toggle · agent badge · audience filter all work in search mode too.
-          doc_status: normalizeStoredStage(hit.doc_status) ?? DOC_STAGES[0],
+          doc_status: normalizeStoredStage(hit.doc_status) ?? INITIAL_DOC_STAGE,
           audience: computeResponseAudience(hit.audience, formatFromPath(hit.html_path)),
           format: formatFromPath(hit.html_path),
         },
@@ -2964,7 +2967,7 @@ function rowToDetailResponse(
     // null = chain root · else predecessor id.
     supersedes_id: row.supersedes_id === null ? null : bigintToNumber(row.supersedes_id),
     superseded_by_id: supersededById,
-    doc_status: normalizeStoredStage(row.doc_status) ?? DOC_STAGES[0],
+    doc_status: normalizeStoredStage(row.doc_status) ?? INITIAL_DOC_STAGE,
     last_status_model: row.last_status_model,
     folder_id: row.folder_id === null ? null : bigintToNumber(row.folder_id),
     // list/detail shape parity (Int? as-is).
@@ -3382,7 +3385,7 @@ function validateFolderIdField(raw: unknown): number | undefined | string {
 /**
  * Validate POST body doc_status.
  *   - unspecified → the first stage (matches the DB DEFAULT, injected explicitly)
- *   - any stored token, the retired alias included → returned as-is
+ *   - any write token → normalised to its stage (the retired alias → the first stage)
  *   - else → { kind: "err" } with a 400 reason
  *
  * The union avoids the `typeof === "string"` trap (success values are strings too).
@@ -3392,7 +3395,7 @@ type DocStatusValidation =
   | { kind: "err"; reason: string };
 
 function validateDocStatusField(raw: unknown): DocStatusValidation {
-  if (raw === undefined || raw === null) return { kind: "ok", value: DOC_STAGES[0] as DocStageLiteral };
+  if (raw === undefined || raw === null) return { kind: "ok", value: INITIAL_DOC_STAGE };
   if (typeof raw !== "string" || !WRITE_DOC_STATUSES.has(raw as DocStatusLiteral)) {
     return { kind: "err", reason: `doc_status must be one of: ${Array.from(WRITE_DOC_STATUSES).join(", ")}` };
   }
