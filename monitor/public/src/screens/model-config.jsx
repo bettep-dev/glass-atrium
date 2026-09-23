@@ -553,7 +553,7 @@ function DomainsSectionMC({
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
 			{state !== "ready" ? (
-				<SectionBodyStateMC state={state} rows={5} />
+				<SectionBodyStateMC state={state} rows={DOMAIN_ORDER_MC.length} />
 			) : (
 				<table className="tbl">
 					<thead>

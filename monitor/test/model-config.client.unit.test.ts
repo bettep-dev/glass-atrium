@@ -563,6 +563,13 @@ test("render harness: the tree tracks the props it was given, not a fixed snapsh
   assert.ok(!textMc(empty).includes("Dev agents"), "no rows → no row label");
 });
 
+test("DomainsSectionMC loading skeleton reserves one placeholder row per server model domain", async () => {
+  const loading = renderComponentMc(screens.DomainsSectionMC, { ...domainsPropsMc([]), state: "loading" });
+  const [busy] = findAllMc(loading, (n) => n.props["aria-busy"] === "true");
+  assert.ok(busy, "loading placeholder rendered");
+  assert.strictEqual(busy.children.length, MODEL_DOMAINS.length);
+});
+
 // ---------------------------------------------------------------------------
 // Rewritten screen — what the target composition makes assertable (streams 2-5).
 // Each test names the relationship it pins, not a pixel: a column set, a tone
