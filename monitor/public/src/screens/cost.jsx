@@ -27,7 +27,7 @@ const COST_PERIODS = [
 
 // Token categories (bottom→top stacking) — --cat-1~4 단일 토큰셋.
 // ModelCostCard 의 cost_cache_creation→--cat-1 … cost_output→--cat-4 매핑과 1:1 정렬
-// → 인접 카드(TokenCategory/TokenStacked/ModelCost) legend 색상 일관성.
+// → 원장 카테고리 행 · Token volume 스택 · 모델 sub-bar 간 legend 색상 일관성.
 const TOKEN_CATEGORIES = [
   { key: 'cache_creation_tokens', label: 'Cache write', colorVar: '--cat-1' },
   { key: 'cache_read_tokens',     label: 'Cache read', colorVar: '--cat-2' },
@@ -1919,7 +1919,7 @@ function computeSessionBins(sessions) {
   }));
 }
 
-// Sparkline 첫→끝 변화율 (%) — KPI delta 화살표.
+// series 첫→끝 변화율 (%) — KPI delta 화살표.
 // 길이 < 2 또는 baseline=0 이면 null (KPI Delta 가 typeof==='number' 체크).
 function computeSparkDeltaC(series) {
   if (!Array.isArray(series) || series.length < 2) return null;
