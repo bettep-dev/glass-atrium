@@ -705,71 +705,65 @@ function WikiRunHistorySection({
 	);
 
 	return (
-		<details className="rounded-md border border-line bg-sunken">
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				<span className="font-mono fs-body text-ink font-medium">
-					Run history
-				</span>
-				<span className="ml-auto font-mono fs-meta text-dim">
-					{describeRunHistoryW(cyclesState, model)}
-				</span>
-			</summary>
-			<div className="px-3 pb-3 flex flex-col gap-3">
-				{cyclesState.status === "loading" ? (
-					<ChartSkeletonW height={120} />
-				) : cyclesState.status === "error" ? (
-					<ErrorBannerW
-						title="Couldn't load run history"
-						detail={cyclesState.error}
-						onRetry={onRetry}
+		<WikiDisclosureW
+			label="Run history"
+			count={describeRunHistoryW(cyclesState, model)}
+			bodyClassName="px-3 pb-3 flex flex-col gap-3"
+		>
+			{cyclesState.status === "loading" ? (
+				<ChartSkeletonW height={120} />
+			) : cyclesState.status === "error" ? (
+				<ErrorBannerW
+					title="Couldn't load run history"
+					detail={cyclesState.error}
+					onRetry={onRetry}
+				/>
+			) : model.rows.length === 0 ? (
+				<EmptyStateW
+					message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
+				/>
+			) : (
+				<>
+					<SparseTrendW
+						label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
+						series={model.compiledSeries}
+						stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
+						w={10}
+						h={44}
+						tone="accent"
 					/>
-				) : model.rows.length === 0 ? (
-					<EmptyStateW
-						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-					/>
-				) : (
-					<>
-						<SparseTrendW
-							label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
-							series={model.compiledSeries}
-							stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
-							w={10}
-							h={44}
-							tone="accent"
-						/>
-						<WikiStatusMixW mix={model.mix} />
-					</>
-				)}
+					<WikiStatusMixW mix={model.mix} />
+				</>
+			)}
 
-				<div className="pt-3 border-t border-line flex flex-col gap-2">
-					<div className="flex items-center gap-2 flex-wrap">
-						<span className="fs-micro font-mono text-faint uppercase tracking-wider">
-							Per-run table
-						</span>
-						<div
-							className="seg ml-auto"
-							role="group"
-							aria-label="Run table time range"
-						>
-							{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
-								<button
-									key={p.value}
-									className={days === p.value ? "active" : ""}
-									aria-pressed={days === p.value}
-									onClick={() => onChangeDays(p.value)}
-								>
-									{p.label}
-								</button>
-							))}
-						</div>
+			<div className="pt-3 border-t border-line flex flex-col gap-2">
+				<div className="flex items-center gap-2 flex-wrap">
+					<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+						Per-run table
+					</span>
+					<div
+						className="seg ml-auto"
+						role="group"
+						aria-label="Run table time range"
+					>
+						{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
+							<button
+								key={p.value}
+								className={days === p.value ? "active" : ""}
+								aria-pressed={days === p.value}
+								onClick={() => onChangeDays(p.value)}
+							>
+								{p.label}
+							</button>
+						))}
 					</div>
-					<div className="fs-micro font-mono text-faint leading-tight">
-						{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
-					</div>
-					<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
 				</div>
+				<div className="fs-micro font-mono text-faint leading-tight">
+					{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+				</div>
+				<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
 			</div>
-		</details>
+		</WikiDisclosureW>
 	);
 }
 
@@ -778,6 +772,24 @@ function describeRunHistoryW(cyclesState, model) {
 	if (cyclesState.status === "error") return "Unavailable";
 	if (model.rows.length === 0) return "No runs in range";
 	return `${model.spanDays} runs · last ${model.newestDate}`;
+}
+
+// Collapsible section shell — label left, count right, body below the summary.
+function WikiDisclosureW({
+	label,
+	count,
+	bodyClassName = "px-3 pb-3",
+	children,
+}) {
+	return (
+		<details className="rounded-md border border-line bg-sunken">
+			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
+				<span className="font-mono fs-body text-ink font-medium">{label}</span>
+				<span className="ml-auto font-mono fs-meta text-dim">{count}</span>
+			</summary>
+			<div className={bodyClassName}>{children}</div>
+		</details>
+	);
 }
 
 // Notes by type — text rows; counts read as a list, not as a card grid.
@@ -789,45 +801,38 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			: [];
 
 	return (
-		<details className="rounded-md border border-line bg-sunken">
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				<span className="font-mono fs-body text-ink font-medium">
-					Notes by type
-				</span>
-				<span className="ml-auto font-mono fs-meta text-dim">
-					{state.status === "ready" ? `${rows.length} types` : "—"}
-				</span>
-			</summary>
-			<div className="px-3 pb-3">
-				{state.status === "loading" ? (
-					<div className="fs-meta font-mono text-faint" aria-busy="true">
-						Loading note types…
-					</div>
-				) : state.status === "error" ? (
-					<ErrorBannerW
-						title="Couldn't load notes by type"
-						detail={state.error}
-						onRetry={onRetry}
-					/>
-				) : rows.length === 0 ? (
-					<EmptyStateW message="No notes indexed yet." />
-				) : (
-					<ul className="flex flex-col gap-1 m-0 p-0 list-none">
-						{rows.map((t) => (
-							<li
-								key={t.note_type}
-								className="flex items-baseline gap-3 fs-meta font-mono"
-							>
-								<span className="text-dim truncate" title={t.note_type}>
-									{t.note_type}
-								</span>
-								<span className="ml-auto text-ink">{formatCountW(t.count)}</span>
-							</li>
-						))}
-					</ul>
-				)}
-			</div>
-		</details>
+		<WikiDisclosureW
+			label="Notes by type"
+			count={state.status === "ready" ? `${rows.length} types` : "—"}
+		>
+			{state.status === "loading" ? (
+				<div className="fs-meta font-mono text-faint" aria-busy="true">
+					Loading note types…
+				</div>
+			) : state.status === "error" ? (
+				<ErrorBannerW
+					title="Couldn't load notes by type"
+					detail={state.error}
+					onRetry={onRetry}
+				/>
+			) : rows.length === 0 ? (
+				<EmptyStateW message="No notes indexed yet." />
+			) : (
+				<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+					{rows.map((t) => (
+						<li
+							key={t.note_type}
+							className="flex items-baseline gap-3 fs-meta font-mono"
+						>
+							<span className="text-dim truncate" title={t.note_type}>
+								{t.note_type}
+							</span>
+							<span className="ml-auto text-ink">{formatCountW(t.count)}</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</WikiDisclosureW>
 	);
 }
 
@@ -976,28 +981,18 @@ function computeStatusMix(rows) {
 	};
 }
 
-// collapsible explorer shell SoT — summary(라벨+카운트) · 'none' 빈상태 · 본문 컨테이너 단일 출처.
-//   children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
+// children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
 function BacklogExplorer({ label, count, payload, children }) {
 	return (
-		<details className="rounded-md border border-line bg-sunken">
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				{/* 12px→fs-body(12) 라벨 · 10.5px→fs-meta(11) 카운트. */}
-				<span className="font-mono fs-body text-ink font-medium">{label}</span>
-				<span className="ml-auto font-mono fs-meta text-dim">
-					{count}
-				</span>
-			</summary>
-			<div className="px-3 pb-3">
-				{children != null ? (
-					children
-				) : (
-					<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
-						{stringifyPayloadW(payload)}
-					</pre>
-				)}
-			</div>
-		</details>
+		<WikiDisclosureW label={label} count={count}>
+			{children != null ? (
+				children
+			) : (
+				<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
+					{stringifyPayloadW(payload)}
+				</pre>
+			)}
+		</WikiDisclosureW>
 	);
 }
 
