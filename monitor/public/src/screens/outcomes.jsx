@@ -736,8 +736,8 @@ function ScreenOutcomes({ onNav }) {
       </DisclosureO>
 
       <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
-        <GraderBreakdownCard state={analyticsState} period={analyticsPeriod} onRetry={triggerRefresh}/>
-        <CrosstabCard state={analyticsState} period={analyticsPeriod} onRetry={triggerRefresh}/>
+        <GraderBreakdownCard state={analyticsState} onRetry={triggerRefresh}/>
+        <CrosstabCard state={analyticsState} onRetry={triggerRefresh}/>
       </DisclosureO>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
@@ -771,9 +771,8 @@ function buildPayloadGroupsO({ attentionState, searchState, analyticsState }) {
 
 function AlarmLaneO({ channelLivenessState, payloadGroups, onRetry }) {
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
-  const groups = Array.isArray(payloadGroups) ? payloadGroups : [];
-  const blocked = groups.filter((g) => g.state.status === 'blocked');
-  const failed  = groups.filter((g) => g.state.status === 'error');
+  const blocked = payloadGroups.filter((g) => g.state.status === 'blocked');
+  const failed  = payloadGroups.filter((g) => g.state.status === 'error');
 
   if (silent.length === 0 && blocked.length === 0 && failed.length === 0) return null;
 
@@ -1385,7 +1384,7 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
 //   verified_pass/unverified/verified_fail = graded_total 분모 · not_measured(레거시 NULL) 은 비율 분모 제외.
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
-function GraderBreakdownCard({ state, period, onRetry }) {
+function GraderBreakdownCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
   const breakdown   = state.status === 'ready' ? state.data?.overall?.grader_breakdown : null;
@@ -1555,7 +1554,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // 행 4 (confidence) × 열 3 (metric_pass) = 12 셀 + 합계 행/열 → 5열 이내(라벨+pass+fail+null+합계).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
-function CrosstabCard({ state, period, onRetry }) {
+function CrosstabCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
