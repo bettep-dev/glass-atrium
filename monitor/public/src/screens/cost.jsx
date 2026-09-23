@@ -104,15 +104,13 @@ function ScreenCost({ onNav }) {
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
     // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
-    const tasks = [
-      runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState, markReceived),
-      runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState, markReceived),
-      runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState, markReceived),
-      runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState, markReceived),
-      runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState, markReceived),
-      runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl.signal, setErrorState, markReceived),
-      runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl.signal, setTurnState, markReceived),
-    ];
+    runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState, markReceived);
+    runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState, markReceived);
+    runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState, markReceived);
+    runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState, markReceived);
+    runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState, markReceived);
+    runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl.signal, setErrorState, markReceived);
+    runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl.signal, setTurnState, markReceived);
 
     return () => ctrl.abort();
   }, [days, refreshTick]);
@@ -1013,12 +1011,10 @@ function rollupModelRows(modelRows, topN) {
   const other = rest.reduce(
     (acc, r) => ({
       cost_usd: acc.cost_usd + r.cost_usd,
-      input_tokens: acc.input_tokens + r.input_tokens,
-      output_tokens: acc.output_tokens + r.output_tokens,
       session_count: acc.session_count + r.session_count,
       count: acc.count + 1,
     }),
-    { cost_usd: 0, input_tokens: 0, output_tokens: 0, session_count: 0, count: 0 },
+    { cost_usd: 0, session_count: 0, count: 0 },
   );
   return { top, other };
 }
