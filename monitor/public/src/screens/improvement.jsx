@@ -608,8 +608,6 @@ function ScreenImprovement({ onNav }) {
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
-						loopEventsState={loopEventsState}
-						loopAggregate={loopAggregate}
 						correctionState={correctionState}
 						statsState={statsState}
 						corpusAuditState={corpusAuditState}

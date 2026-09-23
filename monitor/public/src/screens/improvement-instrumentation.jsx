@@ -85,8 +85,6 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 function ImprovementInstrumentationViewI({
 	statsState,
 	listState,
-	loopEventsState,
-	loopAggregate,
 	correctionState,
 	corpusAuditState,
 	styleRef,
