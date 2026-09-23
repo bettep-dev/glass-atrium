@@ -860,6 +860,46 @@ def read_pending_learning_patterns() -> list[dict]:
         return []
 
 
+# Coverage predicate — none: terminal rows stay visible, so a caller can tell "the
+# label covers no stored row" from "the row it covers is already terminal". Kept
+# apart from _PENDING_PATTERNS_SELECT_SQL — widening intake would change what
+# proposal generation consumes.
+_COVERAGE_PATTERNS_SELECT_SQL = """
+SELECT id, pattern_signature, agent, status::text
+FROM core.learning_log
+ORDER BY id
+"""
+
+
+def read_coverage_learning_patterns() -> list[dict] | None:
+    """Return every core.learning_log row, whatever its status, for coverage matching.
+
+    Shape: [{"id": int, "pattern_signature": str, "agent": str, "status": str}].
+    None on ANY failure, never [] — unlike the intake read's fallback, an outage here
+    must not read as "no stored row"; [] means the read completed on an empty table.
+    """
+    try:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_COVERAGE_PATTERNS_SELECT_SQL)
+                return [
+                    {
+                        "id": row_id,
+                        "pattern_signature": (signature or "").strip(),
+                        "agent": (agent or "").strip(),
+                        "status": status,
+                    }
+                    for row_id, signature, agent, status in cur.fetchall()
+                ]
+    except Exception as exc:  # noqa: BLE001 — any failure is an outage the caller must see
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_coverage_learning_patterns",'
+            '"error_kind":"%s","fallback":"none"}\n'
+            % type(exc).__name__
+        )
+        return None
+
+
 def _learning_window_where(
     since_epoch: float,
     *,

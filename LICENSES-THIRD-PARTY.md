@@ -123,9 +123,8 @@ Import sites (tracked files):
   `hooks/cost-summary.py`, `hooks/learning-aggregator.py`,
   `scripts/_pg_archive_rotate.py`,
   `scripts/_pg_dual_write_daemon.py`, `scripts/agent_lifecycle/db_utils.py`,
-  `scripts/autoagent-status-backfill.py` — plus 8 test files: 7 under
-  `autoagent/test/` (`test_all_reject_alert_e2e.py`,
-  `test_corpus_audit_pg_sink.py`, `test_negative_signal_triggers.py`,
+  `scripts/autoagent-status-backfill.py` — plus 7 test files: 6 under
+  `autoagent/test/` (`test_corpus_audit_pg_sink.py`, `test_negative_signal_triggers.py`,
   `test_observation_count_decouple.py`, `test_pattern_lifecycle_gates.py`,
   `test_pg_pattern_intake.py`, `test_poisoned_window_exclusion.py`), and
   `hooks/test/test_learning_pattern_discharge.py`, which imports the real

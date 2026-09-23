@@ -14,6 +14,7 @@
 # Writes (single transaction, idempotent):
 #   * core.autoagent_proposals.status: 'pending' -> 'applied'
 #     WHERE matched by (cycle_date, pattern_label, target_file)
+#   * core.autoagent_proposals.reviewed_by: this path's own actor token
 #
 # CLI:
 #   --dry-run            print proposed UPDATE row count; rollback at end
@@ -95,11 +96,18 @@ INPUT_GLOB = os.path.join(REPORTS_DIR, "autoagent-applied-*.jsonl")
 # Filename pattern — captures cycle_date; excludes *.dryrun.jsonl by anchored regex.
 _FNAME_RE = re.compile(r"^autoagent-applied-(\d{4}-\d{2}-\d{2})\.jsonl$")
 
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy. This path moves the status, so it names itself.
+_BACKFILL_ACTOR = "status-backfill"
+
 # Parameterized SQL — Korean pattern_label binds safely via psycopg parameters.
 # WHERE status='pending' makes the operation idempotent (re-runs are no-ops).
+# reviewed_at is NOT assigned: the JSONL records an apply, not a review verdict,
+# and a wall-clock stamp here would date the backfill run rather than the event.
 _UPDATE_SQL = """
 UPDATE core.autoagent_proposals
-SET status = 'applied'::core."ProposalStatus"
+SET status = 'applied'::core."ProposalStatus",
+    reviewed_by = %(reviewed_by)s
 WHERE cycle_date = %(cycle_date)s
   AND pattern_label = %(pattern_label)s
   AND target_file = %(target_file)s
@@ -232,6 +240,7 @@ def _apply_updates(conn, tuples: list[dict], dry_run: bool, verbose: bool) -> di
                 "cycle_date": t["cycle_date"],
                 "pattern_label": t["pattern_label"],
                 "target_file": t["target_file"],
+                "reviewed_by": _BACKFILL_ACTOR,
             }
             try:
                 if dry_run:

@@ -9,6 +9,8 @@ window.TOKEN_RATES = {
   'claude-fable-5':     { input: 10.00, output: 50.00, cache_read: 1.00,  cache_creation: 12.50 },
 
   // claude-opus-5 — opus-4-x 세대와 별개 단가라 family prefix 매칭에 기대지 않고 독립 행 유지
+  // 5-5 는 opus-5 보다 전 필드 저가 — 자체 행이 없으면 opus-5 prefix 로 해소돼 전 필드 과금(cache_read 2.5배)
+  'claude-opus-5-5':    { input:  4.00, output: 20.00, cache_read: 0.20,  cache_creation:  5.00 },
   'claude-opus-5':      { input:  5.00, output: 25.00, cache_read: 0.50,  cache_creation:  6.25 },
 
   // claude-opus-4-x family — SoT 행과 1:1 (claude-opus-4 만 예외, 아래 참고)
@@ -49,9 +51,14 @@ window.getTokenRate = function (model) {
   const rates = window.TOKEN_RATES || {};
   if (rates[model]) return rates[model];
 
+  // '[1m]' 등 context-variant 접미사는 routing marker · 단가 불변 — 붙은 채로 prefix 스캔하면
+  // 자체 행을 건너뛰고 상위 family 행에 매칭 (hooks/lib/pricing_loader.py normalize_model_key 와 동일 규칙)
+  const base = model.split('[')[0];
+  if (base !== model && rates[base]) return rates[base];
+
   let best = null;
   for (const key of Object.keys(rates)) {
-    if (model === key || model.startsWith(key + '-')) {
+    if (base === key || base.startsWith(key + '-')) {
       if (best === null || key.length > best.length) best = key;
     }
   }
