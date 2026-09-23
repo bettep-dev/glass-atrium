@@ -144,3 +144,12 @@ test("the default state dir tracks the hook writer's GA data root, override firs
     }
   }
 });
+
+test("an empty registry set is unavailable — the registry loader degrades to empty on failure", async () => {
+  await withStateDir(async () => undefined);
+
+  const snapshot = await loadAgentCircuitBreakerSnapshot([]);
+
+  assert.equal(snapshot.summary.source, "unavailable");
+  assert.equal(snapshot.states.size, 0);
+});

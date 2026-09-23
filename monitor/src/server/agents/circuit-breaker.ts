@@ -45,6 +45,12 @@ export async function loadAgentCircuitBreakerSnapshot(
   const states = new Map<string, AgentCircuitBreakerItem>();
   const alarms: AgentCircuitBreakerSummary["alarms"] = [];
 
+  // loadAgentRegistry degrades to an empty Map on a read/parse failure → zero names
+  // cannot be told apart from an unloaded registry, so it is never a loaded zero.
+  if (agentNames.length === 0) {
+    return getUnavailableSnapshot(0);
+  }
+
   const dirState = await probeStateDir(dir);
   if (dirState === "unavailable") {
     return getUnavailableSnapshot(agentNames.length);
