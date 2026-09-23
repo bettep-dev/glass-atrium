@@ -732,7 +732,8 @@ function WikiRunHistorySection({
 						h={44}
 						tone="accent"
 					/>
-					<WikiStatusMixW mix={model.mix} />
+					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
+					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
 				</>
 			)}
 
@@ -940,6 +941,7 @@ function buildThroughputModel(state) {
 		rows,
 		compiledSeries,
 		mix,
+		isMixUniform: isNearUniformMixW(mix),
 		maxCompiledLabel: formatCountW(maxCompiled),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
@@ -948,6 +950,13 @@ function buildThroughputModel(state) {
 }
 
 const EMPTY_MIX = { ok: 0, partial: 0, error: 0, quota: 0 };
+
+// One status above this share of runs → the mix is near-uniform.
+const STATUS_UNIFORM_PCT = 95;
+
+function isNearUniformMixW(mix) {
+	return Object.values(mix).some((pct) => pct > STATUS_UNIFORM_PCT);
+}
 
 const STATUS_CHIP_META = {
 	ok: { tone: "ok", label: "Healthy" },

@@ -52,6 +52,7 @@ interface WikiHelpers {
     backlogState: FetchState,
     cyclesState: FetchState,
   ) => LaneModel;
+  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean };
   window: { UI: Record<string, unknown> };
 }
 
@@ -225,6 +226,34 @@ test("a loading run history reads as unknown-yet, never as absent history", () =
   ).alarms[0] as Alarm;
   assert.match(checking.detail, /Checking run history/);
   assert.match(settled.detail, /unknown/);
+});
+
+// Near-uniform = one status above 95% of runs → the mix bar carries no information and is dropped.
+test("the status mix is uniform exactly when one status exceeds 95% of runs", () => {
+  const cycles = (counts: Record<string, number>) =>
+    ready({
+      cycles: Object.entries(counts).flatMap(([status, n]) =>
+        Array.from({ length: n }, (_, i) => ({
+          run_date: isoDaysAgo(i),
+          status,
+          compiled_count: 1,
+        })),
+      ),
+    });
+  const cases: Array<[Record<string, number>, boolean]> = [
+    [{ ok: 30 }, true],
+    [{ error: 30 }, true],
+    [{ ok: 24, error: 1 }, true],
+    [{ ok: 19, partial: 1 }, false],
+    [{ ok: 10, quota_exceeded: 10 }, false],
+  ];
+  for (const [counts, expected] of cases) {
+    assert.equal(
+      helpers.buildThroughputModel(cycles(counts)).isMixUniform,
+      expected,
+      JSON.stringify(counts),
+    );
+  }
 });
 
 // Server helpers for the two additive fields.
