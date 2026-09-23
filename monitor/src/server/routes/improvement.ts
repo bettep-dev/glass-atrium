@@ -1357,6 +1357,11 @@ async function handleLearningLog(
       ),
       " OR ",
     )})`;
+    // One column list for the pattern list and the parked rows — both map through rowToLearningLogSummary.
+    const learningLogColumns = Prisma.sql`id, pattern_signature, frequency, agent,
+               status::text AS status, approval_tier::text AS approval_tier,
+               discovered_date, last_updated, last_transition_at, last_transition_reason,
+               ${unpromptablePredicate} AS intake_skipped`;
 
     const [
       totalRows,
@@ -1380,10 +1385,7 @@ async function handleLearningLog(
         ORDER BY count DESC
       `,
       prisma.$queryRaw<LearningLogDbRow[]>`
-        SELECT id, pattern_signature, frequency, agent,
-               status::text AS status, approval_tier::text AS approval_tier,
-               discovered_date, last_updated, last_transition_at, last_transition_reason,
-               ${unpromptablePredicate} AS intake_skipped
+        SELECT ${learningLogColumns}
         FROM core.learning_log
         WHERE discovered_date >= CURRENT_DATE - 7
           ${agentAndFilter}
@@ -1423,10 +1425,7 @@ async function handleLearningLog(
       // timestamp (pre-audit-column rows) falls back to last_updated rather than
       // sinking to the bottom of a NULLS-LAST ordering and off the LIMIT.
       prisma.$queryRaw<ParkedPatternDbRow[]>`
-        SELECT id, pattern_signature, frequency, agent,
-               status::text AS status, approval_tier::text AS approval_tier,
-               discovered_date, last_updated, last_transition_at, last_transition_reason,
-               ${unpromptablePredicate} AS intake_skipped,
+        SELECT ${learningLogColumns},
                ${suppressionCase} AS cause
         FROM core.learning_log
         WHERE status = 'rejected'::core."LearningStatus"
