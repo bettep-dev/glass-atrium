@@ -41,7 +41,7 @@ const MODEL_CAP_MC = {
 	"claude-sonnet-5": "Sonnet tier — balanced speed/cost",
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
-	inherit: "Falls back to whatever settings.json resolves to",
+	inherit: "Follows the session model — the agent file carries no model line",
 };
 // 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명/옵션 구성
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
@@ -74,6 +74,20 @@ const DOMAIN_META_MC = {
 		editable: true,
 		inherit: true,
 	},
+	"model.review": {
+		label: "Review",
+		hint: "Code review and bug diagnosis",
+		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — code review verdicts, plan direction review, and root-cause diagnosis; written into both agent files",
+		editable: true,
+		inherit: true,
+	},
+	"model.docs": {
+		label: "Documents",
+		hint: "Reports and plans",
+		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — report and plan authoring; written into both agent files",
+		editable: true,
+		inherit: true,
+	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
 		hint: "Background daemon housekeeping steps",
@@ -89,6 +103,8 @@ const DOMAIN_ORDER_MC = [
 	"model.research",
 	"model.meta",
 	"model.wiki",
+	"model.review",
+	"model.docs",
 	"model.daemon_cycle_worker",
 ];
 
@@ -762,7 +778,7 @@ function ModelSelectMC({
 			>
 				{options.map((opt) => (
 					<option key={opt} value={opt} title={MODEL_CAP_MC[opt] || undefined}>
-						{opt === "inherit" ? "inherit (settings.json)" : opt}
+						{opt === "inherit" ? "session model (inherit)" : opt}
 					</option>
 				))}
 				<option value={CUSTOM_OPTION_MC}>custom…</option>

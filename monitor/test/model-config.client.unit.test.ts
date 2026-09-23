@@ -32,6 +32,7 @@ import {
   BUDGET_MIN_USD,
   BUDGET_MAX_USD,
   BUDGET_SEED_DEFAULT_USD,
+  MODEL_DOMAINS,
 } from "../src/server/model-config-consts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -196,6 +197,8 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.research": true,
   "model.meta": true,
   "model.wiki": true,
+  "model.review": true,
+  "model.docs": true,
   "model.daemon_cycle_worker": false,
 };
 
@@ -364,6 +367,19 @@ test("sortDomainsMC: canonical order applied, an unknown domain is appended (nev
     ["model.dev", "model.research", "model.future_unknown"],
     "reduced DOMAIN_ORDER_MC order applied, unknown appended last (never dropped)",
   );
+});
+
+test("every server model domain has a client slot, in the server's order, with a matching inherit flag", () => {
+  // Server SoT is the oracle — a domain the API adds without a client entry would sort last under a raw key.
+  const serverKeys = MODEL_DOMAINS.map((d) => d.key);
+  const shuffled = serverKeys.slice().reverse().map((domain) => ({ domain }));
+  const sorted = sameRealm(mc.sortDomainsMC(shuffled)).map((d) => d.domain);
+  assert.deepStrictEqual(sorted, serverKeys, "DOMAIN_ORDER_MC covers every server domain in order");
+
+  const roster = getInheritRosterOrFailMc();
+  for (const def of MODEL_DOMAINS) {
+    assert.strictEqual(roster[def.key], def.allowInherit, `${def.key}: client inherit flag = server allowInherit`);
+  }
 });
 
 test("sortBudgetsMC: known order first, unknown budget appended (never dropped)", () => {
@@ -642,6 +658,40 @@ test("a mixed dev value discloses its per-file actuals instead of hiding them", 
   const text = textMc(tree);
   assert.ok(text.includes("glass-atrium-dev-react.md"), "each file is listed");
   assert.ok(text.includes("inherit"), "a file with no model line reads as inherit, not blank");
+});
+
+test("a mixed review or docs pair reads as a labelled row with both files and a session-model default", () => {
+  const pairs = {
+    "model.review": ["Review", "glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"],
+    "model.docs": ["Documents", "glass-atrium-intel-reporter.md", "glass-atrium-intel-planner.md"],
+  } as const;
+  for (const [domain, [label, pinned, keyless]] of Object.entries(pairs)) {
+    const tree = renderComponentMc(screens.DomainsSectionMC, {
+      ...domainsPropsMc([
+        {
+          ...DOMAIN_ROW_FIXTURE_MC[0],
+          domain,
+          desired: "inherit",
+          actual: "mixed",
+          drift: true,
+          files: [
+            { file: `agents/${pinned}`, model: "claude-sonnet-5" },
+            { file: `agents/${keyless}`, model: null },
+          ],
+        },
+      ]),
+      form: { models: { [domain]: "inherit" }, budgets: {} },
+      baseline: { models: { [domain]: "inherit" }, budgets: {} },
+    });
+    const text = textMc(tree);
+    assert.ok(text.includes(label), `${domain}: row label from DOMAIN_META_MC, not the raw key`);
+    assert.ok(!text.includes(domain), `${domain}: raw key never shown as the label`);
+    assert.ok(text.includes(pinned) && text.includes(keyless), `${domain}: both files listed`);
+    assert.ok(text.includes("2 files"), `${domain}: per-file disclosure counts the pair`);
+    const options = tagsMc(tree, "option");
+    assert.strictEqual(options[0]?.props.value, "inherit", `${domain}: inherit is the first option`);
+    assert.strictEqual(textMc([options[0]]), "session model (inherit)", `${domain}: inherit reads as the session model`);
+  }
 });
 
 test("an empty roster says so; it never renders as a table with nothing in it", () => {
