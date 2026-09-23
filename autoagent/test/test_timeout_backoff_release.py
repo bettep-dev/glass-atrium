@@ -40,9 +40,11 @@ import contextlib
 import importlib
 import io
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -54,6 +56,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
+if str(_STUB_DIR) not in sys.path:
+    sys.path.insert(0, str(_STUB_DIR))
+
+import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
 
 try:
     import daemon_cycle as dc
@@ -274,6 +281,40 @@ class NeverLockoutTest(unittest.TestCase):
         finally:
             importlib.reload(dc)
         self.assertEqual(dc.TIMEOUT_BACKOFF_PROBE_CYCLES, 3)
+
+
+@unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
+class RejectedMarkerHistoryTest(unittest.TestCase):
+    """The reader's own SQL keys on rationale alone — a marker's status is invisible."""
+
+    def _read(self, marker_status: str) -> "dc.BackoffState":
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db = Path(tmp.name) / "proposals.sqlite"
+        stub.create_proposals_table(db)
+        oldest_first = [("rejected", _timeout(dc.HAIKU_TIMEOUT_SEC))] * 3 + [
+            (marker_status, _backoff(3))
+        ] * 4
+        with closing(sqlite3.connect(db)) as conn:
+            conn.executemany(
+                "INSERT INTO autoagent_proposals "
+                "(cycle_date, pattern_label, target_file, status, rationale) "
+                "VALUES (?, 'probe pattern', '/tmp/probe-agent.md', ?, ?)",
+                [
+                    (f"2026-07-{day:02d}", status, rationale)
+                    for day, (status, rationale) in enumerate(oldest_first, start=1)
+                ],
+            )
+            conn.commit()
+        with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True), mock.patch.object(
+            dc, "_pg_connect", lambda: stub.create_connection(db), create=True
+        ):
+            return dc.read_backoff_state("/tmp/probe-agent.md")
+
+    def test_when_markers_stored_rejected_then_state_matches_snoozed_history(self):
+        rejected = self._read("rejected")
+        self.assertEqual(rejected.held_cycles, 4)
+        self.assertEqual(rejected, self._read("snoozed"))
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))

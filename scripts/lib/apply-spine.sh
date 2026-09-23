@@ -311,6 +311,14 @@ spine_retired_unmoved_path() {
   printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-unmoved.txt"
 }
 
+# Echo the path of the retired-key refusal record (UNSAFE / MALFORMED map keys the sweep
+# skipped) — one derivation for the sweep and doctor, as for the un-moved record. Named
+# apart from the update.sh reset modes' `refused` outcomes, which are a different mechanism.
+# Arg: $1 = optional state-dir override.
+spine_retired_refused_path() {
+  printf '%s\n' "$(spine_baseline_dir "${1:-}")/retired-refused-keys.txt"
+}
+
 # Emit (one relative path per line) every path this release RETIRED that is safe to
 # sweep from the live install. The map carries the whole provenance: `retired[path]`
 # is the set of hashes the vendor ever shipped for that path, so a live file matching
@@ -329,10 +337,15 @@ spine_retired_unmoved_path() {
 # migrations arm — so the family row is derived from the single definition rather
 # than from a second copy of the pattern.
 #
-# Args: $1 = new-release manifest.json · $2 = live install root. Returns 0 whenever
-# the manifest is readable: one unusable entry must not cancel the pass.
+# An UNSAFE or MALFORMED key is also appended as a `<kind><TAB><key>` line to the optional
+# refusal file, so a caller records the key itself rather than parsing it back out of a row
+# worded for humans.
+#
+# Args: $1 = new-release manifest.json · $2 = live install root · $3 = optional refusal
+# file. Returns 0 whenever the manifest is readable: one unusable entry must not cancel
+# the pass.
 spine_find_removed_files() {
-  local manifest="$1" install_root="$2"
+  local manifest="$1" install_root="$2" refusals="${3:-}"
   local path target live hashes new_files
   spine_require_tools jq || return 1
   if [[ ! -f "${manifest}" ]]; then
@@ -346,11 +359,16 @@ spine_find_removed_files() {
   new_files="$(jq -r '.files[]' -- "${manifest}")" || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_retired_key "${path}"; then
+      spine_refuse_retired_key UNSAFE "${path}" 'escapes install root' "${refusals}"
+      continue
+    fi
     # Tripwire: the generator guarantees retired and files[] are disjoint, so a path
     # in both is a malformed manifest rather than a removal decision to act on.
     case $'\n'"${new_files}"$'\n' in
       *$'\n'"${path}"$'\n'*)
-        printf 'apply-spine: retired MALFORMED — %s is retired AND shipped; skipped\n' "${path}" >&2
+        spine_refuse_retired_key MALFORMED "${path}" 'is retired AND shipped' "${refusals}"
         continue
         ;;
       *) ;;
@@ -372,7 +390,7 @@ spine_find_removed_files() {
         else ""
         end' -- "${manifest}")"
     if [[ -z "${hashes}" ]]; then
-      printf 'apply-spine: retired MALFORMED — %s carries no non-empty 64-hex hash list; skipped\n' "${path}" >&2
+      spine_refuse_retired_key MALFORMED "${path}" 'carries no non-empty 64-hex hash list' "${refusals}"
       continue
     fi
     target="${install_root}/${path}"
@@ -385,12 +403,71 @@ spine_find_removed_files() {
       printf 'apply-spine: retired skip, not a regular file — %s\n' "${path}" >&2
       continue
     fi
+    # shellcheck disable=SC2310
+    if spine_is_escaping_retired_target "${target}" "${install_root}"; then
+      spine_refuse_retired_key UNSAFE "${path}" 'escapes install root' "${refusals}"
+      continue
+    fi
     live="$(spine_sha256_of "${target}")" || return 1
     case $'\n'"${hashes}"$'\n' in
       *$'\n'"${live}"$'\n'*) printf '%s\n' "${path}" ;;
       *) printf 'apply-spine: retired user-modified, preserved — %s\n' "${path}" >&2 ;;
     esac
   done < <(jq -r '.retired | keys[]' -- "${manifest}")
+}
+
+# Emit the named stderr row for a refused retired key and, when a refusal file is given,
+# append its structured `<kind><TAB><key>` line. Args: $1 = UNSAFE|MALFORMED · $2 = key ·
+# $3 = reason phrase · $4 = refusal file, or empty.
+spine_refuse_retired_key() {
+  printf 'apply-spine: retired %s — %s %s; skipped\n' "$1" "$2" "$3" >&2
+  [[ -z "$4" ]] || printf '%s\t%s\n' "$1" "$2" >>"$4"
+}
+
+# True when manifest key $1 cannot name a path inside the install root by its spelling
+# alone — empty, absolute, or carrying a `..` segment. Segment-exact: `foo..bar` is a
+# name, not a traversal. Needs no filesystem, so it runs for every key before any lookup.
+spine_is_escaping_key() {
+  case "/$1/" in
+    // | //?* | */../*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+spine_is_escaping_retired_key() {
+  spine_is_escaping_key "$1"
+}
+
+# True when existing target $1 physically sits outside install root $2 — the escape a
+# symlinked directory component makes, which spelling cannot show. Both sides resolve
+# physically, else an aliased root (/var -> /private/var) would refuse every key; an
+# unresolvable side counts as escaping. The final component is already known not to
+# be a symlink, so its parent is what resolves.
+spine_is_escaping_retired_target() {
+  spine_is_escaping_dir "$(dirname -- "$1")" "$2"
+}
+
+# True when existing directory $1 physically resolves outside install root $2; an
+# unresolvable side counts as escaping.
+spine_is_escaping_dir() {
+  local dir root
+  dir="$(CDPATH='' cd -P -- "$1" && pwd -P)" || return 0
+  root="$(CDPATH='' cd -P -- "$2" && pwd -P)" || return 0
+  [[ "${dir}" != "${root}" && "${dir}" != "${root%/}/"* ]]
+}
+
+# True when writing path $1 (not yet necessarily present) would land physically outside
+# install root $2 through a symlinked directory component. Judges the nearest EXISTING
+# ancestor, so a caller checking before `mkdir -p` never creates a directory outside
+# the root first — and a brand-new subtree inside the root still passes. A relative walk
+# that runs out of components with no existing ancestor counts as escaping.
+spine_is_escaping_write_target() {
+  local ancestor="${1%/*}"
+  while [[ -n "${ancestor}" && ! -d "${ancestor}" ]]; do
+    [[ "${ancestor}" == */* ]] || return 0
+    ancestor="${ancestor%/*}"
+  done
+  spine_is_escaping_dir "${ancestor:-/}" "$2"
 }
 
 # T11 — staged apply + rollback
@@ -532,6 +609,13 @@ spine_commit_staged() {
     snap="${snapshot}/${path}"
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if ! spine_is_present_path "${src}"; then
+      failed="${path}"
+      rc=1
+      break
+    fi
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${dst}" "${install_root}"; then
+      printf 'apply-spine: write target escapes install root — %s\n' "${path}" >&2
       failed="${path}"
       rc=1
       break

@@ -3,7 +3,8 @@
 // A split keyed on the model-call status alone satisfies the infra/quality counts and is
 // still wrong: every mechanically superseded row carries haiku_status 'ok', so it books as
 // a substantive quality reject. Two control rows discriminate that implementation —
-//   1. a supersede-marked row must land in the lifecycle bucket and leave quality flat;
+//   1. a supersede- or parked-pattern-marked row must land in the lifecycle bucket and
+//      leave quality flat;
 //   2. an updater-written merge-resolution row must move no bucket and no total, which
 //      mechanises the cross-plan provenance guard.
 // A third control covers the population gate: a pending row is not a rejection, so a split
@@ -46,6 +47,10 @@ const HISTORICAL_UPDATER_LABEL = "editable-region-resolved-release";
 // test, so sharing a constant would let a drifted marker pass on both sides.
 const SUPERSEDE_RATIONALE =
   "superseded by fresher per-agent proposal (current-file-anchored, previous calendar day data)";
+
+// update_parked_proposal_status's rationale (head + rows tail), verbatim for the same reason
+const PARKED_PATTERN_RATIONALE =
+  "covering pattern parked before apply (rows 3384:rejected, 6:applied)";
 
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
@@ -197,6 +202,18 @@ test("a supersede-marked row lands in lifecycle, never in quality", async (t) =>
   await insertProposal({ tag: "supersede", rationale: SUPERSEDE_RATIONALE });
   const moved = delta(await fetchBuckets(), start);
   assert.strictEqual(moved.lifecycle_count, 1, "the mechanical row is booked as lifecycle");
+  assert.strictEqual(moved.quality_count, 0, "the quality bucket must not absorb it");
+  assert.strictEqual(moved.infra_count, 0, "nor the infra bucket");
+  assert.strictEqual(moved.total, 1, "still one rejected row in the population");
+});
+
+test("a parked-pattern guard reject lands in lifecycle, never in quality", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const start = await fetchBuckets();
+  // Apply-eligible (ok status) row the guard rejected unjudged — a quality booking is the defect
+  await insertProposal({ tag: "parked-pattern", rationale: PARKED_PATTERN_RATIONALE });
+  const moved = delta(await fetchBuckets(), start);
+  assert.strictEqual(moved.lifecycle_count, 1, "the guarded row is booked as lifecycle");
   assert.strictEqual(moved.quality_count, 0, "the quality bucket must not absorb it");
   assert.strictEqual(moved.infra_count, 0, "nor the infra bucket");
   assert.strictEqual(moved.total, 1, "still one rejected row in the population");

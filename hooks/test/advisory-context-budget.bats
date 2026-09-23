@@ -18,6 +18,15 @@ INPUT='{"tool_name":"Agent","session_id":"t17-ctx-sess"}'
 
 setup() {
   [[ -x "${HOOK_SH}" ]] || skip "hook not found or not executable: ${HOOK_SH}"
+  # Data-root sandbox: CACHE_BYPASS forces the READ past the short-TTL cache but the hook still
+  # WRITES the entry, so an unredirected GA_DATA_ROOT drops t17-ctx-sess.cache into the operator's
+  # live ~/.glass-atrium/logs. hook-utils.sh anchors HOOK_LOG_DIR/HOOK_DATA_DIR on this override.
+  SANDBOX="$(mktemp -d -t ctx-budget-bats.XXXXXX)"
+  export GA_DATA_ROOT="${SANDBOX}"
+}
+
+teardown() {
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
 # Fire the hook with a stubbed occupancy value. $1=tokens, $2=threshold override (optional).

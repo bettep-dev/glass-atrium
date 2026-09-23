@@ -222,3 +222,22 @@ make_regular_fixture() {
   [[ "${output}" != *"post-apply mode mismatch"* ]] || return 1
   [[ "${output}" == *"symlink (skipped"* ]] || return 1
 }
+
+# --- E2 through E5: a modes key reaching outside via a symlinked directory ---
+
+@test "modes key through a symlinked directory: skipped with a WARN, outside mode untouched" {
+  make_update_driver
+  make_regular_fixture
+  mkdir -p "${SANDBOX}/outside"
+  printf 'outside body\n' >"${SANDBOX}/outside/f.sh"
+  chmod 600 "${SANDBOX}/outside/f.sh" "${ROOT}/agents/G.md"
+  ln -s "${SANDBOX}/outside" "${ROOT}/ext"
+  jq '.modes["ext/f.sh"] = "755"' "${MM}" >"${MM}.tmp"
+  mv -f -- "${MM}.tmp" "${MM}"
+
+  run -0 "${DRIVER}" update_enforce_manifest_modes "${MM}" "${ROOT}"
+  [[ "${output}" == *"WARN: mode target escapes the install root (skipped): ext/f.sh"* ]] || return 1
+  [ "$(lmode_of "${SANDBOX}/outside/f.sh")" = "600" ] || return 1
+  # a skip, not an abort: the in-root row after it is still reconciled
+  [ "$(lmode_of "${ROOT}/agents/G.md")" = "644" ] || return 1
+}

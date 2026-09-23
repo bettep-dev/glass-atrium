@@ -52,6 +52,8 @@
 #   18  mirror-farm refresh failed (reinstall path: files installed, but the
 #       ~/.claude facade mirror was NOT refreshed — run `glass-atrium agents-only`)
 #   19  post-extract mode enforcement failed (manifest.modes apply/verify mismatch)
+#   20  a manifest files[] entry or modes key is empty, absolute or carries a `..`
+#       segment, or the keys are unreadable (checked before verify_bundle; nothing written)
 #
 # HARD CONSTRAINT: stock macOS bash 3.2 + BSD coreutils only (no mapfile, no
 # associative arrays, no GNU-only flags).
@@ -69,6 +71,7 @@ readonly EXIT_NO_LAUNCHER=16
 readonly EXIT_EXTRACT_FAILED=17
 readonly EXIT_FARM_FAILED=18
 readonly EXIT_MODE_FAILED=19
+readonly EXIT_MANIFEST_KEY_ESCAPES=20
 
 # parameters (env-overridable)
 # The release repo slug is a REAL wired default (the one-liner installs with zero env
@@ -320,6 +323,46 @@ fetch_release() {
     || die "${EXIT_EXTRACT_FAILED}" "bundle extraction failed: ${bundle}"
 }
 
+# manifest key containment (inline, pre-verify)
+# True when manifest key $1 escapes the install root by spelling alone — empty,
+# absolute, or carrying a `..` segment; `foo..bar` is a name. Builtins only: the
+# bundle's spine_is_escaping_key is untrusted until verify_bundle, and the parity
+# test extracts this definition verbatim to hold the two rules equal.
+is_escaping_manifest_key() {
+  case "/$1/" in
+    // | //?* | */../*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Refuse the whole release when any files[] entry or modes key escapes: a skipped
+# row would leave a partial install or a wrong mode. Keys are read into files so an
+# empty trailing key survives, then every offender is logged before one exit.
+# Args: $1 = manifest.json · $2 = scratch dir for the key lists.
+require_contained_release_keys() {
+  local manifest="$1" scratch="$2" rel line offenders=0
+  # shellcheck disable=SC2310  # a read failure is the verdict — branched on
+  manifest_get files "${manifest}" >"${scratch}/release-keys" \
+    || die "${EXIT_MANIFEST_KEY_ESCAPES}" "cannot read manifest.files keys from ${manifest}"
+  # shellcheck disable=SC2310  # a read failure is the verdict — branched on
+  manifest_get modes "${manifest}" >"${scratch}/modes-lines" \
+    || die "${EXIT_MANIFEST_KEY_ESCAPES}" "cannot read manifest.modes keys from ${manifest}"
+  while IFS= read -r line; do
+    printf '%s\n' "${line%$'\t'*}" # the mode value carries no tab; the key may
+  done <"${scratch}/modes-lines" >>"${scratch}/release-keys"
+  while IFS= read -r rel; do
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if is_escaping_manifest_key "${rel}"; then
+      printf 'manifest key escapes the install root: %q\n' "${rel}" >&2
+      offenders=$((offenders + 1))
+    fi
+  done <"${scratch}/release-keys"
+  if ((offenders > 0)); then
+    die "${EXIT_MANIFEST_KEY_ESCAPES}" \
+      "${offenders} manifest key(s) escape the install root — refusing to install."
+  fi
+}
+
 # per-file integrity verify (reused spine lib)
 # Verify every extracted file's SHA-256 against manifest.hashes[path]. BOOTSTRAP: the
 # verify REUSES the shared spine lib rather than inlining the hash loop, but the lib is
@@ -394,6 +437,12 @@ install_tree() {
     dst="${GA_DIR}/${rel}"
     [[ -f "${src}" ]] \
       || die "${EXIT_EXTRACT_FAILED}" "verified staging member missing for ${rel} — refusing a partial install."
+    # spelling was refused before verify_bundle; what remains is a directory symlink
+    # already inside GA_DIR, judged before mkdir -p creates anything through it
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${dst}" "${GA_DIR}"; then
+      die "${EXIT_EXTRACT_FAILED}" "write target escapes the install root: $(printf '%q' "${rel}")"
+    fi
     mkdir -p -- "$(dirname -- "${dst}")" \
       || die "${EXIT_EXTRACT_FAILED}" "failed to create the destination directory for ${rel} under ${GA_DIR}."
     spine_atomic_swap "${src}" "${dst}" \
@@ -483,6 +532,11 @@ enforce_manifest_modes() {
     # link row rather than read as an absent file by a dereferencing test.
     if [[ -L "${GA_DIR}/${rel}" ]]; then
       log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
+      continue
+    fi
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_escaping_write_target "${GA_DIR}/${rel}" "${GA_DIR}"; then
+      log "WARN: mode target escapes the install root (skipped): $(printf '%q' "${rel}")"
       continue
     fi
     [[ -f "${GA_DIR}/${rel}" ]] \
@@ -586,6 +640,7 @@ main() {
 
   fetch_release "${dl_dir}" "${new_tree}"
   manifest="${dl_dir}/manifest.json"
+  require_contained_release_keys "${manifest}" "${dl_dir}"
   verify_bundle "${new_tree}" "${manifest}" "${staging}"
   # Install from the VERIFIED staging tree, NOT the raw ${new_tree}: installed ==
   # verified == manifest.files, so an unlisted tarball member is never deployed.
