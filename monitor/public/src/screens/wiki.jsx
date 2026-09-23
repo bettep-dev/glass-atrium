@@ -225,7 +225,7 @@ function buildAlarmLaneModel(
 			key: "cycle-overdue",
 			tone: "crit",
 			label: "The daily cycle has not run",
-			detail: `Last run ${summary?.last_run_date || "unknown"} · ${hours} h ago — inspect launchd.`,
+			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours} h ago — inspect launchd.`,
 		});
 	}
 
@@ -240,7 +240,7 @@ function buildAlarmLaneModel(
 		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
 		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
 		// Cycles still in flight → the streak is unknown, not absent.
-		const checking = !wait && cyclesState?.status === "loading";
+		const checking = !wait && cyclesState.status === "loading";
 		const parked = wait
 			? wait.days >= PROPOSAL_PARKED_DAYS
 			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
@@ -276,7 +276,7 @@ function buildAlarmLaneModel(
 // Absent map, unhashed proposals or an unparseable date → null, and the run streak answers instead.
 function readProposalWaitW(backlog, proposals) {
 	const firstSeen = backlog?.proposal_first_seen;
-	if (!firstSeen || typeof firstSeen !== "object" || !proposals) return null;
+	if (!firstSeen || typeof firstSeen !== "object") return null;
 
 	let since = null;
 	for (const p of proposals) {
@@ -300,7 +300,7 @@ function describeProposalWaitW(wait, parked) {
 // Fallback age source for a payload with no first-seen map: the streak of newest
 // cycles carrying an unchanged dedup count, labelled as a count of runs.
 function countUnchangedDedupRunsW(cyclesState) {
-	if (!cyclesState || cyclesState.status !== "ready") return null;
+	if (cyclesState.status !== "ready") return null;
 
 	const cycles = [...(cyclesState.data?.cycles || [])].sort((a, b) =>
 		(b.run_date || "").localeCompare(a.run_date || ""),
@@ -975,21 +975,17 @@ function computeStatusMix(rows) {
 // collapsible explorer shell SoT — summary(라벨+카운트) · 'none' 빈상태 · 본문 컨테이너 단일 출처.
 //   children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
 function BacklogExplorer({ label, count, payload, children }) {
-	const isEmpty = count === 0 || payload == null;
-
 	return (
 		<details className="rounded-md border border-line bg-sunken">
 			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
 				{/* 12px→fs-body(12) 라벨 · 10.5px→fs-meta(11) 카운트. */}
 				<span className="font-mono fs-body text-ink font-medium">{label}</span>
 				<span className="ml-auto font-mono fs-meta text-dim">
-					{count == null ? "—" : `${count}`}
+					{count}
 				</span>
 			</summary>
 			<div className="px-3 pb-3">
-				{isEmpty ? (
-					<div className="fs-meta font-mono text-faint">none</div>
-				) : children != null ? (
+				{children != null ? (
 					children
 				) : (
 					<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
