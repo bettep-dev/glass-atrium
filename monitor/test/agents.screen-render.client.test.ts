@@ -164,3 +164,115 @@ test("the failing-pairs denominator counts judged agent x task_type pairs, not t
   assert.equal(buildTopNFailing(two, 0.95, 5).measuredPairs, 2);
   assert.equal(buildTopNFailing([], 0.95, 5).measuredPairs, 0);
 });
+
+// Circuit-breaker state split — loading, error, unavailable and a loaded zero are
+// four different answers, so no two of them may render alike.
+const BREAKER_LOADED_ZERO = { source: "loaded", registry_agents: 3, suspended_count: 0, streak_count: 0, alarms: [] };
+const BREAKER_UNAVAILABLE = { ...BREAKER_LOADED_ZERO, source: "unavailable" };
+const LOADING_STATE = { status: "loading", data: null, error: null };
+const ERROR_STATE = { status: "error", data: null, error: "HTTP 500" };
+
+function getSummaryState(breaker: unknown, agents: unknown[] = []): unknown {
+  return { status: "ready", data: { agents, meta: { circuit_breaker: breaker } }, error: null };
+}
+
+function getBadgeTexts(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
+}
+
+function isBusy(tree: RenderedNode | string | null): boolean {
+  return findNodes(tree, (n) => n.props["aria-busy"] === "true").length > 0;
+}
+
+async function renderComponent(name: string, props: Record<string, unknown>): Promise<RenderedNode | string | null> {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(React.createElement(mod[name] as Component, props));
+}
+
+test("the alarm lane renders loading, error, unavailable and a loaded zero distinctly", async () => {
+  const onRetry = () => undefined;
+  const loading = await renderComponent("AgentAlarmLane", { state: LOADING_STATE, onRetry });
+  const failed = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry });
+  const unavailable = await renderComponent("AgentAlarmLane", { state: getSummaryState(BREAKER_UNAVAILABLE), onRetry });
+  const loadedZero = await renderComponent("AgentAlarmLane", { state: getSummaryState(BREAKER_LOADED_ZERO), onRetry });
+
+  assert.ok(isBusy(loading));
+  assert.deepEqual(getBadgeTexts(loading), []);
+  assert.match(collectText(failed), /Couldn't load circuit-breaker state/);
+  assert.deepEqual(getBadgeTexts(failed), []);
+  assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
+  assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
+});
+
+test("the unsafe-to-route tile shows a count only when the breaker state actually loaded", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const bandProps = {
+    failureState: ready,
+    overageState: ready,
+    failureByAgent: new Map(),
+    overageByAgent: new Map(),
+    onRetry: () => undefined,
+  };
+  const getUnsafeTile = async (summaryState: unknown) => {
+    const tree = await renderComponent("AgentStatusBand", { ...bandProps, summaryState });
+    // Pre-order → the first div holding only this tile's text is the tile's own card.
+    return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Unsafe to route")
+      && !collectText(n).includes("Failed or blocked"))[0] ?? null;
+  };
+
+  const loadedZero = await getUnsafeTile(getSummaryState(BREAKER_LOADED_ZERO));
+  assert.deepEqual(getBadgeTexts(loadedZero), ["0"]);
+  assert.match(collectText(loadedZero), /of 3 registered agents/);
+
+  const unavailable = await getUnsafeTile(getSummaryState(BREAKER_UNAVAILABLE));
+  assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
+
+  const loading = await getUnsafeTile(LOADING_STATE);
+  assert.ok(isBusy(loading));
+  assert.deepEqual(getBadgeTexts(loading), []);
+
+  const failed = await getUnsafeTile(ERROR_STATE);
+  assert.match(collectText(failed), /Couldn't load unsafe to route/);
+  assert.deepEqual(getBadgeTexts(failed), []);
+});
+
+test("the drawer's breaker line keeps loading and error apart from an unavailable state", async () => {
+  const agent = { agent_id: "dev-react", circuit_breaker: { suspended: false, consecutive_fails: 0, suspended_at: null } };
+  const unloadedAgent = { agent_id: "dev-react", circuit_breaker: null };
+
+  const loading = await renderComponent("AgentCircuitBreakerLine", { agent: null, summaryState: LOADING_STATE });
+  assert.ok(isBusy(loading));
+  assert.deepEqual(getBadgeTexts(loading), []);
+
+  const failed = await renderComponent("AgentCircuitBreakerLine", { agent: null, summaryState: ERROR_STATE });
+  assert.deepEqual(getBadgeTexts(failed), []);
+  assert.doesNotMatch(collectText(failed), /unavailable/);
+
+  const unavailable = await renderComponent("AgentCircuitBreakerLine", {
+    agent: unloadedAgent,
+    summaryState: getSummaryState(BREAKER_UNAVAILABLE, [unloadedAgent]),
+  });
+  assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
+
+  const loadedZero = await renderComponent("AgentCircuitBreakerLine", {
+    agent,
+    summaryState: getSummaryState(BREAKER_LOADED_ZERO, [agent]),
+  });
+  assert.deepEqual(getBadgeTexts(loadedZero), ["safe to route"]);
+});
+
+test("every in-screen hash link resolves to a hash-router screen id", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const screenSource = await readFile(AGENTS_SRC, "utf8");
+  const appSource = await readFile(resolve(__dirname, "../public/src/app.jsx"), "utf8");
+  const navBlock = appSource.slice(appSource.indexOf("const NAV = ["), appSource.indexOf("];", appSource.indexOf("const NAV = [")));
+  const navIds = new Set(Array.from(navBlock.matchAll(/\bid: "([^"]+)"/g), (m) => m[1]));
+  const hashTargets = Array.from(screenSource.matchAll(/href="#([^"]*)"/g), (m) => m[1]);
+
+  assert.ok(navIds.has("improvement"), "the NAV block parsed");
+  assert.ok(hashTargets.length > 0, "the screen carries at least one hash link");
+  for (const target of hashTargets) {
+    assert.ok(navIds.has(target), `href="#${target}" names no NAV screen id`);
+  }
+});

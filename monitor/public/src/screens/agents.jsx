@@ -1140,7 +1140,7 @@ function AgentDetailDrawer({
       ) : (
         <div className="space-cards">
           <AgentDrawerSection title="Overview">
-            <AgentCircuitBreakerLine agent={agent}/>
+            <AgentCircuitBreakerLine agent={agent} summaryState={summaryState}/>
             <AgentOverviewSection
               agent={agent}
               drawerAgent={drawerAgent}
@@ -1181,7 +1181,7 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
             {/* The composite ranking lives on Learning, which owns the improvement answer. */}
-            <a className="btn ghost sm" href="#/improvement">Open in Learning</a>
+            <a className="btn ghost sm" href="#improvement">Open in Learning</a>
           </AgentDrawerSection>
           <AgentDrawerSection title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
@@ -1239,11 +1239,18 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
 }
 
 // Circuit-breaker line — absent state (an agent outside the loaded snapshot) is
-// rendered as unavailable, never as "not suspended".
-function AgentCircuitBreakerLine({ agent }) {
+// rendered as unavailable, never as "not suspended". A summary still loading or
+// failed is neither: the overview section below carries its skeleton / retry banner.
+function AgentCircuitBreakerLine({ agent, summaryState }) {
   const { Badge } = window.UI;
   const breaker = agent ? agent.circuit_breaker : null;
 
+  if (summaryState.status === 'loading') {
+    return <div className="text-faint fs-micro mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
+  }
+  if (summaryState.status === 'error') {
+    return <div className="text-faint fs-micro mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
+  }
   if (!breaker) {
     return (
       <div className="flex items-center gap-2 mb-2">
