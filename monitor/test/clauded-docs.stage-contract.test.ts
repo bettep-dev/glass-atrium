@@ -21,9 +21,10 @@ import {
 
 const RETIRED_ALIAS: DocStatusLiteral = "progress";
 const TERMINAL_STAGE = "done" as const;
+const STORED_TOKENS = [...DOC_STAGES, RETIRED_ALIAS];
 
 test("every stored token reads as a stage, so no stored row is dropped", () => {
-  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+  for (const stored of STORED_TOKENS) {
     assert.notEqual(
       normalizeStoredStage(stored), null,
       `stored '${stored}' must read as a stage`,
@@ -40,7 +41,7 @@ test("normalizing is idempotent on the stages themselves", () => {
 });
 
 test("the write set accepts the retired alias, and the read filter set adds the open pseudo-value", () => {
-  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+  for (const stored of STORED_TOKENS) {
     assert.ok(WRITE_DOC_STATUSES.has(stored), `write must accept '${stored}'`);
     assert.ok(DOC_STATUS_READ_FILTERS.has(stored), `read filter must accept '${stored}'`);
   }
@@ -79,7 +80,7 @@ test("a group row takes its least-advanced member stage, and reports a spread as
 });
 
 test("a write moves the stage only when its token differs from what the stored one reads as", () => {
-  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+  for (const stored of STORED_TOKENS) {
     const existing = { doc_status: stored };
     const storedStage = normalizeStoredStage(stored);
 
@@ -101,7 +102,7 @@ test("a write moves the stage only when its token differs from what the stored o
 
 test("the stored actor survives every non-moving write and is replaced only by the move", () => {
   const STORED_ACTOR = "claude-opus-5";
-  for (const stored of [...DOC_STAGES, RETIRED_ALIAS]) {
+  for (const stored of STORED_TOKENS) {
     const existing = { doc_status: stored, last_status_model: STORED_ACTOR };
     const storedStage = normalizeStoredStage(stored) as DocStatusLiteral;
 
