@@ -191,8 +191,8 @@ interface ActualSurfaces {
   researchModel: string | null | undefined; // undefined = unparseable/unreadable
   metaModel: string | null | undefined;
   wikiModel: string | null | undefined;
-  reviewFiles: DomainFileModel[];
-  docsFiles: DomainFileModel[];
+  reviewFiles: AgentFileRead<undefined>[]; // model undefined = listed file unreadable
+  docsFiles: AgentFileRead<undefined>[];
   knownModelIds: ReadonlySet<string>;
 }
 
@@ -210,13 +210,12 @@ function buildDomainStatus(
       actual = getPerFileActual(files);
       break;
     case "frontmatter-review":
-      files = surfaces.reviewFiles;
-      actual = getPerFileActual(files);
+    case "frontmatter-docs": {
+      const reads = def.surface === "frontmatter-review" ? surfaces.reviewFiles : surfaces.docsFiles;
+      actual = getPerFileActual(reads);
+      files = reads.map(({ file, model }) => ({ file, model: model ?? null }));
       break;
-    case "frontmatter-docs":
-      files = surfaces.docsFiles;
-      actual = getPerFileActual(files);
-      break;
+    }
     case "frontmatter-research":
       actual = surfaces.researchModel === undefined ? null : (surfaces.researchModel ?? INHERIT_VALUE);
       break;
@@ -248,8 +247,11 @@ function buildDomainStatus(
   return status;
 }
 
-// One shared state across every file, else 'mixed'; no files → unknown.
-function getPerFileActual(files: DomainFileModel[]): string | null {
+// One shared state across every file, else 'mixed'; no files or any unreadable file → unknown.
+function getPerFileActual(files: readonly AgentFileRead<null | undefined>[]): string | null {
+  if (files.some((f) => f.model === undefined)) {
+    return null;
+  }
   const states = new Set(files.map((f) => f.model ?? INHERIT_VALUE));
   if (states.size === 0) {
     return null;
@@ -512,29 +514,37 @@ async function listDevAgentFiles(): Promise<string[]> {
 }
 
 async function readDevAgentModels(): Promise<DomainFileModel[]> {
-  return readAgentFileModels(await listDevAgentFiles());
+  return readAgentFileModels(await listDevAgentFiles(), null);
 }
 
-function readPairAgentModels(surface: PairSurface): Promise<DomainFileModel[]> {
-  return readAgentFileModels(PAIR_AGENT_FILES[surface]);
+function readPairAgentModels(surface: PairSurface): Promise<AgentFileRead<undefined>[]> {
+  return readAgentFileModels(PAIR_AGENT_FILES[surface], undefined);
 }
 
-// Unreadable file → null model.
-function readAgentFileModels(names: readonly string[]): Promise<DomainFileModel[]> {
+interface AgentFileRead<T extends null | undefined> {
+  file: string;
+  model: string | null | T;
+}
+
+// Unreadable file → the caller's `missing` sentinel.
+function readAgentFileModels<T extends null | undefined>(
+  names: readonly string[],
+  missing: T,
+): Promise<AgentFileRead<T>[]> {
   return Promise.all(
     names.map(async (name) => ({
       file: name,
-      model: await readFrontmatterModel(path.join(getAgentsDir(), name), null),
+      model: await readFrontmatterModel(path.join(getAgentsDir(), name), missing),
     })),
   );
 }
 
 /**
  * Read one agent file's `model:` frontmatter value; `missing` is the caller-chosen
- * sentinel for an unreadable file or absent `---` block. Research passes `undefined` to
- * keep an unreadable surface distinct from a present-but-model-less block (extractModelLine's
- * null → drift-safe INHERIT in buildDomainStatus); the dev per-file surface passes `null`,
- * conflating both.
+ * sentinel for an unreadable file or absent `---` block. The single-file surfaces and the
+ * fixed review/docs lists pass `undefined` to keep an unreadable file distinct from a
+ * present-but-model-less block (extractModelLine's null → INHERIT), so it reads as unknown;
+ * only the dev discovered-list surface passes `null`, conflating both.
  */
 async function readFrontmatterModel<T extends null | undefined>(
   filePath: string,

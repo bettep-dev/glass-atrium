@@ -662,6 +662,21 @@ for (const pair of PAIR_DOMAINS) {
     }
   });
 
+  test(`${pair.key}: a missing listed file reads as unknown, never inherit-with-no-drift`, async () => {
+    const missingPath = path.join(agentsDir, pair.files[0]);
+    const original = readFileSync(missingPath, "utf8");
+    rmSync(missingPath);
+    try {
+      const res = await app.inject({ method: "GET", url: "/api/model-config" });
+      const status = domainOf(res.json() as ModelConfigGetResponse, pair.key);
+      // Seeded desired is inherit → a never-loaded file shown as inherit would read as a match.
+      assert.notStrictEqual(status.actual, "inherit");
+      assert.strictEqual(status.actual, null);
+    } finally {
+      writeFileSync(missingPath, original, "utf8");
+    }
+  });
+
   test(`${pair.key}: 409 while .apply-lock exists, no file written`, async () => {
     mkdirSync(applyLockPath, { recursive: true });
     try {
