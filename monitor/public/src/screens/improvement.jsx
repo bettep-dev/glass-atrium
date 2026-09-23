@@ -617,6 +617,7 @@ function ScreenImprovement({ onNav }) {
 						confidenceDist={confidenceDist}
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
+						onRetry={triggerRefresh}
 					/>
 				) : (
 					<>
@@ -2872,6 +2873,11 @@ function InstrumentationViewI(props) {
 }
 
 // 계기판 뷰가 소비하는 화면 공용 원자 — 두 번들이 한 화면을 이루므로 기호/배지 판정은 여기 하나뿐.
-window.ImprovementShared = { SymI, confidenceBadgeMetaI, ReviewReasonSegmentsI };
+window.ImprovementShared = {
+	SymI,
+	confidenceBadgeMetaI,
+	ReviewReasonSegmentsI,
+	ErrorBannerI,
+};
 
 window.ScreenImprovement = ScreenImprovement;

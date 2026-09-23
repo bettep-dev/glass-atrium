@@ -22,6 +22,27 @@ function ReviewReasonSegmentsI(props) {
 	);
 }
 
+function ErrorBannerI(props) {
+	return React.createElement(window.ImprovementShared.ErrorBannerI, props);
+}
+
+// One banner per failed payload, in place of the group that payload owns.
+function PayloadErrorCardI({ title, state, onRetry }) {
+	const { CardHead } = window.UI;
+	return (
+		<div className="card">
+			<CardHead title={title} />
+			<div className="p-4">
+				<ErrorBannerI
+					title={`Couldn't load ${title.toLowerCase()}`}
+					detail={state.error}
+					onRetry={onRetry}
+				/>
+			</div>
+		</div>
+	);
+}
+
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
@@ -93,20 +114,58 @@ function ImprovementInstrumentationViewI({
 	confidenceDist,
 	reviewReasons,
 	onNav,
+	onRetry,
 }) {
 	return (
 		<div className="space-sections">
-			<FlaggedResultsCardI
-				state={statsState}
-				reviewReasons={reviewReasons}
-				onNav={onNav}
-			/>
-			<CorpusGrowthCardI state={corpusAuditState} />
-			<CorrectionSignalsCardI state={correctionState} />
-			<StyleRefCardI state={listState} styleRef={styleRef} />
-			<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
-			<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
-			<ConfidenceDistCardI state={listState} confidenceDist={confidenceDist} />
+			{statsState.status === "error" ? (
+				<PayloadErrorCardI
+					title="Flagged results"
+					state={statsState}
+					onRetry={onRetry}
+				/>
+			) : (
+				<FlaggedResultsCardI
+					state={statsState}
+					reviewReasons={reviewReasons}
+					onNav={onNav}
+				/>
+			)}
+			{corpusAuditState.status === "error" ? (
+				<PayloadErrorCardI
+					title="Corpus growth"
+					state={corpusAuditState}
+					onRetry={onRetry}
+				/>
+			) : (
+				<CorpusGrowthCardI state={corpusAuditState} />
+			)}
+			{correctionState.status === "error" ? (
+				<PayloadErrorCardI
+					title="Correction signals"
+					state={correctionState}
+					onRetry={onRetry}
+				/>
+			) : (
+				<CorrectionSignalsCardI state={correctionState} />
+			)}
+			{listState.status === "error" ? (
+				<PayloadErrorCardI
+					title="Proposal measurements"
+					state={listState}
+					onRetry={onRetry}
+				/>
+			) : (
+				<>
+					<StyleRefCardI state={listState} styleRef={styleRef} />
+					<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+					<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+					<ConfidenceDistCardI
+						state={listState}
+						confidenceDist={confidenceDist}
+					/>
+				</>
+			)}
 		</div>
 	);
 }
@@ -122,7 +181,7 @@ function ImprovementInstrumentationViewI({
 //
 // 데이터 부재 분기:
 //   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
-//   - error 상태 → null 반환 (parent state.status === 'error' 카드 자동 미렌더)
+//   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 function TierBreakdownCardI({ state, tierBreakdown }) {
 	const { CardHead } = window.UI;
@@ -243,7 +302,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 //
 // 데이터 부재 분기:
 //   - buckets 비어있음 → "데이터 부재" 회색 indicator (daemon-wiring 미적용 OR window 0건)
-//   - error 상태 → null 반환 (parent state.status === 'error' 카드 자동 미렌더)
+//   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
 	const { CardHead, BulletBar } = window.UI;
@@ -810,7 +869,7 @@ function formatRateI(rate) {
 
 // correction_signals AGGREGATE 카드 — stage1(regex) vs stage2(agent-emit) 검출 일치율
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
-// 가짜 0 금지. error(503/테이블 부재) → 카드 숨김 (loop-events 와 동일 degrade).
+// 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
 	const { CardHead, formatKstDate } = window.UI;
 	const title = "Detection agreement (correction signals)";
