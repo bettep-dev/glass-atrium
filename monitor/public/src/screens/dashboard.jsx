@@ -103,7 +103,7 @@ function ScreenDashboard({ onNav, harness }) {
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
         /* 레인 행 — 톤은 왼쪽 테두리 + 선행 글리프가 운반한다(문구에 색을 싣지 않음). */
         .dash-alarm { border-left-width: 3px; }
-        /* 타일 1차 라벨/힌트 — 1줄 clamp + reserved 높이 → 폭이 줄어도 밴드 높이 불변. */
+        /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
       `}</style>
 
@@ -160,7 +160,7 @@ function AlarmLane({ alarms, onNav, updateState, updateJobState, onRefetchJob })
 
 // 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
 function AlarmRow({ alarm, onNav, children }) {
-  const { Icon } = window.UI;
+  const { Icon, TONE_ICON } = window.UI;
   return (
     <div
       role="listitem"
@@ -169,7 +169,7 @@ function AlarmRow({ alarm, onNav, children }) {
         background: `rgb(var(--${alarm.tone}) / 0.08)`,
         borderColor: `rgb(var(--${alarm.tone}) / 0.5)`,
       }}>
-      <Icon name={TONE_ICON_NAME[alarm.tone]} size={16} className={`text-${alarm.tone}`}/>
+      <Icon name={TONE_ICON[alarm.tone]} size={16} className={`text-${alarm.tone}`}/>
       <div className="flex-1 min-w-0">
         <div className="fs-body font-medium text-ink truncate" title={alarm.title}>{alarm.title}</div>
         {alarm.detail && (
@@ -235,10 +235,7 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob }) {
   const [phase,       setPhase]       = useStateD('idle');  // idle | working (apply POST 전송 중, 낙관적 updating)
   const [actionError, setActionError] = useStateD(null);    // { message, canRetry } | null (mutation 오류 → failed)
 
-  // job 은 poll 이 ready 이고 실제 row 가 있을 때만(none 은 무 job).
-  const job = (jobState.status === 'ready' && jobState.data && jobState.data.status !== 'none')
-    ? jobState.data
-    : null;
+  const job = readUpdateJob(jobState);
 
   const view = deriveUpdateView({
     availabilityStatus: availabilityState.status,
@@ -408,8 +405,6 @@ function mutationErrorMessage(status, data) {
 
 // ── Pure builders (the lane union and the band) ──
 
-// 톤 → Lucide 아이콘 이름. 색 단독 신호 금지 — 모양이 색과 함께 간다.
-const TONE_ICON_NAME = { crit: 'x', warn: 'warn', info: 'info', ok: 'check', neutral: 'info' };
 // 톤 → 배지 문구. 문구는 상태를 이름 짓고, 위험도는 톤이 운반한다.
 const TONE_WORD = { crit: 'Down', warn: 'Attention', ok: 'Healthy', info: 'No data' };
 
@@ -499,15 +494,18 @@ function buildHarnessTile(harness) {
   };
 }
 
+// 스토어 loading/error → 타일, 그 외 null. 타일마다 다른 것은 오류 문구뿐.
+function buildPendingTile(base, state, errorHint) {
+  if (!state || state.status === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Loading…' };
+  if (state.status === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: errorHint };
+  return null;
+}
+
 // 타일 2 — 7일 작업 결과. 판정과 임계는 ui.jsx 공용 규칙 소비 (Task results 와 동일 분모).
 function buildOutcomeTile(outcomesState) {
   const base = { id: 'outcomes', label: 'Task results (7 d)', target: 'outcomes', targetLabel: 'Task results' };
-  if (!outcomesState || outcomesState.status === 'loading') {
-    return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Loading…' };
-  }
-  if (outcomesState.status === 'error') {
-    return { ...base, status: 'error', tone: 'neutral', value: '—', hint: "Couldn't load task results." };
-  }
+  const pending = buildPendingTile(base, outcomesState, "Couldn't load task results.");
+  if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
   return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), hint: describeOutcomeHint(rate) };
 }
@@ -519,9 +517,8 @@ const OUTCOME_TILE_STATUS = {
 
 function describeOutcomeValue(rate) {
   if (rate.status === 'unavailable' || rate.status === 'empty') return '—';
-  if (rate.status === 'low-n') return formatInt(rate.writerTotal);
+  if (rate.status === 'low-n' || rate.status === 'ok') return formatInt(rate.writerTotal);
   const share = rate.status === 'crit' ? rate.breakage : rate.openCaveats;
-  if (rate.status === 'ok') return formatInt(rate.writerTotal);
   return window.UI.formatPctWithDenominator(share, rate.writerTotal);
 }
 
@@ -538,12 +535,8 @@ function describeOutcomeHint(rate) {
 // 없는 수를 지어내지 않고 unavailable 로 고지 — 그 필드가 붙으면 힌트만 교체된다.
 function buildFleetTile(agentsState) {
   const base = { id: 'fleet', label: 'Fleet (7 d)', target: 'agents', targetLabel: 'Agents' };
-  if (!agentsState || agentsState.status === 'loading') {
-    return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Loading…' };
-  }
-  if (agentsState.status === 'error') {
-    return { ...base, status: 'error', tone: 'neutral', value: '—', hint: "Couldn't load the fleet summary." };
-  }
+  const pending = buildPendingTile(base, agentsState, "Couldn't load the fleet summary.");
+  if (pending) return pending;
   const total = Number(agentsState.data?.meta?.total_agents);
   if (!Number.isFinite(total)) {
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Fleet population unavailable.' };
@@ -555,12 +548,8 @@ function buildFleetTile(agentsState) {
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
 function buildSpendTile(costState) {
   const base = { id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage' };
-  if (!costState || costState.status === 'loading') {
-    return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Loading…' };
-  }
-  if (costState.status === 'error') {
-    return { ...base, status: 'error', tone: 'neutral', value: '—', hint: "Couldn't load today's spend." };
-  }
+  const pending = buildPendingTile(base, costState, "Couldn't load today's spend.");
+  if (pending) return pending;
   const pace = resolveSpendPace(costState);
   const hint = pace.status === 'no-basis'
     ? 'No spend in the last 7 days — no baseline to compare against.'
