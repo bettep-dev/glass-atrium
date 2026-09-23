@@ -1313,6 +1313,7 @@ Approval is required for the delta only.
 - **On approval, record it**: stamp `[SCOPE-EXPANSION-APPROVED] <delta in one line> — user-approved <YYYY-MM-DD>` into the follow-up delegation, at the token-family placement (`orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement).
   - One-line grammar style of `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / `[PLAN-SUBSET]`.
   - It covers scope expansion only; a harness-path write approval is `orchestrator-role.md` → `## Harness Path Protection` → Rule 1, and neither substitutes for the other.
+- **Packaging**: an approved Decision-phase delta gets its own branch unless it needs the in-scope work for acceptance or neither landing order keeps the tree consistent; excess already built is exempt. Honor-system.
 - **Without approval**: delegating the excess is FORBIDDEN; excess already built is reported to the user and left awaiting disposition — automatic revert is FORBIDDEN (File Deletion Policy: undoing the work is itself an unapproved act).
 - **Honest backing — presence-checked only**: a hook can check that the token exists; whether an approval happened is the orchestrator's own claim, honor-system.
   - The token is emitted by the actor whose over-interpretation this protocol checks, so it never counts as an independent check — the independent axes are the reviewer's Stage-2 scope-fidelity verdict and the recorder's out-of-process scan.
