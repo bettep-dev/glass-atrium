@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type {
   ApplyMode,
   BudgetDomainKey,
+  FrontmatterSurface,
   ModelDomainKey,
 } from "./types/model-config.js";
 
@@ -83,14 +84,7 @@ export interface ModelDomainDef {
   applyMode: ApplyMode;
   // false = no enforced write surface.
   editable: boolean;
-  surface:
-    | "frontmatter-dev"
-    | "frontmatter-research"
-    | "frontmatter-meta"
-    | "frontmatter-wiki"
-    | "frontmatter-review"
-    | "frontmatter-docs"
-    | "daemon-config";
+  surface: FrontmatterSurface | "daemon-config";
   // daemon-config.json key this domain renders to (write-through target), null otherwise.
   daemonConfigKey: string | null;
   allowInherit: boolean;

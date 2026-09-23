@@ -210,12 +210,7 @@ function ScreenModelConfig() {
 		setSaveError(null);
 		fetchJsonMC("/api/model-config", ctrl.signal)
 			.then((data) => {
-				setConfigState({
-					status: "ready",
-					data,
-					error: null,
-					receivedAt: Date.now(),
-				});
+				setConfigState(readyStateMC(data));
 				setForm(buildFormMC(data));
 			})
 			.catch((err) => {
@@ -292,12 +287,7 @@ function ScreenModelConfig() {
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
 			const data = await putJsonMC("/api/model-config", body);
-			setConfigState({
-				status: "ready",
-				data,
-				error: null,
-				receivedAt: Date.now(),
-			});
+			setConfigState(readyStateMC(data));
 			setForm(buildFormMC(data));
 			const problems = extractSurfaceResultsMC(data);
 			setSurfaceResults(problems);
@@ -1257,18 +1247,22 @@ function sortBudgetsMC(budgets) {
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
 }
 
+function readyStateMC(data) {
+	return { status: "ready", data, error: null, receivedAt: Date.now() };
+}
+
 // Banner remedy payload — re-sends the saved target of every drifted row, so the PUT reaches the
 // render side effects with nothing edited. Unsaved edits win: the response reinitializes the form
 // buffer, so a value left out here would be discarded.
 function resyncPayloadMC(data, edits) {
-	const fileDrift = (data?.daemon_config_sync ?? "ok") !== "ok";
+	const fileDrift = (data.daemon_config_sync ?? "ok") !== "ok";
 	const models = {};
-	for (const d of data?.domains || []) {
+	for (const d of data.domains || []) {
 		if (!(d.drift || fileDrift) || !d.desired) continue;
 		models[d.domain] = d.desired;
 	}
 	const budgets = {};
-	for (const b of data?.budgets || []) {
+	for (const b of data.budgets || []) {
 		if (!(b.drift || fileDrift) || !b.desired) continue;
 		budgets[b.domain] = b.desired;
 	}

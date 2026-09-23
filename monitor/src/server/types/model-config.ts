@@ -71,15 +71,16 @@ export interface SurfaceFileResult {
   reason?: string;
 }
 
+export type FrontmatterSurface =
+  | "frontmatter-dev"
+  | "frontmatter-research"
+  | "frontmatter-meta"
+  | "frontmatter-wiki"
+  | "frontmatter-review"
+  | "frontmatter-docs";
+
 export interface SurfaceResult {
-  surface:
-    | "daemon-config.json"
-    | "frontmatter-dev"
-    | "frontmatter-research"
-    | "frontmatter-meta"
-    | "frontmatter-wiki"
-    | "frontmatter-review"
-    | "frontmatter-docs";
+  surface: "daemon-config.json" | FrontmatterSurface;
   status: "ok" | "skipped" | "failed";
   reason?: string;
   files?: SurfaceFileResult[];

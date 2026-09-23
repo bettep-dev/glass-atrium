@@ -385,13 +385,9 @@ async function handlePut(
 
     // daemon-apply stash-window guard (D4 amended): the real lock is the filesystem dir
     // ~/.glass-atrium/data/daemon-reports/.apply-lock — fail-open when absent.
-    const touchesFrontmatter =
-      modelChanges.has("model.dev") ||
-      modelChanges.has("model.research") ||
-      modelChanges.has("model.meta") ||
-      modelChanges.has("model.wiki") ||
-      modelChanges.has("model.review") ||
-      modelChanges.has("model.docs");
+    const touchesFrontmatter = MODEL_DOMAINS.some(
+      (d) => d.surface.startsWith("frontmatter-") && modelChanges.has(d.key),
+    );
     if (touchesFrontmatter && (await pathExists(getApplyLockPath()))) {
       return reply.code(409).send({
         error: "daemon_apply_in_progress",
@@ -516,19 +512,17 @@ async function listDevAgentFiles(): Promise<string[]> {
 }
 
 async function readDevAgentModels(): Promise<DomainFileModel[]> {
-  const names = await listDevAgentFiles();
-  return Promise.all(
-    names.map(async (name) => ({
-      file: name,
-      model: await readFrontmatterModel(path.join(getAgentsDir(), name), null),
-    })),
-  );
+  return readAgentFileModels(await listDevAgentFiles());
 }
 
-// Same per-file semantics as the dev surface (unreadable file → null).
 function readPairAgentModels(surface: PairSurface): Promise<DomainFileModel[]> {
+  return readAgentFileModels(PAIR_AGENT_FILES[surface]);
+}
+
+// Unreadable file → null model.
+function readAgentFileModels(names: readonly string[]): Promise<DomainFileModel[]> {
   return Promise.all(
-    PAIR_AGENT_FILES[surface].map(async (name) => ({
+    names.map(async (name) => ({
       file: name,
       model: await readFrontmatterModel(path.join(getAgentsDir(), name), null),
     })),
@@ -565,10 +559,7 @@ async function renderDevFrontmatter(desired: string): Promise<SurfaceResult> {
   if (names.length === 0) {
     return { surface: "frontmatter-dev", status: "failed", reason: "no dev-*.md agent files found" };
   }
-  const files: SurfaceFileResult[] = [];
-  for (const name of names) {
-    files.push(await writeFrontmatterModel(path.join(getAgentsDir(), name), desired));
-  }
+  const files = await writeAgentFileModels(names, desired);
   return { surface: "frontmatter-dev", status: aggregateFileStatus(files), files };
 }
 
@@ -588,11 +579,16 @@ async function renderWikiFrontmatter(desired: string): Promise<SurfaceResult> {
 }
 
 async function renderPairFrontmatter(surface: PairSurface, desired: string): Promise<SurfaceResult> {
+  const files = await writeAgentFileModels(PAIR_AGENT_FILES[surface], desired);
+  return { surface, status: aggregateFileStatus(files), files };
+}
+
+async function writeAgentFileModels(names: readonly string[], desired: string): Promise<SurfaceFileResult[]> {
   const files: SurfaceFileResult[] = [];
-  for (const name of PAIR_AGENT_FILES[surface]) {
+  for (const name of names) {
     files.push(await writeFrontmatterModel(path.join(getAgentsDir(), name), desired));
   }
-  return { surface, status: aggregateFileStatus(files), files };
+  return files;
 }
 
 function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "failed" {
