@@ -421,6 +421,7 @@ assert_token_absent_at_new_session() {
   local s
   s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
   cp "${REAL_AUTH_LIB}" "${SANDBOX}/lib/claude-auth-env.sh"
+  # printf -v rather than a direct NAME=value export: the Write|Edit secret scan (SEC-013) blocks that literal shape.
   printf -v CLAUDE_CODE_OAUTH_TOKEN '%s' "${DUMMY_AUTH_VALUE}"
   export CLAUDE_CODE_OAUTH_TOKEN
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"

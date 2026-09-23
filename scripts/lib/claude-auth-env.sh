@@ -5,8 +5,8 @@
 # → 401). Sourced, not executable; no side effects beyond the export. Rendered by
 # render-claude-auth.sh. Call `claude_auth_load_env` BEFORE any `claude` call;
 # absent file → loud WARN + return 0 (keychain fallback), never crash.
-# Caller contract: load only in the leaf that execs claude, or inside a subshell —
-# never in a shell that starts a long-lived server (tmux copies its env globally).
+# Caller contract: never load in a shell that later STARTS a long-lived server —
+# a tmux client that starts the server seeds the server's global env from its own.
 
 # Resolve the secrets file the same way render-claude-auth.sh writes it
 # (GA_ROOT-anchored), so the read path and the write path agree on ONE location.

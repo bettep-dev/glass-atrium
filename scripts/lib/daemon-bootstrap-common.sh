@@ -72,10 +72,7 @@ fi
 # shellcheck source=lib/fakechat-cleanup.sh
 source "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh"
 
-# Headless claude auth (launchd keychain-bypass) is LEAF-ONLY: the token is loaded
-# solely inside the pane command that execs claude (step 3), never in this
-# bootstrap shell — a tmux client that starts the default server copies its env
-# into the server's global env, seeding the token into every later session.
+# No module-scope claude_auth_load_env — leaf-only token load (why: SECURITY note in daemon_bootstrap_create_session).
 
 # Channels-session model — pin the `claude --channels` REPL to the menu-configured
 # daemon LLM tier instead of the settings.json default (Fable 5, whose low usage
@@ -207,7 +204,7 @@ daemon_bootstrap_create_session() {
   # the PANE command sources the 0600 secrets file (claude_auth_load_env), so the
   # exec'd claude inherits the token from its OWN shell env. Absent secrets file →
   # claude_auth_load_env warns + returns 0 (never aborts) → claude falls back to the
-  # keychain (unchanged behavior). The lib path is single-quoted inside the bash -c
+  # keychain. The lib path is single-quoted inside the bash -c
   # program — no token is ever interpolated; only the harness-controlled install path
   # is embedded. `bash -c` (NOT -lc): a login shell would re-source profiles and could
   # mutate PATH/env, so a plain non-login shell preserves the tmux-session env the

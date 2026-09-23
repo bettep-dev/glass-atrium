@@ -1446,14 +1446,14 @@ run_doctor() {
   #     was stripped still reads the truth — this is why the interactive-shell env is NOT checked.
   #     Names and counts only, never a value. Neither `list-sessions` nor `show-environment` starts
   #     a server: no server → clean.
-  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" leak_hits="" leak_bytes=""
+  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN"
   if ! command -v tmux >/dev/null 2>&1; then
     log "  note : tmux token-leak check skipped — tmux not found"
   elif ! tmux list-sessions >/dev/null 2>&1; then
     log "  ok   : no default tmux server running — no global environment to leak ${leak_name} into"
   else
-    leak_hits="$(tmux show-environment -g 2>/dev/null | grep -c "^${leak_name}=" || true)"
-    if [[ "${leak_hits:-0}" -gt 0 ]]; then
+    # grep to /dev/null, not -q: an early exit could SIGPIPE the producer, which pipefail reads as clean.
+    if tmux show-environment -g 2>/dev/null | grep "^${leak_name}=" >/dev/null; then
       token_leak=$((token_leak + 1))
       log "  warn : ${leak_name} is set in the default tmux server's global environment — every new pane inherits it; clear it with 'tmux set-environment -g -u ${leak_name}' (value not shown)"
     else
@@ -1463,9 +1463,8 @@ run_doctor() {
   if ! command -v launchctl >/dev/null 2>&1; then
     log "  note : launchd token-leak check skipped — launchctl not found"
   else
-    # Byte count, never the exit status: getenv of an unset name exits 0 with empty stdout.
-    leak_bytes="$(launchctl getenv "${leak_name}" 2>/dev/null | wc -c | tr -d '[:space:]' || true)"
-    if [[ "${leak_bytes:-0}" -gt 0 ]]; then
+    # stdout, never the exit status: getenv of an unset name exits 0 with empty stdout.
+    if launchctl getenv "${leak_name}" 2>/dev/null | grep . >/dev/null; then
       token_leak=$((token_leak + 1))
       log "  warn : ${leak_name} is set in the launchd user domain — every launchd job inherits it; clear it with 'launchctl unsetenv ${leak_name}' (value not shown)"
     else
