@@ -1439,6 +1439,40 @@ run_doctor() {
     fi
   fi
 
+  # 26. OAuth token leak into shared environments. Registration kind A (counted warning): one per
+  #     leaking surface. A tmux client that STARTS the default server copies its own env into the
+  #     server's global env, and every later pane inherits it; launchd's user domain does the same
+  #     for every job. Both are queried at the source (server / launchd), so a caller whose own env
+  #     was stripped still reads the truth — this is why the interactive-shell env is NOT checked.
+  #     Names and counts only, never a value. Neither `list-sessions` nor `show-environment` starts
+  #     a server: no server → clean.
+  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" leak_hits="" leak_bytes=""
+  if ! command -v tmux >/dev/null 2>&1; then
+    log "  note : tmux token-leak check skipped — tmux not found"
+  elif ! tmux list-sessions >/dev/null 2>&1; then
+    log "  ok   : no default tmux server running — no global environment to leak ${leak_name} into"
+  else
+    leak_hits="$(tmux show-environment -g 2>/dev/null | grep -c "^${leak_name}=" || true)"
+    if [[ "${leak_hits:-0}" -gt 0 ]]; then
+      token_leak=$((token_leak + 1))
+      log "  warn : ${leak_name} is set in the default tmux server's global environment — every new pane inherits it; clear it with 'tmux set-environment -g -u ${leak_name}' (value not shown)"
+    else
+      log "  ok   : default tmux server global environment carries no ${leak_name}"
+    fi
+  fi
+  if ! command -v launchctl >/dev/null 2>&1; then
+    log "  note : launchd token-leak check skipped — launchctl not found"
+  else
+    # Byte count, never the exit status: getenv of an unset name exits 0 with empty stdout.
+    leak_bytes="$(launchctl getenv "${leak_name}" 2>/dev/null | wc -c | tr -d '[:space:]' || true)"
+    if [[ "${leak_bytes:-0}" -gt 0 ]]; then
+      token_leak=$((token_leak + 1))
+      log "  warn : ${leak_name} is set in the launchd user domain — every launchd job inherits it; clear it with 'launchctl unsetenv ${leak_name}' (value not shown)"
+    else
+      log "  ok   : launchd user domain carries no ${leak_name}"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1446,7 +1480,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1454,7 +1488,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak — see above) =="
     fi
     return 0
   fi
