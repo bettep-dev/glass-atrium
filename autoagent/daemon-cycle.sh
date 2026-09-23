@@ -117,10 +117,12 @@ fi
 # The self-improvement loop MUST commit into the GA monorepo (~/.glass-atrium/.git),
 # NOT the orphaned per-subdir facade repos.
 # Export the GA target env so daemon-apply.sh (invoked by run_apply_stage WITHOUT
-# --agents-dir) resolves the GA repo by default. daemon-apply.sh re-derives
-# GIT_ROOT + the stash pathspec (agents/) from AGENTS_DIR; both are env-overridable
-# for tests. Explicit here (not just relying on the apply-side default) so the
-# git target is discoverable at the pipeline entry point.
+# --agents-dir) resolves the GA repo by default. Only AGENTS_DIR reaches the apply:
+# daemon-apply.sh derives GIT_ROOT + the git-apply --directory subdir (agents/) from
+# it alone and reads neither of the two below from the env. Those two are consumed by
+# daemon_cycle._resolve_apply_git_scope, the cycle gate's mirror of that same scope.
+# Explicit here (not just relying on the apply-side default) so the git target is
+# discoverable at the pipeline entry point.
 export AUTOAGENT_AGENTS_DIR="${AUTOAGENT_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
 export AUTOAGENT_GIT_ROOT="${AUTOAGENT_GIT_ROOT:-${HOME}/.glass-atrium}"
 export AUTOAGENT_GIT_PATHSPEC="${AUTOAGENT_GIT_PATHSPEC:-agents/}"

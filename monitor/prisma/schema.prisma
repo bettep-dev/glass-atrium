@@ -529,6 +529,29 @@ model AutoagentProposal {
   status          ProposalStatus
   proposedDiff    String?                @map("proposed_diff")
   costGuardState  String?                @map("cost_guard_state") @db.VarChar(16)
+  // Provenance pair — two different questions, asymmetric on purpose. The
+  // timestamp answers WHEN this was adjudicated, the actor answers WHO moved it;
+  // a drained-then-parked row is the case proving those differ. Quoted by
+  // scripts/_pg_dual_write_daemon.py → write_autoagent_proposal.
+  //
+  // reviewedAt — the instant of the review VERDICT that settled the row: an
+  //   operator reject, or the apply flip that accepted it. Those two writers only.
+  //   A row that reached its status by any other path carries no timestamp, and
+  //   that absence is the defined value, not a gap.
+  // reviewedBy — the actor that produced the row's CURRENT status, whatever kind
+  //   of transition it was. Every status writer stamps it. Closed token set, each
+  //   inside VarChar(64), one per writer — a shared default would file one
+  //   writer's rows under another:
+  //     `monitor-user` — operator route (kept verbatim; live rows carry it)
+  //     `daemon-apply-flip` — apply flip
+  //     `daemon-apply-drain` — stale drain
+  //     `daemon-cycle-parked-guard` — parked guard
+  //     `daemon-cycle-supersede` — machine supersede, NOT a review: an unadjudicated
+  //       termination gets its own token and never the operator's
+  //     `daemon-cycle-push` — cycle push
+  //     `updater-resolved-gap` — updater resolved-gap accountability row
+  //     `status-backfill` — status backfill
+  //   `reverted` has no writer anywhere in the tree, so no token names it.
   reviewedAt      DateTime?              @map("reviewed_at") @db.Timestamptz(6)
   reviewedBy      String?                @map("reviewed_by") @db.VarChar(64)
   auditLogId      BigInt?                @map("audit_log_id")
@@ -637,8 +660,16 @@ model AutoagentLoopEvent {
   evalResult     String   @map("eval_result") @db.VarChar(32)
   changesAdded   Int      @map("changes_added")
   changesRemoved Int      @map("changes_removed")
+  // Identity token of the subject a verdict adjudicates; NULL = census class.
+  subject        String?  @db.VarChar(128)
+  insertedAt     DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
 
-  @@unique([eventTs, agent, evalResult], map: "autoagent_loop_events_dedup")
+  // Dedup is two partial UNIQUE indexes — census (event_ts, agent, eval_result)
+  // WHERE subject IS NULL, verdict (event_ts, agent, subject) WHERE subject IS NOT
+  // NULL. Prisma 7 schema cannot declare partial-index predicates → migration raw
+  // SQL only (20260921000000_split_autoagent_loop_event_identity). NOT mirrored here
+  // intentionally — declaring as a plain @@unique would cause prisma migrate diff to
+  // drop both predicates and recreate one full index.
   @@index([eventTs], map: "autoagent_loop_events_ts_idx")
   @@index([agent, eventTs], map: "autoagent_loop_events_agent_ts_idx")
   @@map("autoagent_loop_events")
