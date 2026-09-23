@@ -894,33 +894,19 @@ function TokenTooltipC({ active, payload }) {
 
 /**
  * Token-category cost split — the ledger's row 0.
- * Each model's authoritative cost_usd is distributed by price weight (tokens x rate/1M) → the split
- * sums back to the ledger total; a token-COUNT ratio would ignore the ~50x output/cache_read price
- * gap and under-report output. A model with no catalog price falls back to that count ratio.
+ * Sums buildModelCostRows' price-weighted cost_* splits (tokens x rate/1M) → the split sums back to
+ * the ledger total; a token-COUNT ratio would ignore the ~50x output/cache_read price gap and
+ * under-report output. A model with no catalog price falls back to that count ratio.
  */
-function getCategoryWeights(modelRow, categoryRates) {
-  const rates = window.getTokenRate(modelRow.model);
-  const weight = {};
-  let sum = 0;
-  for (const cat of categoryRates) {
-    const w = (Number(modelRow[cat.key]) || 0) * (rates ? (Number(rates[cat.rateKey]) || 0) : 1);
-    weight[cat.key] = w;
-    sum += w;
-  }
-  return { weight, sum };
-}
-
-function computeCategoryCostRows(modelRows) {
+function computeCategoryCostRows(modelCostRows) {
   const categoryRates = window.TOKEN_CATEGORY_RATES || [];
   const acc = new Map(categoryRates.map((cat) => [cat.key, { tokens: 0, cost: 0 }]));
 
-  for (const m of modelRows) {
-    const costUsd = Number(m.cost_usd) || 0;
-    const { weight, sum } = getCategoryWeights(m, categoryRates);
+  for (const m of modelCostRows) {
     for (const cat of categoryRates) {
       const bucket = acc.get(cat.key);
-      bucket.tokens += Number(m[cat.key]) || 0;
-      if (sum > 0) bucket.cost += (costUsd * weight[cat.key]) / sum;
+      bucket.tokens += m[cat.key];
+      bucket.cost += m[`cost_${cat.rateKey}`];
     }
   }
 
@@ -1057,7 +1043,7 @@ function ModelCostBody({ state, days, onRetry }) {
 
   return (
     <>
-      <CategoryShareRowC rows={computeCategoryCostRows(rows)}/>
+      <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
       <div style={{ maxHeight: 360, overflowY: 'auto' }}>
         <table className="tbl cost-tbl">
           <thead>
@@ -1143,7 +1129,7 @@ function ModelCostRow({ r }) {
   );
 }
 
-// 모델별 카테고리 USD 기여도 (sub-bar) — computeCategoryCostRows 와 동일한 단가 가중(tokens × rate/1M) 분배.
+// 모델별 카테고리 USD 기여도 (sub-bar · computeCategoryCostRows 입력) — 단가 가중(tokens × rate/1M) 분배.
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
