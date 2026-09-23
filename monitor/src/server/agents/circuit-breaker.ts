@@ -12,6 +12,7 @@ import type {
   AgentCircuitBreakerItem,
   AgentCircuitBreakerSummary,
 } from "../types/agents.js";
+import { errnoCode } from "../errno.js";
 
 export interface AgentCircuitBreakerSnapshot {
   states: Map<string, AgentCircuitBreakerItem>;
@@ -46,31 +47,13 @@ export async function loadAgentCircuitBreakerSnapshot(
 
   const dirState = await probeStateDir(dir);
   if (dirState === "unavailable") {
-    return {
-      states,
-      summary: {
-        source: "unavailable",
-        registry_agents: agentNames.length,
-        suspended_count: 0,
-        streak_count: 0,
-        alarms: [],
-      },
-    };
+    return getUnavailableSnapshot(agentNames.length);
   }
 
   for (const agent of agentNames) {
     const item = await readAgentState(dir, agent);
     if (item === null) {
-      return {
-        states: new Map(),
-        summary: {
-          source: "unavailable",
-          registry_agents: agentNames.length,
-          suspended_count: 0,
-          streak_count: 0,
-          alarms: [],
-        },
-      };
+      return getUnavailableSnapshot(agentNames.length);
     }
 
     states.set(agent, item);
@@ -95,6 +78,19 @@ export async function loadAgentCircuitBreakerSnapshot(
       suspended_count: alarms.filter((row) => row.suspended).length,
       streak_count: alarms.filter((row) => !row.suspended).length,
       alarms,
+    },
+  };
+}
+
+function getUnavailableSnapshot(registryAgents: number): AgentCircuitBreakerSnapshot {
+  return {
+    states: new Map(),
+    summary: {
+      source: "unavailable",
+      registry_agents: registryAgents,
+      suspended_count: 0,
+      streak_count: 0,
+      alarms: [],
     },
   };
 }
@@ -167,9 +163,5 @@ function parseSuspendedAt(body: string): string | null {
 }
 
 function isMissing(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    (error as { code?: string }).code === "ENOENT"
-  );
+  return errnoCode(error) === "ENOENT";
 }
