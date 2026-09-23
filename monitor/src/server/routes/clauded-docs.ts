@@ -2498,7 +2498,10 @@ async function insertClaudedDocRow(
         ),
         _upd AS (
           UPDATE monitor.documents
-          SET doc_status = 'done'::monitor."DocStatus"
+          SET doc_status = 'done'::monitor."DocStatus",
+              -- the close is the superseding caller's status action; an already-done row is not moved
+              last_status_model = CASE WHEN doc_status::text = 'done'
+                                       THEN last_status_model ELSE ${lastStatusModel} END
           WHERE id = ${supersedesId}
           RETURNING 1
         )

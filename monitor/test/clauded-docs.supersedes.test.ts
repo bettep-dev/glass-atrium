@@ -191,6 +191,42 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
   }
 });
 
+test("POST supersedes_id → the predecessor's close is credited to the superseding caller's model", async () => {
+  const predRes = await postCreate(app, {
+    title: makeTitle("actor-pred"),
+    prefix: "계획",
+    doc_status: "doc_review",
+    author: "tester",
+    html_body: makeHtmlBody(`actor-pred-${randomUUID()}`),
+    last_status_model: "model-previous",
+  });
+  assert.strictEqual(predRes.status, 201, "predecessor POST 201");
+  const predId = (predRes.body as { id: number }).id;
+
+  let succId: number | null = null;
+  try {
+    const succRes = await postCreate(app, {
+      title: makeTitle("actor-succ"),
+      prefix: "계획",
+      doc_status: "doc_review",
+      author: "tester",
+      html_body: makeHtmlBody(`actor-succ-${randomUUID()}`),
+      supersedes_id: predId,
+      last_status_model: "model-superseding",
+    });
+    assert.strictEqual(succRes.status, 201, "successor POST 201");
+    succId = (succRes.body as { id: number }).id;
+
+    const refetched = await app.inject({ method: "GET", url: `/api/clauded-docs/${predId}?format=html` });
+    const pred = refetched.json() as { doc_status: string; last_status_model: string | null };
+    assert.strictEqual(pred.doc_status, "done", "predecessor closed by the supersede");
+    assert.strictEqual(pred.last_status_model, "model-superseding", "close credited to the superseding caller");
+  } finally {
+    if (succId !== null) await deleteDoc(app, succId);
+    await deleteDoc(app, predId);
+  }
+});
+
 // ----- X-Deprecation-Notice header invariant -----
 
 test("GET /api/clauded-docs default response 의 X-Deprecation-Notice 헤더 invariant", async () => {
