@@ -57,7 +57,6 @@ interface AppHelpers {
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
   foldHarness: (states: unknown) => HarnessFold;
-  countDaemonsDown: (live: unknown) => number;
 }
 
 async function transform(srcPath: string): Promise<string> {
@@ -126,7 +125,7 @@ async function loadApp(): Promise<AppSurface> {
   );
   const healthModel = (
     ctx.window as {
-      HealthModel: { foldHarness: AppSurface["foldHarness"]; countDaemonsDown: AppSurface["countDaemonsDown"] };
+      HealthModel: { foldHarness: AppSurface["foldHarness"] };
     }
   ).HealthModel;
   return Object.assign(h as AppSurface, {
@@ -134,7 +133,6 @@ async function loadApp(): Promise<AppSurface> {
       location.hash = hash;
     },
     foldHarness: healthModel.foldHarness,
-    countDaemonsDown: healthModel.countDaemonsDown,
   });
 }
 
@@ -187,7 +185,6 @@ test("fold daemonsDown equals the nav slot's daemon badge for every down count",
       fold.daemonsDown,
       "nav numeral and fold must report the same count",
     );
-    assert.equal(app.countDaemonsDown(daemonPayload(down)), fold.daemonsDown);
   }
 });
 

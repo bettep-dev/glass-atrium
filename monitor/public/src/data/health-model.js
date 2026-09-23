@@ -128,7 +128,7 @@ function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
 }
 
-// 데몬 다운 = effective_status ≠ ok. nav 배지와 fold 가 같은 수를 읽도록 여기가 단일 출처.
+// 데몬 다운 = effective_status ≠ ok. nav 배지는 fold.daemonsDown 을 읽는다 → 여기가 단일 출처.
 function countDaemonsDown(livePayload) {
   return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
 }
@@ -183,6 +183,5 @@ window.HealthModel = {
   humanizePayloadKey,
   formatPayloadValue,
   toPayloadRows,
-  countDaemonsDown,
   foldHarness,
 };
