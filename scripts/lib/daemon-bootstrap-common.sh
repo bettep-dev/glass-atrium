@@ -72,17 +72,10 @@ fi
 # shellcheck source=lib/fakechat-cleanup.sh
 source "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh"
 
-# Headless claude auth (launchd keychain-bypass): source the 0600 secrets file
-# so CLAUDE_CODE_OAUTH_TOKEN is exported into THIS bootstrap shell (used by the
-# bootstrap's own probes). The tmux PANE re-sources the same file at startup so
-# the exec'd claude inherits the token from its OWN shell env — the value is NEVER
-# passed via `tmux -e KEY=VALUE` (that is argv-visible; see step-3 SECURITY note).
-# Absent file → loud WARN + keychain fallback (claude_auth_load_env never crashes).
-if [[ -f "${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh" ]]; then
-  # shellcheck source=lib/claude-auth-env.sh
-  source "${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh"
-  claude_auth_load_env
-fi
+# Headless claude auth (launchd keychain-bypass) is LEAF-ONLY: the token is loaded
+# solely inside the pane command that execs claude (step 3), never in this
+# bootstrap shell — a tmux client that starts the default server copies its env
+# into the server's global env, seeding the token into every later session.
 
 # Channels-session model — pin the `claude --channels` REPL to the menu-configured
 # daemon LLM tier instead of the settings.json default (Fable 5, whose low usage
@@ -206,12 +199,13 @@ daemon_bootstrap_create_session() {
   # FAKECHAT_PORT is a NON-secret tmux set-env (server.ts reads process.env) — kept
   # on `-e`. The spawned claude inherits it and passes it to the bun MCP child.
   local tmux_env_args=("-e" "FAKECHAT_PORT=${FAKECHAT_PORT_DEFAULT}")
-  # SECURITY (core-security.md Secret Management / OWASP A04): the headless OAuth
-  # token MUST NOT be passed via `tmux -e KEY=VALUE` — `-e value` lands in the tmux
-  # CLIENT process argv, which `ps -wwxo args` exposes to every local user (macOS
-  # has no default hidepid). Instead the PANE command sources the 0600 secrets file
-  # itself (claude_auth_load_env), so the exec'd claude inherits the token from its
-  # OWN shell env and the value never touches any argv. Absent secrets file →
+  # SECURITY (core-security.md Secret Management / OWASP A04): leaf-only token load.
+  # Never via `tmux -e KEY=VALUE` — `-e value` lands in the tmux CLIENT argv, which
+  # `ps -wwxo args` exposes to every local user (macOS has no default hidepid). Never
+  # in the client env either — `env -u` below strips any inherited copy, because a
+  # client that starts the server seeds the server's global env from its own. Only
+  # the PANE command sources the 0600 secrets file (claude_auth_load_env), so the
+  # exec'd claude inherits the token from its OWN shell env. Absent secrets file →
   # claude_auth_load_env warns + returns 0 (never aborts) → claude falls back to the
   # keychain (unchanged behavior). The lib path is single-quoted inside the bash -c
   # program — no token is ever interpolated; only the harness-controlled install path
@@ -231,7 +225,7 @@ daemon_bootstrap_create_session() {
     # no auth lib on disk (deploy gap) — start claude directly; it uses the keychain.
     pane_cmd="exec claude --channels plugin:fakechat@claude-plugins-official --model '${WORKER_MODEL}'"
   fi
-  if ! tmux new-session -d -s "${SESSION}" -c "${HOME}" \
+  if ! env -u CLAUDE_CODE_OAUTH_TOKEN tmux new-session -d -s "${SESSION}" -c "${HOME}" \
     "${tmux_env_args[@]}" \
     "exec bash -c \"${pane_cmd}\""; then
     # Duplicate-session TOCTOU: a concurrent bootstrap can win the create
