@@ -131,6 +131,10 @@ function ScreenWiki() {
 // Daily cycle plus a grace window — past this the cycle counts as missed.
 const CYCLE_OVERDUE_HOURS = 36;
 
+function isCycleOverdueW(hours) {
+	return typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS;
+}
+
 // Runs an unchanged proposal count must survive before the pair reads as parked.
 const PROPOSAL_PARKED_RUNS = 7;
 
@@ -220,7 +224,7 @@ function buildAlarmLaneModel(
 
 	const summary = summaryState.status === "ready" ? summaryState.data : null;
 	const hours = summary?.hours_since_last_cycle;
-	if (typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS) {
+	if (isCycleOverdueW(hours)) {
 		alarms.push({
 			key: "cycle-overdue",
 			tone: "crit",
@@ -455,7 +459,7 @@ function buildLastRunTileW(state) {
 	}
 
 	const hours = d.hours_since_last_cycle;
-	const overdue = typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS;
+	const overdue = isCycleOverdueW(hours);
 	const statusTone = wikiStatusToneW(d.last_status);
 	const tone = overdue ? "crit" : statusTone === "ok" ? "neutral" : statusTone;
 
