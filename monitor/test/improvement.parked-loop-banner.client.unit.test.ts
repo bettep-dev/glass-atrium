@@ -48,6 +48,8 @@ interface BannerSandbox {
   }) => RecordedElement | null;
   BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
   CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
+  TrendCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
+  ChangeSummaryCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
   LedgerHeldSectionI: (props: { suppression: unknown; declined?: unknown }) => RecordedElement | null;
 }
 
@@ -256,6 +258,36 @@ test("the cycle decomposition chips leave their tone on the glyph", () => {
     [],
     "the chip label repeats a tone the SymI beside it already declares",
   );
+});
+
+// The Loop output cards name a status in a label, so `info` counts as a tone here
+// too — the neutral ℹ glyph beside the label already says it.
+const TONE_TEXT_CLASS = /\btext-(warn|crit|ok|info)\b/;
+
+function toneTextNodes(tree: unknown): string[] {
+  return collectElements(tree, [])
+    .filter((el) => TONE_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => el.props.s === undefined)
+    .map((el) => String(el.props.className));
+}
+
+test("the trend legend leaves its tone on the line swatch", () => {
+  const card = sandbox.TrendCardI({
+    state: { status: "ready" },
+    aggregate: { trend: [{ verified: 2, reject: 1 }, { verified: 3, reject: 0 }], verifiedTotal: 5, rejectTotal: 1 },
+  });
+  assert.deepEqual(toneTextNodes(card), [], "the legend label repeats the hue its swatch already draws");
+});
+
+test("the change summary's reject-rate labels leave their tone on the glyph", () => {
+  Object.assign(sandbox.window.UI, { formatPctWithDenominator: (count: number, total: number) => `${count}/${total}` });
+  for (const failAfter of [{ count: 1, total: 10 }, { count: 9, total: 10 }, { count: 0, total: 0 }]) {
+    const card = sandbox.ChangeSummaryCardI({
+      state: { status: "ready" },
+      aggregate: { added: 4, removed: 2, eventCount: 6, failBefore: { count: 5, total: 10 }, failAfter },
+    });
+    assert.deepEqual(toneTextNodes(card), [], "a reject-rate label repeats the tone its SymI already declares");
+  }
 });
 
 test("every held row renders under exactly one cause group", () => {

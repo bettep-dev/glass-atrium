@@ -927,7 +927,7 @@ function TrendCardI({ state, aggregate }) {
 								strokeWidth="1.6"
 							/>
 						</svg>
-						<span className="text-ok">Verified</span>{" "}
+						<span>Verified</span>{" "}
 						{formatIntI(aggregate.verifiedTotal)}
 					</span>
 					<span className="inline-flex items-center gap-1.5">
@@ -942,7 +942,7 @@ function TrendCardI({ state, aggregate }) {
 								strokeDasharray="3 2"
 							/>
 						</svg>
-						<span className="text-warn">Rejected</span>{" "}
+						<span>Rejected</span>{" "}
 						{formatIntI(aggregate.rejectTotal)}
 					</span>
 				</div>
@@ -2424,7 +2424,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
 					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
 						<SymI s="ℹ" className="text-info" size={12} />
-						<span className="text-info">Reject rate — earlier half</span>
+						<span>Reject rate — earlier half</span>
 					</div>
 					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 						{failBeforeText}
@@ -2433,7 +2433,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
 					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
 						<SymI s={failTrend.symbol} className={failTrend.tone} size={12} />
-						<span className={failTrend.tone}>Reject rate — recent half</span>
+						<span>Reject rate — recent half</span>
 					</div>
 					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 						{failAfterText}
