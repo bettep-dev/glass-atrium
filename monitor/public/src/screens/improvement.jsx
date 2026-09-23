@@ -1932,22 +1932,14 @@ function SuppressionBucketRowsI({ buckets, unitLabel }) {
 
 // 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
 // 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
-// 반려 백로그는 별도의 공개 표면이 아니라 held 의 한 원인이다 — 사람이 이미 내린 결정이므로
-// 설계 결정 그룹과 같이 접힌 채로 시작하고, 원장의 종결 행 구조 안에서만 읽힌다.
-const DECLINED_HELD_CAUSE = "declined";
-
-const HELD_DESIGN_DECISION_CAUSES = new Set([
-	"non-promptable",
-	"other",
-	DECLINED_HELD_CAUSE,
-]);
+const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
 
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
-function LedgerHeldSectionI({ suppression, declined }) {
+// 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
+function LedgerHeldSectionI({ suppression }) {
 	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
-	const declinedRows = Array.isArray(declined) ? declined : [];
-	if (buckets.length === 0 && declinedRows.length === 0) return null;
+	if (buckets.length === 0) return null;
 	const rows = Array.isArray(suppression?.parked_patterns)
 		? suppression.parked_patterns
 		: [];
@@ -1963,25 +1955,8 @@ function LedgerHeldSectionI({ suppression, declined }) {
 					rows={rows.filter((r) => r.cause === b.cause)}
 				/>
 			))}
-			{declinedRows.length > 0 && (
-				<HeldCauseGroupI
-					bucket={declinedHeldBucketI(declinedRows)}
-					rows={declinedRows}
-				/>
-			)}
 		</div>
 	);
-}
-
-function declinedHeldBucketI(rows) {
-	const agents = new Set(rows.map((r) => r.agent).filter(Boolean));
-	return {
-		cause: DECLINED_HELD_CAUSE,
-		label: "Declined",
-		count: rows.length,
-		agents: agents.size,
-		hint: "A human rejected these — terminal unless the pattern is discovered again as a new row.",
-	};
 }
 
 // remedy 는 그룹 헤더에 한 번만 — 행마다 반복하면 원인 하나가 여러 원인으로 읽힌다.
@@ -2575,7 +2550,6 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 	const open = sorted.filter((p) => p.status !== "rejected");
 	const live = open.filter((p) => p.intake_skipped !== true);
 	const inert = open.filter((p) => p.intake_skipped === true);
-	const declined = sorted.filter((p) => p.status === "rejected");
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
@@ -2588,7 +2562,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 				onRowClick={onRowClick}
 			/>
 			<LedgerInertSectionI rows={inert} />
-			<LedgerHeldSectionI suppression={suppression} declined={declined} />
+			<LedgerHeldSectionI suppression={suppression} />
 			<LedgerRecurrenceDisclosureI suppression={suppression} />
 			<LedgerFooterI
 				total={total}

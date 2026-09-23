@@ -48,6 +48,7 @@ interface BannerSandbox {
   }) => RecordedElement | null;
   BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
   CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
+  LedgerHeldSectionI: (props: { suppression: unknown; declined?: unknown }) => RecordedElement | null;
 }
 
 const HINT = "the reset does NOT re-arm the cap; it only overwrites the park timestamp";
@@ -255,4 +256,25 @@ test("the cycle decomposition chips leave their tone on the glyph", () => {
     [],
     "the chip label repeats a tone the SymI beside it already declares",
   );
+});
+
+test("every held row renders under exactly one cause group", () => {
+  const reasoned = { id: 7, agent: "a", cause: "other" };
+  const section = sandbox.LedgerHeldSectionI({
+    suppression: {
+      parked: [{ cause: "other", label: "Other", count: 1, agents: 1, hint: "h" }],
+      parked_patterns: [reasoned],
+    },
+    declined: [{ ...reasoned, status: "rejected" }],
+  });
+  // Flattening walk — collectElements drops a nested array child, which is the shape `buckets.map` yields.
+  const walk = (node: unknown): RecordedElement[] =>
+    Array.isArray(node)
+      ? node.flatMap(walk)
+      : isElement(node)
+        ? [node, ...walk(node.props.children)]
+        : [];
+  const groups = walk(section).filter((el) => el.props.bucket !== undefined);
+  const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
+  assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });
