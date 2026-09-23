@@ -1445,8 +1445,9 @@ run_doctor() {
   #     for every job. Both are queried at the source (server / launchd), so a caller whose own env
   #     was stripped still reads the truth — this is why the interactive-shell env is NOT checked.
   #     Names and counts only, never a value. Neither `list-sessions` nor `show-environment` starts
-  #     a server: no server → clean. Any other list-sessions failure (socket permission, a
-  #     TMUX_TMPDIR mismatch) → unreadable note, never a clean pass.
+  #     a server: no server → clean. A TMUX_TMPDIR dir holding no socket prints the same ENOENT,
+  #     so it is indistinguishable from no server → also clean. Any other list-sessions failure
+  #     (e.g. socket permission) → unreadable note, never a clean pass.
   local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" tmux_ls_err=""
   if ! command -v tmux >/dev/null 2>&1; then
     log "  note : tmux token-leak check skipped — tmux not found"
