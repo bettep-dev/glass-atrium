@@ -52,6 +52,8 @@ const BASELINE: ReadonlyArray<[string, string]> = [
   ["model.research", "claude-sonnet-5"],
   ["model.meta", "claude-sonnet-5"],
   ["model.wiki", "claude-sonnet-5"],
+  ["model.review", "inherit"],
+  ["model.docs", "inherit"],
   ["model.daemon_cycle_worker", "claude-haiku-4-5"],
   ["budget.worker_max_usd", "10.00"],
   ["budget.pre_verify_max_usd", "10.00"],
@@ -109,6 +111,13 @@ interface SavedConfigRow {
   updated_by: string;
 }
 let savedRows: SavedConfigRow[] = [];
+
+const REVIEW_AGENT_FILES = ["glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"];
+const DOCS_AGENT_FILES = ["glass-atrium-intel-planner.md", "glass-atrium-intel-reporter.md"];
+const PAIR_DOMAINS = [
+  { key: "model.review", surface: "frontmatter-review", files: REVIEW_AGENT_FILES },
+  { key: "model.docs", surface: "frontmatter-docs", files: DOCS_AGENT_FILES },
+] as const;
 
 function agentMarkdown(name: string, extraFrontmatterLines: string[] = []): string {
   return ["---", `name: ${name}`, ...extraFrontmatterLines, "tools: [Read]", "---", "", `${name} body.`, ""].join("\n");
@@ -195,6 +204,11 @@ before(async () => {
     "utf8",
   );
 
+  // Two-file review/docs surfaces — no `model:` key, matching the seeded `inherit` rows.
+  for (const name of [...REVIEW_AGENT_FILES, ...DOCS_AGENT_FILES]) {
+    writeFileSync(path.join(agentsDir, name), agentMarkdown(name.replace(/\.md$/, "")), "utf8");
+  }
+
   // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
   // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only glass-atrium-dev-alpha/beta/broken are
   // registered → the on-disk glass-atrium-dev-ghost.md is filtered out of every dev-file surface.
@@ -259,7 +273,7 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigGetResponse;
 
-  assert.strictEqual(body.domains.length, 5);
+  assert.strictEqual(body.domains.length, 7);
   assert.strictEqual(typeof body.fetched_at, "string");
 
   // known_models = the SoT fixture's `models` key set (order-agnostic set equality).
@@ -294,6 +308,16 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(wiki.desired, "claude-sonnet-5");
   assert.strictEqual(wiki.actual, "claude-sonnet-5");
   assert.strictEqual(wiki.drift, false);
+
+  // Key-less pair files read back as the seeded `inherit`, per file, with no drift.
+  for (const pair of PAIR_DOMAINS) {
+    const status = domainOf(body, pair.key);
+    assert.strictEqual(status.apply_mode, "next-spawn");
+    assert.strictEqual(status.desired, "inherit");
+    assert.strictEqual(status.actual, "inherit");
+    assert.strictEqual(status.drift, false);
+    assert.deepStrictEqual(status.files, pair.files.map((file) => ({ file, model: null })));
+  }
 
   const haiku = domainOf(body, "model.daemon_cycle_worker");
   assert.strictEqual(haiku.apply_mode, "next-cycle");
@@ -597,6 +621,59 @@ test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT 
     rmSync(applyLockPath, { recursive: true, force: true });
   }
 });
+
+for (const pair of PAIR_DOMAINS) {
+  test(`${pair.key}: a concrete id renders into both files, inherit removes it from both`, async () => {
+    const pin = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "claude-opus-4-8" } } });
+    assert.strictEqual(pin.statusCode, 200);
+    const pinned = pin.json() as ModelConfigPutResponse;
+    assert.deepStrictEqual(surfaceOf(pinned, pair.surface).files?.map((f) => [f.file, f.status]), pair.files.map((f) => [f, "ok"]));
+    for (const file of pair.files) {
+      assert.match(readFileSync(path.join(agentsDir, file), "utf8"), /^model: claude-opus-4-8$/m, `${file} pinned`);
+    }
+    assert.strictEqual(domainOf(pinned, pair.key).actual, "claude-opus-4-8");
+    assert.strictEqual(domainOf(pinned, pair.key).drift, false);
+
+    const unpin = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "inherit" } } });
+    assert.strictEqual(unpin.statusCode, 200);
+    for (const file of pair.files) {
+      assert.doesNotMatch(readFileSync(path.join(agentsDir, file), "utf8"), /^model:/m, `${file} unpinned`);
+    }
+    assert.strictEqual(domainOf(unpin.json() as ModelConfigGetResponse, pair.key).actual, "inherit");
+    assert.strictEqual(await getDbValue(pair.key), "inherit");
+  });
+
+  test(`${pair.key}: a two-file disagreement reports mixed with per-file detail`, async () => {
+    const [first, second] = pair.files;
+    const firstPath = path.join(agentsDir, first);
+    const original = readFileSync(firstPath, "utf8");
+    writeFileSync(firstPath, agentMarkdown(first.replace(/\.md$/, ""), ["model: claude-sonnet-5"]), "utf8");
+    try {
+      const res = await app.inject({ method: "GET", url: "/api/model-config" });
+      const status = domainOf(res.json() as ModelConfigGetResponse, pair.key);
+      assert.strictEqual(status.actual, "mixed");
+      assert.strictEqual(status.drift, true);
+      assert.deepStrictEqual(status.files, [
+        { file: first, model: "claude-sonnet-5" },
+        { file: second, model: null },
+      ]);
+    } finally {
+      writeFileSync(firstPath, original, "utf8");
+    }
+  });
+
+  test(`${pair.key}: 409 while .apply-lock exists, no file written`, async () => {
+    mkdirSync(applyLockPath, { recursive: true });
+    try {
+      const before = pair.files.map((f) => readFileSync(path.join(agentsDir, f), "utf8"));
+      const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "claude-opus-4-8" } } });
+      assert.strictEqual(res.statusCode, 409);
+      assert.deepStrictEqual(pair.files.map((f) => readFileSync(path.join(agentsDir, f), "utf8")), before);
+    } finally {
+      rmSync(applyLockPath, { recursive: true, force: true });
+    }
+  });
+}
 
 // ----- audit single-writer (AC-9) ----------------------------------------------------
 

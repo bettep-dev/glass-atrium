@@ -88,6 +88,8 @@ export interface ModelDomainDef {
     | "frontmatter-research"
     | "frontmatter-meta"
     | "frontmatter-wiki"
+    | "frontmatter-review"
+    | "frontmatter-docs"
     | "daemon-config";
   // daemon-config.json key this domain renders to (write-through target), null otherwise.
   daemonConfigKey: string | null;
@@ -125,6 +127,22 @@ export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
     applyMode: "next-spawn",
     editable: true,
     surface: "frontmatter-wiki",
+    daemonConfigKey: null,
+    allowInherit: true,
+  },
+  {
+    key: "model.review",
+    applyMode: "next-spawn",
+    editable: true,
+    surface: "frontmatter-review",
+    daemonConfigKey: null,
+    allowInherit: true,
+  },
+  {
+    key: "model.docs",
+    applyMode: "next-spawn",
+    editable: true,
+    surface: "frontmatter-docs",
     daemonConfigKey: null,
     allowInherit: true,
   },

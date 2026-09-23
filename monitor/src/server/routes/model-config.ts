@@ -52,6 +52,12 @@ const UPDATED_BY = "monitor-web";
 const RESEARCH_AGENT_FILE = "glass-atrium-intel-researcher.md";
 const META_AGENT_FILE = "glass-atrium-meta-agent.md";
 const WIKI_AGENT_FILE = "glass-atrium-wiki-curator.md";
+// Fixed two-file domains — a registry phase cannot select these pairs (reporter and planner differ).
+const PAIR_AGENT_FILES = {
+  "frontmatter-review": ["glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"],
+  "frontmatter-docs": ["glass-atrium-intel-planner.md", "glass-atrium-intel-reporter.md"],
+} as const;
+type PairSurface = keyof typeof PAIR_AGENT_FILES;
 const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
@@ -120,13 +126,15 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   );
   const desired = resolution.desired;
 
-  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, knownModelIds] =
+  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, reviewFiles, docsFiles, knownModelIds] =
     await Promise.all([
       readDaemonConfig(),
       readDevAgentModels(),
       readFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), undefined),
       readFrontmatterModel(path.join(getAgentsDir(), META_AGENT_FILE), undefined),
       readFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), undefined),
+      readPairAgentModels("frontmatter-review"),
+      readPairAgentModels("frontmatter-docs"),
       loadKnownModelIds(),
     ]);
   const surfaces: ActualSurfaces = {
@@ -135,6 +143,8 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
     researchModel,
     metaModel,
     wikiModel,
+    reviewFiles,
+    docsFiles,
     knownModelIds,
   };
 
@@ -181,6 +191,8 @@ interface ActualSurfaces {
   researchModel: string | null | undefined; // undefined = unparseable/unreadable
   metaModel: string | null | undefined;
   wikiModel: string | null | undefined;
+  reviewFiles: DomainFileModel[];
+  docsFiles: DomainFileModel[];
   knownModelIds: ReadonlySet<string>;
 }
 
@@ -193,13 +205,18 @@ function buildDomainStatus(
   let files: DomainFileModel[] | undefined;
 
   switch (def.surface) {
-    case "frontmatter-dev": {
+    case "frontmatter-dev":
       files = surfaces.devFiles;
-      const states = files.map((f) => f.model ?? INHERIT_VALUE);
-      const uniq = new Set(states);
-      actual = files.length === 0 ? null : uniq.size === 1 ? states[0] : "mixed";
+      actual = getPerFileActual(files);
       break;
-    }
+    case "frontmatter-review":
+      files = surfaces.reviewFiles;
+      actual = getPerFileActual(files);
+      break;
+    case "frontmatter-docs":
+      files = surfaces.docsFiles;
+      actual = getPerFileActual(files);
+      break;
     case "frontmatter-research":
       actual = surfaces.researchModel === undefined ? null : (surfaces.researchModel ?? INHERIT_VALUE);
       break;
@@ -229,6 +246,15 @@ function buildDomainStatus(
     status.files = files;
   }
   return status;
+}
+
+// One shared state across every file, else 'mixed'; no files → unknown.
+function getPerFileActual(files: DomainFileModel[]): string | null {
+  const states = new Set(files.map((f) => f.model ?? INHERIT_VALUE));
+  if (states.size === 0) {
+    return null;
+  }
+  return states.size === 1 ? [...states][0] : "mixed";
 }
 
 function computeDrift(desired: string | null, actual: string | null): boolean {
@@ -363,7 +389,9 @@ async function handlePut(
       modelChanges.has("model.dev") ||
       modelChanges.has("model.research") ||
       modelChanges.has("model.meta") ||
-      modelChanges.has("model.wiki");
+      modelChanges.has("model.wiki") ||
+      modelChanges.has("model.review") ||
+      modelChanges.has("model.docs");
     if (touchesFrontmatter && (await pathExists(getApplyLockPath()))) {
       return reply.code(409).send({
         error: "daemon_apply_in_progress",
@@ -423,6 +451,12 @@ async function handlePut(
     }
     if (modelChanges.has("model.wiki")) {
       surfaces.push(await renderWikiFrontmatter(modelChanges.get("model.wiki") as string));
+    }
+    if (modelChanges.has("model.review")) {
+      surfaces.push(await renderPairFrontmatter("frontmatter-review", modelChanges.get("model.review") as string));
+    }
+    if (modelChanges.has("model.docs")) {
+      surfaces.push(await renderPairFrontmatter("frontmatter-docs", modelChanges.get("model.docs") as string));
     }
 
     const getShape = await buildGetResponse();
@@ -491,6 +525,16 @@ async function readDevAgentModels(): Promise<DomainFileModel[]> {
   );
 }
 
+// Same per-file semantics as the dev surface (unreadable file → null).
+function readPairAgentModels(surface: PairSurface): Promise<DomainFileModel[]> {
+  return Promise.all(
+    PAIR_AGENT_FILES[surface].map(async (name) => ({
+      file: name,
+      model: await readFrontmatterModel(path.join(getAgentsDir(), name), null),
+    })),
+  );
+}
+
 /**
  * Read one agent file's `model:` frontmatter value; `missing` is the caller-chosen
  * sentinel for an unreadable file or absent `---` block. Research passes `undefined` to
@@ -541,6 +585,14 @@ async function renderMetaFrontmatter(desired: string): Promise<SurfaceResult> {
 async function renderWikiFrontmatter(desired: string): Promise<SurfaceResult> {
   const result = await writeFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), desired);
   return { surface: "frontmatter-wiki", status: result.status, reason: result.reason, files: [result] };
+}
+
+async function renderPairFrontmatter(surface: PairSurface, desired: string): Promise<SurfaceResult> {
+  const files: SurfaceFileResult[] = [];
+  for (const name of PAIR_AGENT_FILES[surface]) {
+    files.push(await writeFrontmatterModel(path.join(getAgentsDir(), name), desired));
+  }
+  return { surface, status: aggregateFileStatus(files), files };
 }
 
 function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "failed" {
