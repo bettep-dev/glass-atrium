@@ -234,6 +234,9 @@ def main():
                 # pass through any explicit override the daemon emits later.
                 "approval_tier": patch.get("approval_tier") or "",
                 "status": patch.get("status") or status_fallback,
+                # The pusher's own token, not a patch field: PatchResult declares
+                # no actor, and the cycle push is what produced this status.
+                "reviewed_by": "daemon-cycle-push",
                 "proposed_diff": patch.get("proposed_diff"),
                 "cost_guard_state": stats["cost_guard_state"],
                 "source_file": source_file_basename,

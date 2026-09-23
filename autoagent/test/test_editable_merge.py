@@ -1246,6 +1246,20 @@ class SensitiveDiffRefusalTest(unittest.TestCase):
             self.assertEqual(cand.verify(str(p)), 1)
         self.assertEqual(stub.calls, 0)  # refused before any Haiku spend
 
+    def test_should_refuse_when_region_line_starting_plus_plus_renders_as_raw_triple_plus(
+        self,
+    ) -> None:
+        # difflib prefixes the region line `++ <cmd>` with '+' → raw `+++ <cmd>` body line.
+        rm_token = "r" "m"
+        base = _doc(top="# A", region="safe line", bottom="z")
+        release = _doc(top="# A", region=f"++ {rm_token} -rf /tmp/scratch", bottom="z")
+
+        cand = em.build_merge_candidate(
+            "dev-shell.md", base, release, base_text=base, verify_fn=_StubVerify(True)
+        )
+        self.assertIn(f"\n+++ {rm_token} -rf /tmp/scratch", cand.diff)
+        self.assertIsNotNone(cand.sensitive_hit)
+
     def test_added_drop_table_in_region_refuses(self) -> None:
         base = _doc(top="# A", region="select 1", bottom="z")
         local = _doc(top="# A", region="select 1", bottom="z")
