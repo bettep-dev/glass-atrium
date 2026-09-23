@@ -10,7 +10,7 @@ every subsequent cycle to 'partial' for a candidate nobody is generating.
 
 Pinned invariants:
   (1) streak >= threshold → no Haiku call, error EMPTY,
-      haiku_status='skipped:chronic-timeout-backoff', status='snoozed' — the
+      haiku_status='skipped:chronic-timeout-backoff', status='rejected' — the
       rationale still rides the proposal row for observability;
   (2) streak < threshold → the fresh timeout keeps its error, so the first N
       timeouts stay visible as 'partial' (the suppression is bounded, not blanket);
@@ -125,7 +125,6 @@ class BackoffErrorSeam(unittest.TestCase):
         # THE PIN: an intentional bounded skip never reads as a cycle error.
         self.assertEqual(patch.error, "")
         self.assertEqual(patch.haiku_status, "skipped:chronic-timeout-backoff")
-        self.assertEqual(patch.status, "snoozed")
         self.assertEqual(patch.proposed_diff, "")
         # The reason is not lost — it rides the persisted proposal row instead.
         self.assertIn("chronic haiku-timeout back-off", patch.rationale)
@@ -135,6 +134,12 @@ class BackoffErrorSeam(unittest.TestCase):
 
         self.assertEqual(patch.error, "")
         self.assertEqual(patch.haiku_status, "skipped:chronic-timeout-backoff")
+
+    def test_when_backed_off_then_status_is_terminal_at_any_streak(self) -> None:
+        # A non-terminal marker is re-selectable by the apply side and reads as output.
+        for streak in (dc.TIMEOUT_BACKOFF_THRESHOLD, dc.TIMEOUT_BACKOFF_THRESHOLD + 5):
+            with self.subTest(streak=streak):
+                self.assertEqual(self._run(streak=streak, proposal=None).status, "rejected")
 
     def test_when_streak_below_threshold_then_fresh_timeout_keeps_error(self) -> None:
         # Bound of the suppression: the first N timeouts still flip the cycle to
@@ -155,7 +160,6 @@ class BackoffErrorSeam(unittest.TestCase):
 
         self.assertEqual(patch.error, rationale)
         self.assertEqual(patch.haiku_status, "skipped:empty-or-error")
-        self.assertNotEqual(patch.status, "snoozed")
 
     def test_when_timeout_stall_proposal_then_status_timeout_stall(self) -> None:
         stall_proposal = dc.PatchProposal(

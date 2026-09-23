@@ -277,8 +277,9 @@ async function seed(): Promise<void> {
     WHERE pattern_signature = ${`${PROMPTABLE_LABEL}|${SUITE_MARKER}-2`}
   `;
 
-  // Per-cycle population. The dedup key is (event_ts, agent, eval_result), so a
-  // recurrence is modelled as distinct days — which is exactly what it is.
+  // Per-cycle population. subject is left NULL, so these are census rows and the key
+  // in play is the census arm (event_ts, agent, eval_result) WHERE subject IS NULL —
+  // a recurrence is therefore modelled as distinct days, which is exactly what it is.
   const events: Array<[string, string, number]> = [
     ["non-promptable", AGENT_A, 0],
     ["non-promptable", AGENT_A, 1],

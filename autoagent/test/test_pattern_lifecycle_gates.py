@@ -144,6 +144,19 @@ class TestConsecutiveRejectCount(unittest.TestCase):
         ]
         self.assertEqual(dc.consecutive_reject_count(_LEGACY_LABEL, rows), 3)
 
+    def test_when_rejected_backoff_marker_rows_then_looked_past(self) -> None:
+        marker = dc.TIMEOUT_BACKOFF_RATIONALE_TEMPLATE.format(n=3, thr=3)
+        rows = [
+            _reject(rationale=marker),
+            _reject(),
+            _reject(rationale=marker),
+            _reject(),
+        ]
+        self.assertEqual(dc.consecutive_reject_count(_LEGACY_LABEL, rows), 2)
+        self.assertEqual(
+            dc.classify_failure_rationale(marker), dc.FAILURE_CLASS_TIMEOUT
+        )
+
     def test_when_applied_row_then_streak_breaks(self) -> None:
         rows = [
             _reject(),

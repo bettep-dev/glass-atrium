@@ -13,7 +13,10 @@ against the live scoped store, and every miss is loud. Covered here:
   (e) the map's agent roster and the shipped ``agents/`` roster agree in BOTH
       directions, so an agent added to the farm without a map entry — the gap
       that left glass-atrium-dev-swift judging C3 against nothing — is red here
-      rather than silent at daemon runtime.
+      rather than silent at daemon runtime;
+  (f) the map stays a CLOSED set of scope-*.md files while the injected
+      turn-budget source shares the same scoped store — that source EXTENDS the
+      store's readers and is reached by its own resolver, never by a map entry.
 
 The scoped store is pointed at the repo's own ``scoped/`` via ``GA_DATA_ROOT``
 (the ga_paths seam both python and shell consumers share), so the suite asserts
@@ -197,6 +200,36 @@ class ScopeFileResolutionTest(unittest.TestCase):
         self.assertIn(dc.SCOPE_EMPTY_SIGNAL, prompt)
         c3_block = prompt.split("[C3 ", 1)[1].split("[C4 ", 1)[0]
         self.assertIn("C3: FAIL", c3_block)
+
+
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class ScopedStoreClosureTest(unittest.TestCase):
+    """(f) the injected turn-budget source shares the store, not the map."""
+
+    def test_when_map_read_then_every_value_is_still_a_scope_file(self):
+        # The closure the C3 axis rests on: a map value resolves a scope-*.md and
+        # nothing else, so no new source can arrive through it by accident.
+        for agent, relative in dc._AGENT_SCOPE_MAP.items():
+            with self.subTest(agent=agent):
+                self.assertTrue(relative.startswith("scope-"), relative)
+                self.assertTrue(relative.endswith(".md"), relative)
+        self.assertNotIn(dc.TURN_BUDGET_SRC_NAME, set(dc._AGENT_SCOPE_MAP.values()))
+
+    def test_when_seam_bound_then_the_budget_source_sits_in_the_scoped_store(self):
+        with tempfile.TemporaryDirectory() as live:
+            live_root = Path(live)
+            with _base_root(live_root):
+                # Derived on both sides: same parent directory as every C3 file,
+                # so the source inherits the store the map is resolved against.
+                self.assertEqual(
+                    dc._get_turn_budget_src().parent, dc._get_scoped_dir()
+                )
+                self.assertEqual(dc._get_turn_budget_src().name, dc.TURN_BUDGET_SRC_NAME)
+
+    def test_when_repo_store_bound_then_the_budget_source_resolves_readable(self):
+        with _base_root(_REPO_ROOT):
+            src = dc._get_turn_budget_src()
+        self.assertTrue(src.is_file(), f"{src} is not a readable file")
 
 
 if __name__ == "__main__":
