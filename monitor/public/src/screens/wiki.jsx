@@ -135,7 +135,7 @@ const CYCLE_OVERDUE_HOURS = 36;
 const PROPOSAL_PARKED_RUNS = 7;
 
 // Same threshold on the dated source — the cycle is daily, so a run and a day match.
-const PROPOSAL_PARKED_DAYS = 7;
+const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
 // Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
 // missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
@@ -294,9 +294,7 @@ function describeProposalWaitW(wait, parked) {
 		wait.days === 0
 			? `Waiting since today (${wait.since})`
 			: `Waiting ${wait.days} ${wait.days === 1 ? "day" : "days"} (since ${wait.since})`;
-	return parked
-		? `${span} — parked; run the curator merge or leave the pair.`
-		: `${span}.`;
+	return describeParkedSpanW(span, parked);
 }
 
 // Fallback age source for a payload with no first-seen map: the streak of newest
@@ -326,6 +324,10 @@ function describeProposalAgeW(runs, parked, checking) {
 	}
 
 	const span = `Unchanged for ${runs} ${runs === 1 ? "run" : "runs"}`;
+	return describeParkedSpanW(span, parked);
+}
+
+function describeParkedSpanW(span, parked) {
 	return parked
 		? `${span} — parked; run the curator merge or leave the pair.`
 		: `${span}.`;
