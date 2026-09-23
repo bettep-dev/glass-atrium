@@ -44,7 +44,7 @@ interface ClosureState {
   closedOverrides: Map<number, string>;
 }
 interface AnalyticsData {
-  overall: { total: number; reconstructed_total?: number };
+  overall: { total: number; reconstructed_total?: number; excluded_poisoned_count?: number };
   byResultCount: Record<string, number>;
 }
 interface AgentStackEntry {
@@ -60,6 +60,14 @@ interface OutcomesHelpers {
     analyticsState: unknown;
   }) => { key: string; label: string; state: unknown }[];
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
+  buildByResultCountMapO: (byResult: unknown) => Record<string, number>;
+  StatusBandO: (props: {
+    analyticsState: PayloadState<AnalyticsData>;
+    attentionState: PayloadState<{ total: number }>;
+    windowDays: number;
+  }) => RenderNode;
+  KpiSkeletonO: unknown;
+  PayloadUnavailableO: unknown;
   buildAgentFailureRowsO: (agentStack: unknown) => { agent: string; failed: number; blocked: number; total: number }[];
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
@@ -69,6 +77,12 @@ interface OutcomesHelpers {
   reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
+}
+
+interface RenderNode {
+  type: unknown;
+  props: Record<string, unknown> | null;
+  children: unknown[];
 }
 
 async function transform(src: string, format: "iife" | "esm"): Promise<string> {
@@ -86,10 +100,15 @@ async function transform(src: string, format: "iife" | "esm"): Promise<string> {
   return built.outputFiles[0].text;
 }
 
+// Element trees stay inspectable — a render branch is asserted by the component it names.
+function createElementStub(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): RenderNode {
+  return { type, props, children };
+}
+
 function getReactStub(): unknown {
   return new Proxy(
     {
-      createElement: () => ({}),
+      createElement: createElementStub,
       Fragment: "frag",
       useState: () => [undefined, () => {}],
       useEffect: () => {},
@@ -142,6 +161,12 @@ const aboveFloor = (byResultCount: Record<string, number>, reconstructed = 0): A
 });
 const toneOf = (tiles: BandTile[], key: string): string => tiles.find((t) => t.key === key)!.tone;
 const tileOf = (tiles: BandTile[], key: string): BandTile => tiles.find((t) => t.key === key)!;
+const flattenNodes = (node: unknown): RenderNode[] => {
+  if (Array.isArray(node)) return node.flatMap(flattenNodes);
+  if (node === null || typeof node !== "object" || !("type" in node)) return [];
+  const el = node as RenderNode;
+  return [el, ...el.children.flatMap(flattenNodes)];
+};
 
 // --- status band: every tile welds a value to a population, and tone is the shared verdict ---
 
@@ -202,6 +227,52 @@ test("buildStatusBandTilesO: the attention tile weds its count to the whole wind
   const attention = tileOf(helpers.buildStatusBandTilesO(aboveFloor({ done: 150 }, 40), 200), "attention");
   assert.deepStrictEqual([attention.count, attention.population], [200, 200]);
   assert.ok(attention.count! <= attention.population, "a value is never more than its stated population");
+});
+
+test("buildStatusBandTilesO: the attention population keeps the quarantined rows the /search predicate counts", () => {
+  // /search never drops poisoned-window rows; the analytics total does — excluded_poisoned_count restores them.
+  const data = { overall: { total: 200, reconstructed_total: 0, excluded_poisoned_count: 30 }, byResultCount: {} };
+  const attention = tileOf(helpers.buildStatusBandTilesO(data, 230), "attention");
+  assert.strictEqual(attention.population, 230);
+  assert.ok(attention.count! <= attention.population, "every quarantined attention row stays inside the population");
+});
+
+test("status band: done and broken count writer-emitted rows only, never above their writer population", () => {
+  // structuredoutput-derived syntheses are result=done yet reconstructed — the raw count would exceed writerTotal.
+  const overall = {
+    total: 200,
+    reconstructed_total: 60,
+    excluded_poisoned_count: 0,
+    by_result: [
+      { result: "done", count: 180, reconstructed_count: 50 },
+      { result: "fail", count: 12, reconstructed_count: 6 },
+      { result: "blocked", count: 8, reconstructed_count: 4 },
+    ],
+  };
+  const byResultCount = helpers.buildByResultCountMapO(overall.by_result);
+  const tiles = helpers.buildStatusBandTilesO({ overall, byResultCount }, 0);
+  assert.deepStrictEqual([tileOf(tiles, "done").count, tileOf(tiles, "broken").count], [130, 10]);
+  for (const key of ["done", "broken"]) {
+    const tile = tileOf(tiles, key);
+    assert.strictEqual(tile.population, 140);
+    assert.ok(tile.count! <= tile.population, `${key} never exceeds its writer-emitted population`);
+  }
+});
+
+test("StatusBandO: an analytics failure renders as unavailable, never as the loading skeleton", () => {
+  const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
+    analyticsState: { status },
+    attentionState: { status: "loading" },
+    windowDays: 30,
+  }));
+  const loading = render("loading");
+  assert.ok(loading.some((n) => n.type === helpers.KpiSkeletonO), "loading draws the pulsing skeleton");
+  for (const status of ["error", "unavailable"] as PayloadStatus[]) {
+    const nodes = render(status);
+    assert.ok(!nodes.some((n) => n.type === helpers.KpiSkeletonO), `${status} draws no skeleton`);
+    assert.ok(nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} says the payload is unavailable`);
+    assert.ok(!nodes.some((n) => n.props?.["aria-busy"] === true || n.props?.["aria-busy"] === "true"), `${status} is not busy`);
+  }
 });
 
 test("buildStatusBandTilesO: the missing-report level honours the same low-N floor as its sibling tiles", () => {

@@ -599,15 +599,15 @@ function ScreenOutcomes({ onNav }) {
     const ctrl = new AbortController();
     setAttentionState({ status: 'loading', data: null, error: null });
 
+    // include_all 미전송 — 분모(cross-analysis)가 registry 스코프이므로 분자도 같은 스코프를 읽는다.
     const params = buildAttentionParamsO(analyticsPeriod);
-    setIncludeAllParamO(params, includeAll);
 
     fetchJsonO(`/api/outcomes/search?${params.toString()}`, ctrl.signal)
       .then((data) => { markFreshO(); setAttentionState({ status: 'ready', data, error: null }); })
       .catch((err) => handleErrorO(err, setAttentionState));
 
     return () => ctrl.abort();
-  }, [analyticsPeriod, includeAll, refreshTick]);
+  }, [analyticsPeriod, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
   useEffectO(() => {
@@ -889,21 +889,24 @@ function buildStatusBandTilesO(data, attentionCount) {
   const writerTotal = getWriterTotal(data?.overall);
   const broken      = (byResult.fail || 0) + (byResult.blocked || 0);
   const omitted     = Math.max(0, total - writerTotal);
+  // /search attention 술어는 오염 창 행을 빼지 않는다 → 분모에 excluded_poisoned_count 를 되돌린다.
+  const attentionTotal = total + (Number(data?.overall?.excluded_poisoned_count) || 0);
   // 두 모집단은 서로 다른 사실을 센다 — writer-emitted 사실은 writerTotal, 창 전체 사실은 total.
-  const hasWriterFloor = writerTotal >= LOW_N_MIN;
-  const hasRecordFloor = total >= LOW_N_MIN;
+  const hasWriterFloor    = writerTotal >= LOW_N_MIN;
+  const hasRecordFloor    = total >= LOW_N_MIN;
+  const hasAttentionFloor = attentionTotal >= LOW_N_MIN;
 
   return [
     {
       key: 'attention',
       label: 'Needs you',
       count: attentionCount,
-      // 서버 attention 술어는 복구행을 빼지 않는다 → 분모도 창 전체 기록(total). writerTotal 이면 100% 초과 가능.
-      population: total,
-      tone: !hasRecordFloor || attentionCount === null
+      // 서버 attention 술어는 복구행을 빼지 않는다 → 분모도 창 전체 기록. writerTotal 이면 100% 초과 가능.
+      population: attentionTotal,
+      tone: !hasAttentionFloor || attentionCount === null
         ? 'neutral'
-        : (outcomeShareTone(attentionCount, total, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
-      hint: 'Records in the window flagged for review, failed, blocked, or carrying an unclosed caveat',
+        : (outcomeShareTone(attentionCount, attentionTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
+      hint: 'Records in the window, quarantined included, flagged for review, failed, blocked, or carrying an unclosed caveat',
     },
     {
       key: 'broken',
@@ -933,16 +936,24 @@ function buildStatusBandTilesO(data, attentionCount) {
       population: writerTotal,
       // 볼륨 사실 — 위험 주장이 아니므로 tone 을 태우지 않는다.
       tone: 'neutral',
-      hint: 'Completed without a concern recorded',
+      hint: 'Writer-emitted records completed without a concern recorded',
     },
   ];
 }
 
 function StatusBandO({ analyticsState, attentionState, windowDays }) {
+  if (analyticsState.status === 'loading') {
+    return (
+      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
+        {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
+      </div>
+    );
+  }
+  // 실패를 skeleton 으로 그리면 끝없는 적재로 읽힌다 — 레인 알람이 원인을 소유하고 여기선 '적재 실패' 만.
   if (analyticsState.status !== 'ready') {
     return (
-      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy={analyticsState.status === 'loading'} aria-label="Status band">
-        {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
+      <div className="card mb-4 flex-shrink-0" aria-label="Status band">
+        <PayloadUnavailableO label="Status band"/>
       </div>
     );
   }
@@ -2947,14 +2958,15 @@ function attributionDayLabelO(day) {
 
 // ----- 분석 섹션 helpers -----------------------------------------------------
 
-// cross-analysis by_result → { result: count }. ANALYTICS_KPI_ORDER 4 키 기본값 0 보장.
+// cross-analysis by_result → { result: writer-emitted count } — 모집단 writerTotal 과 같은 사실 (getWriterCount SoT).
+// ANALYTICS_KPI_ORDER 4 키 기본값 0 보장.
 function buildByResultCountMapO(byResult) {
   const out = {};
   for (const key of ANALYTICS_KPI_ORDER) out[key] = 0;
   if (!Array.isArray(byResult)) return out;
   for (const row of byResult) {
     if (row && typeof row.result === 'string') {
-      out[row.result] = Number(row.count) || 0;
+      out[row.result] = window.UI.getWriterCount(row);
     }
   }
   return out;
