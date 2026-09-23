@@ -668,6 +668,9 @@ function ScreenImprovement({ onNav }) {
 	);
 }
 
+const sumCountsI = (list) =>
+	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
+
 // ----- Status band (Skim) — 화면을 여는 이유 네 가지에 타일 하나씩. --------
 //
 // 각 타일은 자기 payload 의 상태(loading / error / unavailable / ready)를 따로 렌더한다:
@@ -693,9 +696,7 @@ function StatusBandI({
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
 	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
-	const sumCounts = (list) =>
-		list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
-	const heldNeedingHuman = sumCounts(
+	const heldNeedingHuman = sumCountsI(
 		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
 	);
 	return (
@@ -733,7 +734,7 @@ function StatusBandI({
 				symbol="ℹ"
 				label="Held, needs a human"
 				value={formatIntI(heldNeedingHuman)}
-				population={`of ${formatIntI(sumCounts(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
+				population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
 				onRetry={onRetry}
 			/>
 		</div>
@@ -2534,9 +2535,9 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 		: [];
 	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
 	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
-	const declinedAllTime = dist
-		.filter((d) => d.status === "rejected")
-		.reduce((sum, d) => sum + Number(d.count ?? 0), 0);
+	const declinedAllTime = sumCountsI(
+		dist.filter((d) => d.status === "rejected"),
+	);
 	const total = Number(state.data.total_patterns ?? patterns.length);
 
 	// frequency 내림차순 (동률 → discovered_date 최신 우선).
