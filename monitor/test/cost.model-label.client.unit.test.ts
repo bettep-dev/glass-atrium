@@ -27,6 +27,7 @@ assert.strictEqual(typeof cost.shortenModelName, "function", "shortenModelName m
 // The approved mapping — every model id the by-model surface currently renders.
 const APPROVED_LABELS: ReadonlyArray<readonly [string, string]> = [
   ["claude-opus-5", "opus-5"],
+  ["claude-opus-5-5", "opus-5.5"],
   ["claude-fable-5", "fable-5"],
   ["claude-fable-5-1", "fable-5.1"],
   ["claude-sonnet-5", "sonnet-5"],
