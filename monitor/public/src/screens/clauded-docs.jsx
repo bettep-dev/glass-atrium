@@ -878,6 +878,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
            대비 보조 = 좌측 막대 폭을 3→4px 로 굵혀 fill 제거에 따른 식별성 손실 보상. */
         .doc-row.is-selected { box-shadow: inset 4px 0 0 rgb(var(--accent)); }
         .doc-row.is-pending-delete { box-shadow: inset 4px 0 0 rgb(var(--crit)); }
+        .doc-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        button.doc-lineage { display: block; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+        .doc-th-note { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; color: rgb(var(--faint)); }
         .doc-snippet mark { background: rgb(var(--warn) / 0.28); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
@@ -1159,7 +1162,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 }
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
-function DocTagsCellCD({ audience, format }) {
+function DocTagsCellCD({ audience, format, commonFormat }) {
 	const { Badge } = window.UI;
 	return (
 		<td className="doc-tags-cell">
@@ -1168,7 +1171,9 @@ function DocTagsCellCD({ audience, format }) {
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
-				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
+				{DOC_FORMAT_BADGE_CD[format] && format !== commonFormat && (
+					<Badge role="metadata">{format}</Badge>
+				)}
 			</span>
 		</td>
 	);
@@ -1220,6 +1225,7 @@ function DocListCardCD({
 	onRetry,
 }) {
 	const { Icon, Badge } = window.UI;
+	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
@@ -1250,6 +1256,8 @@ function DocListCardCD({
 		(inlineFilterProps.docStatusFilter === "" ||
 			inlineFilterProps.docStatusFilter === "open");
 	const orderedRows = isSectioned ? sortRowsByStageCD(rows) : rows;
+	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
+	const commonFormat = getCommonFormatCD(orderedRows);
 	// 섹션 건수는 page-scoped — chip 의 corpus-scoped 수치와 단위가 다르다.
 	const sectionCounts = new Map();
 	for (const row of orderedRows) {
@@ -1424,11 +1432,14 @@ function DocListCardCD({
 				)}
 				{state.status === "ready" && rows.length > 0 && (
 					<table className="tbl">
+						<caption className="sr-only">
+							Documents ledger. Arrow keys move between rows; Enter opens the focused document.
+						</caption>
 						<thead>
 							<tr>
 								{/* designer-approved DocCheckboxCD (5-state · emerald-600 · WCAG 2.2 AA).
                     select-all 3-state cycle: unchecked → checked → indeterminate → checked (단방향 — UX 단순화). */}
-								<th className="doc-checkbox-cell">
+								<th scope="col" className="doc-checkbox-cell">
 									<DocCheckboxCD
 										checked={isAllSelected}
 										indeterminate={isPartialSelected}
@@ -1445,19 +1456,24 @@ function DocListCardCD({
                     width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
                     min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
 								{/* 135px — 최장 stage 라벨 pill 과 그 아래 모델 줄이 들어가는 컬럼 하한. */}
-								<th style={{ width: 135, minWidth: 135 }}>Status</th>
+								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
                     그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
-								<th style={{ width: 72, minWidth: 72 }}>ID</th>
-								<th style={{ minWidth: 394 }}>Title</th>
+								<th scope="col" style={{ width: 72, minWidth: 72 }}>ID</th>
+								<th scope="col" style={{ minWidth: 394 }}>Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
-								<th style={{ width: 152, minWidth: 152 }}>Tags</th>
-								<th style={{ width: 110, minWidth: 110 }}>Author</th>
-								<th style={{ width: 100, minWidth: 100 }}>Created</th>
+								<th scope="col" style={{ width: 152, minWidth: 152 }}>
+									Tags
+									{commonFormat && (
+										<span className="doc-th-note">{commonFormat} unless shown</span>
+									)}
+								</th>
+								<th scope="col" style={{ width: 110, minWidth: 110 }}>Author</th>
+								<th scope="col" style={{ width: 100, minWidth: 100 }}>Created</th>
 							</tr>
 						</thead>
-						<tbody>
+						<tbody onKeyDown={moveRowFocusCD}>
 							{orderedRows.map((row, rowIndex) => {
 								const isSelectedViewer = row.id === selectedId;
 								const isSelectedMulti = selectedIds.has(row.id);
@@ -1466,6 +1482,8 @@ function DocListCardCD({
 								const isGroupRoot = memberCount > 1 && row.folder_id != null;
 								const isExpanded =
 									isGroupRoot && expandedFolderIds.has(row.folder_id);
+								const snippetText =
+									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
 									"doc-row",
 									isSelectedViewer && "is-selected",
@@ -1500,9 +1518,11 @@ function DocListCardCD({
 													onSelect(row.id);
 												}
 											}}
-											tabIndex={0}
-											role="button"
-											aria-label={`Open ${row.title}`}
+											onFocus={(e) => {
+												if (e.target === e.currentTarget) setFocusRowId(row.id);
+											}}
+											tabIndex={row.id === rovingId ? 0 : -1}
+											aria-label={row.title}
 											aria-current={isSelectedViewer ? "true" : undefined}
 										>
 											<td
@@ -1538,11 +1558,16 @@ function DocListCardCD({
 													<div>#{row.id}</div>
 													{/* 계보는 ID 셀 둘째 줄 — 목록에서 잘려 나가던 사실을 되돌린다. */}
 													{row.supersedes_id != null && (
-														<div
+														<button
+															type="button"
 															className="doc-lineage"
-															title={`Replaces #${row.supersedes_id}`}>
+															title={`Open #${row.supersedes_id}, which this replaces`}
+															onClick={(e) => {
+																e.stopPropagation();
+																onSelect(row.supersedes_id);
+															}}>
 															rev of #{row.supersedes_id}
-														</div>
+														</button>
 													)}
 												</td>
 											<td className="title-cell">
@@ -1586,18 +1611,19 @@ function DocListCardCD({
 														)}
 													</span>
 												</div>
-												{isSearchMode && row.snippet && (
+												{snippetText && (
 													<div
 														className="doc-snippet doc-meta-text mt-1"
 														style={{ color: "rgb(var(--dim))" }}
 													>
-														{parseSnippetCD(row.snippet)}
+														{parseSnippetCD(snippetText)}
 													</div>
 												)}
 											</td>
 											<DocTagsCellCD
 												audience={row.audience}
 												format={row.format}
+												commonFormat={commonFormat}
 											/>
 											<DocAuthorCellCD author={row.author} />
 											<td
@@ -1614,6 +1640,7 @@ function DocListCardCD({
 												memberCount={memberCount}
 												onReorder={onReorder}
 												isSearchMode={isSearchMode}
+												commonFormat={commonFormat}
 												selectedId={selectedId}
 												selectedIds={selectedIds}
 												pendingDelete={pendingDelete}
@@ -1749,6 +1776,7 @@ function GroupMembersRowsCD({
 	representativeId,
 	memberCount,
 	isSearchMode,
+	commonFormat,
 	selectedId,
 	selectedIds,
 	pendingDelete,
@@ -1973,9 +2001,14 @@ function GroupMembersRowsCD({
 						return;
 					onSelect(member.id);
 				}}
-				tabIndex={0}
-				role="button"
-				aria-label={`Open ${member.title} (group member)`}
+				onKeyDown={(e) => {
+					if (e.target !== e.currentTarget) return;
+					if (e.key !== "Enter" && e.key !== " ") return;
+					e.preventDefault();
+					onSelect(member.id);
+				}}
+				tabIndex={-1}
+				aria-label={`${member.title} (group member)`}
 			>
 				<td className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
@@ -2030,7 +2063,11 @@ function GroupMembersRowsCD({
 					</div>
 				</td>
 				{/* 멤버 행 태그 — 서술 속성만. 체인(rev)은 그룹 루트 행이 표시한다. */}
-				<DocTagsCellCD audience={member.audience} format={member.format} />
+				<DocTagsCellCD
+					audience={member.audience}
+					format={member.format}
+					commonFormat={commonFormat}
+				/>
 				<DocAuthorCellCD author={member.author} />
 				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
@@ -3380,6 +3417,68 @@ function parseSnippetCD(snippet) {
 	}
 	if (cursor < text.length) out.push(text.slice(cursor));
 	return out;
+}
+
+// ts_headline fragments carry raw markdown and often open on the title → plain words, title echo dropped.
+function getSnippetTextCD(snippet, title) {
+	const flat = String(snippet ?? "")
+		.replaceAll("<mark>", "\u0001")
+		.replaceAll("</mark>", "\u0002")
+		.replace(/\]\([^)]*\)/g, " ")
+		.replace(/<[^>]*>|[#*`|>[\]~<]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return dropTitleEchoCD(flat, String(title ?? "").trim())
+		.replaceAll("\u0001", "<mark>")
+		.replaceAll("\u0002", "</mark>");
+}
+
+// Highlight markers are skipped when matching the title; a highlight cut open by the drop is reopened.
+function dropTitleEchoCD(flat, title) {
+	const bare = flat.replace(/[\u0001\u0002]/g, "");
+	let cut = 0;
+	if (title && bare.toLowerCase().startsWith(title.toLowerCase())) {
+		for (let seen = 0; cut < flat.length && seen < title.length; cut++) {
+			if (flat[cut] !== "\u0001" && flat[cut] !== "\u0002") seen++;
+		}
+		while (flat[cut] === "\u0002") cut++;
+	}
+	const head = flat.slice(0, cut);
+	const isMarkOpen = head.lastIndexOf("\u0001") > head.lastIndexOf("\u0002");
+	const rest = (isMarkOpen ? "\u0001" : "") + flat.slice(cut);
+	return rest.replace(/^(\u0001?)[^\p{L}\p{N}\u0001]+/u, "$1");
+}
+
+// Majority format of the rendered page → stated once in the Tags header; cells keep only the exceptions.
+function getCommonFormatCD(rows) {
+	const counts = new Map();
+	for (const row of rows) counts.set(row.format, (counts.get(row.format) || 0) + 1);
+	for (const [format, count] of counts) {
+		if (DOC_FORMAT_BADGE_CD[format] && count * 2 > rows.length) return format;
+	}
+	return null;
+}
+
+// One Tab stop in the ledger → last-focused row, else the open document, else the first row.
+function getRovingIdCD(rowIds, focusId, selectedId) {
+	if (rowIds.includes(focusId)) return focusId;
+	if (rowIds.includes(selectedId)) return selectedId;
+	return rowIds[0] ?? null;
+}
+
+// Arrow/Home/End move focus between ledger rows; keys pressed inside a row's controls stay with the control.
+function moveRowFocusCD(e) {
+	if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+	if (e.target.tagName !== "TR") return;
+	const rows = Array.from(e.currentTarget.querySelectorAll("tr.doc-row"));
+	const index = rows.indexOf(e.target);
+	const step = e.key === "ArrowDown" ? 1 : -1;
+	const nextIndex =
+		e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : index + step;
+	const next = rows[nextIndex];
+	if (!next) return;
+	e.preventDefault();
+	next.focus();
 }
 
 // R6 본문 렌더 helpers — DOMPurify + DOMParser + React 트리.
