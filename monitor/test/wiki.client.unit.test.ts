@@ -187,17 +187,29 @@ test("a first-seen date drives the waiting age and the parked threshold", () => 
   ).alarms[0] as Alarm;
   assert.equal(fresh.parked, false);
   assert.match(fresh.detail, /Waiting 2 days \(since \d{4}-\d{2}-\d{2}\)/);
+});
 
-  // The 30-run streak would park this pair if the run fallback were still in charge.
-  const parked = helpers.buildAlarmLaneModel(
+test("each waiting proposal gets its own lane row and age, parked rows last", () => {
+  // Server order puts the long-parked pair first; the lane must not let its age speak for the others.
+  const alarms = helpers.buildAlarmLaneModel(
     ready({}),
     ready({}),
-    proposalBacklog(["h1", "h2"], { h1: isoDaysAgo(20), h2: isoDaysAgo(1) }),
+    proposalBacklog(["old", "new", "mid"], {
+      old: isoDaysAgo(77),
+      new: isoDaysAgo(1),
+      mid: isoDaysAgo(3),
+    }),
     unchangedCycles(30),
-  ).alarms[0] as Alarm;
-  assert.equal(parked.parked, true);
-  // The oldest waiting pair sets the age, not the newest.
-  assert.match(parked.detail, /Waiting 20 days/);
+  ).alarms.map((a) => ({ ...a })) as Alarm[];
+  const lane = [...alarms];
+
+  assert.equal(alarms.length, 3, "one row per proposal");
+  assert.equal(new Set(alarms.map((a) => a.key)).size, 3, "row keys must be unique");
+  assert.deepEqual(
+    lane.map((a) => a.detail.match(/Waiting (\d+) day/)?.[1]),
+    ["1", "3", "77"],
+  );
+  assert.deepEqual(lane.map((a) => a.parked), [false, false, true]);
 });
 
 test("without a first-seen map the age falls back to the unchanged-run count", () => {

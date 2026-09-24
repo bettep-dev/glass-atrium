@@ -237,26 +237,14 @@ function buildAlarmLaneModel(
 		backlogState.status === "ready"
 			? readProposalsW(backlogState.data?.backlog)
 			: null;
-	const count = proposals ? proposals.length : 0;
-	if (count > 0) {
-		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
-		// Dates win when the server reports them; the run streak covers a payload without them.
-		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
-		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
-		// Cycles still in flight → the streak is unknown, not absent.
-		const checking = !wait && cyclesState.status === "loading";
-		const parked = wait
-			? wait.days >= PROPOSAL_PARKED_DAYS
-			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
-		alarms.push({
-			key: "proposals",
-			tone: parked ? "info" : "warn",
-			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
-			detail: wait
-				? describeProposalWaitW(wait, parked)
-				: describeProposalAgeW(runs, parked, checking),
-			parked,
-		});
+	if (proposals && proposals.length > 0) {
+		alarms.push(
+			...buildProposalAlarmsW(
+				backlogState.data?.backlog,
+				proposals,
+				cyclesState,
+			),
+		);
 	}
 
 	const pending =
@@ -276,18 +264,43 @@ function buildAlarmLaneModel(
 	return { alarms, pending, unchecked };
 }
 
-// Oldest first-seen date among the waiting proposals — the server's dated age source.
-// Absent map, unhashed proposals or an unparseable date → null, and the run streak answers instead.
-function readProposalWaitW(backlog, proposals) {
+// One row per waiting proposal, each with its own age; rows sort by that age, so
+// parked pairs land last and the longest-parked last of all.
+function buildProposalAlarmsW(backlog, proposals, cyclesState) {
+	// Undated rows share the run streak, read once for the whole lane.
+	const runs = countUnchangedDedupRunsW(cyclesState);
+	// Cycles still in flight → the streak is unknown, not absent.
+	const checking = cyclesState.status === "loading";
+
+	const rows = proposals.map((proposal, i) => {
+		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
+		const wait = readProposalWaitW(backlog, proposal);
+		const age = wait ? wait.days : runs;
+		const parked = wait
+			? wait.days >= PROPOSAL_PARKED_DAYS
+			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
+		return {
+			key: `proposal-${proposal?.cluster_hash || i}`,
+			tone: parked ? "info" : "warn",
+			label: `Merge proposal waiting on approval · ${proposal?.target_slug || proposal?.cluster_hash || "unnamed pair"}`,
+			detail: wait
+				? describeProposalWaitW(wait, parked)
+				: describeProposalAgeW(runs, parked, checking),
+			parked,
+			age: typeof age === "number" ? age : 0,
+		};
+	});
+	return rows.sort((x, y) => Number(x.parked) - Number(y.parked) || x.age - y.age);
+}
+
+// The proposal's own first-seen date — the server's dated age source.
+// Absent map, unhashed proposal or an unparseable date → null, and the run streak answers instead.
+function readProposalWaitW(backlog, proposal) {
 	const firstSeen = backlog?.proposal_first_seen;
 	if (!firstSeen || typeof firstSeen !== "object") return null;
 
-	let since = null;
-	for (const p of proposals) {
-		const seen = firstSeen[p?.cluster_hash];
-		if (typeof seen === "string" && (since === null || seen < since)) since = seen;
-	}
-	if (since === null) return null;
+	const since = firstSeen[proposal?.cluster_hash];
+	if (typeof since !== "string") return null;
 
 	const days = ageInUtcDaysW(since);
 	return typeof days === "number" ? { days, since } : null;
