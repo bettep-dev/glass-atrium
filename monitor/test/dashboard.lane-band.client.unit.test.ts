@@ -237,7 +237,7 @@ test("the harness tile counts only the parts the shell actually polled", () => {
     }),
     "harness",
   );
-  assert.equal(tile.value, "5 of 6", "the denominator is what answered, not what exists");
+  assert.equal(tile.value, "1 of 6 down", "the verdict leads, over what answered, not what exists");
   assert.equal(tile.tone, "crit");
   assert.ok(tile.hint.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
 });
@@ -278,4 +278,41 @@ test("the spend tile tones only on the pace verdict, never on the amount", () =>
     "spend",
   );
   assert.equal(hot.tone, "warn", "a small but off-pace spend is");
+});
+
+test("the harness tile headlines its verdict — the down count when any part is down, else the healthy count", () => {
+  const cases: Array<[Fold, string]> = [
+    [{ ...HEALTHY }, "7 of 7 up"],
+    [{ ...HEALTHY, partsOk: 4, downNames: ["a", "b", "c"] }, "3 of 7 down"],
+  ];
+  for (const [fold, value] of cases) {
+    const tile = tileOf(
+      dash.buildTiles({ harness: fold, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
+      "harness",
+    );
+    assert.equal(tile.value, value);
+  }
+});
+
+test("no tile hint repeats a fact its active alarm row already states", () => {
+  const harness = { ...HEALTHY, partsOk: 5, downNames: ["autoagent", "monitor"] };
+  const costState = kpi(40, 10);
+  const alarms = dash.buildAlarms({ harness, costState, installKind: "current" });
+  const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING });
+  assert.equal(alarms.length, 2, "both alarms are active in this fixture");
+  for (const alarm of alarms) {
+    const tile = tileOf(tiles, alarm.id);
+    for (const fact of String(alarm.detail).split(" · ")) {
+      const figure = fact.replace(/ .*$/, "");
+      assert.ok(!tile.hint.includes(figure), `${alarm.id} hint repeats "${figure}": ${tile.hint}`);
+    }
+    assert.match(tile.hint, /alarm above/, `${alarm.id} hint points at the alarm instead`);
+  }
+});
+
+test("tile labels carry no window text — the window is its own field so the heading case cannot swallow it", () => {
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
+  for (const tile of tiles) assert.ok(!/\(/.test(tile.label), `${tile.id} label: ${tile.label}`);
+  const windowed = tiles.filter((t) => (t as Tile & { window?: string }).window === "7 d").map((t) => t.id);
+  assert.deepEqual([...windowed], ["outcomes", "fleet"]);
 });
