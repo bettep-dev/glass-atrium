@@ -100,3 +100,81 @@ test("the notes-per-day bars name their date range and their peak value with its
     assert.ok(visible.includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
   }
 });
+
+const LOADING = { status: "loading", data: null, error: null };
+const READY_BACKLOG = {
+  status: "ready",
+  error: null,
+  data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [{ cluster_hash: "c1", notes: ["a", "b"] }] } } },
+};
+
+function findSummaryHeading(tree: RenderedNode | string | null, label: string): RenderedNode | undefined {
+  return findNodes(tree, (n) => n.type === "summary")
+    .flatMap((summary) => findNodes(summary, (n) => n.type === "h2"))
+    .find((h2) => collectText(h2) === label);
+}
+
+test("each wiki section names itself with an h2 inside the summary that toggles its disclosure", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const rows: Array<{ name: string; element: unknown }> = [
+    { name: "Merge proposals", element: createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} }) },
+    {
+      name: "Run history",
+      element: createElement(mod.WikiRunHistorySection, {
+        cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
+      }),
+    },
+    { name: "Notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: LOADING, onRetry: () => {} }) },
+  ];
+
+  for (const row of rows) {
+    const tree = renderScreen(row.element);
+    const heading = findSummaryHeading(tree, row.name);
+    assert.ok(heading, `${row.name} renders as an h2 inside its summary`);
+    const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
+    assert.equal((summary?.children[0] as RenderedNode).props["aria-hidden"], "true", `${row.name} keeps the chevron first`);
+  }
+});
+
+test("one polite live region announces the wave: loading, then ready or the sections that failed", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const regions = findNodes(tree, (n) => n.props["aria-live"] != null);
+  assert.equal(regions.length, 1, "the screen owns exactly one live region");
+  assert.equal(regions[0].props["aria-live"], "polite");
+  assert.match(collectText(regions[0]), /^Loading/, "a wave in flight is announced as loading");
+
+  const describe = mod.describeWikiWaveW as (sections: Array<[{ status: string }, string]>) => string;
+  const ready = { status: "ready" };
+  const failed = { status: "error" };
+  const cases: Array<{ name: string; sections: Array<[{ status: string }, string]>; match: RegExp; absent?: RegExp }> = [
+    { name: "any read still loading", sections: [[ready, "run history"], [LOADING, "notes by type"]], match: /^Loading/ },
+    { name: "every read ready", sections: [[ready, "run history"], [ready, "notes by type"]], match: /loaded/, absent: /couldn't/i },
+    { name: "one read failed", sections: [[ready, "run history"], [failed, "notes by type"]], match: /couldn't load notes by type/i, absent: /run history/ },
+    { name: "failure outranks nothing still loading", sections: [[failed, "run history"], [failed, "notes by type"]], match: /run history, notes by type/ },
+  ];
+  for (const row of cases) {
+    const message = describe(row.sections);
+    assert.match(message, row.match, row.name);
+    if (row.absent) assert.doesNotMatch(message, row.absent, row.name);
+  }
+});
+
+test("Refresh reports busy while a wave is in flight and idle once it settles", async () => {
+  const mod = await loadWikiScreen();
+  for (const [busy, text] of [[true, "Refreshing…"], [false, "Refresh"]] as const) {
+    const tree = renderScreen(mod.React.createElement(mod.WikiRefreshButtonW as Component, { busy, onRefresh: () => {} }));
+    const button = findNodes(tree, (n) => n.type === "button")[0];
+    assert.equal(button.props["aria-label"], "Refresh wiki", "the accessible name stays stable");
+    assert.equal(button.props["aria-busy"], busy ? "true" : undefined, `busy=${busy}`);
+    assert.ok(collectText(button).includes(text), `busy=${busy} shows ${text}`);
+  }
+
+  const screen = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const header = findNodes(screen, (n) => n.props.atom === "PageHeader")[0];
+  const headerRight = renderScreen(header.props.right);
+  const refresh = findNodes(headerRight, (n) => n.props["aria-label"] === "Refresh wiki");
+  assert.equal(refresh.length, 1, "the header carries one Refresh control");
+  assert.equal(refresh[0].props["aria-busy"], "true", "the mount wave is in flight, so Refresh reads busy");
+});
