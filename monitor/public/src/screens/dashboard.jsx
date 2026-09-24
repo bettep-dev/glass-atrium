@@ -1190,15 +1190,22 @@ function buildPopulationDisclosure(total, writerTotal) {
 // 우려동반 분자는 '지금 열려 있는' 건수 — 종결된 DWC 는 조치 대상이 아니므로 경보에서 제외.
 // 분자·분모 모두 writer 발신 모집단 — 기록 누락(합성)이 품질 저하로 읽히던 왜곡을 제거한다.
 function computeOutcomeHint(byResultMap, writerTotal) {
-  const openConcernCount = window.UI.getWriterOpenCount(byResultMap.get('done_with_concerns'));
-  if (window.UI.outcomeShareTone(openConcernCount, writerTotal, window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn')) {
-    return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcernCount, writerTotal)} — above the 7-day norm, worth a look.` };
+  const { breakage, openConcerns } = getOutcomeFactCounts(byResultMap);
+  if (window.UI.outcomeShareTone(openConcerns, writerTotal, window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn')) {
+    return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcerns, writerTotal)} — above the 7-day norm, worth a look.` };
   }
-  const breakageCount = window.UI.getWriterCount(byResultMap.get('fail')) + window.UI.getWriterCount(byResultMap.get('blocked'));
-  if (window.UI.outcomeShareTone(breakageCount, writerTotal, window.UI.OUTCOME_BREAKAGE_CRIT_SHARE, 'crit')) {
-    return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakageCount, writerTotal)}.` };
+  if (window.UI.outcomeShareTone(breakage, writerTotal, window.UI.OUTCOME_BREAKAGE_CRIT_SHARE, 'crit')) {
+    return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakage, writerTotal)}.` };
   }
   return null;
+}
+
+// hint·rollup 공용 writer 사실 건수 — 실패+차단 / 열린 우려동반.
+function getOutcomeFactCounts(byResultMap) {
+  return {
+    breakage: window.UI.getWriterCount(byResultMap.get('fail')) + window.UI.getWriterCount(byResultMap.get('blocked')),
+    openConcerns: window.UI.getWriterOpenCount(byResultMap.get('done_with_concerns')),
+  };
 }
 
 // 기준(previous) 0 → null (배지 미렌더) — 가짜 +100%/0% 금지, '신규' 마커가 대체 (F10).
@@ -1234,8 +1241,7 @@ function computeWorstRollup({ outcomesState }) {
     const writerTotal = window.UI.getWriterTotal(outcomesState.data);
     const byResult = new Map((outcomesState.data.by_result || []).map((r) => [r.result, r]));
     if (writerTotal >= window.UI.LOW_N_MIN) {
-      const breakage = window.UI.getWriterCount(byResult.get('fail')) + window.UI.getWriterCount(byResult.get('blocked'));
-      const openConcerns = window.UI.getWriterOpenCount(byResult.get('done_with_concerns'));
+      const { breakage, openConcerns } = getOutcomeFactCounts(byResult);
       const factTone = window.UI.outcomeShareTone(breakage, writerTotal, window.UI.OUTCOME_BREAKAGE_CRIT_SHARE, 'crit')
         || window.UI.outcomeShareTone(openConcerns, writerTotal, window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn');
       if (factTone) tone = window.UI.worstTone(tone, factTone);
