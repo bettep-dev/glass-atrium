@@ -194,8 +194,8 @@ export interface OutcomeCrossAnalysisCell {
 // isolates harness recovery artifacts (downgrade_origin='synthesized' OR attribution_source
 // IN (completion-synthesized, budget-truncation, structuredoutput-derived)). Invariants:
 // 0 <= reconstructed_count <= count; writer-emitted = count - reconstructed_count.
-// `closed_count` is the ONE closure-aware aggregate field — every other cross-analysis
-// aggregate stays closure-blind, so the norm warning can key on open DWC without
+// `closed_count` and `writer_open_count` (here and per agent) are the closure-aware fields —
+// every other cross-analysis aggregate stays closure-blind, so the norm warning can key on open DWC without
 // changing any other consumer. Invariants: 0 <= closed_count <= count; open =
 // count - closed_count (in practice non-zero only for done_with_concerns).
 // `writer_open_count` is the quality-signal numerator: writer-emitted AND unclosed. A
