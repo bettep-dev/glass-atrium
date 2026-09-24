@@ -614,6 +614,11 @@ function ScreenArchitecture(
 					// ok 는 테두리를 그리지 않음 — 아홉 노드가 다 둘리면 손댈 곳이 테두리로 구별되지 않음.
 					// 클래스는 남김: 판정이 왔다는 사실의 유일한 표식이고, 링은 그 사실의 표현일 뿐임.
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
+					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
+					`#${ARCH_CANVAS_ID} .node.security > :is(rect, path, polygon, circle, ellipse):not(.arch-ring) { stroke-dasharray: none !important; } ` +
+					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-micro); " +
+					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
+					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 700; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
@@ -724,6 +729,7 @@ function ScreenArchitecture(
 					activeDiagram={activeDiagram}
 					liveDaemonsByNodeId={liveDaemonsByNodeId}
 					healthPartRows={healthPartRows}
+					zoneIdByMemberId={zoneRingPlan.zoneIdByMemberId}
 					payloadDaemon={payloadDaemon}
 					onSelectDaemon={setPayloadDaemon}
 					payloadState={payloadState}
@@ -887,6 +893,12 @@ function MermaidCanvas({
 
 		const svgNodes = root.querySelectorAll("g.node");
 		svgNodes.forEach((el) => {
+			// classDef writes its dash inline with !important — only removing it lets the rule above win.
+			if (el.classList.contains("security"))
+				el.querySelectorAll(":scope > :is(rect, path, polygon, circle, ellipse)").forEach((shape) =>
+					shape.style.removeProperty("stroke-dasharray"),
+				);
+
 			const labelText = extractMermaidNodeLabelAR(el);
 			if (!labelText) return;
 			const norm = normalizeLabelAR(labelText);
@@ -926,10 +938,9 @@ function MermaidCanvas({
 			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
 
 			const tone = ringToneByNodeId.get(unscoped);
-			const ringClass = LIVE_RING_CLASS[tone];
+			const isUnverified = !unverifiedNodeIds || unverifiedNodeIds.has(unscoped);
+			const ringClass = getRingClassAR(tone, LIVE_RING_CLASS, isUnverified, NODE_UNVERIFIED_CLASS);
 			if (ringClass) el.classList.add(ringClass);
-			else if (unverifiedNodeIds.has(unscoped))
-				el.classList.add(NODE_UNVERIFIED_CLASS);
 
 			setCornerGlyphAR(el, tone);
 		});
@@ -943,10 +954,9 @@ function MermaidCanvas({
 			if (!nodeId) return;
 
 			const tone = ringToneByNodeId.get(nodeId);
-			const ringClass = ZONE_RING_CLASS[tone];
+			const isUnverified = Boolean(unverifiedNodeIds?.has(nodeId));
+			const ringClass = getRingClassAR(tone, ZONE_RING_CLASS, isUnverified, ZONE_UNVERIFIED_CLASS);
 			if (ringClass) el.classList.add(ringClass);
-			else if (unverifiedNodeIds.has(nodeId))
-				el.classList.add(ZONE_UNVERIFIED_CLASS);
 
 			setCornerGlyphAR(el, tone);
 		});
@@ -1234,6 +1244,11 @@ function MermaidCanvas({
 				</div>
 
 				{/* 가독 fit 안내 — 넓은 LR 그래프는 휠/+−·드래그/화살표·키보드로 탐색 */}
+				{healthBusy && (
+					<div className="arch-canvas-busy" role="status">
+						Loading health…
+					</div>
+				)}
 				<div className="arch-canvas-hint" aria-hidden="true">
 					Click a box for details
 				</div>
@@ -1614,6 +1629,7 @@ function DetailModal({
 	activeDiagram,
 	liveDaemonsByNodeId,
 	healthPartRows,
+	zoneIdByMemberId,
 	payloadDaemon,
 	onSelectDaemon,
 	payloadState,
@@ -1638,6 +1654,7 @@ function DetailModal({
 				nodeIndex={nodeIndex}
 				liveDaemonsByNodeId={liveDaemonsByNodeId}
 				healthPartRows={healthPartRows}
+				zoneIdByMemberId={zoneIdByMemberId}
 				payloadDaemon={payloadDaemon}
 				onSelectDaemon={onSelectDaemon}
 				payloadState={payloadState}
@@ -1671,6 +1688,7 @@ function NodeDetailBody({
 	nodeIndex,
 	liveDaemonsByNodeId,
 	healthPartRows,
+	zoneIdByMemberId,
 	payloadDaemon,
 	onSelectDaemon,
 	payloadState,
@@ -1682,8 +1700,9 @@ function NodeDetailBody({
 	//   판정은 pill 줄이 아니라 아래 health 행이 실음 — 한 노드의 상태를 한 자리에서 읽게 함.
 	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
 
-	const inbound = flows.filter((f) => f.to === info.id);
-	const outbound = flows.filter((f) => f.from === info.id);
+	const endpointIds = getFlowEndpointIdsAR(info.id, zoneIdByMemberId);
+	const inbound = flows.filter((f) => endpointIds.has(f.to));
+	const outbound = flows.filter((f) => endpointIds.has(f.from));
 
 	return (
 		<>
@@ -1709,7 +1728,7 @@ function NodeDetailBody({
 				outbound={outbound}
 				nodeIndex={nodeIndex}
 			/>
-			{info.path && <FieldBlock label="File path" value={info.path} mono />}
+			<FieldBlock label="File path" value={info.path || "Not recorded for this part"} mono />
 			{info.description && (
 				<FieldBlock label="Description" value={info.description} mono={false} />
 			)}
@@ -2205,6 +2224,23 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 	return byNodeId;
 }
 
+// the source draws arrows onto the enclosing zone, so a member's connections are its zone's.
+function getFlowEndpointIdsAR(nodeId, zoneIdByMemberId) {
+	const unscopedId = unscopedNodeIdAR(nodeId);
+	const zoneId = zoneIdByMemberId?.get(unscopedId);
+	const endpointIds = new Set([nodeId]);
+	if (zoneId) endpointIds.add(nodeId.slice(0, nodeId.length - unscopedId.length) + zoneId);
+
+	return endpointIds;
+}
+
+// warn/crit always shows; an ok daemon status must not hide a health part that was never read.
+function getRingClassAR(tone, ringClassByTone, isUnverified, unverifiedClass) {
+	if (tone === "warn" || tone === "crit") return ringClassByTone[tone];
+	if (isUnverified) return unverifiedClass;
+	return ringClassByTone[tone] || null;
+}
+
 // 존 하나가 헬스 노드를 정확히 하나만 담을 때, 그 판정은 노드가 아니라 존 상자가 냄.
 //   근거는 이미 있는 자료 둘뿐임 — 그려지는 mermaid 소스의 subgraph 블록(어느 노드가 어느 존인가)과
 //   /live 의 part_bindings(어느 노드가 판정을 받을 수 있는가). 존 이름을 여기 적어 두면 존이 늘거나
@@ -2214,7 +2250,10 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 //   subgraph 중첩은 다루지 않음 — content-budget 의 subgraphDepth 상한이 1 이라 중첩이 오면
 //   그쪽이 먼저 붉어짐.
 // 판정을 못 받은 부품의 바인딩 노드 — 머리글 넷 중 아직 답하지 않았거나 못 읽은 카드의 것.
+// null = bindings not loaded — which nodes carry health is unknown, so no node may read as judged.
 function buildUnverifiedNodeIds(partBindings, cardStates) {
+	if (!partBindings) return null;
+
 	const ids = new Set();
 
 	const model = window.HealthModel;
@@ -2237,6 +2276,7 @@ function buildZoneRingPlanAR(source, partBindings) {
 
 	const nodeIdByZoneId = new Map();
 	const zoneByNodeId = new Map();
+	const zoneIdByMemberId = new Map();
 
 	let zoneId = "";
 	let inZone = [];
@@ -2261,10 +2301,18 @@ function buildZoneRingPlanAR(source, partBindings) {
 
 		// 선언 줄만 셈 — 여는 괄호가 붙은 첫 토큰. 엣지 줄과 `end` 는 여기서 걸러짐.
 		const declared = /^([A-Za-z_][\w-]*)\s*[[({]/.exec(line);
-		if (declared && healthNodeIds.has(declared[1])) inZone.push(declared[1]);
+		if (!declared) continue;
+
+		zoneIdByMemberId.set(declared[1], zoneId);
+		if (healthNodeIds.has(declared[1])) inZone.push(declared[1]);
 	}
 
-	return { zoneIds: [...nodeIdByZoneId.keys()], nodeIdByZoneId, zoneByNodeId };
+	return {
+		zoneIds: [...nodeIdByZoneId.keys()],
+		nodeIdByZoneId,
+		zoneByNodeId,
+		zoneIdByMemberId,
+	};
 }
 
 // mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —

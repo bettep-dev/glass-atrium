@@ -910,3 +910,57 @@ test("M1 cutting a store can only add unverified nodes, never remove one", () =>
   const unbound = [...callInCtx<Set<string>>(archCtx, "buildUnverifiedNodeIds", { "no-such-card": ["ghost"] }, healthStoreStates())];
   assert.ok(!unbound.includes("ghost"), "a node bound to no card def must never be ringed");
 });
+
+// --- 39731 V1–V4: unverified ring · drawer connections · dashed vocabulary -----------
+const RING_BY_TONE = { ok: "ring-ok", warn: "ring-warn", crit: "ring-crit" };
+
+test("V1 an unjudged part never paints as ok, while warn and crit always show", () => {
+  for (const tone of [undefined, "ok", "warn", "crit"])
+    for (const isUnverified of [false, true]) {
+      const cls = callInCtx<string | null>(archCtx, "getRingClassAR", tone, RING_BY_TONE, isUnverified, "unverified");
+      const label = `tone=${tone} unverified=${isUnverified} → ${cls}`;
+
+      if (tone === "warn" || tone === "crit") assert.strictEqual(cls, RING_BY_TONE[tone], label);
+      else if (isUnverified) assert.strictEqual(cls, "unverified", label);
+      else assert.strictEqual(cls, tone ? RING_BY_TONE[tone as "ok"] : null, label);
+    }
+});
+
+test("V1 bindings that have not arrived report unknown, not an empty unverified set", () => {
+  for (const bindings of [undefined, null])
+    assert.strictEqual(
+      callInCtx<Set<string> | null>(archCtx, "buildUnverifiedNodeIds", bindings, healthStoreStates()),
+      null,
+      "an empty set would read every node as judged while /live is loading or failed",
+    );
+});
+
+test("V2 a zone member's connections include the arrows drawn onto its zone", () => {
+  const source = ["flowchart LR", "subgraph pipeline", "  hook_a[Hook A]", "  hook_b[Hook B]", "end", "pipeline --> store[Store]"].join("\n");
+  const plan = callInCtx<{ zoneIdByMemberId: Map<string, string> }>(archCtx, "buildZoneRingPlanAR", source, {});
+  const flows = [{ from: "sys.pipeline", to: "sys.store" }, { from: "sys.store", to: "sys.pipeline" }];
+
+  for (const member of ["hook_a", "hook_b"]) {
+    const ends = callInCtx<Set<string>>(archCtx, "getFlowEndpointIdsAR", `sys.${member}`, plan.zoneIdByMemberId);
+    assert.strictEqual(flows.filter((f) => ends.has(f.from)).length, 1, `${member} outbound`);
+    assert.strictEqual(flows.filter((f) => ends.has(f.to)).length, 1, `${member} inbound`);
+  }
+
+  const outside = callInCtx<Set<string>>(archCtx, "getFlowEndpointIdsAR", "sys.store", plan.zoneIdByMemberId);
+  assert.deepStrictEqual([...outside], ["sys.store"], "a node outside every zone keeps only its own id");
+});
+
+test("V4 dashed strokes on the map mean unverified and nothing else", () => {
+  const cssLines = readFileSync(ARCH_SRC, "utf8")
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"));
+
+  const dashed = cssLines.filter((line) => /stroke-dasharray:\s*(?!none)[\d]/.test(line));
+  assert.ok(dashed.length > 0, "the unverified ring must stay dashed");
+  for (const line of dashed) assert.ok(line.includes("unverified"), `dashed stroke outside the unverified ring: ${line.trim()}`);
+
+  assert.ok(
+    cssLines.some((line) => line.includes(".node.security > ") && line.includes("stroke-dasharray: none")),
+    "the security classDef's dashed stroke must be overridden",
+  );
+});
