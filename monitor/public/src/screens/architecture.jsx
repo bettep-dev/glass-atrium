@@ -85,13 +85,18 @@ const RING_GLYPH_MARK = { warn: "!", crit: "!!" };
 // 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
 const RING_STATE_CLASS = "arch-ring-state";
 const RING_FOCUS_CLASS = "arch-ring-focus";
+// one health vocabulary for node accessible names and the caption's ring key.
+const HEALTH_WORD_AR = { ok: "ok", info: "not verified", warn: "needs attention", crit: "critical" };
+const UNVERIFIED_WORD_AR = "not verified";
 
 // 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
 // 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
 // 않도록 그쪽 선택자에서 이 클래스를 뺐고, 그래서 반경의 SoT 가 여기 하나임.
 const NODE_CORNER_RADIUS = 8;
 const RING_GAP = 3;
-const RING_RADIUS = NODE_CORNER_RADIUS + RING_GAP;
+// focus ring one band outside the health ring's stroke → health ring keeps its colour, width and place.
+const FOCUS_RING_GAP = RING_GAP + 5;
+const RING_GAP_BY_CLASS = { [RING_FOCUS_CLASS]: FOCUS_RING_GAP };
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
 // cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
@@ -580,7 +585,7 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
 					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
 					// (소스 shape 를 바꾸는 대안은 content-budget 계수와 존 rect 를 동시에 흔들어 기각).
-					// 심은 링 사각형은 제 반경(RING_RADIUS)을 표현 속성으로 가지므로 여기서 뺌 — CSS 기하
+					// 심은 링 사각형은 제 반경(getRingGeometryAR)을 표현 속성으로 가지므로 여기서 뺌 — CSS 기하
 					// 속성이 표현 속성을 이기니, 안 빼면 링이 8 로 되눌려 도형과 동심이 아니게 됨.
 					".arch-mermaid-canvas svg :is(.node, .cluster) rect:not(.arch-ring) { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
@@ -637,16 +642,13 @@ function ScreenArchitecture(
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
-					// 상태 링과 같은 사각형 채널·같은 반경 가족이라 두 표식이 한 모양으로 읽힘.
-					// 포커스가 상태 링을 끔 — 같은 자리에 두 겹이 겹치면 어느 쪽도 제 색으로 안 읽힘.
-					// (종전 outline 규칙에서 포커스가 뒤에 서서 링을 덮던 것과 같은 결과를 명시적으로 씀.)
+					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
 					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
 					// UA 기본 포커스 링은 여기서 끔 — 안 끄면 Chromium 이 `auto 5px rgb(0,95,204)` 를 네모로
 					// 덧그려, 굴린 표식 옆에 각진 표식이 하나 더 섬. 종전 stroke 규칙이 네 노드에서 안 걸렸을 때
 					// 그 자리를 대신 채우고 있던 것이 이 UA 링이었음(실측).
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
-					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-state { display: none; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
 					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
 					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
@@ -673,7 +675,7 @@ function ScreenArchitecture(
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="System map"
-					sub={healthCaption}
+					sub={`${healthCaption} · ${getRingKeyTextAR()}`}
 					right={
 						<>
 							{/* 신선도 — 판정이 언제 읽힌 것인지. 없으면 아직 한 번도 안 읽은 것임. */}
@@ -914,6 +916,7 @@ function MermaidCanvas({
 			if (!matchedId) return;
 
 			el.setAttribute("data-arch-node-id", matchedId);
+			el.setAttribute("data-arch-label", labelText.replace(/\s+/g, " ").trim());
 			// 키보드 진입 — 표를 걷어내며 노드가 헬스 상세로 가는 유일한 문이 됐음 (ADR-20).
 			// 표의 행은 진짜 button 이라 탭으로 닿았는데 노드는 캔버스만 포커스를 받아
 			// (tabIndex 는 캔버스에 있고 키 핸들러는 줌/팬뿐임) 마우스 없이는 상세에 닿을 길이
@@ -943,10 +946,14 @@ function MermaidCanvas({
 			if (!nodeId) return;
 
 			const unscoped = unscopedNodeIdAR(nodeId);
-			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
-
 			const tone = ringToneByNodeId.get(unscoped);
 			const isUnverified = !unverifiedNodeIds || unverifiedNodeIds.has(unscoped);
+			el.setAttribute(
+				"aria-label",
+				getNodeAccessibleNameAR(el.getAttribute("data-arch-label") || "", tone, isUnverified),
+			);
+			if (zoneRingPlan.zoneByNodeId.has(unscoped)) return;
+
 			const ringClass = getRingClassAR(tone, LIVE_RING_CLASS, isUnverified, NODE_UNVERIFIED_CLASS);
 			if (ringClass) el.classList.add(ringClass);
 
@@ -2071,12 +2078,32 @@ function getHealthCaptionAR(partRows, busy, errored = 0) {
 	const unjudgedWord = errored > 0 ? "unreadable" : "not verified";
 
 	if (attention.length > 0)
-		return `${attention.length} of ${total} parts need attention`;
+		return `${attention.length} of ${total} parts need attention${getFlaggedNamesSuffixAR(attention)}`;
 	if (judged.length === 0) return getNoVerdictCaptionAR(total, busy, errored);
 	if (unverified > 0)
 		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
 
 	return `All ${total} parts ok`;
+}
+
+// flagged parts by name — the caption answers 'what is wrong' before any click.
+function getFlaggedNamesSuffixAR(rows) {
+	const names = rows.map((row) => row.name).filter(Boolean);
+	return names.length > 0 ? `: ${names.join(", ")}` : "";
+}
+
+// ring key — built from the glyph marks and health words the canvas itself draws.
+function getRingKeyTextAR() {
+	const marks = ["warn", "crit"].map((tone) => `${getCornerGlyphTextAR(tone, 1)} ${HEALTH_WORD_AR[tone]}`);
+	return `Rings: ${marks.join(" · ")} · dashed ${UNVERIFIED_WORD_AR}`;
+}
+
+// accessible name = label + health word, so the verdict reaches a screen reader, not only the ring colour.
+function getNodeAccessibleNameAR(label, tone, isUnverified) {
+	// mirrors getRingClassAR — a flagged tone outranks unverified, which outranks ok.
+	const isFlagged = tone === "warn" || tone === "crit";
+	const word = !isFlagged && isUnverified ? UNVERIFIED_WORD_AR : HEALTH_WORD_AR[tone];
+	return word ? `${label}, ${word}` : label;
 }
 
 // 판정이 하나도 안 선 상태 — 오는 중 · 못 읽음 · 미판정이 저마다 다른 문장임.
@@ -2366,13 +2393,16 @@ function ensureRingRectAR(groupEl, ringClass) {
 		ring.setAttribute("class", `arch-ring ${ringClass}`);
 		groupEl.appendChild(ring);
 	}
-	ring.setAttribute("x", String(box.x - RING_GAP));
-	ring.setAttribute("y", String(box.y - RING_GAP));
-	ring.setAttribute("width", String(box.width + RING_GAP * 2));
-	ring.setAttribute("height", String(box.height + RING_GAP * 2));
-	ring.setAttribute("rx", String(RING_RADIUS));
-	ring.setAttribute("ry", String(RING_RADIUS));
+	const geometry = getRingGeometryAR(box, ringClass);
+	for (const [attr, value] of Object.entries(geometry)) ring.setAttribute(attr, String(value));
 	return ring;
+}
+
+// ring rect around a shape box — the focus ring takes a wider gap than the health ring.
+function getRingGeometryAR(box, ringClass) {
+	const gap = RING_GAP_BY_CLASS[ringClass] ?? RING_GAP;
+	const radius = NODE_CORNER_RADIUS + gap;
+	return { x: box.x - gap, y: box.y - gap, width: box.width + gap * 2, height: box.height + gap * 2, rx: radius, ry: radius };
 }
 
 /**
