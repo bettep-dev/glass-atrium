@@ -216,14 +216,21 @@ enum AutoagentDecision {
   @@schema("monitor")
 }
 
-/// Phase A (CID 2026-05-22T1135_doc-mgmt-enhance_a1b2) — 2-value workflow gate (사용자 directive 4).
-/// doc_type (4-value lifecycle) 와 의미축 다름:
-///   - doc_status = "현재 작업 상태" (workflow — 사용자 직접 토글 · group cascade 대상)
-///   - doc_type = "lifecycle 분류" (analytic — supersedes_id chain 과 짝 · Phase 1b)
-/// Mapping (migration backfill): draft → progress · final/archived/superseded → done
+/// 문서 작업 단계 (workflow — group cascade 대상 · doc_status = "현재 작업 상태").
+/// 5단계 vocabulary — 화면 표기는 한국어, 저장 토큰은 영문 snake:
+///   doc_review 문서 검증 · implementing 구현중 · impl_review 구현 검증 ·
+///   impl_done 구현 완료 · done 종료
+///   - 구현 3단계는 optional — doc_review → done 만 모든 문서가 지나는 edge
+///   - 순서는 화면 affordance 일 뿐 · 서버는 임의 단계 간 전이를 허용
+/// progress = 폐기된 in-flight 토큰 — enum 에 잔존 (PG 는 ADD VALUE 의 역연산이 없음).
+///   - write alias 로 계속 수락 · 저장된 값은 read 시 doc_review 로 정규화 (행 drop 금지)
 enum DocStatus {
   progress
   done
+  doc_review
+  implementing
+  impl_review
+  impl_done
 
   @@schema("monitor")
 }
@@ -934,11 +941,15 @@ model ClaudedDoc {
   //   - 값 존재 = 본 행이 supersedes_id 가 가리키는 행의 후속 버전 (Phase 2 에서 채택 시점 transition)
   //   - Wave 3-2a follow-up — DocType.superseded enum 폐지 후 transition target = doc_status='done'
   supersedesId  BigInt?   @map("supersedes_id")
-  // Phase A (CID 2026-05-22T1135_doc-mgmt-enhance_a1b2 · 사용자 directive 4) — 2-value workflow gate.
-  //   - DocStatus enum (progress | done) · NOT NULL DEFAULT progress
-  //   - draft → progress · final/archived/superseded → done (migration backfill)
+  // 문서 작업 단계 — DocStatus 5단계 · NOT NULL DEFAULT doc_review (신규 문서 = 문서 검증).
+  //   - 폐기된 progress 행은 doc_review 로 backfill · 토큰 자체는 alias 로 잔존 (enum 주석 참조)
   //   - Phase B handleUpdate: same folder_id 행 cascade (app-layer single-statement CTE — DB trigger 미채택)
-  docStatus     DocStatus @default(progress) @map("doc_status")
+  //   - cascade 범위는 terminal transition 한정 — root 종료 시에만 chain 전체, 그 외 단독 행
+  docStatus     DocStatus @default(doc_review) @map("doc_status")
+  // 마지막 상태 변경을 수행한 모델 id — NULL = unknown (화면이 unknown 으로 렌더 · 자리표시 금지).
+  //   - 운영자 본인의 조작은 예약 리터럴로 기록 — 모델 id 와 구분해 렌더
+  //   - 상태 write 마다 caller 가 공급 · 타임스탬프/actor 컬럼 미도입 (surface area 최소)
+  lastStatusModel String? @map("last_status_model") @db.VarChar(128)
   // Phase A (사용자 directive 1·3·4) — 그룹 식별자 (NULL = ungrouped).
   //   - 같은 folder_id 값 보유 행 = 같은 그룹 · 대제목 = 그룹 내 MAX(created_at) 행의 title
   //   - 50 group/page pagination (CTE/window function — Part 2 §1 채택 D-pattern UNION ALL)
