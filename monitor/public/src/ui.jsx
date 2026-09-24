@@ -465,7 +465,6 @@ function CardHead({ title, sub, right }) {
   </div>;
 }
 
-// title prop 은 단일행 헤더 정책으로 의도적으로 무시 (sub 만 렌더)
 // shouldRenderTitle — opt-in title + sub-line stack; callers without it keep the sub-only eyebrow.
 function PageHeader({ title, sub, right, shouldRenderTitle = false }) {
   const eyebrow = <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>;
