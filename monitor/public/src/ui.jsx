@@ -597,6 +597,47 @@ function formatKstFull(iso) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
 }
 
+const FRESHNESS_STALE_MS = 5 * 60_000;
+
+// glyph carries the tone, text stays neutral → state survives without colour
+const FRESHNESS_META = {
+  loading:    { tone: null, word: 'Loading' },
+  'not-read': { tone: 'crit', word: 'Not read' },
+  stale:      { tone: 'warn', word: 'Stale' },
+  fresh:      { tone: 'ok', word: 'Fresh' },
+};
+
+/**
+ * Freshness of the last successful read. Callers pass only successful-read times as `at`,
+ * so a failed read never advances the stamp; `failed` marks the kept stamp stale.
+ */
+function getFreshnessState({ at, loading = false, failed = false, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
+  const readMs = at ? new Date(at).getTime() : NaN;
+
+  if (!Number.isFinite(readMs)) return loading ? 'loading' : 'not-read';
+  if (failed || now - readMs > staleAfterMs) return 'stale';
+  return 'fresh';
+}
+
+/** Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy. */
+function FreshnessStamp({ at, loading = false, failed = false, staleAfterMs, now }) {
+  const state = getFreshnessState({ at, loading, failed, staleAfterMs, now });
+  const meta = FRESHNESS_META[state];
+  const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
+  const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
+  const isRead = state === 'fresh' || state === 'stale';
+  const text = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
+  const title = isRead ? `${meta.word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : meta.word;
+
+  return (
+    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={loading ? 'true' : undefined}>
+      <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
+      <span className="sr-only">{meta.word}</span>
+      <span data-stamp-text="true">{text}</span>
+    </span>
+  );
+}
+
 // 배지 5-tier canonical taxonomy SoT (T1) — 톤별 pill 토큰 + 기본 라벨 단일 출처.
 //   drift 근절: health 카드 인라인 "WARN"↔"Warning" 케이싱 발산 + 중복 "Healthy" 를 여기서 단일화.
 //   status 톤(ok/warn/crit/info)만 pill 토큰 보유 · neutral = non-status 서술자 → pill 토큰 없음(글리프리스 neutral shell).
@@ -908,6 +949,7 @@ window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
+  FreshnessStamp, getFreshnessState, FRESHNESS_STALE_MS,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
