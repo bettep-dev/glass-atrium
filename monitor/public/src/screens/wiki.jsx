@@ -76,6 +76,10 @@ function ScreenWiki() {
         /* per-run 보고 표 — 읽기 전용 RECORD(상세 드로어 없음) → .tbl 기본 pointer 커서/hover 무력화 (가짜 인터랙션 암시 방지). */
         .w-report-tbl tbody tr { cursor: default; }
         .w-report-tbl tbody tr:hover { background: transparent; }
+        /* summary is a flex row, which drops the native marker → the screen draws its own chevron. */
+        .w-disclosure > summary { list-style: none; }
+        .w-disclosure > summary::-webkit-details-marker { display: none; }
+        .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -712,15 +716,18 @@ function describeMaintenanceW(proposals, deadLinks) {
 		return "Nothing waiting — no merge proposals, no broken links.";
 	}
 
+	// Waiting proposals already carry their count on the disclosure header below.
 	const parts = [
 		proposalCount == null
 			? "merge proposals not reported"
-			: `${formatCountW(proposalCount)} merge ${proposalCount === 1 ? "proposal" : "proposals"}`,
+			: proposalCount === 0
+				? "no merge proposals"
+				: null,
 		deadCount == null
 			? "broken links not reported"
 			: `${formatCountW(deadCount)} broken ${deadCount === 1 ? "link" : "links"}`,
 	];
-	return parts.join(" · ");
+	return parts.filter(Boolean).join(" · ");
 }
 
 // Run history — volume and the per-run table, both behind one closed disclosure.
@@ -763,7 +770,8 @@ function WikiRunHistorySection({
 					<SparseTrendW
 						label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
 						series={model.compiledSeries}
-						stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
+						dates={model.compiledDates}
+						stat={`${model.activeDays} active days of ${model.spanDays}`}
 						w={10}
 						h={44}
 						tone="accent"
@@ -827,8 +835,11 @@ function WikiDisclosureW({
 	children,
 }) {
 	return (
-		<details className="rounded-md border border-line bg-sunken">
+		<details className="w-disclosure rounded-md border border-line bg-sunken">
 			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
+				<span className="w-chevron inline-block fs-micro text-faint" aria-hidden="true">
+					▶
+				</span>
 				<span className="font-mono fs-body text-ink font-medium">{label}</span>
 				<span className="ml-auto font-mono fs-meta text-dim">{count}</span>
 			</summary>
@@ -957,8 +968,8 @@ function buildThroughputModel(state) {
 		return {
 			rows: [],
 			compiledSeries: [],
+			compiledDates: [],
 			mix: EMPTY_MIX,
-			maxCompiledLabel: "—",
 			newestDate: "",
 			spanDays: 0,
 		};
@@ -969,8 +980,8 @@ function buildThroughputModel(state) {
 		return {
 			rows: [],
 			compiledSeries: [],
+			compiledDates: [],
 			mix: EMPTY_MIX,
-			maxCompiledLabel: "—",
 			newestDate: "",
 			spanDays: 0,
 		};
@@ -981,8 +992,6 @@ function buildThroughputModel(state) {
 		(a.run_date || "").localeCompare(b.run_date || ""),
 	);
 	const compiledSeries = ascending.map((r) => Number(r.compiled_count) || 0);
-	const maxCompiled =
-		compiledSeries.length > 0 ? Math.max(...compiledSeries) : 0;
 	// 비0 포인트 수 — 캡션의 active days 수치 · 희소 판정은 SparseTrendW 가 자체 계산.
 	const nonZeroCount = compiledSeries.filter((v) => v > 0).length;
 
@@ -991,9 +1000,9 @@ function buildThroughputModel(state) {
 	return {
 		rows,
 		compiledSeries,
+		compiledDates: ascending.map((r) => r.run_date || ""),
 		mix,
 		isMixUniform: isNearUniformMixW(mix),
-		maxCompiledLabel: formatCountW(maxCompiled),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
 		spanDays: compiledSeries.length,
@@ -1231,29 +1240,51 @@ function EmptyStateW({ message }) {
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
 //   sparse → MiniBars 대신 compact stat(최신/대표값) + "no activity in range" 빈상태로 대체.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 종전대로 MiniBars 렌더. tone = MiniBars 색(text-* 컨테이너에서 상속).
-function SparseTrendW({ label, series, stat, w, h, tone }) {
+function SparseTrendW({ label, series, dates = [], stat, w, h, tone }) {
 	const { MiniBars } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
+	const caption = [describePeakW(series, dates), stat].filter(Boolean).join(" · ");
+	const firstDate = dates[0] || "";
+	const lastDate = dates[dates.length - 1] || "";
 
 	return (
 		<div>
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
 				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 flex items-baseline justify-between gap-3">
-					<span className="font-mono fs-body text-dim">
-						{stat}
-					</span>
+					<span className="font-mono fs-body text-dim">{caption}</span>
 					<span className="fs-micro font-mono text-faint">
 						no activity in range
 					</span>
 				</div>
 			) : (
-				<div className={`text-${tone}`}>
-					<MiniBars data={series} w={Math.max(series.length * w, 60)} h={h} />
-				</div>
+				<>
+					<div
+						role="img"
+						aria-label={`${label} from ${firstDate} to ${lastDate}: ${caption}`}
+						className="inline-flex flex-col"
+					>
+						<div className={`text-${tone}`}>
+							<MiniBars data={series} w={Math.max(series.length * w, 60)} h={h} />
+						</div>
+						<div className="flex justify-between gap-3 fs-micro font-mono text-faint">
+							<span>{firstDate}</span>
+							<span>{lastDate}</span>
+						</div>
+					</div>
+					<div className="fs-micro font-mono text-dim">{caption}</div>
+				</>
 			)}
 		</div>
 	);
+}
+
+// First-occurring maximum and the day it fell on; an empty series names nothing.
+function describePeakW(series, dates) {
+	if (series.length === 0) return "";
+
+	const peakIndex = series.indexOf(Math.max(...series));
+	return `peak ${formatCountW(series[peakIndex])} on ${dates[peakIndex] || "an unknown day"}`;
 }
 
 function ErrorBannerW({ title, detail, onRetry }) {
