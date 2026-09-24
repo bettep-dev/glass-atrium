@@ -846,21 +846,25 @@ function DisclosureO({ title, summary, children }) {
   );
 }
 
-// 미적재 payload 는 em-dash — 닫힌 개시 영역의 요약 줄이 '이상 없음' 으로 읽히면 안 된다.
+// 미적재 payload 의 요약 토큰 — loading 과 실패를 구분하고, 어느 쪽도 '이상 없음' 으로 읽히지 않게.
+function getUnloadedSummaryO(status) {
+  return status === 'loading' ? 'Loading…' : 'Unavailable';
+}
+
 function reportingHealthSummaryO(channelLivenessState) {
-  if (channelLivenessState.status !== 'ready') return '—';
+  if (channelLivenessState.status !== 'ready') return getUnloadedSummaryO(channelLivenessState.status);
   const alerting = channelLivenessState.data?.alerting || [];
   return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
 }
 
 function selfReportSummaryO(analyticsState) {
-  if (analyticsState.status !== 'ready') return '—';
+  if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
   const writerTotal = window.UI.getWriterTotal(analyticsState.data?.overall);
   return `${formatIntO(writerTotal)} writer-emitted records`;
 }
 
 function loopEventsSummaryO(loopEventsState) {
-  if (loopEventsState.status !== 'ready') return '—';
+  if (loopEventsState.status !== 'ready') return getUnloadedSummaryO(loopEventsState.status);
   const events = loopEventsState.data?.events;
   return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
 }
@@ -1029,8 +1033,32 @@ const AGENT_FAILURE_COLUMNS_O = [
   { label: 'of records', align: 'right' },
 ];
 
+// 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
+function AgentFailureSkeletonO({ stickyStyle }) {
+  return (
+    <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
+      <thead>
+        <tr>
+          {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+            <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {[0, 1, 2].map((i) => (
+          <tr key={i}>
+            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
+              <div style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))', animation: 'skelPulseO 1.4s ease-in-out infinite' }}/>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
-  if (state.status === 'loading') return <ChartSkeletonO height={140}/>;
+  if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (state.status === 'error') {
     return <ErrorBannerO title="Couldn't load by-agent failures" detail={state.error} onRetry={onRetry}/>;
   }
@@ -1310,9 +1338,7 @@ function AttributionLegend() {
 function ChannelLivenessCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
-  const alerting = state.status === 'ready' ? (state.data?.alerting || []) : [];
-  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
-  const days = state.status === 'ready' ? state.data?.days : null;
+  const badge = getChannelLivenessBadgeO(state);
 
   return (
     <div className="card mb-4">
@@ -1322,11 +1348,10 @@ function ChannelLivenessCard({ state, onRetry }) {
         right={
           <Badge
             role="status"
-            tone={toneFromColorVarO(meta.colorVar)}
+            tone={badge.tone}
             icon
             title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
-            {alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording'}
-            {days ? ` · ${days}d` : ''}
+            {badge.text}
           </Badge>
         }
       />
@@ -1335,6 +1360,17 @@ function ChannelLivenessCard({ state, onRetry }) {
       </div>
     </div>
   );
+}
+
+// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral 배지.
+function getChannelLivenessBadgeO(state) {
+  if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
+
+  const alerting = state.data?.alerting || [];
+  const days = state.data?.days;
+  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
+  const text = alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording';
+  return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
 }
 
 function ChannelLivenessBody({ state, onRetry }) {

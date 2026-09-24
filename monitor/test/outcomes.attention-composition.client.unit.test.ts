@@ -81,6 +81,8 @@ interface OutcomesHelpers {
   reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
+  getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
+  AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
 }
 
 interface RenderNode {
@@ -436,12 +438,47 @@ test("buildLedgerSectionsO: an optimistic closure moves the row to Routine befor
 
 // --- disclosure summaries: a closed section answers without opening, and never fakes calm ---
 
-test("disclosure summaries: an unloaded payload reads as an em-dash, never as 'all clear'", () => {
-  for (const status of ["loading", "error", "unavailable"] as const) {
-    assert.strictEqual(helpers.reportingHealthSummaryO({ status }), "—", `reporting health @ ${status}`);
-    assert.strictEqual(helpers.selfReportSummaryO({ status }), "—", `self-report @ ${status}`);
-    assert.strictEqual(helpers.loopEventsSummaryO({ status }), "—", `loop events @ ${status}`);
+test("disclosure summaries: loading and failure read as distinct tokens, never as 'all clear'", () => {
+  const summaries = [helpers.reportingHealthSummaryO, helpers.selfReportSummaryO, helpers.loopEventsSummaryO];
+  for (const summarize of summaries) {
+    const loading = summarize({ status: "loading" });
+    for (const status of ["error", "unavailable"] as const) {
+      const failed = summarize({ status });
+      assert.notStrictEqual(failed, loading, `${summarize.name}: ${status} is not drawn as loading`);
+      assert.match(failed, /unavailable/i, `${summarize.name}: ${status} says the payload is unavailable`);
+    }
+    assert.match(loading, /loading/i, `${summarize.name}: loading says so`);
   }
+});
+
+test("getChannelLivenessBadgeO: only a loaded payload may claim 'All recording' or carry a tone", () => {
+  for (const status of ["loading", "error", "unavailable"] as const) {
+    const badge = helpers.getChannelLivenessBadgeO({ status });
+    assert.strictEqual(badge.tone, "neutral", `${status} carries no live tone`);
+    assert.doesNotMatch(badge.text, /all recording/i, `${status} is no all-clear`);
+  }
+  assert.notStrictEqual(
+    helpers.getChannelLivenessBadgeO({ status: "loading" }).text,
+    helpers.getChannelLivenessBadgeO({ status: "error" }).text,
+    "loading and failure read differently",
+  );
+  const live = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: [], days: 7 } });
+  assert.deepStrictEqual(sameRealm(live), { tone: "ok", text: "All recording · 7d" });
+  const silent = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: ["stop"] } });
+  assert.deepStrictEqual(sameRealm(silent), { tone: "crit", text: "Silent: stop" });
+});
+
+test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blank body", () => {
+  const body = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
+  // the body returns its skeleton element — render that one level to read the markup it draws
+  const skeleton = typeof body.type === "function" ? (body.type as (p: unknown) => RenderNode)(body.props) : body;
+  const nodes = flattenNodes(skeleton);
+  const table = nodes.find((n) => n.type === "table");
+  assert.ok(table, "the loading body keeps the table shape");
+  assert.ok(nodes.some((n) => n.props?.["aria-busy"] === true), "the loading body is marked busy");
+  const text = nodes.flatMap((n) => n.children.filter((c) => typeof c === "string")).join(" ");
+  assert.match(text, /Failed/, "the column headers render while loading");
+  assert.ok(nodes.filter((n) => n.type === "tr").length > 1, "skeleton rows sit under the header");
 });
 
 test("reportingHealthSummaryO: a silent channel is named in the closed summary line", () => {
