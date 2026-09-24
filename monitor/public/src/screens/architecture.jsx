@@ -1884,7 +1884,7 @@ function AlarmRowAR({ row, onRetry }) {
 				{row.badges.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
 						{row.badges.map((name) => (
-							<Badge key={name} role="status" tone={row.tone} glyph={false}>
+							<Badge key={name}>
 								{name}
 							</Badge>
 						))}

@@ -132,6 +132,15 @@ test("AC-T-tone the glyph class table is read by icon elements only", () => {
   );
 });
 
+// ui.jsx Badge paints its label in text-{tone} when a status badge drops its glyph.
+test("AC-T-tone no status badge drops its glyph, which would put tone on the label", () => {
+  const offenders = (SCREEN_SRC.match(/<Badge\b[^>]*>/g) || []).filter(
+    (tag) => tag.includes('role="status"') && tag.includes("glyph={false}"),
+  );
+
+  assert.deepEqual(offenders, []);
+});
+
 // 경보 자리를 이름으로 셈 — 개수로 재면 한 자리를 지우고 다른 자리를 들여도 통과함.
 test("AC-T-tone alert role is declared by the alarm row and the canvas error banner only", () => {
   const declarers = SCREEN_SRC.split(/^function /m)
