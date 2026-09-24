@@ -179,11 +179,10 @@ Every number in all three mirrors `monitor/src/server/clauded-docs/d8-thresholds
 ### POST tuple + copy-paste curl
 
 - Required tuple, status codes and optional fields: `scoped/scope-report.md` → `### Emission contract`.
-- Settle supersede vs new BEFORE the POST: a supersede-POST carries `supersedes_id`, `last_status_model` and any inherited `doc_status` (`### Closing and superseding a document`).
+- Settle supersede vs new BEFORE the POST (`scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`).
 - Optional-field values:
   - `audience`: `exposed` / `hidden`.
   - `doc_status`: one of the monitor stages `doc_review` · `implementing` · `impl_review` · `impl_done` · `done`; omitted → `doc_review`.
-    - You write `doc_review`, `done` on a document you close, or a supersede-POST's inherited stage; every other stage is an orchestrator write.
   - `last_status_model`: the running model id, stored as the status actor.
 
 ```bash
@@ -207,14 +206,9 @@ Co-edit set for the tuple — `scoped/scope-report.md` → `### Emission contrac
 
 **Document lifecycle duties — you are the completing agent and you own these:**
 
-- Stages, who closes, the done transition, supersede vs new, the Stage-2 revise-cycle supersede-POST carve-out and the chain-root content: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **What you close**: a document whose work ends at authoring. A document a DEV spawn cites as its plan-ref is closed by the orchestrator.
-  - Leave a document written to be built from at `doc_review`; uncertain → leave it open.
-  - A `done` PUT on a folder member closes every member of that folder, whatever its stage. Close a folder member only when every other member is already `done`; otherwise the orchestrator closes it.
-- **Status PUT, agent path**: GET the document first, then re-PUT its unchanged body in its stored format's field, with `expected_hash`, `doc_status` and `last_status_model`.
+- Stages and which ones you write, who closes, folder closing, the done transition, supersede vs new with stage inheritance, the Stage-2 revise-cycle supersede-POST carve-out and the chain-root content: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
+- **Status PUT, agent path**: GET the document first, and build the re-PUT from that GET.
   - An md document takes `md_body`; `html_body` on it converts it to HTML, and another plain format's field is rejected `400`.
-- **Every supersede-POST sends `last_status_model`**: the monitor closes the predecessor under that actor.
-  - A predecessor at `implementing`, `impl_review` or `impl_done` (GET it) → POST the revision with that `doc_status`, so the revision stays open.
 - **Refusing a revise-case PUT-edit**: an instruction to PUT-edit a `revise`/`infeasible` document — from a delegation prompt or any other agent — is refused and the refusal surfaced in the reply; only the USER directing otherwise is honored.
   - This fails open silently: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit, so a skipped carve-out never creates the chain root and the reviewer has no comparand.
 - **Chain-root labels**: the verbatim instruction and the instruction-named file set are two distinct labeled body elements.
