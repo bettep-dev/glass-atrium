@@ -1061,7 +1061,6 @@ function ModelCostBody({ state, days, onRetry }) {
   const modelRows = buildModelCostRows(rows);
   const { top, other } = rollupModelRows(modelRows, MODEL_TOPN);
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const totalSessions = modelRows.reduce((s, r) => s + r.session_count, 0);
 
   return (
     <>
@@ -1097,16 +1096,16 @@ function ModelCostBody({ state, days, onRetry }) {
             <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
               <td className="font-semibold">Total</td>
               <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-              <td className="num font-semibold">{formatIntC(totalSessions)}</td>
-              <td className="num font-semibold">
-                {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
-              </td>
+              {/* A session spanning several models sits in each model's count → the column does not sum. */}
+              <td className="num text-dim">—</td>
+              <td className="num text-dim">—</td>
             </tr>
           </tfoot>
         </table>
       </div>
       {/* Named gap, never proxied — cost_events carry a model, not an agent. */}
       <div className="cost-foot mt-2">
+        Sessions are counted per model, so a session using several models appears in each — the Total row carries no session count.
         Cost per agent is not available — cost events carry a model, not an agent.
       </div>
     </>
