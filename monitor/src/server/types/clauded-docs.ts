@@ -101,6 +101,9 @@ export interface ListClaudedDocsQuery {
   // negative / 0 → 400 invalid_param. Complements /groups (representative +
   // member_count summary) with the per-member detail rows.
   folder_id?: string;
+  // stage filter — repeated key and/or comma-separated, OR-combined · unknown token → 400
+  // invalid_param · empty-only → no filter.
+  doc_status?: string | string[];
 }
 
 export interface ClaudedDocSummary {
@@ -147,6 +150,8 @@ export interface ListClaudedDocsResponse {
   total: number;
   rows: ClaudedDocSummary[];
   filter: {
+    /** Parsed tokens as sent (de-duplicated, not normalised) · null = no stage filter. */
+    doc_status: DocStatusFilterLiteral[] | null;
     author: string | null;
     limit: number;
     offset: number;

@@ -716,6 +716,15 @@ async function handleList(
 ): Promise<ListClaudedDocsResponse | ClaudedDocsErrorBody> {
   const start = Date.now();
 
+  const docStatusParam = parseEnumListParam<DocStatusFilterLiteral>(
+    request.query.doc_status, DOC_STATUS_READ_FILTERS,
+  );
+  if (docStatusParam === "INVALID") {
+    return reply.code(400).send({
+      error: "invalid_param", param: "doc_status", allowed: Array.from(DOC_STATUS_READ_FILTERS),
+    });
+  }
+
   const author =
     typeof request.query.author === "string" && request.query.author.length > 0
       ? request.query.author.slice(0, AUTHOR_MAX_LENGTH)
@@ -746,6 +755,9 @@ async function handleList(
   }
 
   const fragments: Prisma.Sql[] = [];
+  if (docStatusParam !== null) {
+    fragments.push(Prisma.join(docStatusParam.map(getDocStatusFilterSql), " OR ", "(", ")"));
+  }
   if (author !== null) {
     fragments.push(Prisma.sql`author = ${author}`);
   }
@@ -828,6 +840,7 @@ async function handleList(
       total,
       rows: summaries,
       filter: {
+        doc_status: docStatusParam,
         author,
         limit,
         offset,
@@ -3336,6 +3349,24 @@ function parseEnumParam<T extends string>(
   if (raw === undefined || raw === "") return null;
   if (!allowed.has(raw as T)) return "INVALID";
   return raw as T;
+}
+
+/**
+ * Multi-value twin of parseEnumParam — repeated key (array) and comma form mix freely.
+ * Tokens trimmed, empties dropped, de-duplicated in first-seen order · no token left → null ·
+ * any unknown token rejects the whole list (no silent drop).
+ */
+export function parseEnumListParam<T extends string>(
+  raw: string | string[] | undefined,
+  allowed: ReadonlySet<T>,
+): T[] | null | "INVALID" {
+  const tokens = (raw === undefined ? [] : [raw].flat())
+    .flatMap((value) => value.split(","))
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) return null;
+  if (tokens.some((token) => !allowed.has(token as T))) return "INVALID";
+  return [...new Set(tokens)] as T[]; // every token passed allowed.has above
 }
 
 function parseLimitParam(raw: string | undefined, max: number, fallback: number): number | null {
