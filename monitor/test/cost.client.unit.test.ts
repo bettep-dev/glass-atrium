@@ -76,6 +76,7 @@ interface CostHelpers {
   ) => SessionRollup;
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
+  getAsOfText: (ms: number | null, loading: boolean) => string;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -295,6 +296,17 @@ test("the trend reads complete days only — today's partial point never moves i
     null,
     "one complete day plus today has no first-to-last pair",
   );
+});
+
+test("the as-of stamp tells an in-flight wave apart from one where every fetch failed", () => {
+  assert.strictEqual(cost.getAsOfText(null, true), "refreshing…");
+  assert.strictEqual(cost.getAsOfText(Date.now(), true), "refreshing…", "a stamp is withheld while a wave is in flight");
+
+  const failedWave = cost.getAsOfText(null, false);
+  assert.doesNotMatch(failedWave, /refreshing/, "a settled wave must not claim a refresh in flight");
+  assert.match(failedWave, /no successful fetch/);
+
+  assert.match(cost.getAsOfText(Date.UTC(2026, 0, 10, 12), false), /^as of /);
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {

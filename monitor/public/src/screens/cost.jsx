@@ -219,11 +219,16 @@ function ScreenCost({ onNav }) {
  * A freshness claim must never outlive its measurement.
  */
 function AsOfStampC({ ms, loading }) {
-  const text = loading || ms === null
-    ? 'refreshing…'
-    : `as of ${new Date(ms).toLocaleTimeString()}`;
+  const text = getAsOfText(ms, loading);
 
   return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
+}
+
+// Settled wave with no stamp = every fetch failed → says so rather than claiming a refresh in flight.
+function getAsOfText(ms, loading) {
+  if (loading) return 'refreshing…';
+  if (ms === null) return 'no successful fetch';
+  return `as of ${new Date(ms).toLocaleTimeString()}`;
 }
 
 /**
