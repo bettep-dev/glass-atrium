@@ -32,8 +32,6 @@ const TASK_TYPE_COLUMNS = [
   { key: 'cleanup',   label: 'cleanup'   },
 ];
 
-
-
 // revision_count 분포 — server enum 순서 (stacked bar bottom→top).
 const REVISION_BUCKETS = [
   { key: '0',  label: '0',  colorVar: '--ok'   },
@@ -1497,7 +1495,6 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
     return <DrawerSectionEmpty message="No performance data for this agent in the window."/>;
   }
 
-  const successPct = Number(agent.success_pct) || 0;
   const needsContextCount = Number(agent.needs_context_count) || 0;
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
 
@@ -2758,7 +2755,6 @@ function buildSuccessRateMatrix(rows) {
   return { agents, cells: Object.fromEntries(cellMap) };
 }
 
-
 // flat row → per-pair stats · threshold 미달만 반환 · pooledRate ASC sort · limit cap.
 // 합산 비율 + 최소 표본 floor (분모 < TOPN_MIN_SAMPLE 쌍 랭킹 제외, A5).
 // server 가 last_failure_at 미반환 → failure_count > 0 row 의 event_date 로 client-side 도출.
@@ -3035,7 +3031,6 @@ function mapStatusToTone(status) {
   }
 }
 
-// 성공률 % → 텍스트 톤 클래스 (≥95% ok / ≥90% 무톤 / 미만 warn) — 운영 건전성 목적 (CF8).
 // One Agents rate scale — the shared breakage crit step over a surface's own failed count; steady state stays neutral.
 // Low-N guard stays at each call site.
 function getFailShareTone(failedCount, denominator) {
@@ -3164,7 +3159,7 @@ const formatDurationSecAg = (sec) => window.UI.formatDuration(sec);
 // latency_ms → 인간화 (<1s "NNNms" · ≥60s "Mm Ss") — 공용 formatDuration('ms') 위임, p50/p95/p99 표시.
 const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
 
-// MiniBars 추세 색상 — error / 성공률 미달 / OK 의 3-단 (rgb literal — Tailwind 외 SVG fill).
+// MiniBars 추세 색상 — error → crit · 그 외 fail-share tone · 미판정 → neutral.
 // 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
 //   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
 function trendBarColor(status, failShareTone) {

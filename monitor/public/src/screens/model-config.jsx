@@ -144,13 +144,13 @@ const SYNC_META_MC = {
 		tone: "warn",
 		desc: "daemon-config.json was not found — press Save to recreate it",
 	},
-	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
-	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
 	empty: {
 		label: "Nothing to sync",
 		tone: "neutral",
 		desc: "no model domains or budget caps were reported, so there is nothing to compare",
 	},
+	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
+	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
 	"pending-migration": {
 		label: "Pending migration",
 		tone: "warn",

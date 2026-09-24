@@ -51,7 +51,7 @@ const TOAST_DURATION_MS = 3200;
 //   Awaiting approval (safety pending/snoozed) · Applied (terminal) · Rejected (terminal).
 // snoozed 는 non-terminal + actionable → safety actionable 컬럼에 라우팅
 // (terminal 컬럼 오염 방지) · 카드에 snoozed 마커.
-// variant — 레인별 카드 밀도 (T1). full = ProposalCardI 전체 카드 · compact =
+// variant — 레인별 카드 밀도 (T1). full = AppliedHistoryRowI 이력 행 · compact =
 // CompactProposalCardI 단일행. applied/safety=full, rejected=compact.
 // rejected.tone='crit' 유지 — 심볼-전용 착색용(✕·count·스파크에만, T7 색상 예약).
 const KANBAN_COLUMNS = [
@@ -1275,7 +1275,7 @@ function AwaitingStripI() {
 	);
 }
 
-// 종결 레인 — variant 라우팅(T4): full → ProposalCardI · compact → CompactProposalCardI(폴백 full).
+// 종결 레인 — variant 라우팅(T4): full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
 // 헤더는 레인별 분기(T6 APPLIED hero · Rejected 중립 헤더 + reject 스파크) · Bar 부피막대 폐기(DR-3).
 function KanbanColumnI({
 	column,
