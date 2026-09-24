@@ -377,9 +377,13 @@ function computeHotVerdict(kpi) {
   const burnRate = toFiniteOrNull(kpi.burn_rate_3h_usd_per_hour);
   const normalDaily = week7Cost !== null && week7Cost > 0 ? week7Cost / 7 : null;
 
+  const hoursLeft = getDayHoursLeft(kpi.fetched_at, kpi.day_bucket_timezone);
+
   const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
-  // 3h burn extrapolated to a full day — where today lands if the current rate holds.
-  const paceRatio = normalDaily !== null && burnRate !== null ? (burnRate * 24) / normalDaily : null;
+  // Where today lands: spend so far + the 3h burn held for the rest of the bucket day.
+  const paceRatio = ratio !== null && burnRate !== null && hoursLeft !== null
+    ? (todayCost + burnRate * hoursLeft) / normalDaily
+    : null;
 
   return {
     todayCost,
@@ -390,6 +394,25 @@ function computeHotVerdict(kpi) {
     isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
     verdict: getHotVerdictText(ratio, paceRatio),
   };
+}
+
+// Hours left in the day bucket at the kpi's own fetch instant; an unreadable instant or zone → null, never a guess.
+function getDayHoursLeft(fetchedAt, timeZone) {
+  const ms = Date.parse(fetchedAt);
+  if (!Number.isFinite(ms) || typeof timeZone !== 'string') return null;
+
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+      .formatToParts(new Date(ms));
+  } catch (err) {
+    return null; // unknown zone → RangeError → the pace clause drops rather than guessing a zone
+  }
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+  return 24 - hour - minute / 60;
 }
 
 // So-far clause always; the pace clause joins it only when a pace figure exists.
