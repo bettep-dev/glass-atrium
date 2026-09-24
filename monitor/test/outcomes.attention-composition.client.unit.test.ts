@@ -19,7 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
 
-type PayloadStatus = "loading" | "error" | "unavailable" | "ready";
+type PayloadStatus = "loading" | "error" | "unavailable" | "blocked" | "ready";
 interface PayloadState<T> {
   status: PayloadStatus;
   data?: T;
@@ -78,7 +78,9 @@ interface OutcomesHelpers {
   buildLedgerSectionsO: (
     rows: LedgerRow[],
     closure?: ClosureState,
-  ) => { key: string; label: string; rows: LedgerRow[] }[];
+    needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
+  ) => { key: string; label: string; heading: string; rows: LedgerRow[] }[];
+  buildNeedsYouUrlO: (filter: Record<string, unknown>, sort: string, limit: number, includeAll: boolean) => string;
   reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
@@ -439,6 +441,28 @@ test("buildLedgerSectionsO: partitions the page — every row lands in exactly o
   assert.deepStrictEqual(seen, [1, 2, 3, 4, 5, 6], "no row is dropped or duplicated");
   assert.deepStrictEqual(sameRealm(sections[0].rows.map((r) => r.id)), [2, 3, 5, 6]);
   assert.deepStrictEqual(sameRealm(sections[1].rows.map((r) => r.id)), [1, 4]);
+});
+
+test("buildLedgerSectionsO: Needs you reads the whole window, not the page it happens to share", () => {
+  const pageRows: LedgerRow[] = [{ id: 1, result: "done" }, { id: 2, result: "fail" }, { id: 4, result: "done" }];
+  const windowRows: LedgerRow[] = [{ id: 2, result: "fail" }, { id: 9, result: "blocked" }, { id: 10, result: "fail" }];
+  const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, undefined, {
+    rows: windowRows, total: 1717, windowLabel: "30d",
+  }));
+
+  assert.deepStrictEqual(sameRealm(needsYou.rows.map((r) => r.id)), [2, 9, 10], "rows off this page still need you");
+  assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1, 4], "routine never repeats a needs-you row");
+  assert.match(needsYou.heading, /1,717/, "the header carries the window count, not the page count");
+  assert.match(needsYou.heading, /30d/, "the header names its window");
+  assert.match(routine.heading, /on this page/);
+});
+
+test("buildNeedsYouUrlO: the ledger's own filter plus the attention predicate, always from the first row", () => {
+  const url = new URL(helpers.buildNeedsYouUrlO({ days: 30, agent: "glass-atrium-dev-react" }, "record_ts:desc", 50, false), "http://x");
+  assert.strictEqual(url.searchParams.get("needs_attention"), "true");
+  assert.strictEqual(url.searchParams.get("offset"), "0");
+  assert.strictEqual(url.searchParams.get("days"), "30");
+  assert.strictEqual(url.searchParams.get("agent"), "glass-atrium-dev-react", "a ledger filter narrows needs-you too");
 });
 
 test("isNeedsYouRowO: the predicate is flagged, broken, or an unclosed caveat — nothing else", () => {

@@ -406,6 +406,8 @@ function ScreenOutcomes({ onNav }) {
   const [keywordInput, setKeywordInput] = useStateO(filter.q || '');
 
   const [searchState, setSearchState] = useStateO({ status: 'loading', data: null, error: null });
+  // ledger 의 Needs-you 섹션 — 페이지가 아닌 창 전체를 읽는다(stream 1 attention 술어).
+  const [needsYouState, setNeedsYouState] = useStateO({ status: 'loading', data: null, error: null });
 
   // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
   const analyticsPeriod = analyticsDaysO(filter.days);
@@ -515,6 +517,16 @@ function ScreenOutcomes({ onNav }) {
 
     return () => ctrl.abort();
   }, [filter, sort, page, refreshTick, includeAll]);
+
+  // page 무관 — Needs-you 는 매 페이지 같은 창 전체 집합이라 page hop 에 재요청하지 않는다.
+  useEffectO(() => {
+    const ctrl = new AbortController();
+    setNeedsYouState({ status: 'loading', data: null, error: null });
+    fetchJsonO(buildNeedsYouUrlO(filter, sort, PAGE_LIMIT_DEFAULT, includeAll), ctrl.signal)
+      .then((data) => setNeedsYouState({ status: 'ready', data, error: null }))
+      .catch((err) => handleErrorO(err, setNeedsYouState));
+    return () => ctrl.abort();
+  }, [filter, sort, refreshTick, includeAll]);
 
   // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
@@ -627,6 +639,14 @@ function ScreenOutcomes({ onNav }) {
 
   const rows         = searchState.status === 'ready' ? (searchState.data?.rows ?? [])           : [];
   const totalMatched = searchState.status === 'ready' ? (Number(searchState.data?.total) || 0)   : 0;
+  // 미적재·실패 → null: 섹션은 페이지 분할로 되돌아가고 헤더가 'on this page' 로 범위를 밝힌다.
+  const ledgerNeedsYou = needsYouState.status === 'ready'
+    ? {
+      rows: needsYouState.data?.rows ?? [],
+      total: Number(needsYouState.data?.total) || 0,
+      windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
+    }
+    : null;
 
   // T13 (O2) — facet 옵션을 현재 페이지 rows 대신 canonical registry 집합에서 생성
   // (페이지네이션 안정). registry 소스는 /api/agents/summary 응답의 agent_id 들.
@@ -711,6 +731,7 @@ function ScreenOutcomes({ onNav }) {
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
           onRetry={triggerRefresh}
+          needsYou={ledgerNeedsYou}
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
@@ -2015,7 +2036,7 @@ function ChipGroup({ options, value, onChange, ariaLabel }) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -2048,6 +2069,7 @@ function ResultTableCard({
           onRowClick={onRowClick}
           onRetry={onRetry}
           closure={closure}
+          needsYou={needsYou}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -2109,7 +2131,7 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure }) {
+function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou }) {
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
@@ -2123,7 +2145,7 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}/>;
+  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure} needsYou={needsYou}/>;
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -2174,25 +2196,31 @@ function isNeedsYouRowO(row, closedAt) {
   return row.result === 'done_with_concerns' && !closedAt;
 }
 
-// 페이지 rows → [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
-function buildLedgerSectionsO(rows, closure) {
-  const needsYou = [];
+// [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
+// windowNeedsYou 가 있으면 Needs-you 는 창 전체 질의 결과, 없으면 이 페이지 분할로 되돌아간다.
+function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
+  const pageNeedsYou = [];
   const routine  = [];
   for (const row of rows) {
     const closedAt = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
-    (isNeedsYouRowO(row, closedAt) ? needsYou : routine).push(row);
+    (isNeedsYouRowO(row, closedAt) ? pageNeedsYou : routine).push(row);
   }
+  const needsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
+  const needsYouHeading = windowNeedsYou
+    ? `Needs you · ${formatIntO(windowNeedsYou.total)} in ${windowNeedsYou.windowLabel}`
+      + (windowNeedsYou.total > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '')
+    : `Needs you · ${formatIntO(needsYouRows.length)} on this page`;
   return [
-    { key: 'needs-you', label: 'Needs you', rows: needsYou },
-    { key: 'routine',   label: 'Routine',   rows: routine  },
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
   ];
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }) {
   // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   // 6열 — confidence · self-check · revision · cid 는 drawer 가 운반한다(행은 판단에 필요한 축만).
-  const sections = buildLedgerSectionsO(rows, closure);
+  const sections = buildLedgerSectionsO(rows, closure, needsYou);
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
@@ -2216,7 +2244,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
                     colSpan={6}
                     scope="colgroup"
                     className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
-                    {section.label} · {formatIntO(section.rows.length)} on this page
+                    {section.heading}
                   </th>
                 </tr>
                 {section.rows.map((row) => (
@@ -2859,6 +2887,11 @@ function buildSearchUrlO(filter, sort, page, limit, includeAll) {
   setOptionalAxesO(params, filter);
   setIncludeAllParamO(params, includeAll);
   return `/api/outcomes/search?${params.toString()}`;
+}
+
+// Needs-you 창 전체 질의 — ledger 필터 그대로 + attention 술어, 항상 첫 행부터 (page 무관).
+function buildNeedsYouUrlO(filter, sort, limit, includeAll) {
+  return `${buildSearchUrlO(filter, sort, 0, limit, includeAll)}&needs_attention=true`;
 }
 
 // T13 (O2) — agent facet 옵션을 canonical registry 집합에서 생성 (현재 페이지 rows
