@@ -54,17 +54,18 @@ interface AgentStackEntry {
 }
 interface OutcomesHelpers {
   buildAttentionParamsO: (days: number | string) => URLSearchParams;
-  buildPayloadGroupsO: (states: {
-    attentionState: unknown;
-    searchState: unknown;
-    analyticsState: unknown;
-  }) => { key: string; label: string; state: unknown }[];
+  AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
+  ErrorBannerO: unknown;
+  BlockedBannerO: unknown;
+  ResultTableBody: (props: Record<string, unknown>) => RenderNode;
+  ResultTableCard: (props: Record<string, unknown>) => RenderNode;
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
   buildByResultCountMapO: (byResult: unknown) => Record<string, number>;
   StatusBandO: (props: {
     analyticsState: PayloadState<AnalyticsData>;
     attentionState: PayloadState<{ total: number }>;
     windowDays: number;
+    onRetry?: () => void;
   }) => RenderNode;
   KpiSkeletonO: unknown;
   PayloadUnavailableO: unknown;
@@ -265,7 +266,10 @@ test("status band: done and broken count writer-emitted rows only, never above t
   }
 });
 
-test("StatusBandO: an analytics failure renders as unavailable, never as the loading skeleton", () => {
+const bannerTitles = (nodes: RenderNode[]): string[] =>
+  nodes.filter((n) => n.type === helpers.ErrorBannerO).map((n) => String(n.props?.title));
+
+test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
     analyticsState: { status },
     attentionState: { status: "loading" },
@@ -273,12 +277,57 @@ test("StatusBandO: an analytics failure renders as unavailable, never as the loa
   }));
   const loading = render("loading");
   assert.ok(loading.some((n) => n.type === helpers.KpiSkeletonO), "loading draws the pulsing skeleton");
+  assert.deepStrictEqual(bannerTitles(loading), [], "loading raises no banner");
   for (const status of ["error", "unavailable"] as PayloadStatus[]) {
     const nodes = render(status);
     assert.ok(!nodes.some((n) => n.type === helpers.KpiSkeletonO), `${status} draws no skeleton`);
-    assert.ok(nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} says the payload is unavailable`);
+    assert.ok(!nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} is not a text panel`);
+    assert.strictEqual(bannerTitles(nodes).length, 1, `${status}: one banner for the band's payload`);
     assert.ok(!nodes.some((n) => n.props?.["aria-busy"] === true || n.props?.["aria-busy"] === "true"), `${status} is not busy`);
   }
+});
+
+test("StatusBandO: a needs-you failure sits at the band as its own banner, beside tiles that still load", () => {
+  const nodes = flattenNodes(helpers.StatusBandO({
+    analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) },
+    attentionState: { status: "error", error: "boom" },
+    windowDays: 30,
+  }));
+  assert.strictEqual(bannerTitles(nodes).length, 1, "exactly one banner — the attention group's");
+  assert.match(bannerTitles(nodes)[0], /needs-you/i, "the banner names the group it belongs to");
+  assert.deepStrictEqual(
+    bannerTitles(flattenNodes(helpers.StatusBandO({
+      analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) },
+      attentionState: { status: "ready", data: { total: 3 } },
+      windowDays: 30,
+    }))),
+    [],
+    "a healthy band raises nothing",
+  );
+});
+
+test("AlarmLaneO: payload failures stay at their groups — the lane holds only silence and outages", () => {
+  const liveChannels = { status: "ready" as const, data: { alerting: [] } };
+  assert.strictEqual(
+    helpers.AlarmLaneO({ channelLivenessState: liveChannels, searchState: { status: "error", error: "boom" } }),
+    null,
+    "a ledger failure raises no lane row — the ledger shows it",
+  );
+  const outage = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: liveChannels, searchState: { status: "blocked" } }));
+  assert.ok(outage.some((n) => n.type === helpers.BlockedBannerO), "a sustained outage still owns the lane");
+  assert.deepStrictEqual(bannerTitles(outage), [], "the lane never re-draws a group banner");
+});
+
+test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
+  const body = flattenNodes(helpers.ResultTableBody({ state: { status: "error", error: "boom" }, rows: [] }));
+  assert.strictEqual(bannerTitles(body).length, 1, "the ledger owns its failure banner");
+
+  const card = flattenNodes(helpers.ResultTableCard({
+    state: { status: "error", error: "boom" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: { days: 30 },
+  }));
+  const head = card.find((n) => n.props?.title === "Results")!;
+  assert.doesNotMatch(String(head.props?.sub), /loading/i, "a failed ledger never reads as loading");
+  assert.match(String(head.props?.sub), /unavailable/i);
 });
 
 test("buildStatusBandTilesO: the missing-report level honours the same low-N floor as its sibling tiles", () => {
@@ -302,23 +351,6 @@ test("buildAttentionParamsO: emits a needs_attention literal the route's parser 
     assert.strictEqual(params.get("needs_attention"), "true", "the tile asks for the filtered population");
     assert.strictEqual(params.get("days"), String(days), "the query carries the band's own window");
     assert.strictEqual(params.get("limit"), "1", "only the total is consumed");
-  }
-});
-
-test("buildPayloadGroupsO: every above-the-fold payload owns a lane row carrying its own state", () => {
-  const attentionState = { status: "error", error: "boom" };
-  const searchState = { status: "ready" };
-  const analyticsState = { status: "loading" };
-  const groups = helpers.buildPayloadGroupsO({ attentionState, searchState, analyticsState });
-
-  assert.deepStrictEqual(
-    sameRealm(groups.map((g) => g.key)),
-    ["attention", "ledger", "analytics"],
-    "a read that owns a tile but no lane row fails silently",
-  );
-  for (const [key, state] of [["attention", attentionState], ["ledger", searchState], ["analytics", analyticsState]] as const) {
-    assert.strictEqual(groups.find((g) => g.key === key)!.state, state, `${key} row reads its own payload`);
-    assert.ok(groups.find((g) => g.key === key)!.label.length > 0, `${key} row names the payload in words`);
   }
 });
 

@@ -669,16 +669,13 @@ function ScreenOutcomes({ onNav }) {
         />
       </div>
 
-      <AlarmLaneO
-        channelLivenessState={channelLivenessState}
-        payloadGroups={buildPayloadGroupsO({ attentionState, searchState, analyticsState })}
-        onRetry={triggerRefresh}
-      />
+      <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
       <StatusBandO
         analyticsState={analyticsState}
         attentionState={attentionState}
         windowDays={analyticsPeriod}
+        onRetry={triggerRefresh}
       />
 
       {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
@@ -749,35 +746,18 @@ function ScreenOutcomes({ onNav }) {
   );
 }
 
-// 예약 레인 — 문제가 없으면 아무것도 렌더하지 않는다. 침묵한 기록 채널과 payload 실패만 레인 행이 되고,
-// 나머지 등급은 status band 글리프가 운반한다 (39573 §4 admission).
-// above-the-fold payload 마다 레인 행 하나 — 실패한 읽기가 타일만 비우고 침묵하면 조작자는 아무것도 못 본다.
-function buildPayloadGroupsO({ attentionState, searchState, analyticsState }) {
-  return [
-    { key: 'attention', label: 'the needs-you tile', state: attentionState },
-    { key: 'ledger',    label: 'the record ledger',  state: searchState },
-    { key: 'analytics', label: 'the status band',    state: analyticsState },
-  ];
-}
-
-function AlarmLaneO({ channelLivenessState, payloadGroups, onRetry }) {
+// 예약 레인 — 침묵한 기록 채널과 지속 장애(blocked)만 싣는다. payload 실패 배너는 소유 그룹 자리에 둔다
+// (stream 3) — 레인에 쌓으면 어느 그룹이 비었는지 떨어져 읽힌다.
+function AlarmLaneO({ channelLivenessState, searchState }) {
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
-  const blocked = payloadGroups.filter((g) => g.state.status === 'blocked');
-  const failed  = payloadGroups.filter((g) => g.state.status === 'error');
+  const isBlocked = searchState.status === 'blocked';
 
-  if (silent.length === 0 && blocked.length === 0 && failed.length === 0) return null;
+  if (silent.length === 0 && !isBlocked) return null;
 
   return (
     <div className="flex flex-col gap-2 mb-4 flex-shrink-0" role="region" aria-label="Alarms">
-      {blocked.map((g) => <BlockedBannerO key={g.key} detail={g.state.error}/>)}
+      {isBlocked && <BlockedBannerO detail={searchState.error}/>}
       {silent.length > 0 && <SilentChannelRowO channels={silent}/>}
-      {failed.map((g) => (
-        <ErrorBannerO
-          key={g.key}
-          title={`Couldn't load ${g.label}`}
-          detail={g.state.error}
-          onRetry={onRetry}/>
-      ))}
     </div>
   );
 }
@@ -936,7 +916,7 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
-function StatusBandO({ analyticsState, attentionState, windowDays }) {
+function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   if (analyticsState.status === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
@@ -944,11 +924,18 @@ function StatusBandO({ analyticsState, attentionState, windowDays }) {
       </div>
     );
   }
-  // 실패를 skeleton 으로 그리면 끝없는 적재로 읽힌다 — 레인 알람이 원인을 소유하고 여기선 '적재 실패' 만.
-  if (analyticsState.status !== 'ready') {
+  // blocked 는 레인의 장애 배너가 원인을 소유 → 여기선 '적재 실패' 만. 그 밖의 실패는 band 자리의 배너 하나.
+  if (analyticsState.status === 'blocked') {
     return (
       <div className="card mb-4 flex-shrink-0" aria-label="Status band">
         <PayloadUnavailableO label="Status band"/>
+      </div>
+    );
+  }
+  if (analyticsState.status !== 'ready') {
+    return (
+      <div className="mb-4 flex-shrink-0" aria-label="Status band">
+        <ErrorBannerO title="Couldn't load the status band" detail={analyticsState.error} onRetry={onRetry}/>
       </div>
     );
   }
@@ -961,9 +948,16 @@ function StatusBandO({ analyticsState, attentionState, windowDays }) {
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
 
+  const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
+
   return (
-    <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" role="group" aria-label="Status band">
-      {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
+    <div className="mb-4 flex-shrink-0">
+      <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
+        {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
+      </div>
+      {isAttentionFailed && (
+        <ErrorBannerO title="Couldn't load the needs-you count" detail={attentionState.error} onRetry={onRetry}/>
+      )}
     </div>
   );
 }
@@ -2034,7 +2028,7 @@ function ResultTableCard({
         title="Results"
         sub={state.status === 'ready'
           ? `${formatIntO(totalMatched)} matched · ${formatIntO(rows.length)} shown`
-          : 'Loading…'}
+          : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
             <ActiveFilterChips filter={filter}/>
@@ -2119,8 +2113,11 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
-  if (state.status === 'error' || state.status === 'blocked') {
+  if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records"/>;
+  }
+  if (state.status !== 'ready') {
+    return <ErrorBannerO title="Couldn't load the record ledger" detail={state.error} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
