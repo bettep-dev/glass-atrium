@@ -366,10 +366,10 @@ test("PUT /api/clauded-docs/:id: plain-format mismatch (md row ← yaml_body) �
   }
 });
 
-// POST doc_status 계약 — 실린 값은 그대로 저장되고, 'progress' 는 미지정일 때만 적용되는 기본값.
+// POST doc_status 계약 — 실린 값은 그대로 저장되고, 'doc_review' 는 미지정일 때만 적용되는 기본값.
 // html/plain 두 primary kind 가 각자 insert 를 호출하므로 양쪽 모두 확인 — 한쪽만 보면 다른 경로가
 // 지정값을 무시해도 통과한다.
-test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progress 는 미지정일 때만 기본값 (html·md 양쪽)", async () => {
+test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · doc_review 는 미지정일 때만 기본값 (html·md 양쪽)", async () => {
   const createdIds: number[] = [];
 
   // doc_status 유무만 바꿔 POST → 응답 doc_status 반환. 응답은 INSERT ... RETURNING 행에서
@@ -394,7 +394,7 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
     assert.strictEqual(
       await postDocStatus("post-status-html-done", "html_body", "done"),
       "done",
-      "html primary: 지정한 doc_status=done 이 저장돼야 함 — 기본값이 지정값을 덮으면 클라이언트가 done 으로 만든 문서가 progress 로 생성된다",
+      "html primary: 지정한 doc_status=done 이 저장돼야 함 — 기본값이 지정값을 덮으면 클라이언트가 done 으로 만든 문서가 doc_review 로 생성된다",
     );
     assert.strictEqual(
       await postDocStatus("post-status-md-done", "md_body", "done"),
@@ -403,13 +403,13 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
     );
     assert.strictEqual(
       await postDocStatus("post-status-html-default", "html_body", undefined),
-      "progress",
-      "html primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+      "doc_review",
+      "html primary: doc_review 는 doc_status 미지정일 때만 쓰이는 기본값",
     );
     assert.strictEqual(
       await postDocStatus("post-status-md-default", "md_body", undefined),
-      "progress",
-      "plain primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+      "doc_review",
+      "plain primary: doc_review 는 doc_status 미지정일 때만 쓰이는 기본값",
     );
   } finally {
     for (const id of createdIds) await deleteDoc(app, id);
@@ -418,12 +418,12 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
 
 // PUT doc_status toggle.
 // standalone 행(folder_id IS NULL)도 cascade-only path 진입 → cascadeUpdateDocStatus CTE 가 self-only 집합으로 degradation (단일 행 갱신). 4 시나리오:
-//   (1) standalone progress→done 토글 → 200 + done 영속화
-//   (2) standalone done→progress 역토글 — 양방향 정합
+//   (1) standalone doc_review→done 토글 → 200 + done 영속화
+//   (2) standalone done→doc_review 역토글 — 양방향 정합
 //   (3) grouped(folder_id 존재) cascade 보존 — 회귀 가드
 //   (4) standalone PUT 시 cascade_only 로그 emit + cascade_count=1 + folder_id=null
 
-test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status progress→done — 200 + 영속화", async () => {
+test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status doc_review→done — 200 + 영속화", async () => {
   const title = makeTitle("put-status-standalone-done");
   const html = makeHtmlBody(title);
   const created = await postCreate(app, {
@@ -439,7 +439,7 @@ test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status progress
     doc_status: string;
   };
   assert.strictEqual(detail.folder_id, null, "신규 standalone row 의 folder_id 는 null");
-  assert.strictEqual(detail.doc_status, "progress", "POST default doc_status 는 progress");
+  assert.strictEqual(detail.doc_status, "doc_review", "POST default doc_status 는 doc_review");
 
   try {
     // PUT — body 동일 (no-op short-circuit 경로) + doc_status=done →
@@ -535,14 +535,14 @@ test("PUT /api/clauded-docs/:id: grouped (folder_id 존재) cascade 회귀 — s
       "sibling C 가 cascade 로 done 전환 (grouped 의미 보존)",
     );
 
-    // anchor A — folder_id=NULL 이므로 cascade 범위 외 → progress 유지.
+    // anchor A — folder_id=NULL 이므로 cascade 범위 외 → doc_review 유지.
     const getARes = await app.inject({ method: "GET", url: `/api/clauded-docs/${aDetail.id}` });
     assert.strictEqual(getARes.statusCode, 200);
     const aBody2 = getARes.json() as { doc_status: string };
     assert.strictEqual(
       aBody2.doc_status,
-      "progress",
-      "anchor A (folder_id=NULL) 는 B/C 그룹의 cascade 범위 외 → progress 유지",
+      "doc_review",
+      "anchor A (folder_id=NULL) 는 B/C 그룹의 cascade 범위 외 → doc_review 유지",
     );
   } finally {
     await deleteDoc(app, cDetail.id);

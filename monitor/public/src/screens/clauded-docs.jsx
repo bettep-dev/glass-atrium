@@ -14,27 +14,73 @@ const {
 	useCallback: useCallbackCD,
 } = React;
 
-// doc_status 2-state — progress=작업 중 / done=완료. '' = 필터 미적용.
-const DOC_STATUS_OPTIONS_CD = [
-	{ value: "", label: "All", desc: "Documents in any status" },
-	{
-		value: "progress",
-		label: "In progress",
-		desc: "Still being worked on",
-	},
-	{
-		value: "done",
-		label: "Done",
-		desc: "Finished",
-	},
+// Work stages in screen order — stored token + the operator's Korean label. The meter fills to
+// the stage's 1-based rank, so the labels and the steps stay one vocabulary.
+const DOC_STAGES_CD = [
+	{ value: "doc_review", label: "문서 검증" },
+	{ value: "implementing", label: "구현중" },
+	{ value: "impl_review", label: "구현 검증" },
+	{ value: "impl_done", label: "구현 완료" },
+	{ value: "done", label: "종료" },
 ];
 
-// doc_status chip 색상 — progress=warn(in-flight) / done=ok(완료) / ''=faint.
+const TERMINAL_STAGE_CD = "done";
+
+// Retired in-flight token — read as the first stage (server parity), never written back.
+const RETIRED_STAGE_ALIAS_CD = "progress";
+
+// Reserved last-status-model literal for the operator's own action — a literal rather than an
+// absent value, so the screen renders it distinctly from a model id.
+const OPERATOR_ACTOR_CD = "operator";
+
+// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
+const LEDGER_COLUMN_COUNT_CD = 7;
+
+// Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
+// a count the payload does not carry renders as nothing, never as 0.
+const DOC_STATUS_OPTIONS_CD = [
+	{ value: "open", label: "열림", countKey: "open" },
+	{ value: TERMINAL_STAGE_CD, label: "종료", countKey: "done" },
+	{ value: "", label: "전체", countKey: "total" },
+];
+
+// Chip tint — 종료 keeps today's success tone · open and all stay neutral (no new colour).
 const DOC_STATUS_CSS_VAR_CD = {
 	"": "--faint",
-	progress: "--warn",
+	open: "--dim",
 	done: "--ok",
 };
+
+// Stored token → its stage entry · null = a token no stage covers (rendered as unavailable).
+function stageEntryCD(stored) {
+	if (stored === RETIRED_STAGE_ALIAS_CD) return DOC_STAGES_CD[0];
+	return DOC_STAGES_CD.find((stage) => stage.value === stored) || null;
+}
+
+// 1-based rank the meter fills to · 0 = no stage covers the token.
+function stageRankCD(stored) {
+	const entry = stageEntryCD(stored);
+	return entry ? DOC_STAGES_CD.indexOf(entry) + 1 : 0;
+}
+
+// The stage a ledger row renders — a group row states its least-advanced member stage, since
+// its representative is picked by display_order.
+function rowStageCD(row) {
+	return row?.group_doc_status ?? row?.doc_status ?? null;
+}
+
+// Rows in stage order, stable within a stage. A token no stage covers sorts last so it stays
+// visible instead of vanishing between sections.
+function sortRowsByStageCD(rows) {
+	return rows
+		.map((row, index) => ({
+			row,
+			index,
+			rank: stageRankCD(rowStageCD(row)) || DOC_STAGES_CD.length + 1,
+		}))
+		.sort((a, b) => a.rank - b.rank || a.index - b.index)
+		.map((entry) => entry.row);
+}
 
 // format 배지 데이터 — doc.format 실값으로 dual-encode (색 + glyph). html 외 포맷은 agent-only 변종.
 const DOC_FORMAT_BADGE_CD = {
@@ -92,9 +138,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// 검색어 / 필터.
 	const [keyword, setKeyword] = useStateCD("");
 	const [debouncedQ, setDebouncedQ] = useStateCD("");
-	// doc_status 1차 필터 (전체/진행중/완료). default 'progress' — 신규 진입 시 작업 중 항목 우선 surface.
+	// 열림/종료/전체 chip. default 'open' — 운영자의 열린 목록이 화면의 진입 상태.
 	//   · /groups endpoint 의 ?doc_status= 송신용 — rows endpoint 는 미지원 (search mode 제외).
-	const [docStatusFilter, setDocStatusFilter] = useStateCD("progress");
+	const [docStatusFilter, setDocStatusFilter] = useStateCD("open")
 	const [audienceFilter, setAudienceFilter] = useStateCD("all");
 
 	// 목록 / 뷰어 / 폼 상태.
@@ -117,6 +163,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const [editorOpen, setEditorOpen] = useStateCD(null); // null | { seed }
 	const [pendingDelete, setPendingDelete] = useStateCD(null); // { id, expiresAt }
 	const [refreshTick, setRefreshTick] = useStateCD(0);
+	// 마지막 성공 fetch 시각 — 실패 응답은 갱신하지 않는다 (as-of 가 앞서면 거짓 최신).
+	const [asOf, setAsOf] = useStateCD(null);
 	const [toast, setToast] = useStateCD(null); // { tone, message }
 
 	// doc_status 토글 optimistic state map.
@@ -289,9 +337,17 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					typeof managedData?.bigm_enabled === "boolean"
 						? managedData.bigm_enabled
 						: null;
-				setListState({
-					status: "ready",
-					data: { rows, total, docTotal, hiddenDocTotal, bigmEnabled },
+					// groups 응답 한정 corpus-scoped group 단위 counts — chip 수치의 출처.
+					const groupCounts =
+						managedData && typeof managedData.group_counts === "object"
+							? managedData.group_counts
+							: null;
+					if (typeof managedData?.fetched_at === "string") {
+						setAsOf(managedData.fetched_at);
+					}
+					setListState({
+						status: "ready",
+						data: { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts },
 					error: null,
 				});
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
@@ -605,26 +661,21 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		[showToast, triggerRefresh],
 	);
 
-	// doc_status 1-click 토글 핸들러 — optimistic update 채용.
-	//   사유: status 토글은 binary flip · blast radius 단일 행 → latency wait-state 가 wrong trade-off (다른 write 핸들러의 pessimistic 과 다른 패턴).
-	//   진행 순서:
-	//     1) togglingIds 진입 + optimisticStatusOverrides 즉시 flip (UI instant feedback)
-	//     2) cachedRow 가 같은 id 면 GET 스킵 — 그 외 GET /:id 로 body + content_hash + format 확보 (/groups 응답의 content_hash 는 null)
-	//     3) PUT /:id — body echoed (서버 'body unchanged + status diff' cascade-only path)
-	//     4) ok → triggerRefresh + toast · viewer 동일 id 면 재조회 / 실패 → toast + optimistic 자동 rollback (entry 삭제)
-	//   동일 id 중복 클릭 차단 — togglingIds 멤버 시 early return.
-	const performStatusToggle = useCallbackCD(
-		async (id, currentStatus, cachedRow) => {
-			// 입력 가드 — 알 수 없는 상태 / 진행 중 토글 차단.
-			if (currentStatus !== "progress" && currentStatus !== "done") {
-				showToast("warn", `Unknown status — can't toggle (#${id})`);
+	// 스테이지 변경 핸들러 — 메뉴에서 고른 stage 로 PUT. optimistic update 유지.
+	//   사유: blast radius 단일 행(종료 전이만 그룹 cascade) → latency wait-state 가 wrong trade-off.
+	//   진행 순서: optimistic 반영 → body/hash 확보(viewer cache 히트 시 GET 스킵) → PUT → refresh.
+	//   실패 시 optimistic entry 삭제 = 원래 stage 자동 복귀.
+	const performStageChange = useCallbackCD(
+		async (id, nextStage, cachedRow) => {
+			const entry = DOC_STAGES_CD.find((stage) => stage.value === nextStage);
+			if (!entry) {
+				showToast("warn", `Unknown stage — can't change (#${id})`);
 				return false;
 			}
 			if (togglingIds.has(id)) return false;
 
-			const targetStatus = currentStatus === "progress" ? "done" : "progress";
+			const targetStatus = entry.value;
 
-			// Optimistic flip + in-flight 표시.
 			setTogglingIds((prev) => {
 				const next = new Set(prev);
 				next.add(id);
@@ -636,7 +687,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				return next;
 			});
 
-			// Rollback helper — 응답 실패 시 in-flight + optimistic 동시 정리 (entry 삭제 = 원래 row.doc_status 복귀).
 			const rollback = () => {
 				setTogglingIds((prev) => {
 					const next = new Set(prev);
@@ -651,7 +701,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			};
 
 			try {
-				// 1) row 의 body + content_hash + format 확보. viewer cache 가 같은 id 면 GET 스킵 (네트워크 절감).
 				let body, expectedHash, format;
 				if (
 					cachedRow &&
@@ -672,7 +721,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					format = fetched.format;
 				}
 
-				// 2) format → body field name (서버 parseUpdateBody 5-way discriminator 정합).
+				// format → body field name (서버 parseUpdateBody 5-way discriminator 정합).
 				const bodyFieldName =
 					format === "html"
 						? "html_body"
@@ -684,7 +733,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 									? "json_body"
 									: "txt_body";
 
-				// 3) PUT — body echo + status flip. expected_hash 로 optimistic-lock 보존.
 				const res = await fetch(`/api/clauded-docs/${encodeURIComponent(id)}`, {
 					method: "PUT",
 					headers: {
@@ -694,21 +742,18 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					body: JSON.stringify({
 						expected_hash: expectedHash,
 						doc_status: targetStatus,
+						last_status_model: OPERATOR_ACTOR_CD,
 						[bodyFieldName]: body,
 					}),
 				});
 				const payload = await res.json().catch(() => null);
 				if (!res.ok) {
-					// 409 / 400 / 404 / 5xx — describeApiErrorCD 매핑 + rollback.
 					const reason = describeApiErrorCD(payload, res.status);
-					showToast("crit", `Couldn't change status — ${reason}`);
+					showToast("crit", `Couldn't change stage — ${reason}`);
 					rollback();
 					return false;
 				}
 
-				// 성공 — refresh 가 새 row.doc_status 를 반영하므로 optimistic entry 정리만 수행.
-				//   · togglingIds 제거 (in-flight 해제).
-				//   · optimisticStatusOverrides 제거 — refresh 직후 row.doc_status 가 SoT.
 				setTogglingIds((prev) => {
 					const next = new Set(prev);
 					next.delete(id);
@@ -719,15 +764,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					next.delete(id);
 					return next;
 				});
-				const successLabel =
-					targetStatus === "done" ? "marked done" : "marked in progress";
-				showToast("ok", `#${id} ${successLabel}`);
+				showToast("ok", `#${id} → ${entry.label}`);
 				triggerRefresh();
-				// viewer 가 동일 id 면 강제 재조회 (메타 패널 doc_status badge 즉시 갱신).
 				if (selectedId === id) loadViewerCD(id);
 				return true;
 			} catch (err) {
-				showToast("crit", `Couldn't change status — ${err?.message || err}`);
+				showToast("crit", `Couldn't change stage — ${err?.message || err}`);
 				rollback();
 				return false;
 			}
@@ -862,16 +904,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }
-        .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: 4px; font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
+        .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: var(--radius-badge); font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
         .doc-chip-badge[disabled] { cursor: default; }
-        .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
         /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
         .doc-empty { padding: 28px; border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
-        .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); }
+        .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
+        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
         .doc-editor-textarea:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history (T-DOC-3) — base.css .acked 는 .alert-row 스코프라 div 미적용 → predecessor 전용 dim 룰.
@@ -930,7 +972,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
         button.doc-chip-badge { min-height: 24px; min-width: 24px; }
-        /* (retired) .doc-status-badge — DocStatusBadgeCD 가 canonical Badge(role=status, interactive) 로 이전, screen-local FORM 제거. */
+        /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
@@ -950,7 +992,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         .doc-group-action-bar .ml-auto-actions { margin-left: auto; display: flex; gap: 8px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: 4px; }
+        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle .chevron { transition: transform 160ms ease-out; }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
@@ -962,19 +1004,46 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: 12px; line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: 3px; user-select: none; }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: 12px; line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-badge); user-select: none; }
         .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
+        /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
+        /* ID 셀 둘째 줄 계보 · 로딩 행 골격. */
+        .doc-lineage { font-size: var(--fs-micro); color: rgb(var(--faint)); white-space: nowrap; }
+        .doc-skeleton-row { display: grid; grid-template-columns: 135px 72px 1fr 110px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid rgb(var(--line) / 0.4); }
+        .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+        .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
+        .doc-stage-pill.is-interactive { cursor: pointer; }
+        .doc-stage-pill.is-interactive:hover { background: rgb(var(--line) / 0.4); }
+        .doc-stage-pill.is-terminal { color: rgb(var(--ok)); border-color: rgb(var(--ok) / 0.45); }
+        .doc-stage-meter { display: inline-flex; gap: 2px; }
+        .doc-stage-step { width: 6px; height: 4px; border-radius: 1px; background: rgb(var(--line)); }
+        .doc-stage-step.is-filled { background: rgb(var(--dim)); }
+        .doc-stage-step.is-filled.is-terminal { background: rgb(var(--ok)); }
+        .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
+        .doc-stage-actor { font-size: var(--fs-micro); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-stage-note { font-size: var(--fs-micro); color: rgb(var(--dim)); }
+        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
+        .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
+        .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
+        .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }
+        .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); }
+        /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
+        .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+        /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
+        tr.doc-stage-section > th { padding: 10px 12px 4px; text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
+        .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Documents"
-					sub="Managed documents"
+						sub={asOfSubCD(asOf, listState.status)}
 					right={headerRight}
 				/>
 			</div>
@@ -993,6 +1062,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					hiddenCount={hiddenCount}
 					total={total}
 					docTotal={docTotal}
+					groupCounts={
+						listState.status === "ready" ? (listState.data?.groupCounts ?? null) : null
+					}
 					visibleCount={visibleRows.length}
 					canLoadMore={canLoadMore}
 					loadMoreRemaining={loadMoreRemaining}
@@ -1007,7 +1079,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					onGroupCreate={performGroupCreate}
 					onUngroup={performUngroup}
 					onExportZip={exportSelectionAsZip}
-					onStatusToggle={performStatusToggle}
+					onPickStage={performStageChange}
 					onReorder={performReorder}
 					togglingIds={togglingIds}
 					optimisticStatusOverrides={optimisticStatusOverrides}
@@ -1054,7 +1126,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 							setIsFullscreen(false);
 							setSelectedId(null);
 						}}
-						onStatusToggle={performStatusToggle}
+						onPickStage={performStageChange}
 						togglingIds={togglingIds}
 						optimisticStatusOverrides={optimisticStatusOverrides}
 						onNavigate={setSelectedId}
@@ -1085,8 +1157,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	);
 }
 
-// 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
-function DocTagsCellCD({ audience, format, supersedesId }) {
+// 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
+function DocTagsCellCD({ audience, format }) {
 	const { Badge } = window.UI;
 	return (
 		<td className="doc-tags-cell">
@@ -1096,12 +1168,6 @@ function DocTagsCellCD({ audience, format, supersedesId }) {
 				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
 				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
-				{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'). */}
-				{supersedesId != null && (
-					<Badge role="metadata" title={`Replaces #${supersedesId}`}>
-						rev
-					</Badge>
-				)}
 			</span>
 		</td>
 	);
@@ -1129,6 +1195,7 @@ function DocListCardCD({
 	hiddenCount,
 	total,
 	docTotal,
+	groupCounts,
 	visibleCount,
 	canLoadMore,
 	loadMoreRemaining,
@@ -1144,7 +1211,7 @@ function DocListCardCD({
 	onUngroup,
 	onExportZip,
 	onReorder,
-	onStatusToggle,
+	onPickStage,
 	togglingIds,
 	optimisticStatusOverrides,
 	inlineFilterProps,
@@ -1154,12 +1221,16 @@ function DocListCardCD({
 	const { Icon, Badge } = window.UI;
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
+	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
+	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
 	const totalLabel =
-		!isSearchMode && docTotal != null
-			? `${formatIntCD(total)} groups · ${formatIntCD(docTotal)} documents${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
-			: hiddenCount > 0
-				? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
-				: `${formatIntCD(total)} matched`;
+		state.status !== "ready"
+			? null
+			: !isSearchMode && docTotal != null
+				? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+				: hiddenCount > 0
+					? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
+					: `${formatIntCD(total)} matched`;
 
 	// multi-select 파생값. server contract 정합 (group ≥ 2, ungroup ≥ 1).
 	const selectionSize = selectedIds.size;
@@ -1171,6 +1242,39 @@ function DocListCardCD({
 		rows.length > 0 && allRowIds.every((id) => selectedIds.has(id));
 	const isPartialSelected =
 		!isAllSelected && allRowIds.some((id) => selectedIds.has(id));
+
+	// 스테이지 섹션 — 열림/전체 필터에서만. 단일 stage 필터에서는 chip 과 같은 말을 두 번 한다.
+	const isSectioned =
+		!isSearchMode &&
+		(inlineFilterProps.docStatusFilter === "" ||
+			inlineFilterProps.docStatusFilter === "open");
+	const orderedRows = isSectioned ? sortRowsByStageCD(rows) : rows;
+	// 섹션 건수는 page-scoped — chip 의 corpus-scoped 수치와 단위가 다르다.
+	const sectionCounts = new Map();
+	for (const row of orderedRows) {
+		const rank = stageRankCD(rowStageCD(row));
+		sectionCounts.set(rank, (sectionCounts.get(rank) || 0) + 1);
+	}
+	// 섹션 첫 행 앞에만 헤더 — 같은 stage 가 이어지면 null.
+	const renderSectionHead = (row, index) => {
+		if (!isSectioned) return null;
+		const rank = stageRankCD(rowStageCD(row));
+		const previous = index === 0 ? null : orderedRows[index - 1];
+		if (previous && stageRankCD(rowStageCD(previous)) === rank) return null;
+		const entry = stageEntryCD(rowStageCD(row));
+		return (
+			<tr className="doc-stage-section">
+				<th colSpan={LEDGER_COLUMN_COUNT_CD} scope="colgroup">
+					<span>
+						{entry ? entry.label : "stage unavailable"}
+					</span>
+					<span className="doc-stage-section-count">
+						{formatIntCD(sectionCounts.get(rank) || 0)}
+					</span>
+				</th>
+			</tr>
+		);
+	};
 
 	return (
 		<div
@@ -1186,9 +1290,9 @@ function DocListCardCD({
 					borderBottom: "1px solid rgb(var(--line))",
 				}}
 			>
-				{/* Row 1 — 검색 input (44px 터치 타겟 + Pretendard 가독). */}
-				<div className="px-4 pt-3 pb-2">
-					<div className="relative">
+				{/* 단일 툴바 행 — 검색 · 열림/종료/전체 chip(그룹 단위 건수) · 대상 chip · 건수. */}
+				<div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
 						<span className="doc-search-icon" aria-hidden="true">
 							<Icon name="search" size={14} />
 						</span>
@@ -1197,55 +1301,15 @@ function DocListCardCD({
 							className="doc-search-input"
 							placeholder="Search…"
 							value={inlineFilterProps.keyword}
-							onChange={(e) =>
-								inlineFilterProps.onKeywordChange(e.target.value)
-							}
-							style={{ height: 44 }}
+							onChange={(e) => inlineFilterProps.onKeywordChange(e.target.value)}
+							style={{ height: 36 }}
 							aria-label="Search documents"
 						/>
 					</div>
-				</div>
-				{/* Row 2 — 대상 chips (좌측) + 건수 (우측 ml-auto). 마이크로 라벨 미사용 (chips 자체로 의미 전달). */}
-				<div className="px-4 pb-2.5 flex items-center gap-2 flex-wrap">
 					<div
 						className="flex flex-wrap gap-1.5"
 						role="radiogroup"
-						aria-label="Audience filter"
-					>
-						{AUDIENCE_OPTIONS_CD.map((opt) => {
-							const active = inlineFilterProps.audienceFilter === opt.value;
-							return (
-								<button
-									key={opt.value}
-									type="button"
-									role="radio"
-									className="doc-chip-badge"
-									onClick={() => inlineFilterProps.onAudienceChange(opt.value)}
-									aria-checked={active}
-									aria-pressed={active}
-									style={chipBadgeStyleCD("--info", active)}
-								>
-									{opt.label}
-								</button>
-							);
-						})}
-					</div>
-					<span
-						className="ml-auto fs-meta font-mono"
-						style={{ color: "rgb(var(--dim))" }}
-					>
-						{totalLabel}
-					</span>
-				</div>
-				{/* Row 3 — doc_status chips — primary workflow filter (전체/진행중/완료).
-            · /api/clauded-docs/groups endpoint ?doc_status= 송신 · search mode 미적용 (search 는 rows endpoint).
-            · workflow lifecycle 1차 분류 (사용자 mental model: "지금 진행 중인 것들 보기"). */}
-				<div className="px-4 pb-2.5 flex items-center gap-2 flex-wrap">
-					<div
-						className="flex flex-wrap gap-1.5"
-						role="radiogroup"
-						aria-label="Status filter"
-					>
+						aria-label="Stage filter">
 						{DOC_STATUS_OPTIONS_CD.map((opt) => {
 							const active = inlineFilterProps.docStatusFilter === opt.value;
 							const cssVar = DOC_STATUS_CSS_VAR_CD[opt.value] || "--faint";
@@ -1258,13 +1322,46 @@ function DocListCardCD({
 									onClick={() => inlineFilterProps.onDocStatusChange(opt.value)}
 									aria-checked={active}
 									aria-pressed={active}
-									style={chipBadgeStyleCD(cssVar, active)}
-								>
+									style={chipBadgeStyleCD(cssVar, active)}>
+									{opt.label}
+									{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
+									{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
+										<span className="doc-chip-count">
+											{formatIntCD(groupCounts[opt.countKey])}
+										</span>
+									)}
+								</button>
+							);
+						})}
+					</div>
+					<div
+						className="flex flex-wrap gap-1.5"
+						role="radiogroup"
+						aria-label="Audience filter">
+						{AUDIENCE_OPTIONS_CD.map((opt) => {
+							const active = inlineFilterProps.audienceFilter === opt.value;
+							return (
+								<button
+									key={opt.value}
+									type="button"
+									role="radio"
+									className="doc-chip-badge"
+									onClick={() => inlineFilterProps.onAudienceChange(opt.value)}
+									aria-checked={active}
+									aria-pressed={active}
+									style={chipBadgeStyleCD("--info", active)}>
 									{opt.label}
 								</button>
 							);
 						})}
 					</div>
+					{totalLabel && (
+						<span
+							className="ml-auto fs-meta font-mono"
+							style={{ color: "rgb(var(--dim))" }}>
+							{totalLabel}
+						</span>
+					)}
 				</div>
 				{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
             저하(tsvector 단어 단위만 매칭)가 사용자에게 비가시 → 검색 모드에서 화면에 명시.
@@ -1273,18 +1370,10 @@ function DocListCardCD({
 					state.status === "ready" &&
 					state.data?.bigmEnabled === false && (
 						<div
-							className="mx-4 mb-2.5 flex items-center gap-2 rounded-md px-3 py-2 fs-meta"
-							style={{
-								background: "rgb(var(--warn) / 0.1)",
-								border: "1px solid rgb(var(--warn) / 0.28)",
-								color: "rgb(var(--warn))",
-							}}
-							role="note"
-						>
-							<Icon name="warn" size={14} />
-							<span style={{ color: "rgb(var(--dim))" }}>
-								Search matches whole words only (Korean partial-word matching unavailable).
-							</span>
+							className="px-4 pb-2 fs-meta"
+							style={{ color: "rgb(var(--faint))" }}
+							role="note">
+							Whole-word matches only — Korean partial-word search is unavailable.
 						</div>
 					)}
 				{/* doc_type 필터/배지 서브시스템 전면 제거.
@@ -1354,7 +1443,7 @@ function DocListCardCD({
                     목록 모드 비-제목 합 613px → 제목이 나머지 397px(본문 상자 343px).
                     width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
                     min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
-								{/* 135px — 최장 라벨 "In progress" 배지가 들어가는 컬럼 하한. */}
+								{/* 135px — 최장 stage 라벨 pill 과 그 아래 모델 줄이 들어가는 컬럼 하한. */}
 								<th style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
@@ -1365,15 +1454,10 @@ function DocListCardCD({
 								<th style={{ width: 152, minWidth: 152 }}>Tags</th>
 								<th style={{ width: 110, minWidth: 110 }}>Author</th>
 								<th style={{ width: 100, minWidth: 100 }}>Created</th>
-								{isSearchMode && (
-									<th style={{ width: 56, minWidth: 56 }} className="num">
-										Order
-									</th>
-								)}
 							</tr>
 						</thead>
 						<tbody>
-							{rows.map((row) => {
+							{orderedRows.map((row, rowIndex) => {
 								const isSelectedViewer = row.id === selectedId;
 								const isSelectedMulti = selectedIds.has(row.id);
 								const isPending = pendingDelete && pendingDelete.id === row.id;
@@ -1392,6 +1476,7 @@ function DocListCardCD({
 									.join(" ");
 								return (
 									<React.Fragment key={row.id}>
+										{renderSectionHead(row, rowIndex)}
 										<tr
 											className={rowClass}
 											onClick={(e) => {
@@ -1429,38 +1514,36 @@ function DocListCardCD({
 													ariaLabel={`Select ${row.title}`}
 												/>
 											</td>
-											{/* doc_status badge 별도 column (title inline 제거). 빈 doc_status 는 — fallback (시각 정렬 보존).
-                          onStatusToggle 주입 → 클릭 시 optimistic flip.
-                          optimisticStatusOverrides Map 이 row.id entry 보유 시 그 값을 표시값으로 사용 (서버 refresh 도착 전 즉시 반영). */}
+											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											<td>
-												{row.doc_status ? (
-													<DocStatusBadgeCD
+													<DocStagePillCD
 														docStatus={
-															optimisticStatusOverrides.get(row.id) ??
-															row.doc_status
+															optimisticStatusOverrides.get(row.id) ?? rowStageCD(row)
 														}
-														onToggle={() =>
-															onStatusToggle(
-																row.id,
-																optimisticStatusOverrides.get(row.id) ??
-																	row.doc_status,
-																null,
-															)
-														}
-														isToggling={togglingIds.has(row.id)}
+														onPickStage={(stage) => onPickStage(row.id, stage, null)}
+														isChanging={togglingIds.has(row.id)}
+														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
-												) : (
-													<span
-														className="fs-meta"
-														style={{ color: "rgb(var(--faint))" }}
-													>
-														—
-													</span>
-												)}
-											</td>
+													{/* 마지막 상태 변경 행위자 — 모를 때는 여기서 침묵하고 뷰어가 한 번 말한다. */}
+													{row.last_status_model && (
+														<div
+															className="doc-stage-actor"
+															title={`Last stage action by ${row.last_status_model}`}>
+															{formatActorCD(row.last_status_model)}
+														</div>
+													)}
+												</td>
 											<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
-												#{row.id}
-											</td>
+													<div>#{row.id}</div>
+													{/* 계보는 ID 셀 둘째 줄 — 목록에서 잘려 나가던 사실을 되돌린다. */}
+													{row.supersedes_id != null && (
+														<div
+															className="doc-lineage"
+															title={`Replaces #${row.supersedes_id}`}>
+															rev of #{row.supersedes_id}
+														</div>
+													)}
+												</td>
 											<td className="title-cell">
 												<div
 													className="doc-title-row font-medium fs-title"
@@ -1514,7 +1597,6 @@ function DocListCardCD({
 											<DocTagsCellCD
 												audience={row.audience}
 												format={row.format}
-												supersedesId={row.supersedes_id}
 											/>
 											<DocAuthorCellCD author={row.author} />
 											<td
@@ -1522,15 +1604,7 @@ function DocListCardCD({
 												style={{ color: "rgb(var(--dim))" }}
 											>
 												{formatDateCD(row.created_at)}
-											</td>
-											{isSearchMode && (
-												<td
-													className="num doc-meta-text-mono"
-													style={{ color: "rgb(var(--faint))" }}
-												>
-													{row.rank != null ? (<span title={`Relevance ${Number(row.rank).toFixed(2)}`}>•</span>) : "—"}
 												</td>
-											)}
 										</tr>
 										{isExpanded && (
 											<GroupMembersRowsCD
@@ -1544,7 +1618,7 @@ function DocListCardCD({
 												pendingDelete={pendingDelete}
 												onSelect={onSelect}
 												onToggleSelection={onToggleSelection}
-												onStatusToggle={onStatusToggle}
+												onPickStage={onPickStage}
 												togglingIds={togglingIds}
 												optimisticStatusOverrides={optimisticStatusOverrides}
 											/>
@@ -1680,7 +1754,7 @@ function GroupMembersRowsCD({
 	onSelect,
 	onToggleSelection,
 	onReorder,
-	onStatusToggle,
+	onPickStage,
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
@@ -1772,8 +1846,7 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	// column 구성: checkbox + status + id + title + tags + author + created_at (+ rank if search) = 7 or 8.
-	const colSpan = isSearchMode ? 8 : 7;
+	const colSpan = LEDGER_COLUMN_COUNT_CD;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -1911,22 +1984,16 @@ function GroupMembersRowsCD({
 					/>
 				</td>
 				{/* doc_status badge 별도 column (GroupMembersRows · 사용자 directive).
-            onStatusToggle 주입 (list-row 와 동일 동작). */}
+            onPickStage 주입 (list-row 와 동일 동작). */}
 				<td>
 					{member.doc_status ? (
-						<DocStatusBadgeCD
-							docStatus={
-								optimisticStatusOverrides.get(member.id) ?? member.doc_status
-							}
-							onToggle={() =>
-								onStatusToggle(
-									member.id,
-									optimisticStatusOverrides.get(member.id) ?? member.doc_status,
-									null,
-								)
-							}
-							isToggling={togglingIds.has(member.id)}
-						/>
+						<DocStagePillCD
+								docStatus={
+									optimisticStatusOverrides.get(member.id) ?? member.doc_status
+								}
+								onPickStage={(stage) => onPickStage(member.id, stage, null)}
+								isChanging={togglingIds.has(member.id)}
+							/>
 					) : (
 						<span className="fs-meta" style={{ color: "rgb(var(--faint))" }}>
 							—
@@ -1967,14 +2034,6 @@ function GroupMembersRowsCD({
 				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</td>
-				{isSearchMode && (
-					<td
-						className="num doc-meta-text-mono"
-						style={{ color: "rgb(var(--faint))" }}
-					>
-						—
-					</td>
-				)}
 			</tr>
 		);
 	});
@@ -1991,7 +2050,7 @@ function ViewerPanelCD({
 	pendingDelete,
 	onDelete,
 	onClose,
-	onStatusToggle,
+	onPickStage,
 	togglingIds,
 	optimisticStatusOverrides,
 	onNavigate,
@@ -2044,7 +2103,7 @@ function ViewerPanelCD({
 						{/* doc(=viewer cache) 를 cachedRow 로 전달 → GET 스킵 (네트워크 절감). */}
 						<DocMetaPanelCD
 							doc={state.data}
-							onStatusToggle={onStatusToggle}
+							onPickStage={onPickStage}
 							togglingIds={togglingIds}
 							optimisticStatusOverrides={optimisticStatusOverrides}
 							onNavigate={onNavigate}
@@ -2494,7 +2553,7 @@ function ViewerBodyCD({ state }) {
 
 function DocMetaPanelCD({
 	doc,
-	onStatusToggle,
+	onPickStage,
 	togglingIds,
 	optimisticStatusOverrides,
 	onNavigate,
@@ -2517,23 +2576,33 @@ function DocMetaPanelCD({
 					{formatDateTimeCD(doc.created_at)}
 				</span>
 			</div>
+			{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Lineage</span>
+				<span className="doc-meta-value">
+					{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
+					{doc.superseded_by_id != null
+						? ` · superseded by #${doc.superseded_by_id}`
+						: ""}
+				</span>
+			</div>
+			{/* 목록은 모르는 행위자에 침묵하고, 뷰어가 여기서 한 번 unknown 이라고 말한다. */}
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Last action</span>
+				<span className="doc-meta-value">
+					{doc.last_status_model ? formatActorCD(doc.last_status_model) : "unknown"}
+				</span>
+			</div>
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
-				{/* doc_status dual-encoded badge (workflow lifecycle 진행중/완료).
-				    onStatusToggle 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
-				    cachedRow=doc — viewer state 가 body + content_hash + format 보유 → GET 스킵 (네트워크 절감). */}
-				<DocStatusBadgeCD
+				{/* onPickStage 미주입 → read-only pill · cachedRow=doc → viewer cache 로 GET 스킵. */}
+				<DocStagePillCD
 					docStatus={optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status}
-					onToggle={
-						typeof onStatusToggle === "function"
-							? () =>
-									onStatusToggle(
-										doc.id,
-										optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status,
-										doc,
-									)
+					onPickStage={
+						typeof onPickStage === "function"
+							? (stage) => onPickStage(doc.id, stage, doc)
 							: undefined
 					}
-					isToggling={togglingIds?.has(doc.id) ?? false}
+					isChanging={togglingIds?.has(doc.id) ?? false}
 				/>
 				{/* format = 서술 속성 → neutral metadata pill.
 				    · 미지정 format 은 배지 미출력 (거짓 주장 방지). */}
@@ -2555,65 +2624,110 @@ function DocMetaPanelCD({
 	);
 }
 
-// doc_status dual-encoded badge (workflow lifecycle).
-//   · 색상: DOC_STATUS_CSS_VAR_CD 매핑 — progress=--warn / done=--ok (canonical 2-state).
-//   · text label: In progress / Done.
-//   · 위치: 목록 row 의 title 아래 + meta panel (DocMetaPanelCD).
-// doc_status badge 시맨틱 업그레이드.
-//   · onToggle 미제공 → 기존 <span> read-only fallback (backwards-compat — 호출 사이트 점진 마이그레이션 안전).
-//   · onToggle 제공 → 시맨틱 <button> + aria-label 동작 명시 + aria-busy in-flight 표시.
-//     · 키보드 활성화 (Enter / Space) 는 native button 이 자동 처리 — 별도 핸들러 불필요.
-//     · dual-encoding — TONE_ICON Lucide(check/warn) + 텍스트 라벨 (In progress/Done) 2중 채널 (Badge status SoT).
-//     · pending 상태 → 라벨 'Changing…' + 투명도 0.65 (색상 회전 회피 — 새 의미 카테고리 시사 차단).
-//     · prefers-reduced-motion 자동 정합 — transition 미사용 (instant swap).
-function DocStatusBadgeCD({ docStatus, onToggle, isToggling }) {
-	const { Badge } = window.UI;
-	if (!docStatus) return null;
-	// lifecycle 상태 = status role: progress→warn(in-flight) / done→ok(완료).
-	const tone =
-		docStatus === "progress" ? "warn" : docStatus === "done" ? "ok" : "info";
-	const label =
-		docStatus === "progress"
-			? "In progress"
-			: docStatus === "done"
-				? "Done"
-				: docStatus;
+// Stage pill — a monotone 5-step meter + the stage label, and the stage menu it opens.
+//   · tone rides on the meter fill and the terminal glyph, never on the label text (39578 §E).
+//   · 종료 keeps today's success tone · every open stage renders neutral (no new colour).
+//   · a token no stage covers renders as unavailable — distinct from a stage and from empty.
+//   · onPickStage 미제공 → read-only 표시 · pending 중 메뉴 차단 (중복 PUT 가드).
+function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
+	const { Icon } = window.UI;
+	const [menuOpen, setMenuOpen] = useStateCD(false);
+	const entry = stageEntryCD(docStatus);
 
-	// Read-only fallback — 호출 사이트가 onToggle 을 넘기지 않은 경우 (점진 마이그레이션 안전망).
-	if (typeof onToggle !== "function") {
+	if (!entry) {
 		return (
-			<span title={`Status — ${label}`}>
-				<Badge role="status" tone={tone} icon>
-					{label}
-				</Badge>
+			<span
+				className="fs-meta"
+				style={{ color: "rgb(var(--faint))" }}
+				title={`Stage unavailable — stored '${docStatus ?? "none"}'`}>
+				stage unavailable
 			</span>
 		);
 	}
 
-	// Interactive — 캐노니컬 window.UI.Badge(role=status)를 interactive 로 렌더 → read-only <Badge role=status> 와 동일 FORM.
-	//   · Badge 가 <button className="pill pill--interactive"> + 선행 tone glyph(status role)을 생성 — screen-local .doc-status-badge 폐기.
-	//   · dedup: pending(isToggling) 중 onClick 을 no-op 가드 (disabled attr 없이 중복 PUT 차단).
-	//   · pending 상태는 라벨 'Changing…'(button 접근 이름) + title 이 운반 → 상태/동작 접근성 유지.
-	//   · focus-visible ring 은 .pill--interactive(base.css) 이 담당 (인라인 tailwind ring 유틸 제거).
-	const oppositeLabel = docStatus === "progress" ? "Done" : "In progress";
-	const displayLabel = isToggling ? "Changing…" : label;
+	const rank = stageRankCD(entry.value);
+	const isTerminal = entry.value === TERMINAL_STAGE_CD;
+	const accessibleName = `${entry.label} — stage ${rank} of ${DOC_STAGES_CD.length}`;
+	const face = (
+		<>
+			<span className="doc-stage-meter" aria-hidden="true">
+				{DOC_STAGES_CD.map((stage, index) => (
+					<span
+						key={stage.value}
+						className={`doc-stage-step${index < rank ? " is-filled" : ""}${isTerminal ? " is-terminal" : ""}`}
+					/>
+				))}
+			</span>
+			{isTerminal && <Icon name="check" size={11} />}
+			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
+		</>
+	);
+
+	if (typeof onPickStage !== "function") {
+		return (
+			<span className="doc-stage-pill" title={accessibleName}>
+				{face}
+			</span>
+		);
+	}
 
 	return (
-		<Badge
-			role="status"
-			tone={tone}
-			icon
-			interactive
-			title={isToggling ? "Changing status…" : `Click to mark ${oppositeLabel}`}
-			onClick={(e) => {
-				// row click bubble 차단 — DocListCardCD onClick 이 viewer fullscreen 진입 트리거 (의도 충돌).
-				e.stopPropagation();
-				if (!isToggling) onToggle();   // pending 중 중복 PUT 차단 (disabled attr 대체 가드)
+		<span
+			className="doc-stage-picker"
+			onKeyDown={(e) => {
+				if (e.key === "Escape" && menuOpen) {
+					e.stopPropagation();
+					setMenuOpen(false);
+				}
 			}}
-		>
-			{displayLabel}
-		</Badge>
+			onBlur={(e) => {
+				// 포커스가 메뉴 밖으로 나가면 닫는다 — 내부 이동은 유지.
+				if (!e.currentTarget.contains(e.relatedTarget)) setMenuOpen(false);
+			}}>
+			<button
+				type="button"
+				className={`doc-stage-pill is-interactive${isTerminal ? " is-terminal" : ""}`}
+				aria-haspopup="menu"
+				aria-expanded={menuOpen}
+				aria-busy={isChanging || undefined}
+				aria-label={`${accessibleName} — change stage`}
+				title={isChanging ? "Changing stage…" : accessibleName}
+				onClick={(e) => {
+					// row click bubble 차단 — 행 클릭은 뷰어 진입 (의도 충돌).
+					e.stopPropagation();
+					if (!isChanging) setMenuOpen((open) => !open);
+				}}>
+				{face}
+			</button>
+			{note && <span className="doc-stage-note">{note}</span>}
+			{menuOpen && (
+				<span className="doc-stage-menu" role="menu" aria-label="Set stage">
+					{DOC_STAGES_CD.map((stage, index) => (
+						<button
+							key={stage.value}
+							type="button"
+							role="menuitemradio"
+							aria-checked={stage.value === entry.value}
+							className="doc-stage-menu-item"
+							onClick={(e) => {
+								e.stopPropagation();
+								setMenuOpen(false);
+								if (stage.value !== entry.value) onPickStage(stage.value);
+							}}>
+							<span className="doc-stage-menu-rank">{index + 1}</span>
+							{stage.label}
+						</button>
+					))}
+				</span>
+			)}
+		</span>
 	);
+}
+
+// last-status-model → the line under the pill. The operator's own action is a reserved literal
+// and reads as such; a model id renders verbatim. Unknown is absent here and stated in the viewer.
+function formatActorCD(model) {
+	return model === OPERATOR_ACTOR_CD ? "운영자" : model;
 }
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
@@ -3005,15 +3119,37 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 function DocListSkeletonCD() {
 	return (
 		<div className="p-4" aria-busy="true" aria-label="Loading documents">
+			{/* 행 모양 그대로 — 로딩이 빈 목록으로 읽히지 않게 한다. */}
 			{Array.from({ length: 6 }).map((_, i) => (
-				<div key={i} style={{ ...skeletonBlockStyleCD(36), marginBottom: 8 }} />
+				<div key={i} className="doc-skeleton-row">
+					<div style={skeletonBlockStyleCD(14)} />
+					<div style={skeletonBlockStyleCD(12)} />
+					<div style={skeletonBlockStyleCD(12)} />
+					<div style={skeletonBlockStyleCD(12)} />
+				</div>
 			))}
 		</div>
 	);
 }
 
+// as-of 스탬프 — asOf 는 성공 fetch 만 갱신하므로 첫 fetch 가 실패하면 null 로 남는다.
+// 그 상태를 "loading…" 이라 말하면 에러 배너 옆에서 진행 중이라 거짓말하는 셈.
+function asOfSubCD(asOf, listStatus) {
+	if (asOf) return `as of ${formatDateTimeCD(asOf)}`;
+	return listStatus === "loading" ? "loading…" : "not loaded";
+}
+
+// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
+function emptyHeadlineCD(isSearchMode, docStatusFilter) {
+	if (isSearchMode) return "No documents match this search";
+	// 칩의 한국어 stage 단어만 옮기고 문장은 화면 나머지와 같은 영어 — 한 면 안에서 언어가 갈리지 않게.
+	const option = DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter);
+	if (option && option.value) return `No ${option.label} documents`;
+	return "No documents";
+}
+
 // S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
-//   · docStatus default 'progress' / audience default 'all' 기준으로 non-default 만 active 집계.
+//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
 //   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
 function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
@@ -3037,7 +3173,7 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 
 	return (
 		<div className="doc-empty m-4" role="status" aria-live="polite">
-			<div>{isSearchMode ? "No matches" : "No documents"}</div>
+			<div>{emptyHeadlineCD(isSearchMode, docStatusFilter)}</div>
 			{hasActiveFilters && (
 				<div
 					className="fs-meta mt-2"
@@ -3108,6 +3244,10 @@ function normalizeGroupToRowCD(group) {
 		title: group.representative_title,
 		author: group.representative_author,
 		doc_status: group.representative_doc_status,
+		// 그룹 행이 렌더하는 stage = 가장 덜 진행된 멤버 (대표 행이 아니라) + 멤버 일치 여부.
+		group_doc_status: group.group_doc_status,
+		group_stage_uniform: group.group_stage_uniform,
+		last_status_model: group.representative_last_status_model ?? null,
 		audience: group.representative_audience,
 		format: group.representative_format,
 		created_at: group.representative_created_at,
@@ -4274,7 +4414,7 @@ function chipBadgeStyleCD(cssVar, active) {
 function skeletonBlockStyleCD(height) {
 	return {
 		height,
-		borderRadius: 6,
+		borderRadius: "var(--radius-badge)",
 		background: "rgb(var(--sunken))",
 		opacity: 0.7,
 		animation: "skelPulseCD 1.4s ease-in-out infinite",
