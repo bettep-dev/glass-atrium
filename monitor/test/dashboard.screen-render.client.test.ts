@@ -111,7 +111,7 @@ test("a tile heads with an h2 whose window keeps its own case, and leads with th
   const windowSpan = findNodes(headings[0], (n) => classOf(n).includes("normal-case"));
   assert.equal(windowSpan.length, 1, "the window escapes the label's uppercase");
   assert.equal(collectText(windowSpan[0]).replace(/\s+/g, ""), "(7d)");
-  const value = findNodes(tree, (n) => classOf(n).includes("kpi-value"));
+  const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
   assert.equal(value.length, 1, "the value uses the Cost page's KPI scale");
   assert.equal(collectText(value[0]), "40");
 });
@@ -142,7 +142,7 @@ test("the Task results tile headlines a verdict for every judged status and keep
 test("a tile with detail renders the headline first and the detail outside the KPI-scale value", () => {
   const tile = { ...READY_TILE, value: "Within lines", detail: "40 outcomes", hint: "Shares of writer-emitted outcomes." };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const value = findNodes(tree, (n) => classOf(n).includes("kpi-value"));
+  const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
   assert.equal(value.length, 1);
   assert.equal(collectText(value[0]), "Within lines");
   const text = collectText(tree);

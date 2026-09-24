@@ -207,7 +207,7 @@ function StatusBand({ tiles, onNav, onRetry }) {
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(스켈레톤) · error(재시도) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry }) {
-  const { Badge } = window.UI;
+  const { Badge, KpiValue } = window.UI;
   return (
     <div className="card p-3 flex flex-col gap-1.5">
       <h2 className="fs-meta text-dim uppercase tracking-wide">
@@ -218,7 +218,7 @@ function StatusTile({ tile, onNav, onRetry }) {
         <Skel w={90} h={24}/>
       ) : (
         <div className="flex items-center gap-2">
-          <span className="kpi-value text-ink">{tile.value}</span>
+          <KpiValue>{tile.value}</KpiValue>
           {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{TONE_WORD[tile.tone]}</Badge>}
         </div>
       )}
