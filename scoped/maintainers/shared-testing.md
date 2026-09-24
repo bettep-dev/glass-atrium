@@ -25,7 +25,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
-| Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
+| Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | Rationalization Rejection (Testing) | every agent — the charter names testing as a home file for the excuse→rebuttal pairs | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
@@ -33,7 +33,9 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
-  - The Test Structure H3s (`### Where a test lives`, `### Names, comments and test data`, `### Table form per stack`) are cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` and by in-file pointers; grep before renaming one.
+  - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
+    - headings: `### What makes a test a test` · `#### The prohibited shapes` · `## Mocking Rules` · `## Test Structure` · `### Where a test lives` · `### Names, comments and test data` · `### Table form per stack`;
+    - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
 
 ## Backing honesty — Test Quality
 
