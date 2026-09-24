@@ -1,5 +1,5 @@
 // Unit tests for the SHARED outcome-rate rule in public/src/ui.jsx —
-// resolveOutcomeRate and the writer-population accessors it reads. The Dashboard band
+// resolveOutcomeRate. The accessors it reads are pinned in ui.outcome-tone. The Dashboard band
 // and Task results both consume this one export, so the thresholds, the denominator and
 // the low-n gate are asserted here once instead of on each screen.
 //
@@ -37,12 +37,9 @@ interface Verdict {
 }
 interface UiSurface {
   resolveOutcomeRate: (data: CrossAnalysis | null | undefined) => Verdict;
-  getOutcomeOpenCount: (row: ByResultRow | undefined) => number;
-  getOutcomeWriterOpenCount: (row: ByResultRow | undefined) => number;
-  getOutcomeWriterTotal: (data: CrossAnalysis | undefined) => number;
   LOW_N_MIN: number;
-  OUTCOME_BREAKAGE_RATE: number;
-  OUTCOME_OPEN_CAVEAT_RATE: number;
+  OUTCOME_BREAKAGE_CRIT_SHARE: number;
+  OUTCOME_OPEN_CAVEAT_WARN_SHARE: number;
 }
 
 const UI = await buildUiSandbox<UiSurface>();
@@ -54,34 +51,7 @@ function population(rows: ByResultRow[], total = 200): CrossAnalysis {
   return { total, by_result: [...rows, { result: "done", count: Math.max(0, total - named) }] };
 }
 
-// --- The open-count derivation: closure subtracts, and never goes negative ---
-
-test("open count is count minus closed across the whole input class", () => {
-  for (const [count, closed] of [[10, 0], [10, 3], [10, 10], [0, 0], [5, 9]]) {
-    const row = { result: "done_with_concerns", count, closed_count: closed };
-    assert.equal(UI.getOutcomeOpenCount(row), Math.max(0, count - closed));
-  }
-  assert.equal(UI.getOutcomeOpenCount(undefined), 0, "a missing row is 0 open, never NaN");
-});
-
-test("writer open count falls back to the closure derivation when the field is absent", () => {
-  const legacy = { result: "done_with_concerns", count: 10, closed_count: 4 };
-  assert.equal(UI.getOutcomeWriterOpenCount(legacy), 6, "old payloads keep their previous reading");
-  assert.equal(
-    UI.getOutcomeWriterOpenCount({ ...legacy, writer_open_count: 2 }),
-    2,
-    "the explicit field wins once it is present",
-  );
-});
-
 // --- The denominator: harness-reconstructed rows leave BOTH sides of the share ---
-
-test("the quality denominator drops exactly the reconstructed rows", () => {
-  for (const reconstructed of [0, 1, 50, 200, 500]) {
-    const data = { total: 200, reconstructed_total: reconstructed, by_result: [] };
-    assert.equal(UI.getOutcomeWriterTotal(data), Math.max(0, 200 - reconstructed));
-  }
-});
 
 test("a fully reconstructed population carries no quality signal", () => {
   const verdict = UI.resolveOutcomeRate({ total: 120, reconstructed_total: 120, by_result: [] });
@@ -100,7 +70,7 @@ test("synthesized breakage rows leave the numerator with their denominator", () 
 // --- The thresholds: the relationship each line asserts ---
 
 test("breakage at or above its line is crit, and below it is not", () => {
-  const cut = UI.OUTCOME_BREAKAGE_RATE;
+  const cut = UI.OUTCOME_BREAKAGE_CRIT_SHARE;
   const total = 200;
   for (const [count, expected] of [
     [Math.ceil(total * cut), "crit"],
@@ -118,7 +88,7 @@ test("fail and blocked are summed into one breakage numerator", () => {
 });
 
 test("open caveats at or above their line warn, and closed ones stop warning", () => {
-  const cut = UI.OUTCOME_OPEN_CAVEAT_RATE;
+  const cut = UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE;
   const total = 200;
   const count = Math.ceil(total * cut);
   const open = population([{ result: "done_with_concerns", count, closed_count: 0 }], total);

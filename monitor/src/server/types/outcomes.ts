@@ -58,6 +58,9 @@ export interface OutcomeSearchFilterEcho {
   attribution_source: string | null;
   // Exact-match cid filter; null when no filter applied.
   cid: string | null;
+  // true = narrowed to the attention population (flagged, failed, blocked, or an
+  // unclosed caveat row); false = no attention filter.
+  needs_attention: boolean;
   sort: OutcomeSortToken;
   limit: number;
   offset: number;
@@ -191,8 +194,8 @@ export interface OutcomeCrossAnalysisCell {
 // isolates harness recovery artifacts (downgrade_origin='synthesized' OR attribution_source
 // IN (completion-synthesized, budget-truncation, structuredoutput-derived)). Invariants:
 // 0 <= reconstructed_count <= count; writer-emitted = count - reconstructed_count.
-// `closed_count` is the ONE closure-aware aggregate field — every other cross-analysis
-// aggregate stays closure-blind, so the norm warning can key on open DWC without
+// `closed_count` and `writer_open_count` (here and per agent) are the closure-aware fields —
+// every other cross-analysis aggregate stays closure-blind, so the norm warning can key on open DWC without
 // changing any other consumer. Invariants: 0 <= closed_count <= count; open =
 // count - closed_count (in practice non-zero only for done_with_concerns).
 // `writer_open_count` is the quality-signal numerator: writer-emitted AND unclosed. A
@@ -217,6 +220,9 @@ export interface OutcomeCrossAnalysisByAgent {
   agent: string;
   count: number;
   reconstructed_count: number;
+  // Open-caveat count for the agent — writer-emitted, unclosed `done_with_concerns`
+  // rows. Invariant: 0 <= writer_open_count <= count - reconstructed_count.
+  writer_open_count: number;
 }
 
 // Per-(agent, result) exact count over the matching set — the single-query SoT for
