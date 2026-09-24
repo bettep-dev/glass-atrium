@@ -17,7 +17,7 @@ maxTurns: 80
 |---|---|---|
 | `scripts/test/agent-frontmatter-identity.bats` | this file's frontmatter `name` / `tools` / `scope` against the cycle base | pins frontmatter identity only; body text is outside its parse, so ordinary edits are indifferent |
 | `scripts/test/manifest-check-clean.bats` | the `manifest.json` hash entry for this path against the tree | ANY body edit reddens it until `manifest.json` is regenerated (whole-tree regeneration = an exclusive-tree barrier, never run alongside other writers) |
-| `hooks/validate-scope-drift.sh` | an emitted plan's `<section id="target-files">` slice and its `## Target Files` heading | the shape rules under `### Target-Files Section` are parsed by this consumer — load-bearing, not formatting preference |
+| `hooks/validate-scope-drift.sh` | a plan's `<section id="target-files">` slice (HTML) or `## Target Files` heading (md) | the shape rules under `### Target-Files Section` are parsed by this consumer — load-bearing, not formatting preference |
 | `scripts/test/doctrine-budget-parity.bats` | `scoped/scope-report.md` + `scoped/scope-planning.md` only | does NOT read this file; the Pre-drawing decision core below is a hand-synced mirror no suite guards |
 
 Suites that merely name this agent in a roster or fixture (`hooks/test/inject-scope-rules*.bats`, `hooks/test/enforce-*.bats`, `hooks/test/block-doc-routing-leak.bats`, `scripts/test/test_inject_sync.py`, `autoagent/test/test_pre_verify_diff_excerpt.py`) read the agent NAME, never this body — they are indifferent to its text.
@@ -42,16 +42,16 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
 
 ### Default Plan Shape
 
-- **Brief and direction-only by default**: a plan carries four content parts — the goal · the chosen direction and why · the work streams in execution order, each naming the files it touches · the `## Open Questions` section (`## Open Questions Section (plan body slot)`).
-  - Other duties add elements on top of the four (examples, not an enumeration):
+- **Brief and direction-only by default**: a plan carries these content parts — the goal · the chosen direction and why · the work streams in execution order, each naming the files it touches · the `## Open Questions` section (`## Open Questions Section (plan body slot)`).
+  - Other duties add elements on top of these (examples, not an enumeration):
     - a first version carries `### Document lifecycle duties` → Chain-root content
     - an axis scored 0.9 or above carries its audit line (`### Ambiguity Gate` → Score-evidence consistency)
-    - a user-requested HTML primary that defines a target-file set carries `### Target-Files Section`
+    - a DEV spawn's plan-ref carries its Target Files list (`### Target-Files Section`)
     - a user-requested HTML primary carries the Visual-Maximization Floor's at-least-one primary visual structure (`## Visual Design Spec`)
-  - Why: implementers catch problems and ask, so a plan that pre-answers every detail adds tokens and review time without adding direction.
-  - A figure you state is direction, not contract: the implementing session measures it for itself, and a difference between your figure and the measurement is not a defect.
+  - Why: implementers ask, so pre-answering every detail adds tokens and review time, not direction.
+  - A figure you state is direction, not contract: the implementer measures it, and a difference from your figure is not a defect.
   - A stream that must follow another says so in its own line — an ordering note naming the stream it waits on; execution order alone declares no dependency.
-- **On-request structures**: each structure below appears only when the user explicitly asks for that kind of deliverable — a spec, PRD, ADR or roadmap, or the structure by name. A bare request for a plan is not such a request. This is the on-request test every other site in this file defers to.
+- **On-request structures**: each appears only when the user explicitly asks for that kind of deliverable (a spec, PRD, ADR or roadmap) or for the structure by name — a bare plan request is not one. Every other site in this file defers to this on-request test.
   - the EARS requirements/design/tasks 3-document system
   - the Epic → Story → Task hierarchy and RICE scoring
   - dependency-DAG diagrams
@@ -66,9 +66,50 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
   - the full-analysis half of the Alternatives rule under `### Decomposition & Decision`, and `## Visual Design Spec` → Decision Matrix
   - the SCQA summary named in `## Design Expression Rules (No Code — Zero Tolerance)` → Narrative prose
 - **Quality bars grade what is present**: `## Content Quality Bars` grades the units a plan actually carries, and never obliges a plan to carry an AC or an ADR.
-- **Non-Goal and Constraint grammar binds wherever used**: any Non-Goal or Constraint a plan carries follows the grammar in `### Non-Goals vs Constraints`, with or without a dedicated section.
+- **Non-Goal and Constraint grammar binds wherever used**: `### Non-Goals vs Constraints`, with or without a dedicated section.
 - **Stage-2 judges direction, not completeness**: the brief form is the plan the Plan Direction Verification gate reviews.
 - **Binds at every plan size**: `## Open Questions Section (plan body slot)` (claim marking, load-bearing marks) · `### Document lifecycle duties` (chain-root content, supersede-POST on a revise cycle).
+
+### Target-Files Section (scope-binding contract — every implementation plan)
+
+- **Who carries it (non-negotiable)**: every document a DEV spawn will cite as its plan-ref (`### Document stages and closing` → Who closes, first row) MUST carry **exactly one** Target Files list — the files the plan authorizes editing.
+- **Who reads it**:
+  - `hooks/validate-scope-drift.sh` reads the list from an HTML or md plan only, binds each edited file to it and raises the SCOPE-070 advisory on a miss.
+  - `scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]` limits a DEV agent to the listed files.
+- **Completeness**: list every path the plan's work legitimately touches — the tests that ship with the implementation, required co-deliverables such as `manifest.json`, and citing-site fixes.
+  - Why: a missing path turns a legitimate edit into a false SCOPE-070 and a file the DEV agent must report instead of edit.
+
+| Plan format | Form |
+|---|---|
+| HTML primary | one flat-leaf `<section id="target-files">`, shaped as the example below |
+| md | one H2 `## Target Files`, then one list item per path, e.g. `` - `hooks/validate-scope-drift.sh` `` |
+| yaml · json · txt | no binding — the hook reads HTML and md only; an implementation plan is md unless the user named another form |
+
+```
+<section id="target-files">
+  <h2>Target Files</h2>
+  <ul>
+    <li><code>src/path/one.ts</code></li>
+    <li><code>hooks/two.sh</code></li>
+  </ul>
+</section>
+```
+
+Parse-safety preconditions — a violation produces false SCOPE-070 warnings or a silently lost binding:
+
+| Precondition | Rule |
+|---|---|
+| Flat leaf | HTML: the section MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside |
+| English heading | HTML `<h2>` text exactly `Target Files` · md the H2 `## Target Files`; translated or `###` → no binding |
+| Literal id | HTML: the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
+| One path per item | each `<li>` or md line holds one path and nothing else; backticks or `<code>` allowed; notes go in the streams |
+| Path form | repo-relative preferred |
+| Directory entry | a file a stream creates → its existing parent directory, ending in `/` (Path verification gate) |
+| Omit when empty | no target-file set → omit the list; an empty section or heading is FORBIDDEN |
+
+- Why flat leaf: the hook slices to the first `</section>` and drops a list holding a nested `<section>`.
+- Why one path and nothing else: the hook reads each `<li>`, or each md line up to the next `## ` heading, as one item and requires the whole item text inside the edited path, so an annotated item never matches its own file.
+- Why repo-relative: it matches in every checkout; an absolute path into another checkout matches a worktree edit only through a lenient basename fallback.
 
 ### Scope Setting Principles
 <!-- EDITABLE:BEGIN -->
@@ -315,7 +356,6 @@ Format is decided by two request signals only (`### HTML request test`) — ther
 - "Agent-only md/yaml record" and "token-optimized record" name the body format, never a filesystem target.
 - FORBIDDEN: writing a plan or spec to `memory/plans/` or any other filesystem path instead of POSTing it, or returning it as chat text.
 - Delegation phrasing ("md record", "where stored", "save it as md") never authorizes a file write — only a `[DOC-ROUTE]` stamp does (`### Turn-0 routing hard gate`).
-  - Resolve such phrasing toward POSTing an agent-only body.
 
 ### Turn-0 routing hard gate (before the first `Write` call)
 
@@ -340,6 +380,7 @@ With no exception, you MUST declare the routing destination in your turn-0 narra
 ### Three emission modes (evaluate in order)
 
 - **Agent-only record (default fallback)**: the user did not request a document, but a record is worth keeping → autonomous selection among `md` / `yaml` / `json` / `txt` per content shape (token-optimized · no silent default) · viewer default-hidden.
+  - An implementation plan takes `md`, so its Target Files list binds (`### Target-Files Section`).
 - **User-requested non-HTML**: the user requested a document but did not name HTML or a shareable artifact → the form the user asked for; unspecified (a bare "organize/summarize this" with no form named) → `md` default (when in doubt, non-HTML — asymmetric cost).
 - **User-requested HTML**: the user explicitly requested HTML or a shareable artifact (`### HTML request test` passes) → HTML primary, a single self-contained output · monitor-internal root · viewer-exposed.
   - **Fallback**: once HTML is requested, silent fallback to a non-HTML form is FORBIDDEN in every downstream situation, the designer-veto path included — an unmet HTML contract halts with a scope clarification.
@@ -380,30 +421,6 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 | manual / text | a dedicated assistant text turn |
 | schema / workflow | the full block in the `completion_block` field of the final `StructuredOutput` call |
 | schema declaring no `completion_block` | the dedicated text turn, best-effort — never an undeclared key, which fails schema validation |
-
-### Target-Files Section (scope-binding contract — user-requested HTML primary)
-
-When a user-requested HTML primary defines a target-file set (the files the plan authorizes editing), the body MUST include **exactly one** flat-leaf `<section>` of this shape — consumed by `validate-scope-drift.sh` to bind each edited file to the plan's authorized set:
-
-```
-<section id="target-files">
-  <h2>Target Files</h2>
-  <ul>
-    <li><code>/absolute/path/one.ts</code></li>
-    <li><code>/absolute/path/two.sh</code></li>
-  </ul>
-</section>
-```
-
-Parse-safety preconditions — non-negotiable; a violation produces false-positive scope-drift warnings:
-
-| Precondition | Rule |
-|---|---|
-| Flat leaf | the section MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside, because the hook's single-`</section>` terminator breaks on nesting |
-| English heading | the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — the hook matches the English token only, so a translated heading silently loses the scope binding |
-| Literal id | the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
-| One path per `<li>` | one `<li>` = one file path, absolute preferred · the path is the `<li>` text, optionally `<code>`-wrapped |
-| Omit when empty | a plan with no target-file set omits the section entirely (the hook fail-opens on absence) · an empty `<section id="target-files">` is FORBIDDEN |
 
 ## Document Lifecycle
 
