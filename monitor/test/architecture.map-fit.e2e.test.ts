@@ -169,8 +169,8 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 		const canvasSelector = await page.evaluate(
 			() => (window as never as { ARCH_SELECTORS: { canvas: string } }).ARCH_SELECTORS.canvas,
 		);
-		// fit 은 노드 각인 이후 커밋에서 적용되므로 각인까지 기다린 뒤, 실제 변환행렬이
-		// 붙을 때까지 한 번 더 기다림 — 배율 1(미적용) 상태를 재는 것을 막음.
+		// 미적용 상태는 배율 1 이 아니라 svg-pan-zoom 초기화의 viewBox meet 배율 — 각인 뒤 두 프레임가량 남아
+		// 1024 에서 floor 미만으로 읽힘. 그래서 fit 표식 + 그 배율이 CTM 에 실린 것까지 기다림.
 		await page.waitForSelector(`${canvasSelector} svg g.node[data-arch-node-id]`, {
 			timeout: 30_000,
 		});
@@ -178,11 +178,14 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			(sel) => {
 				const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
 				const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-				return Boolean(m && m.a > 0);
+				const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+				return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < 1e-3);
 			},
 			canvasSelector,
 			{ timeout: 30_000 },
 		);
+		// 배율이 meet 과 같은 뷰포트는 위 대조로 pan 반영을 못 가림 — 라이브러리의 다음 프레임 반영을 한 프레임 넘겨 보장.
+		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
 
 		return await page.evaluate((sel) => {
 			const canvas = document.querySelector(sel) as HTMLElement;

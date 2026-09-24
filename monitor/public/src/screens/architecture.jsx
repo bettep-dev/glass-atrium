@@ -2052,6 +2052,11 @@ function applyLegibleFitAR(instance, root) {
 	const slackX = Math.max(0, (s.width - fittedGraphW) / 2);
 	const slackY = Math.max(0, (s.height - fittedGraphH) / 2);
 	instance.pan({ x: baseX + slackX, y: baseY + slackY });
+
+	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
+	root
+		?.querySelector(".svg-pan-zoom_viewport")
+		?.setAttribute("data-arch-fit-scale", String(targetAbs));
 }
 
 // .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
