@@ -28,6 +28,10 @@ const UI_SCALARS: Record<string, unknown> = {
   resolveBadge: () => ({ label: "badge", tone: "warn" }),
   formatPctWithDenominator: (pct: number) => `${pct}%`,
   formatKstFull: (iso: string) => iso,
+  // Same rule as ui.jsx outcomeShareTone — the share at or above the step takes the tone.
+  outcomeShareTone: (count: number, population: number, minShare: number, tone: string) =>
+    population > 0 && count / population >= minShare ? tone : null,
+  OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
 };
 
 function uiStub(): unknown {
@@ -52,7 +56,8 @@ function uiStub(): unknown {
 }
 
 async function loadAgentsScreen(): Promise<Record<string, unknown>> {
-  return loadScreenModule(AGENTS_SRC, { UI: uiStub(), React: createReactStub() });
+  // Recharts rides the same transparent-atom stub — the matrix sparkline only needs its components to exist.
+  return loadScreenModule(AGENTS_SRC, { UI: uiStub(), Recharts: uiStub(), React: createReactStub() });
 }
 
 type Component = (props: unknown) => unknown;
@@ -339,4 +344,70 @@ test("the page header renders every title as the page h1 with the sub-line under
 
   const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
   assert.doesNotMatch(src, /shouldRenderTitle/, "the retired opt-in is gone from the Agents screen");
+});
+
+const HIGH_FAIL_WORD = "high failure share";
+
+test("the summary row marks the shared crit step from its own failed share, and only on an adequate sample", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  // failed share = 1 − passed/denominator, denominator = runs − needs_context.
+  const cases = [
+    { success_pct: 95, runs: 42, needs_context_count: 2, crit: true, why: "2 of 40 failed sits on the 5% step" },
+    { success_pct: 98, runs: 50, needs_context_count: 0, crit: false, why: "1 of 50 failed stays under the step" },
+    { success_pct: 50, runs: 4, needs_context_count: 0, crit: false, why: "n below LOW_N_MIN carries no tone" },
+  ];
+  for (const c of cases) {
+    const tree = renderScreen(
+      React.createElement(mod.AgentSummaryRow as Component, {
+        agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", ...c },
+        days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+      }),
+    );
+    assert.equal(collectText(tree).includes(HIGH_FAIL_WORD), c.crit, c.why);
+    const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
+    assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
+  }
+});
+
+test("a matrix cell takes the crit step from failures over its rate denominator, reconstructed rows excluded", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const cases = [
+    { successCount: 19, failureCount: 1, reconstructed: 10, crit: true, why: "1 of 20 judged hits the step; 10 reconstructed do not dilute it" },
+    { successCount: 39, failureCount: 1, reconstructed: 0, crit: false, why: "1 of 40 stays under the step" },
+    { successCount: 2, failureCount: 1, reconstructed: 0, crit: false, why: "n below LOW_N_MIN carries no tone" },
+  ];
+  for (const c of cases) {
+    const rateDenominator = c.successCount + c.failureCount;
+    const cell = { ...c, rateDenominator, totalCount: rateDenominator + c.reconstructed, pooledRate: c.successCount / rateDenominator, points: [] };
+    const tree = renderScreen(React.createElement(mod.SuccessRateCell as Component, { agent: "a", taskType: "feature", cell }));
+    assert.equal(collectText(tree).includes(HIGH_FAIL_WORD), c.crit, c.why);
+  }
+});
+
+test("Agents keeps one rate scale — the retired thresholds and the hardcoded trend band are gone", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(AGENTS_SRC, "utf8");
+  for (const name of ["SUMMARY_SUCCESS_OK_PCT", "SUMMARY_SUCCESS_WARN_PCT", "SUCCESS_RATE_OK_THRESHOLD", "SUCCESS_RATE_WARN_THRESHOLD", "successRateTone"]) {
+    assert.equal(source.includes(name), false, `${name} is retired`);
+  }
+  assert.doesNotMatch(source, /successPct\s*<\s*90/, "trendBarColor no longer carries its own 90% band");
+});
+
+test("the Agents ledger shows no initial avatar, which reads G for every glass-atrium agent", async () => {
+  const mod = await loadAgentsScreen();
+  const tree = renderSummaryRow(mod, null);
+  assert.equal(findNodes(tree, (n) => n.props?.atom === "AgentBadge").length, 0);
+});
+
+test("a failing pair drills to Task results filtered by its agent, task type and window", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const pair = { agent: "glass-atrium-dev-react", task_type: "feature", successCount: 1, rateDenominator: 5, pooledRate: 0.2, totalCount: 5 };
+  const tree = renderScreen(
+    React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
+  );
+  const hrefs = findNodes(tree, (n) => n.type === "a").map((n) => String(n.props.href));
+  assert.deepEqual(hrefs, ["#outcomes?agent=glass-atrium-dev-react&task_type=feature&days=14"]);
 });
