@@ -32,7 +32,7 @@ const SPEND_BASELINE_DAYS = 7;
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness }) {
-  const { Icon, PageHeader, TypeScaleStyle } = window.UI;
+  const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_FETCH_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_FETCH_STATE);
@@ -41,7 +41,7 @@ function ScreenDashboard({ onNav, harness }) {
   const [updateJobState, setUpdateJobState] = useStateD(INITIAL_FETCH_STATE);
 
   const [refreshTick, setRefreshTick] = useStateD(0);
-  // as-of 스탬프 — wave 가 정착한 시각. 화면 수치가 언제 것인지 없으면 stale 을 못 읽는다.
+  // last wave that settled with ≥1 successful read → kept across waves, never advanced by an all-failed wave
   const [settledAt, setSettledAt] = useStateD(null);
 
   // AbortController per fetch wave — unmount/refetch 시 in-flight 요청 취소.
@@ -69,8 +69,9 @@ function ScreenDashboard({ onNav, harness }) {
       runFetch('/api/outcomes/cross-analysis?days=7', ctrl.signal, setOutcomesState),
       runFetch(UPDATE_STATUS_ENDPOINT, ctrl.signal, setUpdateState),
       runFetch(UPDATE_JOB_ENDPOINT, ctrl.signal, setUpdateJobState),
-    ]).then(() => {
-      if (!ctrl.signal.aborted) setSettledAt(new Date().toISOString());
+    ]).then((results) => {
+      const hasRead = results.some((r) => r.status === 'fulfilled' && r.value === true);
+      if (!ctrl.signal.aborted && hasRead) setSettledAt(new Date().toISOString());
     });
 
     return () => ctrl.abort();
@@ -115,7 +116,8 @@ function ScreenDashboard({ onNav, harness }) {
           title="Dashboard"
           right={
             <>
-              <span className="fs-meta font-mono text-dim">{describeStamp(harness, settledAt)}</span>
+              <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
+              <FreshnessStamp {...getFreshnessInputD(settledAt, [costState, agentsState, outcomesState, updateState])}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh dashboard">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -589,11 +591,18 @@ function describeSpendHint(pace) {
   return `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
 }
 
-// 헤더 우측 중립 텍스트 — 설치 버전 + wave 정착 시각. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
-function describeStamp(harness, settledAt) {
-  const version = harness && harness.version ? `v${harness.version}` : 'version unknown';
-  const stamp = settledAt ? window.UI.formatKstTime(settledAt) : '—';
-  return `${version} · as of ${stamp} ${window.UI.tzShortLabel()}`;
+// 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
+function describeVersion(harness) {
+  return harness && harness.version ? `v${harness.version}` : 'version unknown';
+}
+
+// wave panels only — update-job also polls on its own, so a poll result must not move the screen's stamp
+function getFreshnessInputD(settledAt, waveStates) {
+  return {
+    at: settledAt,
+    loading: waveStates.some((st) => st.status === 'loading'),
+    failed: waveStates.some((st) => st.status === 'error'),
+  };
 }
 
 // update-job poll → 실제 row (none 은 무 job).
@@ -636,16 +645,20 @@ async function fetchJson(url, signal) {
 // fetch + setter wiring 보일러플레이트 통합 — useEffect 본문 단순화.
 function runFetch(url, signal, setter) {
   return fetchJson(url, signal)
-    .then((data) => setter({ status: 'ready', data, error: null }))
+    .then((data) => {
+      setter({ status: 'ready', data, error: null });
+      return true;
+    })
     .catch((err) => handleError(err, setter));
 }
 
 function handleError(err, setter) {
   // AbortError = navigation away (사용자 가시 실패 아님).
   if (err && err.name === 'AbortError') {
-    return;
+    return false;
   }
   setter({ status: 'error', data: null, error: err && err.message ? err.message : String(err) });
+  return false;
 }
 
 window.ScreenDashboard = ScreenDashboard;
