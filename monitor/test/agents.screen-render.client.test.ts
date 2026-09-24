@@ -555,6 +555,24 @@ test("the breakage count takes a tone only once its share of the agent's outcome
   }
 });
 
+test("the drawer breakage badge takes the same crit step as the ledger numeral", async () => {
+  const idle = { status: "idle", data: null, error: null };
+  const rows = [
+    { name: "one of forty stays under the 5% step", total_breakages: 1, breakage_rate: 0.025, tone: "neutral" },
+    { name: "four of forty crosses the step", total_breakages: 4, breakage_rate: 0.1, tone: "crit" },
+    { name: "two of four is a sample below LOW_N_MIN", total_breakages: 2, breakage_rate: 0.5, tone: "neutral" },
+  ];
+  for (const row of rows) {
+    const failureByAgent = new Map([["glass-atrium-dev-react", { total_breakages: row.total_breakages, reconstructed: 0, breakage_rate: row.breakage_rate }]]);
+    const tree = await renderComponent("AgentReliabilityBreakages", {
+      drawerAgent: "glass-atrium-dev-react", failureByAgent, failureState: { status: "ready", data: { rows: [] }, error: null },
+      detailState: idle, blockedState: idle, days: 30, onRetry: () => undefined,
+    });
+    const badge = findNodes(tree, (n) => n.props?.atom === "Badge" && /breakages/.test(collectText(n)))[0];
+    assert.equal(badge?.props.tone, row.tone, `${row.name}: drawer badge tone`);
+  }
+});
+
 test("a P95 numeral is coloured only past the crit cut, while the glyph keeps every latency tier", async () => {
   const mod = await loadAgentsScreen();
   const rows = [

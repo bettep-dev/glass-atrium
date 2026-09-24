@@ -50,9 +50,6 @@ const UNKNOWN_AGENT_LABEL = 'Unidentified (old)';
 const UNKNOWN_AGENT_TITLE =
   "Work that couldn't be matched to a current agent — agent_id_missing / deprecated_agent / legacy_unknown (PG fallback)";
 
-// breakage = fail + blocked (failure-patterns breakage_rate) — fail 단독 비율 아님.
-const BREAKAGE_RATE_CRIT_THRESHOLD = 0.2;
-
 // 저활용 agent 임계 anchor — 30일 기준 SubagentStart < 3 회.
 // 정보성 badge — 삭제 trigger 아님 (삭제 의사결정은 별도 단계).
 // invocations 는 선택 ?days window 상대값 → 임계도 window 비례 환산 (아래 helper).
@@ -1635,7 +1632,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       {failure && failure.total_breakages > 0 ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge role="status" tone={failure.breakage_rate > BREAKAGE_RATE_CRIT_THRESHOLD ? 'crit' : 'warn'}>
+            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
               {formatIntAg(failure.total_breakages - (failure.reconstructed || 0))} breakages · {(failure.breakage_rate * 100).toFixed(1)}%
             </Badge>
             {failure.reconstructed > 0 && (
