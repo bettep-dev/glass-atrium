@@ -496,7 +496,7 @@ function formatRelativeTime(iso) {
   const now = Date.now();
   const diffSec = Math.round((target - now) / 1000);
   const abs = Math.abs(diffSec);
-  const past = diffSec < 0;
+  const past = diffSec <= 0; // sub-second past rounds to -0 → must still read "ago"
   let label;
   if (abs < 60)         label = `${abs}s`;
   else if (abs < 3600)  label = `${Math.round(abs / 60)}m`;
