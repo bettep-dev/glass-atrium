@@ -1191,7 +1191,7 @@ function DocAuthorCellCD({ author }) {
 	return (
 		<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
 			<span className="doc-cell-clamp" title={author}>
-				{author}
+				<window.UI.AgentName name={author} />
 			</span>
 		</td>
 	);
@@ -2613,7 +2613,7 @@ function DocMetaPanelCD({
 			</div>
 			<div className="doc-meta-row">
 				<span className="doc-meta-label">Author</span>
-				<span className="doc-meta-value">{doc.author}</span>
+				<window.UI.AgentName name={doc.author} className="doc-meta-value" />
 			</div>
 			<div className="doc-meta-row">
 				<span className="doc-meta-label">Created</span>
@@ -2944,7 +2944,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 							style={{ color: "rgb(var(--faint))" }}
 						>
 							{formatDateTimeCD(predState.data.created_at)} ·{" "}
-							{predState.data.author}
+							<window.UI.AgentName name={predState.data.author} />
 						</div>
 					</div>
 				)}

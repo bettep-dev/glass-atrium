@@ -1617,7 +1617,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 							className="min-w-0 max-w-[10rem]"
 							title={`Target agent: ${row.target_agent}`}
 						>
-							<span className="truncate min-w-0">{row.target_agent}</span>
+							<window.UI.AgentName name={row.target_agent} className="truncate min-w-0" />
 						</Badge>
 					)}
 					<Badge
@@ -2015,7 +2015,7 @@ function LedgerPlainRowsI({ rows }) {
 					>
 						{truncateI(patternLabelI(r.pattern_signature, r.agent), 120)}
 					</span>
-					<span className="text-dim shrink-0">{r.agent || "—"}</span>
+					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
 					<span className="text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
@@ -2697,9 +2697,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 				{truncateI(label, 120)}
 			</span>
 			{pattern.agent && (
-				<span className="fs-micro font-mono text-dim shrink-0">
-					{pattern.agent}
-				</span>
+				<window.UI.AgentName name={pattern.agent} className="fs-micro font-mono text-dim shrink-0" />
 			)}
 			<span
 				className={`fs-micro font-mono shrink-0 ${badge.tone}`}

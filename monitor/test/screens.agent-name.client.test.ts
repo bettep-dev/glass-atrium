@@ -1,4 +1,4 @@
-// Agents and Task results print agent names through the shared AgentName atom (plan 39859 S4b).
+// Agents, Task results, Documents and Learning print agent names through the shared AgentName atom (plan 39859 S4b/S4c).
 //
 // Runner: npx tsx --test test/screens.agent-name.client.test.ts
 
@@ -18,6 +18,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
+const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
+const LEARNING_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
 
 type Component = (props: Record<string, unknown>) => unknown;
 
@@ -59,6 +61,8 @@ async function loadScreen(src: string): Promise<Record<string, unknown>> {
 
 const agentsMod = await loadScreen(AGENTS_SRC);
 const outcomesMod = await loadScreen(OUTCOMES_SRC);
+const docsMod = await loadScreen(DOCS_SRC);
+const learningMod = await loadScreen(LEARNING_SRC);
 
 function render(mod: Record<string, unknown>, name: string, props: Record<string, unknown>): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
@@ -85,6 +89,20 @@ const NAME_SITES: Array<[string, Record<string, unknown>, string, Record<string,
   }],
   ["Task results record row", outcomesMod, "ResultTableRow", {
     row: { agent: FULL, task_type: "feature", result: "done", record_ts: "2026-01-01T00:00:00Z" }, onRowClick: () => {}, closure: null,
+  }],
+  ["Documents author cell", docsMod, "DocAuthorCellCD", { author: FULL }],
+  ["Documents meta panel", docsMod, "DocMetaPanelCD", {
+    doc: { id: 1, author: FULL, created_at: "2026-01-01T00:00:00Z", doc_status: "draft" },
+    onPickStage: () => {}, togglingIds: new Set(), optimisticStatusOverrides: new Map(), onNavigate: () => {},
+  }],
+  ["Learning suggestion card", learningMod, "ProposalCardI", {
+    row: { id: 7, target_agent: FULL, created_at: "2026-01-01T00:00:00Z" }, onClick: () => {}, onAction: () => {}, pendingActionId: null,
+  }],
+  ["Learning ledger rows", learningMod, "LedgerPlainRowsI", {
+    rows: [{ id: 1, agent: FULL, pattern_signature: "sig", discovered_date: "2026-01-01" }],
+  }],
+  ["Learning candidate row", learningMod, "CandidateRowI", {
+    rank: 1, pattern: { agent: FULL, pattern_signature: "sig", status: "open", frequency: 3 }, maxFreq: 3, onClick: () => {},
   }],
 ];
 
