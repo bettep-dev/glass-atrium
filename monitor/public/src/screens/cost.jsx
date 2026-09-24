@@ -521,6 +521,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
 function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+  const { KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
@@ -528,9 +529,9 @@ function CostTileC({ label, status, value, hint, unavailableNote, children }) {
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       <div className="kpi-label">{label}</div>
       {isReady && hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
-      <div className="kpi-value">
+      <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
-      </div>
+      </KpiValue>
       {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
     </div>
   );

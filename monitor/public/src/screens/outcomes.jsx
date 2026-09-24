@@ -984,7 +984,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
 }
 
 function BandTileO({ tile, windowLabel }) {
-  const { TONE_ICON, formatPctWithDenominator } = window.UI;
+  const { KpiValue, TONE_ICON, formatPctWithDenominator } = window.UI;
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
   const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
@@ -1003,7 +1003,7 @@ function BandTileO({ tile, windowLabel }) {
         </span>
         {tile.label}
       </div>
-      <div className="kpi-value">{loaded ? formatIntO(tile.count) : '—'}</div>
+      <KpiValue>{loaded ? formatIntO(tile.count) : '—'}</KpiValue>
       <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
     </Tag>
   );
