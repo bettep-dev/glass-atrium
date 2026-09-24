@@ -1,12 +1,15 @@
 #!/usr/bin/env bats
-# validate-scope-drift.sh — per-session resolution-cache suite.
+# validate-scope-drift.sh — monitor-leg suite (PLAN_FILE unset): plan selection, format dispatch,
+# and the per-session resolution cache.
 #
-# Pins the PLAN_FILE-unset (monitor-API) latency optimization: the resolved plan id + target-file
-# list are cached once per session so subsequent same-session edits skip BOTH loopback curls + the
-# HTML re-parse. The cache is an optimization ONLY — the drift verdict for a fixed (plan, target)
-# input MUST be identical to the uncached path, and any cache anomaly falls back to the live lookup.
+# Selection binds exactly one `implementing` plan and parses its Target Files list by the plan's
+# own format; the cache stores that binding once per session and MUST NOT change the verdict.
 #
 # Assertions proven here:
+#   * the list request carries the stage filter; only a lone `implementing` row binds (two such
+#     plans, other stages, or a server ignoring the filter → no binding to a wrong plan)
+#   * format dispatch: an md plan binds through its `## Target Files` heading only, never through a
+#     quoted HTML section; an html plan through its target-files section
 #   * loopback fires exactly ONCE per session (2nd edit is a cache hit, zero curls)
 #   * verdict parity: 1st edit (live path) and 2nd edit (cache path) yield the SAME block/pass
 #     decision for both an in-scope and an out-of-scope target
@@ -27,20 +30,22 @@ setup() {
   SHIMBIN="${WORK}/bin"
   CACHE_DIR="${WORK}/cache"
   COUNT_FILE="${WORK}/curl.count"
+  URL_LOG="${WORK}/curl.urls"
   LIST_JSON="${WORK}/list.json"
-  DOC_JSON="${WORK}/doc.json"
+  DOC_DIR="${WORK}/docs"
   SID="sess-cache-test"
-  mkdir -p "${SHIMBIN}"
+  mkdir -p "${SHIMBIN}" "${DOC_DIR}"
   : >"${COUNT_FILE}"
 
-  # Canned monitor responses. List → one in-progress doc (id 5). GET → HTML body whose
+  # Canned monitor responses. List → one implementing HTML plan (id 5). GET → HTML body whose
   # target-files section whitelists exactly two paths (the LIVE resolution).
-  printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"progress","created_at":"2026-07-01T00:00:00Z"}]}' \
+  printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"implementing","format":"html","created_at":"2026-07-01T00:00:00Z"}]}' \
     >"${LIST_JSON}"
-  printf '%s\n' '{"id":5,"body":"<section id=\"target-files\"><ul><li>hooks/validate-scope-drift.sh</li><li>src/allowed/in-scope.ts</li></ul></section>"}' \
-    >"${DOC_JSON}"
+  printf '%s\n' '{"id":5,"format":"html","body":"<section id=\"target-files\"><ul><li>hooks/validate-scope-drift.sh</li><li>src/allowed/in-scope.ts</li></ul></section>"}' \
+    >"${DOC_DIR}/5.json"
 
-  # Counting curl shim: one tally char per call; list vs GET distinguished by URL suffix.
+  # Counting curl shim: one tally char per call. The list arm accepts a query string; the GET arm
+  # serves the doc fixture named by the requested id, so a wrongly picked row gets no body.
   cat >"${SHIMBIN}/curl" <<'SH'
 #!/usr/bin/env bash
 printf 'x' >>"${CURL_COUNT_FILE}"
@@ -50,9 +55,14 @@ for a in "$@"; do
     http*) url="${a}" ;;
   esac
 done
+printf '%s\n' "${url}" >>"${CURL_URL_LOG}"
 case "${url}" in
-  */clauded-docs) cat "${LIST_JSON_FILE}" ;;
-  */clauded-docs/*) cat "${DOC_JSON_FILE}" ;;
+  */clauded-docs | */clauded-docs\?*) cat "${LIST_JSON_FILE}" ;;
+  */clauded-docs/*)
+    doc="${DOC_JSON_DIR}/${url##*/}.json"
+    [[ -f "${doc}" ]] || exit 22
+    cat "${doc}"
+    ;;
   *) exit 22 ;;
 esac
 SH
@@ -76,6 +86,22 @@ seed_cache() {
   } >"${CACHE_DIR}/${SID}.cache"
 }
 
+# Replace the list response with the given rows. Args: row JSON objects, e.g. '{"id":7,...}'.
+set_list_rows() {
+  jq -cn --args '{total: ($ARGS.positional | length), rows: [$ARGS.positional[] | fromjson]}' "$@" \
+    >"${LIST_JSON}"
+}
+
+# Write the GET fixture for one plan. Args: $1=id  $2=format  $3=body.
+write_doc() {
+  jq -cn --argjson id "${1}" --arg fmt "${2}" --arg body "${3}" '{id: $id, format: $fmt, body: $body}' \
+    >"${DOC_DIR}/${1}.json"
+}
+
+# md plan body: a `## Target Files` list between two other sections.
+MD_PLAN_BODY="$(printf '%s\n' '# Plan' '## Goal' '- ship it' '## Target Files' \
+  '- `hooks/md-listed.sh`' '- `src/md/listed.ts`' '## Open Questions' '- none')"
+
 # Fire the hook once for a given edit target (PLAN_FILE forced unset → the API+cache path).
 # ATRIUM_MONITOR_PORT short-circuits the port resolver; SCOPE_DRIFT_MONITOR_URL pins the loopback;
 # SCOPE_DRIFT_CACHE_DIR + HOME redirect all writes under WORK. stderr merged into $output.
@@ -90,8 +116,9 @@ run_hook() {
     SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
     SCOPE_DRIFT_CACHE_DIR="${CACHE_DIR}" \
     CURL_COUNT_FILE="${COUNT_FILE}" \
+    CURL_URL_LOG="${URL_LOG}" \
     LIST_JSON_FILE="${LIST_JSON}" \
-    DOC_JSON_FILE="${DOC_JSON}" \
+    DOC_JSON_DIR="${DOC_DIR}" \
     PATH="${SHIMBIN}:${PATH}" \
     bash -c 'bash "$0" 2>&1' "${HOOK}" <<<"${input}"
 }
@@ -99,7 +126,8 @@ run_hook() {
 @test "out-of-scope: verdict identical on live(1st) and cached(2nd) edit; loopback fires once per session" {
   run_hook "/work/repo/src/other/out-of-scope.ts"
   [[ "${status}" -eq 0 ]] || { echo "1st exit ${status} != 0" >&2; return 1; }
-  [[ "${output}" == *SCOPE-070* ]] || { echo "1st(live) missing SCOPE-070: ${output}" >&2; return 1; }
+  [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *plan-doc* ]] \
+    || { echo "1st(live) missing plan-doc SCOPE-070: ${output}" >&2; return 1; }
   local c1
   c1="$(curl_count)"
   [[ "${c1}" -eq 2 ]] || { echo "1st edit curl count ${c1} != 2 (list+GET expected)" >&2; return 1; }
@@ -184,4 +212,77 @@ run_hook() {
   local c
   c="$(curl_count)"
   [[ "${c}" -eq 2 ]] || { echo "corrupt-cache curl count ${c} != 2" >&2; return 1; }
+}
+
+@test "list request asks the monitor for implementing rows, up to 200" {
+  run_hook "/work/repo/src/allowed/in-scope.ts"
+  local list_url
+  list_url="$(head -n 1 "${URL_LOG}")"
+  [[ "${list_url}" == *'?'*doc_status=implementing* ]] && [[ "${list_url}" == *limit=200* ]] \
+    || { echo "list URL lacks the stage filter or the limit: ${list_url}" >&2; return 1; }
+}
+
+@test "a lone implementing md plan binds its Target Files heading: a listed path passes" {
+  set_list_rows '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 7 md "${MD_PLAN_BODY}"
+  run_hook "/work/repo/src/md/listed.ts"
+  # The cached binding separates a matched list from a fail-open silence.
+  [[ "${status}" -eq 0 ]] && [[ "${output}" != *SCOPE-070* ]] \
+    && awk 'NR == 2 { found = ($0 == "7") } END { exit !found }' "${CACHE_DIR}/${SID}.cache" \
+    && grep -qF 'src/md/listed.ts' "${CACHE_DIR}/${SID}.cache" \
+    || { echo "listed md path not passed through a bound plan 7: ${output}" >&2; return 1; }
+}
+
+@test "a lone implementing md plan binds its Target Files heading: an unlisted path warns" {
+  set_list_rows '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 7 md "${MD_PLAN_BODY}"
+  run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] && [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *'"plan_id":7'* ]] \
+    || { echo "unlisted path not flagged against the md plan: ${output}" >&2; return 1; }
+}
+
+@test "an md plan binds only through its heading, never through a quoted HTML section" {
+  # No Target Files heading, but the body quotes the HTML contract example (as the planner body
+  # does) — a section parse here would bind placeholder paths and flag every real edit.
+  set_list_rows '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 7 md "$(printf '%s\n' '# Plan' '## Goal' '```html' \
+    '<section id="target-files"><ul><li><code>/absolute/path/one.ts</code></li></ul></section>' '```')"
+  run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] && [[ "${output}" != *SCOPE-070* ]] \
+    || { echo "md plan without a heading bound something: ${output}" >&2; return 1; }
+}
+
+@test "no binding unless exactly one plan is implementing" {
+  local -a rows=(
+    'two implementing plans|{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}|{"id":8,"doc_status":"implementing","format":"md","created_at":"2026-07-02T00:00:00Z"}'
+    'doc_review rows only|{"id":7,"doc_status":"doc_review","format":"md","created_at":"2026-07-01T00:00:00Z"}|{"id":8,"doc_status":"doc_review","format":"md","created_at":"2026-07-02T00:00:00Z"}'
+    'retired progress stage|{"id":7,"doc_status":"progress","format":"md","created_at":"2026-07-01T00:00:00Z"}|{"id":8,"doc_status":"done","format":"md","created_at":"2026-07-02T00:00:00Z"}'
+  )
+  write_doc 7 md "${MD_PLAN_BODY}"
+  write_doc 8 md "${MD_PLAN_BODY}"
+  local row name a b
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name a b <<<"${row}"
+    set_list_rows "${a}" "${b}"
+    SCOPE_DRIFT_CACHE_BYPASS=1 run_hook "/work/repo/src/other/out-of-scope.ts"
+    [[ "${status}" -eq 0 ]] && [[ "${output}" != *SCOPE-070* ]] \
+      || { echo "${name}: bound a plan: ${output}" >&2; return 1; }
+  done
+  # Each row stopped at the list call: no plan body was fetched.
+  local c
+  c="$(curl_count)"
+  [[ "${c}" -eq "${#rows[@]}" ]] || { echo "a plan body was fetched; curl count ${c} != ${#rows[@]}" >&2; return 1; }
+}
+
+@test "a server ignoring the stage filter still binds only the implementing row" {
+  # The newer, higher-id doc_review row lists the edited path; binding it would silence the warning.
+  set_list_rows \
+    '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}' \
+    '{"id":9,"doc_status":"doc_review","format":"md","created_at":"2026-07-03T00:00:00Z"}' \
+    '{"id":8,"doc_status":"done","format":"md","created_at":"2026-07-02T00:00:00Z"}'
+  write_doc 7 md "${MD_PLAN_BODY}"
+  write_doc 9 md "$(printf '%s\n' '## Target Files' '- src/other/out-of-scope.ts')"
+  run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] && [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *'"plan_id":7'* ]] \
+    || { echo "did not bind the implementing row 7: ${output}" >&2; return 1; }
 }
