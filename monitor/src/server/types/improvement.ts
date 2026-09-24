@@ -526,8 +526,11 @@ export interface ImprovementLoopSuppressionState {
   // Recurring per-cycle suppressions from core.autoagent_loop_events over
   // `per_cycle_window_days`. These write no transition, so a window is the only
   // way to count them at all.
-  per_cycle: ImprovementSuppressionBucket[];
+  // Each bucket also carries `cycles`: distinct UTC cycle days it recurred on.
+  per_cycle: (ImprovementSuppressionBucket & { cycles: number })[];
   per_cycle_window_days: number;
+  // Distinct UTC cycle days with any loop event in the window — the coverage denominator.
+  per_cycle_window_cycles: number;
   // status='identified' rows whose pattern label is one the daemon skips at intake
   // (NON_PROMPTABLE_LABELS). These are the rows that look like pending backlog and
   // are not: no proposal can ever be generated from them.

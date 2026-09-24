@@ -1893,42 +1893,6 @@ function ParkedLoopBannerI({ applyCap }) {
 // 억제 사실은 원장 바깥에 따로 살지 않는다 — 억제된 행과 그 행을 세는 숫자가 다른 카드에
 // 있으면 둘 중 하나만 읽힌다. 두 population(parked / per-cycle) 은 분리해 렌더하고 절대
 // 더하지 않는다: 종결 row 와 재발 횟수라 합계는 둘 중 어느 것도 아니다.
-function SuppressionBucketRowsI({ buckets, unitLabel }) {
-	if (!Array.isArray(buckets) || buckets.length === 0) {
-		return (
-			<div className="placeholder">No {unitLabel} in this population</div>
-		);
-	}
-	return (
-		<table className="w-full fs-meta font-mono">
-			<thead>
-				<tr className="text-faint uppercase tracking-wider">
-					<th className="text-left py-1.5 pl-1.5">Cause</th>
-					<th className="text-right py-1.5">{unitLabel}</th>
-					<th className="text-right py-1.5 pr-1.5">Agents</th>
-				</tr>
-			</thead>
-			<tbody>
-				{buckets.map((b) => (
-					<tr key={b.cause} className="border-t border-line/50 align-top">
-						<td className="text-left py-1.5 pl-1.5">
-							<div className="text-ink">{b.label}</div>
-							{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. 원인별 hint 가 잘리면
-							    "무엇이 이걸 푸는가"가 사라지고 숫자만 남는다. */}
-							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
-						</td>
-						<td className="text-right py-1.5 text-ink">
-							{formatIntI(Number(b.count ?? 0))}
-						</td>
-						<td className="text-right py-1.5 pr-1.5 text-dim">
-							{formatIntI(Number(b.agents ?? 0))}
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
-	);
-}
 
 // 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
 // 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
@@ -1945,9 +1909,11 @@ function LedgerHeldSectionI({ suppression }) {
 		: [];
 	return (
 		<div className="px-3 pb-3">
-			<div className="fs-meta font-mono text-dim mb-1">
-				Held — terminal rows, all time
-			</div>
+			<LedgerSectionHeadI
+				label="Held — terminal rows"
+				basis="all time"
+				count={sumCountsI(buckets)}
+			/>
 			{buckets.map((b) => (
 				<HeldCauseGroupI
 					key={b.cause}
@@ -2005,15 +1971,26 @@ function LedgerPlainRowsI({ rows }) {
 	);
 }
 
+// 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
+function LedgerSectionHeadI({ label, basis, count }) {
+	return (
+		<div className="fs-meta font-mono text-dim mb-1">
+			{label} · {basis} <span className="tnum">({formatIntI(count)})</span>
+		</div>
+	);
+}
+
 // 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
 // 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다.
 function LedgerInertSectionI({ rows }) {
 	if (rows.length === 0) return null;
 	return (
 		<div className="px-3 pb-3">
-			<div className="fs-meta font-mono text-dim mb-1">
-				Inert — the intake skips this label every cycle
-			</div>
+			<LedgerSectionHeadI
+				label="Inert — the intake skips this label every cycle"
+				basis="discovered in the last 7 days"
+				count={rows.length}
+			/>
 			<LedgerPlainRowsI rows={rows} />
 		</div>
 	);
@@ -2025,19 +2002,56 @@ function LedgerRecurrenceDisclosureI({ suppression }) {
 	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
 	if (buckets.length === 0) return null;
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
+	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
 		<details className="px-3 pb-3">
 			<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
-				Recurrence rates — last {formatIntI(windowDays)} days
+				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
+				{formatIntI(windowCycles)} cycle days
 			</summary>
 			<div className="mt-2">
-				<SuppressionBucketRowsI buckets={buckets} unitLabel="Events" />
+				<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
 				<div className="card-sub is-wrap fs-micro mt-1">
 					Recurrences, not distinct patterns — these mechanisms write no lifecycle
 					transition, so the same row is re-suppressed on every cycle.
 				</div>
 			</div>
 		</details>
+	);
+}
+
+// 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
+function RecurrenceRowsI({ buckets, windowCycles }) {
+	return (
+		<table className="w-full fs-meta font-mono">
+			<thead>
+				<tr className="text-faint uppercase tracking-wider">
+					<th className="text-left py-1.5 pl-1.5">Cause</th>
+					<th className="text-right py-1.5">Agents affected</th>
+					<th className="text-right py-1.5">Cycle days</th>
+					<th className="text-right py-1.5 pr-1.5">Events</th>
+				</tr>
+			</thead>
+			<tbody>
+				{buckets.map((b) => (
+					<tr key={b.cause} className="border-t border-line/50 align-top">
+						<td className="text-left py-1.5 pl-1.5">
+							<div className="text-ink">{b.label}</div>
+							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
+						</td>
+						<td className="text-right py-1.5 text-ink">
+							{formatIntI(Number(b.agents ?? 0))}
+						</td>
+						<td className="text-right py-1.5 text-ink">
+							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
+						</td>
+						<td className="text-right py-1.5 pr-1.5 text-dim">
+							{formatIntI(Number(b.count ?? 0))}
+						</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
 	);
 }
 
@@ -2576,9 +2590,17 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 // 활성 구역 — 제안이 나올 수 있는 행만. 비어도 카드는 남는다: held 는 윈도우가 없어서
 // 활성이 0 이어도 읽을 것이 있다.
 function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
+	const head = (
+		<LedgerSectionHeadI
+			label="Live — can propose"
+			basis="discovered in the last 7 days · ×N = times seen, all time"
+			count={rows.length}
+		/>
+	);
 	if (rows.length === 0) {
 		return (
 			<div className="px-3 pb-3">
+				{head}
 				<div className="placeholder">
 					No candidate patterns in the last 7 days
 				</div>
@@ -2587,6 +2609,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	}
 	return (
 		<div className="px-3 pb-3 flex flex-col gap-1.5">
+			{head}
 			{rows.map((p, i) => (
 				<CandidateRowI
 					key={p.id}
