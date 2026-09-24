@@ -114,7 +114,7 @@ const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opac
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
 function ScreenAgents() {
-  const { PageHeader, Icon, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [days, setDays] = useStateAg(30);
   const [refreshTick, setRefreshTick] = useStateAg(0);
@@ -123,6 +123,7 @@ function ScreenAgents() {
   // failureState → Summary fail_count 컬럼 client-side merge (failure-patterns 흡수).
   // revisionState + reviewState → 드로어 Quality 섹션과 Instrumentation 타임라인 입력.
   const [summaryState,   setSummaryState]   = useStateAg(INITIAL_FETCH_STATE);
+  const [summaryAsOfAt,  setSummaryAsOfAt]  = useStateAg(null);
   const [latencyState,   setLatencyState]   = useStateAg(INITIAL_FETCH_STATE);
   const [successState,   setSuccessState]   = useStateAg(INITIAL_FETCH_STATE);
   const [revisionState,  setRevisionState]  = useStateAg(INITIAL_FETCH_STATE);
@@ -239,6 +240,8 @@ function ScreenAgents() {
     return () => ctrl.abort();
   }, [drawerAgent, refreshTick]);
 
+  useEffectAg(() => setSummaryAsOfAt((prevAt) => getLastReadAtAg(prevAt, summaryState)), [summaryState]);
+
   // 패널 1개라도 loading → period 토글 비활성 (abort storm 방지).
   const anyLoading = [
     summaryState, latencyState, successState, revisionState,
@@ -328,9 +331,7 @@ function ScreenAgents() {
                   </button>
                 ))}
               </div>
-              <span className="text-faint fs-micro" title="Summary payload timestamp">
-                {readyData(summaryState)?.fetched_at ? `as of ${readyData(summaryState).fetched_at}` : 'as of —'}
-              </span>
+              <FreshnessStamp {...getFreshnessInputAg(summaryAsOfAt, summaryState)}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh agent data">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -2693,6 +2694,15 @@ function handleErrorAg(err, setter) {
 // state.status === 'ready' 가드 — body 부 ready data 접근 패턴 압축.
 function readyData(state) {
   return state.status === 'ready' ? state.data : null;
+}
+
+// a refresh resets the summary to loading → keep the last successful read so the stamp survives it
+function getLastReadAtAg(prevAt, state) {
+  return readyData(state)?.fetched_at ?? prevAt;
+}
+
+function getFreshnessInputAg(asOfAt, state) {
+  return { at: asOfAt, loading: state.status === 'loading', failed: state.status === 'error' };
 }
 
 // agent × task_type 매트릭스 build — flat row → { agents, cells } projection.

@@ -177,7 +177,7 @@ const BUDGET_META_MC = {
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 function ScreenModelConfig() {
-	const { PageHeader, Icon, TypeScaleStyle } = window.UI;
+	const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [configState, setConfigState] = useStateMC({
 		status: "loading",
@@ -190,6 +190,7 @@ function ScreenModelConfig() {
 	const [saveError, setSaveError] = useStateMC(null);
 	const [surfaceResults, setSurfaceResults] = useStateMC(null);
 	const [refreshTick, setRefreshTick] = useStateMC(0);
+	const [asOfAt, setAsOfAt] = useStateMC(null);
 	const [toast, setToast] = useStateMC(null); // { tone, message }
 	// discardConfirm = Discard 확인 다이얼로그 게이트 (T-MDL-5, destructive=편집분 소실).
 	const [discardConfirm, setDiscardConfirm] = useStateMC(false);
@@ -229,6 +230,8 @@ function ScreenModelConfig() {
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
+
+	useEffectMC(() => setAsOfAt((prevAt) => getLastReadAtMC(prevAt, configState)), [configState]);
 
 	const baseline = useMemoMC(
 		() =>
@@ -353,8 +356,8 @@ function ScreenModelConfig() {
 							<SyncTokenMC
 								state={configState.status}
 								sync={headerSyncMC(data)}
-								receivedAt={configState.receivedAt}
 							/>
+							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
@@ -487,7 +490,7 @@ function ScreenModelConfig() {
 
 // Header sync token — answers "is what I saved what runs?" once per screen, never per row.
 // Tone rides the glyph, text stays plain · as-of = client receive time (loopback → same instant).
-function SyncTokenMC({ state, sync, receivedAt }) {
+function SyncTokenMC({ state, sync }) {
 	const { Icon } = window.UI;
 
 	if (state === "loading") {
@@ -518,16 +521,17 @@ function SyncTokenMC({ state, sync, receivedAt }) {
 				/>
 			)}
 			<span>{meta.label}</span>
-			{receivedAt && (
-				<span className="text-faint">· as of {formatClockMC(receivedAt)}</span>
-			)}
 		</span>
 	);
 }
 
-// as-of format — seconds included, so a just-received reading never looks stale.
-function formatClockMC(ms) {
-	return new Date(ms).toLocaleTimeString();
+// a refresh resets the config to loading → keep the last successful read so the stamp survives it
+function getLastReadAtMC(prevAt, state) {
+	return state.status === "ready" && state.receivedAt ? state.receivedAt : prevAt;
+}
+
+function getFreshnessInputMC(asOfAt, state) {
+	return { at: asOfAt, loading: state.status === "loading", failed: state.status === "error" };
 }
 
 // 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.

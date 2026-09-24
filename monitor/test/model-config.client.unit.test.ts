@@ -731,15 +731,13 @@ test("section headers survive every state, and a non-ready body never reads as z
   }
 });
 
-test("the header sync token answers once per state and stamps when it was read", () => {
-  const readAt = Date.UTC(2026, 0, 2, 3, 4, 5);
+test("the header sync token answers once per state and leaves the as-of stamp to the shared atom", () => {
   const ready = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "ok",
-    receivedAt: readAt,
   });
   assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
-  assert.ok(textMc(ready).includes("as of"), "the reading carries its as-of stamp");
+  assert.ok(!textMc(ready).includes("as of"), "the header freshness atom owns the stamp, not the token");
   const readyGlyphs = tagsMc(ready, "i");
   assert.strictEqual(readyGlyphs.length, 1, "the steady state carries its own glyph, so it reads first");
   assert.strictEqual(tonedMc(ready, "ok").length, 0, "the steady glyph spends no ok tone");
@@ -747,7 +745,6 @@ test("the header sync token answers once per state and stamps when it was read",
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "drift",
-    receivedAt: readAt,
   });
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
   assert.notStrictEqual(
@@ -821,7 +818,7 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
 });
 
 
-// The header token renders its stamp only under `receivedAt`, so a load path that omits it
+// The header stamp advances only from a ready reading's `receivedAt`, so a load path that omits it
 // leaves every Refresh unstamped — the relationship pinned here is GET → stamped reading.
 test("a completed GET stamps the reading with its receive time", async () => {
   const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
@@ -854,10 +851,8 @@ test("a completed GET stamps the reading with its receive time", async () => {
     typeof receivedAt === "number" && receivedAt >= before,
     "the ready reading carries the time it was received",
   );
-  const token = textMc(
-    renderComponentMc(live.SyncTokenMC, { state: "ready", sync: "ok", receivedAt }),
-  );
-  assert.ok(token.includes("as of"), "that stamp is what the header token renders");
+  const getLastReadAt = live.getLastReadAtMC as (prevAt: unknown, state: unknown) => unknown;
+  assert.strictEqual(getLastReadAt(null, ready[0]), receivedAt, "that receive time is what the header stamp reads");
 });
 
 test("the drift banner triggers on any drifted row, not on the file state alone", () => {
