@@ -1,5 +1,5 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
-// 카드: config-sync KPI → 모델 도메인 테이블 → per-call 예산 상한 카드.
+// Layout: header sync token → model domain ledger → per-call budget cap ledger.
 // DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
@@ -41,43 +41,57 @@ const MODEL_CAP_MC = {
 	"claude-sonnet-5": "Sonnet tier — balanced speed/cost",
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
-	inherit: "Falls back to whatever settings.json resolves to",
+	inherit: "Follows the session model — the agent file carries no model line",
 };
-// 도메인 표시 메타 — 라벨/평이 설명/옵션 구성. enforcement = spec D3 class 컬럼의 클라이언트 표기
+// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명/옵션 구성
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
 	"model.dev": {
 		label: "Dev agents",
-		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file, picked up at next spawn",
-		enforcement: "applied",
+		hint: "Code implementation across the dev fleet",
+		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file",
 		editable: true,
 		inherit: true,
 	},
 	"model.research": {
 		label: "Research agent",
-		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis; written into its agent file, picked up at next spawn",
-		enforcement: "applied",
+		hint: "Web and codebase research",
+		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis",
 		editable: true,
 		inherit: true,
 	},
 	"model.meta": {
 		label: "Meta agent",
+		hint: "Rewrites agent instructions",
 		desc: "glass-atrium-meta-agent — the AutoAgent self-improvement loop's instruction rewriter: regenerates agent instruction files from outcome signals, so its model quality shapes how well every agent evolves",
-		enforcement: "applied",
 		editable: true,
 		inherit: true,
 	},
 	"model.wiki": {
 		label: "Wiki curator",
+		hint: "Wiki compilation and index writes",
 		desc: "glass-atrium-wiki-curator — sole owner of wiki writes: incremental compilation, index and topic-map updates, health checks, and raw-ingestion validation",
-		enforcement: "applied",
+		editable: true,
+		inherit: true,
+	},
+	"model.review": {
+		label: "Review",
+		hint: "Code review and bug diagnosis",
+		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — code review verdicts, plan direction review, and root-cause diagnosis; written into both agent files",
+		editable: true,
+		inherit: true,
+	},
+	"model.docs": {
+		label: "Documents",
+		hint: "Reports and plans",
+		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — report and plan authoring; written into both agent files",
 		editable: true,
 		inherit: true,
 	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
+		hint: "Background daemon housekeeping steps",
 		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
-		enforcement: "applied",
 		editable: true,
 		inherit: false,
 	},
@@ -89,15 +103,28 @@ const DOMAIN_ORDER_MC = [
 	"model.research",
 	"model.meta",
 	"model.wiki",
+	"model.review",
+	"model.docs",
 	"model.daemon_cycle_worker",
 ];
 
-// enforcement class 칩 — 정직 공시: applied=저장이 실제 소비 지점에 반영.
-const ENFORCEMENT_META_MC = {
-	applied: {
-		label: "Applied",
-		tone: "ok",
-		desc: "Saving here changes the real consumed value",
+// Take-effect labels — GET apply_mode rendered, so every row answers when its edit applies.
+const APPLY_MODE_META_MC = {
+	"next-spawn": {
+		label: "Next spawn",
+		desc: "Saved now — a running agent keeps its current model until it next spawns",
+	},
+	"next-cycle": {
+		label: "Next cycle",
+		desc: "Saved now — the daemon picks it up on its next cycle",
+	},
+	"tmux-restart": {
+		label: "After tmux restart",
+		desc: "Saved now — the tmux session must restart before it is used",
+	},
+	immediate: {
+		label: "Immediately",
+		desc: "In force as soon as the save lands",
 	},
 };
 
@@ -131,21 +158,18 @@ const SYNC_META_MC = {
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
+		hint: "Caps one self-improve generation or wiki compile call",
 		desc: "Aborts a single runaway model call in the self-improve generation step and the wiki compile step (both share this cap)",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
+		hint: "Caps one self-improve pre-verify call",
 		desc: "Aborts a single runaway model call in the self-improve pre-verify step",
 	},
 };
 
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
-
-// 추천 preset — form 채움만 수행, 저장은 명시 Save 버튼 (spec P3).
-const PRESET_MODELS_MC = {
-	"model.dev": "claude-opus-4-8",
-};
 
 function ScreenModelConfig() {
 	const { PageHeader, Icon, TypeScaleStyle } = window.UI;
@@ -186,7 +210,7 @@ function ScreenModelConfig() {
 		setSaveError(null);
 		fetchJsonMC("/api/model-config", ctrl.signal)
 			.then((data) => {
-				setConfigState({ status: "ready", data, error: null });
+				setConfigState(readyStateMC(data));
 				setForm(buildFormMC(data));
 			})
 			.catch((err) => {
@@ -222,6 +246,7 @@ function ScreenModelConfig() {
 	);
 	const payload = baseline && form ? diffFormMC(baseline, form) : null;
 	const hasErrors = Object.keys(errors).length > 0;
+	const changeCount = countChangesMC(payload);
 	// dirty = 저장할 변경분 존재 — save-banner 노출 + beforeunload 경고 게이트.
 	const isDirty = payload !== null;
 
@@ -252,30 +277,29 @@ function ScreenModelConfig() {
 	const setBudget = (key, value) => {
 		setForm((f) => (f ? { ...f, budgets: { ...f.budgets, [key]: value } } : f));
 	};
-	const applyPreset = () => {
-		setForm((f) =>
-			f ? { ...f, models: { ...f.models, ...PRESET_MODELS_MC } } : f,
-		);
-	};
-
-	const save = async () => {
-		if (!payload || hasErrors || saving) return;
+	// One transport for both Save controls — the sticky bar sends the edit diff, the drift banner
+	// sends the saved targets of the rows that drifted.
+	const submit = async (body) => {
+		if (!body || hasErrors || saving) return;
 		setSaving(true);
 		setSaveError(null);
 		setSurfaceResults(null);
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
-			const data = await putJsonMC("/api/model-config", payload);
-			setConfigState({ status: "ready", data, error: null });
+			const data = await putJsonMC("/api/model-config", body);
+			setConfigState(readyStateMC(data));
 			setForm(buildFormMC(data));
-			setSurfaceResults(extractSurfaceResultsMC(data));
-			showToast("ok", "Changes saved");
+			const problems = extractSurfaceResultsMC(data);
+			setSurfaceResults(problems);
+			// Only a clean save ends in a toast — a failed or skipped surface gets the card instead.
+			if (!problems) showToast("ok", "Changes saved");
 		} catch (err) {
 			setSaveError(err && err.message ? err.message : String(err));
 		} finally {
 			setSaving(false);
 		}
 	};
+	const save = () => submit(payload);
 
 	// Discard — 편집 버퍼를 저장된 baseline 로 되돌림 (네트워크 호출 없음). confirm 게이트 통과 후 실행.
 	const discard = () => {
@@ -293,6 +317,22 @@ function ScreenModelConfig() {
 
 	const ready = configState.status === "ready" && form !== null;
 	const data = configState.data;
+	// Banner trigger = any row drift, not the file-sync state alone — the banner carries the remedy the rows no longer do.
+	const showDrift =
+		ready && (data.daemon_config_sync !== "ok" || hasRowDriftMC(data));
+	// The banner's remedy must be pressable at the moment it fires: a drifted row is clean against
+	// the form buffer, so the sticky Save bar is absent exactly then.
+	const resyncPayload = ready ? resyncPayloadMC(data, payload) : null;
+	const hasAlarm = Boolean(
+		configState.status === "error" || saveError || showDrift || surfaceResults,
+	);
+	// state prop per section rather than a lifted header — both keep the headers in every state
+	// → the smaller diff wins (plan Open Question: implementer's call).
+	const sectionState = ready
+		? "ready"
+		: configState.status === "loading"
+			? "loading"
+			: "unavailable";
 
 	return (
 		<div className="flex flex-col">
@@ -302,18 +342,15 @@ function ScreenModelConfig() {
 			</style>
 			<div className="flex-shrink-0">
 				<PageHeader
-					sub="Models & per-call budget caps"
+					title="Models & budgets"
+					sub="Models & budgets"
 					right={
 						<>
-							<button
-								className="btn ghost sm"
-								onClick={applyPreset}
-								disabled={!ready || saving}
-								title="Fills the recommended values into the form (dev agents claude-opus-4-8). Nothing is saved until you press Save in the banner below."
-								aria-label="Fill recommended preset"
-							>
-								Fill preset
-							</button>
+							<SyncTokenMC
+								state={configState.status}
+								sync={headerSyncMC(data)}
+								receivedAt={configState.receivedAt}
+							/>
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
@@ -327,68 +364,74 @@ function ScreenModelConfig() {
 				/>
 			</div>
 
-			{saveError && (
-				<div className="mb-4">
-					<ErrorBannerMC
-						title="Couldn't save changes"
-						detail={saveError}
-						onRetry={save}
-					/>
-				</div>
-			)}
-			{surfaceResults && (
-				<SurfaceResultsCardMC
-					results={surfaceResults}
-					onDismiss={() => setSurfaceResults(null)}
-				/>
-			)}
-
-			{configState.status === "loading" && <ModelConfigSkeletonMC />}
-			{configState.status === "error" && (
-				<ErrorBannerMC
-					title="Couldn't load model config"
-					detail={configState.error}
-					onRetry={triggerRefresh}
-				/>
-			)}
-			{ready && (
-				<>
-					{/* 드리프트 배너는 전체 sync 가 ok 가 아닐 때만 — In-sync 와 동시 노출 금지(W3-T2 IA-4).
-              per-domain drift 는 테이블 행 내 drift/in-sync 칩으로 이미 공시되므로 상단 배너는 top-level 신호 전용. */}
-					{data.daemon_config_sync !== "ok" && (
-						<DriftBannerMC
-							sync={data.daemon_config_sync}
-							domains={data.domains}
+			{hasAlarm && (
+				<div
+					className="mb-4 flex flex-col gap-3"
+					role="region"
+					aria-label="Alerts">
+					{configState.status === "error" && (
+						<ErrorBannerMC
+							title="Couldn't load model config"
+							detail={configState.error}
+							onRetry={triggerRefresh}
 						/>
 					)}
-					<SyncStatusRowMC sync={data.daemon_config_sync} />
-					<DomainsSectionMC
-						domains={data.domains}
-						knownModels={knownModels}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onModelChange={setModel}
-					/>
-					<BudgetsSectionMC
-						budgets={data.budgets}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onBudgetChange={setBudget}
-					/>
-				</>
+					{saveError && (
+						<ErrorBannerMC
+							title="Couldn't save changes"
+							detail={saveError}
+							onRetry={save}
+						/>
+					)}
+					{showDrift && (
+						<DriftBannerMC
+							sync={data.daemon_config_sync}
+							onResync={
+								resyncPayload && !hasErrors
+									? () => submit(resyncPayload)
+									: null
+							}
+							saving={saving}
+						/>
+					)}
+					{surfaceResults && (
+						<SurfaceResultsCardMC
+							results={surfaceResults}
+							onDismiss={() => setSurfaceResults(null)}
+						/>
+					)}
+				</div>
 			)}
+
+			<DomainsSectionMC
+				state={sectionState}
+				domains={data?.domains}
+				knownModels={knownModels}
+				form={form}
+				baseline={baseline}
+				errors={errors}
+				onModelChange={setModel}
+			/>
+			<BudgetsSectionMC
+				state={sectionState}
+				budgets={data?.budgets}
+				form={form}
+				baseline={baseline}
+				errors={errors}
+				onBudgetChange={setBudget}
+			/>
 
 			{ready && isDirty && (
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
 					<div className="flex items-center gap-2 min-w-0">
 						<span className="fs-body font-medium text-ink">
-							Unsaved changes
+							{changeCount} unsaved change
+							{changeCount === 1 ? "" : "s"}
 						</span>
 						{hasErrors && (
 							<span className="fs-meta text-crit">
-								— fix the highlighted fields before saving
+								<span aria-hidden="true">✕ </span>
+								fix the highlighted fields before saving
 							</span>
 						)}
 					</div>
@@ -438,28 +481,40 @@ function ScreenModelConfig() {
 	);
 }
 
-// daemon-config.json 동기화 상태 — 표준 status Badge 1개로 공시 (W3-T2 (b): 26px KPI 값으로 띄우던
-// 거대 "In sync" 헤딩을 표준 status pill 로 강등 — 색+TONE_ICON 듀얼 인코딩). 지출/청구 KPI 는 없음
-// (OAuth 구독 = metered 청구 없음, GET 에 spend 데이터 없음 · per-call 캡이라 누적 소진 게이지 개념 없음).
-function SyncStatusRowMC({ sync }) {
-	const { Badge } = window.UI;
+// Header sync token — answers "is what I saved what runs?" once per screen, never per row.
+// Tone rides the glyph, text stays plain · as-of = client receive time (loopback → same instant).
+function SyncTokenMC({ state, sync, receivedAt }) {
+	const { Icon } = window.UI;
 
-	const syncMeta = SYNC_META_MC[sync] || {
+	if (state === "loading") {
+		return <span className="fs-meta text-faint">Checking sync…</span>;
+	}
+	if (state !== "ready") {
+		return <span className="fs-meta text-faint">Sync state unavailable</span>;
+	}
+
+	const meta = SYNC_META_MC[sync] || {
 		label: sync || "—",
 		desc: "",
 		tone: "neutral",
 	};
 
 	return (
-		<div className="flex items-center gap-2 mb-4">
-			<span className="section-label">Config file sync</span>
-			<span title={syncMeta.desc}>
-				<Badge role="status" tone={syncMeta.tone} icon={true}>
-					{syncMeta.label}
-				</Badge>
-			</span>
-		</div>
+		<span
+			className="fs-meta text-dim flex items-center gap-1.5"
+			title={meta.desc}>
+			{sync !== "ok" && <Icon name="warn" size={12} className="text-warn" />}
+			<span>{meta.label}</span>
+			{receivedAt && (
+				<span className="text-faint">· as of {formatClockMC(receivedAt)}</span>
+			)}
+		</span>
 	);
+}
+
+// as-of format — seconds included, so a just-received reading never looks stale.
+function formatClockMC(ms) {
+	return new Date(ms).toLocaleTimeString();
 }
 
 // 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.
@@ -479,11 +534,12 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
-// 총 컬럼 수 (설명 행 colSpan) — Target·Saved target·Actual·Sync·Enforcement = 5.
-const DOMAIN_TABLE_COLSPAN_MC = 5;
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live·Takes effect = 4.
+const DOMAIN_TABLE_COLSPAN_MC = 4;
 
-// 모델 도메인 섹션 — Saved target(편집) vs Actual(실측) + apply/enforcement 칩.
+// 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
 function DomainsSectionMC({
+	state,
 	domains,
 	knownModels,
 	form,
@@ -496,49 +552,115 @@ function DomainsSectionMC({
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
-			<table className="tbl">
-				<thead>
-					<tr>
-						<th>Target</th>
-						<th>Saved target</th>
-						<th>Actual</th>
-						<th>Sync</th>
-						<th>Enforcement</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((d) => (
-						<DomainRowMC
-							key={d.domain}
-							domain={d}
-							knownModels={knownModels}
-							value={form.models[d.domain] ?? ""}
-							defaultValue={baseline?.models[d.domain] ?? ""}
-							error={errors[d.domain]}
-							onChange={(v) => onModelChange(d.domain, v)}
-						/>
-					))}
-				</tbody>
-			</table>
+			{state !== "ready" ? (
+				<SectionBodyStateMC state={state} rows={DOMAIN_ORDER_MC.length} />
+			) : (
+				<table className="tbl">
+					<thead>
+						<tr>
+							<th>Agent tier</th>
+							<th>Model</th>
+							<th>Live</th>
+							<th>Takes effect</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={DOMAIN_TABLE_COLSPAN_MC}
+								message="No model domains reported."
+							/>
+						) : (
+							rows.map((d) => (
+								<DomainRowMC
+									key={d.domain}
+									domain={d}
+									knownModels={knownModels}
+									value={form.models[d.domain] ?? ""}
+									defaultValue={baseline?.models[d.domain] ?? ""}
+									error={errors[d.domain]}
+									onChange={(v) => onModelChange(d.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
 		</div>
 	);
 }
 
-// drift/in-sync 상태 배지 — actual↔saved(또는 daemon-config) 정합성 공시. DomainRowMC/BudgetRowMC 공용
-// (드리프트 소스 boolean + title 문구만 상이 — span[title]>Badge 구조는 동일).
-function DriftBadgeMC({ drift, driftTitle, syncTitle, className = "" }) {
+// Empty roster — states zero rows explicitly, so it never reads as a failed load.
+function EmptyRowMC({ colSpan, message }) {
+	return (
+		<tr>
+			<td colSpan={colSpan}>
+				<div className="fs-meta text-faint">{message}</div>
+			</td>
+		</tr>
+	);
+}
+
+// One-line hint, full text behind a click — a full-width prose row breaks the table rhythm.
+function RowHintMC({ hint, detail }) {
+	if (!hint && !detail) return null;
+	if (!detail || detail === hint) {
+		return <div className="fs-meta text-faint is-wrap">{hint}</div>;
+	}
+
+	return (
+		<details className="fs-meta text-faint">
+			<summary className="is-wrap">{hint}</summary>
+			<div className="is-wrap mt-1">{detail}</div>
+		</details>
+	);
+}
+
+// Live value = measured at the consumption point. Matching the saved target → one dim line
+// (no standing ok pill); differing → one warn badge, tone on the glyph · mixed files behind a click.
+function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
-	return drift ? (
-		<span title={driftTitle}>
-			<Badge role="status" tone="warn" icon={true} className={className}>
-				drift
-			</Badge>
-		</span>
-	) : (
-		<span title={syncTitle}>
-			<Badge role="status" tone="ok" icon={true} className={className}>
-				in sync
-			</Badge>
+	const fileRows = Array.isArray(files) ? files : [];
+
+	return (
+		<div className="flex flex-col gap-1 min-w-0">
+			<div className="flex items-center gap-2 min-w-0">
+				<span
+					className={`font-mono fs-meta truncate ${drift ? "text-ink" : "text-dim"}`}
+				>
+					{value ?? "—"}
+				</span>
+				{drift && (
+					<span title={driftTitle}>
+						<Badge role="status" tone="warn" icon={true} className="pill--ctl-h">
+							drift
+						</Badge>
+					</span>
+				)}
+			</div>
+			{fileRows.length > 0 && (
+				<details className="fs-micro text-faint">
+					<summary>{fileRows.length} files</summary>
+					<div className="mt-1 flex flex-col gap-0.5">
+						{fileRows.map((f) => (
+							<div key={f.file} className="font-mono truncate">
+								{f.file} — {f.model ?? "inherit"}
+							</div>
+						))}
+					</div>
+				</details>
+			)}
+		</div>
+	);
+}
+
+// Take-effect cell — toneless: a report, not an alarm.
+function ApplyModeMC({ mode }) {
+	const meta = APPLY_MODE_META_MC[mode] || { label: mode || "—", desc: "" };
+
+	return (
+		<span className="fs-meta text-dim" title={meta.desc}>
+			{meta.label}
 		</span>
 	);
 }
@@ -554,83 +676,52 @@ function DomainRowMC({
 	const { Badge } = window.UI;
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
+		hint: "",
 		desc: "",
-		enforcement: "applied",
 		editable: d.editable !== false,
 	};
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
-	const enforceMeta =
-		ENFORCEMENT_META_MC[meta.enforcement] || ENFORCEMENT_META_MC.applied;
 
 	// 행 간격 10px(상하 5px) — 라벨/컨트롤 묶음이 개별 행으로 읽히게.
 	const cellPad = { paddingTop: 5, paddingBottom: 5 };
 
 	return (
-		<>
-			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-				<td style={cellPad}>
-					<div className="flex items-center gap-2 min-w-0">
-						<span className="shrink-0 fs-body font-medium text-ink">
-							{meta.label}
-						</span>
-					</div>
-				</td>
-				<td style={{ ...cellPad, minWidth: 220 }}>
-					{editable ? (
-						<ModelSelectMC
-							domain={d.domain}
-							knownModels={knownModels}
-							value={value}
-							defaultValue={defaultValue}
-							error={error}
-							pricingKnown={d.pricing_known}
-							onChange={onChange}
-						/>
-					) : (
-						// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
-						<Badge role="metadata" className="pill--ctl-h">
-							{value || d.desired || "—"}
-						</Badge>
-					)}
-				</td>
-				<td style={cellPad}>
-					{/* 메타/상태 배지는 SAVED TARGET <select> 와 같은 높이(--ctl-h)로 맞춘다 — 사용자 요구.
-					    한 행 안에서 높이가 어긋나면 버그로 읽힌다. 공용 Badge 로 이관할 때도 이 height-match 는 유지할 것
-					    (이전 이관에서 표준 22px 로 되돌아가 회귀했던 지점). */}
-					<Badge role="metadata" className="pill--ctl-h">
-						{d.actual ?? "—"}
-					</Badge>
-				</td>
-				<td style={cellPad}>
-					<DriftBadgeMC
-						drift={d.drift}
-						driftTitle="Actual differs from saved target"
-						syncTitle="Actual matches saved target"
-						className="pill--ctl-h"
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td style={{ ...cellPad, maxWidth: 260 }}>
+				<div className="fs-body font-medium text-ink">{meta.label}</div>
+				<RowHintMC hint={meta.hint} detail={meta.desc} />
+			</td>
+			<td style={{ ...cellPad, minWidth: 220 }}>
+				{editable ? (
+					<ModelSelectMC
+						domain={d.domain}
+						knownModels={knownModels}
+						value={value}
+						defaultValue={defaultValue}
+						error={error}
+						pricingKnown={d.pricing_known}
+						onChange={onChange}
 					/>
-				</td>
-				<td style={cellPad}>
-					<span title={enforceMeta.desc}>
-						<Badge
-							role="status"
-							tone={enforceMeta.tone}
-							glyph={false}
-							className="pill--ctl-h">
-							{enforceMeta.label}
-						</Badge>
-					</span>
-				</td>
-			</tr>
-			{meta.desc && (
-				// 설명은 전 컬럼 폭 행으로 — 좁은 첫 컬럼에 갇히면 여러 줄로 접혀 읽히지 않는다.
-				<tr className="row-desc">
-					<td colSpan={DOMAIN_TABLE_COLSPAN_MC}>
-						<div className="card-sub is-wrap">{meta.desc}</div>
-					</td>
-				</tr>
-			)}
-		</>
+				) : (
+					// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
+					<Badge role="metadata" className="pill--ctl-h">
+						{value || d.desired || "—"}
+					</Badge>
+				)}
+			</td>
+			<td style={cellPad}>
+				<LiveValueMC
+					value={d.actual}
+					drift={d.drift}
+					files={d.files}
+					driftTitle="Live value differs from the saved target — press Save again"
+				/>
+			</td>
+			<td style={cellPad}>
+				<ApplyModeMC mode={d.apply_mode} />
+			</td>
+		</tr>
 	);
 }
 
@@ -677,7 +768,7 @@ function ModelSelectMC({
 			>
 				{options.map((opt) => (
 					<option key={opt} value={opt} title={MODEL_CAP_MC[opt] || undefined}>
-						{opt === "inherit" ? "inherit (settings.json)" : opt}
+						{opt === "inherit" ? "session model (inherit)" : opt}
 					</option>
 				))}
 				<option value={CUSTOM_OPTION_MC}>custom…</option>
@@ -694,6 +785,7 @@ function ModelSelectMC({
 			)}
 			{error && (
 				<div className="fs-meta text-crit mt-1" role="alert">
+					<span aria-hidden="true">✕ </span>
 					{error}
 				</div>
 			)}
@@ -731,38 +823,56 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	);
 }
 
-// 총 컬럼 수 (설명 행 colSpan) — Background call·Per-call cap·Actual·Sync = 4.
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live·Takes effect = 4.
 const BUDGET_TABLE_COLSPAN_MC = 4;
 
-// per-call 예산 상한 섹션 — 입력 + apply/drift 칩 + OAuth 맥락 정직 공시 (월 청구 캡이 아님).
-function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
+// per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
+function BudgetsSectionMC({
+	state,
+	budgets,
+	form,
+	baseline,
+	errors,
+	onBudgetChange,
+}) {
 	const rows = sortBudgetsMC(budgets || []);
 
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Per-call budget caps" />
-			<table className="tbl">
-				<thead>
-					<tr>
-						<th>Background call</th>
-						<th>Per-call cap</th>
-						<th>Actual</th>
-						<th>Sync</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((b) => (
-						<BudgetRowMC
-							key={b.domain}
-							budget={b}
-							value={form.budgets[b.domain] ?? ""}
-							defaultValue={baseline?.budgets[b.domain] ?? ""}
-							error={errors[b.domain]}
-							onChange={(v) => onBudgetChange(b.domain, v)}
-						/>
-					))}
-				</tbody>
-			</table>
+			{state !== "ready" ? (
+				<SectionBodyStateMC state={state} rows={2} />
+			) : (
+				<table className="tbl">
+					<thead>
+						<tr>
+							<th>Background call</th>
+							<th>Per-call cap</th>
+							<th>Live</th>
+							<th>Takes effect</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={BUDGET_TABLE_COLSPAN_MC}
+								message="No budget caps reported."
+							/>
+						) : (
+							rows.map((b) => (
+								<BudgetRowMC
+									key={b.domain}
+									budget={b}
+									value={form.budgets[b.domain] ?? ""}
+									defaultValue={baseline?.budgets[b.domain] ?? ""}
+									error={errors[b.domain]}
+									onChange={(v) => onBudgetChange(b.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
 		</div>
 	);
 }
@@ -774,140 +884,142 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// 예산 1행 — $ 입력(2-decimal 문자열) + 단위/범위 힌트 + validate-on-blur + field-adjacent role=alert
-// (T-MDL-4) + actual/drift + ghost default/reset (T-MDL-6).
+// 예산 1행 — $ 입력(2-decimal 문자열) + validate-on-blur + field-adjacent role=alert (T-MDL-4)
+// + 실측/반영 시점 + ghost default/reset (T-MDL-6).
 function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
-	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, desc: "" };
+	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// touched = blur 1회 후에만 inline 에러 노출 (validate-on-blur — 타이핑 중 noise 억제).
 	const [touched, setTouched] = useStateMC(false);
 	const showError = error && touched;
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
-		<>
-			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-				<td>
-					<div className="fs-body">{meta.label}</div>
-				</td>
-				<td style={{ minWidth: 180 }}>
-					<div className="flex items-center gap-2">
-						<span
-							className={`field-affix${showError ? " is-error" : ""}`}
-							style={{ width: "6rem" }}
-						>
-							<span className="field-affix__sym">$</span>
-							<input
-								type="text"
-								inputMode="decimal"
-								className="field field--mono text-right"
-								value={value}
-								placeholder={budgetPlaceholderMC()}
-								onChange={(e) => onChange(e.target.value)}
-								onBlur={() => setTouched(true)}
-								aria-label={`${meta.label} per-call cap in USD`}
-								aria-invalid={showError ? "true" : undefined}
-							/>
-						</span>
-					</div>
-					{showError && (
-						<div className="fs-meta text-crit mt-1" role="alert">
-							{error}
-						</div>
-					)}
-					<GhostResetMC
-						overridden={overridden}
-						defaultValue={defaultValue}
-						onReset={() => onChange(defaultValue)}
-					/>
-				</td>
-				<td>
-					<span className="font-mono fs-body">
-						{b.actual ? `$${b.actual}` : "—"}
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td style={{ maxWidth: 260 }}>
+				<div className="fs-body">{meta.label}</div>
+				<RowHintMC hint={meta.hint} detail={meta.desc} />
+			</td>
+			<td style={{ minWidth: 180 }}>
+				<div className="flex items-center gap-2">
+					<span
+						className={`field-affix${showError ? " is-error" : ""}`}
+						style={{ width: "6rem" }}
+					>
+						<span className="field-affix__sym">$</span>
+						<input
+							type="text"
+							inputMode="decimal"
+							className="field field--mono text-right"
+							value={value}
+							placeholder={budgetPlaceholderMC()}
+							onChange={(e) => onChange(e.target.value)}
+							onBlur={() => setTouched(true)}
+							aria-label={`${meta.label} per-call cap in USD`}
+							aria-invalid={showError ? "true" : undefined}
+						/>
 					</span>
-				</td>
-				<td>
-					<DriftBadgeMC
-						drift={b.drift}
-						driftTitle="daemon-config.json differs from saved target — press Save"
-						syncTitle="daemon-config.json matches saved target"
-						className="pill--ctl-h"
-					/>
-				</td>
-			</tr>
-			{meta.desc && (
-				// 설명은 전 컬럼 폭 행으로 — ellipsis 로 잘려 hover 툴팁에만 있던 문장을 인라인 전문 노출.
-				<tr className="row-desc">
-					<td colSpan={BUDGET_TABLE_COLSPAN_MC}>
-						<div className="fs-meta text-faint">{meta.desc}</div>
-					</td>
-				</tr>
-			)}
-		</>
+				</div>
+				{showError && (
+					<div className="fs-meta text-crit mt-1" role="alert">
+						<span aria-hidden="true">✕ </span>
+						{error}
+					</div>
+				)}
+				<GhostResetMC
+					overridden={overridden}
+					defaultValue={defaultValue}
+					onReset={() => onChange(defaultValue)}
+				/>
+			</td>
+			<td>
+				<LiveValueMC
+					value={b.actual ? `$${b.actual}` : null}
+					drift={b.drift}
+					driftTitle="daemon-config.json differs from the saved cap — press Save again"
+				/>
+			</td>
+			<td>
+				<ApplyModeMC mode={b.apply_mode} />
+			</td>
+		</tr>
 	);
 }
 
-// Save 의 per-surface 결과 공시 — frontmatter per-file ok/skipped/failed 등 (silent skip 금지, AC-5).
+// Save 의 per-surface 결과 공시 — 문제 행(failed/skipped)만 펼쳐 두고 ok 행은 접힌 disclosure 뒤로
+// (silent skip 금지, AC-5 — 접어도 목록에는 남는다).
 function SurfaceResultsCardMC({ results, onDismiss }) {
-	const { CardHead, Icon, Badge } = window.UI;
+	const { CardHead, Icon } = window.UI;
 
 	const rows = Array.isArray(results) ? results : [];
 	if (rows.length === 0) return null;
 
-	const toneOf = (status) =>
-		status === "ok" ? "ok" : status === "skipped" ? "warn" : "crit";
+	const problems = rows.filter((r) => r.status !== "ok");
+	const okRows = rows.filter((r) => r.status === "ok");
 
 	return (
-		<div className="card mb-4">
+		<div className="card">
 			<CardHead
-				title="Save results"
+				title={`Save touched ${rows.length} surface${rows.length === 1 ? "" : "s"}`}
 				right={
 					<button
 						className="btn ghost sm"
 						onClick={onDismiss}
-						aria-label="Dismiss save results"
-					>
+						aria-label="Dismiss save results">
 						<Icon name="x" size={14} />
 					</button>
 				}
 			/>
 			<div className="card-body">
-				{rows.map((r, i) => (
-					<div
-						key={i}
-						className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0"
-					>
-						<Badge role="status" tone={toneOf(r.status)} icon={true}>
-							{r.status || "—"}
-						</Badge>
-						<span className="text-dim truncate">
-							{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
-						</span>
-						{r.reason && (
-							<span className="text-faint truncate">— {r.reason}</span>
-						)}
-					</div>
+				{problems.map((r, i) => (
+					<SurfaceResultRowMC key={i} result={r} />
 				))}
+				{okRows.length > 0 && (
+					<details className="fs-meta text-faint mt-1">
+						<summary>{okRows.length} surfaces written without error</summary>
+						<div className="mt-1">
+							{okRows.map((r, i) => (
+								<SurfaceResultRowMC key={i} result={r} />
+							))}
+						</div>
+					</details>
+				)}
 			</div>
 		</div>
 	);
 }
 
-// 설정 드리프트 배너 — daemon_config_sync 불일치 또는 도메인 drift 존재 시 노출.
+function SurfaceResultRowMC({ result: r }) {
+	const { Badge } = window.UI;
+	const tone = r.status === "ok" ? "ok" : r.status === "skipped" ? "warn" : "crit";
+
+	return (
+		<div className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0">
+			<Badge role="status" tone={tone} icon={true}>
+				{r.status || "—"}
+			</Badge>
+			<span className="text-dim truncate">
+				{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
+			</span>
+			{r.reason && <span className="text-faint truncate">— {r.reason}</span>}
+		</div>
+	);
+}
+
+// Config drift banner — one remedy, carried here only: file mismatch or any drifted row raises it.
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
-function DriftBannerMC({ sync, domains }) {
+function DriftBannerMC({ sync, onResync, saving }) {
 	const { Icon } = window.UI;
-	const driftedDomains = (domains || []).filter((d) => d.drift);
-	// 처방이 다르다 — drift/file-missing 은 Save 가, pending-migration 은 db-setup 이 고친다.
+	// Remedies differ — Save fixes drift/file-missing, db-setup fixes pending-migration.
 	const pendingMigration = sync === "pending-migration";
+
 	return (
 		<div
 			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3 mb-4"
+			className="rounded-md border p-3 flex items-start gap-3"
 			style={{
 				background: "rgb(var(--warn) / 0.08)",
 				borderColor: "rgb(var(--warn) / 0.4)",
-			}}
-		>
+			}}>
 			<Icon name="git" size={16} className="text-warn mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">
@@ -915,18 +1027,25 @@ function DriftBannerMC({ sync, domains }) {
 						? "Config rows still carry their pre-rename names"
 						: "Saved config not yet fully live"}
 				</div>
-				{pendingMigration && (
-					<div className="fs-meta text-dim mt-1">
-						Values below are read from the old rows. Run{" "}
-						<span className="font-mono">glass-atrium db-setup</span> to complete
-						the rename.
-					</div>
-				)}
-				{driftedDomains.length > 0 && (
-					<div className="fs-meta text-dim mt-2">
-						{driftedDomains.length} domain
-						{driftedDomains.length === 1 ? "" : "s"} out of sync.
-					</div>
+				<div className="fs-meta text-dim mt-1">
+					{pendingMigration ? (
+						<>
+							Values below are read from the old rows. Run{" "}
+							<span className="font-mono">glass-atrium db-setup</span> to complete
+							the rename.
+						</>
+					) : (
+						"Save again to rewrite the surfaces that consume these values."
+					)}
+				</div>
+				{!pendingMigration && onResync && (
+					<button
+						className="btn primary sm mt-2"
+						onClick={onResync}
+						disabled={saving}
+					>
+						Save again
+					</button>
 				)}
 			</div>
 		</div>
@@ -1012,29 +1131,31 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-function ModelConfigSkeletonMC() {
-	const block = (h) => (
-		<div
-			aria-busy="true"
-			style={{
-				width: "100%",
-				height: h,
-				borderRadius: 8,
-				background: "rgb(var(--sunken))",
-				opacity: 0.7,
-				animation: "skelPulseMC 1.4s ease-in-out infinite",
-			}}
-		/>
-	);
-	return (
-		<div className="space-y-4" aria-label="Loading model config">
-			<div className="grid grid-cols-3 gap-3">
-				{block(72)}
-				{block(72)}
-				{block(72)}
+function SectionBodyStateMC({ state, rows }) {
+	if (state === "loading") {
+		return (
+			<div aria-busy="true" aria-label="Loading rows">
+				{Array.from({ length: rows }, (_unused, i) => (
+					<div
+						key={i}
+						style={{
+							height: 34,
+							marginBottom: 6,
+							borderRadius: 6,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+							animation: "skelPulseMC 1.4s ease-in-out infinite",
+						}}
+					/>
+				))}
 			</div>
-			{block(280)}
-			{block(200)}
+		);
+	}
+
+	// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
+	return (
+		<div className="fs-meta text-faint py-2">
+			Not available — the saved config could not be loaded.
 		</div>
 	);
 }
@@ -1126,9 +1247,60 @@ function sortBudgetsMC(budgets) {
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
 }
 
+function readyStateMC(data) {
+	return { status: "ready", data, error: null, receivedAt: Date.now() };
+}
+
+// Banner remedy payload — re-sends the saved target of every drifted row, so the PUT reaches the
+// render side effects with nothing edited. Unsaved edits win: the response reinitializes the form
+// buffer, so a value left out here would be discarded.
+function resyncPayloadMC(data, edits) {
+	const fileDrift = (data.daemon_config_sync ?? "ok") !== "ok";
+	const models = {};
+	for (const d of data.domains || []) {
+		if (!(d.drift || fileDrift) || !d.desired) continue;
+		models[d.domain] = d.desired;
+	}
+	const budgets = {};
+	for (const b of data.budgets || []) {
+		if (!(b.drift || fileDrift) || !b.desired) continue;
+		budgets[b.domain] = b.desired;
+	}
+	Object.assign(models, edits?.models || {});
+	Object.assign(budgets, edits?.budgets || {});
+
+	const payload = {};
+	if (Object.keys(models).length > 0) payload.models = models;
+	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	return Object.keys(payload).length > 0 ? payload : null;
+}
+
+// Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
+function headerSyncMC(data) {
+	const sync = data?.daemon_config_sync;
+	return sync === "ok" && hasRowDriftMC(data) ? "drift" : sync;
+}
+
+// Row drift present — banner trigger, true on one drifted model or budget row.
+function hasRowDriftMC(data) {
+	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
+	return rows.some((r) => r.drift);
+}
+
 function extractSurfaceResultsMC(data) {
 	const results = data.results ?? data.surfaces ?? null;
-	return Array.isArray(results) && results.length > 0 ? results : null;
+	if (!Array.isArray(results) || results.length === 0) return null;
+	// All ok → no card: a clean save is announced by the toast alone.
+	return results.some((r) => r.status !== "ok") ? results : null;
+}
+
+// Unsaved count = fields in the partial PUT payload, so the wording matches what is sent.
+function countChangesMC(payload) {
+	if (!payload) return 0;
+	return (
+		Object.keys(payload.models || {}).length +
+		Object.keys(payload.budgets || {}).length
+	);
 }
 
 async function fetchJsonMC(url, signal) {
