@@ -118,6 +118,7 @@ function ScreenWiki() {
 				/>
 				<WikiRunHistorySection
 					cyclesState={cyclesState}
+					summaryState={summaryState}
 					reportState={reportState}
 					days={reportDays}
 					onChangeDays={setReportDays}
@@ -728,6 +729,7 @@ function describeMaintenanceW(proposals, deadLinks) {
 
 function WikiRunHistorySection({
 	cyclesState,
+	summaryState,
 	reportState,
 	days,
 	onChangeDays,
@@ -741,7 +743,7 @@ function WikiRunHistorySection({
 	return (
 		<WikiDisclosureW
 			label="Run history"
-			count={describeRunHistoryW(cyclesState, model)}
+			count={describeRunHistoryW(cyclesState, model, summaryState)}
 			bodyClassName="px-3 pb-3 flex flex-col gap-3"
 		>
 			{cyclesState.status === "loading" ? (
@@ -802,11 +804,19 @@ function WikiRunHistorySection({
 	);
 }
 
-function describeRunHistoryW(cyclesState, model) {
+// The server's p95 shares the cycles window, so it rides the same summary line.
+function describeRunHistoryW(cyclesState, model, summaryState) {
 	if (cyclesState.status === "loading") return "Loading…";
 	if (cyclesState.status === "error") return "Unavailable";
 	if (model.rows.length === 0) return "No runs in range";
-	return `${model.spanDays} runs · last ${model.newestDate}`;
+
+	const p95 =
+		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
+	const p95Label =
+		typeof p95 === "number"
+			? ` · p95 ${window.UI.formatDuration(p95, "ms")}`
+			: "";
+	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
 }
 
 // Collapsible section shell — label left, count right, body below the summary.

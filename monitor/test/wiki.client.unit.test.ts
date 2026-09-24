@@ -52,10 +52,11 @@ interface WikiHelpers {
     backlogState: FetchState,
     cyclesState: FetchState,
   ) => LaneModel;
-  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean };
+  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
   buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
   describeNotesByTypeW: (state: FetchState) => string;
+  describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
 
@@ -331,3 +332,21 @@ test("a backlog built without a first-seen map carries an empty map, never undef
 function dedup(hashes: string[]) {
   return { dedup_proposals: { proposals: hashes.map((h) => ({ cluster_hash: h })) } };
 }
+
+// The cycle p95 is demoted to the run-history summary line, not dropped.
+
+test("the run-history summary carries the cycle p95 exactly when the server reports one", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const cycles = unchangedCycles(3);
+  const model = helpers.buildThroughputModel(cycles);
+  assert.ok(model.rows.length > 0, "fixture must yield run rows");
+
+  const reported = helpers.describeRunHistoryW(cycles, model, ready({ cycle_p95_ms: 4200 }));
+  assert.match(reported, /p95 4200ms/);
+
+  for (const summary of [ready({ cycle_p95_ms: null }), loading, errored]) {
+    assert.doesNotMatch(helpers.describeRunHistoryW(cycles, model, summary), /p95/);
+  }
+  helpers.window.UI.formatDuration = originalFormat;
+});
