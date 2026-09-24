@@ -37,6 +37,7 @@ import {
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
+import type { HealthDaemonsResponse } from "../src/server/types/health-detail.js";
 import { buildScreenSandbox } from "./client-sandbox.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -96,8 +97,29 @@ function getLiveFixture(
 		// 서버 표 그대로 각인함 — `{}` 로 두면 AC-B2-3c 가 공허해짐. 그 AC 는 `pg_db` 와
 		// `hook_pipeline` 이 비어 있지 않게 각인된 것을 먼저 단언한 뒤 그 두 노드에 링이
 		// 없음을 재는데, 각인이 없으면 "바인딩이 없어서 링이 없다"와 구별되지 않음.
-		// 이 하네스는 health 라우트를 스텁하지 않으므로 각인은 있고 판정만 비는 상태가 됨.
+		// 하네스는 데몬 health 만 세우므로 pg·hook 부품은 각인은 있고 판정만 비는 상태가 됨.
 		part_bindings: PART_NODE_BINDINGS,
+	};
+}
+
+// /api/health/daemons 픽스처 — 데몬 부품의 판정이 도착해야 그 노드가 unverified 를 벗고 판정 링을 닮.
+function getDaemonHealthFixture(verdict: string): HealthDaemonsResponse {
+	return {
+		daemons: [
+			{
+				daemon_name: BOUND_DAEMON,
+				last_run_at: null,
+				last_status: null,
+				effective_status: verdict,
+				expected_next_at: null,
+				cost_guard_state: null,
+				staleness_minutes: null,
+				needs_auth: false,
+				needs_auth_remediation: null,
+			},
+		],
+		computed_at: new Date().toISOString(),
+		timezone: "UTC",
 	};
 }
 
@@ -131,6 +153,7 @@ interface RenderContext {
 // 서버·브라우저·페이지를 모두 새로 세우므로 두 컨텍스트는 서로의 DOM 도 폴링 상태도 보지 못함.
 async function openRenderContext(
 	liveFixture: ArchitectureLiveResponse,
+	daemonHealth?: HealthDaemonsResponse,
 ): Promise<RenderContext> {
 	const app = Fastify({ logger: false });
 	await app.register(fastifyStatic, {
@@ -145,6 +168,7 @@ async function openRenderContext(
 		return doc.diagrams;
 	});
 	app.get("/api/architecture/live", async () => liveFixture);
+	if (daemonHealth) app.get("/api/health/daemons", async () => daemonHealth);
 	await app.ready();
 	const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -288,7 +312,10 @@ describe("healthy live fixture", () => {
 			"ok",
 			`fixture precondition: '${HEALTHY_VERDICT}' must read as the healthy tone in the shared status table`,
 		);
-		ctx = await openRenderContext(getLiveFixture(HEALTHY_VERDICT, 1));
+		ctx = await openRenderContext(
+			getLiveFixture(HEALTHY_VERDICT, 1),
+			getDaemonHealthFixture(HEALTHY_VERDICT),
+		);
 	});
 
 	after(async () => {
@@ -359,7 +386,7 @@ describe("healthy live fixture", () => {
 	/**
 	 * AC-B2-3a — 정상 판정도 링을 켬.
 	 * 링 근거원이 데몬 판정 ∪ 부품 판정이므로 '정상은 안 켠다' 는 계약이 아님.
-	 * 이 하네스는 health 라우트를 세우지 않으므로 부품 판정은 도착하지 않음.
+	 * 하네스는 데몬 health 만 세우므로 도착하는 부품 판정은 데몬 부품뿐임.
 	 * 여기서 켜지는 것은 데몬 원천뿐 — 기대 집합이 데몬 바인딩 ∩ 각인 id 로 정확히 닫힘.
 	 */
 	test("AC-B2-3a healthy verdict lights the ok ring on exactly the bound rendered nodes", async () => {
@@ -378,6 +405,28 @@ describe("healthy live fixture", () => {
 			okCount,
 			expectedIds.length,
 			`${LIVE_TONE_CLASS.ok} count vs bound rendered nodes ${expectedIds.join(", ")}`,
+		);
+
+		// 링 규칙 (39731 S2) — ok 는 판정 클래스를 달되 테두리를 그리지 않음. 클래스 수만 재면
+		// '판정이 왔음' 과 '테두리가 섰음' 이 한 값으로 접혀, 아홉 노드가 다 둘린 지도도 초록임.
+		// 링 사각형의 존재를 먼저 단언함 — 없으면 아래 읽기는 빈 목록 위의 공허한 초록임.
+		const okRingDisplays = await ctx.page.evaluate(
+			(sel) =>
+				Array.from(
+					document.querySelectorAll(
+						`${sel} svg .arch-node-live-ok > rect.arch-ring-state`,
+					),
+				).map((el) => getComputedStyle(el).display),
+			ctx.selectors.canvas,
+		);
+		assert.ok(
+			okRingDisplays.length > 0,
+			"an ok-toned node must still carry its ring rect, or the reading below measures nothing",
+		);
+		assert.deepStrictEqual(
+			[...new Set(okRingDisplays)],
+			["none"],
+			`an ok part must read unringed — displays: ${okRingDisplays.join(", ")}`,
 		);
 
 		for (const cls of [LIVE_TONE_CLASS.warn, LIVE_TONE_CLASS.crit]) {
@@ -406,7 +455,7 @@ describe("healthy live fixture", () => {
 	 * 각인 전제를 먼저 세우는 이유 — 각인이 없으면 "바인딩이 없어서 안 켜졌다" 와 구별되지 않음.
 	 * 그래서 (1) 픽스처가 싣는 표가 두 부품을 비어 있지 않게 각인함.
 	 * (2) 그 id 들이 실제로 그려졌음을 먼저 재고, 그 다음에야 링 부재를 잼.
-	 * 이 하네스는 health 라우트를 세우지 않으므로 각인은 있고 판정만 비는 상태가 성립함.
+	 * 하네스가 pg·hook health 라우트를 세우지 않으므로 각인은 있고 판정만 비는 상태가 성립함.
 	 */
 	const UNVERDICTED_PARTS = ["pg", "hook-chain"] as const;
 

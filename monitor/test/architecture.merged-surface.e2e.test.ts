@@ -96,7 +96,7 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 				daemon_name: BOUND_DAEMON,
 				// "critical" is not a DAEMON_STATUS_TONE key, so the tone resolves through the
 				// `info` fallback and the pill text reads "critical" — ui.jsx `daemonStatusLabel`
-				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on LiveStrip
+				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on the strip
 				// text inherits `critical`, not an em dash.
 				effective_status: "critical",
 				last_run_at: null,
@@ -587,8 +587,8 @@ test("AC-T19 no interaction attaches the node-dim classes", async () => {
 
 // 상시 칩이 렌더하던 정확한 라벨 — 기본 픽스처(writers 빈 배열 · 최근활동 0) 기준.
 // 맨 단어(cost/agent/outcome)는 다이어그램 노드 라벨과 충돌하므로(diagrams-source 의
-// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 로드 실패 경보와
-// 로딩 스켈레톤이 같은 .arch-live-strip 을 쓰고 둘 다 남기 때문임.
+// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 칩이 살던 줄 자체가
+// 이제 화면에 없으므로 클래스로는 그 부재를 가릴 수 없음.
 const CHIP_LABELS = ["Writer 0/0", "cost 0", "agent 0", "outcome \u2014"];
 
 // 실제 로스터 이름 — composeWriters(live-overlay.ts:383-387)가 내보내는 원소 모양과 같음.
@@ -866,6 +866,42 @@ async function assertZoneRing(
 	);
 }
 
+/**
+ * ok 존 — 판정 클래스는 들되 테두리를 그리지 않음 (39731 S2 링 규칙).
+ * 클래스와 그림을 함께 재야 '클래스가 사라짐' 과 '그리지 않음' 이 갈림: 앞만 재면 판정이
+ * 통째로 끊긴 지도도 초록이고, 뒤만 재면 링 규칙이 판정 자체를 지운 회귀가 지나감.
+ */
+async function assertZoneUnringed(
+	probe: ZoneRingProbe,
+	zoneId: string,
+	expectedClass: string,
+): Promise<void> {
+	assert.ok(
+		Object.hasOwn(probe.zoneClasses, zoneId),
+		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.deepEqual(
+		probe.zoneClasses[zoneId],
+		[expectedClass],
+		`zone '${zoneId}' must carry exactly ${expectedClass}`,
+	);
+
+	const display = await page.evaluate(
+		(args) => {
+			const el = document.querySelector(
+				`${args.canvas} svg .${args.cls} > rect.arch-ring-state`,
+			);
+			return el ? getComputedStyle(el).display : "<no ring rect>";
+		},
+		{ canvas: selectors.canvas, cls: expectedClass },
+	);
+	assert.equal(
+		display,
+		"none",
+		`zone '${zoneId}' must stay unringed — a painted ok verdict rings every healthy part, and then the ring marks nothing`,
+	);
+}
+
 // 존이 대표하는 노드에는 링이 남으면 안 됨 — 같은 판정이 두 겹으로 읽힘.
 function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): void {
 	const nodes = getRenderedPart(probe.rendered, partId);
@@ -995,7 +1031,7 @@ test("AC-B2-3d healthy part verdicts light the zone that represents them", async
 	const zoneProbe = await getZoneRingProbe();
 
 	for (const [partId, zoneId] of Object.entries(ZONE_REPRESENTED_PART_ZONE)) {
-		await assertZoneRing(zoneProbe, zoneId, ZONE_RING_OK_CLASS, "--ok");
+		await assertZoneUnringed(zoneProbe, zoneId, ZONE_RING_OK_CLASS);
 		assertNodeUnringed(nodeProbe, partId, zoneId);
 	}
 });
@@ -1054,7 +1090,7 @@ test("AC-B2-3f exactly the zones with a single health node carry the verdict", a
 test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
 	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	await assertZoneRing(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS, "--ok");
+	await assertZoneUnringed(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS);
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
@@ -2829,7 +2865,7 @@ async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null
 
 // 끊긴 health 저장소를 부르는 경보 — 이름·자리·복구 컨트롤을 함께 읽음.
 // 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '노드를 눌러야 보임' 이 초록으로 지나감.
-// 경보는 표 안에 서 있었고 표가 사라지며 페이지로 올라왔음 — `onPage` 가 그 이사를 잼.
+// 경보는 이제 지도 위 경보 레인의 한 행임 — `onPage` 가 그 자리를 잼.
 async function getStoreAlerts(): Promise<
 	{ text: string; onPage: boolean; inPanel: boolean; retries: number }[]
 > {
@@ -2838,7 +2874,7 @@ async function getStoreAlerts(): Promise<
 			.filter((el) => (el.textContent || "").includes("system health"))
 			.map((el) => ({
 				text: (el.textContent || "").replace(/\s+/g, " ").trim(),
-				onPage: Boolean(el.closest(".arch-health-alert-wrap")),
+				onPage: Boolean(el.closest(".arch-alarm-lane")),
 				// 패널 안에 서면 노드를 눌러야 보임 — 헬스를 통째로 못 읽었다는 사실이
 				// 클릭 뒤에 숨는 것이 이 절이 막는 결함임.
 				inPanel: Boolean(el.closest("[data-node-health]")),
@@ -2851,7 +2887,7 @@ test("AC-B2-6b a health store that failed is named by an alert standing on the p
 	await openMapWithHealth(getHealthFixture({ failedStores: ["health"] }));
 	// 끊긴 저장소의 부품은 tone 을 못 받으므로 판정 앵커를 쓸 수 없음 — 경보 자체를 기다림.
 	// 부재는 아래 단언이 문장으로 보고함(여기서 던지면 붉은 이유가 타임아웃으로 바뀜).
-	await page.waitForSelector(".arch-health-alert-wrap .arch-queue-error", { timeout: 15_000 }).then(
+	await page.waitForSelector('.arch-alarm-lane [data-alarm="health-store"]', { timeout: 15_000 }).then(
 		() => true,
 		() => false,
 	);
