@@ -57,12 +57,12 @@ const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
 function ScreenCost({ onNav }) {
-  const { PageHeader, Icon, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [days, setDays] = useStateC(30);
   const [refreshTick, setRefreshTick] = useStateC(0);
-  // "As of" = client receive time of the wave's LATEST successful fetch → one stamp per screen.
-  const [asOfMs, setAsOfMs] = useStateC(null);
+  // "As of" = client receive time of the LATEST successful fetch → one stamp per screen, kept across waves.
+  const [asOfAt, setAsOfAt] = useStateC(null);
 
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
   const [kpiState,      setKpiState]      = useStateC({ status: 'loading', data: null, error: null }); // KPI band (고정 윈도우 — days 무관)
@@ -98,9 +98,8 @@ function ScreenCost({ onNav }) {
     setSessionState({ status: 'loading', data: null, error: null });
     setErrorState({ status: 'loading', data: null, error: null });
     setTurnState({ status: 'loading', data: null, error: null });
-    setAsOfMs(null);
 
-    const markReceived = () => setAsOfMs(Date.now());
+    const markReceived = () => setAsOfAt(new Date().toISOString());
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
     // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
@@ -117,8 +116,8 @@ function ScreenCost({ onNav }) {
 
   // 패널 로딩 중 period 토글 비활성화 — 빠른 연타 시 abort 스톰 차단.
   // Every payload counts: a gate reading a subset lets the toggle fire while a panel is still in flight.
-  const anyLoading = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState]
-    .some((st) => st.status === 'loading');
+  const panelStates = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState];
+  const anyLoading = panelStates.some((st) => st.status === 'loading');
 
   return (
     <div className="cost-screen flex flex-col">
@@ -166,7 +165,7 @@ function ScreenCost({ onNav }) {
                 <Icon name="refresh" size={14}/>
                 Refresh
               </button>
-              <AsOfStampC ms={asOfMs} loading={anyLoading}/>
+              <FreshnessStamp {...getFreshnessInputC(asOfAt, panelStates)}/>
             </>
           }
         />
@@ -214,21 +213,13 @@ function ScreenCost({ onNav }) {
   );
 }
 
-/**
- * One stamp for the whole screen, withheld while a wave is in flight rather than shown stale.
- * A freshness claim must never outlive its measurement.
- */
-function AsOfStampC({ ms, loading }) {
-  const text = getAsOfText(ms, loading);
-
-  return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
-}
-
-// Settled wave with no stamp = every fetch failed → says so rather than claiming a refresh in flight.
-function getAsOfText(ms, loading) {
-  if (loading) return 'refreshing…';
-  if (ms === null) return 'no successful fetch';
-  return `as of ${new Date(ms).toLocaleTimeString()}`;
+// any failed panel → the kept stamp reads stale, so a partial wave never claims full freshness
+function getFreshnessInputC(asOfAt, panelStates) {
+  return {
+    at: asOfAt,
+    loading: panelStates.some((st) => st.status === 'loading'),
+    failed: panelStates.some((st) => st.status === 'error'),
+  };
 }
 
 /**

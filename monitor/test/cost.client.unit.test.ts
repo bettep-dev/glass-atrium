@@ -55,7 +55,12 @@ interface SessionRollup {
 }
 
 interface CostHelpers {
-  window: { getTokenRate?: (model: string) => Record<string, number> | null };
+  window: {
+    getTokenRate?: (model: string) => Record<string, number> | null;
+    UI: {
+      getFreshnessState: (input: { at: string | null; loading: boolean; failed: boolean; now: number }) => string;
+    };
+  };
   computeAlarmRows: (input: {
     hot: HotVerdict;
     latestOutsideBand: boolean;
@@ -76,7 +81,10 @@ interface CostHelpers {
   ) => SessionRollup;
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
-  getAsOfText: (ms: number | null, loading: boolean) => string;
+  getFreshnessInputC: (
+    asOfAt: string | null,
+    panelStates: ReadonlyArray<PanelState>,
+  ) => { at: string | null; loading: boolean; failed: boolean };
   getSessionModelLabel: (model: string | null | undefined) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
 }
@@ -300,15 +308,23 @@ test("the trend reads complete days only — today's partial point never moves i
   );
 });
 
-test("the as-of stamp tells an in-flight wave apart from one where every fetch failed", () => {
-  assert.strictEqual(cost.getAsOfText(null, true), "refreshing…");
-  assert.strictEqual(cost.getAsOfText(Date.now(), true), "refreshing…", "a stamp is withheld while a wave is in flight");
+test("the stamp keeps the last successful read: a wave in flight is busy, a failed panel marks it stale", () => {
+  const ui = cost.window.UI;
+  const now = Date.parse(NOON_UTC);
+  const readAt = new Date(now - 60_000).toISOString();
+  const getState = (at: string | null, panels: PanelState[]) =>
+    ui.getFreshnessState({ ...cost.getFreshnessInputC(at, panels), now });
 
-  const failedWave = cost.getAsOfText(null, false);
-  assert.doesNotMatch(failedWave, /refreshing/, "a settled wave must not claim a refresh in flight");
-  assert.match(failedWave, /no successful fetch/);
+  const settled = [ready({}), ready({})];
+  assert.deepEqual({ ...cost.getFreshnessInputC(readAt, settled) }, { at: readAt, loading: false, failed: false });
+  assert.strictEqual(getState(readAt, settled), "fresh");
 
-  assert.match(cost.getAsOfText(Date.UTC(2026, 0, 10, 12), false), /^as of /);
+  assert.strictEqual(cost.getFreshnessInputC(readAt, [ready({}), loading]).loading, true, "any panel in flight = busy");
+  assert.strictEqual(getState(readAt, [loading, loading]), "fresh", "a refresh in flight keeps the last stamp");
+  assert.strictEqual(getState(null, [loading, loading]), "loading");
+
+  assert.strictEqual(getState(readAt, [ready({}), failed]), "stale", "a failed panel never reads as fresh");
+  assert.strictEqual(getState(null, [failed, failed]), "not-read", "every fetch failed and nothing was ever read");
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {
