@@ -53,6 +53,9 @@ interface WikiHelpers {
     cyclesState: FetchState,
   ) => LaneModel;
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean };
+  buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
+  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
+  describeNotesByTypeW: (state: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
 
@@ -136,6 +139,29 @@ test("loading, error and unreported each read as themselves, never as a value", 
     assert.equal(/\d/.test(tile.value), false, `placeholder must carry no figure: ${tile.value}`);
     assert.equal(tile.tone, "neutral");
   }
+});
+
+// State contract: loading and failure never share a token, and a failed payload is announced once at its group.
+
+test("notes by type reads loading, failure and a count as three different tokens", () => {
+  const tokens = [
+    helpers.describeNotesByTypeW(loading),
+    helpers.describeNotesByTypeW(errored),
+    helpers.describeNotesByTypeW(ready({ by_type: [{ note_type: "concept", count: 3 }] })),
+  ];
+  assert.equal(new Set(tokens).size, 3, `tokens must differ: ${tokens.join(" / ")}`);
+  assert.equal(tokens[2], "1 types");
+});
+
+test("a failed band feeder is named once for the group, never per tile", () => {
+  const tiles = [...helpers.buildTileBandModel(errored, errored, ready({ backlog: null }))];
+  for (const tile of tiles) {
+    assert.equal(tile.state, "error");
+    assert.doesNotMatch(tile.sub || "", /Couldn't load/, `tile ${tile.key} repeats the banner`);
+  }
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, errored)], ["daily cycle summary", "search index"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, ready({}))], ["daily cycle summary"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(loading, ready({}))], []);
 });
 
 // The alarm lane: a check that could not run is never silence.

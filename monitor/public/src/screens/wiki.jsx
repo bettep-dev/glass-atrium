@@ -108,6 +108,7 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
+					onRetry={triggerRefresh}
 				/>
 
 				{/* Behind the click — working lists, run history, note composition. */}
@@ -375,19 +376,38 @@ function describeSnapshotAgeW(runDate) {
 // Four-tile band — last run · compiled last cycle · search index · library totals.
 // Steady state carries no status word and no tint; only an actionable state tints.
 
-function WikiTileBand({ summaryState, indexState, backlogState }) {
+function WikiTileBand({ summaryState, indexState, backlogState, onRetry }) {
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState),
 		[summaryState, indexState, backlogState],
 	);
+	const failures = readTileBandFailuresW(summaryState, indexState);
 
 	return (
-		<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-			{tiles.map((tile) => (
-				<WikiTile key={tile.key} tile={tile} />
-			))}
+		<div className="flex flex-col gap-2">
+			{failures.length > 0 && (
+				<ErrorBannerW
+					title={`Couldn't load the ${failures.join(" and ")} — the tiles below are incomplete`}
+					onRetry={onRetry}
+				/>
+			)}
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+				{tiles.map((tile) => (
+					<WikiTile key={tile.key} tile={tile} />
+				))}
+			</div>
 		</div>
 	);
+}
+
+// The band's own feeders; the backlog's failure is announced by the maintenance group it feeds.
+function readTileBandFailuresW(summaryState, indexState) {
+	return [
+		[summaryState, "daily cycle summary"],
+		[indexState, "search index"],
+	]
+		.filter(([state]) => state.status === "error")
+		.map(([, label]) => label);
 }
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
@@ -438,10 +458,11 @@ function buildTileBandModel(summaryState, indexState, backlogState) {
 
 // Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
 // none of them renders as a number (a zero nobody loaded is the failure mode).
+// An errored tile carries no text of its own: the band's single banner names the failure.
 function tilePlaceholderW(key, label, state) {
 	const SUB = {
 		loading: "Loading",
-		error: "Couldn't load",
+		error: null,
 		unavailable: "Not reported yet",
 		empty: "Nothing recorded",
 	};
@@ -817,7 +838,7 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 	return (
 		<WikiDisclosureW
 			label="Notes by type"
-			count={state.status === "ready" ? `${rows.length} types` : "—"}
+			count={describeNotesByTypeW(state)}
 		>
 			{state.status === "loading" ? (
 				<div className="fs-meta font-mono text-faint" aria-busy="true">
@@ -848,6 +869,13 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			)}
 		</WikiDisclosureW>
 	);
+}
+
+function describeNotesByTypeW(state) {
+	if (state.status === "loading") return "Loading…";
+	if (state.status === "error") return "Unavailable";
+	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
+	return `${rows.length} types`;
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
