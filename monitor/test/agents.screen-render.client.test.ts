@@ -324,19 +324,19 @@ test("the ledger and instrumentation card adopt the shared labels", async () => 
   assert.equal(cardHead?.props.title, "No completion record");
 });
 
-test("the page header renders the Agents title with the triage sub-line under it, leaving title-less callers unchanged", async () => {
+test("the page header renders every title as the page h1 with the sub-line under it", async () => {
   const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
   const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
   const PageHeader = ui.PageHeader as Component;
 
-  const titled = renderScreen(React.createElement(PageHeader, { title: "Agents", sub: "Triage — who is unsafe", shouldRenderTitle: true }));
+  const titled = renderScreen(React.createElement(PageHeader, { title: "Agents", sub: "Triage — who is unsafe" }));
   const heading = findNodes(titled, (n) => n.type === "h1")[0];
   assert.equal(heading && collectText(heading), "Agents");
   assert.ok(collectText(titled).indexOf("Agents") < collectText(titled).indexOf("Triage"), "the sub-line sits under the title");
 
-  const legacy = renderScreen(React.createElement(PageHeader, { title: "Dashboard", sub: "Triage" }));
-  assert.equal(findNodes(legacy, (n) => n.type === "h1").length, 0, "screens that do not opt in keep their header");
+  const echoed = renderScreen(React.createElement(PageHeader, { title: "Models & budgets", sub: "Models & budgets" }));
+  assert.equal(collectText(echoed), "Models & budgets", "a sub-line repeating the title is not rendered twice");
 
   const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
-  assert.match(src, /<PageHeader\s+title="Agents"[\s\S]{0,200}shouldRenderTitle/, "the Agents screen opts in");
+  assert.doesNotMatch(src, /shouldRenderTitle/, "the retired opt-in is gone from the Agents screen");
 });

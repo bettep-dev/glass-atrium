@@ -458,23 +458,21 @@ function Tabs({ items, value, onChange }) {
 function CardHead({ title, sub, right }) {
   return <div className="card-head">
     <div className="flex-1 min-w-0">
-      <div className="card-title">{title}</div>
+      <h2 className="card-title">{title}</h2>
       {sub && <div className="card-sub mt-0.5" title={window.UI.titleOf(sub)}>{sub}</div>}
     </div>
     {right && <div className="ml-auto flex items-center gap-2 shrink-0">{right}</div>}
   </div>;
 }
 
-// shouldRenderTitle — opt-in title + sub-line stack; callers without it keep the sub-only eyebrow.
-function PageHeader({ title, sub, right, shouldRenderTitle = false }) {
-  const eyebrow = <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>;
+// title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
+function PageHeader({ title, sub, right }) {
+  const hasSub = sub && sub !== title;
   return <div className="flex items-center gap-3 mb-4">
-    {shouldRenderTitle ? (
-      <div className="min-w-0">
-        <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-        {eyebrow}
-      </div>
-    ) : eyebrow}
+    <div className="min-w-0">
+      <h1 className="fs-display font-semibold leading-tight">{title}</h1>
+      {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
+    </div>
     {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
   </div>;
 }

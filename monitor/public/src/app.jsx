@@ -47,7 +47,7 @@ function Sidebar({ active, onNav, harness }) {
 	const systems = systemsRollup(harness);
 	const dynamicBadges = harnessToNavBadges(harness);
 	return (
-		<aside className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
+		<aside aria-label="Sidebar" className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="px-4 py-4 border-b border-line">
 				<div className="flex items-center gap-2.5">
 					<div className="w-7 h-7 rounded-md overflow-hidden bg-ink">
@@ -60,7 +60,7 @@ function Sidebar({ active, onNav, harness }) {
 					</div>
 				</div>
 			</div>
-			<nav className="flex-1 p-2.5 overflow-y-auto">
+			<nav aria-label="Primary" className="flex-1 p-2.5 overflow-y-auto">
 				<div className="space-y-0.5">
 					{NAV.map((n) => {
 						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
