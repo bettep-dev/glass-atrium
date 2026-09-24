@@ -69,6 +69,11 @@ const ALLOWED_TASK_TYPES: ReadonlySet<OutcomeTaskType> = new Set<OutcomeTaskType
 // 종결 표시가 정의된 유일한 result — 열린 항목(open items)을 뜻하는 버킷이기 때문.
 const CLOSABLE_RESULT: OutcomeResultLiteral = "done_with_concerns";
 
+// Results that ask for an operator action on sight — the breakage half of the
+// attention population. The caveat half is CLOSABLE_RESULT while it stays unclosed,
+// and the flag half is review_flag; buildWhereClause ORs the three.
+const ATTENTION_RESULTS: readonly OutcomeResultLiteral[] = ["fail", "blocked"];
+
 const CLOSE_ROUTE = "/api/outcomes/:id/close";
 const CLOSE_BY_CID_ROUTE = "/api/outcomes/close-by-cid";
 
@@ -378,6 +383,8 @@ interface ByAgentDbRow {
   count: bigint;
   // FILTER sub-count of `count` — reconstructed (harness-synthesized) rows only.
   reconstructed_count: bigint;
+  // FILTER sub-count of `count` — writer-emitted AND unclosed caveat rows only.
+  writer_open_count: bigint;
 }
 
 // One (grader_verdict-or-NULL, count) group for the artifact-vs-quality
@@ -464,6 +471,9 @@ interface SearchQuerystring {
   // O2 forensic toggle — truthy lifts the default registry-membership gate on
   // /search so de-registered / sentinel / noise agents reappear (T7 / AC-2).
   include_all?: string;
+  // Attention filter — 'true' narrows to the rows asking for an operator action.
+  // /search-only per contract.
+  needs_attention?: string;
 }
 
 interface CrossAnalysisQuerystring {
@@ -503,6 +513,9 @@ interface ParsedFilters {
   // Exact-match filter on cid; null = no filter. /search-only — /cross-analysis
   // never supplies the key, so it stays null there (behavior unchanged).
   cid: string | null;
+  // Attention filter; false = no filter. /search-only — /cross-analysis never
+  // supplies the key, so it stays false there (behavior unchanged).
+  needs_attention: boolean;
 }
 
 // registration
@@ -988,7 +1001,15 @@ async function handleCrossAnalysis(
             COUNT(*)::bigint AS count,
             (COUNT(*) FILTER (
               WHERE ${buildReconstructedRowFilter()}
-            ))::bigint       AS reconstructed_count
+            ))::bigint       AS reconstructed_count,
+            -- Per-agent open-caveat count — same writer-emitted AND unclosed
+            -- predicate as by_result, narrowed to the one closable result (this
+            -- grouping is per agent, so the result term is explicit here).
+            (COUNT(*) FILTER (
+              WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
+                AND closed_at IS NULL
+                AND result::text = ${CLOSABLE_RESULT}
+            ))::bigint       AS writer_open_count
           FROM core.outcomes
           ${analyticsWhere}
           ${byAgentMembership}
@@ -1121,6 +1142,7 @@ async function handleCrossAnalysis(
       agent: row.agent,
       count: bigintToNumber(row.count),
       reconstructed_count: bigintToNumber(row.reconstructed_count),
+      writer_open_count: bigintToNumber(row.writer_open_count),
     }));
     // Defensive enum filter — drop rows with a drifted result value (mirrors by_result).
     const byAgentResult: OutcomeCrossAnalysisByAgentResult[] = byAgentResultRows.flatMap((row) => {
@@ -2047,6 +2069,26 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
   const cidRaw = "cid" in query ? query.cid : undefined;
   const cid = typeof cidRaw === "string" && cidRaw.length > 0 ? cidRaw : null;
 
+  // needs_attention: strict boolean literal, /search-only. Same `in` guard as the
+  // two filters above keeps /cross-analysis at false. 'false' is accepted and means
+  // no filter — the FE toggles the param rather than dropping it.
+  const needsAttentionRaw =
+    "needs_attention" in query ? query.needs_attention : undefined;
+  let needsAttention = false;
+  if (needsAttentionRaw !== undefined && needsAttentionRaw !== "") {
+    if (needsAttentionRaw === "true") needsAttention = true;
+    else if (needsAttentionRaw !== "false") {
+      return {
+        filters: emptyFilters(),
+        error: {
+          error: "invalid_param",
+          param: "needs_attention",
+          allowed: ["true", "false"],
+        },
+      };
+    }
+  }
+
   const filters: ParsedFilters = {
     days,
     agent,
@@ -2058,6 +2100,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
     q,
     attribution_source: attributionSource,
     cid,
+    needs_attention: needsAttention,
   };
 
   return { filters, error: null };
@@ -2135,6 +2178,19 @@ function buildWhereClause(
   // null = no filter (the /cross-analysis path always lands here).
   if (filters.cid !== null) {
     fragments.push(Prisma.sql`cid = ${filters.cid}`);
+  }
+
+  // Attention population — flagged for review, broken, or an unclosed caveat. A
+  // closed caveat row is out: it no longer asks for an action. false = no filter
+  // (the /cross-analysis path always lands here).
+  if (filters.needs_attention) {
+    const attentionResults = Prisma.join(
+      ATTENTION_RESULTS.map((literal) => Prisma.sql`${literal}`),
+      ", ",
+    );
+    fragments.push(
+      Prisma.sql`(review_flag = TRUE OR result::text IN (${attentionResults}) OR (result::text = ${CLOSABLE_RESULT} AND closed_at IS NULL))`,
+    );
   }
 
   // T7 (O2) — caller-opt-in registry gate. Fires ONLY when a caller supplies a
@@ -2252,6 +2308,7 @@ function toSearchFilterEcho(
     q: filters.q,
     attribution_source: filters.attribution_source,
     cid: filters.cid,
+    needs_attention: filters.needs_attention,
     sort,
     limit,
     offset,
@@ -2285,6 +2342,7 @@ function emptyFilters(): ParsedFilters {
     q: null,
     attribution_source: null,
     cid: null,
+    needs_attention: false,
   };
 }
 

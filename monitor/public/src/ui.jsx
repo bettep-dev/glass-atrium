@@ -742,6 +742,59 @@ function resolveResultMeta(result, closedAt) {
 // 비율 표본 임계 (A5) — n < 30 이면 muted/italic + '(n=N)' 표기 대상.
 const LOW_N_MIN = 30;
 
+// Outcome quality thresholds — the share a fact must reach before it carries a tone.
+const OUTCOME_BREAKAGE_CRIT_SHARE = 0.05;
+const OUTCOME_OPEN_CAVEAT_WARN_SHARE = 0.1;
+// Recorder-reconstructed share — a reporting-pipeline fact, tuned independently of the caveat rule.
+const OUTCOME_MISSING_REPORT_WARN_SHARE = 0.1;
+
+// Per-fact tone SoT — every screen reads one fact's share against one population here,
+// so a bare "greater than zero" never becomes a second rule. Population <= 0 → null
+// (an absent denominator is not a risk); below the share → null; at or above it → tone.
+// The low-N guard stays at the call site: the rollup applies it and the card hint does
+// not, and that split is a contract, not an accident.
+function outcomeShareTone(count, population, minShare, tone) {
+  const den = Number(population);
+  if (!Number.isFinite(den) || den <= 0) return null;
+  return (Number(count) || 0) / den >= minShare ? tone : null;
+}
+
+// by_result / by_agent row → 총 건수. row 부재(응답 누락 키)·비수치 모두 0.
+function getOutcomeCount(row) {
+  return Number(row?.count) || 0;
+}
+
+// by_result row → 미종결 건수. closed_count 부재(구 응답)는 0 종결 · 계약 어긋난 초과 종결도 음수 금지.
+function getOutcomeOpenCount(row) {
+  const closed = Number(row?.closed_count) || 0;
+  return Math.max(0, getOutcomeCount(row) - closed);
+}
+
+// 품질 신호 모집단 — 합성행 제외. 합성행의 result 는 recorder 가 고른 값이라 품질 정보가 없다.
+// reconstructed_total 부재(구 응답) → 종전 total 유지(하위호환).
+//
+// 이중 모집단 계약(여기가 그 seam) — 이 값은 임계 hint · severity rollup 전용이고, 분포
+// 막대·범례는 total(전수)을 쓴다. 불일치는 버그가 아니라 계약이므로 어느 한쪽으로 통일하지
+// 말 것: 막대를 writer 기준으로 바꾸면 합성 기록이 화면에서 사라지고, hint 를 전수로
+// 되돌리면 기록 누락이 품질 저하로 읽힌다.
+function getWriterTotal(data) {
+  const total = Number(data?.total) || 0;
+  const reconstructed = Number(data?.reconstructed_total) || 0;
+  return Math.max(0, total - reconstructed);
+}
+
+// row → writer 발신 미종결 건수(품질 분자). writer_open_count 부재(구 응답) → 종전 미종결 건수.
+function getWriterOpenCount(row) {
+  const writerOpen = Number(row?.writer_open_count);
+  return Number.isFinite(writerOpen) ? Math.max(0, writerOpen) : getOutcomeOpenCount(row);
+}
+
+// row → writer 발신 건수(종결 무관 — 실패/차단 임계는 종결에 반응하지 않는 계약 유지).
+function getWriterCount(row) {
+  const reconstructed = Number(row?.reconstructed_count) || 0;
+  return Math.max(0, getOutcomeCount(row) - reconstructed);
+}
+
 // 비율 headline SoT (A5) — 'N.N% (x/y)'. 분모 0/음수 → '—' (fabricated 0% 차단).
 function formatPctWithDenominator(numerator, denominator) {
   const den = Number(denominator);
@@ -812,6 +865,29 @@ function reviewFlagReasons(row) {
   return reasons;
 }
 
+// Outcome 품질 판정 — Dashboard 와 Task results 가 공유하는 단일 규칙.
+// 임계 리터럴·분모 helper 는 위 outcomeShareTone 블록이 SoT — 여기서는 조합만.
+// cross-analysis 응답 → 단일 판정. status 는 톤이 아니라 상태다 —
+//   'unavailable' 미수신/전량 합성 · 'empty' 기간 내 0건 · 'low-n' 표본 부족(가짜 경보 차단) ·
+//   'ok' | 'warn' | 'crit'. 색은 tone 으로만 나가고 문구에는 싣지 않는다.
+function resolveOutcomeRate(data) {
+  const total = Number(data?.total) || 0;
+  const rows = new Map((data?.by_result || []).map((r) => [r.result, r]));
+  const writerTotal = getWriterTotal(data);
+  const breakage = getWriterCount(rows.get('fail')) + getWriterCount(rows.get('blocked'));
+  const openCaveats = getWriterOpenCount(rows.get('done_with_concerns'));
+  const base = { total, writerTotal, breakage, openCaveats, tone: 'neutral' };
+
+  if (!data) return { ...base, status: 'unavailable' };
+  if (total <= 0) return { ...base, status: 'empty' };
+  if (writerTotal <= 0) return { ...base, status: 'unavailable' };
+  if (writerTotal < LOW_N_MIN) return { ...base, status: 'low-n' };
+  const tone = outcomeShareTone(breakage, writerTotal, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit')
+    || outcomeShareTone(openCaveats, writerTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn')
+    || 'ok';
+  return { ...base, status: tone, tone };
+}
+
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
@@ -823,4 +899,7 @@ window.UI = {
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
+  OUTCOME_MISSING_REPORT_WARN_SHARE,
+  getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
 };
