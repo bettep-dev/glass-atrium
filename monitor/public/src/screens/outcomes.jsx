@@ -1030,6 +1030,14 @@ function AgentFailureTableO({ state, onRetry }) {
   );
 }
 
+const AGENT_FAILURE_COLUMNS_O = [
+  { label: 'Agent', align: 'left' },
+  { label: 'Failed', align: 'right' },
+  { label: 'Blocked', align: 'right' },
+  { label: 'Open caveats', align: 'right' },
+  { label: 'of records', align: 'right' },
+];
+
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   if (state.status === 'loading') return <ChartSkeletonO height={140}/>;
   if (state.status === 'error') {
@@ -1046,11 +1054,9 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
-            <th className="text-left text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Agent</th>
-            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Failed</th>
-            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Blocked</th>
-            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>Open caveats</th>
-            <th className="text-right text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line" style={stickyStyle}>of records</th>
+            {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+              <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
