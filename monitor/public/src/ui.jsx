@@ -982,7 +982,7 @@ window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
-  FreshnessStamp, getFreshnessState, FRESHNESS_STALE_MS,
+  FreshnessStamp, getFreshnessState,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
