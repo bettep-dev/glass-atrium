@@ -322,6 +322,7 @@ function ScreenAgents() {
         <PageHeader
           title="Agents"
           sub="Triage — who is unsafe to route to, and what is breaking"
+          shouldRenderTitle
           right={
             <>
               <div className="seg" aria-label="Time range">

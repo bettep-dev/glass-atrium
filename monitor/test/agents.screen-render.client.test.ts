@@ -276,3 +276,67 @@ test("every in-screen hash link resolves to a hash-router screen id", async () =
     assert.ok(navIds.has(target), `href="#${target}" names no NAV screen id`);
   }
 });
+
+function renderSummaryRow(mod: Record<string, unknown>, overage: unknown): RenderedNode {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000 },
+      days: 30,
+      isSelected: false,
+      onSelect: () => {},
+      trend: null,
+      failure: null,
+      overage,
+    }),
+  );
+}
+
+test("a budget crossing rides the P95 fill-bar instead of a pill that contradicts the fast-tier glyph", async () => {
+  const mod = await loadAgentsScreen();
+  const crossed = renderSummaryRow(mod, { overage_count: 3, max_crossed_pct: 112 });
+  const clean = renderSummaryRow(mod, null);
+
+  const badgesIn = (tree: RenderedNode) => findNodes(tree, (n) => n.props?.atom === "Badge");
+  assert.equal(badgesIn(crossed).length, 0, "no near-cap pill sits beside the P95 glyph");
+
+  const p95BarLabel = (tree: RenderedNode) =>
+    String(findNodes(tree, (n) => n.props?.atom === "Bar" && String(n.props.ariaLabel).startsWith("p95"))[0]?.props.ariaLabel);
+  assert.match(p95BarLabel(crossed), /3 tool_use-budget crossings.*peak 112%/);
+  assert.doesNotMatch(p95BarLabel(clean), /crossing/, "an uncrossed row's bar claims no crossing");
+});
+
+test("the ledger and instrumentation card adopt the shared labels", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+
+  const table = renderScreen(
+    React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
+  );
+  const headers = findNodes(table, (n) => n.type === "th").map((n) => collectText(n));
+  assert.ok(headers.includes("Failed or blocked"), `ledger headers: ${headers.join(" | ")}`);
+  assert.ok(!headers.includes("Breakages"));
+
+  const card = renderScreen(
+    React.createElement(mod.LifecycleStatsCard as Component, { state: { status: "loading" }, days: 30, onSelect: () => {}, onRetry: () => {} }),
+  );
+  const cardHead = findNodes(card, (n) => n.props?.atom === "CardHead")[0];
+  assert.equal(cardHead?.props.title, "No completion record");
+});
+
+test("the page header renders the Agents title with the triage sub-line under it, leaving title-less callers unchanged", async () => {
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const PageHeader = ui.PageHeader as Component;
+
+  const titled = renderScreen(React.createElement(PageHeader, { title: "Agents", sub: "Triage — who is unsafe", shouldRenderTitle: true }));
+  const heading = findNodes(titled, (n) => n.type === "h1")[0];
+  assert.equal(heading && collectText(heading), "Agents");
+  assert.ok(collectText(titled).indexOf("Agents") < collectText(titled).indexOf("Triage"), "the sub-line sits under the title");
+
+  const legacy = renderScreen(React.createElement(PageHeader, { title: "Dashboard", sub: "Triage" }));
+  assert.equal(findNodes(legacy, (n) => n.type === "h1").length, 0, "screens that do not opt in keep their header");
+
+  const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
+  assert.match(src, /<PageHeader\s+title="Agents"[\s\S]{0,200}shouldRenderTitle/, "the Agents screen opts in");
+});
