@@ -693,7 +693,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
   );
 }
 
-// Footer/expand colSpan — expand affordance · Agent · Success · Breakages · P95 · Trend.
+// Footer/expand colSpan — expand affordance · Agent · Success · Failed or blocked · P95 · Trend.
 const SUMMARY_TABLE_COLSPAN = 6;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent }) {
@@ -721,7 +721,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
             <th style={STICKY_TH_STYLE}><span className="sr-only">Expand row</span></th>
             <th style={STICKY_TH_STYLE}>Agent</th>
             <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
-            <th className="num" style={STICKY_TH_STYLE} title="Breakages = failed + blocked (blocked = a compliant halt, not a defect)">Breakages</th>
+            <th className="num" style={STICKY_TH_STYLE} title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</th>
             <th className="num" style={STICKY_TH_STYLE} title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</th>
             <th style={STICKY_TH_STYLE}>Trend</th>
           </tr>
@@ -1795,7 +1795,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
     <div>
       <div
         className="fs-meta font-mono text-faint mb-2 flex items-center gap-1"
-        title="Combined result IN ('fail','blocked') — same scope as the summary Breakages column (needs_context excluded)">
+        title="Combined result IN ('fail','blocked') — same scope as the summary Failed or blocked column (needs_context excluded)">
         <Icon name="x" size={12}/>
         Why tasks failed · fail+blocked ({days}d)
       </div>
@@ -2471,7 +2471,7 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
   return (
     <div className="card h-full flex flex-col min-h-0">
       <CardHead
-        title="Unfinished runs"
+        title="No completion record"
         sub={`Last ${days} days · top ${LIFECYCLE_DISPLAY_LIMIT}`}
         right={state.status === 'ready' && totalOrphans > 0
           ? <Pill tone="warn">{formatIntAg(totalOrphans)} orphan</Pill>
