@@ -488,12 +488,12 @@ function AgentAlarmLane({ state, onRetry }) {
 }
 
 function AgentAlarmRow({ alarm }) {
-  const { Badge } = window.UI;
+  const { Badge, AgentName } = window.UI;
 
   return (
     <div className="flex items-center gap-2">
       <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
-      <span className="font-mono">{alarm.agent}</span>
+      <AgentName name={alarm.agent} className="font-mono"/>
       <span className="text-faint fs-micro">
         {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
@@ -744,7 +744,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
   const [isExpanded, setExpanded] = useStateAg(false);
-  const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
+  const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
@@ -812,7 +812,9 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
       <td>
         <div className="flex items-center gap-1.5 flex-wrap">
           <StatusDot status={status}/>
-          <span className="font-medium">{isUnknownAgent ? nonActionableLabel : agent.agent_name}</span>
+          {isUnknownAgent
+            ? <span className="font-medium">{nonActionableLabel}</span>
+            : <AgentName name={agent.agent_name} className="font-medium"/>}
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
       </td>
@@ -959,7 +961,7 @@ function LatencyBars({ agents }) {
         return (
           <div key={a.agent_id} className="fs-body">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="flex-1 truncate">{a.agent_name}</span>
+              <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
               <span className="font-mono text-faint fs-micro">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
@@ -1000,7 +1002,7 @@ function AgentDetailDrawer({
   detailState, blockedState, recentState, trendByAgent, failureByAgent,
   days, onClose, onNav, onRetry, onDeleted,
 }) {
-  const { DetailSurface, StatusDot } = window.UI;
+  const { DetailSurface, StatusDot, AgentName } = window.UI;
 
   // summary 행에서 선택 agent 도출 — 모든 섹션의 1차 소스. 미발견 시 id 만으로 헤더 표시.
   const agent = (readyData(summaryState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
@@ -1036,7 +1038,7 @@ function AgentDetailDrawer({
 
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
-      {agentName}
+      <AgentName name={agentName}/>
       <StatusDot status={statusTone}/>
       <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}/>
     </span>
@@ -1987,7 +1989,7 @@ function SuccessRateMatrixRow({ agent, cells }) {
         title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
         {isUnknownAgent
           ? <span className="text-dim italic">{UNKNOWN_AGENT_LABEL}</span>
-          : agent}
+          : <window.UI.AgentName name={agent}/>}
       </td>
       {TASK_TYPE_COLUMNS.map((c) => (
         <SuccessRateCell key={c.key} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
@@ -2216,7 +2218,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
             return (
               <tr key={`${p.agent}|${p.task_type}`}>
                 <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
-                  <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}>{p.agent}</a>
+                  <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
                 </td>
                 <td className="text-left text-dim px-2 py-1.5 border-b border-line">
                   {p.task_type}

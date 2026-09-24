@@ -286,7 +286,7 @@ function AttributionBudgetKillListO({ rows }) {
       <div className="flex flex-col gap-0.5">
         {rows.map((r) => (
           <div key={r.agent} className="flex items-center justify-between fs-micro font-mono">
-            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}>{r.agent}</span>
+            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}><window.UI.AgentName name={r.agent}/></span>
             <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
           </div>
         ))}
@@ -1112,7 +1112,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
-              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}>{row.agent}</td>
+              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
@@ -1871,7 +1871,7 @@ function LoopEventsBody({ state, onRetry }) {
                     {window.UI.formatKstDateTime(e.event_ts)}
                   </td>
                   <td className="text-left text-dim px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={e.agent || ''}>
-                    {e.agent || '—'}
+                    <window.UI.AgentName name={e.agent}/>
                   </td>
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
                     <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
@@ -2411,7 +2411,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
         {ts}
       </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
-        {row.agent}
+        <window.UI.AgentName name={row.agent}/>
       </td>
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
