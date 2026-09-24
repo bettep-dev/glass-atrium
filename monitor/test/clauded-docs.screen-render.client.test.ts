@@ -22,7 +22,6 @@ const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
 // Formatters tag their input so a test can tell which one the screen called.
 const UI_SCALARS: Record<string, unknown> = {
   formatInt: (n: number) => String(n),
-  formatKstTime: (iso: string) => `time(${iso})`,
   formatKstDateTime: (iso: string) => `datetime(${iso})`,
 };
 
@@ -83,17 +82,6 @@ test("a done pill renders its check glyph inside the ok-toned glyph slot and its
   const labels = findNodes(tree, (node) => node.props.className === "doc-stage-label");
   assert.equal(labels.length, 1);
   assert.equal(findNodes(glyphSlots[0], (node) => node === labels[0]).length, 0);
-});
-
-test("the header line always leads with the one-word screen name, stamped with a time-only as-of", async () => {
-  const screen = await loadDocsScreen();
-  const asOfSub = screen.asOfSubCD as (asOf: string | null, status: string) => string;
-  const iso = "2026-09-24T12:34:00.000Z";
-
-  assert.equal(asOfSub(iso, "ready"), `Documents · as of time(${iso})`);
-  for (const status of ["loading", "error"]) {
-    assert.ok(asOfSub(null, status).startsWith("Documents · "), `status ${status}`);
-  }
 });
 
 const MARK_SYNTAX = /[#*`|>[\]~]/;

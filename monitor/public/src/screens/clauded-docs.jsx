@@ -132,8 +132,15 @@ const GROUP_MIN_MEMBERS_CD = 2;
 
 // 메인 화면
 function ScreenClaudedDocs(/* { onNav } */) {
-	const { PageHeader, Icon, Pill, Badge, TypeScaleStyle, DetailSurface } =
-		window.UI;
+	const {
+		PageHeader,
+		Icon,
+		Pill,
+		Badge,
+		TypeScaleStyle,
+		DetailSurface,
+		FreshnessStamp,
+	} = window.UI;
 
 	// 검색어 / 필터.
 	const [keyword, setKeyword] = useStateCD("");
@@ -833,6 +840,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
 	const headerRight = (
 		<>
+			<FreshnessStamp {...getFreshnessInputCD(asOf, listState.status)} />
 			<button
 				type="button"
 				className="btn ghost sm"
@@ -1047,7 +1055,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Documents"
-						sub={asOfSubCD(asOf, listState.status)}
 					right={headerRight}
 				/>
 			</div>
@@ -3174,11 +3181,9 @@ function DocListSkeletonCD() {
 	);
 }
 
-// as-of 스탬프 — asOf 는 성공 fetch 만 갱신하므로 첫 fetch 가 실패하면 null 로 남는다.
-// 그 상태를 "loading…" 이라 말하면 에러 배너 옆에서 진행 중이라 거짓말하는 셈.
-function asOfSubCD(asOf, listStatus) {
-	if (asOf) return `Documents · as of ${window.UI.formatKstTime(asOf)}`;
-	return `Documents · ${listStatus === "loading" ? "loading…" : "not loaded"}`;
+// asOf advances on successful list reads only → a failed read marks the kept stamp stale
+function getFreshnessInputCD(asOf, listStatus) {
+	return { at: asOf, loading: listStatus === "loading", failed: listStatus === "error" };
 }
 
 // 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
