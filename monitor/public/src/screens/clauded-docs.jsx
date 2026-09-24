@@ -2782,7 +2782,7 @@ function formatActorCD(model) {
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
 //   · default     — bg-zinc-900 border-zinc-600
 //   · hover       — bg-zinc-800 border-zinc-400
-//   · focus-visible — +ring-2 ring-emerald-400 ring-offset-2 ring-offset-zinc-950
+//   · focus-visible — global :focus-visible outline (base.css)
 //   · checked     — bg-emerald-600 border-emerald-600 + white check SVG
 //   · indeterminate — bg-emerald-600 border-emerald-600 + white minus SVG
 //
