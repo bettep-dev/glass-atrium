@@ -13,6 +13,10 @@
   --ok:        5 150 105;
   /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
   --info:      8 145 178;
+  /* focus ring — theme-owned, not the tweak-driven --accent → ≥3:1 on surface/elev/sunken whatever accent is picked */
+  --focus-ring:       37  99 235;
+  --focus-ring-width:  2px;
+  --focus-ring-offset: 2px;
   /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
   --cat-1:   124  58 237;
   --cat-2:    13 148 136;
@@ -79,6 +83,7 @@
   --ok:       52 211 153;
   /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
   --info:     34 211 238;
+  --focus-ring:   96 165 250;
   /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
   --cat-1:   167 139 250;
   --cat-2:    45 212 191;

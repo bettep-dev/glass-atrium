@@ -287,9 +287,21 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
   );
 }
 
+// tone = TONE_GLYPH shape + colour + a word for AT → state survives without colour. Unknown status gets its own mark, not info's.
+const STATUS_DOT_WORD = { ok: 'OK', warn: 'Warning', crit: 'Critical', info: 'Info' };
+
 function StatusDot({ status }) {
-  const map = { ok:'bg-ok', warn:'bg-warn', crit:'bg-crit', info:'bg-info' };
-  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${map[status] || 'bg-faint'} mr-1.5 align-middle`}></span>;
+  const isKnown = Object.hasOwn(STATUS_DOT_WORD, status);
+  const glyph = isKnown ? TONE_GLYPH[status] : '–';
+  const word = isKnown ? STATUS_DOT_WORD[status] : 'Unknown';
+  const toneClass = isKnown ? `text-${status}` : 'text-faint';
+
+  return (
+    <span className={`inline-block fs-micro leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+      <span aria-hidden="true">{glyph}</span>
+      <span className="sr-only">{word}</span>
+    </span>
+  );
 }
 
 // 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —

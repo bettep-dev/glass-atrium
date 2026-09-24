@@ -636,7 +636,6 @@ function ScreenArchitecture(
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
-					".arch-zoom-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이라 두 표식이 한 모양으로 읽힘.
 					// 포커스가 상태 링을 끔 — 같은 자리에 두 겹이 겹치면 어느 쪽도 제 색으로 안 읽힘.
@@ -646,7 +645,7 @@ function ScreenArchitecture(
 					// 덧그려, 굴린 표식 옆에 각진 표식이 하나 더 섬. 종전 stroke 규칙이 네 노드에서 안 걸렸을 때
 					// 그 자리를 대신 채우고 있던 것이 이 UA 링이었음(실측).
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
-					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--accent)) !important; } ` +
+					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-state { display: none; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
 					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
@@ -660,7 +659,6 @@ function ScreenArchitecture(
 					".arch-part-drill { align-self: flex-start; background: none; border: 0; margin: 0; padding: 0 0 0 10px; " +
 					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
 					".arch-part-drill:hover { color: rgb(var(--ink)); } " +
-					".arch-part-drill:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; } " +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +

@@ -515,7 +515,6 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
-        .i-row-card:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
         .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
@@ -524,7 +523,6 @@ function ScreenImprovement({ onNav }) {
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
         /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
         .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
-        .i-act-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:1px; }
         /* RC4 in-flight — opacity 둔감화 + pointer-events:none 가 실제 중복 클릭 게이트. */
         .i-act-btn:disabled { opacity:.55; cursor:progress; pointer-events:none; }
         /* 스피너 — 텍스트 글리프(↻)에서 인라인 <svg>(Icon 'refresh')로 교체됨. svg 루트는
@@ -574,7 +572,6 @@ function ScreenImprovement({ onNav }) {
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
           color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); cursor:pointer; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
-        .i-more-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
       `}</style>
 
 			<div className="flex-shrink-0">

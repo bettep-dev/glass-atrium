@@ -1,5 +1,11 @@
 /* Component classes — light wrappers over Tailwind */
 
+/* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
+:focus-visible {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+
 /* ── Tier 3 — neue elevation/glass surfaces (§3.3, Tier 2 만 소비) ─────
    .glass-surface 는 transient(모달 backdrop·flyout) 전용 — 상시 표면 금지(§6.3). */
 .glass-surface {
@@ -192,8 +198,7 @@
 	min-height: var(--ctl-h);
 }
 /* interactive variant — Badge interactive=true 시 <button> 렌더. min-height 27px 로 .btn 패밀리와 정합(height rhythm)
-   · min-width 24px 는 WCAG 2.2 §2.5.8 최소 타깃 유지 + UA button reset(appearance/margin) + focus-visible ring
-   (ring-offset 은 surface 색 2px gap). canonical FORM 유지. */
+   · min-width 24px 는 WCAG 2.2 §2.5.8 최소 타깃 유지 + UA button reset(appearance/margin) · focus ring = global :focus-visible. canonical FORM 유지. */
 .pill--interactive {
 	height: auto;
 	min-height: 27px;
@@ -201,10 +206,6 @@
 	appearance: none;
 	margin: 0;
 	cursor: pointer;
-}
-.pill--interactive:focus-visible {
-	outline: none;
-	box-shadow: 0 0 0 2px rgb(var(--surface)), 0 0 0 4px rgb(var(--accent));
 }
 /* icon-only variant — 정사각(label 텍스트 부재), glyph 중앙 정렬. 의미는 aria-label/title 로 운반(absent-text 규칙). */
 .pill--icon-only {
@@ -780,13 +781,10 @@
 	border-color: rgb(var(--faint));
 }
 
-/* focus-visible — accent border + 2px accent/0.2 ring (doc-filter-input:focus 미러).
-   :focus-visible 사용 → 마우스 클릭 시 ring 억제, 키보드 탐색 시 노출 (접근성). */
+/* focus — accent border only; the ring is the global :focus-visible outline. */
 .field:focus-visible,
 .field:focus {
-	outline: none;
 	border-color: rgb(var(--accent));
-	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
 }
 
 /* disabled — .btn:disabled 정합 */
@@ -803,7 +801,6 @@
 .field.is-error:focus-visible,
 .field.is-error:focus {
 	border-color: rgb(var(--crit));
-	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
 }
 
 /* ── select — native <select> 유지 + 토큰 색 chevron ─────────────────────────
@@ -844,7 +841,10 @@
 .field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
 	border-color: rgb(var(--accent));
-	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
+}
+.field-affix:has(:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
 }
 .field-affix__sym {
 	font-size: 12.5px;
@@ -862,12 +862,11 @@
 	width: 100%;
 }
 .field-affix .field:focus-visible,
-.field-affix .field:focus { box-shadow: none; border: none; }
+.field-affix .field:focus { box-shadow: none; border: none; outline: none; }
 /* affix error — wrapper hue 교체 (input 은 그대로 borderless) */
 .field-affix.is-error { border-color: rgb(var(--crit)); }
 .field-affix.is-error:focus-within {
 	border-color: rgb(var(--crit));
-	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
 }
 
 /* reduced-motion — transition 제거 (base.css §8.4 계약 정합). 색 변화는 즉시 적용. */

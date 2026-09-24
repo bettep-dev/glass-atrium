@@ -907,14 +907,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: var(--radius-badge); font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
         .doc-chip-badge[disabled] { cursor: default; }
         .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
-        .doc-search-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
+        .doc-search-input:focus { border-color: rgb(var(--accent)); }
         /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
         .doc-empty { padding: 28px; border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
         .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
-        .doc-editor-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
+        .doc-editor-input:focus { border-color: rgb(var(--accent)); }
         .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
-        .doc-editor-textarea:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
+        .doc-editor-textarea:focus { border-color: rgb(var(--accent)); }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history (T-DOC-3) — base.css .acked 는 .alert-row 스코프라 div 미적용 → predecessor 전용 dim 룰.
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. summary chevron 은 native 유지. */
@@ -2779,7 +2779,7 @@ function DocCheckboxCD({
 				onChange={onChange}
 				onClick={onClick}
 				aria-label={ariaLabel}
-				className="appearance-none w-4 h-4 rounded border-2 border-zinc-600 bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-400 checked:bg-emerald-600 checked:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 transition-colors duration-150 cursor-pointer"
+				className="appearance-none w-4 h-4 rounded border-2 border-zinc-600 bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-400 checked:bg-emerald-600 checked:border-emerald-600 transition-colors duration-150 cursor-pointer"
 				style={{ margin: 0 }}
 			/>
 			{/* check SVG — checked 단독 시 표시 (indeterminate 우선) */}
