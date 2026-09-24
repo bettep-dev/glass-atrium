@@ -1861,7 +1861,6 @@ const TONE_GLYPH_CLASS = {
  */
 function AlarmRowAR({ row, onRetry }) {
 	const { Icon, Badge } = window.UI;
-	const names = row.badges || [];
 	return (
 		<div
 			role="alert"
@@ -1881,9 +1880,9 @@ function AlarmRowAR({ row, onRetry }) {
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{row.title}</div>
 				<div className="fs-meta text-dim mt-1">{row.note}</div>
-				{names.length > 0 && (
+				{row.badges.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
-						{names.map((name) => (
+						{row.badges.map((name) => (
 							<Badge key={name} role="status" tone={row.tone} glyph={false}>
 								{name}
 							</Badge>
