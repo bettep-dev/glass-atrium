@@ -117,7 +117,8 @@ function ScreenCost({ onNav }) {
   // 패널 로딩 중 period 토글 비활성화 — 빠른 연타 시 abort 스톰 차단.
   // Every payload counts: a gate reading a subset lets the toggle fire while a panel is still in flight.
   const panelStates = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState];
-  const anyLoading = panelStates.some((st) => st.status === 'loading');
+  const freshnessInput = getFreshnessInputC(asOfAt, panelStates);
+  const anyLoading = freshnessInput.loading;
 
   return (
     <div className="cost-screen flex flex-col">
@@ -165,7 +166,7 @@ function ScreenCost({ onNav }) {
                 <Icon name="refresh" size={14}/>
                 Refresh
               </button>
-              <FreshnessStamp {...getFreshnessInputC(asOfAt, panelStates)}/>
+              <FreshnessStamp {...freshnessInput}/>
             </>
           }
         />
