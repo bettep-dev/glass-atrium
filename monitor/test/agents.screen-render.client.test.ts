@@ -444,3 +444,78 @@ test("the ledger opens sorted by breakages, riskiest agents first", async () => 
   const source = await readFile(AGENTS_SRC, "utf8");
   assert.match(source, /\[sortBy, setSortBy\] = useStateAg\('failures'\)/);
 });
+
+const NOT_LOADED_WORD = "not loaded";
+
+function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, trendStatus: string): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000 },
+      days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+      failureStatus, trendStatus,
+    }),
+  );
+}
+
+test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero keeps the dash", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "both loading", failureStatus: "loading", trendStatus: "loading", notLoaded: 2 },
+    { name: "both failed", failureStatus: "error", trendStatus: "error", notLoaded: 2 },
+    { name: "breakages read, trend loading", failureStatus: "ready", trendStatus: "loading", notLoaded: 1 },
+    { name: "both read with no data", failureStatus: "ready", trendStatus: "ready", notLoaded: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderLoadRow(mod, row.failureStatus, row.trendStatus);
+    const marks = findNodes(tree, (n) => n.type === "span" && collectText(n) === NOT_LOADED_WORD);
+    assert.equal(marks.length, row.notLoaded, `${row.name}: not-loaded marks`);
+    const failCell = findNodes(tree, (n) => n.type === "td" && String(n.props?.title ?? "").length > 0)
+      .find((n) => /breakage/.test(String(n.props.title)));
+    const failText = collectText(failCell ?? null);
+    assert.equal(failText === "—", row.failureStatus === "ready", `${row.name}: the dash means a read zero only`);
+  }
+});
+
+function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const agents = [
+    { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
+    { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
+  ];
+  const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, breakage_rate: 0.7 }]]);
+  const tree = renderScreen(
+    React.createElement(mod.AgentSummaryBody as Component, {
+      state: { status: "ready", data: { agents }, error: null },
+      days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
+    }),
+  );
+  const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => String((n.props.agent as { agent_id: string }).agent_id));
+  const note = findNodes(tree, (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
+  return [...order, `note:${note}`];
+}
+
+test("the breakage sort orders by breakages only once they are read, and says so while they are not", async () => {
+  const mod = await loadAgentsScreen();
+  const [readFirst, , readNote] = renderSortedBody(mod, "ready");
+  assert.equal(readFirst, "glass-atrium-dev-risky", "read breakages put the riskiest agent first");
+  assert.equal(readNote, "note:", "a read sort carries no caveat");
+
+  for (const status of ["loading", "error"]) {
+    const [first, , note] = renderSortedBody(mod, status);
+    assert.equal(first, "glass-atrium-dev-busy", `${status}: unread breakages fall back to run order`);
+    assert.match(note, /breakages not loaded/i, `${status}: the fallback order is announced`);
+  }
+});
+
+test("the Refresh control carries a busy state while any region is still loading", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  for (const isBusy of [true, false]) {
+    const tree = renderScreen(React.createElement(mod.RefreshButtonAg as Component, { isBusy, onRefresh: () => {} }));
+    const button = findNodes(tree, (n) => n.type === "button")[0];
+    assert.equal(button?.props["aria-busy"], isBusy ? "true" : undefined, `busy=${isBusy}: aria-busy`);
+    assert.equal(/Refreshing/.test(collectText(tree)), isBusy, `busy=${isBusy}: visible busy label`);
+  }
+});

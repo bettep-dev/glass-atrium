@@ -29,7 +29,7 @@ interface StampSandbox {
     UI: { getFreshnessState: (input: FreshnessInput & { now: number }) => string };
   };
   getLastReadAtAg: (prevAt: string | null, state: FetchState) => string | null;
-  getFreshnessInputAg: (asOfAt: string | null, state: FetchState) => FreshnessInput;
+  getFreshnessInputAg: (asOfAt: string | null, state: FetchState, regionStates?: FetchState[]) => FreshnessInput;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(AGENTS_SRC);
@@ -66,5 +66,18 @@ test("a refresh keeps the last stamp, and a failed summary read never reads as f
       expected,
       `asOf=${asOfAt} summary=${state.status}`,
     );
+  }
+});
+
+test("the stamp stays busy while any region is loading, even once the summary has been read", () => {
+  const rows = [
+    { name: "a sibling region still loading", regions: [ready, loading], busy: true },
+    { name: "every region settled, one failed", regions: [ready, failed], busy: false },
+    { name: "every region read", regions: [ready, ready], busy: false },
+  ];
+  for (const row of rows) {
+    const input = sandbox.getFreshnessInputAg(READ_AT, ready, row.regions);
+    assert.strictEqual(input.loading, row.busy, row.name);
+    assert.strictEqual(input.failed, false, `${row.name}: only the summary read decides failure`);
   }
 });
