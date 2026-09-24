@@ -269,7 +269,8 @@ function ScreenAgents() {
   );
 
   // 정렬 상태를 화면 레벨로 승격 — 테이블과 드로어 Prev/Next nav 가 동일 정렬 순서를 공유 (AC3).
-  const [sortBy, setSortBy] = useStateAg('name');
+  // Riskiest agents first — the ledger opens on breakages, not the alphabet.
+  const [sortBy, setSortBy] = useStateAg('failures');
 
   // 드로어 nav 가 walk 하는 현재 정렬된 agent 행 — DetailModal 이 rows 위 idx 도출하는 패턴 미러.
   const sortedAgents = useMemoAg(
@@ -344,6 +345,7 @@ function ScreenAgents() {
       <AgentAlarmLane state={summaryState} onRetry={triggerRefresh}/>
 
       <AgentStatusBand
+        days={days}
         summaryState={summaryState}
         failureState={failureState}
         overageState={overageState}
@@ -506,7 +508,7 @@ function AgentAlarmRow({ alarm }) {
 
 // Status band — the four fleet questions the first screenful answers. Each tile
 // carries its own payload state so one unloaded source never reads as a zero.
-function AgentStatusBand({ summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
+function AgentStatusBand({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
   const summary = readyData(summaryState);
   const breaker = summary?.meta?.circuit_breaker ?? null;
 
@@ -532,7 +534,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
       <AgentStatusTile
         label="Unsafe to route"
-        sub={breaker && breaker.source === 'loaded' ? `of ${breaker.registry_agents} registered agents` : 'circuit-breaker state'}
+        sub={breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now'}
         unavailableSub={CIRCUIT_BREAKER_UNREADABLE_COPY}
         status={unsafeStatus}
         value={unsafeCount}
@@ -542,7 +544,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Failed or blocked"
-        sub="agents with breakages in the window"
+        sub={`agents with breakages · last ${days}d`}
         status={failureState.status}
         value={breakingCount}
         tone={breakingCount ? 'crit' : 'ok'}
@@ -551,7 +553,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Over tool-use cap"
-        sub="runs that crossed their tool-use budget"
+        sub={`runs that crossed their tool-use budget · last ${days}d`}
         status={overageState.status}
         value={overCapCount}
         tone={overCapCount ? 'warn' : 'ok'}
@@ -560,7 +562,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Needs context"
-        sub="needs_context outcomes — fix the delegation prompt"
+        sub={`needs_context outcomes · last ${days}d — fix the delegation prompt`}
         status={summaryState.status}
         value={needsContextCount}
         tone={needsContextCount ? 'warn' : 'ok'}

@@ -411,3 +411,29 @@ test("a failing pair drills to Task results filtered by its agent, task type and
   const hrefs = findNodes(tree, (n) => n.type === "a").map((n) => String(n.props.href));
   assert.deepEqual(hrefs, ["#outcomes?agent=glass-atrium-dev-react&task_type=feature&days=14"]);
 });
+
+test("every status-band tile names the window its count covers", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const tree = await renderComponent("AgentStatusBand", {
+    days: 14,
+    summaryState: getSummaryState(BREAKER_LOADED_ZERO),
+    failureState: ready,
+    overageState: ready,
+    failureByAgent: new Map(),
+    overageByAgent: new Map(),
+    onRetry: () => undefined,
+  });
+  const labels = ["Unsafe to route", "Failed or blocked", "Over tool-use cap", "Needs context"];
+  const tiles = labels.map((label) => findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
+    .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0]);
+  assert.match(collectText(tiles[0]), /\bnow\b/, "breaker state is current, not windowed");
+  for (const tile of tiles.slice(1)) {
+    assert.match(collectText(tile), /last 14d/);
+  }
+});
+
+test("the ledger opens sorted by breakages, riskiest agents first", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(AGENTS_SRC, "utf8");
+  assert.match(source, /\[sortBy, setSortBy\] = useStateAg\('failures'\)/);
+});
