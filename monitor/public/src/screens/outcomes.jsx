@@ -1850,7 +1850,8 @@ function LoopEventsBody({ state, onRetry }) {
         ))}
       </div>
       {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤). */}
-      <div className="overflow-y-auto" style={{ maxHeight: '42vh' }}>
+      {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
+      <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
           <thead>
             <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
@@ -2417,7 +2418,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
       </td>
-      <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
+      <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
@@ -2458,9 +2459,9 @@ function ResultTableRow({ row, onRowClick, closure }) {
           <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line" title={summary}>
-        {/* 폭 상한은 div 가, 말줄임은 min-w-0 flex 자식이 — td 자체의 truncate 는 표 레이아웃에서 잘리기만 한다. */}
-        <div className="flex items-center" style={{ maxWidth: 380 }}>
+      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
+      <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+        <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
           <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
         </div>
