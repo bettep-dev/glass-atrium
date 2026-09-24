@@ -869,8 +869,10 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
 }
 
-// Collapsible section shell — label left, count right, body below the summary. The h2 sits
-// inside the summary (HTML allows one heading there), so heading navigation lands on the toggle.
+/**
+ * Collapsible section shell — label left, count right, body below the summary.
+ * h2 inside the summary (HTML allows one heading there) → heading navigation lands on the toggle.
+ */
 function WikiDisclosureW({
 	label,
 	count,

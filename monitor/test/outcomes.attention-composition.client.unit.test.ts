@@ -710,6 +710,9 @@ test("ledger row and filter chips name the same value the same way", () => {
     assert.strictEqual(chips.length, 1, row.name);
     assert.ok(chips[0].endsWith(`: ${cellText(rendered, row.cell)}`), `${row.name}: chip '${chips[0]}' vs cell '${cellText(rendered, row.cell)}'`);
   }
+});
+
+test("the agent filter chip names the agent by the display name the ledger shows", () => {
   const agentChip = helpers.buildActiveFilterChipsO({ days: 30, agent: LEDGER_AGENT })[0];
   assert.strictEqual(agentChip, `Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`);
 });

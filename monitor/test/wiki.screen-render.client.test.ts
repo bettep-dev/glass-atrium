@@ -137,14 +137,17 @@ test("each wiki section names itself with an h2 inside the summary that toggles 
   }
 });
 
-test("one polite live region announces the wave: loading, then ready or the sections that failed", async () => {
+test("one polite live region announces a wave in flight as loading", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const regions = findNodes(tree, (n) => n.props["aria-live"] != null);
   assert.equal(regions.length, 1, "the screen owns exactly one live region");
   assert.equal(regions[0].props["aria-live"], "polite");
   assert.match(collectText(regions[0]), /^Loading/, "a wave in flight is announced as loading");
+});
 
+test("the wave announcement reads loading, then ready or the sections that failed", async () => {
+  const mod = await loadWikiScreen();
   const describe = mod.describeWikiWaveW as (sections: Array<[{ status: string }, string]>) => string;
   const ready = { status: "ready" };
   const failed = { status: "error" };
@@ -170,7 +173,10 @@ test("Refresh reports busy while a wave is in flight and idle once it settles", 
     assert.equal(button.props["aria-busy"], busy ? "true" : undefined, `busy=${busy}`);
     assert.ok(collectText(button).includes(text), `busy=${busy} shows ${text}`);
   }
+});
 
+test("the page header carries one Refresh control, busy while the mount wave is in flight", async () => {
+  const mod = await loadWikiScreen();
   const screen = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const header = findNodes(screen, (n) => n.props.atom === "PageHeader")[0];
   const headerRight = renderScreen(header.props.right);
