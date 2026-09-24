@@ -137,9 +137,10 @@ SCOPE_CONDITIONAL_RULES: dict[str, tuple[dict[str, str], ...]] = {
 # The closed file set a registry row may cite. shared-design-token-consumption
 # appears only here: it binds the UI-emitting DEV subset unconditionally, which
 # is a per-AGENT fact no scope-level default can derive, so it is added by hand.
-# shared-code-structure.md and shared-naming.md also bind glass-atrium-qa-code-
-# reviewer alone within QA — likewise hand-added per agent, but already in this
-# set through the DEV defaults, so they need no entry of their own.
+# shared-code-structure.md, shared-naming.md and shared-testing.md also bind
+# glass-atrium-qa-code-reviewer alone within QA — likewise hand-added per agent,
+# but already in this set through the DEV defaults, so they need no entry of
+# their own.
 RULE_FILES: frozenset[str] = frozenset(
     set(SCOPE_RULE_FILES.values())
     | {f for files in SCOPE_SHARED_RULE_FILES.values() for f in files}
@@ -155,12 +156,12 @@ def get_rules_for_scope(scope: str) -> dict[str, Any]:  # Any: str | list values
     cannot be read off a scope label — the UI-emitting DEV subset that also takes
     shared-design-token-consumption.md, glass-atrium-meta-prompt-engineer taking
     the 5 original cross-cutting DEV Tier-3 files its META sibling does not, and
-    glass-atrium-qa-code-reviewer taking shared-code-structure.md and
-    shared-naming.md that its QA sibling does not. Each is corrected by
-    appending the missing file with add_shared_rule_file — additively, since both
-    divergences ADD to the scope defaults rather than contradicting them. The
-    write surface is ADD / remove / additive domains append / additive
-    rules.shared append; no op rewrites an existing value.
+    glass-atrium-qa-code-reviewer taking shared-code-structure.md,
+    shared-naming.md and shared-testing.md that its QA sibling does not. Each is
+    corrected by appending the missing file with add_shared_rule_file —
+    additively, since every divergence ADDS to the scope defaults rather than
+    contradicting them. The write surface is ADD / remove / additive domains
+    append / additive rules.shared append; no op rewrites an existing value.
 
     Raises RegistryMutationError on an unknown scope — a silent empty default
     would ship an agent claiming membership in nothing.
@@ -302,13 +303,15 @@ def add_shared_rule_file(
 
     The correction path for the per-AGENT divergences get_rules_for_scope cannot
     derive from a scope label (the UI-emitting DEV subset's design-token file,
-    glass-atrium-meta-prompt-engineer's 5 DEV Tier-3 files). Additive by the same
-    §2.2 rule as add_domain_token: existing files keep their order, only a new
-    one is appended, and a file already present is a no-op. The RESULTING entry
-    goes through assert_rule_files_known, so a path no consumer could resolve is
-    refused before the write rather than stored. Returns a reverse-op closure
-    (removes the file IFF this call appended it). Raises RegistryMutationError
-    when the agent, its `rules` object, or its shared list is absent.
+    glass-atrium-meta-prompt-engineer's 5 DEV Tier-3 files,
+    glass-atrium-qa-code-reviewer's code-structure, naming and testing files).
+    Additive by the same §2.2 rule as add_domain_token: existing files keep
+    their order, only a new one is appended, and a file already present is a
+    no-op. The RESULTING entry goes through assert_rule_files_known, so a path
+    no consumer could resolve is refused before the write rather than stored.
+    Returns a reverse-op closure (removes the file IFF this call appended it).
+    Raises RegistryMutationError when the agent, its `rules` object, or its
+    shared list is absent.
     """
     agents = load_registry_agents(paths)
     if name not in agents:
