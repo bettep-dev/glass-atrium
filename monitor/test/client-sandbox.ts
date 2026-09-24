@@ -10,26 +10,11 @@
 import vm from "node:vm";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import esbuild from "esbuild";
 
-// ui.jsx mirror — the rollup skips samples below it.
-export const LOW_N_MIN = 30;
-
-/** Shared atoms bundle — the real source behind `window.UI`. */
 const UI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src/ui.jsx");
 
-interface SandboxOptions {
-  /**
-   * Evaluate the real ui.jsx into the same context before the screen, so `window.UI`
-   * carries the shipped shared helpers instead of the stub. Required by a screen that
-   * reads a shared derivation (tone rules, writer-population helpers) rather than only
-   * the formatters the stub covers.
-   */
-  withUi?: boolean;
-}
-
-async function transpile(srcPath: string): Promise<string> {
+async function transformScript(srcPath: string): Promise<string> {
   const built = await esbuild.build({
     entryPoints: [srcPath],
     bundle: false,
@@ -49,12 +34,21 @@ async function transpile(srcPath: string): Promise<string> {
   return output.text;
 }
 
-export async function buildScreenSandbox<T>(
-  srcPath: string,
-  options: SandboxOptions = {},
-): Promise<T> {
-  const screenSource = await transpile(srcPath);
-  const uiSource = options.withUi === true ? await transpile(UI_SRC) : null;
+export async function buildUiSandbox<T>(): Promise<T> {
+  const ctx = await runSandbox([]);
+  return (ctx.window as { UI: T }).UI;
+}
+
+export async function buildScreenSandbox<T>(srcPath: string): Promise<T> {
+  return (await runSandbox([await transformScript(srcPath)])) as unknown as T;
+}
+
+// ui.jsx is evaluated FIRST and wrapped in an IIFE: it exports only `window.UI`, so its
+// top-level consts must stay out of the shared vm global — a screen redeclaring `formatUsd`
+// at top level would otherwise be a SyntaxError rather than a test.
+// The screen scripts stay unwrapped, because their top-level fn decls ARE the test surface.
+async function runSandbox(screenCodes: string[]): Promise<Record<string, unknown>> {
+  const uiCode = `(function(){\n${await transformScript(UI_SRC)}\n})();`;
 
   // Every hook returns a benign default — only the (uninvoked) component bodies touch
   // React, so the stubs never actually drive a render.
@@ -70,17 +64,11 @@ export async function buildScreenSandbox<T>(
     },
     { get: (t: Record<string, unknown>, p: string) => (p in t ? t[p] : () => ({})) },
   );
-  // Module-top reads window.UI.* at evaluation time.
-  const uiStub = {
-    formatUsd: () => "",
-    formatUsdCompact: () => "",
-    formatInt: (n: number) => String(n),
-    formatTokenCompact: () => "",
-    formatPctWithDenominator: (n: number, d: number) => `${((n / d) * 100).toFixed(1)}% (${n}/${d})`,
-    LOW_N_MIN,
-  };
+  // The REAL ui.jsx is evaluated into the same context and self-registers window.UI.
+  // A hand-written stub of the shared outcome-rate rule would make every assertion
+  // against it an echo of the stub, which is the one thing these suites must not be.
   const ctx: Record<string, unknown> = {
-    window: { UI: uiStub },
+    window: {},
     React: reactStub,
     document: { documentElement: {} },
     Intl,
@@ -89,12 +77,9 @@ export async function buildScreenSandbox<T>(
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  // ui.jsx assigns the real window.UI over the stub — a superset, so the formatters the
-  // stub provided stay available to every screen that never asked for the real bundle.
-  // Wrapped in an IIFE: a screen re-declares the atoms it aliases (`const formatUsd =
-  // window.UI.formatUsd`), and two top-level `const`s of one name collide in a shared
-  // vm context. The `window.UI =` assignment is the only surface this path needs.
-  if (uiSource !== null) vm.runInContext(`(function(){\n${uiSource}\n})();`, ctx);
-  vm.runInContext(screenSource, ctx);
-  return ctx as unknown as T;
+  vm.runInContext(uiCode, ctx);
+  for (const code of screenCodes) {
+    vm.runInContext(code, ctx);
+  }
+  return ctx;
 }

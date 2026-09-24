@@ -4,8 +4,7 @@
 // Pinned relationships:
 //   (a) outcomeShareTone carries the tone iff count/population reaches the share — the
 //       threshold itself is inside, and an absent population is never a risk.
-//   (b) worstTone is the severity maximum, with info/neutral ranked not-risky.
-//   (c) the writer-population helpers subtract exactly the harness-reconstructed rows
+//   (b) the writer-population helpers subtract exactly the harness-reconstructed rows
 //       and fall back to the legacy closure count on an old payload.
 //
 // Sandbox harness (esbuild + node:vm over the real shipped ui.jsx): client-sandbox.ts.
@@ -36,7 +35,6 @@ interface UiHelpers {
     minShare: number,
     tone: Tone,
   ) => Tone | null;
-  worstTone: (a: Tone, b: Tone) => Tone;
   getOutcomeCount: (row: OutcomeRow | undefined) => number;
   getOutcomeOpenCount: (row: OutcomeRow | undefined) => number;
   getWriterTotal: (data: { total?: number; reconstructed_total?: number } | undefined) => number;
@@ -89,30 +87,7 @@ test("the outcome share thresholds stay the breakage/caveat pair the screens rea
   assert.strictEqual(ui.outcomeShareTone(9, 100, ui.OUTCOME_OPEN_CAVEAT_WARN_SHARE, "warn"), null);
 });
 
-// (b) worst-of 축약.
-
-test("worstTone returns the more severe of the two tones, in either argument order", () => {
-  const pairs: readonly [Tone, Tone, Tone][] = [
-    ["ok", "crit", "crit"],
-    ["warn", "crit", "crit"],
-    ["ok", "warn", "warn"],
-    ["ok", "info", "ok"],
-  ];
-
-  for (const [a, b, worst] of pairs) {
-    assert.strictEqual(ui.worstTone(a, b), worst, `${a} vs ${b}`);
-    assert.strictEqual(ui.worstTone(b, a), worst, `${b} vs ${a} — order must not matter`);
-  }
-});
-
-test("worstTone keeps the incumbent tone when neither is more severe", () => {
-  // info 와 neutral 은 같은 '위험 아님' 등급 — 동급끼리는 먼저 쥔 톤이 남는다(rollup 누산 순서 안정).
-  assert.strictEqual(ui.worstTone("neutral", "info"), "neutral");
-  assert.strictEqual(ui.worstTone("info", "neutral"), "info");
-  assert.strictEqual(ui.worstTone("warn", "warn"), "warn");
-});
-
-// (c) 모집단 헬퍼.
+// (b) 모집단 헬퍼.
 
 test("the writer population is the total minus the harness-reconstructed rows", () => {
   assert.strictEqual(ui.getWriterTotal({ total: 100, reconstructed_total: 40 }), 60);
@@ -133,4 +108,12 @@ test("getWriterOpenCount falls back to the closure-only open count on a legacy r
   assert.strictEqual(ui.getWriterOpenCount({ count: 10, closed_count: 4 }), 6);
   assert.strictEqual(ui.getWriterOpenCount({ count: 3, closed_count: 9 }), 0, "never negative");
   assert.strictEqual(ui.getWriterOpenCount(undefined), 0);
+});
+
+test("open count is count minus closed across the whole input class", () => {
+  for (const [count, closed] of [[10, 0], [10, 3], [10, 10], [0, 0], [5, 9]]) {
+    const row = { result: "done_with_concerns", count, closed_count: closed };
+    assert.equal(ui.getOutcomeOpenCount(row), Math.max(0, count - closed));
+  }
+  assert.equal(ui.getOutcomeOpenCount(undefined), 0, "a missing row is 0 open, never NaN");
 });

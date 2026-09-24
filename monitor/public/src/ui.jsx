@@ -742,15 +742,6 @@ function resolveResultMeta(result, closedAt) {
 // 비율 표본 임계 (A5) — n < 30 이면 muted/italic + '(n=N)' 표기 대상.
 const LOW_N_MIN = 30;
 
-// severity 우선순위 — worst-of 축약 기준. 높을수록 위험 (crit 최상위).
-// neutral/info 는 "위험 아님" 동급(0) — 둘 다 정상 신호로 rollup 톤을 끌어올리지 않음.
-const SEVERITY_RANK = { crit: 3, warn: 2, ok: 1, info: 0, neutral: 0 };
-
-// 두 톤 중 더 위험한 쪽 반환 — enum SoT 톤만 입력(로컬 색맵 없음).
-function worstTone(a, b) {
-  return (SEVERITY_RANK[b] || 0) > (SEVERITY_RANK[a] || 0) ? b : a;
-}
-
 // Outcome quality thresholds — the share a fact must reach before it carries a tone.
 const OUTCOME_BREAKAGE_CRIT_SHARE = 0.05;
 const OUTCOME_OPEN_CAVEAT_WARN_SHARE = 0.1;
@@ -874,6 +865,29 @@ function reviewFlagReasons(row) {
   return reasons;
 }
 
+// Outcome 품질 판정 — Dashboard 와 Task results 가 공유하는 단일 규칙.
+// 임계 리터럴·분모 helper 는 위 outcomeShareTone 블록이 SoT — 여기서는 조합만.
+// cross-analysis 응답 → 단일 판정. status 는 톤이 아니라 상태다 —
+//   'unavailable' 미수신/전량 합성 · 'empty' 기간 내 0건 · 'low-n' 표본 부족(가짜 경보 차단) ·
+//   'ok' | 'warn' | 'crit'. 색은 tone 으로만 나가고 문구에는 싣지 않는다.
+function resolveOutcomeRate(data) {
+  const total = Number(data?.total) || 0;
+  const rows = new Map((data?.by_result || []).map((r) => [r.result, r]));
+  const writerTotal = getWriterTotal(data);
+  const breakage = getWriterCount(rows.get('fail')) + getWriterCount(rows.get('blocked'));
+  const openCaveats = getWriterOpenCount(rows.get('done_with_concerns'));
+  const base = { total, writerTotal, breakage, openCaveats, tone: 'neutral' };
+
+  if (!data) return { ...base, status: 'unavailable' };
+  if (total <= 0) return { ...base, status: 'empty' };
+  if (writerTotal <= 0) return { ...base, status: 'unavailable' };
+  if (writerTotal < LOW_N_MIN) return { ...base, status: 'low-n' };
+  const tone = outcomeShareTone(breakage, writerTotal, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit')
+    || outcomeShareTone(openCaveats, writerTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn')
+    || 'ok';
+  return { ...base, status: tone, tone };
+}
+
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
@@ -885,7 +899,7 @@ window.UI = {
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
-  worstTone, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
+  outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
 };
