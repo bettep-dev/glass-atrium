@@ -24,7 +24,7 @@ const INITIAL_FETCH_STATE = { status: "loading", data: null, error: null };
 const SPARSE_MIN_NONZERO = 4;
 
 function ScreenWiki() {
-	const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const { PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [summaryState, setSummaryState] = useStateW(INITIAL_FETCH_STATE);
 	const [cyclesState, setCyclesState] = useStateW(INITIAL_FETCH_STATE);
@@ -42,7 +42,14 @@ function ScreenWiki() {
 
 	const triggerRefresh = useCallbackW(() => setRefreshTick((t) => t + 1), []);
 
-	const waveStates = [summaryState, cyclesState, indexState, backlogState, reportState];
+	const waveSections = [
+		[summaryState, "summary"],
+		[cyclesState, "run history"],
+		[indexState, "notes by type"],
+		[backlogState, "maintenance backlog"],
+		[reportState, "per-run table"],
+	];
+	const waveStates = waveSections.map(([state]) => state);
 	const freshness = getFreshnessInputW(settledAt, waveStates);
 
 	// 4 parallel fetches via Promise.allSettled — 단일 실패 시에도 나머지 섹션 렌더 유지.
@@ -104,13 +111,7 @@ function ScreenWiki() {
 
 			{/* Always mounted — a region inserted with its text is not announced. */}
 			<div className="sr-only" role="status" aria-live="polite">
-				{describeWikiWaveW([
-					[summaryState, "summary"],
-					[cyclesState, "run history"],
-					[indexState, "notes by type"],
-					[backlogState, "maintenance backlog"],
-					[reportState, "per-run table"],
-				])}
+				{describeWikiWaveW(waveSections)}
 			</div>
 
 			<div className="flex flex-col gap-4">
