@@ -1,5 +1,5 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
-const { useEffect, useRef } = React;
+const { useEffect, useRef, useState } = React;
 
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -631,6 +631,7 @@ function formatKstFull(iso) {
 }
 
 const FRESHNESS_STALE_MS = 5 * 60_000;
+const FRESHNESS_TICK_MS = 30_000;
 
 // glyph carries the tone, text stays neutral → state survives without colour
 const FRESHNESS_META = {
@@ -652,13 +653,25 @@ function getFreshnessState({ at, loading = false, failed = false, staleAfterMs =
   return 'fresh';
 }
 
-/** Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy. */
+/**
+ * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
+ * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ */
 function FreshnessStamp({ at, loading = false, failed = false, staleAfterMs, now }) {
+  const [, setTick] = useState(0);
   const state = getFreshnessState({ at, loading, failed, staleAfterMs, now });
   const meta = FRESHNESS_META[state];
   const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
   const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
   const isRead = state === 'fresh' || state === 'stale';
+  const shouldTick = isRead && now === undefined;
+
+  useEffect(() => {
+    if (!shouldTick) return undefined;
+    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
+    return () => clearInterval(intervalId);
+  }, [shouldTick]);
+
   const text = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
   const title = isRead ? `${meta.word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : meta.word;
 

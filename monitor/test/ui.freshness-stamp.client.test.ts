@@ -89,3 +89,62 @@ test("a refresh in flight keeps the last stamp and marks the atom busy", () => {
   assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1);
   assert.match(collectText(tree), new RegExp(`as of ${formatKstTime(at)}`));
 });
+
+// Recording React whose state setter and effects the test drives by hand, plus a settable clock.
+function createTickHarness(startMs: number) {
+  const clock = { now: startMs };
+  const effects: Array<() => unknown> = [];
+  const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+  let rerenders = 0;
+  const RealDate = Date;
+  class ClockDate extends RealDate {
+    static now() {
+      return clock.now;
+    }
+  }
+  const baseReact = ui.React as Record<string, unknown>;
+  const React = {
+    ...baseReact,
+    useState: (initial: unknown) => [initial, () => { rerenders += 1; }],
+    useEffect: (effect: () => unknown) => { effects.push(effect); },
+  };
+  const globals = {
+    React,
+    Date: ClockDate,
+    setInterval: (fn: () => void, ms: number) => timers.push({ fn, ms, cleared: false }) - 1,
+    clearInterval: (id: number) => { if (timers[id]) timers[id].cleared = true; },
+  };
+  return { clock, effects, timers, globals, getRerenders: () => rerenders };
+}
+
+test("with no injected clock, a read stamp re-checks its own age: time passing alone turns Fresh into Stale", async () => {
+  const harness = createTickHarness(NOW);
+  const tickUi = await loadScreenModule(UI_SRC, harness.globals);
+  const at = isoAgo(1_000);
+  const render = () => renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { at, staleAfterMs: STALE_MS })) as RenderedNode;
+  const srWord = (tree: RenderedNode) => collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim();
+
+  assert.equal(srWord(render()), "Fresh");
+  const cleanups = harness.effects.map((effect) => effect());
+  const live = harness.timers.filter((t) => !t.cleared);
+  assert.equal(live.length, 1, "one tick scheduled");
+  assert.ok(live[0].ms <= STALE_MS / 2, `tick ${live[0].ms}ms is fine-grained enough to catch the stale edge`);
+
+  harness.clock.now = NOW + STALE_MS + 1;
+  live[0].fn();
+  assert.ok(harness.getRerenders() >= 1, "the tick requests a re-render");
+  assert.equal(srWord(render()), "Stale");
+
+  for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+  assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
+});
+
+test("no tick is scheduled when nothing time-dependent is shown or the clock is injected", async () => {
+  for (const props of [{ at: null }, { at: null, loading: true }, { at: isoAgo(1_000), now: NOW }]) {
+    const harness = createTickHarness(NOW);
+    const tickUi = await loadScreenModule(UI_SRC, harness.globals);
+    renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { staleAfterMs: STALE_MS, ...props }));
+    harness.effects.forEach((effect) => effect());
+    assert.equal(harness.timers.length, 0, JSON.stringify(props));
+  }
+});
