@@ -344,10 +344,10 @@ test("AC-T2 cadence 를 넘긴 staleness 가 있어도 화면은 판정을 올�
 });
 
 test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으로 남김", () => {
-  // `info` 는 링 등급표에 없는 tone 임 — 미수신은 링을 칠하지 않음이 정답임.
+  // no verdict → info ('No data'), which rings dashed like an unread part — never ok, never blank.
   assert.strictEqual(
     ringToneOf({ daemon_name: "autoagent", status: "ok", node_ids: ["cron"] }),
-    undefined,
+    "info",
   );
 });
 
@@ -791,6 +791,7 @@ const CAPTION_CASES: {
   { name: "some ok, rest unreadable", rows: partRows("ok", null), busy: false, errored: 1, must: ["1 of 2", "unreadable"] },
   { name: "attention outranks everything", rows: partRows("crit", null), busy: true, errored: 1, must: ["1 of 2", "need attention"] },
   { name: "all judged ok", rows: partRows("ok", "ok"), busy: false, errored: 0, must: ["All 2 parts ok"] },
+  { name: "a 'No data' part is unverified, not attention", rows: partRows("ok", "ok", "info"), busy: false, errored: 0, must: ["2 of 3", "not verified"] },
 ];
 
 test("M1 every health state renders its own caption sentence", () => {
@@ -915,13 +916,13 @@ test("M1 cutting a store can only add unverified nodes, never remove one", () =>
 const RING_BY_TONE = { ok: "ring-ok", warn: "ring-warn", crit: "ring-crit" };
 
 test("V1 an unjudged part never paints as ok, while warn and crit always show", () => {
-  for (const tone of [undefined, "ok", "warn", "crit"])
+  for (const tone of [undefined, "ok", "info", "warn", "crit"])
     for (const isUnverified of [false, true]) {
       const cls = callInCtx<string | null>(archCtx, "getRingClassAR", tone, RING_BY_TONE, isUnverified, "unverified");
       const label = `tone=${tone} unverified=${isUnverified} → ${cls}`;
 
       if (tone === "warn" || tone === "crit") assert.strictEqual(cls, RING_BY_TONE[tone], label);
-      else if (isUnverified) assert.strictEqual(cls, "unverified", label);
+      else if (isUnverified || tone === "info") assert.strictEqual(cls, "unverified", label);
       else assert.strictEqual(cls, tone ? RING_BY_TONE[tone as "ok"] : null, label);
     }
 });
@@ -933,6 +934,28 @@ test("V1 bindings that have not arrived report unknown, not an empty unverified 
       null,
       "an empty set would read every node as judged while /live is loading or failed",
     );
+});
+
+test("M1 a 'No data' part keeps its tone on the node, and it outranks an ok daemon there", () => {
+  const defs = (arch as unknown as { window: { HealthModel: { HEALTH_CARD_DEFS: { id: string; kind: string }[] } } })
+    .window.HealthModel.HEALTH_CARD_DEFS;
+  const daemonDef = defs.find((d) => d.kind === "daemon");
+  assert.ok(daemonDef, "fixture precondition: the health model must carry a daemon part");
+
+  // daemons: [] → the daemon part is ready but reads 'No data' (info).
+  const okDaemon = arch.buildLiveDaemonsByNodeId([
+    { daemon_name: "autoagent", status: "ok", effective_status: "ok", node_ids: ["shared"] },
+  ]);
+  const tones = arch.buildRingToneByNodeId(okDaemon, { [daemonDef.id]: ["shared"] }, healthStoreStates());
+
+  assert.strictEqual(tones.get("shared"), "info", "an ok daemon must not cover a part that has no data");
+});
+
+test("M3 a health model that never loaded leaves every bound node unverified", () => {
+  const ctx = loadArchWithoutHealthModel(archCode);
+  const ids = callInCtx<Set<string>>(ctx, "buildUnverifiedNodeIds", { a: ["n1"], b: ["n2", "n3"] }, healthStoreStates());
+
+  assert.deepStrictEqual([...ids].sort(), ["n1", "n2", "n3"]);
 });
 
 test("V2 a zone member's connections include the arrows drawn onto its zone", () => {

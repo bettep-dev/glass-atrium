@@ -95,7 +95,8 @@ const RING_RADIUS = NODE_CORNER_RADIUS + RING_GAP;
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
 // cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
-const RING_TONE_RANK = { ok: 1, warn: 2, crit: 3 };
+// info ('No data') outranks ok — a part with no data must not read as all-clear under an ok neighbour.
+const RING_TONE_RANK = { ok: 1, info: 2, warn: 3, crit: 4 };
 
 // ── health 응답 흡수 (ADR-B1 R2) ────────────────────────────────────────────
 // health.jsx 가 읽던 다섯 응답을 맵이 그대로 읽음 — 서버 계약 무변경, 요청 자리만 옮김.
@@ -2052,7 +2053,8 @@ function getHealthCaptionAR(partRows, busy, errored = 0) {
 	if (total === 0)
 		return busy ? "Reading part health…" : "Part health unavailable";
 
-	const judged = partRows.filter((row) => row.tone);
+	// 'No data' (info) is not a verdict — it rings dashed, so it counts as unverified, not attention.
+	const judged = partRows.filter((row) => row.tone && row.tone !== "info");
 	const attention = judged.filter((row) => row.tone !== "ok");
 	const unverified = total - judged.length;
 	// 끊긴 저장소가 있으면 남은 빈칸은 '아직' 이 아니라 '못 읽음' 임 — 두 낱말이 그 둘을 가름.
@@ -2210,10 +2212,10 @@ function getFlowEndpointIdsAR(nodeId, zoneIdByMemberId) {
 	return endpointIds;
 }
 
-// warn/crit always shows; an ok daemon status must not hide a health part that was never read.
+// warn/crit always shows; 'No data' (info) shares the dashed ring with a part that was never read.
 function getRingClassAR(tone, ringClassByTone, isUnverified, unverifiedClass) {
 	if (tone === "warn" || tone === "crit") return ringClassByTone[tone];
-	if (isUnverified) return unverifiedClass;
+	if (isUnverified || tone === "info") return unverifiedClass;
 	return ringClassByTone[tone] || null;
 }
 
@@ -2224,8 +2226,12 @@ function buildUnverifiedNodeIds(partBindings, cardStates) {
 
 	const ids = new Set();
 
+	// no health model → no part is judged, so every bound node is unverified.
 	const model = window.HealthModel;
-	if (!model || typeof model.resolveCardFacts !== "function") return ids;
+	if (!model || typeof model.resolveCardFacts !== "function") {
+		for (const nodeIds of Object.values(partBindings)) for (const nodeId of nodeIds || []) ids.add(nodeId);
+		return ids;
+	}
 
 	for (const def of model.HEALTH_CARD_DEFS || []) {
 		const facts = model.resolveCardFacts(def, cardStates);

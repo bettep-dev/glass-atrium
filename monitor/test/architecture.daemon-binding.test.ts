@@ -143,9 +143,9 @@ function healthCards(rows: DaemonAggRow[], anchor: Date | null): DaemonStatusCar
 // whole comparable now — the map's status sentence is drawn inline by the node panel's
 // pill, which has no unit instrument, so this assertion no longer reaches it.
 // architecture.jsx RING_TONE_RANK 의 키 집합 거울 — 그 상수는 렉시컬 선언이라 샌드박스
-// 바깥에서 읽을 수 없음. 링은 등급이 있는 tone 만 칠하고 미수신(info)은 칠하지 않으므로,
-// 그 자리를 두 화면이 같은 빈 값으로 맞춰야 '같은 판정' 비교가 성립함.
-const PAINTED_RING_TONES = new Set(["ok", "warn", "crit"]);
+// 바깥에서 읽을 수 없음. 등급이 없는 tone 은 링에 서지 않으므로, 그 자리를 두 화면이
+// 같은 빈 값으로 맞춰야 '같은 판정' 비교가 성립함. info('No data')는 점선 링으로 섬.
+const PAINTED_RING_TONES = new Set(["ok", "info", "warn", "crit"]);
 // 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니라 부품 tone 이 서지 않음.
 const NO_CARD_STATES = {
   pgState: { status: "loading", data: null, error: null },
