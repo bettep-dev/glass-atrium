@@ -168,6 +168,34 @@ export type AgentSummarySortKey = "name" | "runs" | "success" | "p95";
 // absent (current cycle MUST always emit this) · approximate/exact = future.
 export type AgentSummaryCostAttribution = "unavailable" | "approximate" | "exact";
 
+// Circuit-breaker facts published by /api/agents/summary. "unavailable" = the
+// state dir exists but could not be read — never rendered as a zero.
+export type AgentCircuitBreakerSource = "loaded" | "unavailable";
+
+export interface AgentCircuitBreakerItem {
+  suspended: boolean;
+  // Consecutive fail streak; 0 once any non-fail outcome resets it.
+  consecutive_fails: number;
+  // ISO 8601 from the .suspended marker body; null when absent/unparseable.
+  suspended_at: string | null;
+}
+
+export interface AgentCircuitBreakerAlarm extends AgentCircuitBreakerItem {
+  agent: string;
+}
+
+export interface AgentCircuitBreakerSummary {
+  source: AgentCircuitBreakerSource;
+  // Denominator = the agent registry, not the agents with runs in the window.
+  registry_agents: number;
+  suspended_count: number;
+  // On a streak but not yet suspended.
+  streak_count: number;
+  // One row per suspended-or-streaking agent — includes agents with no runs in
+  // the window, which never reach the `agents` array.
+  alarms: AgentCircuitBreakerAlarm[];
+}
+
 export interface AgentSummaryItem {
   // Both hold the agent NAME (e.g. "react-dev") — no separate hash id this cycle; the
   // agent_id hash in core.agent_events is internal pairing-key only.
@@ -205,6 +233,8 @@ export interface AgentSummaryItem {
   invocations: number | null;
   // Deprecated alias of `invocations` (name implied fixed 30d; tracks ?days) — kept one release.
   invocations_30d: number | null;
+  // null when the fleet state is unavailable (meta.circuit_breaker.source).
+  circuit_breaker: AgentCircuitBreakerItem | null;
 }
 
 export interface AgentSummaryMeta {
@@ -215,6 +245,7 @@ export interface AgentSummaryMeta {
   period_end: string;
   // Honesty flag — current cycle MUST be "unavailable".
   cost_attribution: AgentSummaryCostAttribution;
+  circuit_breaker: AgentCircuitBreakerSummary;
 }
 
 export interface AgentSummaryResponse {
