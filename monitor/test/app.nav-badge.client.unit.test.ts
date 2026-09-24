@@ -190,12 +190,27 @@ test("fold daemonsDown equals the nav slot's daemon badge for every down count",
 
 test("an unpolled harness store leaves its parts unchecked rather than counted healthy", () => {
   const fold = app.foldHarness({});
-  assert.equal(fold.status, "unavailable", "nothing polled = unavailable, never a healthy zero");
+  assert.equal(fold.status, "loading", "nothing answered yet = loading, never a healthy zero");
   assert.equal(fold.partsChecked, 0);
   assert.equal(fold.partsOk, 0);
   assert.equal(fold.uncheckedNames.length, fold.partsTotal);
   assert.equal(fold.daemonsDown, null, "an unpolled count is null, not 0");
   assert.equal(fold.failCount1h, null);
+});
+
+// First-poll wait and a lost harness are different facts — the tile skeleton and the footer's
+// CHECKING… belong to the wait, 'unavailable' only once every part has answered without a reading.
+test("a fold with nothing checked is loading while any part store is pending, unavailable once none is", () => {
+  const rejected = { status: "error", data: null };
+  const allRejected = { healthState: rejected, liveState: rejected, hookState: rejected, hookFailState: rejected };
+  assert.equal(app.foldHarness(allRejected).status, "unavailable");
+  for (const pending of ["healthState", "liveState", "hookState", "hookFailState"]) {
+    const fold = app.foldHarness({ ...allRejected, [pending]: { status: "loading", data: null } });
+    assert.equal(fold.status, "loading", `${pending} still pending`);
+    assert.equal(fold.partsChecked, 0);
+  }
+  const partial = app.foldHarness(allHealthy({ hookState: { status: "loading", data: null } }));
+  assert.equal(partial.status, "ready", "one answered part is a reading, whatever is still pending");
 });
 
 test("partsOk counts only observed-healthy parts and never exceeds partsChecked", () => {

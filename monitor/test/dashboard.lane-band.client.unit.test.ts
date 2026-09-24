@@ -208,6 +208,23 @@ test("the fleet tile separates an empty population from an unavailable one", () 
   assert.equal(empty.value, "0", "a loaded zero is a real reading and shows as one");
 });
 
+// The footer reads CHECKING… for the first-poll wait; the tile must not call the same wait 'unavailable'.
+test("the harness tile is loading exactly while the fold is, and unavailable only after", () => {
+  const empty = { ...HEALTHY, partsOk: 0, partsChecked: 0, uncheckedNames: ["PostgreSQL"] };
+  for (const [foldStatus, expected] of [["loading", "loading"], ["unavailable", "unavailable"]]) {
+    const tile = tileOf(
+      dash.buildTiles({
+        harness: { ...empty, status: foldStatus },
+        costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
+      }),
+      "harness",
+    );
+    assert.equal(tile.status, expected, foldStatus);
+    assert.equal(tile.value, "—", `${foldStatus} must not render a count nobody polled`);
+    assert.equal(tile.tone, "neutral");
+  }
+});
+
 test("the harness tile counts only the parts the shell actually polled", () => {
   const tile = tileOf(
     dash.buildTiles({

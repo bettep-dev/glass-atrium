@@ -478,6 +478,9 @@ function buildTiles({ harness, costState, agentsState, outcomesState }) {
 // 타일 1 — 하네스 파트. 분모는 셸이 실제로 관측한 파트 수: 미관측 파트를 정상으로 세지 않는다.
 function buildHarnessTile(harness) {
   const base = { id: 'harness', label: 'Harness health', target: 'architecture', targetLabel: 'System map' };
+  if (harness && harness.status === 'loading') {
+    return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: 'Checking…' };
+  }
   if (!harness || harness.status !== 'ready') {
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.' };
   }
