@@ -12,7 +12,9 @@ Corpus-maintenance companion to `scoped/shared-testing.md`. Nothing here binds a
 
 ## Membership
 
-- The rule file applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code); glass-atrium-meta-agent does NOT inherit it.
+- The rule file applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code), plus glass-atrium-qa-code-reviewer, which judges added and edited tests against it.
+  - glass-atrium-meta-agent does NOT inherit it; glass-atrium-qa-debugger does not either — it authors no tests.
+  - The reviewer's entry is a per-agent `rules.shared` append, like its `shared-naming.md` and `shared-code-structure.md` entries.
 - Membership is declared on the registry row (`agent-registry.json` → the agent's `rules` array) and in `rules/glass-atrium/core-compliance-matrix.md`. The rule file itself no longer restates it.
 - A delivery-status paragraph ("nothing injects it at spawn, so a duty homed HERE reaches no running agent") was DROPPED rather than moved: it is false once the body is delivered, so keeping a copy would preserve a claim a future editor could act on.
 
@@ -23,17 +25,33 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
-| Mocking Rules · Test Structure | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → 7-Perspective Checklist, Testing row |
+| Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → 7-Perspective Checklist, Testing row |
 | Rationalization Rejection (Testing) | every agent — the charter names testing as a home file for the excuse→rebuttal pairs | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
 | Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
 
-- **Heading stability**: `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
+- **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
+  - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
+  - The Test Structure H3s (`### Where a test lives`, `### Names, comments and test data`, `### Table form per stack`) are cited by the reviewer's Testing row and by in-file pointers; grep before renaming one.
 
 ## Backing honesty — Test Quality
 
 - The `## Test Quality` section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor below, which never inspects the relationship claim itself.
+- The home-file, grouping, ID-ban, comment, test-data and table-form rules are reviewer-applied with no tooling at all. Extending the auditor to ID-bearing titles, incident-framed headers and source-grep pins is a deferred follow-up, not a current check.
+
+## Test-authoring delta — provenance
+
+- Sources: Kent Beck's Test Desiderata (isolation, determinism) · Khorikov, *You are naming your tests wrong* (behavior names) · Google Testing Blog on DAMP and change-detector tests · the bats-core FAQ (loop table form).
+- Placement: the home-file, naming/data and per-stack H3s sit under `## Test Structure`, not `## Test Quality`, so `## Test Quality` stays near the 8 KB H2 shape-cap guide; the scope bound sits in the file lead because it governs both H2s.
+- Do not reintroduce, each works against readable tests: a regression pin named for its defect · a DAMP carve-out that covers byte-identical fixtures across files · a property-first ranking with no real-invariant bound · a fixed naming template or regex naming grammar.
+- Honour the research's exclusions: no comment scaffold, no assertion-count cap, no numeric trigger (duplication percentage, line count, rows per table, builder variants), no blanket property or mutation mandate.
+- **The file-lead Authoring scope bullet** exists because the home-file and fold-back rules otherwise collide with `scoped/scope-dev.md` → "Everything outside that set is SURFACED, never performed" (an extra test, a neighbouring cleanup). Change the two together.
+- **Table form per stack**:
+  - TypeScript lists `node:test` first because `monitor/test` imports it and not Vitest.
+  - The JUnit `name` placeholder and the `@CsvSource` / `@ValueSource` / `@MethodSource` sources were checked against the official JUnit user guide, *Parameterized Classes and Tests* (docs.junit.org, 6.1.3).
+  - The Swift Testing `@Test("…", arguments: …)` form was checked against the swift-testing DocC article *ParameterizedTesting.md* (swiftlang/swift-testing); Apple's rendered macro page was not readable by the fetch tool.
+  - The bats row's `|| { echo …; return 1; }` form mirrors `agents/glass-atrium-dev-shell.md` → `### Bats + test-run discipline`: bash 3.2 exempts a mid-body `[[ ]]` from errexit, so a loop of bare `[[ ]]` can pass on macOS while an earlier row fails.
 
 ## Tooling status of the prohibited-shape rows
 
@@ -50,6 +68,7 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 | An assertion that cannot fail | Pereira 2010 | MECHANICAL — tooling: signal (b) |
 | Asserting back the value a mock was configured to return | — (mock-echo sub-case) | MECHANICAL `[no tooling]` |
 | An expected value copied from observed output | Google Testing Blog 2015 | JUDGMENT `[no tooling]` |
+| An assertion on the source text or line order of the code under test | Google Testing Blog 2015 (source-pin sub-case) | MECHANICAL `[no tooling]` |
 | Near-duplicate cases that one property or one parameterized table would cover | van Deursen et al. 2001 | JUDGMENT `[no tooling]` |
 | A test whose target has no branch and no logic | — (trivial getter/setter/constructor test) | JUDGMENT `[no tooling]` |
 | Control flow that can SKIP an assertion | Meszaros 2007 | JUDGMENT `[no tooling]` |

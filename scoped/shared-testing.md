@@ -1,21 +1,25 @@
 # Testing Rules (Cross-Cutting Concern)
 
+- **Authoring scope** (`## Test Quality` · `## Test Structure`): these rules bind the tests a change adds or edits, and every edit stays inside the change's declared file set (`scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]`).
+  - A violation in a test the change does not touch, or an owning file outside that set, goes into `concerns` and is never edited.
+
 ## Test Quality
 
 ### What makes a test a test
 
 - **Relationship over enumeration**: a test asserts a RELATIONSHIP that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
-- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would THIS test fail?" No → it is not a test. A test never observed to fail has not been verified.
-- **Behavioral testing**: verify external behavior (input → output), not implementation details.
-- **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter.
-- **Naming**: prefer `should_expectedBehavior_when_condition` or readable `describe/it` blocks — and make the name state the RELATIONSHIP asserted, not the input value used.
+- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would THIS test fail?" No → it is not a test.
+- **Watch it fail**: write the test before the code exists, or apply the deliberate-break exception (`## Rationalization Rejection (Testing)` → **Qualifier on the last row**). A test never observed to fail has not been verified.
+  - Never edit a failing test to make it pass until you know why it failed.
+- **Behavioral testing**: verify behavior a caller can observe (input → output), not implementation details — a source-text or line-order pin is a prohibited shape (`### Meaningless-Test Prohibitions`).
+- **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter · the result MUST NOT depend on timing (sleeps, wall-clock races) — a flaky test stops being an oracle.
 
 ### Decision procedure — run it before writing the SECOND test of the same behavior
 
 Each step builds on the previous.
 
 1. Name the relationship in one sentence — an invariant, a round-trip, or a metamorphic relation ("output is always sorted" · "decode of encode is identity" · "total never exceeds the cap").
-2. Pick the cheapest form that expresses it: property/invariant assertion > ONE parameterized table over an equivalence class plus its boundaries > a single example.
+2. Pick the cheapest form that expresses it: a property assertion only where a real invariant exists (round-trip, idempotence, a whole-class invariant) > ONE table of named rows over the equivalence class plus its boundaries (`### Table form per stack`) > a single example.
 3. An Nth case is admissible only when it crosses an equivalence-class boundary the existing cases do not. Same class as an existing case → do NOT add it; strengthen the existing assertion instead.
 4. Cannot name the relationship → the behavior is not understood yet. Stop and clarify; enumerating cases is not a substitute for understanding.
 
@@ -25,7 +29,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 | Kind | Legitimate when |
 |---|---|
-| regression pin | it reproduces one reported defect and is named for that defect |
+| regression pin | it reproduces one reported defect, is named for the behavior it protects, and lives in that behavior's home file |
 | characterization test | it pins observed legacy behavior before a refactor — deliberately structure-sensitive, deliberately temporary, rewritten or deleted once the refactor lands |
 | executable-specification example | it is the one canonical worked example documenting the contract |
 
@@ -44,6 +48,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | An assertion that cannot fail | tautological test |
 | Asserting back the value a mock was configured to return | tautological test — mock-echo sub-case |
 | An expected value copied from observed output | change-detector test |
+| An assertion on the source text or line order of the code under test | change-detector test — source-pin sub-case |
 | Near-duplicate cases that one property or one parameterized table would cover | test code duplication |
 | A test whose target has no branch and no logic | trivial getter/setter/constructor test |
 | Control flow that can SKIP an assertion | conditional test logic |
@@ -58,6 +63,8 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
   - JS/Python shapes only: the shell corpus has no mock-configuration form.
 - **An expected value copied from observed output** — full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec.
   - **Carve-out — a characterization test (Test Quality → Legitimate example tests) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not a characterization test and is not exempt.
+- **An assertion on the source text or line order of the code under test** — a `grep`, regex or file read over the source file under test, or a comparison of two source lines' positions.
+  - **Carve-out — a static fact that is itself the contract** (a file listed in the manifest) is asserted, in the file that owns that contract.
 - **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
   - The DAMP carve-out below decides whether a given cluster is this smell.
 - **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it; no tool resolves it for you.
@@ -67,6 +74,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 #### Rules spanning the whole table
 
 - **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
+  - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
 - **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
 - **This list is defect-risk regulation, not style preference**: smelly tests carry measurably higher defect risk than clean ones.
 
@@ -78,8 +86,40 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 ## Test Structure
 
-- **Arrange-Act-Assert**: clearly separate into 3 phases
-- **One behavior per test** — one relationship per test (Test Quality above); multiple asserts are allowed only as facets of that same relationship
+- **Arrange-Act-Assert**: keep the three phases visible, and never chain a second Act — a later action and its assertion belong in their own test. No `// Arrange` comment scaffold is required.
+- **One behavior per test** — one relationship per test (`## Test Quality`); multiple asserts are allowed only as facets of that same relationship.
+  - Each failure points to one cause: split the test, or give each assertion a message.
+
+### Where a test lives
+
+- **One home file per behavior**: a new case, a regression case included, goes into the file that already owns that behavior — never into a new file per incident, plan or task.
+- **Grouping**: one `describe` block or test class per rule; each nesting level narrows exactly one condition. Split a file by behavior area, never by line count.
+- **Check before adding**: search the owning file for a test that already asserts the behavior — found → strengthen that test instead of adding a second.
+- **Fold-back**: when you edit a one-off incident file whose behavior has an owning file, fold its cases into that file — both files inside the **Authoring scope** bound at the head of this file.
+
+### Names, comments and test data
+
+- **Naming**: a readable sentence of behavior plus condition, in the form the sibling file already uses; it states the relationship asserted, not the input value used.
+- **ID ban — the one hard naming rule**: no plan, task, incident or ticket ID (`AC-…`, `T19`, `P0-2`, `#14`) in a test name, test file name or helper name. The reference goes in the commit message.
+  - Bad: `"T19/P2-T2: …"` · Good: `"update keeps a live model pin when the release omits it"`.
+- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code. A test that calls itself vacuous is fixed or deleted.
+- **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
+- **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
+
+### Table form per stack
+
+Every table row carries a name stating its condition — an unnamed row fails with no meaning. Only the syntax differs per stack.
+
+| Stack | Table form | Row name |
+|---|---|---|
+| bats | an array of rows looped inside one `@test` | a row label printed on that row's failure |
+| pytest | `@pytest.mark.parametrize` | `ids=[…]` or `pytest.param(…, id=…)` — never auto-generated IDs on non-trivial values |
+| TypeScript, `node:test` | a `rows` array looped inside one `describe`, one `test()` per row | `test(row.name, …)` |
+| TypeScript, Vitest | `test.each(rows)` | `$prop` (object rows) or `%s` (array rows) in the title |
+| Kotlin, JUnit 5 | `@ParameterizedTest` + `@CsvSource` / `@ValueSource` / `@MethodSource` | `name = "…{0}…"` |
+| Swift Testing | `@Test("…", arguments: …)` — each argument reports as its own case, no loop | the display string plus the argument |
+
+- **bats — every row fails on its own iteration**: assert each row as `<check> || { echo "<row name>"; return 1; }`. A bare `[[ ]]` in the loop body is exempt from errexit on bash 3.2, so an earlier failing row goes unseen.
 
 ## Rationalization Rejection (Testing)
 
