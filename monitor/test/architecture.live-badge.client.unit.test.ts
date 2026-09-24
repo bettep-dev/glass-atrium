@@ -1032,17 +1032,6 @@ test("C2 a node carrying more than one attention part says how many on its glyph
   assert.strictEqual(callInCtx(archCtx, "getCornerGlyphTextAR", "ok", 3), "", "no attention tone → no glyph");
 });
 
-test("C3 a failed headline read never reads as a fresh reading", () => {
-  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", null, 0, 4), "Health not read yet");
-  assert.match(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /not read/);
-  assert.doesNotMatch(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /yet/);
-
-  const partial = callInCtx<string>(archCtx, "getHealthStampTextAR", "2m ago", 1, 4);
-  assert.match(partial, /2m ago/);
-  assert.match(partial, /1 of 4 .*not read/);
-  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", "2m ago", 0, 4), "Health as of 2m ago");
-});
-
 test("C3 regression pin — the as-of stamp advances only on a successful headline read", () => {
   const src = readFileSync(ARCH_SRC, "utf8");
   const fetchBlock = /urls\.forEach\(\(url, i\) => \{[\s\S]*?\n\t\t\}\);/.exec(src)?.[0] || "";

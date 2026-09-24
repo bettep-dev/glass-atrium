@@ -243,7 +243,7 @@ const RUN_VERDICT_NOTE = {
 function ScreenArchitecture(
 	/* { onNav } unused — uniform Screen signature per app.jsx */
 ) {
-	const { Icon, PageHeader, TypeScaleStyle, formatRelativeTime } = window.UI;
+	const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [diagState, setDiagState] = useStateAR({
 		status: "loading",
@@ -678,14 +678,13 @@ function ScreenArchitecture(
 					sub={`${healthCaption} · ${getRingKeyTextAR()}`}
 					right={
 						<>
-							{/* 신선도 — 판정이 언제 읽힌 것인지. 없으면 아직 한 번도 안 읽은 것임. */}
-							<span className="fs-meta text-dim" aria-busy={healthBusy || undefined}>
-								{getHealthStampTextAR(
-									healthAsOf ? formatRelativeTime(healthAsOf) : null,
+							<FreshnessStamp
+								{...getFreshnessInputAR(
+									healthAsOf,
+									healthBusy,
 									healthStoreErrors.length,
-									Object.keys(headlineHealthStates).length,
 								)}
-							</span>
+							/>
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
@@ -2130,11 +2129,9 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
 }
 
-// freshness line — a store that did not answer is named as unread, never folded into the stamp.
-function getHealthStampTextAR(relativeAsOf, errored, total) {
-	if (!relativeAsOf) return errored > 0 ? "Health not read — stores did not answer" : "Health not read yet";
-	if (errored > 0) return `Health as of ${relativeAsOf} · ${errored} of ${total} stores not read`;
-	return `Health as of ${relativeAsOf}`;
+// unanswered stores are named by the alarm lane → the stamp only turns stale, never counts them
+function getFreshnessInputAR(healthAsOf, healthBusy, erroredCount) {
+	return { at: healthAsOf, loading: healthBusy, failed: erroredCount > 0 };
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
