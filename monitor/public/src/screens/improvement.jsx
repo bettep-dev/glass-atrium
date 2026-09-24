@@ -150,7 +150,7 @@ const SRC_LABEL_UNIFIED = { t: "ok", s: "✓", x: "Unified endpoint" };
 const SRC_LABEL_LOADING = { t: "info", s: "ℹ", x: "Loading…" };
 
 function ScreenImprovement({ onNav }) {
-	const { Icon, PageHeader, Pill, TypeScaleStyle } = window.UI;
+	const { Icon, PageHeader, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [listState, setListState] = useSI({
 		status: "loading",
@@ -582,7 +582,7 @@ function ScreenImprovement({ onNav }) {
 					title="Learning"
 					right={
 						<div className="flex items-center gap-2">
-							<AsOfStampI at={asOf} />
+							<FreshnessStamp {...getFreshnessInputI(asOf, listState)} />
 							<ViewToggleI view={view} onChange={setView} />
 							<button
 								className="btn ghost sm"
@@ -838,16 +838,13 @@ function formatCycleStampI(iso) {
 	});
 }
 
-// as-of 스탬프 — payload 가 착지한 순간. 값이 없으면 시각을 지어내지 않는다.
-function AsOfStampI({ at }) {
-	return (
-		<span
-			className="fs-micro font-mono text-faint"
-			title="When the pattern list last landed — every other card reports its own state"
-		>
-			as of {at ? formatCycleStampI(at) : "—"}
-		</span>
-	);
+// stamp tracks the pattern list only → every other card reports its own state
+function getFreshnessInputI(asOf, listState) {
+	return {
+		at: asOf,
+		loading: listState.status === "loading",
+		failed: listState.status === "error",
+	};
 }
 
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
