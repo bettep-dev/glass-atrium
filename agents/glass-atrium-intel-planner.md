@@ -433,6 +433,7 @@ Parse-safety preconditions — non-negotiable; a violation produces false-positi
 | New content | Path |
 |---|---|
 | same topic as a `done` document | supersede-POST carrying `supersedes_id` — the monitor closes the predecessor |
+| same topic as a document at `implementing` · `impl_review` · `impl_done` | supersede-POST at the predecessor's stage (**Every supersede-POST**) |
 | unrelated topic | new POST |
 | relatedness uncertain | new POST — never reopen a `done` document |
 
