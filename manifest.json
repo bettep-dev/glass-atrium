@@ -885,7 +885,7 @@
   "hashes": {
     "LICENSE": "4f1fa8b64af3405e4ecc89143f3c13d1b25948336c418a53dc425bd5faca319d",
     "LICENSES-THIRD-PARTY.md": "e8ab307f7a83cce55a261130b9469b98bf5cca384259df058715baf28c41b035",
-    "agent-registry.json": "432955f6a71b708c87b22b08ef80e99a32a307b29ae1c0e21ee2000ce759f1b5",
+    "agent-registry.json": "232a6f49e4f6f312f33e23989e0348ee85826991c33cc7ba614ec772bc1c746f",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "f5873bca8392c575b1f053e8be18a83c33058b346e7d9757a691afa80c0a7783",
     "agents/glass-atrium-design-designer.md": "297850a4ec8b06b432ee8e6f0bf0cd91f4f4407dd7b164cfa14ada43df43d301",
     "agents/glass-atrium-dev-android.md": "114b81daccbb8f87a12805f96dc2daae9c11586c4b9129ebd1b96cb81073c981",
@@ -1478,7 +1478,7 @@
     "scripts/agent_lifecycle/overlap.py": "7bd7a306ce0b47a76d48928451249ba126baa228ed51c7f1f96d225f64279f65",
     "scripts/agent_lifecycle/paths.py": "116c9036c31baadcec8f0781773e1edc12cbb8acf474b849c45601538d833539",
     "scripts/agent_lifecycle/readers.py": "a96517285d8bf52ef8eedf48d4aedad6153459d7886fc45fbdef35bfaf7dcb28",
-    "scripts/agent_lifecycle/registry_ops.py": "b42e4c04dbba12e3950cb855b21250ea0d5fb4a0e12965012aa109bf9b974219",
+    "scripts/agent_lifecycle/registry_ops.py": "4c8200727dcd7eeba6a444f96cb71a58f06f7baee694c0854ebca5755b9e348f",
     "scripts/agent_lifecycle/scaffold.py": "f91a50cb51c65a5977235faec30f4c0bc4e68a718f8a8aa66bc87b7e85f5fddb",
     "scripts/agent_lifecycle/scope_infer.py": "533b4a5b2098841dbee1e8ad29c7c68ffee84626f4a41cdfb4214329153044f8",
     "scripts/agent_lifecycle/secret_scan.py": "85ebdda540a3f6710b3d43b9e8f8d833a453303ff80ec57cbf71d8a6285d6513",
