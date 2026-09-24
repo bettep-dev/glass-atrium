@@ -1064,17 +1064,24 @@ const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Total records', align: 'right' },
 ];
 
+function AgentFailureHeadO({ stickyStyle }) {
+  return (
+    <thead>
+      <tr>
+        {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+          <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
 // 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
 function AgentFailureSkeletonO({ stickyStyle }) {
   return (
     <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
-      <thead>
-        <tr>
-          {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-            <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
-          ))}
-        </tr>
-      </thead>
+      {/* called, not mounted → <thead> stays a direct child in the element tree */}
+      {AgentFailureHeadO({ stickyStyle })}
       <tbody>
         {[0, 1, 2].map((i) => (
           <tr key={i}>
@@ -1102,13 +1109,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   return (
     <div className="overflow-auto" style={{ maxHeight: 260, position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-              <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
-            ))}
-          </tr>
-        </thead>
+        {AgentFailureHeadO({ stickyStyle })}
         <tbody>
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
@@ -1905,6 +1906,8 @@ const MORE_FILTER_AXES = [
   { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
 
+const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
+
 function FilterSidebar({
   filter, keywordInput, distinctAgents, includeAll, sort,
   onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
@@ -2121,7 +2124,7 @@ function buildActiveFilterChipsO(filter) {
   const chips = [];
   if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
   if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
-  for (const { axis, label, options } of [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES]) {
+  for (const { axis, label, options } of FILTER_AXES_O) {
     if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
   }
   if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
@@ -2134,7 +2137,7 @@ function getOptionLabelO(options, value) {
 
 // Drawer value → the filter chip's name for it, so chip, ledger cell and drawer agree.
 function getDetailValueLabelO(axis, value) {
-  const { options } = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES].find((group) => group.axis === axis);
+  const { options } = FILTER_AXES_O.find((group) => group.axis === axis);
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
