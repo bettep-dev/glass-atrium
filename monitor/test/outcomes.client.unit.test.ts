@@ -16,7 +16,7 @@
 // not a drift-prone copy. NO render harness / component / interaction assertions
 // (the monitor has no jsdom/testing-library; see the plan Task Decomposition preamble).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,7 @@ interface OutcomesHelpers {
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
   buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
+  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -318,4 +319,25 @@ test("buildSummaryFlagO: review reasons come from the shared SoT and land in the
   const flag = outcomes.buildSummaryFlagO({ review_flag: true });
   assert.strictEqual(flag?.tone, "warn");
   assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
+});
+
+// --- buildActiveFilterChipsO: a chip reads like the filter control that set it ---
+
+describe("buildActiveFilterChipsO: each chip names its axis and value as the filter controls do", () => {
+  const rows = [
+    { name: "the default period adds no chip", filter: { days: 30 }, chips: [] },
+    { name: "another period names its window", filter: { days: 7 }, chips: ["Period: 7d"] },
+    { name: "a result names its label, not its enum", filter: { days: 30, result: "done_with_concerns" }, chips: ["Result: Done with caveats"] },
+    { name: "a flagged filter names its option", filter: { days: 30, review_flag: "false" }, chips: ["Flagged: Clear"] },
+    { name: "a task type keeps its canonical token", filter: { days: 30, task_type: "bug-fix" }, chips: ["Task type: bug-fix"] },
+    { name: "a missing confidence reads None", filter: { days: 30, confidence: "null" }, chips: ["Confidence: None"] },
+    { name: "a self-check names Pass", filter: { days: 30, metric_pass: "true" }, chips: ["Self-check: Pass"] },
+    { name: "an attribution names its short label", filter: { days: 30, attribution_source: "budget-truncation" }, chips: ["Attribution: budget-kill"] },
+    { name: "a keyword is quoted and shortened", filter: { days: 30, q: "a keyword longer than eighteen" }, chips: ['Keyword: "a keyword longer …"'] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
+    });
+  }
 });

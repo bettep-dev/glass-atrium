@@ -1100,7 +1100,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   }
 
   return (
-    <div className="overflow-auto" style={{ maxHeight: 260 }}>
+    <div className="overflow-auto" style={{ maxHeight: 260, position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
@@ -2114,19 +2114,21 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'key=value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+// 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+//   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
 function buildActiveFilterChipsO(filter) {
   const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`days=${filter.days}`);
-  if (filter.agent)        chips.push(`agent=${filter.agent}`);
-  if (filter.task_type)    chips.push(`task=${filter.task_type}`);
-  if (filter.result)       chips.push(`result=${filter.result}`);
-  if (filter.confidence)   chips.push(`conf=${filter.confidence}`);
-  if (filter.metric_pass)  chips.push(`metric=${filter.metric_pass}`);
-  if (filter.review_flag)  chips.push(`review=${filter.review_flag}`);
-  if (filter.attribution_source) chips.push(`attr=${filter.attribution_source}`);
-  if (filter.q)            chips.push(`q="${truncateO(filter.q, 18)}"`);
+  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
+  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
+  for (const { axis, label, options } of [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES]) {
+    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
+  }
+  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
   return chips;
+}
+
+function getOptionLabelO(options, value) {
+  return options.find((option) => option.value === value)?.label ?? value;
 }
 
 // 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
@@ -2257,16 +2259,17 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
   const sections = buildLedgerSectionsO(rows, closure, needsYou);
 
   return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
+    // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} align="left" width={120}/>
             <PlainHeader label="Agent" minWidth={110}/>
-            <PlainHeader label="task_type"/>
-            <PlainHeader label="result"/>
+            <PlainHeader label="Task type"/>
+            <PlainHeader label="Result"/>
             <PlainHeader label="Check" align="center" width={52}/>
-            <PlainHeader label="summary"/>
+            <PlainHeader label="Summary"/>
           </tr>
         </thead>
         <tbody>
@@ -2376,7 +2379,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
   const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
 
   const ts       = formatTimestampO(row.record_ts);
-  const summary  = truncateO(row.summary || '', 60);
+  const summary  = row.summary || '';
   const grader   = graderVerdictMetaO(row.grader_verdict);
   // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
   const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
@@ -2390,6 +2393,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
   const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
   const resultMeta  = window.UI.resolveResultMeta(row.result, closedAt);
+  const resultLabel = window.UI.resolveResultMeta(row.result, null).label;
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
@@ -2419,7 +2423,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
         <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
           <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
-            {row.result}
+            {resultLabel}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
             {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
           </span>
@@ -2454,9 +2458,12 @@ function ResultTableRow({ row, onRowClick, closure }) {
           <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
-        <SummaryFlagSlotO row={row}/>
-        {summary}
+      <td className="text-left text-ink px-2 py-1.5 border-b border-line" title={summary}>
+        {/* 폭 상한은 div 가, 말줄임은 min-w-0 flex 자식이 — td 자체의 truncate 는 표 레이아웃에서 잘리기만 한다. */}
+        <div className="flex items-center" style={{ maxWidth: 380 }}>
+          <SummaryFlagSlotO row={row}/>
+          <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
+        </div>
       </td>
     </tr>
   );

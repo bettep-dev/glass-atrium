@@ -92,6 +92,8 @@ interface OutcomesHelpers {
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
+  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
+  window: { UI: { getAgentDisplayName: (name: string) => string } };
 }
 
 interface RenderNode {
@@ -642,4 +644,72 @@ test("ledger row: the accessible name carries the word that tells Done from Clos
   assert.match(nameOf("done_with_concerns", "2026-09-01T00:00:00Z"), /\bClosed\b/);
   assert.doesNotMatch(nameOf("done", null), /\bClosed\b/);
   assert.match(nameOf("done_with_concerns", null), /Done with caveats/);
+});
+
+// --- ledger layout: the page ends where its content ends, the ledger scrolls inside its card ---
+
+const LEDGER_AGENT = "glass-atrium-dev-shell";
+const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}) => ({
+  id: 11, agent: LEDGER_AGENT, task_type: "feature", result, closed_at: null, ...extra,
+});
+const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultTableRow({
+  row, onRowClick: () => {}, closure: { pendingIds: new Set(), closedOverrides: new Map() },
+});
+const textOf = (node: RenderNode): string => flattenNodes(node)
+  .flatMap((n) => n.children.filter((c) => typeof c === "string" || typeof c === "number"))
+  .join("");
+
+test("ledger: every scroller is the containing block of its visually hidden names, so they cannot stretch the page", () => {
+  const ledger = helpers.ResultTable({
+    rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+  });
+  const failures = helpers.AgentFailureBodyO({
+    state: {
+      status: "ok",
+      data: helpers.buildAnalyticsDataO({ by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 1 }], by_agent_top_10: [] }),
+    } as unknown as PayloadState<unknown>,
+    onRetry: () => {},
+  });
+  const scrollers = [...flattenNodes(ledger), ...flattenNodes(failures)]
+    .filter((n) => /\boverflow-auto\b/.test(String(n.props?.className ?? "")));
+  assert.strictEqual(scrollers.length, 2, "the ledger and the by-agent table each render a scroller");
+  for (const scroller of scrollers) {
+    assert.strictEqual((scroller.props!.style as Record<string, unknown>)?.position, "relative");
+  }
+});
+
+test("ledger: every column header uses sentence case, never a raw field name", () => {
+  const table = helpers.ResultTable({
+    rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+  });
+  const labels = flattenNodes(table)
+    .filter((n) => typeof n.type === "function" && /Header$/.test((n.type as { name: string }).name))
+    .map((n) => String(n.props!.label));
+  assert.strictEqual(labels.length, 6);
+  for (const label of labels) assert.match(label, /^[A-Z][a-z]*(?: [a-z]+)*$/, `header '${label}'`);
+});
+
+test("ledger row: a long summary keeps its full text for a CSS ellipsis and carries it as the title", () => {
+  const summary = "Bounded the ledger inside its card so the page ends where its content ends, and truncated the summary with an ellipsis";
+  const nodes = flattenNodes(renderLedgerRow(ledgerRowOf("done", { summary })));
+  const clip = nodes.find((n) => n.children.includes(summary));
+  assert.ok(clip, "the summary is rendered in full, not cut in script");
+  assert.match(String(clip!.props?.className), /\btruncate\b/);
+  assert.ok(nodes.some((n) => n.type === "td" && n.props?.title === summary), "the cell title carries the full text");
+});
+
+test("ledger row and filter chips name the same value the same way", () => {
+  const cellText = (row: RenderNode, index: number) => textOf(row.children[index] as RenderNode).trim();
+  const rows = [
+    ...["done", "done_with_concerns", "fail", "blocked", "needs_context"].map((value) => ({ name: `result ${value}`, axis: "result", value, cell: 3 })),
+    { name: "task type", axis: "task_type", value: "feature", cell: 2 },
+  ];
+  for (const row of rows) {
+    const rendered = renderLedgerRow(ledgerRowOf(row.axis === "result" ? row.value : "done"));
+    const chips = helpers.buildActiveFilterChipsO({ days: 30, [row.axis]: row.value });
+    assert.strictEqual(chips.length, 1, row.name);
+    assert.ok(chips[0].endsWith(`: ${cellText(rendered, row.cell)}`), `${row.name}: chip '${chips[0]}' vs cell '${cellText(rendered, row.cell)}'`);
+  }
+  const agentChip = helpers.buildActiveFilterChipsO({ days: 30, agent: LEDGER_AGENT })[0];
+  assert.strictEqual(agentChip, `Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`);
 });
