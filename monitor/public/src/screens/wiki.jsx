@@ -24,7 +24,7 @@ const INITIAL_FETCH_STATE = { status: "loading", data: null, error: null };
 const SPARSE_MIN_NONZERO = 4;
 
 function ScreenWiki() {
-	const { Icon, PageHeader, TypeScaleStyle } = window.UI;
+	const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [summaryState, setSummaryState] = useStateW(INITIAL_FETCH_STATE);
 	const [cyclesState, setCyclesState] = useStateW(INITIAL_FETCH_STATE);
@@ -35,6 +35,7 @@ function ScreenWiki() {
 	const [reportDays, setReportDays] = useStateW(30);
 
 	const [refreshTick, setRefreshTick] = useStateW(0);
+	const [settledAt, setSettledAt] = useStateW(null);
 
 	// AbortController per fetch wave — 언마운트/재요청 시 in-flight 취소.
 	const abortRef = useRefW(null);
@@ -55,11 +56,12 @@ function ScreenWiki() {
 			[`/api/health/wiki-reports?days=${reportDays}`, setReportState],
 		];
 
-		fetches.forEach(([url, setter]) => {
+		const reads = fetches.map(([url, setter]) => {
 			setter(INITIAL_FETCH_STATE);
-			fetchJsonW(url, ctrl.signal)
-				.then((data) => setter({ status: "ready", data, error: null }))
-				.catch((err) => handleErrorW(err, setter));
+			return runFetchW(url, ctrl.signal, setter);
+		});
+		Promise.all(reads).then((results) => {
+			if (!ctrl.signal.aborted && results.includes(true)) setSettledAt(new Date().toISOString());
 		});
 
 		return () => ctrl.abort();
@@ -87,6 +89,15 @@ function ScreenWiki() {
 					title="Wiki"
 					right={
 						<>
+							<FreshnessStamp
+								{...getFreshnessInputW(settledAt, [
+									summaryState,
+									cyclesState,
+									indexState,
+									backlogState,
+									reportState,
+								])}
+							/>
 							<button
 								className="btn ghost sm"
 								onClick={triggerRefresh}
@@ -1357,14 +1368,33 @@ async function fetchJsonW(url, signal) {
 	return res.json();
 }
 
+// resolves true only on a successful read → only those advance the header stamp
+function runFetchW(url, signal, setter) {
+	return fetchJsonW(url, signal)
+		.then((data) => {
+			setter({ status: "ready", data, error: null });
+			return true;
+		})
+		.catch((err) => handleErrorW(err, setter));
+}
+
 function handleErrorW(err, setter) {
 	// AbortError = 재요청/언마운트; 사용자 가시 실패 아님.
-	if (err && err.name === "AbortError") return;
+	if (err && err.name === "AbortError") return false;
 	setter({
 		status: "error",
 		data: null,
 		error: err && err.message ? err.message : String(err),
 	});
+	return false;
+}
+
+function getFreshnessInputW(settledAt, waveStates) {
+	return {
+		at: settledAt,
+		loading: waveStates.some((st) => st.status === "loading"),
+		failed: waveStates.some((st) => st.status === "error"),
+	};
 }
 
 // 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기. formatInt 가 wiki 가드(음수/NaN → '—') 승격 보유.
