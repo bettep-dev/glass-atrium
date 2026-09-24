@@ -1740,11 +1740,41 @@ function NodeDetailBody({
 				outbound={outbound}
 				nodeIndex={nodeIndex}
 			/>
+			<OwningScreenLinkAR nodeId={info.id} />
 			<FieldBlock label="File path" value={info.path || "Not recorded for this part"} mono />
 			{info.description && (
 				<FieldBlock label="Description" value={info.description} mono={false} />
 			)}
 		</>
+	);
+}
+
+// drawn node → the screen that reads that part's records (hash id = app.jsx NAV id). Unowned parts get no link.
+const OWNING_SCREEN_BY_NODE_AR = {
+	agent_layer: { id: "agents", label: "Agents" },
+	hook_pipeline: { id: "outcomes", label: "Task results" },
+	autoagent_d: { id: "improvement", label: "Learning" },
+	wiki_d: { id: "wiki", label: "Wiki" },
+	doc_export: { id: "clauded-docs", label: "Documents" },
+};
+
+function getOwningScreenAR(nodeId) {
+	const bareId = unscopedNodeIdAR(nodeId);
+	return Object.hasOwn(OWNING_SCREEN_BY_NODE_AR, bareId) ? OWNING_SCREEN_BY_NODE_AR[bareId] : null;
+}
+
+function OwningScreenLinkAR({ nodeId }) {
+	const owner = getOwningScreenAR(nodeId);
+	if (!owner) return null;
+	return (
+		<div>
+			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+				Records
+			</div>
+			<a className="fs-body" href={`#${owner.id}`}>
+				Open {owner.label}
+			</a>
+		</div>
 	);
 }
 
