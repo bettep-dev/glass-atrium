@@ -1,4 +1,4 @@
-// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합) 6-섹션 SPA.
+// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 알람 레인 + 타일 밴드 + 디스클로저 3종.
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
@@ -10,10 +10,9 @@ const {
 // 사이클 기간 allowlist — server ALLOWED_WIKI_DAYS 와 정합 (routes/wiki.ts).
 const WIKI_CYCLE_DAYS = 30;
 
-// 일일 보고 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
+// 실행 표 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
 const WIKI_REPORT_DAYS_OPTIONS = [
 	{ value: 7, label: "7d" },
-	{ value: 14, label: "14d" },
 	{ value: 30, label: "30d" },
 	{ value: 90, label: "90d" },
 ];
@@ -33,7 +32,7 @@ function ScreenWiki() {
 	const [backlogState, setBacklogState] = useStateW(INITIAL_FETCH_STATE);
 	// 일일 보고 — /api/health/wiki-reports (라우트 불변, 호출 화면만 이동). 기간 선택 state 동반.
 	const [reportState, setReportState] = useStateW(INITIAL_FETCH_STATE);
-	const [reportDays, setReportDays] = useStateW(7);
+	const [reportDays, setReportDays] = useStateW(30);
 
 	const [refreshTick, setRefreshTick] = useStateW(0);
 
@@ -82,7 +81,6 @@ function ScreenWiki() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Wiki"
-					sub="Wiki knowledge base"
 					right={
 						<>
 							<button
@@ -99,277 +97,749 @@ function ScreenWiki() {
 			</div>
 
 			<div className="flex flex-col gap-4">
-				{/* 1. 개요 KPI×3 + 최근 사이클 헬스 (cycles → KPI 인라인 스파크라인 추세) */}
-				<WikiOverviewSection
-					state={summaryState}
+				{/* Above the fold — what needs a hand, then the health band. */}
+				<WikiAlarmLane
+					summaryState={summaryState}
+					indexState={indexState}
+					backlogState={backlogState}
 					cyclesState={cyclesState}
-					onRetry={triggerRefresh}
+				/>
+				<WikiTileBand
+					summaryState={summaryState}
+					indexState={indexState}
+					backlogState={backlogState}
 				/>
 
-				{/* 보조 카드 — 2열 그리드(좁은 뷰포트 1열). 짧은 카드가 전폭을 점유하던 세로 공백 절감 (A5).
-	          누적 현황(Library totals)은 by_type 중복 → Index health 로 병합 (A3). */}
-				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-					{/* 일별 컴파일 throughput + status mix */}
-					<WikiThroughputCard state={cyclesState} onRetry={triggerRefresh} />
-
-					{/* 관리 백로그 — deadlinks/dedup 추세 + 최신 proposals explorer */}
-					<WikiBacklogCard
-						cyclesState={cyclesState}
-						backlogState={backlogState}
-						onRetry={triggerRefresh}
-					/>
-
-					{/* 인덱스 헬스 — Library totals(raw/summary/backlog) 병합 + by_type 카운트 + master-index freshness */}
-					<WikiIndexHealthCard
-						state={indexState}
-						summaryState={summaryState}
-						backlogState={backlogState}
-						onRetry={triggerRefresh}
-					/>
-
-					{/* 일일 보고 — 사이클별 deadlinks/dedup 백로그 + per-run 보고 표(전폭 유지). */}
-					<WikiReportsCard
-						state={reportState}
-						days={reportDays}
-						onChangeDays={setReportDays}
-						onRetry={triggerRefresh}
-					/>
-				</div>
+				{/* Behind the click — working lists, run history, note composition. */}
+				<WikiMaintenanceSection
+					backlogState={backlogState}
+					onRetry={triggerRefresh}
+				/>
+				<WikiRunHistorySection
+					cyclesState={cyclesState}
+					reportState={reportState}
+					days={reportDays}
+					onChangeDays={setReportDays}
+					onRetry={triggerRefresh}
+				/>
+				<WikiNotesByTypeSection state={indexState} onRetry={triggerRefresh} />
 			</div>
 		</div>
 	);
 }
 
-// WikiOverviewSection — KPI×3(최근 컴파일·누적 노트·사이클 p95) + 최근 사이클 헬스 배너.
-// ready 전에는 모두 '—' (가짜 0 금지). cycles 추세는 KPI 인라인 스파크라인(sparkData)으로 노출 (S3).
+// Daily cycle plus a grace window — past this the cycle counts as missed.
+const CYCLE_OVERDUE_HOURS = 36;
 
-function WikiOverviewSection({ state, cyclesState, onRetry }) {
-	const { KPI } = window.UI;
+function isCycleOverdueW(hours) {
+	return typeof hours === "number" && hours > CYCLE_OVERDUE_HOURS;
+}
 
-	const model = useMemoW(() => buildOverviewModel(state), [state]);
-	// KPI 인라인 스파크라인 — 이미 fetch 한 cycles 재사용. 비0 < 2 면 Sparkline 미렌더(추세 의미 없음).
-	const spark = useMemoW(() => buildOverviewSpark(cyclesState), [cyclesState]);
+// Runs an unchanged proposal count must survive before the pair reads as parked.
+const PROPOSAL_PARKED_RUNS = 7;
 
-	if (state.status === "error") {
-		return (
-			<div className="card">
-				<div className="card-body">
-					<ErrorBannerW
-						title="Couldn't load the wiki overview"
-						detail={state.error}
-						onRetry={onRetry}
-					/>
-				</div>
+// Same threshold on the dated source — the cycle is daily, so a run and a day match.
+const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
+
+// Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
+// missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
+// renders its banner at the group it feeds, never a lane row.
+
+function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) {
+	const { Icon, TONE_ICON } = window.UI;
+
+	const model = useMemoW(
+		() =>
+			buildAlarmLaneModel(
+				summaryState,
+				indexState,
+				backlogState,
+				cyclesState,
+			),
+		[summaryState, indexState, backlogState, cyclesState],
+	);
+
+	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
+	if (model.alarms.length === 0 && model.unchecked.length === 0) {
+		return model.pending ? (
+			<div className="fs-meta font-mono text-faint" aria-busy="true">
+				Checking what needs attention…
 			</div>
-		);
+		) : null;
 	}
 
 	return (
-		<div className="flex flex-col gap-4">
-			{/* grid-cols-1 sm:grid-cols-3 — 좁은 뷰포트 1열 적층. */}
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-				<KPI
-					label="Notes compiled"
-					value={model.compiledLabel}
-					unit=""
-					sparkData={spark.compiled}
-					sparkColor="rgb(var(--accent))"
-				/>
-				<KPI label="Total notes" value={model.notesLabel} unit="" hint="" />
-				<KPI label="Run time (p95)" value={model.p95Label} unit="" />
-			</div>
+		<ul
+			className="flex flex-col gap-2 m-0 p-0 list-none"
+			aria-label="Wiki alarms"
+		>
+			{model.alarms.map((alarm) => (
+				<li
+					key={alarm.key}
+					className="rounded-md border border-line bg-sunken px-3 py-2 flex items-stretch gap-2.5"
+				>
+					<span className={`sev-bar ${alarm.tone}`} aria-hidden="true" />
+					<Icon
+						name={TONE_ICON[alarm.tone]}
+						size={14}
+						className={`text-${alarm.tone} mt-0.5 flex-shrink-0`}
+					/>
+					<span className="min-w-0">
+						<span className="fs-body font-mono text-ink font-medium block">
+							{alarm.label}
+						</span>
+						<span className="fs-micro font-mono text-faint block leading-tight">
+							{alarm.detail}
+						</span>
+					</span>
+				</li>
+			))}
+			{model.unchecked.length > 0 && (
+				<li className="fs-micro font-mono text-faint">
+					{`Couldn't check: ${model.unchecked.join(", ")} — the lane is incomplete.`}
+				</li>
+			)}
+		</ul>
+	);
+}
+
+// pending = a feeder is still loading, so "no alarms" cannot yet be told apart from
+// "nothing loaded". An errored feeder is not pending — its group carries the banner.
+function buildAlarmLaneModel(
+	summaryState,
+	indexState,
+	backlogState,
+	cyclesState,
+) {
+	const alarms = [];
+
+	if (indexState.status === "ready" && indexState.data?.dirty === true) {
+		alarms.push({
+			key: "index-dirty",
+			tone: "warn",
+			label: "Search index is dirty",
+			detail: "Run a wiki compile to regenerate the master index.",
+		});
+	}
+
+	const summary = summaryState.status === "ready" ? summaryState.data : null;
+	const hours = summary?.hours_since_last_cycle;
+	if (isCycleOverdueW(hours)) {
+		alarms.push({
+			key: "cycle-overdue",
+			tone: "crit",
+			label: "The daily cycle has not run",
+			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours} h ago — inspect launchd.`,
+		});
+	}
+
+	const proposals =
+		backlogState.status === "ready"
+			? readProposalsW(backlogState.data?.backlog)
+			: null;
+	const count = proposals ? proposals.length : 0;
+	if (count > 0) {
+		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
+		// Dates win when the server reports them; the run streak covers a payload without them.
+		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
+		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
+		// Cycles still in flight → the streak is unknown, not absent.
+		const checking = !wait && cyclesState.status === "loading";
+		const parked = wait
+			? wait.days >= PROPOSAL_PARKED_DAYS
+			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
+		alarms.push({
+			key: "proposals",
+			tone: parked ? "info" : "warn",
+			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
+			detail: wait
+				? describeProposalWaitW(wait, parked)
+				: describeProposalAgeW(runs, parked, checking),
+			parked,
+		});
+	}
+
+	const pending =
+		summaryState.status === "loading" ||
+		indexState.status === "loading" ||
+		backlogState.status === "loading";
+
+	// An errored feeder answers none of its checks, so the lane says so rather than reading clear.
+	const unchecked = [
+		[indexState, "search index"],
+		[summaryState, "daily cycle"],
+		[backlogState, "merge proposals"],
+	]
+		.filter(([state]) => state.status === "error")
+		.map(([, label]) => label);
+
+	return { alarms, pending, unchecked };
+}
+
+// Oldest first-seen date among the waiting proposals — the server's dated age source.
+// Absent map, unhashed proposals or an unparseable date → null, and the run streak answers instead.
+function readProposalWaitW(backlog, proposals) {
+	const firstSeen = backlog?.proposal_first_seen;
+	if (!firstSeen || typeof firstSeen !== "object") return null;
+
+	let since = null;
+	for (const p of proposals) {
+		const seen = firstSeen[p?.cluster_hash];
+		if (typeof seen === "string" && (since === null || seen < since)) since = seen;
+	}
+	if (since === null) return null;
+
+	const days = ageInUtcDaysW(since);
+	return typeof days === "number" ? { days, since } : null;
+}
+
+function describeProposalWaitW(wait, parked) {
+	const span =
+		wait.days === 0
+			? `Waiting since today (${wait.since})`
+			: `Waiting ${wait.days} ${wait.days === 1 ? "day" : "days"} (since ${wait.since})`;
+	return describeParkedSpanW(span, parked);
+}
+
+// Fallback age source for a payload with no first-seen map: the streak of newest
+// cycles carrying an unchanged dedup count, labelled as a count of runs.
+function countUnchangedDedupRunsW(cyclesState) {
+	if (cyclesState.status !== "ready") return null;
+
+	const cycles = [...(cyclesState.data?.cycles || [])].sort((a, b) =>
+		(b.run_date || "").localeCompare(a.run_date || ""),
+	);
+	const newest = cycles[0];
+	if (!newest || typeof newest.dedup_count !== "number") return null;
+
+	let runs = 0;
+	for (const c of cycles) {
+		if (c.dedup_count !== newest.dedup_count) break;
+		runs += 1;
+	}
+	return runs;
+}
+
+function describeProposalAgeW(runs, parked, checking) {
+	if (typeof runs !== "number") {
+		return checking
+			? "Checking run history for the waiting time…"
+			: "Waiting time unknown — no run history yet.";
+	}
+
+	const span = `Unchanged for ${runs} ${runs === 1 ? "run" : "runs"}`;
+	return describeParkedSpanW(span, parked);
+}
+
+function describeParkedSpanW(span, parked) {
+	return parked
+		? `${span} — parked; run the curator merge or leave the pair.`
+		: `${span}.`;
+}
+
+// dedup_proposals JSONB — { proposals, not_verified, errors, … }; the shape varies by
+// cycle, so every read is guarded and a missing key stays null rather than an empty list.
+function readDedupW(backlog) {
+	const raw = backlog?.dedup_proposals;
+	return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+}
+
+function readProposalsW(backlog) {
+	const list = readDedupW(backlog)?.proposals;
+	return Array.isArray(list) ? list : null;
+}
+
+// Backlog figures are a per-cycle snapshot: past one cycle they are dated, and an
+// undated or stale snapshot must not read as the current count.
+function describeSnapshotAgeW(runDate) {
+	if (!runDate) return " (run date not reported)";
+
+	const ageDays = ageInUtcDaysW(runDate);
+	const stale = typeof ageDays === "number" && ageDays > BACKLOG_STALE_DAYS;
+	return stale ? ` (as of ${runDate}, cycle overdue)` : "";
+}
+
+// Four-tile band — last run · compiled last cycle · search index · library totals.
+// Steady state carries no status word and no tint; only an actionable state tints.
+
+function WikiTileBand({ summaryState, indexState, backlogState }) {
+	const tiles = useMemoW(
+		() => buildTileBandModel(summaryState, indexState, backlogState),
+		[summaryState, indexState, backlogState],
+	);
+
+	return (
+		<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+			{tiles.map((tile) => (
+				<WikiTile key={tile.key} tile={tile} />
+			))}
 		</div>
 	);
 }
 
-// cycles → KPI 인라인 스파크라인 시리즈. run_date asc(최신 우측) · 비0 포인트 < SPARSE_MIN_NONZERO 면 null(Sparkline 미렌더).
-//   compiled = 일별 노트 산출 추세. 가짜 추세 금지(데이터 없으면 미노출).
-function buildOverviewSpark(cyclesState) {
-	if (!cyclesState || cyclesState.status !== "ready") return { compiled: null };
+// Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
+// figure, leaving tinted containers to the alarm lane (39578 §C/§D).
+function WikiTile({ tile }) {
+	const { Icon, TONE_ICON } = window.UI;
+	const alarmed = tile.tone === "warn" || tile.tone === "crit";
 
-	const cycles = cyclesState.data?.cycles || [];
-	const asc = [...cycles].sort((a, b) =>
-		(a.run_date || "").localeCompare(b.run_date || ""),
+	return (
+		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
+			<div
+				className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
+				title={tile.label}
+			>
+				{tile.label}
+			</div>
+			<div
+				className={`font-mono fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
+				aria-busy={tile.state === "loading" ? "true" : undefined}
+			>
+				{alarmed && (
+					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true">
+						<Icon name={TONE_ICON[tile.tone]} size={13} />
+					</span>
+				)}
+				{tile.value}
+			</div>
+			{tile.sub && (
+				<div
+					className="fs-micro font-mono text-faint mt-1 leading-tight truncate"
+					title={tile.sub}
+				>
+					{tile.sub}
+				</div>
+			)}
+		</div>
 	);
-	const compiled = asc.map((c) => Number(c.compiled_count) || 0);
-
-	const enough = (arr) => arr.filter((v) => v > 0).length >= SPARSE_MIN_NONZERO;
-	return { compiled: enough(compiled) ? compiled : null };
 }
 
-// summary 응답 → 개요 표시 모델. hours_since_last_cycle(시간 정밀도, started_at 파생) 로 tone 분기 —
-// 일 단위 환산은 24h/36h 임계를 무의미하게 만들어 폐기 (F33).
-function buildOverviewModel(state) {
-	if (state.status !== "ready") {
-		return {
-			compiledLabel: "—",
-			notesLabel: "—",
-			p95Label: "—",
-		};
-	}
+function buildTileBandModel(summaryState, indexState, backlogState) {
+	return [
+		buildLastRunTileW(summaryState),
+		buildCompiledTileW(summaryState),
+		buildIndexTileW(indexState),
+		buildLibraryTileW(indexState, summaryState, backlogState),
+	];
+}
 
-	const d = state.data || {};
-
+// Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
+// none of them renders as a number (a zero nobody loaded is the failure mode).
+function tilePlaceholderW(key, label, state) {
+	const SUB = {
+		loading: "Loading",
+		error: "Couldn't load",
+		unavailable: "Not reported yet",
+		empty: "Nothing recorded",
+	};
 	return {
-		compiledLabel: formatCountW(d.latest_compiled_count),
-		notesLabel: formatCountW(d.notes_total),
-		p95Label: formatDurationMsW(d.cycle_p95_ms),
+		key,
+		label,
+		state,
+		value: state === "loading" ? "…" : "—",
+		sub: SUB[state],
+		tone: "neutral",
 	};
 }
 
-// Library totals 본문 — raw vs summary + 미처리 백로그(데몬 권위 true_backlog). Index health 카드 상단에 인라인 병합 (A3).
-// by_type 카운트는 index-metrics, 총계는 summary · 백로그는 /api/wiki/backlog 의 true_backlog (재계산 금지).
+function tileFetchStateW(state) {
+	if (state.status === "loading") return "loading";
+	if (state.status === "error") return "error";
+	return null;
+}
 
-function WikiAccumulationBody({ summaryState, indexState, model, onRetry }) {
-	if (summaryState.status === "loading" || indexState.status === "loading") {
-		return <ChartSkeletonW height={120} />;
+function buildLastRunTileW(state) {
+	const label = "Last run";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("last-run", label, pending);
+
+	const d = state.data || {};
+	if (!d.last_cycle_started_at) {
+		return tilePlaceholderW("last-run", label, "empty");
 	}
-	if (summaryState.status === "error" && indexState.status === "error") {
+
+	const hours = d.hours_since_last_cycle;
+	const overdue = isCycleOverdueW(hours);
+	const statusTone = wikiStatusToneW(d.last_status);
+	const tone = overdue ? "crit" : statusTone === "ok" ? "neutral" : statusTone;
+
+	return {
+		key: "last-run",
+		label,
+		state: "ready",
+		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
+		// Steady state names the cycle date only; a non-healthy run names what went wrong.
+		sub: overdue
+			? `Overdue · cycle ${d.last_run_date}`
+			: tone === "neutral"
+				? `Cycle ${d.last_run_date}`
+				: `${wikiStatusLabelW(d.last_status)} · cycle ${d.last_run_date}`,
+		tone,
+	};
+}
+
+function buildCompiledTileW(state) {
+	const label = "Compiled last cycle";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("compiled", label, pending);
+
+	const d = state.data || {};
+	if (typeof d.latest_compiled_count !== "number") {
+		return tilePlaceholderW("compiled", label, "unavailable");
+	}
+
+	return {
+		key: "compiled",
+		label,
+		state: "ready",
+		value: formatCountW(d.latest_compiled_count),
+		sub: d.last_run_date ? `Cycle ${d.last_run_date}` : null,
+		tone: "neutral",
+	};
+}
+
+function buildIndexTileW(state) {
+	const label = "Search index";
+	const pending = tileFetchStateW(state);
+	if (pending) return tilePlaceholderW("index", label, pending);
+
+	const d = state.data || {};
+	// The server states row presence outright; the timestamp inference covers a payload predating it.
+	const flagMissing =
+		d.has_dirty_flag === false ||
+		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
+	if (flagMissing) return tilePlaceholderW("index", label, "unavailable");
+	if (d.dirty === true) {
+		return {
+			key: "index",
+			label,
+			state: "ready",
+			value: "Dirty",
+			sub:
+				typeof d.last_dirty_ms === "number"
+					? `Since ${window.UI.formatRelativeTime(new Date(d.last_dirty_ms).toISOString())}`
+					: "Compile pending",
+			tone: "warn",
+		};
+	}
+
+	return {
+		key: "index",
+		label,
+		state: "ready",
+		value: "Clean",
+		sub: "Master index current",
+		tone: "neutral",
+	};
+}
+
+function buildLibraryTileW(indexState, summaryState, backlogState) {
+	const label = "Library notes";
+	const pending = tileFetchStateW(indexState) || tileFetchStateW(summaryState);
+	if (pending) return tilePlaceholderW("library", label, pending);
+
+	const total =
+		typeof indexState.data?.notes_total === "number"
+			? indexState.data.notes_total
+			: summaryState.data?.notes_total;
+	if (typeof total !== "number") {
+		return tilePlaceholderW("library", label, "unavailable");
+	}
+
+	const payload =
+		backlogState.status === "ready" ? backlogState.data?.backlog : null;
+	const backlog = payload?.true_backlog;
+
+	return {
+		key: "library",
+		label,
+		state: "ready",
+		value: formatCountW(total),
+		sub:
+			typeof backlog === "number"
+				? `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting${describeSnapshotAgeW(payload?.run_date)}`
+				: "Backlog not reported",
+		tone: "neutral",
+	};
+}
+
+// Maintenance — one summary line above the fold, the working lists behind a click.
+// The proposals list reports the cost-guard residue, since unverified candidate pairs
+// make the proposal count a floor rather than a total.
+
+function WikiMaintenanceSection({ backlogState, onRetry }) {
+	const model = useMemoW(
+		() => buildMaintenanceModel(backlogState),
+		[backlogState],
+	);
+
+	if (model.state === "error") {
 		return (
 			<ErrorBannerW
-				title="Couldn't load library totals"
-				detail={summaryState.error || indexState.error}
+				title="Couldn't load the maintenance backlog"
+				detail={backlogState.error}
 				onRetry={onRetry}
 			/>
 		);
 	}
-	if (!model.ready) {
-		return <EmptyStateW message="No note data yet." />;
-	}
 
-	const { Bar } = window.UI;
-
-	// raw/summary 비례막대 분모 — 둘 중 큰 값 (구성을 길이로 읽히게 · 백로그는 구성원 아님 → 막대 제외).
-	const compMax = Math.max(model.rawCount ?? 0, model.summaryCount ?? 0);
-
-	// 3 스탯: 원본(raw) / 요약(source-summary) / 미처리 백로그(데몬 true_backlog). 백로그 0 = ok, 양수 = info, null = pending.
 	return (
-		<div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-			<SummaryStatW
-				label="Saved originals"
-				value={model.rawLabel}
-				unit=""
-				tone="info"
-				hint="Awaiting summary"
-				bar={
-					typeof model.rawCount === "number" && compMax > 0 ? (
-						<Bar
-							value={model.rawCount}
-							max={compMax}
-							tone="neutral"
-							ariaLabel={`Saved originals: ${model.rawLabel}`}
-						/>
-					) : null
-				}
-			/>
-			<SummaryStatW
-				label="Summary notes"
-				value={model.summaryLabel}
-				unit=""
-				tone="info"
-				bar={
-					typeof model.summaryCount === "number" && compMax > 0 ? (
-						<Bar
-							value={model.summaryCount}
-							max={compMax}
-							tone="neutral"
-							ariaLabel={`Summary notes: ${model.summaryLabel}`}
-						/>
-					) : null
-				}
-			/>
-			<SummaryStatW
-				label="Waiting to process"
-				value={model.backlogLabel}
-				unit={model.backlogUnit}
-				tone={model.backlogTone}
-				hint={model.backlogHint}
-			/>
+		<div className="flex flex-col gap-2">
+			<div
+				className="fs-body font-mono text-dim"
+				aria-busy={model.state === "loading" ? "true" : undefined}
+			>
+				{model.summaryLine}
+			</div>
+
+			{model.proposals && model.proposals.length > 0 && (
+				<BacklogExplorer
+					label="Merge proposals"
+					count={model.proposals.length}
+					payload={model.proposals}
+				>
+					<div className="flex flex-col gap-2">
+						<ul className="flex flex-col gap-2 m-0 p-0 list-none max-h-64 overflow-y-auto">
+							{model.proposals.map((proposal, i) => (
+								<MergeSuggestionItem
+									key={proposal.cluster_hash || i}
+									proposal={proposal}
+								/>
+							))}
+						</ul>
+						{model.residueLine && (
+							<div className="fs-micro font-mono text-faint leading-tight">
+								{model.residueLine}
+							</div>
+						)}
+					</div>
+				</BacklogExplorer>
+			)}
+
+			{/* Dead-link lists appear only once the fixer has something to report. */}
+			{model.deadLinks && model.deadLinks.length > 0 && (
+				<BacklogExplorer
+					label="Broken links"
+					count={model.deadLinks.length}
+					payload={model.deadLinks}
+				/>
+			)}
+			{model.linkFixes && model.linkFixes.length > 0 && (
+				<BacklogExplorer
+					label="Link fixes applied"
+					count={model.linkFixes.length}
+					payload={model.linkFixes}
+				/>
+			)}
 		</div>
 	);
 }
 
-function buildAccumulationModel(summaryState, indexState, backlogState) {
-	const byType =
-		indexState.status === "ready" ? indexState.data?.by_type || [] : [];
-	const rawCount = findTypeCountW(byType, "raw");
-	const summaryCount = findTypeCountW(byType, "source-summary");
+function buildMaintenanceModel(backlogState) {
+	if (backlogState.status === "loading") {
+		return { state: "loading", summaryLine: "Checking the maintenance backlog…" };
+	}
+	if (backlogState.status === "error") return { state: "error" };
 
-	// 총계 — index-metrics.notes_total 우선, 없으면 summary.notes_total 폴백.
-	const notesTotal =
-		indexState.status === "ready" &&
-		typeof indexState.data?.notes_total === "number"
-			? indexState.data.notes_total
-			: summaryState.status === "ready"
-				? summaryState.data?.notes_total
-				: null;
+	const backlog = backlogState.data?.backlog;
+	if (!backlog) {
+		return { state: "empty", summaryLine: "No maintenance cycle reported yet." };
+	}
 
-	const ready = byType.length > 0 || typeof notesTotal === "number";
-
-	// 미처리 백로그 — 데몬 권위 수치 true_backlog (rawCount−summaryCount 재계산 금지).
-	// null(데몬 미발행/로딩/에러) → pending placeholder (백로그는 true_backlog만 사용 · 빼기 계산 금지) · 톤은 selectBacklogW 참조.
-	// run_date 동반 → 데몬 비가동/사이클 미실행 시 stale 0 을 fresh 0 으로 오인하지 않도록 신선도 분기.
-	const backlogData =
-		backlogState && backlogState.status === "ready"
-			? backlogState.data?.backlog
-			: null;
-	const trueBacklog = backlogData?.true_backlog ?? null;
-	const backlogRunDate = backlogData?.run_date ?? null;
-	const backlog = selectBacklogW(trueBacklog, backlogRunDate);
+	const proposals = readProposalsW(backlog);
+	const deadLinks = Array.isArray(backlog.deadlink_dryrun)
+		? backlog.deadlink_dryrun
+		: null;
+	const linkFixes = Array.isArray(backlog.deadlink_fixes)
+		? backlog.deadlink_fixes
+		: null;
+	const notVerified = readDedupW(backlog)?.not_verified;
 
 	return {
-		ready,
-		rawCount,
-		summaryCount,
-		rawLabel: formatCountW(rawCount),
-		summaryLabel: formatCountW(summaryCount),
-		backlogLabel: backlog.label,
-		backlogTone: backlog.tone,
-		backlogUnit: backlog.unit,
-		backlogHint: backlog.hint,
-		notesTotalLabel: formatCountW(notesTotal),
+		state: "ready",
+		proposals,
+		deadLinks,
+		linkFixes,
+		summaryLine: `${describeMaintenanceW(proposals, deadLinks)}${describeSnapshotAgeW(backlog.run_date)}`,
+		residueLine:
+			typeof notVerified === "number" && notVerified > 0
+				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
+				: null,
 	};
+}
+
+// A missing key reads as "not reported", never as zero.
+function describeMaintenanceW(proposals, deadLinks) {
+	const proposalCount = proposals ? proposals.length : null;
+	const deadCount = deadLinks ? deadLinks.length : null;
+
+	if (proposalCount === 0 && deadCount === 0) {
+		return "Nothing waiting — no merge proposals, no broken links.";
+	}
+
+	const parts = [
+		proposalCount == null
+			? "merge proposals not reported"
+			: `${formatCountW(proposalCount)} merge ${proposalCount === 1 ? "proposal" : "proposals"}`,
+		deadCount == null
+			? "broken links not reported"
+			: `${formatCountW(deadCount)} broken ${deadCount === 1 ? "link" : "links"}`,
+	];
+	return parts.join(" · ");
+}
+
+// Run history — volume and the per-run table, both behind one closed disclosure.
+// The window control drives the table only; the chart and the status mix keep the
+// fixed cycles window and say so.
+
+function WikiRunHistorySection({
+	cyclesState,
+	reportState,
+	days,
+	onChangeDays,
+	onRetry,
+}) {
+	const model = useMemoW(
+		() => buildThroughputModel(cyclesState),
+		[cyclesState],
+	);
+
+	return (
+		<WikiDisclosureW
+			label="Run history"
+			count={describeRunHistoryW(cyclesState, model)}
+			bodyClassName="px-3 pb-3 flex flex-col gap-3"
+		>
+			{cyclesState.status === "loading" ? (
+				<ChartSkeletonW height={120} />
+			) : cyclesState.status === "error" ? (
+				<ErrorBannerW
+					title="Couldn't load run history"
+					detail={cyclesState.error}
+					onRetry={onRetry}
+				/>
+			) : model.rows.length === 0 ? (
+				<EmptyStateW
+					message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
+				/>
+			) : (
+				<>
+					<SparseTrendW
+						label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
+						series={model.compiledSeries}
+						stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
+						w={10}
+						h={44}
+						tone="accent"
+					/>
+					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
+					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
+				</>
+			)}
+
+			<div className="pt-3 border-t border-line flex flex-col gap-2">
+				<div className="flex items-center gap-2 flex-wrap">
+					<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+						Per-run table
+					</span>
+					<div
+						className="seg ml-auto"
+						role="group"
+						aria-label="Run table time range"
+					>
+						{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
+							<button
+								key={p.value}
+								className={days === p.value ? "active" : ""}
+								aria-pressed={days === p.value}
+								onClick={() => onChangeDays(p.value)}
+							>
+								{p.label}
+							</button>
+						))}
+					</div>
+				</div>
+				<div className="fs-micro font-mono text-faint leading-tight">
+					{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+				</div>
+				<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
+			</div>
+		</WikiDisclosureW>
+	);
+}
+
+function describeRunHistoryW(cyclesState, model) {
+	if (cyclesState.status === "loading") return "Loading…";
+	if (cyclesState.status === "error") return "Unavailable";
+	if (model.rows.length === 0) return "No runs in range";
+	return `${model.spanDays} runs · last ${model.newestDate}`;
+}
+
+// Collapsible section shell — label left, count right, body below the summary.
+function WikiDisclosureW({
+	label,
+	count,
+	bodyClassName = "px-3 pb-3",
+	children,
+}) {
+	return (
+		<details className="rounded-md border border-line bg-sunken">
+			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
+				<span className="font-mono fs-body text-ink font-medium">{label}</span>
+				<span className="ml-auto font-mono fs-meta text-dim">{count}</span>
+			</summary>
+			<div className={bodyClassName}>{children}</div>
+		</details>
+	);
+}
+
+// Notes by type — text rows; counts read as a list, not as a card grid.
+
+function WikiNotesByTypeSection({ state, onRetry }) {
+	const rows =
+		state.status === "ready" && Array.isArray(state.data?.by_type)
+			? state.data.by_type
+			: [];
+
+	return (
+		<WikiDisclosureW
+			label="Notes by type"
+			count={state.status === "ready" ? `${rows.length} types` : "—"}
+		>
+			{state.status === "loading" ? (
+				<div className="fs-meta font-mono text-faint" aria-busy="true">
+					Loading note types…
+				</div>
+			) : state.status === "error" ? (
+				<ErrorBannerW
+					title="Couldn't load notes by type"
+					detail={state.error}
+					onRetry={onRetry}
+				/>
+			) : rows.length === 0 ? (
+				<EmptyStateW message="No notes indexed yet." />
+			) : (
+				<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+					{rows.map((t) => (
+						<li
+							key={t.note_type}
+							className="flex items-baseline gap-3 fs-meta font-mono"
+						>
+							<span className="text-dim truncate" title={t.note_type}>
+								{t.note_type}
+							</span>
+							<span className="ml-auto text-ink">{formatCountW(t.count)}</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</WikiDisclosureW>
+	);
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
-
-// 데몬 true_backlog → 백로그 스탯 선택. number(0 포함) → 표시·tone(0=ok/양수=info)·단위 '개'.
-// 단, run_date 가 BACKLOG_STALE_DAYS 초과 경과(데몬 비가동/사이클 미실행) → faint de-emphasis + 'as of <run_date>'.
-//   stale 0 을 fresh 0 으로 오인 방지 (값은 마지막 사이클 시점 스냅샷일 뿐).
-// null(미발행/로딩/에러) → pending placeholder + faint 톤 + 단위 없음 (백로그는 true_backlog만 사용 · 빼기 계산 금지).
-// faint = SummaryStatW 가 rgb(var(--TONE)) 로 소비하는 유효 토큰 · --neutral 미정의 (tokens.css).
-function selectBacklogW(trueBacklog, runDate) {
-	if (
-		typeof trueBacklog === "number" &&
-		Number.isFinite(trueBacklog) &&
-		trueBacklog >= 0
-	) {
-		const ageDays = ageInUtcDaysW(runDate);
-		const isStale = typeof ageDays === "number" && ageDays > BACKLOG_STALE_DAYS;
-		if (isStale) {
-			return {
-				label: formatCountW(trueBacklog),
-				tone: "faint",
-				unit: "",
-				hint: `as of ${runDate} (stale — run overdue)`,
-			};
-		}
-		return {
-			label: formatCountW(trueBacklog),
-			tone: trueBacklog === 0 ? "ok" : "info",
-			unit: "",
-			hint: "Originals awaiting summary",
-		};
-	}
-	return {
-		label: "Waiting",
-		tone: "faint",
-		unit: "",
-		hint: "Originals awaiting summary",
-	};
-}
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).
@@ -387,152 +857,58 @@ function ageInUtcDaysW(runDate) {
 	return ageDays >= 0 ? ageDays : null;
 }
 
-// WikiThroughputCard — 일별 컴파일 throughput + status mix.
-// cycles 응답(run_date 내림차순) → 일별 compiled_count 미니바 + status 분포 비율 바.
-
-function WikiThroughputCard({ state, onRetry }) {
-	const { CardHead } = window.UI;
-
-	const model = useMemoW(() => buildThroughputModel(state), [state]);
-
-	return (
-		<div className="card">
-			<CardHead title="Daily output" right={null} />
-			<div className="card-body">
-				<WikiThroughputBody state={state} model={model} onRetry={onRetry} />
-			</div>
-		</div>
-	);
-}
-
-function WikiThroughputBody({ state, model, onRetry }) {
+// Status mix bar + legend — colour-blind-safe 4-cell proportion with a text legend.
+function WikiStatusMixW({ mix }) {
 	const { Icon } = window.UI;
 
-	if (state.status === "loading") {
-		return <ChartSkeletonW height={180} />;
-	}
-	if (state.status === "error") {
-		return (
-			<ErrorBannerW
-				title="Couldn't load daily output"
-				detail={state.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
-	if (!model.ready || model.rows.length === 0) {
-		return (
-			<EmptyStateW
-				message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-			/>
-		);
-	}
-
 	return (
-		<div className="flex flex-col gap-3">
-			{/* status mix — 단일 우세 상태(>95%)면 칩 1개로 축약, 아니면 색맹 안전 4종 바+레전드 (A6). */}
-			<div>
-				<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
-					Run status mix
-				</div>
-				{model.dominant ? (
-					<div className="flex items-center gap-2 fs-meta font-mono">
+		<>
+			<div
+				className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
+				role="img"
+				aria-label={`Run status mix: healthy ${mix.ok}%, warning ${mix.partial}%, down ${mix.error}%, usage limit ${mix.quota}%`}
+			>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.ok}%`, background: "rgb(var(--ok))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.partial}%`, background: "rgb(var(--warn))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.error}%`, background: "rgb(var(--crit))" }}
+				/>
+				<span
+					className="w-mix-cell"
+					style={{ width: `${mix.quota}%`, background: "rgb(var(--faint))" }}
+				/>
+			</div>
+			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
+				{["ok", "partial", "error", "quota"].map((k) => (
+					<span key={k} className="inline-flex items-center gap-1">
 						<Icon
 							name="circle"
 							size={9}
-							className={`text-${model.dominant.tone}`}
+							className={`text-${STATUS_CHIP_META[k].tone}`}
 						/>
-						<span className="text-ink font-medium">
-							{model.dominant.label} {model.dominant.pct}%
-						</span>
-						<span className="text-faint">({model.dominant.runs} runs)</span>
-					</div>
-				) : (
-					<>
-						<div
-							className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
-							role="img"
-							aria-label={`Run status mix: healthy ${model.mix.ok}%, warning ${model.mix.partial}%, down ${model.mix.error}%, usage limit ${model.mix.quota}%`}
-						>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.ok}%`,
-									background: "rgb(var(--ok))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.partial}%`,
-									background: "rgb(var(--warn))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.error}%`,
-									background: "rgb(var(--crit))",
-								}}
-							/>
-							<span
-								className="w-mix-cell"
-								style={{
-									width: `${model.mix.quota}%`,
-									background: "rgb(var(--faint))",
-								}}
-							/>
-						</div>
-						<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
-							{/* 레전드 = STATUS_CHIP_META 단일 SoT (dominant 칩과 tone/label 공유). 배열 순서 = 위 바 셀 순서. */}
-							{["ok", "partial", "error", "quota"].map((k) => (
-								<span key={k} className="inline-flex items-center gap-1">
-									<Icon
-										name="circle"
-										size={9}
-										className={`text-${STATUS_CHIP_META[k].tone}`}
-									/>
-									{STATUS_CHIP_META[k].label} {model.mix[k]}%
-								</span>
-							))}
-						</div>
-					</>
-				)}
+						{STATUS_CHIP_META[k].label} {mix[k]}%
+					</span>
+				))}
 			</div>
-
-			{/* 일별 compiled_count 미니바 — 최신이 우측 (시계열). 비0 < SPARSE_MIN_NONZERO 이면 넓은 빈 차트 대신 compact stat. */}
-			<div className="pt-3 border-t border-line">
-				<SparseTrendW
-					label="Notes per day"
-					series={model.compiledSeries}
-					stat={`peak ${model.maxCompiledLabel} · ${model.activeDays} active days of ${model.spanDays}`}
-					w={10}
-					h={44}
-					tone="accent"
-				/>
-				{!model.sparse && (
-					<div className="flex justify-between fs-micro font-mono text-faint mt-1">
-						<span>{model.oldestDate}</span>
-						<span>{model.newestDate}</span>
-					</div>
-				)}
-			</div>
-		</div>
+		</>
 	);
 }
 
 function buildThroughputModel(state) {
 	if (state.status !== "ready") {
 		return {
-			ready: false,
 			rows: [],
 			compiledSeries: [],
 			mix: EMPTY_MIX,
 			maxCompiledLabel: "—",
-			oldestDate: "",
 			newestDate: "",
-			sparse: false,
-			totalCompiled: 0,
 			spanDays: 0,
 		};
 	}
@@ -540,15 +916,11 @@ function buildThroughputModel(state) {
 	const rows = state.data?.cycles || [];
 	if (rows.length === 0) {
 		return {
-			ready: true,
 			rows: [],
 			compiledSeries: [],
 			mix: EMPTY_MIX,
 			maxCompiledLabel: "—",
-			oldestDate: "",
 			newestDate: "",
-			sparse: false,
-			totalCompiled: 0,
 			spanDays: 0,
 		};
 	}
@@ -560,32 +932,31 @@ function buildThroughputModel(state) {
 	const compiledSeries = ascending.map((r) => Number(r.compiled_count) || 0);
 	const maxCompiled =
 		compiledSeries.length > 0 ? Math.max(...compiledSeries) : 0;
-	// F4: 비0 포인트 < SPARSE_MIN_NONZERO 면 넓은 트랙의 외톨이 막대가 차트 깨짐처럼 읽힘 → 캡션으로 "실제 희소 데이터" 표기.
+	// 비0 포인트 수 — 캡션의 active days 수치 · 희소 판정은 SparseTrendW 가 자체 계산.
 	const nonZeroCount = compiledSeries.filter((v) => v > 0).length;
 
 	const mix = computeStatusMix(rows);
 
 	return {
-		ready: true,
 		rows,
 		compiledSeries,
 		mix,
-		// A6: 한 상태가 >95% 면 4종 막대+레전드 대신 단일 칩으로 축약 (비-ok 상태 존재 시에만 전체 바).
-		dominant: selectDominantStatusW(mix, rows.length),
+		isMixUniform: isNearUniformMixW(mix),
 		maxCompiledLabel: formatCountW(maxCompiled),
-		oldestDate: ascending[0]?.run_date || "",
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
-		sparse: nonZeroCount < SPARSE_MIN_NONZERO,
 		activeDays: nonZeroCount,
-		totalCompiled: compiledSeries.reduce((s, v) => s + v, 0),
 		spanDays: compiledSeries.length,
 	};
 }
 
 const EMPTY_MIX = { ok: 0, partial: 0, error: 0, quota: 0 };
 
-// 단일 우세 상태 임계(%) — 한 상태가 이 비율 초과면 4종 바+레전드를 단일 칩으로 축약 (A6).
-const STATUS_DOMINANT_PCT = 95;
+// One status above this share of runs → the mix is near-uniform.
+const STATUS_UNIFORM_PCT = 95;
+
+function isNearUniformMixW(mix) {
+	return Object.values(mix).some((pct) => pct > STATUS_UNIFORM_PCT);
+}
 
 const STATUS_CHIP_META = {
 	ok: { tone: "ok", label: "Healthy" },
@@ -593,22 +964,6 @@ const STATUS_CHIP_META = {
 	error: { tone: "crit", label: "Down" },
 	quota: { tone: "faint", label: "Usage limit" },
 };
-
-// status mix → 단일 우세 상태(>STATUS_DOMINANT_PCT). 충족 시 { tone, label, pct, runs } · 미충족 → null(전체 바 렌더).
-function selectDominantStatusW(mix, runCount) {
-	for (const key of Object.keys(STATUS_CHIP_META)) {
-		if (mix[key] > STATUS_DOMINANT_PCT) {
-			const meta = STATUS_CHIP_META[key];
-			return {
-				tone: meta.tone,
-				label: meta.label,
-				pct: mix[key],
-				runs: runCount,
-			};
-		}
-	}
-	return null;
-}
 
 // status 분포 → 백분율. ok/partial/error/quota_exceeded 외 status 는 error 로 합산(보수적).
 function computeStatusMix(rows) {
@@ -635,174 +990,18 @@ function computeStatusMix(rows) {
 	};
 }
 
-// WikiBacklogCard — deadlinks/dedup 추세 + 최신 proposals explorer.
-// 추세는 cycles(deadlinks_count·dedup_count), 최신 proposals 는 backlog payload(JSONB)에서.
-
-function WikiBacklogCard({ cyclesState, backlogState, onRetry }) {
-	const { CardHead } = window.UI;
-
-	const model = useMemoW(
-		() => buildBacklogModel(cyclesState, backlogState),
-		[cyclesState, backlogState],
-	);
-
+// children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
+function BacklogExplorer({ label, count, payload, children }) {
 	return (
-		<div className="card">
-			<CardHead title="Maintenance backlog" right={null} />
-			<div className="card-body">
-				<WikiBacklogBody
-					cyclesState={cyclesState}
-					backlogState={backlogState}
-					model={model}
-					onRetry={onRetry}
-				/>
-			</div>
-		</div>
-	);
-}
-
-function WikiBacklogBody({ cyclesState, backlogState, model, onRetry }) {
-	if (cyclesState.status === "loading" && backlogState.status === "loading") {
-		return <ChartSkeletonW height={180} />;
-	}
-	if (cyclesState.status === "error" && backlogState.status === "error") {
-		return (
-			<ErrorBannerW
-				title="Couldn't load the maintenance backlog"
-				detail={cyclesState.error || backlogState.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
-
-	const { MiniBars } = window.UI;
-
-	return (
-		<div className="flex flex-col gap-3">
-			{/* deadlinks/dedup = 누적 백로그 스냅샷(매 사이클 재집계) → info 톤 고정 (영구 warn 신호 희석 방지). */}
-			<div className="grid grid-cols-2 gap-3">
-				<SummaryStatW
-					label="Broken links"
-					value={model.deadLabel}
-					unit=""
-					tone="info"
-				/>
-				<SummaryStatW
-					label="Duplicates"
-					value={model.dedupLabel}
-					unit=""
-					tone="info"
-				/>
-			</div>
-
-			{/* 사이클별 deadlinks/dedup 추세 — 이미 fetch 한 cycles 시리즈 렌더 (F37). 최신이 우측. */}
-			{(model.deadSeries.length >= 2 || model.dedupSeries.length >= 2) && (
-				<div className="grid grid-cols-2 gap-3 pt-3 border-t border-line">
-					{model.deadSeries.length >= 2 && (
-						<div>
-							<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
-								Broken links trend
-							</div>
-							<div className="text-warn">
-								<MiniBars
-									data={model.deadSeries}
-									w={Math.max(model.deadSeries.length * 8, 60)}
-									h={32}
-								/>
-							</div>
-						</div>
-					)}
-					{model.dedupSeries.length >= 2 && (
-						<div>
-							<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
-								Duplicates trend
-							</div>
-							<div className="text-info">
-								<MiniBars
-									data={model.dedupSeries}
-									w={Math.max(model.dedupSeries.length * 8, 60)}
-									h={32}
-								/>
-							</div>
-						</div>
-					)}
-				</div>
+		<WikiDisclosureW label={label} count={count}>
+			{children != null ? (
+				children
+			) : (
+				<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
+					{stringifyPayloadW(payload)}
+				</pre>
 			)}
-
-			{/* 최신 proposals explorer — dedup proposals + deadlink dryrun/fixes collapsible. */}
-			<div className="pt-3 border-t border-line flex flex-col gap-2">
-				<MergeSuggestions
-					count={model.dedupProposalsCount}
-					proposals={model.dedupProposals}
-				/>
-				{/* deadlink dryrun/fixes 는 영구 빈값(count 0) → 노출 생략, 데이터 생길 때만 explorer 렌더 (A7). */}
-				{model.deadlinkDryrunCount > 0 && (
-					<BacklogExplorer
-						label="deadlink dryrun"
-						count={model.deadlinkDryrunCount}
-						payload={model.deadlinkDryrun}
-					/>
-				)}
-				{model.deadlinkFixesCount > 0 && (
-					<BacklogExplorer
-						label="deadlink fixes"
-						count={model.deadlinkFixesCount}
-						payload={model.deadlinkFixes}
-					/>
-				)}
-			</div>
-		</div>
-	);
-}
-
-// collapsible explorer shell SoT — summary(라벨+카운트) · 'none' 빈상태 · 본문 컨테이너 단일 출처.
-//   children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
-function BacklogExplorer({ label, count, payload, defaultOpen, children }) {
-	const isEmpty = count === 0 || payload == null;
-
-	return (
-		<details
-			className="rounded-md border border-line bg-sunken"
-			open={(defaultOpen && !isEmpty) || undefined}
-		>
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				{/* 12px→fs-body(12) 라벨 · 10.5px→fs-meta(11) 카운트. */}
-				<span className="font-mono fs-body text-ink font-medium">{label}</span>
-				<span className="ml-auto font-mono fs-meta text-dim">
-					{count == null ? "—" : `${count}`}
-				</span>
-			</summary>
-			<div className="px-3 pb-3">
-				{isEmpty ? (
-					<div className="fs-meta font-mono text-faint">none</div>
-				) : children != null ? (
-					children
-				) : (
-					<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
-						{stringifyPayloadW(payload)}
-					</pre>
-				)}
-			</div>
-		</details>
-	);
-}
-
-// 머지 제안 explorer — BacklogExplorer shell 재사용 · 본문만 제안당 2줄 구조 렌더(target ← source · similarity · action).
-//   cost_guard/cluster_hash/llm_rationale 등 내부 잡음 필드는 노출 생략 (A7).
-function MergeSuggestions({ count, proposals }) {
-	return (
-		<BacklogExplorer
-			label="Merge suggestions"
-			count={count}
-			payload={proposals}
-			defaultOpen
-		>
-			<ul className="flex flex-col gap-2 m-0 p-0 list-none max-h-64 overflow-y-auto">
-				{(proposals || []).map((p, i) => (
-					<MergeSuggestionItem key={p.cluster_hash || i} proposal={p} />
-				))}
-			</ul>
-		</BacklogExplorer>
+		</WikiDisclosureW>
 	);
 }
 
@@ -844,236 +1043,6 @@ function MergeSuggestionItem({ proposal }) {
 				</div>
 			)}
 		</li>
-	);
-}
-
-function buildBacklogModel(cyclesState, backlogState) {
-	// 추세 숫자 — cycles 최신 1건 (서버 내림차순 → 첫 행).
-	const cycles =
-		cyclesState.status === "ready" ? cyclesState.data?.cycles || [] : [];
-	const latest = cycles[0];
-	const deadCount =
-		latest && typeof latest.deadlinks_count === "number"
-			? latest.deadlinks_count
-			: null;
-	const dedupCount =
-		latest && typeof latest.dedup_count === "number"
-			? latest.dedup_count
-			: null;
-
-	// 사이클별 추세 시리즈 — run_date asc (오래된→최신), 미기록 행은 0 (F37 MiniBars).
-	const ascCycles = [...cycles].sort((a, b) =>
-		(a.run_date || "").localeCompare(b.run_date || ""),
-	);
-	const deadSeries = ascCycles.map((c) =>
-		typeof c.deadlinks_count === "number" ? c.deadlinks_count : 0,
-	);
-	const dedupSeries = ascCycles.map((c) =>
-		typeof c.dedup_count === "number" ? c.dedup_count : 0,
-	);
-
-	// payload JSONB — dedup_proposals = { errors:[], proposals:[] } · deadlink_dryrun/fixes = array.
-	const payload =
-		backlogState.status === "ready" ? backlogState.data?.backlog || {} : {};
-	const dedupRaw =
-		payload.dedup_proposals && typeof payload.dedup_proposals === "object"
-			? payload.dedup_proposals
-			: null;
-	const dedupProposals =
-		dedupRaw?.proposals && Array.isArray(dedupRaw.proposals)
-			? dedupRaw.proposals
-			: null;
-	const deadlinkDryrun = Array.isArray(payload.deadlink_dryrun)
-		? payload.deadlink_dryrun
-		: null;
-	const deadlinkFixes = Array.isArray(payload.deadlink_fixes)
-		? payload.deadlink_fixes
-		: null;
-
-	const ready =
-		cyclesState.status === "ready" || backlogState.status === "ready";
-
-	return {
-		ready,
-		deadLabel: formatCountW(deadCount),
-		dedupLabel: formatCountW(dedupCount),
-		deadSeries,
-		dedupSeries,
-		dedupProposals,
-		dedupProposalsCount: dedupProposals ? dedupProposals.length : null,
-		deadlinkDryrun,
-		deadlinkDryrunCount: deadlinkDryrun ? deadlinkDryrun.length : null,
-		deadlinkFixes,
-		deadlinkFixesCount: deadlinkFixes ? deadlinkFixes.length : null,
-	};
-}
-
-// WikiIndexHealthCard — Library totals(raw/summary/backlog) 병합 + by_type 카운트 표 + master-index 신선도(dirty_flag.dirty · last_dirty epoch ms).
-// Library totals 가 별도 카드로 by_type 을 중복 노출하던 슬롭 제거 → 단일 카드로 통합 (A3).
-
-function WikiIndexHealthCard({ state, summaryState, backlogState, onRetry }) {
-	const { CardHead } = window.UI;
-
-	const model = useMemoW(() => buildIndexHealthModel(state), [state]);
-	// Library totals 본문 모델 — true_backlog 보존 위해 backlogState 동반 (재계산 금지, A3).
-	const totalsModel = useMemoW(
-		() => buildAccumulationModel(summaryState, state, backlogState),
-		[summaryState, state, backlogState],
-	);
-
-	return (
-		<div className="card">
-			<CardHead title="Index health" right={null} />
-			<div className="card-body">
-				<WikiIndexHealthBody
-					state={state}
-					summaryState={summaryState}
-					model={model}
-					totalsModel={totalsModel}
-					onRetry={onRetry}
-				/>
-			</div>
-		</div>
-	);
-}
-
-function WikiIndexHealthBody({
-	state,
-	summaryState,
-	model,
-	totalsModel,
-	onRetry,
-}) {
-	if (state.status === "loading") {
-		return <ChartSkeletonW height={160} />;
-	}
-	if (state.status === "error") {
-		return (
-			<ErrorBannerW
-				title="Couldn't load index health"
-				detail={state.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
-	if (!model.ready) {
-		return <EmptyStateW message="No index metrics yet." />;
-	}
-
-	const { Badge, Bar } = window.UI;
-
-	// note_type 최대 카운트 — 타입별 Bar 의 공통 max (구성 비율을 길이로 읽히게 · 색 단독 인코딩 회피).
-	const maxTypeCount = model.byType.reduce(
-		(m, t) => Math.max(m, Number(t.count) || 0),
-		0,
-	);
-
-	return (
-		<div className="flex flex-col gap-3">
-			{/* Library totals 병합 — saved originals(raw) / summary notes / 미처리 백로그(true_backlog). (A3) */}
-			<WikiAccumulationBody
-				summaryState={summaryState}
-				indexState={state}
-				model={totalsModel}
-				onRetry={onRetry}
-			/>
-
-			{/* note_type 별 카운트 — 누적 노트와 컴파일 총계(per-cycle)는 독립 표기 (드리프트/비율 아님).
-          명시적 2열(A8) — auto-fill minmax 가 적은 타입수에서 남기던 후행 공백 제거. */}
-			<div className="grid grid-cols-2 gap-2 pt-3 border-t border-line">
-				{model.byType.map((t) => (
-					<div
-						key={t.note_type}
-						className="rounded-md border border-line bg-sunken p-2.5"
-					>
-						{/* 10px→fs-micro(10) 라벨 · 18px→fs-stat 카운트. */}
-						<div
-							className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
-							title={t.note_type}
-						>
-							{t.note_type}
-						</div>
-						<div className="font-mono fs-stat font-semibold mt-0.5">
-							{formatCountW(t.count)}
-						</div>
-						{/* 타입별 비례막대 — 구성이 형태(길이)로 읽히게 · 숫자는 위에서 카운트로 전달 (듀얼인코딩). */}
-						<div className="mt-1.5">
-							<Bar
-								value={Number(t.count) || 0}
-								max={maxTypeCount}
-								tone="neutral"
-								ariaLabel={`${t.note_type}: ${formatCountW(t.count)} notes`}
-							/>
-						</div>
-					</div>
-				))}
-			</div>
-
-			{/* master-index state — dirty_flag.dirty surfaced as the DIRTY/CLEAN pill (sole actionable signal). */}
-			<div className="flex items-center gap-3 flex-wrap pt-3 border-t border-line">
-				{/* 12px→fs-body(12). master-index label + DIRTY/CLEAN status pill. */}
-				<span className="inline-flex items-center gap-3 flex-wrap min-w-0">
-					<span className="fs-body font-mono text-faint">master-index</span>
-					<Badge role="status" tone={model.dirty ? "warn" : "ok"} icon>
-						{model.dirty ? "DIRTY" : "CLEAN"}
-					</Badge>
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function buildIndexHealthModel(state) {
-	if (state.status !== "ready") {
-		return {
-			ready: false,
-			byType: [],
-			notesTotalLabel: "—",
-			compiledTotalLabel: "—",
-			dirty: false,
-		};
-	}
-
-	const d = state.data || {};
-	const byType = Array.isArray(d.by_type) ? d.by_type : [];
-
-	return {
-		ready: byType.length > 0 || typeof d.notes_total === "number",
-		byType,
-		notesTotalLabel: formatCountW(d.notes_total),
-		compiledTotalLabel: formatCountW(d.latest_compiled_total),
-		dirty: d.dirty === true,
-	};
-}
-
-// 일일 보고 카드 — summary stats + per-cycle report 카드.
-
-function WikiReportsCard({ state, days, onChangeDays, onRetry }) {
-	const { CardHead } = window.UI;
-
-	return (
-		<div className="card">
-			<CardHead
-				title="Wiki daily report"
-				right={
-					<div className="seg" role="group" aria-label="Wiki report time range">
-						{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
-							<button
-								key={p.value}
-								className={days === p.value ? "active" : ""}
-								aria-pressed={days === p.value}
-								onClick={() => onChangeDays(p.value)}
-							>
-								{p.label}
-							</button>
-						))}
-					</div>
-				}
-			/>
-			<div className="card-body">
-				<WikiReportsBody state={state} days={days} onRetry={onRetry} />
-			</div>
-		</div>
 	);
 }
 
@@ -1203,40 +1172,6 @@ function WikiReportRow({ report, Badge }) {
 
 // Shared chrome (wiki-scoped — health.jsx 패턴 미러).
 
-function SummaryStatW({ label, value, unit, tone, hint, bar }) {
-	return (
-		<div
-			className="rounded-md border p-2.5 min-w-0"
-			title={hint || undefined}
-			style={{
-				background: `rgb(var(--${tone}) / 0.06)`,
-				borderColor: `rgb(var(--${tone}) / 0.35)`,
-			}}
-		>
-			{/* 10px→fs-micro(10) 라벨 · 18px→fs-stat 값 · 11px→fs-meta(11) 단위 · 10px→fs-micro(10) 힌트. */}
-			<div
-				className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
-				title={label}
-			>
-				{label}
-			</div>
-			<div className="font-mono fs-stat font-semibold mt-0.5">
-				{value}
-				{unit && (
-					<span className="fs-meta text-dim font-normal ml-1">{unit}</span>
-				)}
-			</div>
-			{/* 선택적 비례막대 — 구성·비율을 길이로 읽히게 (옵트인, 미전달 시 종전 텍스트 전용 동작 유지). */}
-			{bar && <div className="mt-1.5">{bar}</div>}
-			{hint && (
-				<div className="fs-micro font-mono text-faint mt-1 leading-tight truncate">
-					{hint}
-				</div>
-			)}
-		</div>
-	);
-}
-
 function EmptyStateW({ message }) {
 	const { EmptyState } = window.UI;
 	return <EmptyState message={message} className="m-3" />;
@@ -1350,15 +1285,8 @@ function handleErrorW(err, setter) {
 	});
 }
 
-// by_type 배열에서 특정 note_type 카운트 추출 — 없으면 null (가짜 0 금지).
-function findTypeCountW(byType, noteType) {
-	const row = byType.find((t) => t && t.note_type === noteType);
-	return row && typeof row.count === "number" ? row.count : null;
-}
-
 // 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기. formatInt 가 wiki 가드(음수/NaN → '—') 승격 보유.
 const formatCountW = window.UI.formatInt;
-const formatDurationMsW = (ms) => window.UI.formatDuration(ms, "ms");
 
 // JSONB payload 직렬화 — 순환참조/직렬화 불가 시 안전 폴백.
 function stringifyPayloadW(payload) {

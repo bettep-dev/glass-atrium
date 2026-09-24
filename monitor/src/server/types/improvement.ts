@@ -412,6 +412,10 @@ export interface ImprovementStatsResponse {
   cycles_generated_applied_7d: number;
   cycles_generated_not_applied_7d: number;
   cycles_nothing_generated_7d: number;
+  // Start of the most recent autoagent cycle (ISO8601 UTC); null when no cycle row
+  // exists — never a zero or a stale stamp. Deliberately unwindowed: a windowed
+  // timestamp goes silent exactly when the loop has been quiet longest.
+  latest_cycle_started_at: string | null;
 }
 
 // orphan learning-table read surfaces
@@ -445,6 +449,11 @@ export interface ImprovementLearningLogRow {
   last_updated: string; // ISO8601 UTC
   last_transition_at: string | null; // ISO8601 UTC
   last_transition_reason: string | null;
+  // True when the pattern LABEL is one the daemon skips at intake
+  // (daemon_cycle.py NON_PROMPTABLE_LABELS). Label-keyed like the skip itself, so
+  // it is independent of status and of the registry gate: a marked row can never
+  // produce a proposal, whatever its lifecycle stage says.
+  intake_skipped: boolean;
 }
 
 // Status × tier rollup bucket — one per distinct (status, approval_tier) pair.
@@ -508,6 +517,12 @@ export interface ImprovementLoopSuppressionState {
   // Window-independent for the same reason apply_cap_state is: a row parked weeks
   // ago is still parked today.
   parked: ImprovementSuppressionBucket[];
+  // The rows behind `parked`, window-free for the same reason the buckets are: the
+  // pattern list's discovery window would empty this while the counts stayed
+  // non-zero, hiding the oldest parks — the ones most likely to be waiting on a
+  // human. Registry-gated like `parked` and bounded by the request `limit`; the
+  // untruncated per-cause totals stay on the buckets.
+  parked_patterns: ImprovementParkedPatternRow[];
   // Recurring per-cycle suppressions from core.autoagent_loop_events over
   // `per_cycle_window_days`. These write no transition, so a window is the only
   // way to count them at all.
@@ -533,6 +548,15 @@ export interface ImprovementLoopSuppressionState {
   // field exists to fix. Registry fail-open (empty registry → no predicate) makes
   // this 0.
   off_registry_parked: number;
+}
+
+// A parked row carried with the bucket cause that parked it, so the ledger groups
+// rows under a bucket's remedy without re-deriving the transition-reason marker
+// client-side (two derivations of one marker drift apart; this one cannot).
+export interface ImprovementParkedPatternRow extends ImprovementLearningLogRow {
+  // Matches ImprovementSuppressionBucket.cause — 'other' when the transition reason
+  // matches no marker.
+  cause: string;
 }
 
 export interface ImprovementLearningLogResponse {

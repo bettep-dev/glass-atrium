@@ -69,11 +69,14 @@ import type {
   CreateClaudedDocBody,
   DeleteClaudedDocResponse,
   DocFormatToken,
+  DocStageLiteral,
+  DocStatusFilterLiteral,
   DocStatusLiteral,
   GetClaudedDocResponse,
   GroupClaudedDocsBody,
   GroupClaudedDocsResponse,
   HtmlExportManifestEntry,
+  LastStatusModel,
   ListClaudedDocsGroupsQuery,
   ListClaudedDocsGroupsResponse,
   ListClaudedDocsQuery,
@@ -96,12 +99,133 @@ const ALLOWED_FORMATS: ReadonlySet<DocFormatToken> = new Set<DocFormatToken>([
   "html", "md", "yaml", "json", "txt",
 ]);
 
-// DocStatus 2-value workflow ('progress' = DB DEFAULT). PUT doc_status cascades
-// to all rows sharing folder_id (handleUpdate CTE).
-const ALLOWED_DOC_STATUSES: ReadonlySet<DocStatusLiteral> = new Set<DocStatusLiteral>([
-  "progress",
-  "done",
+// Work stages in screen order. The last one is terminal — the only transition that cascades.
+export const DOC_STAGES: readonly DocStageLiteral[] = [
+  "doc_review", "implementing", "impl_review", "impl_done", "done",
+];
+
+const INITIAL_DOC_STAGE: DocStageLiteral = "doc_review";
+const TERMINAL_DOC_STAGE: DocStageLiteral = "done";
+// Retired in-flight token — still accepted and read, always normalised to INITIAL_DOC_STAGE.
+const RETIRED_STAGE_ALIAS: DocStatusLiteral = "progress";
+
+// A row's 1-based rank in DOC_STAGES, the retired alias folded onto the first stage so an
+// un-backfilled row ranks as itself rather than as NULL. Window-aggregated per group, it is
+// what lets a group row state its least-advanced member stage instead of the representative's.
+const STAGE_RANK_SQL: Prisma.Sql = Prisma.sql`array_position(
+  ARRAY[${Prisma.join(DOC_STAGES.map((stage) => Prisma.sql`${stage}::text`))}],
+  CASE WHEN doc_status::text = 'progress' THEN ${INITIAL_DOC_STAGE}::text ELSE doc_status::text END
+)`;
+
+// Accepted on a WRITE. The retired in-flight alias stays accepted so a not-yet-updated writer
+// keeps working, but it normalises to the first stage — only stages are ever stored.
+export const WRITE_DOC_STATUSES: ReadonlySet<DocStatusLiteral> = new Set<DocStatusLiteral>([
+  ...DOC_STAGES, RETIRED_STAGE_ALIAS,
 ]);
+
+// Accepted on a READ filter = the write set plus the 'open' pseudo-value. The read set is
+// deliberately the wider of the two: a read narrower than what rows hold drops them, and this
+// is what lets the widened read deploy ahead of the enum migration rather than after it.
+export const DOC_STATUS_READ_FILTERS: ReadonlySet<DocStatusFilterLiteral> =
+  new Set<DocStatusFilterLiteral>([...WRITE_DOC_STATUSES, "open"]);
+
+const LAST_STATUS_MODEL_MAX_LENGTH = 128;
+
+/**
+ * Stored token → the stage it reads as; null = a token no stage covers (drift-defensive drop).
+ * The retired alias resolves to the first stage rather than being dropped.
+ */
+export function normalizeStoredStage(stored: string): DocStageLiteral | null {
+  if (stored === RETIRED_STAGE_ALIAS) return INITIAL_DOC_STAGE;
+  return (DOC_STAGES as readonly string[]).includes(stored) ? (stored as DocStageLiteral) : null;
+}
+
+/**
+ * A group's member ranks → the stage its row renders and whether every member sits there.
+ * The least-advanced member decides, since the representative is picked by display_order and
+ * so says nothing about how far the group has moved; an out-of-range rank (a token no stage
+ * covers) keeps the representative's own stage rather than emptying the cell.
+ */
+export function getGroupStage(
+  minRank: number,
+  maxRank: number,
+  fallback: DocStageLiteral,
+): { stage: DocStageLiteral; uniform: boolean } {
+  return { stage: DOC_STAGES[minRank - 1] ?? fallback, uniform: minRank === maxRank };
+}
+
+/**
+ * doc_status filter value → its WHERE fragment. 'open' is every stage but the terminal one;
+ * the first stage also matches the stored alias, else those rows vanish from that chip.
+ */
+export function getDocStatusFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
+  if (filter === "open") return Prisma.sql`doc_status::text <> ${TERMINAL_DOC_STAGE}`;
+  if (filter === INITIAL_DOC_STAGE || filter === RETIRED_STAGE_ALIAS) {
+    return Prisma.sql`doc_status::text IN (${INITIAL_DOC_STAGE}, 'progress')`;
+  }
+  return Prisma.sql`doc_status::text = ${filter}`;
+}
+
+/**
+ * doc_status filter value → its predicate on a group's `min_stage_rank`, the group-level twin of
+ * getDocStatusFilterSql: a group sits at its least-advanced member, so it is open while any
+ * member is and done only when every member is — the same meaning the chip counts use.
+ */
+export function getGroupStageFilterSql(filter: DocStatusFilterLiteral): Prisma.Sql {
+  const terminalRank = DOC_STAGES.indexOf(TERMINAL_DOC_STAGE) + 1;
+  if (filter === "open") return Prisma.sql`min_stage_rank IS DISTINCT FROM ${terminalRank}`;
+  const stage = normalizeStoredStage(filter);
+  // rank 0 is never assigned → a filter no stage covers matches no group
+  return Prisma.sql`min_stage_rank = ${stage === null ? 0 : DOC_STAGES.indexOf(stage) + 1}`;
+}
+
+/**
+ * Whether a status write cascades to the row's group. Only the terminal transition does:
+ * closing a chain closes it whole, and every other move touches the one document.
+ */
+export function isCascadeTransition<T extends { folder_id: bigint | null; doc_status: string }>(
+  newStatus: DocStatusLiteral | undefined,
+  existing: T,
+): existing is T & { folder_id: bigint } {
+  if (newStatus === undefined || existing.folder_id === null) return false;
+  if (newStatus !== TERMINAL_DOC_STAGE) return false;
+  return normalizeStoredStage(existing.doc_status) !== TERMINAL_DOC_STAGE;
+}
+
+/**
+ * Whether this write MOVES the row's stage — the one predicate the cascade radius and the actor
+ * attribution both key on. A PUT echoing the stored stage is a body re-emit, not a status action.
+ */
+export function isStatusAction(
+  newStatus: DocStatusLiteral | undefined,
+  existing: { doc_status: string },
+): boolean {
+  return newStatus !== undefined && newStatus !== normalizeStoredStage(existing.doc_status);
+}
+
+/**
+ * The actor stored for a write. The model is a property OF the status action — a move carrying
+ * none has an unknown actor (null), never the previous action's model; every non-moving write,
+ * a status-less body PUT and a status ECHO alike, keeps the stored one.
+ */
+export function getLastStatusModel(
+  parsed: { doc_status?: DocStatusLiteral; last_status_model?: string | null },
+  existing: { doc_status: string; last_status_model: string | null },
+): string | null {
+  if (!isStatusAction(parsed.doc_status, existing)) return existing.last_status_model;
+  return parsed.last_status_model ?? null;
+}
+
+// SQL mirror of computeResponseAudience + formatFromPath — hidden/agent-only explicit, or a
+// plain-format body with no exposing value. One copy: a divergent second one miscounts silently.
+const HIDDEN_AUDIENCE_SQL: Prisma.Sql = Prisma.sql`(
+  audience IN ('hidden', 'agent-only')
+  OR (
+    (audience IS NULL OR audience NOT IN ('exposed', 'public', 'ops'))
+    AND (html_path LIKE '%.md' OR html_path LIKE '%.yaml' OR html_path LIKE '%.yml'
+         OR html_path LIKE '%.json' OR html_path LIKE '%.txt')
+  )
+)`;
 
 /**
  * Body-kind-based default for the exposure bit.
@@ -179,8 +303,10 @@ interface ClaudedDocDbRow {
   inserted_at: Date;
   // self-ref FK to predecessor. NULL = chain root · BigInt = predecessor id (ON DELETE SET NULL).
   supersedes_id: bigint | null;
-  // workflow status (NOT NULL DEFAULT 'progress'). group cascade target (all rows sharing folder_id).
+  // work stage (NOT NULL DEFAULT 'doc_review'). Terminal-transition cascade target.
   doc_status: string;
+  // model id behind the last status action · NULL = unknown.
+  last_status_model: string | null;
   // group folder linkage. NULL = ungrouped · BigInt = root doc id (FK ON DELETE SET NULL).
   // self-reference allowed (root row where folder_id == id).
   folder_id: bigint | null;
@@ -199,7 +325,7 @@ const CLAUDED_DOC_SELECT_COLUMNS: Prisma.Sql = Prisma.sql`
   id, title, author, created_at,
   content_hash, html_path, md_copy_path,
   last_synced_at, audience, inserted_at, supersedes_id,
-  doc_status::text AS doc_status, folder_id, display_order
+  doc_status::text AS doc_status, last_status_model, folder_id, display_order
 `;
 
 interface SearchHitDbRow {
@@ -480,7 +606,8 @@ async function handleCreateHtmlBody(
     inserted = await insertClaudedDocRow(prisma, {
       parsed, createdAt, conversion, bodyPath, audience, supersedesId,
       // FK enforced by INSERT constraint (missing folder_id → 23503 → failWithDb → 400 invalid_input).
-      docStatus: parsed.doc_status ?? "progress",
+      docStatus: parsed.doc_status ?? INITIAL_DOC_STAGE,
+      lastStatusModel: parsed.last_status_model ?? null,
       folderId: parsed.folder_id === undefined ? null : BigInt(parsed.folder_id),
     });
   } catch (error) {
@@ -557,7 +684,8 @@ async function handleCreatePlainBody(
   try {
     inserted = await insertClaudedDocRow(prisma, {
       parsed, createdAt, conversion, bodyPath, audience, supersedesId,
-      docStatus: parsed.doc_status ?? "progress",
+      docStatus: parsed.doc_status ?? INITIAL_DOC_STAGE,
+      lastStatusModel: parsed.last_status_model ?? null,
       folderId: parsed.folder_id === undefined ? null : BigInt(parsed.folder_id),
     });
   } catch (error) {
@@ -655,8 +783,9 @@ async function handleList(
     const total = bigintToNumber(totalRow.total);
 
     const summaries: ClaudedDocSummary[] = rows.flatMap((row) => {
-      // doc_status drift defensive — exclude rows with an unknown value.
-      if (!ALLOWED_DOC_STATUSES.has(row.doc_status as DocStatusLiteral)) return [];
+      const stage = normalizeStoredStage(row.doc_status);
+      // drift defensive — a token no stage covers cannot be rendered.
+      if (stage === null) return [];
       return [
         {
           id: bigintToNumber(row.id),
@@ -670,7 +799,8 @@ async function handleList(
           audience: computeResponseAudience(row.audience, formatFromPath(row.html_path)),
           format: formatFromPath(row.html_path),
           supersedes_id: row.supersedes_id === null ? null : bigintToNumber(row.supersedes_id),
-          doc_status: row.doc_status as DocStatusLiteral,
+          doc_status: stage,
+          last_status_model: row.last_status_model,
           folder_id: row.folder_id === null ? null : bigintToNumber(row.folder_id),
           display_order: row.display_order,
         },
@@ -724,12 +854,12 @@ async function handleListGroups(
 ): Promise<ListClaudedDocsGroupsResponse | ClaudedDocsErrorBody> {
   const start = Date.now();
 
-  const docStatusParam = parseEnumParam<DocStatusLiteral>(
-    request.query.doc_status, ALLOWED_DOC_STATUSES,
+  const docStatusParam = parseEnumParam<DocStatusFilterLiteral>(
+    request.query.doc_status, DOC_STATUS_READ_FILTERS,
   );
   if (docStatusParam === "INVALID") {
     return reply.code(400).send({
-      error: "invalid_param", param: "doc_status", allowed: Array.from(ALLOWED_DOC_STATUSES),
+      error: "invalid_param", param: "doc_status", allowed: Array.from(DOC_STATUS_READ_FILTERS),
     });
   }
 
@@ -751,14 +881,13 @@ async function handleListGroups(
   const includeArchived = parseBooleanParam(request.query.include_archived);
   const excludingArchived = !includeArchived;
 
-  // doc-level filter fragments — the same fragments must feed both the grouped and
-  // ungrouped CTE for cluster consistency (Prisma.sql is immutable, so reuse is safe).
-  const fragments: Prisma.Sql[] = [];
-  if (docStatusParam !== null) fragments.push(Prisma.sql`doc_status::text = ${docStatusParam}`);
-  if (author !== null) fragments.push(Prisma.sql`author = ${author}`);
-  const filterClause = fragments.length === 0
+  // Doc-level scope = the author, the operator's standing scope. The stage filter is group-level
+  // (on the whole group's least-advanced rank), so a filtered group keeps its representative and
+  // its stage, and the listed groups match the chip counts.
+  const corpusClause = author === null ? Prisma.empty : Prisma.sql`WHERE author = ${author}`;
+  const stageClause = docStatusParam === null
     ? Prisma.empty
-    : Prisma.join(fragments, " AND ", "WHERE ");
+    : Prisma.sql`WHERE ${getGroupStageFilterSql(docStatusParam)}`;
 
   const prisma = getPrisma();
   try {
@@ -770,7 +899,7 @@ async function handleListGroups(
         WITH grouped_reps AS (
           SELECT DISTINCT ON (folder_id)
                  id AS rep_id, title, author,
-                 doc_status::text AS doc_status,
+                 doc_status::text AS doc_status, last_status_model,
                  audience, html_path, created_at, supersedes_id,
                  -- group_latest_at = the newest member's created_at across the whole
                  -- group (DF-26), NOT the rep row's own created_at — the rep is picked
@@ -779,47 +908,67 @@ async function handleListGroups(
                  MAX(created_at) OVER (PARTITION BY folder_id) AS group_latest_at,
                  folder_id AS group_key,
                  (SELECT COUNT(*) FROM monitor.documents d2
-                  WHERE d2.folder_id = d.folder_id)::bigint AS member_count
+                  WHERE d2.folder_id = d.folder_id)::bigint AS member_count,
+                 -- least- and most-advanced member ranks over the WHOLE group, like member_count:
+                 -- the group row renders the first and says members differ when they disagree.
+                 (SELECT MIN(${STAGE_RANK_SQL}) FROM monitor.documents d2
+                  WHERE d2.folder_id = d.folder_id) AS min_stage_rank,
+                 (SELECT MAX(${STAGE_RANK_SQL}) FROM monitor.documents d2
+                  WHERE d2.folder_id = d.folder_id) AS max_stage_rank
           FROM monitor.documents d
-          ${filterClause === Prisma.empty
+          ${corpusClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NOT NULL`
-            : Prisma.sql`${filterClause} AND folder_id IS NOT NULL`}
+            : Prisma.sql`${corpusClause} AND folder_id IS NOT NULL`}
           -- rep pick: the drag-order-first member (lowest display_order) represents the group.
           --   all-NULL display_order group → NULLS LAST ties → created_at DESC fallback (latest = rep).
           ORDER BY folder_id, display_order ASC NULLS LAST, created_at DESC, id DESC
         ),
         ungrouped AS (
           SELECT id AS rep_id, title, author,
-                 doc_status::text AS doc_status,
+                 doc_status::text AS doc_status, last_status_model,
                  audience, html_path, created_at, supersedes_id,
                  created_at AS group_latest_at, -id AS group_key,
-                 1::bigint AS member_count
+                 1::bigint AS member_count,
+                 ${STAGE_RANK_SQL} AS min_stage_rank, ${STAGE_RANK_SQL} AS max_stage_rank
           FROM monitor.documents
-          ${filterClause === Prisma.empty
+          ${corpusClause === Prisma.empty
             ? Prisma.sql`WHERE folder_id IS NULL`
-            : Prisma.sql`${filterClause} AND folder_id IS NULL`}
+            : Prisma.sql`${corpusClause} AND folder_id IS NULL`}
+        ),
+        listed AS (
+          SELECT * FROM grouped_reps
+          UNION ALL
+          SELECT * FROM ungrouped
         )
-        SELECT * FROM grouped_reps
-        UNION ALL
-        SELECT * FROM ungrouped
+        SELECT * FROM listed ${stageClause}
         ORDER BY group_latest_at DESC, rep_id DESC
         LIMIT ${limit} OFFSET ${offset}
       `,
       prisma.$queryRaw<GroupsCountRow[]>`
+        WITH ranked AS (
+          SELECT COALESCE(folder_id, -id) AS group_key, author,
+                 ${HIDDEN_AUDIENCE_SQL} AS is_hidden,
+                 MIN(${STAGE_RANK_SQL}) OVER (PARTITION BY COALESCE(folder_id, -id)) AS min_stage_rank
+          FROM monitor.documents
+        ),
+        corpus AS (SELECT * FROM ranked ${corpusClause}),
+        scoped AS (SELECT * FROM corpus ${stageClause}),
+        -- corpus rows collapsed to one row per group: open by the same predicate the chip
+        -- filter lists with · hidden only when EVERY member is.
+        per_group AS (
+          SELECT group_key,
+                 bool_or(${getGroupStageFilterSql("open")}) AS has_open,
+                 bool_and(is_hidden) AS all_hidden
+          FROM corpus
+          GROUP BY group_key
+        )
         SELECT
-          COUNT(DISTINCT COALESCE(folder_id, -id))::bigint AS total,
-          COUNT(*)::bigint AS doc_total,
-          -- effective-audience hidden — SQL mirror of computeResponseAudience +
-          -- formatFromPath (hidden/agent-only explicit · NULL/unknown → plain-format default).
-          COUNT(*) FILTER (
-            WHERE audience IN ('hidden', 'agent-only')
-               OR (
-                 (audience IS NULL OR audience NOT IN ('exposed', 'public', 'ops'))
-                 AND (html_path LIKE '%.md' OR html_path LIKE '%.yaml' OR html_path LIKE '%.yml'
-                      OR html_path LIKE '%.json' OR html_path LIKE '%.txt')
-               )
-          )::bigint AS hidden_doc_total
-        FROM monitor.documents ${filterClause}
+          (SELECT COUNT(DISTINCT group_key)::bigint FROM scoped) AS total,
+          (SELECT COUNT(*)::bigint FROM scoped) AS doc_total,
+          (SELECT COUNT(*) FILTER (WHERE is_hidden)::bigint FROM scoped) AS hidden_doc_total,
+          (SELECT COUNT(*)::bigint FROM per_group) AS corpus_group_total,
+          (SELECT COUNT(*) FILTER (WHERE has_open)::bigint FROM per_group) AS open_group_total,
+          (SELECT COUNT(*) FILTER (WHERE all_hidden)::bigint FROM per_group) AS hidden_group_total
       `,
     ]);
 
@@ -830,17 +979,27 @@ async function handleListGroups(
     const total = bigintToNumber(totalRow.total);
     const docTotal = bigintToNumber(totalRow.doc_total);
     const hiddenDocTotal = bigintToNumber(totalRow.hidden_doc_total);
+    const corpusGroupTotal = bigintToNumber(totalRow.corpus_group_total);
+    const openGroupTotal = bigintToNumber(totalRow.open_group_total);
+    const hiddenGroupTotal = bigintToNumber(totalRow.hidden_group_total);
 
     const groups: ClaudedDocGroup[] = rows.flatMap((row) => {
-      // doc_status drift defensive — exclude rows with an unknown value.
-      if (!ALLOWED_DOC_STATUSES.has(row.doc_status as DocStatusLiteral)) return [];
+      const stage = normalizeStoredStage(row.doc_status);
+      // drift defensive — a token no stage covers cannot be rendered.
+      if (stage === null) return [];
+      const groupStage = getGroupStage(
+        Number(row.min_stage_rank), Number(row.max_stage_rank), stage,
+      );
       return [{
         // group_key is an internal sort key — not surfaced in the response.
         folder_id: row.group_key > 0n ? bigintToNumber(row.group_key) : null,
         representative_id: bigintToNumber(row.rep_id),
         representative_title: row.title,
         representative_author: row.author,
-        representative_doc_status: row.doc_status as DocStatusLiteral,
+        representative_doc_status: stage,
+        group_doc_status: groupStage.stage,
+        group_stage_uniform: groupStage.uniform,
+        representative_last_status_model: row.last_status_model,
         representative_audience: computeResponseAudience(row.audience, formatFromPath(row.html_path)),
         representative_format: formatFromPath(row.html_path),
         representative_created_at: row.created_at.toISOString(),
@@ -869,6 +1028,13 @@ async function handleListGroups(
       doc_total: docTotal,
       hidden_doc_total: hiddenDocTotal,
       groups,
+      group_counts: {
+        total: corpusGroupTotal,
+        open: openGroupTotal,
+        done: corpusGroupTotal - openGroupTotal,
+        hidden: hiddenGroupTotal,
+        exposed: corpusGroupTotal - hiddenGroupTotal,
+      },
       filter: {
         doc_status: docStatusParam,
         author, limit, offset,
@@ -887,6 +1053,7 @@ interface GroupedRepRow {
   title: string;
   author: string;
   doc_status: string;
+  last_status_model: string | null;
   audience: string | null;
   html_path: string;
   created_at: Date;
@@ -894,12 +1061,17 @@ interface GroupedRepRow {
   group_latest_at: Date;
   group_key: bigint;
   member_count: bigint;
+  min_stage_rank: number;
+  max_stage_rank: number;
 }
 
 interface GroupsCountRow {
   total: bigint;
   doc_total: bigint;
   hidden_doc_total: bigint;
+  corpus_group_total: bigint;
+  open_group_total: bigint;
+  hidden_group_total: bigint;
 }
 
 // GET /api/clauded-docs/:id
@@ -1558,14 +1730,15 @@ async function handleUpdateHtmlBody(
   // Standalone (folder_id=NULL) rows enter too — cascadeUpdateDocStatus CTE degrades to self-only.
   const sameAudience = normalizeAudience(existing.audience) === targetAudience;
   if (existing.content_hash === conversion.contentHash && sameAudience) {
-    const cascadeNeeded =
-      parsed.doc_status !== undefined &&
-      parsed.doc_status !== (existing.doc_status as DocStatusLiteral);
+    const cascadeNeeded = isStatusAction(parsed.doc_status, existing);
     if (!cascadeNeeded) {
       return buildWriteResponse(await replyNoOpUpdate(request, reply, id, existing), notices);
     }
     return buildWriteResponse(
-      await replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, "html", parsed.expected_hash),
+      await replyCascadeOnlyUpdate(
+        request, reply, id, existing, parsed.doc_status as DocStatusLiteral,
+        parsed.last_status_model ?? null, "html", parsed.expected_hash,
+      ),
       notices,
     );
   }
@@ -1691,13 +1864,14 @@ async function handleUpdatePlainBody(
   // Standalone (folder_id=NULL) rows enter too → CTE degrades to self-only.
   const sameAudience = normalizeAudience(existing.audience) === finalAudience;
   if (existing.content_hash === conversion.contentHash && sameAudience) {
-    const cascadeNeeded =
-      parsed.doc_status !== undefined &&
-      parsed.doc_status !== (existing.doc_status as DocStatusLiteral);
+    const cascadeNeeded = isStatusAction(parsed.doc_status, existing);
     if (!cascadeNeeded) {
       return replyNoOpUpdatePlain(request, reply, id, existing, format);
     }
-    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, format, parsed.expected_hash);
+    return replyCascadeOnlyUpdate(
+      request, reply, id, existing, parsed.doc_status as DocStatusLiteral,
+      parsed.last_status_model ?? null, format, parsed.expected_hash,
+    );
   }
 
   // Was HTML primary → path swap needed · same plain format → in-place.
@@ -1932,7 +2106,7 @@ async function handleSearch(
           snippet: hit.snippet,
           // list-row parity fields — same derivation as the handleList SELECT, so
           // status toggle · agent badge · audience filter all work in search mode too.
-          doc_status: hit.doc_status as DocStatusLiteral,
+          doc_status: normalizeStoredStage(hit.doc_status) ?? INITIAL_DOC_STAGE,
           audience: computeResponseAudience(hit.audience, formatFromPath(hit.html_path)),
           format: formatFromPath(hit.html_path),
         },
@@ -2265,9 +2439,11 @@ interface InsertClaudedDocArgs {
   // When set, the same INSERT statement (CTE) auto-transitions the predecessor
   // doc_status → 'done'.
   supersedesId: bigint | null;
-  // Workflow status (POST default 'progress'); always passed explicitly to
+  // Work stage (POST default = the first stage); always passed explicitly to
   // avoid relying on the silent DB default.
   docStatus: DocStatusLiteral;
+  // Model id behind this row's opening status · null = unknown.
+  lastStatusModel: LastStatusModel;
   // Group folder linkage. null = ungrouped (new row is its own root) · bigint =
   // FK-validated root id.
   folderId: bigint | null;
@@ -2286,7 +2462,7 @@ async function insertClaudedDocRow(
   prisma: ReturnType<typeof getPrisma>,
   args: InsertClaudedDocArgs,
 ): Promise<ClaudedDocDbRow> {
-  const { parsed, createdAt, conversion, bodyPath, audience, supersedesId, docStatus, folderId } = args;
+  const { parsed, createdAt, conversion, bodyPath, audience, supersedesId, docStatus, lastStatusModel, folderId } = args;
   // supersedesId null → plain INSERT. Otherwise a single-statement CTE: `WITH ins AS (...
   // RETURNING *)` feeds the follow-up `_upd AS (UPDATE ... RETURNING 1)` (side-effect only);
   // the final SELECT returns ins columns. RETURNING set matches the SELECT/UPDATE/DELETE sites
@@ -2296,7 +2472,7 @@ async function insertClaudedDocRow(
         INSERT INTO monitor.documents
           (title, author, created_at, content_hash, html_path,
            md_copy_path, indexable_text, last_synced_at, audience, supersedes_id,
-           doc_status, folder_id)
+           doc_status, last_status_model, folder_id)
         VALUES (
           ${parsed.title},
           ${parsed.author},
@@ -2309,6 +2485,7 @@ async function insertClaudedDocRow(
           ${audience},
           ${null},
           ${docStatus}::monitor."DocStatus",
+          ${lastStatusModel},
           ${folderId}
         )
         RETURNING ${CLAUDED_DOC_SELECT_COLUMNS}
@@ -2318,7 +2495,7 @@ async function insertClaudedDocRow(
           INSERT INTO monitor.documents
             (title, author, created_at, content_hash, html_path,
              md_copy_path, indexable_text, last_synced_at, audience, supersedes_id,
-             doc_status, folder_id)
+             doc_status, last_status_model, folder_id)
           VALUES (
             ${parsed.title},
             ${parsed.author},
@@ -2331,13 +2508,17 @@ async function insertClaudedDocRow(
             ${audience},
             ${supersedesId},
             ${docStatus}::monitor."DocStatus",
+            ${lastStatusModel},
             ${folderId}
           )
           RETURNING ${CLAUDED_DOC_SELECT_COLUMNS}
         ),
         _upd AS (
           UPDATE monitor.documents
-          SET doc_status = 'done'::monitor."DocStatus"
+          SET doc_status = 'done'::monitor."DocStatus",
+              -- the close is the superseding caller's status action; an already-done row is not moved
+              last_status_model = CASE WHEN doc_status::text = 'done'
+                                       THEN last_status_model ELSE ${lastStatusModel} END
           WHERE id = ${supersedesId}
           RETURNING 1
         )
@@ -2416,6 +2597,7 @@ async function replyCascadeOnlyUpdate(
   id: number,
   existing: ClaudedDocDbRow,
   newStatus: DocStatusLiteral,
+  lastStatusModel: LastStatusModel,
   format: DocFormatToken,
   // Client optimistic-lock hash — guards the cascade target atomically (DF-26).
   expectedHash: string,
@@ -2423,7 +2605,11 @@ async function replyCascadeOnlyUpdate(
   const prisma = getPrisma();
   let cascadeRows: CascadeRow[];
   try {
-    cascadeRows = await cascadeUpdateDocStatus(prisma, id, newStatus, expectedHash);
+    cascadeRows = await cascadeUpdateDocStatus(prisma, id, newStatus, {
+      lastStatusModel,
+      cascadeToGroup: isCascadeTransition(newStatus, existing),
+      expectedHash,
+    });
   } catch (error) {
     return failWithDb(request, reply, "/api/clauded-docs/:id (PUT cascade-only)", error);
   }
@@ -2604,11 +2790,13 @@ export async function updateClaudedDocRow(
   // doc_status unspecified → keep existing. This function handles body+meta only;
   // group cascade fires separately via cascadeUpdateDocStatus.
   const docStatusNew = parsed.doc_status ?? (existing.doc_status as DocStatusLiteral);
+  const lastStatusModelNew = getLastStatusModel(parsed, existing);
   const rows = await prisma.$queryRaw<ClaudedDocDbRow[]>`
     UPDATE monitor.documents
     SET
       title = ${titleNew},
       doc_status = ${docStatusNew}::monitor."DocStatus",
+      last_status_model = ${lastStatusModelNew},
       content_hash = ${conversion.contentHash},
       indexable_text = ${conversion.indexableText},
       html_path = ${htmlPathNew},
@@ -2667,17 +2855,16 @@ export async function replyUpdateCasConflict(
 }
 
 /**
- * Group cascade UPDATE CTE. Fires (per the handleUpdate dispatcher) only when
- * doc_status is specified AND the row is a group member (folder_id !== null);
- * otherwise body/meta UPDATE alone runs.
+ * Status-write UPDATE CTE, in one of two radii per `cascadeToGroup` (isCascadeTransition):
+ * the target row alone, or the target plus every same-folder_id row.
  *
  * Single-statement CTE:
  *   - target: id → folder_id (subquery-cached, race-safe)
- *   - cascade_targets: ids where id=$1 OR folder_id=(target.folder_id)
+ *   - cascade_targets: the target id, plus its folder_id peers when the radius is the group
  *   - UPDATE … WHERE id IN (cascade_targets) RETURNING id, doc_status, folder_id
  *
- * Caller derives cascade_count from the RETURNING row count. Cascade toggles
- * doc_status only — other mutations go through updateClaudedDocRow (SRP).
+ * Caller derives cascade_count from the RETURNING row count. This writes the status columns
+ * only — other mutations go through updateClaudedDocRow (SRP).
  */
 interface CascadeRow {
   id: bigint;
@@ -2685,31 +2872,45 @@ interface CascadeRow {
   folder_id: bigint | null;
 }
 
+export interface DocStatusWriteOptions {
+  /** Model id behind this status action · null = unknown. */
+  lastStatusModel: LastStatusModel;
+  /** true → the target's folder_id peers move too · false → the target row alone. */
+  cascadeToGroup: boolean;
+  /**
+   * Optional CAS guard on the TARGET row (cascade-only PUT path, DF-26). When set, an empty
+   * RETURNING signals the target's content_hash moved / row deleted since fetch → caller
+   * resolves 409/404. The body-changed path omits it (updateClaudedDocRow already advanced
+   * the hash, so its own WHERE carried the guard).
+   */
+  expectedHash?: string;
+}
+
 export async function cascadeUpdateDocStatus(
   prisma: ReturnType<typeof getPrisma>,
   id: number,
   newStatus: DocStatusLiteral,
-  // Optional CAS guard on the TARGET row (cascade-only PUT path, DF-26). When set,
-  // an empty RETURNING signals the target's content_hash moved / row deleted since
-  // fetch → caller resolves 409/404. Body-changed path omits it (updateClaudedDocRow
-  // already advanced the hash, so its own WHERE carried the guard).
-  expectedHash?: string,
+  options: DocStatusWriteOptions,
 ): Promise<CascadeRow[]> {
+  const { lastStatusModel, cascadeToGroup, expectedHash } = options;
   const targetGuard =
     expectedHash === undefined
       ? Prisma.empty
       : Prisma.sql`AND content_hash = ${expectedHash}`;
+  const peers = cascadeToGroup
+    ? Prisma.sql`OR folder_id = (SELECT folder_id FROM target WHERE folder_id IS NOT NULL)`
+    : Prisma.empty;
   return prisma.$queryRaw<CascadeRow[]>`
     WITH target AS (
       SELECT id, folder_id FROM monitor.documents WHERE id = ${BigInt(id)} ${targetGuard}
     ),
     cascade_targets AS (
       SELECT id FROM monitor.documents
-      WHERE id = (SELECT id FROM target)
-         OR folder_id = (SELECT folder_id FROM target WHERE folder_id IS NOT NULL)
+      WHERE id = (SELECT id FROM target) ${peers}
     )
     UPDATE monitor.documents
-    SET doc_status = ${newStatus}::monitor."DocStatus"
+    SET doc_status = ${newStatus}::monitor."DocStatus",
+        last_status_model = ${lastStatusModel}
     WHERE id IN (SELECT id FROM cascade_targets)
     RETURNING id, doc_status::text AS doc_status, folder_id
   `;
@@ -2734,18 +2935,17 @@ export async function cascadeAfterRowUpdate(
   parsed: UpdateClaudedDocBody,
   existing: ClaudedDocDbRow,
 ): Promise<true | ClaudedDocsErrorBody> {
-  // Cascade fires only on an ACTUAL status diff (DF-13): a body-changed PUT that
-  // echoes the row's current doc_status must leave mixed-status siblings alone —
-  // else the group homogenizes to the echoed value. Standalone/unspecified skip too.
-  if (
-    parsed.doc_status === undefined ||
-    existing.folder_id === null ||
-    parsed.doc_status === (existing.doc_status as DocStatusLiteral)
-  ) {
+  // Only the terminal transition of a grouped row reaches the siblings: a non-terminal move,
+  // a standalone row, and a body-changed PUT echoing the current stage all touch the one
+  // document, which updateClaudedDocRow has already written.
+  if (!isCascadeTransition(parsed.doc_status, existing)) {
     return true; // no-op — cascade trigger conditions unmet
   }
   try {
-    const cascadeRows = await cascadeUpdateDocStatus(prisma, id, parsed.doc_status);
+    const cascadeRows = await cascadeUpdateDocStatus(prisma, id, parsed.doc_status as DocStatusLiteral, {
+      lastStatusModel: parsed.last_status_model ?? null,
+      cascadeToGroup: true,
+    });
     request.log.info(
       {
         route: "/api/clauded-docs/:id", method: "PUT", id,
@@ -2787,7 +2987,8 @@ function rowToDetailResponse(
     // null = chain root · else predecessor id.
     supersedes_id: row.supersedes_id === null ? null : bigintToNumber(row.supersedes_id),
     superseded_by_id: supersededById,
-    doc_status: row.doc_status as DocStatusLiteral,
+    doc_status: normalizeStoredStage(row.doc_status) ?? INITIAL_DOC_STAGE,
+    last_status_model: row.last_status_model,
     folder_id: row.folder_id === null ? null : bigintToNumber(row.folder_id),
     // list/detail shape parity (Int? as-is).
     display_order: row.display_order,
@@ -2866,14 +3067,19 @@ function parseCreateBody(raw: unknown): ParsedCreateBody | string {
   }
   const folderId: number | undefined = folderValidation;
 
-  // doc_status enum validation. Unspecified → 'progress' (injected explicitly to
-  // avoid relying on the silent DB default); other values → 400. Discriminated
-  // union avoids the `typeof === "string"` trap (success values are strings too).
+  // doc_status enum validation. Unspecified → the first stage (injected explicitly to avoid
+  // relying on the silent DB default); the retired alias normalises to it; other values → 400.
+  // Discriminated union avoids the `typeof === "string"` trap (success values are strings too).
   const docStatusValidation = validateDocStatusField(body.doc_status);
   if (docStatusValidation.kind === "err") {
     return docStatusValidation.reason;
   }
-  const docStatus: DocStatusLiteral = docStatusValidation.value;
+  const docStatus: DocStageLiteral = docStatusValidation.value;
+
+  const modelValidation = validateLastStatusModelField(body.last_status_model);
+  if (modelValidation.kind === "err") {
+    return modelValidation.reason;
+  }
 
   // audience is the exposure bit (always non-null).
   const parsed: CreateClaudedDocBody = {
@@ -2888,6 +3094,8 @@ function parseCreateBody(raw: unknown): ParsedCreateBody | string {
     parsed.folder_id = folderId;
   }
   parsed.doc_status = docStatus;
+  // A new row's stage IS a status action, so the column is written on every create.
+  parsed.last_status_model = modelValidation.value ?? null;
   // Exactly one body field by invariant; surface it for round-trip compat
   // (caller dispatches on `body`/`format`).
   if (format === "html") parsed.html_body = rawBody;
@@ -3083,14 +3291,19 @@ function parseUpdateBody(raw: unknown): ParsedUpdateBody | string {
     audience = body.audience as AudienceLiteral;
   }
 
-  // doc_status (cascade trigger). Unspecified → undefined (keep row value, no
-  // cascade); only 'progress'|'done' allowed.
-  let docStatus: DocStatusLiteral | undefined;
+  // doc_status (cascade trigger). Unspecified → undefined (keep row value, no cascade); the
+  // retired alias normalises to the stage it names, so only stages reach the column.
+  let docStatus: DocStageLiteral | undefined;
   if (body.doc_status !== undefined && body.doc_status !== null) {
-    if (typeof body.doc_status !== "string" || !ALLOWED_DOC_STATUSES.has(body.doc_status as DocStatusLiteral)) {
-      return `doc_status must be one of: ${Array.from(ALLOWED_DOC_STATUSES).join(", ")}`;
+    if (typeof body.doc_status !== "string" || !WRITE_DOC_STATUSES.has(body.doc_status as DocStatusLiteral)) {
+      return `doc_status must be one of: ${Array.from(WRITE_DOC_STATUSES).join(", ")}`;
     }
-    docStatus = body.doc_status as DocStatusLiteral;
+    docStatus = normalizeStoredStage(body.doc_status) as DocStageLiteral;
+  }
+
+  const modelValidation = validateLastStatusModelField(body.last_status_model);
+  if (modelValidation.kind === "err") {
+    return modelValidation.reason;
   }
 
   const parsed: UpdateClaudedDocBody = {
@@ -3105,6 +3318,7 @@ function parseUpdateBody(raw: unknown): ParsedUpdateBody | string {
   if (title !== undefined) parsed.title = title;
   if (audience !== undefined) parsed.audience = audience;
   if (docStatus !== undefined) parsed.doc_status = docStatus;
+  if (modelValidation.value !== undefined) parsed.last_status_model = modelValidation.value;
 
   return { format, body: rawBody, parsed };
 }
@@ -3190,22 +3404,43 @@ function validateFolderIdField(raw: unknown): number | undefined | string {
 
 /**
  * Validate POST body doc_status.
- *   - unspecified → 'progress' (matches the DB DEFAULT, injected explicitly)
- *   - 'progress' | 'done' → returned as-is
+ *   - unspecified → the first stage (matches the DB DEFAULT, injected explicitly)
+ *   - any write token → normalised to its stage (the retired alias → the first stage)
  *   - else → { kind: "err" } with a 400 reason
  *
  * The union avoids the `typeof === "string"` trap (success values are strings too).
  */
 type DocStatusValidation =
-  | { kind: "ok"; value: DocStatusLiteral }
+  | { kind: "ok"; value: DocStageLiteral }
   | { kind: "err"; reason: string };
 
 function validateDocStatusField(raw: unknown): DocStatusValidation {
-  if (raw === undefined || raw === null) return { kind: "ok", value: "progress" };
-  if (typeof raw !== "string" || !ALLOWED_DOC_STATUSES.has(raw as DocStatusLiteral)) {
-    return { kind: "err", reason: `doc_status must be one of: ${Array.from(ALLOWED_DOC_STATUSES).join(", ")}` };
+  if (raw === undefined || raw === null) return { kind: "ok", value: INITIAL_DOC_STAGE };
+  if (typeof raw !== "string" || !WRITE_DOC_STATUSES.has(raw as DocStatusLiteral)) {
+    return { kind: "err", reason: `doc_status must be one of: ${Array.from(WRITE_DOC_STATUSES).join(", ")}` };
   }
-  return { kind: "ok", value: raw as DocStatusLiteral };
+  // Non-null by the membership guard above — every accepted write token names a stage.
+  return { kind: "ok", value: normalizeStoredStage(raw) as DocStageLiteral };
+}
+
+/**
+ * Validate a body last_status_model. Unspecified → undefined (create injects null, update
+ * preserves) · explicit null → unknown · a non-empty bounded string → the model id.
+ */
+type LastStatusModelValidation =
+  | { kind: "ok"; value: LastStatusModel | undefined }
+  | { kind: "err"; reason: string };
+
+function validateLastStatusModelField(raw: unknown): LastStatusModelValidation {
+  if (raw === undefined) return { kind: "ok", value: undefined };
+  if (raw === null) return { kind: "ok", value: null };
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > LAST_STATUS_MODEL_MAX_LENGTH) {
+    return {
+      kind: "err",
+      reason: `last_status_model must be null or a string of 1-${LAST_STATUS_MODEL_MAX_LENGTH} characters`,
+    };
+  }
+  return { kind: "ok", value: raw };
 }
 
 function bigintToNumber(value: bigint): number {

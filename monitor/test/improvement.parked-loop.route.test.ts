@@ -60,9 +60,16 @@ interface ApplyCapState {
   rearm_hint: string | null;
 }
 
+interface ParkedPatternRow {
+  pattern_signature: string;
+  agent: string | null;
+  cause: string;
+}
+
 interface LearningLogBody {
   total_patterns: number;
   apply_cap_state: ApplyCapState;
+  loop_suppression_state: { parked_patterns: ParkedPatternRow[] };
 }
 
 let app: FastifyInstance;
@@ -204,5 +211,37 @@ test("K=3: a second cap on one agent moves the pattern count, not the agent coun
     body.apply_cap_state.capped_agents,
     2,
     "still two parked agents — patterns and agents are counted separately",
+  );
+});
+
+// The cap COUNTS and the parked ROWS are computed by separate queries over separate
+// predicates — the counts off the cap stamp, the rows off any terminal transition.
+// Nothing else pins that they describe the same caps: the row/bucket agreement pinned
+// in improvement.loop-suppression.route.test.ts covers the per-cycle buckets, not
+// apply_cap_state. Both directions are asserted here, because each fails differently —
+// rows narrowed to the cap predicate lose the non-cap parks, and counts widened to the
+// row predicate over-report the cap.
+test("the parked rows carry every capped pattern, over a population wider than the cap", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const body = await fetchState();
+  const mine = body.loop_suppression_state.parked_patterns.filter((row) =>
+    row.pattern_signature.startsWith(SUITE_MARKER),
+  );
+  const capped = mine.filter((row) => row.cause === "repeat-apply-cap");
+
+  assert.strictEqual(
+    capped.length,
+    body.apply_cap_state.capped_patterns,
+    "one cap-caused row per counted capped pattern",
+  );
+  assert.strictEqual(
+    new Set(capped.map((row) => row.agent)).size,
+    body.apply_cap_state.capped_agents,
+    "the distinct agents behind those rows are the parked agents",
+  );
+  assert.strictEqual(
+    mine.length,
+    capped.length + 2,
+    "plus the two terminal non-cap rows — a row set narrowed to the cap predicate fails here",
   );
 });

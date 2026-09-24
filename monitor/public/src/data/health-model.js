@@ -119,6 +119,62 @@ function toPayloadRows(payload) {
   });
 }
 
+// 셸이 폴링한 harness 스토어 → 단일 harness 상태. 풋터 롤업 · System map nav 숫자 ·
+// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 세 표면이 어긋날 수 없음.
+// 파트 분모는 '셸이 실제로 관측한' 파트뿐 — 미관측 파트를 ok 로 세지 않는다.
+
+// 스토어가 ready 일 때만 값 추출 — 미수신을 0/빈값으로 꾸미지 않음 (unknown → null).
+function readReady(state, pick) {
+  return state && state.status === 'ready' ? pick(state.data) : null;
+}
+
+// 데몬 다운 = effective_status ≠ ok. nav 배지는 fold.daemonsDown 을 읽는다 → 여기가 단일 출처.
+function countDaemonsDown(livePayload) {
+  return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
+}
+
+// tone → 파트 관측 결과. ok=정상 · crit/warn=고장 · 그 외(info·비ready)=관측 못 함(null).
+// 모르는 파트는 분모에서 빠진다 — 정상으로도 고장으로도 세지 않음.
+const PART_OK_BY_TONE = { ok: true, crit: false, warn: false };
+
+// 셸 스토어 → resolveCardFacts 입력 이름. 미폴링 스토어도 loading 계약으로 채워
+// resolver 가 옵셔널 체크 없이 같은 형태를 읽는다.
+const STORE_UNPOLLED = { status: 'loading', data: null };
+
+function toCardStates(states) {
+  return {
+    pgState: states.healthState || STORE_UNPOLLED,
+    daemonState: states.liveState || STORE_UNPOLLED,
+    hookState: states.hookState || STORE_UNPOLLED,
+    hookFailState: states.hookFailState || STORE_UNPOLLED,
+  };
+}
+
+// 파트 판정은 System map 과 같은 resolveCardFacts tone 하나에서 나온다 — 두 번째 분류기를
+// 두면 같은 payload 로 레인은 'down', 맵은 '데이터 없음' 이라 말할 수 있음 (SRP).
+function foldHarness(states = {}) {
+  const cardStates = toCardStates(states);
+  const parts = HEALTH_CARD_DEFS.map((def) => {
+    const facts = resolveCardFacts(def, cardStates);
+    const ok = facts.status === 'ready' ? PART_OK_BY_TONE[facts.tone] : undefined;
+    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok };
+  });
+  const checked = parts.filter((p) => p.ok !== null);
+  const down = checked.filter((p) => p.ok === false);
+
+  return {
+    status: checked.length === 0 ? 'unavailable' : 'ready',
+    partsOk: checked.length - down.length,
+    partsChecked: checked.length,
+    partsTotal: parts.length,
+    downNames: down.map((p) => p.name),
+    uncheckedNames: parts.filter((p) => p.ok === null).map((p) => p.name),
+    daemonsDown: readReady(states.liveState, countDaemonsDown),
+    failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
+    version: readReady(states.healthState, (d) => d?.version || null),
+  };
+}
+
 window.HealthModel = {
   HEALTH_CARD_DEFS,
   isDaemonStale,
@@ -127,4 +183,5 @@ window.HealthModel = {
   humanizePayloadKey,
   formatPayloadValue,
   toPayloadRows,
+  foldHarness,
 };
