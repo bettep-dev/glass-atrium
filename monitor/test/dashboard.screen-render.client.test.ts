@@ -115,3 +115,37 @@ test("a tile heads with an h2 whose window keeps its own case, and leads with th
   assert.equal(value.length, 1, "the value uses the Cost page's KPI scale");
   assert.equal(collectText(value[0]), "40");
 });
+
+// Real-enough UI for the outcome tile builder: the rate passes through untouched so each judged status can be driven directly.
+const rateMod = (await loadScreenModule(DASH_SRC, {
+  UI: {
+    resolveOutcomeRate: (data: unknown) => data,
+    formatInt: (n: number) => String(n),
+    formatPctWithDenominator: (num: number, den: number) => `${num}/${den}`,
+    LOW_N_MIN: 20,
+  },
+  React: createReactStub(),
+})) as Record<string, unknown>;
+const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
+
+test("the Task results tile headlines a verdict for every judged status and keeps the count as secondary detail", () => {
+  const judged = [["low-n", "neutral"], ["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
+  const verdicts = judged.map(([status, tone]) => {
+    const tile = buildOutcomeTile({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
+    assert.doesNotMatch(tile.value, /\d|—/, `${status}: the headline is a verdict, not a number or a blank`);
+    assert.match(String(tile.detail), /40/, `${status}: the count stays visible beside the verdict`);
+    return tile.value;
+  });
+  assert.equal(new Set(verdicts).size, judged.length, "each judged status reads as its own verdict");
+});
+
+test("a tile with detail renders the headline first and the detail outside the KPI-scale value", () => {
+  const tile = { ...READY_TILE, value: "Within lines", detail: "40 outcomes", hint: "Shares of writer-emitted outcomes." };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const value = findNodes(tree, (n) => classOf(n).includes("kpi-value"));
+  assert.equal(value.length, 1);
+  assert.equal(collectText(value[0]), "Within lines");
+  const text = collectText(tree);
+  assert.ok(text.includes("40 outcomes"), "the detail renders");
+  assert.ok(text.indexOf("Within lines") < text.indexOf("40 outcomes"), "the verdict precedes the count");
+});

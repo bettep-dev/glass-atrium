@@ -222,6 +222,7 @@ function StatusTile({ tile, onNav, onRetry }) {
           {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{TONE_WORD[tile.tone]}</Badge>}
         </div>
       )}
+      {tile.detail && tile.status !== 'loading' && <div className="fs-body text-dim">{tile.detail}</div>}
       <div className="fs-meta text-dim dash-tile-hint">{tile.hint}</div>
       {tile.status === 'error' ? (
         <button className="btn sm self-start" onClick={onRetry}>Retry</button>
@@ -536,7 +537,7 @@ function buildOutcomeTile(outcomesState) {
   const pending = buildPendingTile(base, outcomesState, "Couldn't load task results.");
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
-  return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), hint: describeOutcomeHint(rate) };
+  return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate) };
 }
 
 // 판정 → 타일 상태. low-n 은 ready 가 아니다 — 표본 부족을 '정상'으로 읽히게 두지 않는다.
@@ -544,9 +545,18 @@ const OUTCOME_TILE_STATUS = {
   unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
 };
 
+// 판정이 헤드라인, 수는 detail 보조 — low-n 도 판정 문구를 가진다(표본 부족이 빈칸으로 읽히지 않게).
+const OUTCOME_VERDICT = {
+  'low-n': 'Too few to judge', ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line',
+};
+
 function describeOutcomeValue(rate) {
-  if (rate.status === 'unavailable' || rate.status === 'empty') return '—';
-  if (rate.status === 'low-n' || rate.status === 'ok') return formatInt(rate.writerTotal);
+  return OUTCOME_VERDICT[rate.status] ?? '—';
+}
+
+function describeOutcomeDetail(rate) {
+  if (rate.status === 'low-n' || rate.status === 'ok') return `${formatInt(rate.writerTotal)} outcomes`;
+  if (rate.status !== 'warn' && rate.status !== 'crit') return null;
   const share = rate.status === 'crit' ? rate.breakage : rate.openCaveats;
   return window.UI.formatPctWithDenominator(share, rate.writerTotal);
 }
@@ -554,10 +564,10 @@ function describeOutcomeValue(rate) {
 function describeOutcomeHint(rate) {
   if (rate.status === 'unavailable') return 'No writer-emitted outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return `Sample below ${window.UI.LOW_N_MIN} — too small to judge.`;
-  if (rate.status === 'crit') return 'Failed or blocked share is above its line.';
-  if (rate.status === 'warn') return 'Open done-with-caveats share is above its line.';
-  return `${formatInt(rate.writerTotal)} writer-emitted outcomes, all shares within their lines.`;
+  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} writer-emitted outcomes to judge.`;
+  if (rate.status === 'crit') return 'Failed or blocked share of writer-emitted outcomes.';
+  if (rate.status === 'warn') return 'Open done-with-caveats share of writer-emitted outcomes.';
+  return 'Failed and caveat shares of writer-emitted outcomes.';
 }
 
 // 타일 3 — 함대. 정지(suspension) 사실은 Agents 계획(clauded-docs/39585 T1)이 아직 발행하지 않는다.
