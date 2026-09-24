@@ -600,7 +600,8 @@ function CostTrendCard({ state, days, onRetry }) {
         title="Cost over time"
         right={
           <button
-            className="btn ghost sm"
+            type="button"
+            className="btn sm"
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
@@ -671,7 +672,7 @@ function CostTrendChart({ rows, bandOn }) {
         <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
         {bandOn && (
           <Area
-            type="monotone"
+            type="linear"
             dataKey="upperBand"
             stroke="none"
             fill="rgb(var(--faint) / 0.18)"
@@ -681,7 +682,7 @@ function CostTrendChart({ rows, bandOn }) {
         )}
         {bandOn && (
           <Area
-            type="monotone"
+            type="linear"
             dataKey="lowerBand"
             stroke="none"
             fill="rgb(var(--elev))"
@@ -691,7 +692,7 @@ function CostTrendChart({ rows, bandOn }) {
         )}
         {bandOn && (
           <Line
-            type="monotone"
+            type="linear"
             dataKey="rollingMean"
             stroke="rgb(var(--dim))"
             strokeDasharray="4 4"
@@ -702,7 +703,7 @@ function CostTrendChart({ rows, bandOn }) {
           />
         )}
         <Line
-          type="monotone"
+          type="linear"
           dataKey="actual"
           stroke="rgb(var(--accent))"
           strokeWidth={2}
@@ -843,7 +844,7 @@ function TokenStackedArea({ points }) {
         {TOKEN_CATEGORIES.map((cat) => (
           <Area
             key={cat.key}
-            type="monotone"
+            type="linear"
             dataKey={cat.key}
             stackId="tokens"
             stroke={`rgb(var(${cat.colorVar}))`}
@@ -1013,8 +1014,8 @@ function ModelCostCard({ state, days, onRetry, onNav }) {
                 <Pill>{fallbackCount} est. rate</Pill>
               </span>
             )}
-            <button className="btn ghost sm" onClick={() => onNav('model-config')}>
-              Models &amp; budgets
+            <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
+              Models &amp; budgets ›
             </button>
           </div>
         }
@@ -1290,7 +1291,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         />
         <Tooltip content={<CacheHitTooltipC/>}/>
         <Line
-          type="monotone"
+          type="linear"
           dataKey="rate_pct"
           stroke="rgb(var(--info))"
           strokeWidth={2}
@@ -1364,6 +1365,7 @@ function SessionDistributionCard({ state, days, onRetry }) {
 
 function SessionDistributionBody({ state, days, onRetry }) {
   const [histogramOpen, setHistogramOpen] = useStateC(false);
+  const [openSession, setOpenSession] = useStateC(null);
 
   // Hooks run before any early return — an unready payload reduces to an empty list.
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1383,33 +1385,57 @@ function SessionDistributionBody({ state, days, onRetry }) {
   return (
     <>
       <div className="space-y-1.5">
-        {rollup.top.map((s) => <SessionRowC key={s.session_id} session={s}/>)}
+        <div className="flex items-center gap-3 fs-meta text-faint pb-1 border-b border-line" aria-hidden="true">
+          <span className="flex-1">Session · model</span>
+          <span>Cost</span>
+          <span className="w-20 text-right">Tokens</span>
+          <span className="w-32 text-right">Last seen</span>
+        </div>
+        {rollup.top.map((s) => (
+          <SessionRowC key={s.session_id} session={s} onOpen={() => setOpenSession(s)}/>
+        ))}
         {rollup.other && (
           <button
             type="button"
             className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+            aria-label={`Other ${rollup.other.count} of ${rollup.total} sessions, ${formatUsdC(rollup.other.cost_usd)} — open the cost distribution`}
             onClick={() => setHistogramOpen(true)}>
             <span className="text-dim flex-1">
               Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
             </span>
             <span className="text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</span>
-            <span className="text-faint">distribution</span>
+            <span className="btn sm" aria-hidden="true">Distribution ›</span>
           </button>
         )}
       </div>
       {histogramOpen && (
         <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
+      {openSession && (
+        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)}/>
+      )}
     </>
   );
 }
 
-function SessionRowC({ session }) {
+function getSessionModelLabel(model) {
+  return !model || isUnattributedModel(model) ? UNATTRIBUTED_MODEL_LABEL : model;
+}
+
+function SessionRowC({ session, onOpen }) {
   const { formatRelativeTime, formatKstFull } = window.UI;
+  const modelLabel = getSessionModelLabel(session.top_model);
 
   return (
-    <div className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
-      <span className="text-dim truncate flex-1" title={session.session_id}>{session.session_id}</span>
+    <button
+      type="button"
+      className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+      aria-label={`Session ${session.session_id}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
+      onClick={onOpen}>
+      <span className="flex-1 min-w-0 flex items-baseline gap-2">
+        <span className="text-dim truncate" title={session.session_id}>{session.session_id}</span>
+        <span className="text-faint truncate shrink-0 max-w-[45%]">{modelLabel}</span>
+      </span>
       <span className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</span>
       <span className="text-faint w-20 text-right">{formatTokenCompactC(session.total_tokens)}</span>
       {/* last_event_at is a real UTC ISO instant — relative label, absolute day-bucket time on hover. */}
@@ -1418,7 +1444,32 @@ function SessionRowC({ session }) {
         title={session.last_event_at ? formatKstFull(session.last_event_at) : undefined}>
         {session.last_event_at ? formatRelativeTime(session.last_event_at) : '—'}
       </span>
-    </div>
+    </button>
+  );
+}
+
+function SessionDetailDrawerC({ session, onClose }) {
+  const { DetailSurface, formatKstFull } = window.UI;
+  const facts = [
+    ['Session', session.session_id],
+    ['Model', getSessionModelLabel(session.top_model)],
+    ['Cost', formatUsdC(session.total_cost_usd)],
+    ['Tokens', formatTokenCompactC(session.total_tokens)],
+    ['Events', formatIntC(session.event_count)],
+    ['Last seen', session.last_event_at ? formatKstFull(session.last_event_at) : '—'],
+  ];
+
+  return (
+    <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 fs-meta">
+        {facts.map(([term, value]) => (
+          <React.Fragment key={term}>
+            <dt className="text-dim">{term}</dt>
+            <dd className="font-mono text-ink break-all">{value}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </DetailSurface>
   );
 }
 
@@ -1431,7 +1482,27 @@ function SessionHistogramDrawerC({ bins, total, onClose }) {
       <div style={{ width: '100%', height: 260 }}>
         <SessionDistributionChart bins={bins}/>
       </div>
+      <SessionHistogramLegendC/>
     </DetailSurface>
+  );
+}
+
+function SessionHistogramLegendC() {
+  const outlierFloor = SESSION_COST_BINS.find((b) => b.isOutlier)?.min;
+  const items = [
+    { key: 'typical', color: 'rgb(var(--accent) / 0.85)', label: 'Sessions per cost band' },
+    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', label: `Outlier bands — $${outlierFloor} or more per session` },
+  ];
+
+  return (
+    <ul className="flex flex-wrap gap-4 mt-3 fs-meta text-dim" aria-label="Histogram legend">
+      {items.map((item) => (
+        <li key={item.key} className="flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
+          {item.label}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1602,7 +1673,7 @@ function ParseErrorChart({ rows }) {
         </Bar>
         <Line
           yAxisId="ratio"
-          type="monotone"
+          type="linear"
           dataKey="error_ratio_pct"
           stroke="rgb(var(--warn))"
           strokeWidth={1.5}
@@ -1711,6 +1782,7 @@ function TurnStatsBody({ state, days, onRetry }) {
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
+  const sessionPopulation = Number(state.data?.stop_reason_session_count) || 0;
   const turns = state.data?.turns ?? null;
   if (stopReasons.length === 0) {
     return <EmptyStateC message={`No turn events in the last ${days} days.`}/>;
@@ -1724,7 +1796,11 @@ function TurnStatsBody({ state, days, onRetry }) {
     <>
       {/* turns 집계 — 평균/최대/총 턴 (세션당 턴 수). */}
       {turns && <TurnAggregateRow turns={turns}/>}
-      <TurnStopReasonTable rows={stopReasons} maxEvents={maxEvents} totalEvents={totalEvents}/>
+      <TurnStopReasonTable
+        rows={stopReasons}
+        maxEvents={maxEvents}
+        totalEvents={totalEvents}
+        sessionPopulation={sessionPopulation}/>
     </>
   );
 }
@@ -1764,15 +1840,22 @@ function TurnAggregateRow({ turns }) {
 }
 
 // stop_reason 분포 — 4컬럼 테이블 (분류 · 이벤트수+인라인바 · 세션수 · 비중). ≤5컬럼.
-function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
+function getStopReasonSessionShare(sessionCount, population) {
+  return population > 0 ? sessionCount / population : null;
+}
+
+function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
   return (
     <table className="tbl cost-tbl">
+      <caption className="fs-meta text-dim text-left pb-2">
+        {`${formatIntC(sessionPopulation)} sessions with a recorded turn — a session counts under every stop reason it hit, so Sessions does not sum to that total.`}
+      </caption>
       <thead>
         <tr>
           <th>stop_reason</th>
           <th className="num">Events</th>
           <th className="num">Sessions</th>
-          <th className="num">Share</th>
+          <th className="num">Event share</th>
         </tr>
       </thead>
       <tbody>
@@ -1781,6 +1864,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
           const events = Number(r.event_count) || 0;
           const sessions = Number(r.session_count) || 0;
           const pct = totalEvents > 0 ? (events / totalEvents) : 0;
+          const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
           const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
           return (
             <tr key={r.stop_reason}>
@@ -1806,7 +1890,12 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
                   <span className="font-mono">{formatIntC(events)}</span>
                 </div>
               </td>
-              <td className="num">{formatIntC(sessions)}</td>
+              <td className="num">
+                {formatIntC(sessions)}
+                {sessionShare !== null && (
+                  <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+                )}
+              </td>
               <td className="num text-dim">{(pct * 100).toFixed(1)}%</td>
             </tr>
           );

@@ -70,6 +70,7 @@ interface SessionDistributionDbRow {
   total_tokens: bigint;
   event_count: bigint;
   last_event_at: Date;
+  top_model: string | null;
 }
 
 interface SessionCountRow {
@@ -109,6 +110,7 @@ interface TurnStatsDbRow {
   avg_turns: Prisma.Decimal | null;
   max_turns: number | null;
   turn_event_count: bigint;
+  stop_reason_session_count: bigint;
 }
 
 export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
@@ -269,12 +271,22 @@ async function handleSessionDistribution(
       prisma.$queryRaw<SessionDistributionDbRow[]>`
         SELECT
           session_id,
+          (
+            SELECT m.model
+            FROM core.cost_events m
+            WHERE m.session_id = e.session_id
+              AND m.event_date >= ${windowLowerBound}
+              AND m.model IS NOT NULL
+            GROUP BY m.model
+            ORDER BY SUM(m.cost_usd) DESC, m.model
+            LIMIT 1
+          ) AS top_model,
           COALESCE(SUM(cost_usd), 0)::numeric(12,6) AS total_cost_usd,
           SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)::bigint
             AS total_tokens,
           COUNT(*)::bigint AS event_count,
           MAX(event_date + event_time) AS last_event_at
-        FROM core.cost_events
+        FROM core.cost_events e
         WHERE event_date >= ${windowLowerBound}
         GROUP BY session_id
         HAVING SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) > 0
@@ -308,6 +320,7 @@ async function handleSessionDistribution(
       total_tokens: bigintToNumber(row.total_tokens),
       event_count: bigintToNumber(row.event_count),
       last_event_at: row.last_event_at.toISOString(),
+      top_model: row.top_model,
     }));
 
     request.log.info(
@@ -442,7 +455,8 @@ async function handleTurnStats(
           SUM(num_turns) FILTER (WHERE num_turns > 0)::bigint        AS total_turns,
           AVG(num_turns) FILTER (WHERE num_turns > 0)::numeric(10,4) AS avg_turns,
           MAX(num_turns) FILTER (WHERE num_turns > 0)               AS max_turns,
-          COUNT(*) FILTER (WHERE num_turns > 0)::bigint             AS turn_event_count
+          COUNT(*) FILTER (WHERE num_turns > 0)::bigint             AS turn_event_count,
+          COUNT(DISTINCT session_id)::bigint                        AS stop_reason_session_count
         FROM core.cost_events
         WHERE event_date >= ${windowLowerBound}
           AND kind = 'turn'
@@ -500,7 +514,13 @@ async function handleTurnStats(
       },
       "cost query complete",
     );
-    return { days, stop_reasons: stopReasons, turns, fetched_at: new Date().toISOString() };
+    return {
+      days,
+      stop_reasons: stopReasons,
+      stop_reason_session_count: bigintToNumber(turnRow.stop_reason_session_count),
+      turns,
+      fetched_at: new Date().toISOString(),
+    };
   } catch (error) {
     return failWithDb(request, reply, "/api/cost/turn-stats", error);
   }

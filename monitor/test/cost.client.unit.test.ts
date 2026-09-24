@@ -77,6 +77,8 @@ interface CostHelpers {
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
   getAsOfText: (ms: number | null, loading: boolean) => string;
+  getSessionModelLabel: (model: string | null | undefined) => string;
+  getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -403,4 +405,18 @@ test("every tile state is distinct, and only ready renders a measured value", ()
     assert.ok(cost.getTileNote(status, "no normal to compare against").length > 0, status);
   }
   assert.strictEqual(cost.getTileNote("ready", "x"), "", "a ready tile states its value, not a note");
+});
+
+test("a session's model label names the model, and an unattributed model never reads as a model name", () => {
+  assert.equal(cost.getSessionModelLabel("claude-opus-4-1"), "claude-opus-4-1");
+  for (const model of [null, undefined, "", "unknown", "<synthetic>"]) {
+    assert.equal(cost.getSessionModelLabel(model), "Unattributed", `model ${String(model)}`);
+  }
+});
+
+test("a stop reason's session share is taken over the whole session population, never over the column sum", () => {
+  // Two reasons each hit by 6 of 10 sessions: the column sums to 12, yet each share stays 0.6.
+  assert.equal(cost.getStopReasonSessionShare(6, 10), 0.6);
+  assert.equal(cost.getStopReasonSessionShare(10, 10), 1);
+  assert.equal(cost.getStopReasonSessionShare(0, 0), null, "an empty population has no share");
 });
