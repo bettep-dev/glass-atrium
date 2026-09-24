@@ -64,14 +64,14 @@ One scope file per scope; ORCHESTRATOR is the one exception, a tightly coupled f
 
 ### Tier 3 — Cross-cutting (conditional inheritance)
 
-Each file below is inherited on its OWN condition. DEV is the common carrier, but QA, META, PLANNING, REPORT and ORCHESTRATOR each carry some, so this tier is not DEV-exclusive. The `†‡§¶` markers are the Compliance Matrix footnotes below, which hold the exact subsets — stated there once.
+Each file below is inherited on its own condition. DEV is the common carrier, but QA, META, PLANNING, REPORT and ORCHESTRATOR each carry some, so this tier is not DEV-exclusive. The `†‡§¶` markers are the Compliance Matrix footnotes below, which hold the exact subsets — stated there once.
 
 | Tier-3 file | Inherited by |
 |---|---|
 | `scoped/shared-comment-logging.md` | DEV · QA · META † |
 | `scoped/shared-performance.md` | DEV · META † |
 | `scoped/shared-search-first.md` | DEV · META † |
-| `scoped/shared-testing.md` | DEV · META † |
+| `scoped/shared-testing.md` | DEV · META † · glass-atrium-qa-code-reviewer |
 | `scoped/shared-type-safety.md` | DEV · META † |
 | `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
 | `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR unconditionally · autoagent-touching DEV subset § |
@@ -85,12 +85,13 @@ Each file below is inherited on its OWN condition. DEV is the common carrier, bu
   - It takes the files the table above marks `META †`, because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance").
   - The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". Its registry row keeps an empty `conditional` list, and `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry.
   - `glass-atrium-meta-agent` inherits no Tier-3 file but `shared-authoring-hygiene.md`.
-  - **`shared-authoring-hygiene.md` is the exception on both counts** — the one Tier-3 file BOTH META agents take, and the one with no DEV member. `glass-atrium-meta-agent` rewrites agent instructions, so a rule binding authored instruction text binds it.
+  - **`shared-authoring-hygiene.md` is the exception on both counts** — the one Tier-3 file both META agents take, and the one with no DEV member. `glass-atrium-meta-agent` rewrites agent instructions, so a rule binding authored instruction text binds it.
     - Its other members are PLANNING and REPORT, whose authored documents it binds equally, so its META cell carries a bare `✓` and no subset marker.
-- **QA** takes `shared-comment-logging.md` and `shared-investigation-discipline.md` on both agents, `shared-hook-capability-contract.md` only on hook work, and two files on glass-atrium-qa-code-reviewer alone.
-  - **`shared-naming.md` and `shared-code-structure.md` are glass-atrium-qa-code-reviewer ONLY.** glass-atrium-qa-debugger is read-only by its Guardrails and authors no identifier or code, so neither authoring rule applies to it; DEV takes both unconditionally.
+- **QA** takes `shared-comment-logging.md` and `shared-investigation-discipline.md` on both agents, `shared-hook-capability-contract.md` only on hook work, and the reviewer-only files below.
+  - **`shared-naming.md`, `shared-code-structure.md` and `shared-testing.md` are glass-atrium-qa-code-reviewer only.** DEV takes each unconditionally.
+    - Why: glass-atrium-qa-debugger is read-only by its Guardrails and authors no identifier, code or test, so none of these authoring rules applies to it.
     - Their Compliance Matrix QA cells carry a bare `✓` with no footnote marker: the Tier-3 row names the single agent outright, which no marker could state more precisely.
-  - **`shared-investigation-discipline.md` binds BOTH QA agents unconditionally**, so its `✓` carries no subset qualifier; glass-atrium-qa-debugger is its heaviest consumer — diagnosis IS the investigation sequence.
+  - **`shared-investigation-discipline.md` binds both QA agents unconditionally**, so its `✓` carries no subset qualifier; glass-atrium-qa-debugger is its heaviest consumer — diagnosis is the investigation sequence.
     - ORCHESTRATOR is deliberately absent: its half of the duty (routing the escalation, rejecting a conclusion carrying no evidence) lives in `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`.
 
 ### Injected Blocks (SubagentStart allowlist)
@@ -136,7 +137,7 @@ Two injection sources are not rule files of this matrix, and neither gains membe
 
 ### Membership vs. Delivery (per tier)
 
-Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIVERY, the channel that actually carries the text to a running agent. Two channels carry rule text, with different budgets: the HOST project-instructions and the SubagentStart channels above. Every YES below is a measurement.
+Tier membership — which rules a scope *should* load — is distinct from delivery, the channel that actually carries the text to a running agent. Two channels carry rule text, with different budgets: the HOST project-instructions and the SubagentStart channels above. Every YES below is a measurement.
 
 | Tier | Channel | Arrives? |
 |---|---|---|
@@ -146,13 +147,13 @@ Tier MEMBERSHIP — which rules a scope *should* load — is DISTINCT from DELIV
 | Tier 3 — CONDITIONAL members (footnote cells) | path pointer only | NO body — selection cannot key on a task at spawn |
 | `rules/glass-atrium/` members and the ALL column | HOST project-instructions | YES — and deliberately NOT selected by the part slots, to avoid delivering them twice |
 
-- **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there is the set the MAIN SESSION holds — the Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope.
+- **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there is the set the main session holds — the Tier-1 files, the ORCHESTRATOR Tier-2 pair, this file and `rules/glass-atrium/shared-self-improve-hygiene.md` — whatever the subagent's own scope.
   - Measured by reading a spawned subagent's received project-instructions directly.
-- **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the PARENT session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat WHAT arrives as established and WHY as open.
+- **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the parent session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat what arrives as established and why as open.
 - **Membership source**: membership MUST be read from the registry row, not from this file; this matrix stays the governance SoT the rows are authored from.
   - The reconcile binding the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, run off the delivery path, where a fail-open matrix parser is the right instrument.
-  - That reconcile reads the **Tier-2 and Tier-3 DECLARATION ROWS, never the Compliance Matrix table cell**, which is a coarser summary of them.
-    - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on the `shared-naming.md` and `shared-code-structure.md` QA cells (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
+  - That reconcile reads the **Tier-2 and Tier-3 declaration rows, never the Compliance Matrix table cell**, which is a coarser summary of them.
+    - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on every reviewer-only QA cell (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
 - **Standing consequence**: a duty that binds an agent may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
   - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of those three.
@@ -216,7 +217,7 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 | shared-comment-logging.md | | ✓ | ✓† | | | | | ✓ | | | |
 | shared-performance.md | | ✓ | ✓† | | | | | | | | |
 | shared-search-first.md | | ✓ | ✓† | | | | | | | | |
-| shared-testing.md | | ✓ | ✓† | | | | | | | | |
+| shared-testing.md | | ✓ | ✓† | | | | | ✓ | | | |
 | shared-type-safety.md | | ✓ | ✓† | | | | | | | | |
 | shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
 | shared-hook-capability-contract.md | | ✓¶ | | | | | | ✓ | | | |
