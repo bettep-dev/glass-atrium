@@ -1,7 +1,7 @@
 // Screen 02 — Cost / Token (live data via /api/dashboard/* + /api/cost/*).
-// 카드: KPI×4 → 토큰 추이 → 카테고리 단가 → 모델별 비용 → 캐시·세션·parse_error → 이상 탐지.
+// Decision tier: alarm lane → KPI x4 → cost trend → model ledger → session list.
+// Instrumentation tier: three closed disclosures — token volume, turn statistics, log integrity.
 // Single global period 토글이 모든 fetch 의 days 매개변수를 구동 (AbortController 1개/wave).
-// AnomalyCost 는 tokenState 재사용 (추가 fetch 없음).
 // Hooks C-suffix aliased — window-scope 충돌 방지.
 const {
   useState: useStateC,
@@ -27,7 +27,7 @@ const COST_PERIODS = [
 
 // Token categories (bottom→top stacking) — --cat-1~4 단일 토큰셋.
 // ModelCostCard 의 cost_cache_creation→--cat-1 … cost_output→--cat-4 매핑과 1:1 정렬
-// → 인접 카드(TokenCategory/TokenStacked/ModelCost) legend 색상 일관성.
+// → 원장 카테고리 행 · Token volume 스택 · 모델 sub-bar 간 legend 색상 일관성.
 const TOKEN_CATEGORIES = [
   { key: 'cache_creation_tokens', label: 'Cache write', colorVar: '--cat-1' },
   { key: 'cache_read_tokens',     label: 'Cache read', colorVar: '--cat-2' },
@@ -56,21 +56,17 @@ const PARSE_ERROR_CRIT_THRESHOLD = 0.05;
 const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
-// JSX inline-object 할당 회피용 hoist.
-const anomalyChartMargin = { top: 6, right: 8, left: 0, bottom: 0 };
-// Recharts <Legend wrapperStyle> = HTML DOM div → 공유 토큰 var(--fs-meta) 소비 (차트 SVG tick 과 달리 DOM 텍스트).
-const anomalyLegendStyle = { fontSize: 'var(--fs-meta)', paddingTop: 4 };
-
 function ScreenCost({ onNav }) {
   const { PageHeader, Icon, TypeScaleStyle } = window.UI;
 
   const [days, setDays] = useStateC(30);
   const [refreshTick, setRefreshTick] = useStateC(0);
+  // "As of" = client receive time of the wave's LATEST successful fetch → one stamp per screen.
+  const [asOfMs, setAsOfMs] = useStateC(null);
 
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
   const [kpiState,      setKpiState]      = useStateC({ status: 'loading', data: null, error: null }); // KPI band (고정 윈도우 — days 무관)
   const [tokenState,    setTokenState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [token7State,   setToken7State]   = useStateC({ status: 'loading', data: null, error: null }); // KPI sparkline source (7d 고정)
   const [modelState,    setModelState]    = useStateC({ status: 'loading', data: null, error: null });
   const [cacheState,    setCacheState]    = useStateC({ status: 'loading', data: null, error: null });
   const [sessionState,  setSessionState]  = useStateC({ status: 'loading', data: null, error: null });
@@ -82,6 +78,14 @@ function ScreenCost({ onNav }) {
 
   const triggerRefresh = useCallbackC(() => setRefreshTick((t) => t + 1), []);
 
+  // One derivation, two readers — the lane states the same verdict tile 1 renders.
+  const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
+  const alarmRows = computeAlarmRows({
+    hot: hotVerdict,
+    latestOutsideBand: isLatestOutsideBand(tokenState),
+    parseError: getParseErrorDayCounts(errorState),
+  });
+
   useEffectC(() => {
     const ctrl = new AbortController();
     abortRef.current?.abort();
@@ -89,36 +93,32 @@ function ScreenCost({ onNav }) {
 
     setKpiState({ status: 'loading', data: null, error: null });
     setTokenState({ status: 'loading', data: null, error: null });
-    setToken7State({ status: 'loading', data: null, error: null });
     setModelState({ status: 'loading', data: null, error: null });
     setCacheState({ status: 'loading', data: null, error: null });
     setSessionState({ status: 'loading', data: null, error: null });
     setErrorState({ status: 'loading', data: null, error: null });
     setTurnState({ status: 'loading', data: null, error: null });
+    setAsOfMs(null);
+
+    const markReceived = () => setAsOfMs(Date.now());
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
     // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
-    const tasks = [
-      runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState),
-      runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState),
-      runFetchC('/api/dashboard/cost-timeseries?days=7',       ctrl.signal, setToken7State),
-      runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState),
-      runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState),
-      runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState),
-      runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl.signal, setErrorState),
-      runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl.signal, setTurnState),
-    ];
+    runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState, markReceived);
+    runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState, markReceived);
+    runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState, markReceived);
+    runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState, markReceived);
+    runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState, markReceived);
+    runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl.signal, setErrorState, markReceived);
+    runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl.signal, setTurnState, markReceived);
 
     return () => ctrl.abort();
   }, [days, refreshTick]);
 
   // 패널 로딩 중 period 토글 비활성화 — 빠른 연타 시 abort 스톰 차단.
-  const anyLoading =
-    tokenState.status === 'loading' ||
-    modelState.status === 'loading' ||
-    cacheState.status === 'loading' ||
-    sessionState.status === 'loading' ||
-    errorState.status === 'loading';
+  // Every payload counts: a gate reading a subset lets the toggle fire while a panel is still in flight.
+  const anyLoading = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState]
+    .some((st) => st.status === 'loading');
 
   return (
     <div className="cost-screen flex flex-col">
@@ -135,6 +135,13 @@ function ScreenCost({ onNav }) {
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: 11.5px; line-height: 1.5; color: rgb(var(--dim)); }
         .cost-screen .kpi-hint { color: rgb(var(--dim)); }
+        .cost-disc > summary { list-style: none; }
+        .cost-disc > summary::-webkit-details-marker { display: none; }
+        .cost-disc > summary .disc-caret { transition: transform 140ms ease; color: rgb(var(--faint)); }
+        .cost-disc[open] > summary .disc-caret { transform: rotate(90deg); }
+        @media (prefers-reduced-motion: reduce) {
+          .cost-disc > summary .disc-caret { transition: none; }
+        }
       `}</style>
       <div className="flex-shrink-0">
         <PageHeader
@@ -159,252 +166,430 @@ function ScreenCost({ onNav }) {
                 <Icon name="refresh" size={14}/>
                 Refresh
               </button>
+              <AsOfStampC ms={asOfMs} loading={anyLoading}/>
             </>
           }
         />
       </div>
 
-      {/* 1. KPI×4 (R09) — 오늘 비용 · 7일 비용 · 시간당 burn (3h) · 성공 작업당 비용 */}
+      <AlarmLaneC rows={alarmRows}/>
+
+      {/* Decision tier — the facts a spend decision is made on, in priority order. */}
       <KpiRowC
         kpiState={kpiState}
-        token7State={token7State}
+        hot={hotVerdict}
+        trendState={tokenState}
+        modelState={modelState}
+        days={days}
         onRetry={triggerRefresh}
       />
 
-      {/* 2. 비용 추이 라인 차트 (T-CST-1) — 단일 Y축 LINE, full-width */}
       <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh}/>
 
-      {/* 2b. 예산 대비 + burn-rate 투영 (T-CST-4) — BulletBar/텍스트 투영, full-width */}
-      <BudgetCard kpiState={kpiState} onRetry={triggerRefresh}/>
-
-      {/* 3. 토큰 누적 영역 차트 (input/output 분할 — magnitude 상이 → 누적 정당) — full-width */}
-      <TokenStackedCard state={tokenState} days={days} onRetry={triggerRefresh}/>
-
-      {/* 4. 토큰 카테고리 단가 테이블 (BP-TokenCategoryTable) — full-width 5컬럼 */}
-      <TokenCategoryCard state={modelState} days={days} onRetry={triggerRefresh}/>
-
-      {/* 4. 모델별 비용 — full-width (AgentMiniBar 카드 제거 후 단독 row) */}
       <div className="mb-4">
-        <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh}/>
+        <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} onNav={onNav}/>
       </div>
 
-      {/* 5. 보조 모니터 고유 카드 — 캐시 적중률 + 세션 분포 + parse_error.
-          REGION(W3-T5): 16px gap(gap-card 표준) + 각 .card 의 --shadow-raised 로 세 카드가 한 strip 으로 안 뭉치고
-          개별 떠오른 면으로 분리. parse_error 는 임계 초과(critDays>0)일 때만 ParseErrorCard 내부에서 --warn 강조(상시 left-rule X). */}
-      <div className="grid grid-cols-3 gap-card mb-4">
-        <CacheHitCard state={cacheState} days={days} onRetry={triggerRefresh}/>
+      <div className="mb-4">
         <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh}/>
-        <ParseErrorCard state={errorState} days={days} onRetry={triggerRefresh}/>
       </div>
 
-      {/* 6. 비용 이상 탐지 (monitor 고유 유지) — full-width */}
-      <AnomalyCostCard state={tokenState} days={days} onRetry={triggerRefresh}/>
+      {/* Instrumentation tier — rare reads, closed by default. */}
+      <CostDisclosureC title="Token volume" hint="Category split over time, with the cache-hit line">
+        <div className="mb-3"><TokenLegend/></div>
+        <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}/>
+        <div className="mt-5">
+          <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh}/>
+        </div>
+      </CostDisclosureC>
 
-      {/* 7. 턴 통계 (P2-B) — stop_reason 분포 + turns 집계, full-width */}
-      <TurnStatsCard state={turnState} days={days} onRetry={triggerRefresh}/>
+      <CostDisclosureC title="Turn statistics" hint="Stop reasons and per-turn aggregates">
+        <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh}/>
+      </CostDisclosureC>
+
+      <CostDisclosureC title="Log integrity" hint="Unreadable log entries over the window">
+        <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh}/>
+      </CostDisclosureC>
     </div>
   );
 }
 
-// 1. KPI row × 4 (R09) — 오늘 비용 / 7일 비용 / 시간당 burn (3h) / 성공 작업당 비용.
-// 출처 = /api/cost/kpi (고정 윈도우 · KST 기준일). 7일 비용만 7d 일별 시리즈 sparkline 동반 —
-// 나머지는 단일 스칼라 → sparkline 없음 (A6).
-function KpiRowC({ kpiState, token7State, onRetry }) {
-  const { KPI } = window.UI;
+/**
+ * One stamp for the whole screen, withheld while a wave is in flight rather than shown stale.
+ * A freshness claim must never outlive its measurement.
+ */
+function AsOfStampC({ ms, loading }) {
+  const text = loading || ms === null
+    ? 'refreshing…'
+    : `as of ${new Date(ms).toLocaleTimeString()}`;
 
-  if (kpiState.status === 'loading') {
-    return (
-      <div className="grid grid-cols-3 gap-3 mb-4" aria-busy="true" aria-label="Loading KPIs">
-        {Array.from({ length: 3 }).map((_, i) => <KpiSkeletonC key={i}/>)}
-      </div>
-    );
-  }
-  if (kpiState.status === 'error') {
-    return (
-      <div className="mb-4">
-        <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>
-      </div>
-    );
-  }
+  return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
+}
 
-  const kpi = kpiState.data || {};
-  const todayCost = Number(kpi.today_cost_usd) || 0;
-  const week7Cost = Number(kpi.window_7d_cost_usd) || 0;
-  // null = 7일 내 done 0건 → '—' (가짜 0 금지).
-  const costPerDone = kpi.cost_per_done_usd === null || kpi.cost_per_done_usd === undefined
-    ? null
-    : Number(kpi.cost_per_done_usd) || 0;
-  const doneCount7d = Number(kpi.done_count_7d) || 0;
-
-  // 7일 비용 sparkline + delta — 7d 일별 시리즈 (token7State 재사용).
-  const cost7Points = token7State.status === 'ready' ? (token7State.data?.points ?? []) : [];
-  const costSpark = cost7Points.length > 0 ? cost7Points.map((p) => Number(p.cost_usd) || 0) : null;
-  const costDelta = computeSparkDeltaC(costSpark);
+/**
+ * Instrumentation shell — three rare-read groups over one cost-local <details>, not three card idioms.
+ * Native disclosure keeps keyboard + screen-reader semantics without a new shared atom.
+ */
+function CostDisclosureC({ title, hint, children }) {
+  const { Icon } = window.UI;
 
   return (
-    <div className="grid grid-cols-3 gap-3 mb-4">
-      <KPI
-        label="Cost today"
-        value={formatUsdC(todayCost)}
-        hint={`${window.UI.tzShortLabel()} day`}
-      />
-      <KPI
-        label="Cost, 7 days"
-        value={formatUsdC(week7Cost)}
-        delta={costDelta}
-        deltaInverse={true}
-        sparkData={costSpark}
-        sparkColor="rgb(var(--crit))"
-        hint="last 7 days"
-      />
-      <KPI
-        label="Cost per finished task"
-        value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
-        hint={costPerDone === null ? 'no done tasks in 7 days' : `7-day cost / ${formatIntC(doneCount7d)} done`}
-      />
-    </div>
+    <details className="card mb-4 cost-disc">
+      <summary className="card-head cursor-pointer select-none">
+        {/* card-head is a flex container, which drops the native marker — the caret restores the affordance. */}
+        <Icon name="chevron-right" className="disc-caret mt-0.5" size={12}/>
+        <div className="flex-1 min-w-0">
+          <div className="card-title">{title}</div>
+          {hint && <div className="card-sub mt-0.5">{hint}</div>}
+        </div>
+      </summary>
+      <div className="card-body">{children}</div>
+    </details>
   );
 }
 
-function KpiSkeletonC() {
-  return (
-    <div className="kpi" style={{ pointerEvents: 'none' }}>
-      <div className="kpi-label"><SkelC w={80} h={11}/></div>
-      <div className="kpi-value" style={{ marginTop: 10 }}><SkelC w={120} h={26}/></div>
-    </div>
-  );
-}
+/**
+ * Alarm lane — structural, leading the screen, zero height when nothing fires.
+ * One "running hot" row (today so far, its pace, or the latest day outside its own band)
+ * + a conditional parse-error row.
+ * A payload FAILURE is never a lane row — that stays a banner at its owning group.
+ */
+function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
+  const rows = [];
 
-// 2b. BudgetCard (T-CST-4) — 오늘 지출을 자기 7일 일평균 baseline 대비로 BulletBar 표현
-// + 3h burn-rate 의 일·월 run-rate TEXT 투영(radial 게이지 금지).
-// SLOP 가드: 시스템에 사용자 설정 예산값이 없음 → 예산 수치를 발명하지 않는다.
-//   target/zone 은 "자기 7일 일평균" 이라는 실측 baseline 으로만 도출 (lower-is-better=deltaInverse 의미).
-//   실 예산 config 소스가 생기면 target 을 그 값으로 교체 (shared_change_needed 로 보고).
-function BudgetCard({ kpiState, onRetry }) {
-  const { CardHead } = window.UI;
-
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Spend vs. baseline"
-      />
-      <div className="card-body">
-        <BudgetBody kpiState={kpiState} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function BudgetBody({ kpiState, onRetry }) {
-  const { BulletBar } = window.UI;
-
-  if (kpiState.status === 'loading') {
-    return <ChartSkeletonC height={120} aria-label="Loading budget projection"/>;
+  if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
+    rows.push({ key: 'hot', tone: 'crit', text: getHotAlarmText(hot, latestOutsideBand) });
   }
-  if (kpiState.status === 'error') {
-    return <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>;
+  if (parseError.crit > 0) {
+    rows.push({
+      key: 'parse-error',
+      tone: 'warn',
+      text: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold — some spend may be unrecorded.`,
+    });
   }
 
-  const kpi = kpiState.data || {};
-  const todayCost = Number(kpi.today_cost_usd) || 0;
-  const week7Cost = Number(kpi.window_7d_cost_usd) || 0;
-  const burnRate = Number(kpi.burn_rate_3h_usd_per_hour) || 0;
+  return rows;
+}
 
-  // 7일 비용 / 7 = 일평균 baseline (실측, 발명 아님). 0 분모 → BulletBar 생략 (placeholder).
-  const avgDaily = week7Cost > 0 ? week7Cost / 7 : 0;
-  // baseline 대비 비율 — 1.0 = 일평균과 동일. zone 컷: <0.75 ok · <1.25 warn · ≥1.25 crit (lower-is-better).
-  // 정규화 분모 = baseline×2 (BulletBar 는 0-1 입력 → today/(avg×2) 로 0.5 가 baseline 위치).
-  const ratioNorm = avgDaily > 0 ? Math.min(todayCost / (avgDaily * 2), 1) : 0;
-  const targetNorm = avgDaily > 0 ? 0.5 : null;
+function getHotAlarmText(hot, latestOutsideBand) {
+  const clauses = [];
+  if (hot.isHot || hot.isPaceHot) clauses.push(hot.verdict);
+  if (latestOutsideBand) clauses.push('The latest day sits outside its own 7-day normal band.');
+  return clauses.join(' ');
+}
 
-  // 실 데이터 투영(TEXT) — 3h burn 을 일/월 run-rate 로 외삽. 게이지/radial 아님.
-  const projectedDaily = burnRate * 24;
-  const projectedMonthly = burnRate * 24 * 30;
+/**
+ * Is the newest day outside its own rolling band?
+ * Below the rolling window the question has no answer, and "no answer" must not fire the lane.
+ */
+function isLatestOutsideBand(trendState) {
+  const points = getTrendPoints(trendState);
+  if (points.length < ROLLING_WINDOW) return false;
+  const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
+  const latest = rows[rows.length - 1];
+  return !!(latest && latest.isAnomaly);
+}
+
+// cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존) · 미로드 state → 빈 배열.
+function getTrendPoints(trendState) {
+  if (trendState.status !== 'ready') return [];
+  return trendState.data?.points ?? trendState.data?.rows ?? [];
+}
+
+// Crit days travel with the population they came from — the lane never states a count alone.
+function getParseErrorDayCounts(errorState) {
+  const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
+  const crit = rows.filter(isParseErrorCritDay).length;
+  return { crit, total: rows.length };
+}
+
+function isParseErrorCritDay(row) {
+  return (Number(row.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD;
+}
+
+function AlarmLaneC({ rows }) {
+  const { Icon } = window.UI;
+
+  if (rows.length === 0) {
+    return null;
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      {avgDaily > 0 ? (
-        <div>
-          <div className="flex items-baseline justify-end mb-1.5">
-            <span className="fs-meta font-mono text-dim">
-              {formatUsdC(todayCost)} <span className="text-faint">today</span> · {formatUsdC(avgDaily)} <span className="text-faint">7-day avg/day</span>
-            </span>
-          </div>
-          <BulletBar
-            value={ratioNorm}
-            target={targetNorm}
-            zones={BUDGET_ZONES}
-            ariaLabel={`Today ${formatUsdC(todayCost)} vs 7-day average ${formatUsdC(avgDaily)} (marker = average)`}
-            showValue={false}
-          />
-          {/* dual-encode: 막대 색 외 텍스트 verdict 도 동반 (색 단독 인코딩 금지). */}
-          <div className="cost-foot mt-1.5">
-            {budgetVerdictText(todayCost, avgDaily)}
-          </div>
+    <div className="flex flex-col gap-2 mb-4">
+      {rows.map((r) => (
+        <div
+          key={r.key}
+          role="alert"
+          className="rounded-md border p-3 flex items-start gap-3"
+          style={{ background: `rgb(var(--${r.tone}) / 0.08)`, borderColor: `rgb(var(--${r.tone}) / 0.4)` }}>
+          <Icon name="warn" size={16} className={`text-${r.tone} mt-0.5`}/>
+          <div className="fs-body text-ink">{r.text}</div>
         </div>
-      ) : (
-        <div className="placeholder" style={{ padding: 16 }}>
-          No 7-day cost yet — daily-average baseline needs cost in the last 7 days.
-        </div>
-      )}
-
-      {/* burn-rate 투영 — TEXT only (T-CST-4: not radial). */}
-      <div className="grid grid-cols-3 gap-3 items-start">
-        <div>
-          <div className="fs-meta text-dim">Burn rate</div>
-          <div className="font-mono fs-stat font-semibold tracking-tight">
-            {formatUsdC(burnRate)}<span className="fs-meta text-dim font-normal ml-1">/h</span>
-          </div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim" title="3-hour burn rate extrapolated to 24 hours">Projected / day</div>
-          <div className="font-mono fs-stat text-dim tracking-tight">{formatUsdC(projectedDaily)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim" title="3-hour burn rate extrapolated to 30 days">Projected / 30 d</div>
-          <div className="font-mono fs-stat text-dim tracking-tight">{formatUsdC(projectedMonthly)}</div>
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
 
-// BulletBar zone cut-points (lower-is-better) — normalized to today/(avg×2):
-//   < 0.375 (= today < 0.75×avg) ok · < 0.625 (= today < 1.25×avg) warn · 이상 crit.
-const BUDGET_ZONES = [
-  { upTo: 0.375, tone: 'ok' },
-  { upTo: 0.625, tone: 'warn' },
-  { upTo: 1.0,   tone: 'crit' },
+// KPI band — today vs the 7-day normal · window total + trend · cost per task · cache share.
+
+// "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
+const HOT_RATIO_CUT = 1.25;
+
+// Bullet-bar zones over today / (normal x 2) → 0.5 = the normal · only the hot band carries a tone.
+const HOT_BULLET_ZONES = [
+  { upTo: HOT_RATIO_CUT / 2, tone: 'neutral' },
+  { upTo: 1.0,               tone: 'crit'    },
 ];
 
-// 텍스트 verdict — 막대 색의 dual-encode 짝 (색 단독 금지). baseline 대비 배수로 서술.
-function budgetVerdictText(todayCost, avgDaily) {
-  if (avgDaily <= 0) return '';
-  const ratio = todayCost / avgDaily;
-  if (ratio < 0.75) return `Below baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average.`;
-  if (ratio < 1.25) return `Around baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average.`;
-  return `Above baseline — today is ${(ratio * 100).toFixed(0)}% of the 7-day daily average (running hot).`;
+// Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
+function toFiniteOrNull(value) {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
-// 2. CostTrendCard — 일별 비용 단일 Y축 LINE 차트 (T-CST-1).
-// cost-over-time 의 1차 표현은 라인 (단일 magnitude → 누적 영역 불필요). 토큰 input/output 분할만
-// 누적 영역(서로 다른 magnitude)으로 별도 카드에서 표현 (TokenStackedCard).
+/**
+ * Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
+ * unavailable (payload arrived, this measure is not derivable) · ready.
+ */
+function getTileStatus(state, value, isEmpty) {
+  if (state.status === 'loading') return 'loading';
+  if (state.status === 'error') return 'error';
+  if (isEmpty) return 'empty';
+  return value === null || value === undefined ? 'unavailable' : 'ready';
+}
+
+// Non-ready tiles say why in words; the value slot stays an em dash so it never reads as measured.
+function getTileNote(status, unavailableNote) {
+  if (status === 'error') return 'Unavailable — this payload failed to load.';
+  if (status === 'empty') return 'No cost recorded in this window.';
+  if (status === 'unavailable') return unavailableNote || 'Not available for this window.';
+  return '';
+}
+
+/**
+ * Today so far against the operator's own 7-day daily normal.
+ * Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+ */
+function computeHotVerdict(kpi) {
+  const todayCost = toFiniteOrNull(kpi.today_cost_usd);
+  const week7Cost = toFiniteOrNull(kpi.window_7d_cost_usd);
+  const burnRate = toFiniteOrNull(kpi.burn_rate_3h_usd_per_hour);
+  const normalDaily = week7Cost !== null && week7Cost > 0 ? week7Cost / 7 : null;
+
+  const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
+  // 3h burn extrapolated to a full day — where today lands if the current rate holds.
+  const paceRatio = normalDaily !== null && burnRate !== null ? (burnRate * 24) / normalDaily : null;
+
+  return {
+    todayCost,
+    normalDaily,
+    ratio,
+    paceRatio,
+    isHot: ratio !== null && ratio >= HOT_RATIO_CUT,
+    isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
+    verdict: getHotVerdictText(ratio, paceRatio),
+  };
+}
+
+// So-far clause always; the pace clause joins it only when a pace figure exists.
+function getHotVerdictText(ratio, paceRatio) {
+  if (ratio === null) return '';
+  const soFar = `${(ratio * 100).toFixed(0)}% of the 7-day daily normal so far`;
+  if (paceRatio === null) return `Today is ${soFar}.`;
+  const pace = paceRatio >= HOT_RATIO_CUT
+    ? `on pace for ${paceRatio.toFixed(1)}x it`
+    : `on pace for ${(paceRatio * 100).toFixed(0)}% of it`;
+  return `Today is ${soFar}, ${pace}.`;
+}
+
+// Window total + first-to-last trend over the period the toggle selects.
+function computeWindowTotal(trendState) {
+  const ready = trendState.status === 'ready';
+  const points = getTrendPoints(trendState);
+  if (points.length === 0) {
+    return { total: null, delta: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
+  }
+  const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
+  const total = series.reduce((s, v) => s + v, 0);
+  return {
+    total,
+    delta: computeSparkDeltaC(series),
+    dayCount: points.length,
+    avgDaily: total / points.length,
+    peakCost: Math.max(...series),
+    isEmpty: false,
+  };
+}
+
+/**
+ * Cache share of cost — both cache categories over the window total, from the per-model price split.
+ * A zero-cost window yields null: 0% would read as "cache is free".
+ */
+function computeCacheShare(modelState) {
+  const ready = modelState.status === 'ready';
+  const rows = ready ? (modelState.data?.rows ?? []) : [];
+  if (rows.length === 0) {
+    return { share: null, cacheCost: null, isEmpty: ready };
+  }
+  const split = buildModelCostRows(rows);
+  const totalCost = split.reduce((s, r) => s + r.cost_usd, 0);
+  const cacheCost = split.reduce((s, r) => s + r.cost_cache_read + r.cost_cache_creation, 0);
+  return {
+    share: totalCost > 0 ? cacheCost / totalCost : null,
+    cacheCost: totalCost > 0 ? cacheCost : null,
+    isEmpty: false,
+  };
+}
+
+function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
+  const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
+  const windowTotal = computeWindowTotal(trendState);
+  const cacheShare = computeCacheShare(modelState);
+  const costPerDone = toFiniteOrNull(kpi.cost_per_done_usd);
+  const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
+
+  return (
+    <>
+      {/* Payload failure is a banner at the owning group — the KPI payload feeds tiles 1 and 3. */}
+      {kpiState.status === 'error' && (
+        <div className="mb-4">
+          <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>
+        </div>
+      )}
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <CostTileC
+          label="Today vs. normal"
+          status={getTileStatus(kpiState, hot.ratio, false)}
+          value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
+          hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
+          unavailableNote="No cost in the last 7 days — no normal to compare against.">
+          <HotBulletC hot={hot}/>
+        </CostTileC>
+
+        <CostTileC
+          label={`Cost, last ${days} days`}
+          status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
+          value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
+          hint={windowTotal.total === null
+            ? ''
+            : `${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+          unavailableNote="Trend payload carries no cost figure.">
+          <TrendDeltaC delta={windowTotal.delta}/>
+        </CostTileC>
+
+        <CostTileC
+          label="Cost per finished task"
+          status={getTileStatus(kpiState, costPerDone, false)}
+          value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
+          hint={`7-day cost / ${formatIntC(doneCount)} finished`}
+          unavailableNote="No finished task in the last 7 days."/>
+
+        <CostTileC
+          label="Cache share of cost"
+          status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
+          value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
+          hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
+          unavailableNote="No priced model cost in this window."/>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
+ * All four tiles take this one shell rather than mixing two tile idioms in one band.
+ */
+function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+  const isReady = status === 'ready';
+  const note = getTileNote(status, unavailableNote);
+
+  return (
+    <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
+      <div className="kpi-label">{label}</div>
+      {isReady && hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+      <div className="kpi-value">
+        {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
+      </div>
+      {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
+    </div>
+  );
+}
+
+/**
+ * Bullet bar carries the alarm tone, the sentence under it repeats the verdict in words.
+ * The pace figure lives in that sentence alone → it can never colour the bar.
+ */
+function HotBulletC({ hot }) {
+  const { BulletBar } = window.UI;
+  // today / (normal x 2) — the normal sits at 0.5, the 1.25x cut at 0.625, anything beyond clamps to 1.
+  const valueNorm = Math.min(hot.ratio / 2, 1);
+
+  return (
+    <div className="mt-2">
+      <BulletBar
+        value={valueNorm}
+        target={0.5}
+        zones={HOT_BULLET_ZONES}
+        ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
+        showValue={false}
+      />
+      <div className="cost-foot mt-1.5">{hot.verdict}</div>
+    </div>
+  );
+}
+
+// Window trend — direction rides on the glyph, never on the text colour.
+function TrendDeltaC({ delta }) {
+  if (typeof delta !== 'number' || !Number.isFinite(delta)) {
+    return <div className="cost-foot mt-1.5">No trend — a single day in the window.</div>;
+  }
+  const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
+  return (
+    <div className="cost-foot mt-1.5">
+      <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
+      {Math.abs(delta).toFixed(0)}% first day to last
+    </div>
+  );
+}
+
+/**
+ * Daily cost as a single-axis line — one magnitude, so no stacking.
+ * The ±2σ band is a toggle here rather than a second card: it asks "is this day unusual" about
+ * the very series already drawn.
+ */
 function CostTrendCard({ state, days, onRetry }) {
   const { CardHead } = window.UI;
+  const [bandOn, setBandOn] = useStateC(false);
+
+  const points = getTrendPoints(state);
+  const bandAvailable = points.length >= ROLLING_WINDOW;
 
   return (
     <div className="card mb-4">
       <CardHead
         title="Cost over time"
+        right={
+          <button
+            className="btn ghost sm"
+            disabled={!bandAvailable}
+            aria-pressed={bandOn}
+            title={bandAvailable
+              ? 'Overlay the 7-day rolling average and its ±2σ band'
+              : `Needs ${ROLLING_WINDOW} days of cost to compute a rolling band`}
+            onClick={() => setBandOn((v) => !v)}>
+            ±2σ band
+          </button>
+        }
       />
       <div className="card-body">
-        <CostTrendBody state={state} days={days} onRetry={onRetry}/>
+        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry}/>
       </div>
     </div>
   );
 }
 
-function CostTrendBody({ state, days, onRetry }) {
+function CostTrendBody({ state, days, bandOn, onRetry }) {
   if (state.status === 'loading') {
     return <ChartSkeletonC height={260} aria-label="Loading cost trend"/>;
   }
@@ -412,138 +597,117 @@ function CostTrendBody({ state, days, onRetry }) {
     return <ErrorBannerC title="Couldn't load cost trend" detail={state.error} onRetry={onRetry}/>;
   }
 
-  const points = state.data?.points ?? state.data?.rows ?? [];
+  const points = getTrendPoints(state);
   if (points.length === 0) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
 
-  const totalCost = points.reduce((s, p) => s + (Number(p.cost_usd) || 0), 0);
-  const avgDaily = points.length > 0 ? totalCost / points.length : 0;
-  const peak = points.reduce(
-    (best, p) => {
-      const c = Number(p.cost_usd) || 0;
-      return c > best.cost ? { cost: c, date: p.date } : best;
-    },
-    { cost: 0, date: null },
-  );
-
-  const rows = points.map((p) => ({
-    date: typeof p.date === 'string' ? p.date.slice(5) : '',
-    fullDate: p.date,
-    cost_usd: Number(p.cost_usd) || 0,
-    session_count: Number(p.session_count) || 0,
-  }));
+  // Band rows extend buildTrendRow, so both chart modes read one row shape.
+  const rows = bandOn
+    ? computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA)
+    : points.map((p) => buildTrendRow(p));
 
   return (
-    <>
-      {/* 동일 크기(fs-display) · 위계는 강조(합계=semibold·기본색 / 평균·피크=text-dim)로만 표현 → baseline 정렬. */}
-      <div className="flex items-start gap-4 mb-3">
-        <div>
-          <div className="fs-meta text-dim">Period total</div>
-          <div className="font-mono fs-display font-semibold tracking-tight">{formatUsdC(totalCost)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Period avg/day</div>
-          <div className="font-mono fs-display text-dim tracking-tight">{formatUsdC(avgDaily)}</div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Peak day</div>
-          <div className="font-mono fs-display text-dim tracking-tight">
-            {peak.cost > 0 ? formatUsdC(peak.cost) : '—'}
-          </div>
-        </div>
-      </div>
-      <div style={{ width: '100%', height: 260 }}>
-        <CostTrendChart rows={rows}/>
-      </div>
-    </>
+    <div style={{ width: '100%', height: 260 }}>
+      <CostTrendChart rows={rows} bandOn={bandOn}/>
+    </div>
   );
 }
 
-// 단일 Y축 LINE 차트 — gridline 없음(--faint 톤 약하게 horizontal 만). cost magnitude 단일 → 라인.
-// annotations (T-CST-5): { date, label } 실 이벤트 배열. 비어있으면(기본) 아무것도 렌더 안 함 —
-// 가짜 마커 발명 금지(SLOP 가드). 실 이벤트 데이터 소스가 생기면 props 로 주입.
-function CostTrendChart({ rows, annotations = [] }) {
-  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
-
-  // x축 dataKey 는 MM-DD 슬라이스 — annotation date 도 동일 형식으로 매칭 (full ISO → slice(5)).
-  const annoByX = annotations
-    .map((a) => ({ x: typeof a.date === 'string' ? a.date.slice(5) : a.date, label: a.label }))
-    .filter((a) => a.x && rows.some((r) => r.date === a.x));
+/**
+ * Single Y axis, faint horizontal gridlines only.
+ * Band on → rolling mean + ±2σ envelope ride the same chart: upper Area over a lower Area masked
+ * in the card surface, the layering Recharts 2.x needs because an array dataKey is unstable there.
+ */
+function CostTrendChart({ rows, bandOn }) {
+  const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-        {/* faint gridline — 수평만, --line 위 0.6 opacity 로 거의 안 보이게 (T-CST-1 faint/no gridlines). */}
+      <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
+          tick={anomalyAxisTickStyle}
+          axisLine={anomalyAxisLineStyle}
           tickLine={false}
         />
         <YAxis
           tickFormatter={formatUsdAxisC}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
+          tick={anomalyAxisTickStyle}
+          axisLine={anomalyAxisLineStyle}
           tickLine={false}
           width={56}
         />
-        <Tooltip content={<CostTrendTooltipC/>}/>
-        {annoByX.map((a, i) => (
-          <ReferenceLine
-            key={i}
-            x={a.x}
-            stroke="rgb(var(--warn))"
-            strokeDasharray="3 3"
-            label={{ value: a.label, position: 'insideTop', fontSize: 9, fill: 'rgb(var(--warn))' }}
+        <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
+        {bandOn && (
+          <Area
+            type="monotone"
+            dataKey="upperBand"
+            stroke="none"
+            fill="rgb(var(--faint) / 0.18)"
+            isAnimationActive={false}
+            connectNulls={false}
           />
-        ))}
+        )}
+        {bandOn && (
+          <Area
+            type="monotone"
+            dataKey="lowerBand"
+            stroke="none"
+            fill="rgb(var(--elev))"
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+        )}
+        {bandOn && (
+          <Line
+            type="monotone"
+            dataKey="rollingMean"
+            stroke="rgb(var(--dim))"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+        )}
         <Line
           type="monotone"
-          dataKey="cost_usd"
+          dataKey="actual"
           stroke="rgb(var(--accent))"
           strokeWidth={2}
           dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
           activeDot={{ r: 4 }}
           isAnimationActive={false}
         />
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
 
-function CostTrendTooltipC({ active, payload }) {
+function CostTrendTooltipC({ active, payload, bandOn }) {
   if (!active || !payload || payload.length === 0) {
     return null;
   }
   const row = payload[0].payload;
+  const hasBand = bandOn && row.rollingMean !== null && row.rollingMean !== undefined;
+
   return (
     <div style={tooltipStyle}>
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        Daily cost {formatUsdC(row.cost_usd)}
+        Daily cost {formatUsdC(row.actual)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
-    </div>
-  );
-}
-
-// 3. TokenStackedCard — input/output(+cache) 토큰 분할 누적 (7d=bar, 30d/90d=area).
-// 토큰 type 별 magnitude 가 서로 달라(예: cache_read >> output) 누적 영역이 정당 (T-CST-1 예외).
-function TokenStackedCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Token usage over time"
-        right={<TokenLegend/>}
-      />
-      <div className="card-body">
-        <TokenStackedBody state={state} days={days} onRetry={onRetry}/>
-      </div>
+      {hasBand && (
+        <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
+          Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
+        </div>
+      )}
+      {typeof row.session_count === 'number' && (
+        <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
+      )}
     </div>
   );
 }
@@ -569,8 +733,7 @@ function TokenStackedBody({ state, days, onRetry }) {
     return <ErrorBannerC title="Couldn't load token trend" detail={state.error} onRetry={onRetry}/>;
   }
 
-  // cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존).
-  const points = state.data?.points ?? state.data?.rows ?? [];
+  const points = getTrendPoints(state);
   if (points.length === 0) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
@@ -729,127 +892,65 @@ function TokenTooltipC({ active, payload }) {
   );
 }
 
-// 3. TokenCategoryCard — 4컬럼 테이블 (카테고리·토큰·비용·비중).
-// 비용·비중 = /api/cost/by-model cost_usd 를 카테고리 단가·토큰 가중(tokens × rate/1M)으로 분배 → KPI '월 비용' 과 동일 출처 (Σ = cost_usd 합계 일치).
-// 단순 토큰 COUNT 비율은 카테고리간 단가차 무시 → 고단가·저COUNT인 output 과소표시 → 단가 가중으로 교정 (단가 미상 모델은 COUNT 비율 폴백).
-// 단가/1M 컬럼 미노출 — 빌링과 무관한 Sonnet 단일 대표값이라 오해 유발 → 단가는 ModelCostCard 귀속.
-function TokenCategoryCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Cost by token type"
-      />
-      <div className="card-body flush">
-        <TokenCategoryBody state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function TokenCategoryBody({ state, days, onRetry }) {
-  const { Bar } = window.UI;
-  if (state.status === 'loading') {
-    return <div className="p-4"><ChartSkeletonC height={180} aria-label="Loading price table"/></div>;
-  }
-  if (state.status === 'error') {
-    return <div className="p-4"><ErrorBannerC title="Couldn't load cost by model" detail={state.error} onRetry={onRetry}/></div>;
-  }
-
-  const modelRows = state.data?.rows ?? [];
-  if (modelRows.length === 0) {
-    return <div className="p-4"><EmptyStateC message={`No cost events in the last ${days} days.`}/></div>;
-  }
-
+/**
+ * Token-category cost split — the ledger's row 0.
+ * Sums buildModelCostRows' price-weighted cost_* splits (tokens x rate/1M) → the split sums back to
+ * the ledger total; a token-COUNT ratio would ignore the ~50x output/cache_read price gap and
+ * under-report output. A model with no catalog price falls back to that count ratio.
+ */
+function computeCategoryCostRows(modelCostRows) {
   const categoryRates = window.TOKEN_CATEGORY_RATES || [];
-
-  // 모델별 카테고리 가중치 — 단가 가중(tokens × rate/1M) 분배의 분모.
-  // 토큰 COUNT 비율은 카테고리간 단가차(Opus output $75 vs cache_read $1.5 = 50배) 무시 → 고단가·저COUNT output 을 ~8배 과소표시 → 단가 가중으로 교정.
-  // 단가 미상 모델(카탈로그 키 부재) → tokens × 1 = 순수 COUNT 비율 폴백 (비용 0/누락 없이 기존 거동 유지).
-  // getTokenRate = exact + family-prefix — date-suffixed id 도 family 단가로 해소 (silent COUNT 폴백 방지).
-  const modelWeights = (m) => {
-    const rates = window.getTokenRate(m.model);
-    const weight = {};
-    let sum = 0;
-    for (const cat of categoryRates) {
-      const tk = Number(m[cat.key]) || 0;
-      const rate = rates ? (Number(rates[cat.rateKey]) || 0) : 1;
-      const w = tk * rate;
-      weight[cat.key] = w;
-      sum += w;
-    }
-    return { weight, sum };
-  };
-
-  // 카테고리별 집계 — tokens = 전 모델 raw 합 · cost = Σ_models(cost_usd × 단가가중 share).
-  // 권위 출처(API cost_usd)를 단가·토큰 가중으로 분배 → Σ category cost = cost_usd 불변 → 테이블 합계 = KPI '월 비용' 일치.
-  // Σ weight === 0(전 토큰 0) → 해당 모델 0 기여, 0 나눗셈 회피.
   const acc = new Map(categoryRates.map((cat) => [cat.key, { tokens: 0, cost: 0 }]));
-  for (const m of modelRows) {
-    const costUsd = Number(m.cost_usd) || 0;
-    const { weight, sum } = modelWeights(m);
+
+  for (const m of modelCostRows) {
     for (const cat of categoryRates) {
       const bucket = acc.get(cat.key);
-      bucket.tokens += Number(m[cat.key]) || 0;
-      if (sum > 0) {
-        bucket.cost += (costUsd * weight[cat.key]) / sum;
-      }
+      bucket.tokens += m[cat.key];
+      bucket.cost += m[`cost_${cat.rateKey}`];
     }
   }
 
-  const rows = categoryRates.map((cat) => ({
+  const totalCost = categoryRates.reduce((s, cat) => s + acc.get(cat.key).cost, 0);
+  return categoryRates.map((cat) => ({
     key: cat.key,
     label: cat.label,
     colorVar: cat.colorVar,
     tokens: acc.get(cat.key).tokens,
     cost: acc.get(cat.key).cost,
+    pct: totalCost > 0 ? acc.get(cat.key).cost / totalCost : 0,
   }));
+}
 
-  const totalCost = rows.reduce((s, r) => s + r.cost, 0);
-  const finalRows = rows.map((r) => ({
-    ...r,
-    pct: totalCost > 0 ? (r.cost / totalCost) : 0,
-  }));
+// Row 0 of the ledger — where the money goes by token category, as one 100% bar plus its legend.
+function CategoryShareRowC({ rows }) {
+  const total = rows.reduce((s, r) => s + r.cost, 0);
+  if (total <= 0) {
+    return <div className="cost-foot mb-3">No priced token cost in this window — category split unavailable.</div>;
+  }
 
   return (
-    <table className="tbl cost-tbl">
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th className="num">Tokens</th>
-          <th className="num">Cost</th>
-          <th className="num">Share</th>
-        </tr>
-      </thead>
-      <tbody>
-        {finalRows.map((r) => (
-          <tr key={r.key}>
-            <td>
-              <span
-                className="inline-block w-[3px] h-3 rounded-sm mr-3 align-middle"
-                style={{ background: `rgb(var(${r.colorVar}))` }}
-              />
-              {r.label}
-            </td>
-            <td className="num">{formatTokenCompactC(r.tokens)}</td>
-            <td className="num">{formatUsdC(r.cost)}</td>
-            {/* per-row share% — 행 자체 비중을 비례막대로 (100% 누적 단일막대 아님) · 텍스트 %가 정확수치, 막대는 길이로 비교 보조. */}
-            <td className="num">
-              <div className="flex items-center justify-end gap-2">
-                <div className="w-20 shrink-0">
-                  <Bar value={r.pct} tone="info" ariaLabel={`${r.label} share ${(r.pct * 100).toFixed(1)}%`}/>
-                </div>
-                <span className="text-dim">{(r.pct * 100).toFixed(1)}%</span>
-              </div>
-            </td>
-          </tr>
+    <div className="mb-3">
+      <div
+        className="flex h-2 rounded-sm overflow-hidden bg-sunken"
+        role="img"
+        aria-label={rows.map((r) => `${r.label} ${(r.pct * 100).toFixed(0)}%`).join(', ')}>
+        {rows.map((r) => (
+          <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
-      </tbody>
-    </table>
+      </div>
+      <div className="flex items-center gap-3 flex-wrap mt-1.5">
+        {rows.map((r) => (
+          <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
+            {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
-// 4. ModelCostCard — 모델별 누적 비용 (4분류 contribution 분해 stacked bar).
+// ModelCostCard — 모델별 누적 비용 (4분류 contribution 분해 stacked bar).
 
 // 비실모델 버킷 — 'unknown' = COALESCE(model,'unknown') 미귀속 legacy 행 ·
 // '<synthetic>' = subagent-scan sentinel (서버가 zero-token 행은 제외, 잔존 행도 실모델 아님).
@@ -860,7 +961,7 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, onRetry }) {
+function ModelCostCard({ state, days, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -876,13 +977,18 @@ function ModelCostCard({ state, days, onRetry }) {
     <div className="card">
       <CardHead
         title="Cost by model"
-        right={fallbackCount > 0
-          ? (
-            <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-              <Pill tone="warn">{fallbackCount} est. rate</Pill>
-            </span>
-          )
-          : null}
+        right={
+          <div className="flex items-center gap-2">
+            {fallbackCount > 0 && (
+              <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
+                <Pill>{fallbackCount} est. rate</Pill>
+              </span>
+            )}
+            <button className="btn ghost sm" onClick={() => onNav('model-config')}>
+              Models &amp; budgets
+            </button>
+          </div>
+        }
       />
       <div className="card-body">
         <ModelCostBody state={state} days={days} onRetry={onRetry}/>
@@ -905,12 +1011,10 @@ function rollupModelRows(modelRows, topN) {
   const other = rest.reduce(
     (acc, r) => ({
       cost_usd: acc.cost_usd + r.cost_usd,
-      input_tokens: acc.input_tokens + r.input_tokens,
-      output_tokens: acc.output_tokens + r.output_tokens,
       session_count: acc.session_count + r.session_count,
       count: acc.count + 1,
     }),
-    { cost_usd: 0, input_tokens: 0, output_tokens: 0, session_count: 0, count: 0 },
+    { cost_usd: 0, session_count: 0, count: 0 },
   );
   return { top, other };
 }
@@ -932,79 +1036,98 @@ function ModelCostBody({ state, days, onRetry }) {
 
   const modelRows = buildModelCostRows(rows);
   const { top, other } = rollupModelRows(modelRows, MODEL_TOPN);
-
-  // 합계 footer — Top + Other 전부 포함 (전 모델 합).
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const totalIn = modelRows.reduce((s, r) => s + r.input_tokens, 0);
-  const totalOut = modelRows.reduce((s, r) => s + r.output_tokens, 0);
   const totalSessions = modelRows.reduce((s, r) => s + r.session_count, 0);
 
   return (
-    <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-      <table className="tbl cost-tbl">
-        <thead>
-          <tr>
-            <th style={STICKY_TH_STYLE}>Model</th>
-            <th className="num" style={STICKY_TH_STYLE}>Cost</th>
-            <th className="num" style={STICKY_TH_STYLE}>Tokens in</th>
-            <th className="num" style={STICKY_TH_STYLE}>Tokens out</th>
-            <th className="num" style={STICKY_TH_STYLE}>Sessions</th>
-            <th className="num" style={STICKY_TH_STYLE}>Avg / session</th>
-          </tr>
-        </thead>
-        <tbody>
-          {top.map((r) => (
-            <ModelCostRow key={r.fullModel} r={r}/>
-          ))}
-          {other && (
+    <>
+      <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
+      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        <table className="tbl cost-tbl">
+          <thead>
             <tr>
-              <td>
-                <span className="text-dim" title={`${other.count} more models rolled up`}>Other</span>
-              </td>
-              <td className="num">{formatUsdC(other.cost_usd)}</td>
-              <td className="num">{formatTokenCompactC(other.input_tokens)}</td>
-              <td className="num">{formatTokenCompactC(other.output_tokens)}</td>
-              <td className="num">{formatIntC(other.session_count)}</td>
-              <td className="num text-dim">
-                {other.session_count > 0 ? formatUsdC(other.cost_usd / other.session_count) : '—'}
+              <th style={STICKY_TH_STYLE}>Model</th>
+              <th className="num" style={STICKY_TH_STYLE}>Cost</th>
+              <th className="num" style={STICKY_TH_STYLE}>Sessions</th>
+              <th className="num" style={STICKY_TH_STYLE}>Avg / session</th>
+            </tr>
+          </thead>
+          <tbody>
+            {top.map((r) => (
+              <ModelCostRow key={r.fullModel} r={r}/>
+            ))}
+            {other && (
+              <tr>
+                <td>
+                  <span className="text-dim">Other · {other.count} more models</span>
+                </td>
+                <td className="num">{formatUsdC(other.cost_usd)}</td>
+                <td className="num">{formatIntC(other.session_count)}</td>
+                <td className="num text-dim">
+                  {other.session_count > 0 ? formatUsdC(other.cost_usd / other.session_count) : '—'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
+              <td className="font-semibold">Total</td>
+              <td className="num font-semibold">{formatUsdC(totalCost)}</td>
+              <td className="num font-semibold">{formatIntC(totalSessions)}</td>
+              <td className="num font-semibold">
+                {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
               </td>
             </tr>
-          )}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
-            <td className="font-semibold">Total</td>
-            <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-            <td className="num font-semibold">{formatTokenCompactC(totalIn)}</td>
-            <td className="num font-semibold">{formatTokenCompactC(totalOut)}</td>
-            <td className="num font-semibold">{formatIntC(totalSessions)}</td>
-            <td className="num font-semibold">
-              {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
-            </td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          </tfoot>
+        </table>
+      </div>
+      {/* Named gap, never proxied — cost_events carry a model, not an agent. */}
+      <div className="cost-foot mt-2">
+        Cost per agent is not available — cost events carry a model, not an agent.
+      </div>
+    </>
   );
 }
 
+/**
+ * One ledger row — token columns behind the row's own expand.
+ * The default table stays at the four columns a spend decision needs.
+ */
 function ModelCostRow({ r }) {
+  const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
+
   return (
-    <tr>
-      <td>
-        <span className="font-mono" title={r.fullModel}>{r.model}</span>
-      </td>
-      <td className="num">{formatUsdC(r.cost_usd)}</td>
-      <td className="num">{formatTokenCompactC(r.input_tokens)}</td>
-      <td className="num">{formatTokenCompactC(r.output_tokens)}</td>
-      <td className="num">{formatIntC(r.session_count)}</td>
-      <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
-    </tr>
+    <>
+      <tr>
+        <td>
+          <button
+            type="button"
+            className="flex items-center gap-2 font-mono text-left"
+            aria-expanded={expanded}
+            title={r.fullModel}
+            onClick={() => setExpanded((v) => !v)}>
+            <span className="text-faint" aria-hidden="true">{expanded ? '−' : '+'}</span>
+            {r.model}
+          </button>
+        </td>
+        <td className="num">{formatUsdC(r.cost_usd)}</td>
+        <td className="num">{formatIntC(r.session_count)}</td>
+        <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={4} className="fs-meta text-dim font-mono">
+            in {formatTokenCompactC(r.input_tokens)} · out {formatTokenCompactC(r.output_tokens)} ·
+            cache read {formatTokenCompactC(r.cache_read_tokens)} · cache write {formatTokenCompactC(r.cache_creation_tokens)}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
-// 모델별 카테고리 USD 기여도 (sub-bar) — TokenCategoryCard 와 동일한 단가 가중(tokens × rate/1M) 분배.
+// 모델별 카테고리 USD 기여도 (sub-bar · computeCategoryCostRows 입력) — 단가 가중(tokens × rate/1M) 분배.
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
@@ -1049,21 +1172,6 @@ function buildModelCostRows(rows) {
 
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
-
-// 5b. CacheHitCard — cache_read / total_input 라인 차트.
-function CacheHitCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card">
-      <CardHead
-        title="Cache hit rate"
-      />
-      <div className="card-body">
-        <CacheHitBody state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
 
 function CacheHitBody({ state, days, onRetry }) {
   if (state.status === 'loading') {
@@ -1187,7 +1295,21 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. SessionDistributionCard — 세션 비용 히스토그램 + bin 클릭 모달.
+// 5c. Most expensive sessions — top five + a rolled-up Other row, histogram behind it in the drawer.
+const SESSION_TOPN = 5;
+
+// Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
+function rollupSessionRows(sessions, topN) {
+  const sorted = sessions
+    .slice()
+    .sort((a, b) => (Number(b.total_cost_usd) || 0) - (Number(a.total_cost_usd) || 0));
+  const rest = sorted.slice(topN);
+  const other = rest.length === 0
+    ? null
+    : { count: rest.length, cost_usd: rest.reduce((s, r) => s + (Number(r.total_cost_usd) || 0), 0) };
+  return { top: sorted.slice(0, topN), other, total: sorted.length };
+}
+
 function SessionDistributionCard({ state, days, onRetry }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
@@ -1197,10 +1319,12 @@ function SessionDistributionCard({ state, days, onRetry }) {
   return (
     <div className="card">
       <CardHead
-        title="Cost per session"
-        sub={`${visibleCount.toLocaleString('en-US')} sessions`}
+        title="Most expensive sessions"
+        sub={state.status === 'ready'
+          ? `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
+          : undefined}
         right={truncated
-          ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill tone="warn">Truncated</Pill></span>
+          ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill>{`${visibleCount} of ${totalCount} loaded`}</Pill></span>
           : null}
       />
       <div className="card-body">
@@ -1211,18 +1335,18 @@ function SessionDistributionCard({ state, days, onRetry }) {
 }
 
 function SessionDistributionBody({ state, days, onRetry }) {
-  const [activeBin, setActiveBin] = useStateC(null);
+  const [histogramOpen, setHistogramOpen] = useStateC(false);
 
-  // Hooks 는 early-return 전에 호출 — 데이터 미준비 시 빈 배열로 안전 처리.
+  // Hooks run before any early return — an unready payload reduces to an empty list.
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
-
-  const binData = useMemoC(() => computeSessionBins(sessions), [sessions]);
+  const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
+  const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading session distribution"/>;
+    return <ChartSkeletonC height={220} aria-label="Loading session costs"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load session distribution" detail={state.error} onRetry={onRetry}/>;
+    return <ErrorBannerC title="Couldn't load session costs" detail={state.error} onRetry={onRetry}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -1230,34 +1354,65 @@ function SessionDistributionBody({ state, days, onRetry }) {
 
   return (
     <>
-      <div style={{ width: '100%', height: 220 }}>
-        <SessionDistributionChart bins={binData} onBinClick={setActiveBin}/>
+      <div className="space-y-1.5">
+        {rollup.top.map((s) => <SessionRowC key={s.session_id} session={s}/>)}
+        {rollup.other && (
+          <button
+            type="button"
+            className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+            onClick={() => setHistogramOpen(true)}>
+            <span className="text-dim flex-1">
+              Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
+            </span>
+            <span className="text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</span>
+            <span className="text-faint">distribution</span>
+          </button>
+        )}
       </div>
-      {activeBin && (
-        <SessionBinModal
-          bin={activeBin}
-          sessions={sessions}
-          onClose={() => setActiveBin(null)}
-        />
+      {histogramOpen && (
+        <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
     </>
   );
 }
 
-function SessionDistributionChart({ bins, onBinClick }) {
+function SessionRowC({ session }) {
+  const { formatRelativeTime, formatKstFull } = window.UI;
+
+  return (
+    <div className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
+      <span className="text-dim truncate flex-1" title={session.session_id}>{session.session_id}</span>
+      <span className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</span>
+      <span className="text-faint w-20 text-right">{formatTokenCompactC(session.total_tokens)}</span>
+      {/* last_event_at is a real UTC ISO instant — relative label, absolute day-bucket time on hover. */}
+      <span
+        className="text-dim w-32 text-right"
+        title={session.last_event_at ? formatKstFull(session.last_event_at) : undefined}>
+        {session.last_event_at ? formatRelativeTime(session.last_event_at) : '—'}
+      </span>
+    </div>
+  );
+}
+
+function SessionHistogramDrawerC({ bins, total, onClose }) {
+  const { DetailSurface } = window.UI;
+
+  return (
+    <DetailSurface open onClose={onClose} variant="drawer"
+      title={`Cost distribution — ${formatIntC(total)} sessions`}>
+      <div style={{ width: '100%', height: 260 }}>
+        <SessionDistributionChart bins={bins}/>
+      </div>
+    </DetailSurface>
+  );
+}
+
+function SessionDistributionChart({ bins }) {
   const { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart
-        data={bins}
-        margin={{ top: 6, right: 8, left: 0, bottom: 0 }}
-        onClick={(e) => {
-          if (e?.activePayload?.[0]?.payload) {
-            const bin = e.activePayload[0].payload;
-            if (bin.count > 0) onBinClick(bin);
-          }
-        }}>
+      <BarChart data={bins} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="label"
@@ -1277,12 +1432,9 @@ function SessionDistributionChart({ bins, onBinClick }) {
           width={36}
         />
         <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
-        <Bar dataKey="count" isAnimationActive={false} cursor="pointer">
+        <Bar dataKey="count" isAnimationActive={false}>
           {bins.map((b, i) => (
-            <Cell
-              key={i}
-              fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}
-            />
+            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}/>
           ))}
         </Bar>
       </BarChart>
@@ -1299,78 +1451,6 @@ function SessionBinTooltipC({ active, payload }) {
     <div style={tooltipStyle}>
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{bin.label}</div>
       <div style={{ color: 'rgb(var(--dim))' }}>{bin.count.toLocaleString('en-US')} sessions</div>
-    </div>
-  );
-}
-
-function SessionBinModal({ bin, sessions, onClose }) {
-  const { DetailSurface, formatRelativeTime, formatKstFull } = window.UI;
-
-  // 본 bin 내 비용 desc 상위 20개 (drawer density cap).
-  const matched = sessions
-    .filter((s) => {
-      const cost = Number(s.total_cost_usd) || 0;
-      return cost >= bin.min && cost < bin.max;
-    })
-    .sort((a, b) => (Number(b.total_cost_usd) || 0) - (Number(a.total_cost_usd) || 0))
-    .slice(0, 20);
-
-  return (
-    <DetailSurface open onClose={onClose} variant="drawer"
-      title={`${bin.label} bucket — top ${matched.length}`}>
-      {matched.length === 0
-        ? <div className="fs-body text-dim">No sessions to show.</div>
-        : (
-          <div className="space-y-1.5">
-            {matched.map((s) => (
-              // 행 텍스트 text-[11.5px]→fs-meta(11px) 최근접 (11.5↔11 차 0.5 < 11.5↔12 차 0.5 동률 → 보조 meta 콘텐츠라 meta 채택).
-              <div
-                key={s.session_id}
-                className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
-                <span className="text-dim truncate flex-1" title={s.session_id}>
-                  {s.session_id}
-                </span>
-                <span className="text-ink font-semibold">
-                  {formatUsdC(s.total_cost_usd)}
-                </span>
-                <span className="text-faint w-20 text-right">
-                  {formatTokenCompactC(s.total_tokens)}
-                </span>
-                <span className="text-faint w-16 text-right">
-                  {formatIntC(s.event_count)} events
-                </span>
-                {/* last_event_at = 실 UTC ISO 시각 → 상대표시 + hover 절대시각 KST 명시 (브라우저 로컬 tz 비의존). */}
-                <span
-                  className="text-dim w-32 text-right"
-                  title={s.last_event_at ? formatKstFull(s.last_event_at) : undefined}>
-                  {s.last_event_at ? formatRelativeTime(s.last_event_at) : '—'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )
-      }
-    </DetailSurface>
-  );
-}
-
-// 5d. ParseErrorCard — 일별 error_count + error_ratio 임계 강조.
-// REGION(W3-T5): error_ratio 가 임계 초과한 날이 있을 때(true alert)만 카드 좌측 --warn rule.
-//   상시 left-rule 금지 — 평시엔 일반 카드, 실 경보일 때만 시각 강조 (색은 단독 인코딩 아님: 내부 crit Pill + aria 가 의미 전달).
-function ParseErrorCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
-  const hasAlert = rows.some((r) => (Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD);
-  return (
-    <div
-      className="card"
-      style={hasAlert ? { borderLeft: '3px solid rgb(var(--warn))' } : undefined}>
-      <CardHead
-        title="Unreadable log entries"
-      />
-      <div className="card-body">
-        <ParseErrorBody state={state} days={days} onRetry={onRetry}/>
-      </div>
     </div>
   );
 }
@@ -1408,10 +1488,10 @@ function ParseErrorBody({ state, days, onRetry }) {
     error_count: Number(r.error_count) || 0,
     total_count: Number(r.total_count) || 0,
     error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
-    isCrit: (Number(r.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD,
+    isCrit: isParseErrorCritDay(r),
   }));
 
-  const critDays = chartRows.filter((r) => r.isCrit).length;
+  const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
   return (
     <>
@@ -1435,9 +1515,8 @@ function ParseErrorBody({ state, days, onRetry }) {
         <>
           {critDays > 0 && (
             <div className="mb-2">
-              <Badge role="status" tone="crit" icon={true}>
-                {critDays} days over threshold
-              </Badge>
+              {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
+              <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
             </div>
           )}
           <div style={{ width: '100%', height: 200 }}>
@@ -1519,192 +1598,9 @@ function ParseErrorTooltipC({ active, payload }) {
       <div style={{ color: 'rgb(var(--dim))' }}>
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
-      <div style={{ color: row.isCrit ? 'rgb(var(--crit))' : 'rgb(var(--dim))' }}>
+      <div style={{ color: 'rgb(var(--dim))' }}>
         Rate {row.error_ratio_pct.toFixed(2)}%{row.isCrit ? ' · over threshold' : ''}
       </div>
-    </div>
-  );
-}
-
-// 6. AnomalyCostCard — 7일 rolling mean ±2σ band, band 밖 = anomaly.
-function AnomalyCostCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Unusual spending"
-      />
-      <div className="card-body">
-        <AnomalyCostBody state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function AnomalyCostBody({ state, days, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonC height={200} aria-label="Loading anomaly detection"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load anomaly data" detail={state.error} onRetry={onRetry}/>;
-  }
-
-  // cost-timeseries 응답 — points[] ASC (오래된→최신). dashboard.ts 와 동일.
-  const points = state.data?.points ?? state.data?.rows ?? [];
-  if (points.length < ROLLING_WINDOW) {
-    return (
-      <EmptyStateC
-        message={`Only ${points.length} days of data (< ${ROLLING_WINDOW}) — rolling average needs at least ${ROLLING_WINDOW} days`}
-      />
-    );
-  }
-
-  const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
-  const anomalyCount = rows.reduce((s, r) => s + (r.isAnomaly ? 1 : 0), 0);
-  const totalCovered = rows.reduce((s, r) => s + (r.rollingMean !== null ? 1 : 0), 0);
-
-  return <AnomalyCostChart rows={rows} anomalyCount={anomalyCount} totalCovered={totalCovered} days={days}/>;
-}
-
-function AnomalyCostChart({ rows, anomalyCount, totalCovered, days }) {
-  const { Badge } = window.UI;
-  const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceDot } = window.Recharts;
-
-  // 마지막 일자 anomaly 시 strong signal — 우측 KPI Pill 노출.
-  const latest = rows[rows.length - 1];
-  const isLatestAnomaly = !!(latest && latest.isAnomaly);
-
-  return (
-    <>
-      <div className="flex items-baseline gap-3 mb-3">
-        <div>
-          <div className="fs-meta text-dim">Anomalies</div>
-          <div className="font-mono fs-stat font-semibold tracking-tight">
-            {anomalyCount}
-            <span className="fs-meta text-dim font-normal ml-1">/ {totalCovered} days</span>
-          </div>
-        </div>
-        {isLatestAnomaly && (
-          <Badge role="status" tone="crit" icon={true}>
-            latest day outside band
-          </Badge>
-        )}
-      </div>
-      <div style={{ width: '100%', height: 240 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={rows} margin={anomalyChartMargin}>
-            {/* faint gridline — 비용 시계열(T-CST-1): --line 0.6 opacity 수평만. */}
-            <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
-            <XAxis
-              dataKey="date"
-              tick={anomalyAxisTickStyle}
-              axisLine={anomalyAxisLineStyle}
-              tickLine={false}
-            />
-            <YAxis
-              tickFormatter={formatUsdAxisC}
-              tick={anomalyAxisTickStyle}
-              axisLine={anomalyAxisLineStyle}
-              tickLine={false}
-              width={56}
-            />
-            {/* ±σ band — 상단 Area(--faint/0.18 가시) + 하단 Area(--elev 마스킹) layering.
-                Recharts 2.x array dataKey 불안정 회피용 안전 패턴. */}
-            <Area
-              type="monotone"
-              dataKey="upperBand"
-              stroke="none"
-              fill="rgb(var(--faint) / 0.18)"
-              isAnimationActive={false}
-              connectNulls={false}
-              name="±2σ band"
-            />
-            <Area
-              type="monotone"
-              dataKey="lowerBand"
-              stroke="none"
-              fill="rgb(var(--elev))"
-              isAnimationActive={false}
-              connectNulls={false}
-              legendType="none"
-            />
-            <Line
-              type="monotone"
-              dataKey="rollingMean"
-              stroke="rgb(var(--dim))"
-              strokeDasharray="4 4"
-              strokeWidth={1.5}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls={false}
-              name="7-day average"
-            />
-            <Line
-              type="monotone"
-              dataKey="actual"
-              stroke="rgb(var(--accent))"
-              strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-              name="Daily cost"
-            />
-            {rows.map((r) => (r.isAnomaly ? (
-              <ReferenceDot
-                key={r.date}
-                x={r.date}
-                y={r.actual}
-                r={4.5}
-                fill="rgb(var(--crit))"
-                stroke="rgb(var(--elev))"
-                strokeWidth={2}
-                ifOverflow="extendDomain"
-              />
-            ) : null))}
-            <Tooltip content={<AnomalyTooltipC/>}/>
-            <Legend wrapperStyle={anomalyLegendStyle}/>
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-    </>
-  );
-}
-
-function AnomalyTooltipC({ active, payload }) {
-  const { Icon } = window.UI;
-  if (!active || !payload || payload.length === 0) {
-    return null;
-  }
-  const row = payload[0].payload;
-  const hasBand = row.rollingMean !== null && row.rollingMean !== undefined;
-  return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.date}</div>
-      <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        Daily cost {formatUsdC(row.actual)}
-      </div>
-      {hasBand && (
-        <>
-          <div style={tooltipRowStyle}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--dim))' }}/>
-            7-day average {formatUsdC(row.rollingMean)}
-          </div>
-          <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
-            Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
-          </div>
-          {row.isAnomaly && (
-            <div className="inline-flex items-center gap-1" style={{ color: 'rgb(var(--crit))', marginTop: 4, fontWeight: 600 }}>
-              <Icon name="warn" size={11} stroke={2.4}/>
-              Unusual spike
-            </div>
-          )}
-        </>
-      )}
-      {!hasBand && (
-        <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
-          within warm-up window (≤{ROLLING_WINDOW - 1} days) — no rolling average yet
-        </div>
-      )}
     </div>
   );
 }
@@ -1713,11 +1609,8 @@ function AnomalyTooltipC({ active, payload }) {
 // points 정렬은 ASC (cost-timeseries API).
 function computeAnomalyRows(points, window, sigma) {
   return points.map((p, i) => {
-    const actual = pointCostC(p);
     const base = {
-      date: typeof p.date === 'string' ? p.date.slice(5) : '',
-      fullDate: p.date,
-      actual,
+      ...buildTrendRow(p),
       rollingMean: null,
       upperBand: null,
       lowerBand: null,
@@ -1738,9 +1631,18 @@ function computeAnomalyRows(points, window, sigma) {
     const upperBand = mean + sigma * std;
     // 비용 음수 불가 → lower 클램프. std≈0 시 모두 정상 (isAnomaly=false).
     const lowerBand = Math.max(0, mean - sigma * std);
-    const isAnomaly = std > 0 && (actual > upperBand || actual < lowerBand);
+    const isAnomaly = std > 0 && (base.actual > upperBand || base.actual < lowerBand);
     return { ...base, rollingMean: mean, upperBand, lowerBand, isAnomaly };
   });
+}
+
+function buildTrendRow(p) {
+  return {
+    date: typeof p.date === 'string' ? p.date.slice(5) : '',
+    fullDate: p.date,
+    actual: pointCostC(p),
+    session_count: Number(p.session_count) || 0,
+  };
 }
 
 // cost-timeseries point → daily cost (USD). cost_usd 우선 · split 합산 폴백 보존.
@@ -1756,7 +1658,7 @@ function pointCostC(p) {
 const anomalyAxisTickStyle = { fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
-// 7. TurnStatsCard — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
+// Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
 // no_assistant_in_turn = tool-only(LLM 미응답) 턴 · end_turn = 실 LLM 턴.
 // 분포는 인라인 가로 막대(테이블 기반, sandbox-safe) — Recharts 미사용.
 
@@ -1770,20 +1672,6 @@ const STOP_REASON_META = {
 
 function turnStopReasonMeta(reason) {
   return STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
-}
-
-function TurnStatsCard({ state, days, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card mb-4">
-      <CardHead
-        title="Turn statistics"
-      />
-      <div className="card-body">
-        <TurnStatsBody state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
@@ -1992,9 +1880,12 @@ async function fetchJsonC(url, signal) {
 }
 
 // fetch + setter wiring 통합 — useEffect 본문 단순화.
-function runFetchC(url, signal, setter) {
+function runFetchC(url, signal, setter, onReceived) {
   return fetchJsonC(url, signal)
-    .then((data) => setter({ status: 'ready', data, error: null }))
+    .then((data) => {
+      setter({ status: 'ready', data, error: null });
+      onReceived?.();
+    })
     .catch((err) => handleErrorC(err, setter));
 }
 
@@ -2028,7 +1919,7 @@ function computeSessionBins(sessions) {
   }));
 }
 
-// Sparkline 첫→끝 변화율 (%) — KPI delta 화살표.
+// series 첫→끝 변화율 (%) — KPI delta 화살표.
 // 길이 < 2 또는 baseline=0 이면 null (KPI Delta 가 typeof==='number' 체크).
 function computeSparkDeltaC(series) {
   if (!Array.isArray(series) || series.length < 2) return null;

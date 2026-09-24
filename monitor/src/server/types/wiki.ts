@@ -87,6 +87,9 @@ export interface WikiIndexMetrics {
   latest_compiled_total: number | null;
   // wiki.dirty_flag.dirty — master-index regeneration pending signal.
   dirty: boolean;
+  // Whether the wiki.dirty_flag row exists at all. false collapses `dirty:false`
+  // from "clean" to "unknown" — the FE must not render a missing row as clean.
+  has_dirty_flag: boolean;
   // wiki.dirty_flag.last_dirty normalized to epoch MILLISECONDS at the route boundary
   // (daemon writes seconds). null only when the row is absent.
   last_dirty_ms: number | null;
@@ -114,6 +117,10 @@ export interface WikiBacklog {
   // Authoritative SoT — the FE must read this, not recompute rawCount − summaryCount.
   // null when the payload lacks the key (e.g. before the daemon pushes it). 0 is valid.
   true_backlog: number | null;
+  // dedup proposal cluster_hash → the earliest scanned run_date (UTC date-only) that
+  // carried it, so the FE ages a proposal by date instead of by unchanged-run count.
+  // Keys cover the latest payload's proposals only; empty when none are resolvable.
+  proposal_first_seen: Record<string, string>;
   timezone: "UTC";
 }
 
