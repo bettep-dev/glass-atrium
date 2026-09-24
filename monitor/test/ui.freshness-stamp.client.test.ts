@@ -1,4 +1,4 @@
-// Shared freshness-stamp atom (plan 39859 S3): four states, glyph-borne tone, a word for AT.
+// Shared freshness-stamp atom: four states, glyph-borne tone, a word for AT.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";

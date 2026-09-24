@@ -1,4 +1,4 @@
-// Shared agent-name display atom (plan 39859 S4a): short form on screen, full name for AT and hover.
+// Shared agent-name display atom: short form on screen, full name for AT and hover.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";

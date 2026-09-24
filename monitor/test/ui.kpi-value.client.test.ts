@@ -1,4 +1,4 @@
-// Shared KPI value atom (plan 39859 P2b): one type scale for headline figures, tone on the glyph only.
+// Shared KPI value atom: one type scale for headline figures, tone on the glyph only.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";

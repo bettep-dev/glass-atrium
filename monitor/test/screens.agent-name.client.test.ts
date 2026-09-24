@@ -1,4 +1,4 @@
-// Agents, Task results, Documents and Learning print agent names through the shared AgentName atom (plan 39859 S4b/S4c).
+// Agents, Task results, Documents and Learning print agent names through the shared AgentName atom.
 //
 // Runner: npx tsx --test test/screens.agent-name.client.test.ts
 
