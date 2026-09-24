@@ -115,7 +115,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   }));
   app.get("/api/cost/parse-errors", async () => ({
     rows: trendRows.map((r) => ({
-      day: r.day,
+      day: r.date,
       error_ratio: fixture.parseErrorRatio,
       error_count: 1,
       total_count: 100,
