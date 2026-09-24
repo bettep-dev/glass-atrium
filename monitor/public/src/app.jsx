@@ -42,9 +42,10 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, dynamicBadges }) {
+function Sidebar({ active, onNav, harness }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(dynamicBadges);
+	const systems = systemsRollup(harness);
+	const dynamicBadges = harnessToNavBadges(harness);
 	return (
 		<aside className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="px-4 py-4 border-b border-line">
@@ -119,51 +120,44 @@ function fetchJson(url) {
 	);
 }
 
-// 실패 카운트 목적지는 architecture(System map) 슬롯 — 맵이 health 판독을 흡수했음.
-function kpiToBadges(kpi) {
-	const fails = Number(kpi.last_1h_fail_count) || 0;
-	// cost 키는 항상 반환(null 이라도) — 정적 fallback 배지 차단 계약 유지. 예산은 per-call HARD CAP
-	// (월 누적 한도 아님)이라 cost-slot 에 매핑할 소진율 신호가 없으므로 항상 null.
-	return {
-		architecture: fails > 0 ? { badge: String(fails), badgeTone: "warn" } : null,
-		cost: null,
-	};
+// harness 스토어 초기값 — 'loading' 은 '아직 모름'이고 0 이 아니다(가짜 정상 차단).
+const HARNESS_STORE_INITIAL = { status: "loading", data: null };
+
+// allSettled 결과 → harness 스토어 상태. rejected 는 error 로 남겨 fold 가 미수신을 구분한다.
+function toStoreState(settled) {
+	return settled.status === "fulfilled"
+		? { status: "ready", data: settled.value }
+		: { status: "error", data: null };
 }
 
-// 데몬 다운(effective_status≠ok) → architecture(System map) 슬롯 warn 카운트, KPI 배지와 소스 태그로 공존.
-// 계수 근거는 effective_status — 전환용 status 중복이 아니라 판정 필드가 기록의 근거임.
-function liveToBadge(live) {
-	const badDaemons = (live?.daemons || []).filter(
-		(d) => d.effective_status !== "ok",
-	).length;
-	const daemonDown =
-		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
+// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
+// 한 fold 에서 같이 나오므로 소스별 병합이 필요 없다 — 재폴링이 서로를 덮을 수 없음.
+// 키 존재 = polled 계약 유지: fold 가 아직 아무것도 관측 못 했으면 키 자체를 내지 않는다.
+function harnessToNavBadges(harness) {
+	if (!harness || harness.status !== "ready") return {};
 
-	return { daemonDown };
+	const badges = [];
+	if (harness.failCount1h > 0) {
+		badges.push({ badge: String(harness.failCount1h), badgeTone: "warn", source: "kpi" });
+	}
+	if (harness.daemonsDown > 0) {
+		badges.push({ badge: String(harness.daemonsDown), badgeTone: "warn", source: "daemon" });
+	}
+	return { architecture: badges.length > 0 ? { badges } : null };
 }
 
-// ALL SYSTEMS 풋터 도트 = architecture nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
-// 미폴링(architecture 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · warn 0 → ok · warn N → warn.
+// ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
+// 두 표면이 어긋나지 않는다 — 미관측은 직전 값 보존이 아니라 neutral 'CHECKING…'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-function systemsRollup(dynamicBadges) {
-	const polled =
-		dynamicBadges &&
-		Object.prototype.hasOwnProperty.call(dynamicBadges, "architecture");
-	if (!polled) return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+function systemsRollup(harness) {
+	if (!harness || harness.status !== "ready") {
+		return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+	}
 
-	const badges = dynamicBadges.architecture?.badges || [];
-	const warns = badges.filter((b) => b.badgeTone === "warn").length;
-	if (warns === 0) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	const issues =
+		harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0;
+	if (!issues) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
 	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
-}
-
-// nav 슬롯 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운)가 한 슬롯에 병치.
-// 소스 태그로 자기 기여분만 교체 → 한 소스 재폴링이 다른 소스 배지를 덮지 않음.
-// badges-array-coexistence 관용(Sidebar 가 배열/단일 양쪽 호환) 재사용.
-function mergeHealthBadge(prevHealth, source, badge) {
-	const kept = (prevHealth?.badges || []).filter((b) => b.source !== source);
-	const next = badge ? [...kept, { ...badge, source }] : kept;
-	return next.length > 0 ? { badges: next } : null;
 }
 
 function App() {
@@ -172,8 +166,13 @@ function App() {
 
 	const [active, setActive] = useS(parseHashScreen);
 
-	// id → badge 오버라이드. 키 존재 = polled (count=0 도 정적 fallback 차단)
-	const [navBadges, setNavBadges] = useS({});
+	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
+	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 풋터와 어긋난다.
+	const [kpiState, setKpiState] = useS(HARNESS_STORE_INITIAL);
+	const [liveState, setLiveState] = useS(HARNESS_STORE_INITIAL);
+	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
+	const [hookState, setHookState] = useS(HARNESS_STORE_INITIAL);
+	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -209,20 +208,7 @@ function App() {
 		const fetchBadges = async () => {
 			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
 			if (cancelled) return;
-			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
-			setNavBadges((prev) => {
-				const kpi = kpiToBadges(kpiR[0].value);
-				// architecture 는 데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
-				return {
-					...prev,
-					cost: kpi.cost,
-					architecture: mergeHealthBadge(
-						prev.architecture,
-						"kpi",
-						kpi.architecture,
-					),
-				};
-			});
+			setKpiState(toStoreState(kpiR[0]));
 		};
 		fetchBadges();
 		const id = setInterval(fetchBadges, NAV_BADGE_POLL_MS);
@@ -232,23 +218,28 @@ function App() {
 		};
 	}, []);
 
-	// architecture/live 배지 — 마운트 시 1회. 데이터가 서비스 부팅 간 준정적이라 폴링 불요
+	// harness wave — architecture/live + health 를 KPI 와 같은 cadence 로 폴링.
+	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
 	useE(() => {
 		let cancelled = false;
-		fetchJson("/api/architecture/live")
-			.then((live) => {
-				if (cancelled) return;
-				const { daemonDown } = liveToBadge(live);
-				setNavBadges((prev) => ({
-					...prev,
-					architecture: mergeHealthBadge(prev.architecture, "daemon", daemonDown),
-				}));
-			})
-			.catch(() => {
-				// 무시 — 직전 navBadges/동기화 시각 보존
-			});
+		const pollHarness = async () => {
+			const [live, health, hook, hookFail] = await Promise.allSettled([
+				fetchJson("/api/architecture/live"),
+				fetchJson("/api/health"),
+				fetchJson("/api/health/hook-chain"),
+				fetchJson("/api/health/hook-failures?days=30&limit=50"),
+			]);
+			if (cancelled) return;
+			setHealthState(toStoreState(health));
+			setLiveState(toStoreState(live));
+			setHookState(toStoreState(hook));
+			setHookFailState(toStoreState(hookFail));
+		};
+		pollHarness();
+		const id = setInterval(pollHarness, NAV_BADGE_POLL_MS);
 		return () => {
 			cancelled = true;
+			clearInterval(id);
 		};
 	}, []);
 
@@ -263,6 +254,15 @@ function App() {
 		}
 	};
 
+	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
+	const harness = window.HealthModel.foldHarness({
+		kpiState,
+		liveState,
+		healthState,
+		hookState,
+		hookFailState,
+	});
+
 	const Screen = Screens[active];
 	const activeNav = NAV.find((n) => n.id === active);
 
@@ -274,15 +274,11 @@ function App() {
 			style={{ minWidth: 1280 }}
 			data-screen-label={activeNav ? `${activeNav.label}` : ""}
 		>
-			<Sidebar
-				active={active}
-				onNav={onNavClick}
-				dynamicBadges={navBadges}
-			/>
+			<Sidebar active={active} onNav={onNavClick} harness={harness} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main className="flex-1 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} />
+						<Screen onNav={onNavClick} harness={harness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
