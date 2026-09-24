@@ -100,7 +100,7 @@ Parse-safety preconditions — a violation produces false SCOPE-070 warnings or 
 | Precondition | Rule |
 |---|---|
 | Flat leaf | HTML: the section MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside |
-| English heading | HTML `<h2>` text exactly `Target Files` · md the H2 `## Target Files`; translated or `###` → no binding |
+| English heading | md: the H2 `## Target Files`; translated or `###` → no binding · HTML: `<h2>Target Files</h2>` by convention |
 | Literal id | HTML: the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
 | One path per item | each `<li>` or md line holds one path and nothing else; backticks or `<code>` allowed; notes go in the streams |
 | Path form | repo-relative preferred |
@@ -108,6 +108,7 @@ Parse-safety preconditions — a violation produces false SCOPE-070 warnings or 
 | Omit when empty | no target-file set → omit the list; an empty section or heading is FORBIDDEN |
 
 - Why flat leaf: the hook slices to the first `</section>` and drops a list holding a nested `<section>`.
+- Why the heading binds only in md: the md parse matches an English `## Target Files` H2; the HTML parse keys on the literal id alone.
 - Why one path and nothing else: the hook reads each `<li>`, or each md line up to the next `## ` heading, as one item and requires the whole item text inside the edited path, so an annotated item never matches its own file.
 - Why repo-relative: it matches in every checkout; an absolute path into another checkout matches a worktree edit only through a lenient basename fallback.
 
