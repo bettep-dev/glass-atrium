@@ -489,7 +489,7 @@ function ScreenModelConfig() {
 }
 
 // Header sync token — answers "is what I saved what runs?" once per screen, never per row.
-// Tone rides the glyph, text stays plain · as-of = client receive time (loopback → same instant).
+// Tone rides the glyph, text stays plain.
 function SyncTokenMC({ state, sync }) {
 	const { Icon } = window.UI;
 
