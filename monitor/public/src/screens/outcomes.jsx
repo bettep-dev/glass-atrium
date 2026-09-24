@@ -395,7 +395,7 @@ const SCREEN_OUTCOMES_CSS = `
 `;
 
 function ScreenOutcomes({ onNav }) {
-  const { PageHeader, Icon, Pill, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   // Filter state — URL hash 초기화 → 북마크 / 직접링크 복원.
   const [filter, setFilter] = useStateO(() => readFilterFromHashO());
@@ -678,7 +678,7 @@ function ScreenOutcomes({ onNav }) {
           sub="Agent task outcomes"
           right={
             <>
-              <AsOfStampO at={asOfAt}/>
+              <FreshnessStamp {...getFreshnessInputO(asOfAt, [searchState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState])}/>
               <WindowSeg value={filter.days} onChange={setWindowDays}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh task results">
                 <Icon name="refresh" size={14}/>
@@ -802,18 +802,13 @@ function SilentChannelRowO({ channels }) {
   );
 }
 
-// 한 번도 적재되지 않은 값은 em-dash — 0 으로 읽히면 안 된다 (39578 §D).
-function AsOfStampO({ at }) {
-  const { tzShortLabel, formatKstTime, formatKstFull, getDisplayTimezone } = window.UI;
-  const zone = tzShortLabel(getDisplayTimezone());
-
-  return (
-    <span
-      className="fs-micro font-mono text-faint"
-      title={at ? `Last successful load ${formatKstFull(at)} (${zone})` : 'Nothing has loaded yet'}>
-      As of {at ? `${formatKstTime(at)} ${zone}` : '—'}
-    </span>
-  );
+// stamping panels only → any failed read marks the kept stamp stale, so a partial refresh never claims full freshness
+function getFreshnessInputO(asOfAt, stampStates) {
+  return {
+    at: asOfAt,
+    loading: stampStates.some((st) => st.status === 'loading'),
+    failed: stampStates.some((st) => st.status === 'error'),
+  };
 }
 
 function WindowSeg({ value, onChange }) {
