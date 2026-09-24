@@ -277,7 +277,7 @@ test("every in-screen hash link resolves to a hash-router screen id", async () =
   }
 });
 
-function renderSummaryRow(mod: Record<string, unknown>, overage: unknown): RenderedNode {
+function renderSummaryRow(mod: Record<string, unknown>, overage: unknown): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   return renderScreen(
     React.createElement(mod.AgentSummaryRow as Component, {
@@ -297,10 +297,10 @@ test("a budget crossing rides the P95 fill-bar instead of a pill that contradict
   const crossed = renderSummaryRow(mod, { overage_count: 3, max_crossed_pct: 112 });
   const clean = renderSummaryRow(mod, null);
 
-  const badgesIn = (tree: RenderedNode) => findNodes(tree, (n) => n.props?.atom === "Badge");
+  const badgesIn = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props?.atom === "Badge");
   assert.equal(badgesIn(crossed).length, 0, "no near-cap pill sits beside the P95 glyph");
 
-  const p95BarLabel = (tree: RenderedNode) =>
+  const p95BarLabel = (tree: RenderedNode | string | null) =>
     String(findNodes(tree, (n) => n.props?.atom === "Bar" && String(n.props.ariaLabel).startsWith("p95"))[0]?.props.ariaLabel);
   assert.match(p95BarLabel(crossed), /3 tool_use-budget crossings.*peak 112%/);
   assert.doesNotMatch(p95BarLabel(clean), /crossing/, "an uncrossed row's bar claims no crossing");
