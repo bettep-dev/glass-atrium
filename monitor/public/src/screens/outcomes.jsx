@@ -2661,6 +2661,12 @@ function formatToolUseLineO(markdown) {
     (_line, prefix, actual, declared) => `${prefix}${actual} tool calls${declared ? ` · ${declared} estimated` : ''}`);
 }
 
+// Recorder's '- **Result**: <enum>' line → the label the drawer title and chip show.
+function formatResultLineO(markdown) {
+  return markdown.replace(/^(- \*\*Result\*\*: )(\S+)[ \t]*$/m,
+    (_line, prefix, result) => `${prefix}${window.UI.resolveResultMeta(result, null).label}`);
+}
+
 // 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
 function DetailReferences({ row }) {
   if (!row?.cid) return null;
@@ -2712,7 +2718,7 @@ function DetailBody({ detailState, markdown }) {
     );
   }
 
-  return <MarkdownView markdown={formatToolUseLineO(markdown)}/>;
+  return <MarkdownView markdown={formatResultLineO(formatToolUseLineO(markdown))}/>;
 }
 
 // SECURITY: marked.parse → DOMPurify.sanitize → HTML. DOMPurify 부재 / parse 실패 시 null 반환 →

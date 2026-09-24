@@ -22,6 +22,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
+import { buildUiSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -62,6 +63,7 @@ interface OutcomesHelpers {
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseLineO: (markdown: string) => string;
+  formatResultLineO: (markdown: string) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -123,6 +125,9 @@ const outcomes = (await loadScreen(OUTCOMES_SRC, { window: { UI: {} } })) as unk
 // agents.jsx reads `window.UI.STICKY_TH_STYLE` at module top level → provide a
 // non-empty UI object so the eval does not throw (the value itself is unused here).
 const agents = (await loadScreen(AGENTS_SRC, { window: { UI: {} } })) as unknown as AgentsHelpers;
+// The real ui.jsx result names — the drawer title, chip and ledger cell all read these.
+const ui = await buildUiSandbox<{ resolveResultMeta: (result: string, closedAt: unknown) => { label: string } }>();
+outcomes.window.UI.resolveResultMeta = ui.resolveResultMeta;
 
 // Helper return arrays originate in the vm realm; re-materialize into this realm
 // before deep-equality (cross-realm prototype mismatch otherwise).
@@ -397,6 +402,26 @@ describe("formatToolUseLineO: the recorded tool-use count reads as words, not ke
   for (const row of rows) {
     test(row.name, () => {
       assert.strictEqual(outcomes.formatToolUseLineO(`- **Agent**: a\n${row.line}\n`), `- **Agent**: a\n${row.readable}\n`);
+    });
+  }
+});
+
+describe("formatResultLineO: the body's Result line reads as the drawer title names the result", () => {
+  const rows = [
+    { name: "a done result", result: "done" },
+    { name: "a result done with caveats", result: "done_with_concerns" },
+    { name: "a failed result", result: "fail" },
+    { name: "a blocked result", result: "blocked" },
+    { name: "a result needing info", result: "needs_context" },
+    { name: "an unknown result keeps its recorded value", result: "mystery" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const label = ui.resolveResultMeta(row.result, null).label;
+      assert.strictEqual(
+        outcomes.formatResultLineO(`- **Task type**: review\n- **Result**: ${row.result}\n`),
+        `- **Task type**: review\n- **Result**: ${label}\n`,
+      );
     });
   }
 });
