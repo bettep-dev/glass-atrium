@@ -26,8 +26,14 @@ Agent-only record (default fallback) · user-requested HTML · user-requested no
 
 The baseline requirement list, the d8 validator-safe color rule and the content-driven escalation are canonical at `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor`.
 
-- **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**: purple/indigo/lavender AI-brand gradients · gradient text on headings (`background-clip:text`) · equal `grid-cols-3` (prefer asymmetric 1fr/3fr) · `rgba(0,0,0,X)` shadows on dark surfaces · at most 1 gradient per layer, 2 stops max · decoration stacking (one treatment per element).
-  - The SoT, which carries none of these six: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
+- **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**:
+  - purple/indigo/lavender AI-brand gradients
+  - gradient text on headings (`background-clip:text`)
+  - equal `grid-cols-3` (prefer asymmetric 1fr/3fr)
+  - `rgba(0,0,0,X)` shadows on dark surfaces
+  - at most 1 gradient per layer, 2 stops max
+  - decoration stacking (one treatment per element)
+  - The SoT, which carries none of these: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
   - Glassmorphism is not on this list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
@@ -37,37 +43,61 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 ### Threshold SoT
 
 - The D8 numeric thresholds live in `monitor/src/server/clauded-docs/d8-thresholds.json`, which the HTML validator `JSON.parse`-loads at module init.
-- Every prose number in the corpus is a mirror of that JSON: editing a prose number without editing the JSON is FORBIDDEN.
+- Every prose number in the corpus is a mirror of that JSON: editing a prose number without editing the JSON is forbidden.
 
 ### Emission contract
 
-- Every emission mode POSTs to `POST /api/clauded-docs` (`127.0.0.1:16145`). "Agent-only record" names the body FORMAT, never a filesystem target.
-- **Required tuple** (route source: `monitor/src/server/routes/clauded-docs.ts`): `title` (non-empty, ≤500) + `author` (non-empty, ≤64) + EXACTLY ONE of `{html_body, md_body, yaml_body, json_body, txt_body}`.
-  - There is no `prefix` field: the supplied body field IS the format discriminator.
-  - Optional: `audience`, `supersedes_id`, `folder_id`, `doc_status`.
+- Every emission mode POSTs to `POST /api/clauded-docs` (`127.0.0.1:16145`). "Agent-only record" names the body format, never a filesystem target.
+- **Required tuple** (route source: `monitor/src/server/routes/clauded-docs.ts`): `title` (non-empty, ≤500) + `author` (non-empty, ≤64) + exactly one of `{html_body, md_body, yaml_body, json_body, txt_body}`.
+  - There is no `prefix` field: the supplied body field is the format discriminator.
+  - Optional: `audience`, `supersedes_id`, `folder_id`, `doc_status` (a stage — `### Document Lifecycle — completion + exposure routing`), `last_status_model` (the running model id, stored as the status actor).
   - Zero body fields or two or more → `400`; a missing or over-length `title`/`author` → `400 invalid_body`; success → `201`.
 - An HTML primary is stored as a single file in the monitor-internal root, with no MD companion generated (`md_copy_path` null).
 - `memory/` is never a deliverable store — it holds session-internal `progress-*.md` state only, so writing any deliverable there is a hard violation.
 - Delegation phrasing does not override this routing.
-- **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the USER explicitly asked for that local destination. Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
+- **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the user explicitly asked for that local destination.
+  - Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
   - Stamping without an actual user request is a violation.
   - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands unchanged.
-- On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is FORBIDDEN.
+- On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is forbidden.
 - **Sensitivity self-check before the POST of an exposed HTML primary** — one triggered by either HTML request test signal, an explicit format request included.
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
-  - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is FORBIDDEN.
+  - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is forbidden.
   - The report is count + category + locator only — never the flagged text, in the narrative, the `[COMPLETION]`, `concerns` or any log, so the scanner cannot become the leak path.
   - Honor-system semantic judgment: no hook reads it.
 
 ### Document Lifecycle — completion + exposure routing
 
-- **Done transition**: the completing agent transitions `doc_status→done` through `PUT /api/clauded-docs/:id`, re-sending the document body plus the optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` is rejected `400 invalid_body`.
-- **Supersede vs new**: same topic as a `done` document → supersede POST carrying `supersedes_id` (the monitor auto-transitions the predecessor) · unrelated topic → new POST · uncertain relatedness → new POST, never reopening a `done` document.
-- **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede POST even though the predecessor is still `progress`, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
-- **Chain-root content**: the first version carries the original user instruction VERBATIM plus the instruction-NAMED file set. An empty named set is the common shape and falls back to the instruction's named SUBJECT set, the file-count leg being skipped rather than measured against a zero baseline.
-- **Exposure routing**: viewer-exposed only on an explicit HTML/share signal; everything else is viewer default-hidden, and an ambiguous form defaults to non-HTML md.
-- An agent-only record follows the same done-transition and supersede rules — exposure is a routing choice, not a lifecycle exemption.
-- The reviewer-side consumer of the chain root is `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`.
+- **Stages**: `doc_status` is one of `doc_review` · `implementing` · `impl_review` · `impl_done` · `done` (`clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`.
+- **Author writes**: `doc_review` · `done` on a document you close · a supersede-POST's inherited stage (below). Other stages are orchestrator writes.
+- **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref:
+
+| Document | Closer |
+|---|---|
+| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator, which records its stages from the first DEV spawn through its close |
+| any other — its work ends at authoring (report, reference, research) | its author, once no work remains |
+
+- Leave a document written to be built from at `doc_review`; uncertain → leave it open.
+  - Why: the orchestrator's `implementing` write skips a document past `doc_review`, so a plan closed early drops out of tracking.
+- **Done transition**: `PUT /api/clauded-docs/:id` re-sending the unchanged body in its stored format's field (`<format>_body`), plus `expected_hash`, `doc_status: "done"` and `last_status_model`.
+  - A bare `{"doc_status":"done"}` → `400 invalid_body`.
+  - A wrong body field: HTML↔plain converts the document's format, plain↔plain is rejected `400`.
+  - An omitted `last_status_model` stores a null status actor.
+  - A `done` PUT on a folder member closes every member of that folder, whatever its stage. Close a folder member only when every other member is already `done`; otherwise the orchestrator closes it.
+- **Supersede vs new**:
+
+| New content | Path |
+|---|---|
+| same topic as a `done` document | supersede-POST carrying `supersedes_id` — the monitor closes the predecessor |
+| unrelated topic | new POST |
+| relatedness uncertain | new POST — never reopen a `done` document |
+
+- **Every supersede-POST** sends `last_status_model`: the monitor closes the predecessor under that actor.
+  - Predecessor at `implementing`, `impl_review` or `impl_done` (GET it) → POST the revision with that `doc_status`, keeping the revision open.
+- **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede-POST even though the predecessor is still open, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
+- **Chain-root content**: the first version carries the original user instruction verbatim plus the instruction-named file set.
+  - An empty named set falls back to the instruction's named subject set; the file-count leg is then skipped, not measured against a zero baseline.
+- **Exposure routing**: viewer-exposed only on a `### HTML request test` signal, viewer default-hidden otherwise. An agent-only record follows every rule above — exposure is a routing choice, not a lifecycle exemption.
 
 ## Diagram Standard [REPORT]
 
