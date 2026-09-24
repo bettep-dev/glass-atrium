@@ -364,12 +364,20 @@ function strHash(str) {
   return h;
 }
 
+// Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
+function KpiValue({ children, unit, tone }) {
+  return <div className="kpi-value">
+    {tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>}
+    {children}{unit && <span className="unit">{unit}</span>}
+  </div>;
+}
+
 // label + 26px mono value + delta + 68×26 inline sparkline
 function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
     {hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
-    <div className="kpi-value">{value}{unit && <span className="unit">{unit}</span>}</div>
+    <KpiValue unit={unit}>{value}</KpiValue>
     {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
   </button>;
@@ -971,7 +979,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, FRESHNESS_STALE_MS,

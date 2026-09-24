@@ -181,6 +181,10 @@ function getSummaryState(breaker: unknown, agents: unknown[] = []): unknown {
   return { status: "ready", data: { agents, meta: { circuit_breaker: breaker } }, error: null };
 }
 
+function getValueTexts(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => n.props.atom === "KpiValue").map((n) => collectText(n));
+}
+
 function getBadgeTexts(tree: RenderedNode | string | null): string[] {
   return findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
 }
@@ -227,15 +231,18 @@ test("the unsafe-to-route tile shows a count only when the breaker state actuall
   };
 
   const loadedZero = await getUnsafeTile(getSummaryState(BREAKER_LOADED_ZERO));
-  assert.deepEqual(getBadgeTexts(loadedZero), ["0"]);
+  assert.deepEqual(getValueTexts(loadedZero), ["0"], "the count rides the KPI value scale");
+  assert.deepEqual(getBadgeTexts(loadedZero), [], "the count is not a micro-sized pill");
   assert.match(collectText(loadedZero), /of 3 registered agents/);
 
   const unavailable = await getUnsafeTile(getSummaryState(BREAKER_UNAVAILABLE));
   assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
+  assert.deepEqual(getValueTexts(unavailable), []);
 
   const loading = await getUnsafeTile(LOADING_STATE);
   assert.ok(isBusy(loading));
   assert.deepEqual(getBadgeTexts(loading), []);
+  assert.deepEqual(getValueTexts(loading), []);
 
   const failed = await getUnsafeTile(ERROR_STATE);
   assert.match(collectText(failed), /Couldn't load unsafe to route/);

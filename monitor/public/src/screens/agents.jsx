@@ -573,7 +573,7 @@ function AgentStatusBand({ days, summaryState, failureState, overageState, failu
 }
 
 function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, onRetry }) {
-  const { Badge } = window.UI;
+  const { Badge, KpiValue } = window.UI;
 
   return (
     <div className="card h-full flex flex-col min-h-0">
@@ -584,11 +584,7 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
           <ErrorBannerAg title={`Couldn't load ${label.toLowerCase()}`} detail={error} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
-        {status === 'ready' && (
-          <span className="fs-xl font-mono">
-            <Badge role="status" tone={tone} glyph={true}>{value}</Badge>
-          </span>
-        )}
+        {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
         <span className="text-faint fs-micro">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
       </div>
     </div>
