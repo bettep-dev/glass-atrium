@@ -68,7 +68,11 @@ interface OutcomesHelpers {
   }) => RenderNode;
   KpiSkeletonO: unknown;
   PayloadUnavailableO: unknown;
-  buildAgentFailureRowsO: (agentStack: unknown) => { agent: string; failed: number; blocked: number; total: number }[];
+  buildAgentFailureRowsO: (
+    agentStack: unknown,
+    byAgentTop?: unknown,
+  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number }[];
+  buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
     rows: LedgerRow[],
@@ -333,6 +337,44 @@ test("buildAgentFailureRowsO: keeps only rows with a failure and orders them wor
     "clean agents drop out; the rest sort by failed+blocked descending",
   );
   for (const row of rows) assert.ok(row.failed + row.blocked > 0, `${row.agent} earns its row`);
+});
+
+test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
+  const busy = Array.from({ length: 12 }, (_, i) => ({ agent: `busy-${i}`, result: "done", count: 100 + i }));
+  const quiet = [
+    { agent: "quiet-fail", result: "done", count: 1 },
+    { agent: "quiet-fail", result: "fail", count: 1 },
+    { agent: "quiet-blocked", result: "blocked", count: 1 },
+  ];
+  const data = helpers.buildAnalyticsDataO({ by_agent_result: [...busy, ...quiet], by_agent_top_10: [] });
+  const rows = sameRealm(helpers.buildAgentFailureRowsO(data.agentStack, data.overall.by_agent_top_10));
+
+  assert.deepStrictEqual(
+    rows.map((r) => r.agent).sort(),
+    ["quiet-blocked", "quiet-fail"],
+    "a volume cap must not hide a failing agent from a table headed 'non-zero rows'",
+  );
+});
+
+test("buildAgentFailureRowsO: open caveats are known only for agents the top-10 rollup loaded", () => {
+  const stack: AgentStackEntry[] = [
+    { agent: "in-rollup-open", total: 10, byResult: { fail: 2 } },
+    { agent: "in-rollup-clear", total: 10, byResult: { fail: 1 } },
+    { agent: "off-rollup", total: 3, byResult: { blocked: 1 } },
+  ];
+  const byAgentTop = [
+    { agent: "in-rollup-open", count: 10, writer_open_count: 4 },
+    { agent: "in-rollup-clear", count: 10, writer_open_count: 0 },
+  ];
+  const openOf = (top: unknown) =>
+    Object.fromEntries(sameRealm(helpers.buildAgentFailureRowsO(stack, top)).map((r) => [r.agent, r.openCaveats]));
+
+  assert.deepStrictEqual(openOf(byAgentTop), { "in-rollup-open": 4, "in-rollup-clear": 0, "off-rollup": null });
+  assert.deepStrictEqual(
+    openOf(undefined),
+    { "in-rollup-open": null, "in-rollup-clear": null, "off-rollup": null },
+    "no rollup loaded → no agent reads as a zero",
+  );
 });
 
 test("buildAgentFailureRowsO: an absent or malformed stack yields no rows", () => {

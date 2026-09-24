@@ -330,9 +330,6 @@ function loopResultMetaO(result) {
   return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || '—' };
 }
 
-// AgentStackedBar 카드 상한 — 컨테이너 가독성 / cross-analysis 의 by_agent_top_10 캡과 일관.
-const AGENT_STACK_TOP_N = 8;
-
 // 비-actionable pseudo-agent ID — attribution-fallback 버킷 (실 agent 아님).
 // agents.jsx NON_ACTIONABLE_AGENT_IDS 와 동일 집합 (named-token 정합, T14).
 // 서버가 registry 게이트(T7)하므로 canonical agent 는 이 집합에 절대 없음 → 집합은
@@ -528,15 +525,9 @@ function ScreenOutcomes({ onNav }) {
 
     fetchJsonO(crossUrl, ctrl.signal)
       .then((overall) => {
-        const byResultCount = buildByResultCountMapO(overall.by_result);
-        const agentStack    = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
-        const crosstab      = buildCrosstabO(overall.cells);
+        const data = buildAnalyticsDataO(overall);
         markFreshO();
-        setAnalyticsState({
-          status: 'ready',
-          data: { overall, byResultCount, agentStack, crosstab },
-          error: null,
-        });
+        setAnalyticsState({ status: 'ready', data, error: null });
       })
       .catch((err) => handleErrorO(err, setAnalyticsState));
 
@@ -995,7 +986,7 @@ function BandTileO({ tile, windowLabel }) {
 // registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
 // 행 자체가 조치 대상이므로 tone 은 글리프가 아니라 숫자의 존재로 운반된다(0 행은 아예 렌더하지 않음).
 // by_agent_top_10 → per-agent open-caveat lookup. The stack rows (by_agent_result) carry no
-// such field, so it joins on the agent key — absent (legacy response) → 0.
+// such field, so it joins on the agent key — an agent outside the top-10 rollup has no loaded count.
 function buildAgentOpenCaveatMapO(byAgentTop) {
   const { getWriterOpenCount } = window.UI;
   const rows = Array.isArray(byAgentTop) ? byAgentTop : [];
@@ -1010,7 +1001,7 @@ function buildAgentFailureRowsO(agentStack, byAgentTop) {
       agent: entry.agent,
       failed: entry.byResult?.fail || 0,
       blocked: entry.byResult?.blocked || 0,
-      openCaveats: openByAgent.get(entry.agent) || 0,
+      openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
       total: entry.total || 0,
     }))
     .filter((row) => row.failed + row.blocked > 0)
@@ -1065,13 +1056,25 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
               <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}>{row.agent}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
-              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.openCaveats)}</td>
+              <OpenCaveatCellO count={row.openCaveats}/>
               <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+// null = the agent sits outside the top-10 rollup → em-dash, never a zero that was not loaded.
+function OpenCaveatCellO({ count }) {
+  const isLoaded = count !== null;
+  return (
+    <td
+      className="text-right text-ink font-mono px-3 py-1.5 border-b border-line"
+      title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
+      {isLoaded ? formatIntO(count) : '—'}
+    </td>
   );
 }
 
@@ -2978,12 +2981,22 @@ function buildByResultCountMapO(byResult) {
   return out;
 }
 
+// cross-analysis payload → analytics card data. The agent stack stays uncapped: the failure table must list every failing registry agent.
+function buildAnalyticsDataO(overall) {
+  return {
+    overall,
+    byResultCount: buildByResultCountMapO(overall.by_result),
+    agentStack: buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER),
+    crosstab: buildCrosstabO(overall.cells),
+  };
+}
+
 // cross-analysis by_agent_result (단일 GROUP BY (agent, result)) → 에이전트별 스택 행.
 // 이전 per-result top-10 4-list stitch(는 #11↓ agent 를 소리없이 누락 = 근사치)를 대체 —
 // 서버가 canonical agent 전체의 모든 result 를 한 쿼리로 반환하므로 per-agent total 이 정확히 정합.
 // resultOrder(4-KPI) 밖 result(needs_context 등)는 스택 미표시 → total/byResult 에서 제외(막대 합 100%).
 // reconstructed = reconstructed_count 누적(합성 복구행) — headline 을 writer-emitted(total-reconstructed)로 분리.
-// 반환: total desc top-N.
+// 반환: total desc top-N (topN 생략 시 전체).
 function buildAgentStackO(byAgentResult, resultOrder, topN) {
   const resultSet = new Set(resultOrder);
   const byAgent = new Map();
