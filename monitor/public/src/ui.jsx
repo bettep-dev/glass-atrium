@@ -330,6 +330,31 @@ function AgentBadge({ a, size=22 }) {
   </span>;
 }
 
+const AGENT_NAME_PREFIX = 'glass-atrium-';
+
+/** Display form of an agent name — the shared install prefix dropped; a missing name → '—'. */
+function getAgentDisplayName(name) {
+  const full = typeof name === 'string' ? name.trim() : '';
+
+  if (!full) return '—';
+  if (!full.startsWith(AGENT_NAME_PREFIX) || full.length === AGENT_NAME_PREFIX.length) return full;
+  return full.slice(AGENT_NAME_PREFIX.length);
+}
+
+// generic span takes no aria-label → full name travels as sr-only text, the short form stays visual only
+function AgentName({ name, className = '' }) {
+  const full = typeof name === 'string' ? name.trim() : '';
+  const short = getAgentDisplayName(name);
+
+  if (short === full || !full) return <span className={className}>{short}</span>;
+  return (
+    <span className={className} title={full}>
+      <span aria-hidden="true">{short}</span>
+      <span className="sr-only">{full}</span>
+    </span>
+  );
+}
+
 // djb2-lite — 시각 팔레트용 결정적 해시 (crypto 불필요)
 function strHash(str) {
   let h = 5381;
@@ -946,7 +971,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, FRESHNESS_STALE_MS,
