@@ -348,7 +348,6 @@ function ScreenModelConfig() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Models & budgets"
-					sub="Models & budgets"
 					right={
 						<>
 							<SyncTokenMC
