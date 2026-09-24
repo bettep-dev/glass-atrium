@@ -437,7 +437,8 @@ function computeWindowTotal(trendState) {
   const total = series.reduce((s, v) => s + v, 0);
   return {
     total,
-    delta: computeSparkDeltaC(series),
+    // The series always ends at today (server generate_series → today), a partial day → left out of the trend.
+    delta: computeSparkDeltaC(series.slice(0, -1)),
     dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
@@ -565,13 +566,13 @@ function HotBulletC({ hot }) {
 // Window trend — direction rides on the glyph, never on the text colour.
 function TrendDeltaC({ delta }) {
   if (typeof delta !== 'number' || !Number.isFinite(delta)) {
-    return <div className="cost-foot mt-1.5">No trend — a single day in the window.</div>;
+    return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
   }
   const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
-      {Math.abs(delta).toFixed(0)}% first day to last
+      {Math.abs(delta).toFixed(0)}% first day to yesterday
     </div>
   );
 }

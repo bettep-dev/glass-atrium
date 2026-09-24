@@ -286,6 +286,17 @@ test("the trend delta states direction, which the total alone cannot", () => {
   assert.strictEqual(cost.computeWindowTotal(getTrendPoints([2, 2, 2])).delta, 0);
 });
 
+test("the trend reads complete days only — today's partial point never moves it", () => {
+  for (const today of [0, 0.1, 4, 100]) {
+    assert.strictEqual(cost.computeWindowTotal(getTrendPoints([4, 4, 4, today])).delta, 0, `today=${today}`);
+  }
+  assert.strictEqual(
+    cost.computeWindowTotal(getTrendPoints([3, 1])).delta,
+    null,
+    "one complete day plus today has no first-to-last pair",
+  );
+});
+
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {
   const share = cost.computeCacheShare(
     ready({
