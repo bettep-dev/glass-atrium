@@ -639,10 +639,6 @@
 	font-size: 12px;
 }
 
-.grid-cols-30 {
-	grid-template-columns: repeat(30, minmax(0, 1fr));
-}
-
 .alert-detail {
 	font-size: 12.5px;
 }
