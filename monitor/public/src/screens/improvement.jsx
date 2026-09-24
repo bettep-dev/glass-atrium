@@ -691,7 +691,7 @@ function StatusBandI({
 		0,
 		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
 	);
-	const statsStatus = tileStatusI(statsState, statsState.data);
+	const statsStatus = bandTileStatusI(statsState, statsState.data);
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
 	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
@@ -701,11 +701,12 @@ function StatusBandI({
 	return (
 		<div className="grid grid-cols-4 gap-3 mb-3">
 			<StatusTileI
-				status={tileStatusI(listState, listState.data)}
+				status={bandTileStatusI(listState, listState.data)}
 				tone="text-warn"
 				symbol="⚠"
 				label="Awaiting your decision"
 				value={formatIntI(awaiting)}
+				owner="suggestion board"
 				population="Safety-tier suggestions, pending or snoozed · no recency bound"
 				onRetry={onRetry}
 			/>
@@ -715,24 +716,27 @@ function StatusBandI({
 				symbol="✓"
 				label="Applied (7 days)"
 				value={formatIntI(Number(s.cycles_generated_applied_7d ?? 0))}
+				owner="loop output"
 				population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
 				onRetry={onRetry}
 			/>
 			<StatusTileI
-				status={tileStatusI(learningLogState, suppression)}
+				status={bandTileStatusI(learningLogState, suppression)}
 				tone="text-info"
 				symbol="ℹ"
 				label="Backlog that can propose"
 				value={formatIntI(promptable)}
+				owner="pattern ledger"
 				population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
 				onRetry={onRetry}
 			/>
 			<StatusTileI
-				status={tileStatusI(learningLogState, suppression)}
+				status={bandTileStatusI(learningLogState, suppression)}
 				tone="text-info"
 				symbol="ℹ"
 				label="Held, needs a human"
 				value={formatIntI(heldNeedingHuman)}
+				owner="pattern ledger"
 				population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
 				onRetry={onRetry}
 			/>
@@ -748,11 +752,22 @@ function tileStatusI(state, value) {
 	return "ready";
 }
 
-function StatusTileI({ status, tone, symbol, label, value, population, onRetry }) {
+// 밴드 타일은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
+function bandTileStatusI(state, value) {
+	const status = tileStatusI(state, value);
+	return status === "error" ? "announced" : status;
+}
+
+function StatusTileI({ status, tone, symbol, label, value, population, owner, onRetry }) {
 	const { KPI } = window.UI;
 	if (status !== "ready") {
 		return (
-			<TilePlaceholderI status={status} label={label} onRetry={onRetry} />
+			<TilePlaceholderI
+				status={status}
+				label={label}
+				owner={owner}
+				onRetry={onRetry}
+			/>
 		);
 	}
 	return (
@@ -771,7 +786,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, onRetry }
 
 // 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
 // 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
-function TilePlaceholderI({ status, label, onRetry }) {
+function TilePlaceholderI({ status, label, owner, onRetry }) {
 	return (
 		<div
 			className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
@@ -800,6 +815,11 @@ function TilePlaceholderI({ status, label, onRetry }) {
 			{status === "unavailable" ? (
 				<div className="card-sub is-wrap fs-meta mt-1">
 					Not measured — this payload carried no value for it
+				</div>
+			) : null}
+			{status === "announced" ? (
+				<div className="card-sub is-wrap fs-meta mt-1">
+					Not loaded — see the {owner} below
 				</div>
 			) : null}
 		</div>
@@ -1024,6 +1044,13 @@ function LoopOutputGroupI({
 					</button>
 				}
 			/>
+			{statsState.status === "error" ? (
+				<ErrorBannerI
+					title="Couldn't load the improvement stats — run breakdown and learning memory are missing"
+					detail={statsState.error}
+					onRetry={onRetry}
+				/>
+			) : null}
 			{statsState.status === "ready" && statsState.data ? (
 				<CycleDecompositionRowI stats={statsState.data} />
 			) : null}
@@ -1784,8 +1811,7 @@ function BucketRowI({ state, buckets }) {
 	const { ctm, epm, outcome, joinMeta } = buckets;
 	// linked_agent_count = DISTINCT 연결 에이전트 수 (record-level 연결은 FK 부재로 측정 불가).
 	const linkedAgents = Number(joinMeta?.linked_agent_count ?? 0);
-	// accent (S5) = CTM/EPM 카드만 2px 좌측 보더 (--ok/--warn) — full-fill 금지·--cat-* 금지.
-	// 나머지 진단 카드는 accent 없음 (중립 ring 유지 → 학습 메모리 두 카드만 시각 구분).
+	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
 		[
@@ -1794,7 +1820,6 @@ function BucketRowI({ state, buckets }) {
 			"Confirmed wins",
 			formatIntI(ctm),
 			"Confidence high · check passed · done",
-			"--ok",
 		],
 		[
 			"⚠",
@@ -1802,7 +1827,6 @@ function BucketRowI({ state, buckets }) {
 			"Mistake patterns (EPM)",
 			formatIntI(epm),
 			"Cases that failed or needed repeated rework",
-			"--warn",
 		],
 	];
 	return (
@@ -1812,15 +1836,10 @@ function BucketRowI({ state, buckets }) {
 				sub="All time, every agent — not the group's 7-day cycle window"
 			/>
 			<div className="grid grid-cols-2 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint, accent]) => (
+				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-						style={
-							accent
-								? { borderLeft: `2px solid rgb(var(${accent}))` }
-								: undefined
-						}
 					>
 						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
@@ -2409,25 +2428,18 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<span className="fs-micro font-mono text-faint uppercase tracking-wider">
 					Lines changed
 				</span>
-				{/* .diff-line glyph+색 어휘를 COUNT 배지에 재사용 (라인-diff 본문 없음 — Path A). */}
 				<span
-					className="diff-line diff-line--add rounded"
-					style={{ display: "inline-flex" }}
+					className="inline-flex items-center gap-1 fs-micro font-mono text-ink"
 					title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
 				>
-					<span className="diff-line__glyph" aria-hidden="true">
-						+
-					</span>
+					<SymI s="＋" className="text-ok" size={11} />
 					<span>{formatIntI(added)} added</span>
 				</span>
 				<span
-					className="diff-line diff-line--del rounded"
-					style={{ display: "inline-flex" }}
+					className="inline-flex items-center gap-1 fs-micro font-mono text-ink"
 					title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
 				>
-					<span className="diff-line__glyph" aria-hidden="true">
-						−
-					</span>
+					<SymI s="−" className="text-crit" size={11} />
 					<span>{formatIntI(removed)} removed</span>
 				</span>
 				<span className="fs-micro font-mono text-faint ml-auto">
