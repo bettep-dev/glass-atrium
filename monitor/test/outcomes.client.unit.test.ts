@@ -398,6 +398,8 @@ describe("formatToolUseLineO: the recorded tool-use count reads as words, not ke
   const rows = [
     { name: "an actual count alone", line: "- **Tool use**: actual=44", readable: "- **Tool use**: 44 tool calls" },
     { name: "an actual count with its estimate", line: "- **Tool use**: actual=44 declared=30", readable: "- **Tool use**: 44 tool calls · 30 estimated" },
+    { name: "a single call reads singular", line: "- **Tool use**: actual=1 declared=3", readable: "- **Tool use**: 1 tool call · 3 estimated" },
+    { name: "zero calls read plural", line: "- **Tool use**: actual=0", readable: "- **Tool use**: 0 tool calls" },
   ];
   for (const row of rows) {
     test(row.name, () => {

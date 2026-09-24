@@ -2658,7 +2658,7 @@ function splitLessonO(markdown) {
 // Recorder's 'actual=N declared=M' tool-use line → words.
 function formatToolUseLineO(markdown) {
   return markdown.replace(/^(- \*\*Tool use\*\*: )actual=(\d+)(?: declared=(\d+))?[ \t]*$/m,
-    (_line, prefix, actual, declared) => `${prefix}${actual} tool calls${declared ? ` · ${declared} estimated` : ''}`);
+    (_line, prefix, actual, declared) => `${prefix}${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`);
 }
 
 // Recorder's '- **Result**: <enum>' line → the label the drawer title and chip show.
