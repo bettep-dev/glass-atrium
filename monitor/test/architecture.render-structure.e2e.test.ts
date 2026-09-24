@@ -502,7 +502,7 @@ describe("fault live fixture", () => {
 			"crit",
 			`fixture precondition: '${FAULT_VERDICT}' must read as a fault tone in the shared status table`,
 		);
-		ctx = await openRenderContext(getLiveFixture(FAULT_VERDICT, 999));
+		ctx = await openRenderContext(getLiveFixture(FAULT_VERDICT, 999), getDaemonHealthFixture(FAULT_VERDICT));
 	});
 
 	after(async () => {

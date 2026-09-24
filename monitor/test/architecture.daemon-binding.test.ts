@@ -146,10 +146,10 @@ function healthCards(rows: DaemonAggRow[], anchor: Date | null): DaemonStatusCar
 // 바깥에서 읽을 수 없음. 등급이 없는 tone 은 링에 서지 않으므로, 그 자리를 두 화면이
 // 같은 빈 값으로 맞춰야 '같은 판정' 비교가 성립함. info('No data')는 점선 링으로 섬.
 const PAINTED_RING_TONES = new Set(["ok", "info", "warn", "crit"]);
-// 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니라 부품 tone 이 서지 않음.
+// daemons store answered (C1: /live tones need it); no part bindings reach the table, so no part tone lands.
 const NO_CARD_STATES = {
   pgState: { status: "loading", data: null, error: null },
-  daemonState: { status: "loading", data: null, error: null },
+  daemonState: { status: "ready", data: { daemons: [] }, error: null },
   hookState: { status: "loading", data: null, error: null },
   hookFailState: { status: "loading", data: null, error: null },
 };

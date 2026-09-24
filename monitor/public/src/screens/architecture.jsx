@@ -333,13 +333,12 @@ function ScreenArchitecture(
 			setter(INITIAL_FETCH_STATE_AR);
 			fetchJsonAR(url, ctrl.signal)
 				.then((data) => {
-					if (!ctrl.signal.aborted) setter({ status: "ready", data, error: null });
+					if (ctrl.signal.aborted) return;
+					setter({ status: "ready", data, error: null });
+					// a failed read is no reading — the stamp keeps the last one that answered.
+					setHealthAsOf(new Date().toISOString());
 				})
-				.catch((err) => handleErrorAR(err, setter))
-				// 도착이면 성공이든 실패든 시각을 밀어 올림 — 못 읽은 것도 '지금 읽어 본 결과' 임.
-				.finally(() => {
-					if (!ctrl.signal.aborted) setHealthAsOf(new Date().toISOString());
-				});
+				.catch((err) => handleErrorAR(err, setter));
 		});
 
 		return () => ctrl.abort();
@@ -484,6 +483,12 @@ function ScreenArchitecture(
 		() =>
 			buildUnverifiedNodeIds(liveState.data?.part_bindings, headlineHealthStates),
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
+	);
+
+	// caption population per node — two parts can share one node (cron), so one glyph may stand for several.
+	const attentionCountByNodeId = useMemoAR(
+		() => buildAttentionCountByNodeIdAR(healthPartRows),
+		[healthPartRows],
 	);
 
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
@@ -675,9 +680,11 @@ function ScreenArchitecture(
 						<>
 							{/* 신선도 — 판정이 언제 읽힌 것인지. 없으면 아직 한 번도 안 읽은 것임. */}
 							<span className="fs-meta text-dim" aria-busy={healthBusy || undefined}>
-								{healthAsOf
-									? `Health as of ${formatRelativeTime(healthAsOf)}`
-									: "Health not read yet"}
+								{getHealthStampTextAR(
+									healthAsOf ? formatRelativeTime(healthAsOf) : null,
+									healthStoreErrors.length,
+									Object.keys(headlineHealthStates).length,
+								)}
 							</span>
 							<button
 								className="btn ghost sm"
@@ -707,6 +714,7 @@ function ScreenArchitecture(
 								unverifiedNodeIds={unverifiedNodeIds}
 								healthBusy={healthBusy}
 								zoneRingPlan={zoneRingPlan}
+								attentionCountByNodeId={attentionCountByNodeId}
 								onSelectNode={handleSelectNode}
 								onRetry={triggerRefresh}
 							/>
@@ -751,6 +759,7 @@ function DiagramBody({
 	unverifiedNodeIds,
 	healthBusy,
 	zoneRingPlan,
+	attentionCountByNodeId,
 	onSelectNode,
 	onRetry,
 }) {
@@ -805,6 +814,7 @@ function DiagramBody({
 			unverifiedNodeIds={unverifiedNodeIds}
 			healthBusy={healthBusy}
 			zoneRingPlan={zoneRingPlan}
+			attentionCountByNodeId={attentionCountByNodeId}
 			onSelectNode={onSelectNode}
 		/>
 	);
@@ -822,6 +832,7 @@ function MermaidCanvas({
 	unverifiedNodeIds,
 	healthBusy,
 	zoneRingPlan,
+	attentionCountByNodeId,
 	onSelectNode,
 }) {
 	const containerRef = useRefAR(null);
@@ -941,7 +952,7 @@ function MermaidCanvas({
 			const ringClass = getRingClassAR(tone, LIVE_RING_CLASS, isUnverified, NODE_UNVERIFIED_CLASS);
 			if (ringClass) el.classList.add(ringClass);
 
-			setCornerGlyphAR(el, tone);
+			setCornerGlyphAR(el, tone, attentionCountByNodeId.get(unscoped));
 		});
 
 		root.querySelectorAll("g.cluster").forEach((el) => {
@@ -957,7 +968,7 @@ function MermaidCanvas({
 			const ringClass = getRingClassAR(tone, ZONE_RING_CLASS, isUnverified, ZONE_UNVERIFIED_CLASS);
 			if (ringClass) el.classList.add(ringClass);
 
-			setCornerGlyphAR(el, tone);
+			setCornerGlyphAR(el, tone, attentionCountByNodeId.get(nodeId));
 		});
 	}, [
 		renderState.status,
@@ -966,6 +977,7 @@ function MermaidCanvas({
 		ringToneByNodeId,
 		unverifiedNodeIds,
 		zoneRingPlan,
+		attentionCountByNodeId,
 	]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
@@ -1491,10 +1503,10 @@ function NodePartHealth({
 								{row.tone ? (
 									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
 										<StatusDot status={row.tone} />
-										{row.statusLabel}
+										{getPartStatusTextAR(row)}
 									</span>
 								) : (
-									<span className="fs-meta text-dim">—</span>
+									<span className="fs-meta text-dim">{getPartStatusTextAR(row)}</span>
 								)}
 								{/* 마지막 실행은 데몬 부품만 갖는 사실임 — 나머지 부품에서는 빈 값이 정답이라
 								    칸을 아예 두지 않음. 데몬인데 값이 없으면 그 없음은 보여야 하므로 '—' 로 냄. */}
@@ -2076,6 +2088,35 @@ function getNoVerdictCaptionAR(total, busy, errored) {
 	return `No verdict yet for ${total} parts`;
 }
 
+// unscoped node id → attention parts bound there — the same population the caption counts.
+function buildAttentionCountByNodeIdAR(partRows) {
+	const counts = new Map();
+	for (const row of partRows || []) {
+		if (row.tone !== "warn" && row.tone !== "crit") continue;
+		for (const nodeId of row.nodeIds || []) counts.set(nodeId, (counts.get(nodeId) || 0) + 1);
+	}
+	return counts;
+}
+
+// mark alone for one part; with a count once a node stands for several, so the caption tallies.
+function getCornerGlyphTextAR(tone, attentionCount) {
+	const mark = RING_GLYPH_MARK[tone];
+	if (!mark) return "";
+	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
+}
+
+// freshness line — a store that did not answer is named as unread, never folded into the stamp.
+function getHealthStampTextAR(relativeAsOf, errored, total) {
+	if (!relativeAsOf) return errored > 0 ? "Health not read — stores did not answer" : "Health not read yet";
+	if (errored > 0) return `Health as of ${relativeAsOf} · ${errored} of ${total} stores not read`;
+	return `Health as of ${relativeAsOf}`;
+}
+
+// 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
+function getPartStatusTextAR(row) {
+	return row.tone ? row.statusLabel : "Not loaded";
+}
+
 // 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
 // 글리프 색 표의 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
 const ALARM_TONE_RANK = { crit: 1, warn: 2, info: 3 };
@@ -2184,10 +2225,12 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 		byNodeId.set(nodeId, tone);
 	};
 
-	for (const [nodeId, daemons] of daemonsByNodeId) {
-		for (const d of daemons || [])
-			putTone(nodeId, window.UI.daemonStatusTone(d?.effective_status));
-	}
+	// daemons store not answered → the /live statuses carry no verdict the headline stands behind.
+	if (cardStates?.daemonState?.status === "ready")
+		for (const [nodeId, daemons] of daemonsByNodeId) {
+			for (const d of daemons || [])
+				putTone(nodeId, window.UI.daemonStatusTone(d?.effective_status));
+		}
 
 	const model = window.HealthModel;
 	if (!model || typeof model.resolveCardFacts !== "function") return byNodeId;
@@ -2338,8 +2381,8 @@ function ensureRingRectAR(groupEl, ringClass) {
  * 모서리 글리프 — 링과 같은 g 안에 심어 한 좌표계를 씀. tone 이 없으면 지움:
  * 남겨 두면 판정이 바뀐 노드가 옛 표식을 계속 실어 색과 글리프가 서로 다른 말을 함.
  */
-function setCornerGlyphAR(groupEl, tone) {
-	const mark = RING_GLYPH_MARK[tone];
+function setCornerGlyphAR(groupEl, tone, attentionCount) {
+	const mark = getCornerGlyphTextAR(tone, attentionCount);
 	const existing = groupEl.querySelector(`:scope > text.${RING_GLYPH_CLASS}`);
 
 	if (!mark) {

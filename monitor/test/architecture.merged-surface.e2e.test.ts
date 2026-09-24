@@ -2927,9 +2927,9 @@ test("AC-B2-6f a daemon part with no response carries no verdict, never a fabric
 
 	const unread = await getDaemonRowVerdicts();
 	assert.deepEqual(
-		unread.filter((row) => row.tone !== null || row.status !== "—"),
+		unread.filter((row) => row.tone !== null || row.status !== "Not loaded"),
 		[],
-		"a daemon part whose response never arrived must carry no tone and no status word — either one is an invented verdict",
+		"a daemon part whose response never arrived must carry no tone and read 'Not loaded' — a tone or a verdict word would be invented",
 	);
 
 	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.

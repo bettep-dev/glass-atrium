@@ -310,11 +310,11 @@ test("empty / null daemon input yields an empty map (no throw)", () => {
 // 그것임. 축소된 범위를 밝혀 둠: 표가 재던 사실 중 tone 만 여기 남고, 상태 문장(라벨)은
 // 노드 상세 패널의 pill 이 JSX 안에서 직접 그리므로 이 파일에 잴 자리가 없음.
 
-// 아직 도착하지 않은 health 카드 응답 넷 — 어느 카드도 ready 가 아니므로 부품 tone 이 하나도 서지
-// 않음. 데몬 판정만 남은 표를 얻는 자리임(카드가 서면 rank-max 가 두 판정을 하나로 접어 버림).
+// daemons store answered (C1: /live tones need it) + no part bindings passed → no part tone lands,
+// so the table holds the daemon verdict alone (a part tone would rank-max fold into it).
 const NO_CARD_STATES = {
   pgState: { status: "loading", data: null, error: null },
-  daemonState: { status: "loading", data: null, error: null },
+  daemonState: { status: "ready", data: { daemons: [] }, error: null },
   hookState: { status: "loading", data: null, error: null },
   hookFailState: { status: "loading", data: null, error: null },
 };
@@ -986,4 +986,76 @@ test("V4 dashed strokes on the map mean unverified and nothing else", () => {
     cssLines.some((line) => line.includes(".node.security > ") && line.includes("stroke-dasharray: none")),
     "the security classDef's dashed stroke must be overridden",
   );
+});
+
+// --- 39731 conformance: C1–C4 ------------------------------------------------------------
+test("C1 a daemons store that has not answered leaves no verdict ring from the live daemon statuses", () => {
+  const critDaemon = arch.buildLiveDaemonsByNodeId([
+    { daemon_name: "daily-restart", status: "error", effective_status: "error", node_ids: ["cron"] },
+  ]);
+
+  for (const status of ["error", "loading", "ready"]) {
+    const daemonState = { status, data: status === "ready" ? { daemons: [] } : null, error: status === "error" ? "HTTP 500" : null };
+    const tones = callInCtx<Map<string, string>>(
+      archCtx, "buildRingToneByNodeId", critDaemon, {}, healthStoreStates({ daemonState }),
+    );
+
+    assert.strictEqual(tones.has("cron"), status === "ready", `daemons store ${status} → cron ring tone ${tones.get("cron")}`);
+  }
+});
+
+test("C2 the per-node attention counts add up to the caption's attention count", () => {
+  const rows = [
+    { tone: "crit", nodeIds: ["cron"] },
+    { tone: "crit", nodeIds: ["cron"] },
+    { tone: "warn", nodeIds: ["autoagent_d"] },
+    { tone: "ok", nodeIds: ["wiki_d"] },
+    { tone: "info", nodeIds: ["pg_db"] },
+    { tone: null, nodeIds: ["hook_pipeline"] },
+  ];
+  const counts = callInCtx<Map<string, number>>(archCtx, "buildAttentionCountByNodeIdAR", rows);
+  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
+  const captionCount = Number(/^(\d+) of/.exec(caption)?.[1]);
+
+  assert.strictEqual([...counts.values()].reduce((a, b) => a + b, 0), captionCount, caption);
+  assert.strictEqual(counts.get("cron"), 2);
+});
+
+test("C2 a node carrying more than one attention part says how many on its glyph", () => {
+  for (const tone of ["warn", "crit"]) {
+    const single = callInCtx<string>(archCtx, "getCornerGlyphTextAR", tone, 1);
+    const double = callInCtx<string>(archCtx, "getCornerGlyphTextAR", tone, 2);
+
+    assert.ok(single && !/\d/.test(single), `one part → bare mark, read ${single}`);
+    assert.ok(double.startsWith(single) && double.includes("2"), `two parts → mark plus count, read ${double}`);
+  }
+  assert.strictEqual(callInCtx(archCtx, "getCornerGlyphTextAR", "ok", 3), "", "no attention tone → no glyph");
+});
+
+test("C3 a failed headline read never reads as a fresh reading", () => {
+  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", null, 0, 4), "Health not read yet");
+  assert.match(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /not read/);
+  assert.doesNotMatch(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /yet/);
+
+  const partial = callInCtx<string>(archCtx, "getHealthStampTextAR", "2m ago", 1, 4);
+  assert.match(partial, /2m ago/);
+  assert.match(partial, /1 of 4 .*not read/);
+  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", "2m ago", 0, 4), "Health as of 2m ago");
+});
+
+test("C3 regression pin — the as-of stamp advances only on a successful headline read", () => {
+  const src = readFileSync(ARCH_SRC, "utf8");
+  const fetchBlock = /urls\.forEach\(\(url, i\) => \{[\s\S]*?\n\t\t\}\);/.exec(src)?.[0] || "";
+
+  assert.ok(fetchBlock.includes("setHealthAsOf"), "fixture precondition: the headline fetch loop sets the stamp");
+  assert.doesNotMatch(fetchBlock, /\.finally\([\s\S]*setHealthAsOf/, "a failed read must not advance the stamp");
+});
+
+test("C4 an unjudged part and a 'No data' part never share a drawer label", () => {
+  const unjudged = callInCtx<string>(archCtx, "getPartStatusTextAR", { tone: null, statusLabel: null });
+  const noData = callInCtx<string>(archCtx, "getPartStatusTextAR", { tone: "info", statusLabel: "No data" });
+
+  assert.strictEqual(unjudged, "Not loaded");
+  assert.notStrictEqual(unjudged, noData);
+  assert.notStrictEqual(unjudged, "—");
 });
