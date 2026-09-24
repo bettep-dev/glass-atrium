@@ -163,6 +163,10 @@ interface ProposalListDbRow {
   status: string;
   cost_guard_state: string | null;
   reviewed_at: Date | null;
+  // Contract + closed token set: monitor/prisma/schema.prisma -> AutoagentProposal.
+  // Nullable independently of reviewed_at above — a machine-drained row carries one
+  // and not the other, so neither column's presence implies the other's.
+  reviewed_by: string | null;
   // Provenance columns surfacing the pre-verify chain to the UI.
   rationale: string | null;
   pre_verify_rationale: string | null;
@@ -539,6 +543,9 @@ const REJECT_BUCKET_QUALITY = "quality";
 // reuses 'rejected' — which is why the rationale text is the only discriminator available.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
+// Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede
+const PARKED_PATTERN_RATIONALE_LIKE = "covering pattern parked before apply%";
+
 // The daemon's own apply gate (is_apply_eligible_haiku_status / the daemon-apply
 // `haiku_status LIKE 'ok%'` SELECT) reads an ok-prefixed status as "the model produced a
 // usable diff". The quality bucket reuses that reading rather than enumerating skip
@@ -726,6 +733,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -759,6 +767,7 @@ async function handleImprovement(
           status::text AS status,
           cost_guard_state,
           reviewed_at,
+          reviewed_by,
           rationale,
           pre_verify_rationale,
           pre_verify_axes,
@@ -867,9 +876,9 @@ async function handleImprovement(
       `,
       // Reject lifecycle split. Tier is omitted for the same reason as the prose-only-add
       // count above — the split is tier-independent.
-      //   - CASE order is the contract: a superseded row carries haiku_status 'ok', so the
-      //     lifecycle arm must precede the quality arm or the mechanical rows book as
-      //     quality rejects (the defect).
+      //   - CASE order is the contract: a superseded or parked-pattern row carries
+      //     haiku_status 'ok', so the lifecycle arms must precede the quality arm or the
+      //     mechanical rows book as quality rejects (the defect).
       //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
       //     compares NULL against LIKE and would otherwise fall through untyped.
       //   - The provenance filter drops updater-written release rows, which are not
@@ -880,6 +889,8 @@ async function handleImprovement(
         SELECT
           CASE
             WHEN COALESCE(rationale, '') LIKE ${SUPERSEDE_RATIONALE_LIKE}
+              THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN COALESCE(rationale, '') LIKE ${PARKED_PATTERN_RATIONALE_LIKE}
               THEN ${REJECT_BUCKET_LIFECYCLE}
             WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
               THEN ${REJECT_BUCKET_QUALITY}
@@ -1473,7 +1484,7 @@ async function handleLearningLog(
 // GET /api/improvement/loop-events
 
 // Surfaces core.autoagent_loop_events — the per-cycle stage event stream.
-// Recent events (event_ts DESC) + table-wide eval_result distribution + latest
+// Recent events (event_ts DESC, id DESC) + table-wide eval_result distribution + latest
 // event timestamp.
 async function handleLoopEvents(
   request: FastifyRequest<{ Querystring: OrphanQuerystring }>,
@@ -1511,11 +1522,16 @@ async function handleLoopEvents(
         ORDER BY count DESC
       `,
       // rice (Decimal) cast ::float8 → plain number | null on the raw map.
+      // id DESC tie-breaks a shared event_ts — eval_result is part of the census key,
+      // so one agent stamps a row per result at a single cycle instant and event_ts
+      // alone leaves their order to the scan. id, not inserted_at: the migration's `DEFAULT now()`
+      // stamps every pre-existing row with the one migration instant, so
+      // inserted_at carries no ordering for them and id is their only history.
       prisma.$queryRaw<LoopEventDbRow[]>`
         SELECT id, event_ts, agent, rice::float8 AS rice, eval_result, changes_added, changes_removed
         FROM core.autoagent_loop_events
         ${agentWhere}
-        ORDER BY event_ts DESC
+        ORDER BY event_ts DESC, id DESC
         LIMIT ${limit}
       `,
     ]);
@@ -1731,9 +1747,16 @@ export function resolveApplyScript(): string {
   return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
+// Who an approval through this route files the row under. One member of the closed
+// actor set declared at monitor/prisma/schema.prisma -> AutoagentProposal, and the
+// same literal handleReject stamps: both routes are the same operator, so both name
+// one actor. daemon-apply.sh defaults to its own machine token, which would file an
+// operator's decision as the daemon's — hence the explicit hand-off.
+const REVIEW_ACTOR_OPERATOR = "monitor-user";
+
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
-//   8  = no-op / not actionable (id not found OR status not pending/snoozed)
+//   8  = no-op, already terminal (status applied/rejected/approved/reverted)
 //   9  = apply failed without auto-regen (won't occur on this route — we always
 //        pass --auto-regen — but kept as a defensive fallback branch)
 //   10 = applied-after-regen (stale diff → regenerated + pre-verify passed →
@@ -1745,7 +1768,20 @@ export function resolveApplyScript(): string {
 //   13 = regen-invalid (regenerated but 4-axis pre-verify failed; row left
 //        pending; failing axes on stderr — "axes: C1=..,C2=..,C3=..,C4=..")
 //   14 = regen-unrecoverable (no landable diff could be produced; row left pending)
-//   2 = bad arg · 3 = no psql · 6 = DB update failed (infra-class failures)
+//   18 = parked-pattern refusal (every covering pattern row is terminal; nothing
+//        applied, row untouched; stderr names the rows — Reject is the way out)
+//   19 = not found (no proposal with that id; no-op)
+//   20 = generation-outcome refusal (stored haiku_status not ok-prefixed; nothing
+//        applied, row untouched; stderr names the outcome — Reject is the way out)
+//   21 = proposal DB query failed (the lookup errored; nothing applied) — infra,
+//        answered 503 rather than the generic 500, and a retry can succeed
+//   23 = proposal row unreadable (the lookup answered but the row did not reassemble
+//        or answered for another id; nothing applied) — stored data, so a retry reads
+//        the same bytes; stderr names the row — Reject is the way out
+//   24 = unknown --actor token — unreachable from here (the actor above is a fixed
+//        literal, not request input), so it falls to the generic apply_error 500
+//   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
+//       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
 const APPLY_EXIT_NOOP = 8;
 const APPLY_EXIT_FAILED = 9;
@@ -1754,6 +1790,18 @@ const APPLY_EXIT_REGEN_FAILED = 11;
 const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
+const APPLY_EXIT_PARKED_PATTERN = 18;
+const APPLY_EXIT_NOT_FOUND = 19;
+const APPLY_EXIT_GENERATION_NOT_OK = 20;
+const APPLY_EXIT_QUERY_FAILED = 21;
+const APPLY_EXIT_ROW_UNREADABLE = 23;
+
+// Approve-only exit-18 refusal — route-local like RestoreErrorBody
+interface ApproveRefusalBody {
+  status: "parked_pattern";
+  id: number;
+  reason: string;
+}
 
 // SECURITY (LLM06 — Excessive Agency): approve mutates agent .md files via daemon-apply.sh
 // (high-impact). What actually constrains a caller: (1) the loopback-only bind in main.ts;
@@ -1771,7 +1819,7 @@ const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 async function handleApprove(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply,
-): Promise<ApproveProposalResponse | ImprovementMutationErrorBody> {
+): Promise<ApproveProposalResponse | ImprovementMutationErrorBody | ApproveRefusalBody> {
   const start = Date.now();
   const id = parseIdParam(request.params.id);
   if (id === null) {
@@ -1785,7 +1833,13 @@ async function handleApprove(
   let exitCode: number;
   let stderr: string;
   try {
-    await execFileAsync(resolveApplyScript(), ["--proposal-id", String(id), "--auto-regen"]);
+    await execFileAsync(resolveApplyScript(), [
+      "--proposal-id",
+      String(id),
+      "--auto-regen",
+      "--actor",
+      REVIEW_ACTOR_OPERATOR,
+    ]);
     // Resolved promise → exit 0.
     exitCode = APPLY_EXIT_APPLIED;
     stderr = "";
@@ -1817,14 +1871,9 @@ async function handleApprove(
     return { id, status: "applied", already_applied: true };
   }
   if (exitCode === APPLY_EXIT_NOOP) {
-    // Idempotent no-op: id absent OR already terminal/approved — nothing changed.
-    request.log.warn({ ...logBase, stderr }, "approve no-op (id not found or already terminal)");
+    request.log.warn({ ...logBase, stderr }, "approve no-op (already terminal)");
     reply.code(409);
-    return {
-      status: "noop",
-      id,
-      reason: "proposal not found or not in an actionable (pending/snoozed) state",
-    };
+    return { status: "noop", id, reason: "proposal already terminal — nothing to apply" };
   }
   if (exitCode === APPLY_EXIT_FAILED) {
     // Defensive fallback: with --auto-regen the stale path no longer emits exit 9
@@ -1875,6 +1924,60 @@ async function handleApprove(
       status: "unrecoverable",
       id,
       reason: "no applyable diff could be regenerated",
+    };
+  }
+  if (exitCode === APPLY_EXIT_PARKED_PATTERN) {
+    // Refusal, not a rejection — row stays queued; way out first since the approve toast truncates
+    const parkedRows = parseParkedRows(stderr);
+    request.log.warn(
+      { ...logBase, stderr, parkedRows },
+      "approve refused (every covering pattern row is terminal — row left as it was)",
+    );
+    reply.code(409);
+    const reason = "all covering pattern rows are terminal, nothing applied — use Reject instead";
+    return {
+      status: "parked_pattern",
+      id,
+      reason: parkedRows ? `${reason} (rows ${parkedRows})` : reason,
+    };
+  }
+  if (exitCode === APPLY_EXIT_NOT_FOUND) {
+    request.log.warn({ ...logBase, stderr }, "approve no-op (proposal not found)");
+    reply.code(404);
+    return { status: "not_found", id, reason: "proposal not found" };
+  }
+  if (exitCode === APPLY_EXIT_GENERATION_NOT_OK) {
+    // Refusal, not a rejection — way out first since the approve toast truncates
+    const outcome = parseGenerationOutcome(stderr);
+    request.log.warn(
+      { ...logBase, stderr, outcome },
+      "approve refused (generation outcome not ok-prefixed — row left as it was)",
+    );
+    reply.code(409);
+    const outcomeText = outcome ? ` haiku_status=${outcome}` : "";
+    return {
+      status: "generation_not_ok",
+      id,
+      reason: `use Reject — generation outcome${outcomeText} is not ok-prefixed, nothing applied (override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_QUERY_FAILED) {
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal DB query failed (nothing applied)");
+    reply.code(503);
+    return {
+      status: "apply_error",
+      id,
+      reason: `proposal DB query failed, nothing applied — retry once the database is reachable: ${truncateStderr(stderr)}`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_ROW_UNREADABLE) {
+    // Data problem, not an outage — no retry offered; way out first since the approve toast truncates
+    request.log.error({ ...logBase, stderr }, "approve failed — proposal row unreadable (nothing applied)");
+    reply.code(422);
+    return {
+      status: "row_unreadable",
+      id,
+      reason: `use Reject — stored proposal row is unreadable (row data, not a DB outage), nothing applied: ${truncateStderr(stderr)}`,
     };
   }
 
@@ -2888,6 +2991,21 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
     axes[key] = match[2].toLowerCase() === "true";
   }
   return Object.keys(axes).length > 0 ? axes : undefined;
+}
+
+/**
+ * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 3384:rejected, 6:applied)` line.
+ * Only id:status tokens pass — no other stderr text reaches the reason; undefined when none.
+ */
+function parseParkedRows(stderr: string): string | undefined {
+  const match = /guard REFUSED proposal id=\d+[^\n]*?\(rows (\d+:[a-z]+(?:, \d+:[a-z]+)*)\)/.exec(stderr);
+  return match?.[1];
+}
+
+// Exit-20 outcome token — value charset only, so no free stderr text rides into the reason
+function parseGenerationOutcome(stderr: string): string | undefined {
+  const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
+  return match?.[1];
 }
 
 // Mutation-side DB failure → 500 with the discriminated mutation-error envelope

@@ -19,6 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 const PRICING_SRC = resolve(__dirname, "../public/src/data/pricing.js");
 const PRICING_SOT = resolve(__dirname, "../../hooks/pricing.json");
+const MODEL_CONFIG_SRC = resolve(__dirname, "../public/src/screens/model-config.jsx");
 
 interface Rates {
   input: number; output: number; cache_read: number; cache_creation: number;
@@ -106,6 +107,20 @@ function loadPricing(): PricingMirror {
   return (ctx.window as PricingMirror);
 }
 
+// MODEL_CAP_MC is a module-local UI constant with no export seam — evaluate the real
+// literal out of the source so this reads the shipped map, not a copy of it.
+function loadModelCapMap(): Record<string, string> {
+  const src = readFileSync(MODEL_CONFIG_SRC, "utf8");
+  const start = src.indexOf("const MODEL_CAP_MC = {");
+  assert.ok(start >= 0, "model-config.jsx lost its MODEL_CAP_MC descriptor map");
+  const end = src.indexOf("\n};", start);
+  assert.ok(end > start, "MODEL_CAP_MC literal is unterminated");
+  const ctx: Record<string, unknown> = {};
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end + 3)}\nresult = MODEL_CAP_MC;`, ctx);
+  return ctx.result as Record<string, string>;
+}
+
 const agents = (await loadScreen(AGENTS_SRC)) as unknown as AgentsHelpers;
 const pricing = loadPricing();
 
@@ -159,6 +174,33 @@ test("getTokenRate: claude-fable-5-1 resolves from its own mirror row, not the f
   assert.strictEqual(pricing.getTokenRate("claude-fable-5-1"), explicit);
   assert.strictEqual(explicit.cache_read, 0.25);
   assert.strictEqual(pricing.TOKEN_RATES["claude-fable-5"].cache_read, 1.0);
+});
+
+test("getTokenRate: claude-opus-5-5 resolves from its own mirror row, not the family prefix", () => {
+  // Losing the row falls through to the claude-opus-5 prefix, which prices input
+  // at 5.00 against the 4.00 this id carries — overcharges every field (cache_read 2.5x).
+  const explicit = pricing.TOKEN_RATES["claude-opus-5-5"];
+  assert.ok(explicit, "mirror lost its explicit claude-opus-5-5 row");
+  assert.strictEqual(pricing.getTokenRate("claude-opus-5-5"), explicit);
+  // A context-variant suffix left on the id skips the exact row and matches claude-opus-5-.
+  assert.strictEqual(pricing.getTokenRate("claude-opus-5-5[1m]"), explicit);
+  assert.strictEqual(explicit.input, 4.0);
+  assert.strictEqual(pricing.TOKEN_RATES["claude-opus-5"].input, 5.0);
+});
+
+test("MODEL_CAP_MC: every described id is priced, and one id alone is the latest Opus", () => {
+  const caps = loadModelCapMap();
+
+  // An option whose id the mirror cannot price renders a cost-less radio card.
+  for (const [id, desc] of Object.entries(caps)) {
+    if (id === "inherit") continue;
+    assert.ok(pricing.getTokenRate(id), `descriptor id ${id} resolves to no mirror rate`);
+    assert.ok(desc.length > 0, `descriptor id ${id} carries an empty label`);
+  }
+
+  // Two ids claiming "Latest Opus" means a superseded row was never demoted.
+  const latest = Object.keys(caps).filter((id) => caps[id].startsWith("Latest Opus"));
+  assert.deepStrictEqual(latest, ["claude-opus-5-5"]);
 });
 
 // --- DF-24: matrix consumes reconstructed_count (writer-emitted basis) ---

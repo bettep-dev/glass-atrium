@@ -7,8 +7,10 @@
 # AUTOAGENT_PREFLIGHT_ACTIVE re-entry sentinel) and the single-proposal green-
 # suite exemption are pinned too, plus the ONE flaky retry (a first suite
 # failure re-runs the FULL suite once behind a loud green_gate_flaky_retry WARN;
-# a second failure hits the unchanged preflight_fatal). Every code-behavior row
-# FAILS at HEAD (no preflight exists there) and passes after.
+# a second failure hits the unchanged preflight_fatal). A runner that REFUSES on an
+# unusable toolchain is classified apart from that red suite by the exit code the
+# runner reserves for it, since the rc is the only channel between the two scripts.
+# Every code-behavior row FAILS at HEAD (no preflight exists there) and passes after.
 #
 # Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
 # bare non-final `[[ ]]` / `(( ))` failure does not abort on macOS bash 3.2.57 —
@@ -149,6 +151,19 @@ EOF
   chmod +x "${dest}"
 }
 
+# reserved_toolchain_rc / mirrored_toolchain_rc — the rc the RUNNER reserves for a
+# toolchain precondition failure, and the daemon's MIRROR of it. Both are read from the
+# real sources so this suite never becomes a third copy of the number; equality between
+# them is what keeps the mirror from drifting, and is asserted where they are used.
+reserved_toolchain_rc() {
+  sed -n 's/^readonly TOOLCHAIN_PRECONDITION_RC=\([0-9]*\)$/\1/p' \
+    "${GA}/scripts/run-bats-parallel.sh"
+}
+
+mirrored_toolchain_rc() {
+  sed -n 's/^readonly BATS_RUNNER_TOOLCHAIN_RC=\([0-9]*\)$/\1/p' "${REAL_SCRIPT}"
+}
+
 # run_batch / run_single — invoke the sandbox daemon with a clean, controlled env
 # (ambient escape-hatch vars UNSET so the suite is hermetic even when itself run
 # under the green-suite). Extra env assignments are forwarded via $@.
@@ -231,7 +246,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # Dry-run over the same absent roots does NOT abort.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${SANDBOX_SCRIPT}" --dry-run --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1
@@ -442,7 +457,7 @@ count_abort_rows() {
   grep -c '"status":"abort"' "${log}" || true
 }
 
-@test "persistence: each of the four abort paths writes exactly one abort row with its own clause" {
+@test "persistence: each of the five abort paths writes exactly one abort row with its own clause" {
   local log
   log="$(applied_log_path)"
 
@@ -480,6 +495,20 @@ count_abort_rows() {
   [[ "${status}" -eq 16 ]] || return 1
   [[ "$(count_abort_rows)" -eq 1 ]] || return 1
   grep -q '"clause":"test suite FAILED' "${log}" || return 1
+
+  # (e) the runner refused on an unusable toolchain — the suite never ran, so this row
+  # must NOT read as the red suite above. It is the row the doctor and the operator get
+  # after the cycle ends, which is the whole point of separating the two causes.
+  rm -f -- "${log}"
+  local reserved
+  reserved="$(reserved_toolchain_rc)"
+  [[ -n "${reserved}" ]] || return 1
+  make_sandbox roots
+  make_runner "${WORK}/runner-toolchain.sh" "${reserved}"
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-toolchain.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 1 ]] || return 1
+  grep -q '"clause":"test-suite toolchain precondition FAILED' "${log}" || return 1
 }
 
 @test "persistence: the abort row is valid JSON carrying the named exit code and the suite runner" {
@@ -524,4 +553,41 @@ print("%s|%s|%s|%s" % (row["status"], row["reason"], row["exit_code"], row["suit
   [[ "${status}" -eq 16 ]] || return 1
   [[ "${output}" == *"abort row NOT persisted"* ]] || return 1
   [[ "${output}" == *"test suite FAILED"* ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# 21. the rc VALUE selects the clause — a toolchain refusal and a red suite share
+#     exit 16 and must not share a name. The mirror-equality assertion opens the
+#     test because the branch is only as good as the number it compares against:
+#     a drifted mirror would silently route every toolchain refusal back into the
+#     red-suite clause, which is exactly the mislabel this branch removes.
+# ---------------------------------------------------------------------------
+
+@test "batch: the reserved runner rc selects the toolchain clause, any other non-zero the red-suite one" {
+  local reserved mirrored
+  reserved="$(reserved_toolchain_rc)"
+  mirrored="$(mirrored_toolchain_rc)"
+  [[ -n "${reserved}" ]] || {
+    printf 'no TOOLCHAIN_PRECONDITION_RC in %s\n' "${GA}/scripts/run-bats-parallel.sh" >&2
+    return 1
+  }
+  [[ "${mirrored}" == "${reserved}" ]] || {
+    printf 'daemon mirrors rc=%s but the runner reserves rc=%s\n' "${mirrored}" "${reserved}" >&2
+    return 1
+  }
+
+  make_sandbox roots
+  make_runner "${WORK}/runner-toolchain.sh" "${reserved}"
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-toolchain.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "${output}" == *"toolchain precondition FAILED"* ]] || return 1
+  [[ "${output}" != *"test suite FAILED"* ]] || return 1
+
+  # Contrast leg: an ordinary non-zero still reads as a red suite, so the branch
+  # discriminates on the reserved VALUE rather than on non-zero-ness.
+  make_runner "${WORK}/runner-red.sh" 1
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "${output}" == *"test suite FAILED"* ]] || return 1
+  [[ "${output}" != *"toolchain precondition FAILED"* ]] || return 1
 }

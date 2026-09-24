@@ -848,7 +848,12 @@ passthrough() {
       run_dependency_preflight || exit "${PREFLIGHT_EXIT_BLOCKED}"
       run_bootstrap
       ;;
-    install) run_install ;;
+    install)
+      # manifest loops read through process substitutions, where a die cannot fail the run — refuse
+      # an escaping manifest here, before run_install mutates anything
+      require_contained_manifest_keys || exit "${MANIFEST_EXIT_ESCAPING_KEY}"
+      run_install
+      ;;
     doctor)
       # run_doctor sets the exit code; the headless-auth advisory is APPENDED
       # non-fatally (it never changes the doctor verdict). Capture rc, run the
@@ -884,6 +889,8 @@ passthrough() {
       # mutually-exclusive standalone modes; the default is the full removal
       # path. The target-home precondition gates every sub-mode.
       [[ -d "${TARGET_HOME}" ]] || die "target home missing: ${TARGET_HOME}"
+      # before launchd teardown / DB drop, so an escaping manifest never leaves a half-uninstalled home
+      require_contained_manifest_keys || exit "${MANIFEST_EXIT_ESCAPING_KEY}"
       if "${VERIFY_CLEAN}"; then
         verify_clean
       elif "${SCAN_ONLY}"; then
