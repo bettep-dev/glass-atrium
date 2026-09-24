@@ -146,6 +146,11 @@ const SYNC_META_MC = {
 	},
 	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
 	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
+	empty: {
+		label: "Nothing to sync",
+		tone: "neutral",
+		desc: "no model domains or budget caps were reported, so there is nothing to compare",
+	},
 	"pending-migration": {
 		label: "Pending migration",
 		tone: "warn",
@@ -499,11 +504,20 @@ function SyncTokenMC({ state, sync, receivedAt }) {
 		tone: "neutral",
 	};
 
+	// steady glyph (neutral) → the first question reads first · empty roster → no glyph to claim
+	const glyph = sync === "ok" ? "check" : sync === "empty" ? null : "warn";
+
 	return (
 		<span
 			className="fs-meta text-dim flex items-center gap-1.5"
 			title={meta.desc}>
-			{sync !== "ok" && <Icon name="warn" size={12} className="text-warn" />}
+			{glyph && (
+				<Icon
+					name={glyph}
+					size={12}
+					className={glyph === "warn" ? "text-warn" : "text-dim"}
+				/>
+			)}
 			<span>{meta.label}</span>
 			{receivedAt && (
 				<span className="text-faint">· as of {formatClockMC(receivedAt)}</span>
@@ -537,6 +551,20 @@ function SectionHeadMC({ label, sub, right }) {
 // 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live·Takes effect = 4.
 const DOMAIN_TABLE_COLSPAN_MC = 4;
 
+// One column grid for both ledgers — content-sized cells let Live / Takes effect drift apart.
+const LEDGER_COL_WIDTHS_MC = ["32%", "30%", "22%", "16%"];
+const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
+
+function LedgerColsMC() {
+	return (
+		<colgroup>
+			{LEDGER_COL_WIDTHS_MC.map((width, i) => (
+				<col key={i} style={{ width }} />
+			))}
+		</colgroup>
+	);
+}
+
 // 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
 function DomainsSectionMC({
 	state,
@@ -555,7 +583,8 @@ function DomainsSectionMC({
 			{state !== "ready" ? (
 				<SectionBodyStateMC state={state} rows={DOMAIN_ORDER_MC.length} />
 			) : (
-				<table className="tbl">
+				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<LedgerColsMC />
 					<thead>
 						<tr>
 							<th>Agent tier</th>
@@ -616,19 +645,32 @@ function RowHintMC({ hint, detail }) {
 	);
 }
 
-// Live value = measured at the consumption point. Matching the saved target → one dim line
-// (no standing ok pill); differing → one warn badge, tone on the glyph · mixed files behind a click.
+// payload carries no resolved session model → name the source an inherit value follows
+const INHERIT_LIVE_LABEL_MC = {
+	inherit: "session model (inherit)",
+	"inherit (settings.json)": "settings.json model (inherit)",
+};
+
+function liveLabelMC(value) {
+	return INHERIT_LIVE_LABEL_MC[value] ?? value ?? "—";
+}
+
+// Live value = measured at the consumption point. Matching the saved target → a dim '= saved'
+// (the value sits in the tooltip, never repeated); differing → the value + one warn badge.
 function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
+	const isSteady = !drift && value != null;
+	const label = liveLabelMC(value);
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
 				<span
 					className={`font-mono fs-meta truncate ${drift ? "text-ink" : "text-dim"}`}
+					title={isSteady ? `Live value matches the saved setting: ${label}` : undefined}
 				>
-					{value ?? "—"}
+					{isSteady ? "= saved" : label}
 				</span>
 				{drift && (
 					<span title={driftTitle}>
@@ -644,7 +686,7 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 					<div className="mt-1 flex flex-col gap-0.5">
 						{fileRows.map((f) => (
 							<div key={f.file} className="font-mono truncate">
-								{f.file} — {f.model ?? "inherit"}
+								{f.file} — {liveLabelMC(f.model ?? "inherit")}
 							</div>
 						))}
 					</div>
@@ -688,11 +730,11 @@ function DomainRowMC({
 
 	return (
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-			<td style={{ ...cellPad, maxWidth: 260 }}>
+			<td style={cellPad}>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
 				<RowHintMC hint={meta.hint} detail={meta.desc} />
 			</td>
-			<td style={{ ...cellPad, minWidth: 220 }}>
+			<td style={cellPad}>
 				{editable ? (
 					<ModelSelectMC
 						domain={d.domain}
@@ -700,7 +742,6 @@ function DomainRowMC({
 						value={value}
 						defaultValue={defaultValue}
 						error={error}
-						pricingKnown={d.pricing_known}
 						onChange={onChange}
 					/>
 				) : (
@@ -709,6 +750,7 @@ function DomainRowMC({
 						{value || d.desired || "—"}
 					</Badge>
 				)}
+				<PricingNoteMC pricingKnown={d.pricing_known} />
 			</td>
 			<td style={cellPad}>
 				<LiveValueMC
@@ -735,7 +777,6 @@ function ModelSelectMC({
 	value,
 	defaultValue,
 	error,
-	pricingKnown,
 	onChange,
 }) {
 	const options = modelOptionsMC(domain, knownModels);
@@ -789,16 +830,23 @@ function ModelSelectMC({
 					{error}
 				</div>
 			)}
-			{pricingKnown === false && (
-				<div className="fs-meta text-warn mt-1">
-					No price listed — billed at the conservative fallback rate
-				</div>
-			)}
 			<GhostResetMC
 				overridden={overridden}
 				defaultValue={defaultValue}
 				onReset={() => onChange(defaultValue)}
 			/>
+		</div>
+	);
+}
+
+// Tier → Cost & usage link; pricing_known=false also says why the cost there is a fallback estimate.
+function PricingNoteMC({ pricingKnown }) {
+	if (pricingKnown === undefined) return null;
+
+	return (
+		<div className={`fs-meta mt-1 ${pricingKnown ? "text-faint" : "text-warn"}`}>
+			{!pricingKnown && "No price listed — billed at the conservative fallback rate · "}
+			<a href="#cost">Cost & usage</a>
 		</div>
 	);
 }
@@ -843,7 +891,8 @@ function BudgetsSectionMC({
 			{state !== "ready" ? (
 				<SectionBodyStateMC state={state} rows={2} />
 			) : (
-				<table className="tbl">
+				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<LedgerColsMC />
 					<thead>
 						<tr>
 							<th>Background call</th>
@@ -895,11 +944,11 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 
 	return (
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-			<td style={{ maxWidth: 260 }}>
+			<td>
 				<div className="fs-body">{meta.label}</div>
 				<RowHintMC hint={meta.hint} detail={meta.desc} />
 			</td>
-			<td style={{ minWidth: 180 }}>
+			<td>
 				<div className="flex items-center gap-2">
 					<span
 						className={`field-affix${showError ? " is-error" : ""}`}
@@ -1277,6 +1326,9 @@ function resyncPayloadMC(data, edits) {
 
 // Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
 function headerSyncMC(data) {
+	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
+	if (rows.length === 0) return "empty";
+
 	const sync = data?.daemon_config_sync;
 	return sync === "ok" && hasRowDriftMC(data) ? "drift" : sync;
 }

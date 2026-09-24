@@ -740,7 +740,9 @@ test("the header sync token answers once per state and stamps when it was read",
   });
   assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
   assert.ok(textMc(ready).includes("as of"), "the reading carries its as-of stamp");
-  assert.strictEqual(tagsMc(ready, "i").length, 0, "an ok state spends no glyph");
+  const readyGlyphs = tagsMc(ready, "i");
+  assert.strictEqual(readyGlyphs.length, 1, "the steady state carries its own glyph, so it reads first");
+  assert.strictEqual(tonedMc(ready, "ok").length, 0, "the steady glyph spends no ok tone");
 
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
@@ -748,6 +750,11 @@ test("the header sync token answers once per state and stamps when it was read",
     receivedAt: readAt,
   });
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
+  assert.notStrictEqual(
+    tagsMc(drifted, "i")[0].props["data-icon"],
+    readyGlyphs[0].props["data-icon"],
+    "drift and in-sync never share a glyph",
+  );
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
   for (const [state, expected] of [
@@ -928,4 +935,80 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
     onResync: () => {},
   });
   assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
+});
+
+test("an empty roster never reads as in sync, whatever the file state says", () => {
+  const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
+  for (const fileSync of ["ok", "drift", "file-missing"]) {
+    const sync = headerSync({ daemon_config_sync: fileSync, domains: [], budgets: [] });
+    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }));
+    assert.ok(!token.includes("In sync"), `${fileSync}: an empty roster is not 'In sync'`);
+    assert.ok(token.includes("Nothing to sync"), `${fileSync}: the empty roster is named`);
+  }
+  const populated = headerSync({ daemon_config_sync: "ok", domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
+  assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
+});
+
+// Live cell of the first body row — the third column in both ledgers.
+function liveCellMc(tree: McNode[]): McTag {
+  const bodyRow = tagsMc(tagsMc(tree, "tbody")[0].children, "tr")[0];
+  return tagsMc(bodyRow.children, "td")[2];
+}
+
+test("Live repeats nothing in the steady state and shows the value only when it differs", () => {
+  for (const [name, props, drifted] of [
+    ["DomainsSectionMC", domainsPropsMc(), domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }])],
+    ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
+  ] as const) {
+    const steady = liveCellMc(renderComponentMc(screens[name], props));
+    assert.strictEqual(textMc([steady]), "= saved", `${name}: a matching live value reads as '= saved'`);
+
+    const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
+    assert.ok(!differs.includes("= saved"), `${name}: a differing value is never '= saved'`);
+    assert.ok(/claude-sonnet-5|\$12\.00/.test(differs), `${name}: the differing value is shown`);
+  }
+});
+
+test("an inherit live value names what it inherits from, never a bare 'inherit'", () => {
+  for (const [actual, source] of [
+    ["inherit", "session model"],
+    ["inherit (settings.json)", "settings.json model"],
+  ] as const) {
+    const tree = renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual, drift: true }]),
+    );
+    const live = textMc([liveCellMc(tree)]);
+    assert.ok(live.includes(source), `${actual}: names the ${source}`);
+    assert.notStrictEqual(live.replace(/\s*drift$/, ""), actual, `${actual}: not shown raw`);
+  }
+});
+
+test("both ledgers sit on one column grid, so Live and Takes effect line up", () => {
+  const gridOf = (tree: McNode[]): string =>
+    JSON.stringify(tagsMc(tree, "col").map((c) => c.props.style ?? c.props.width));
+  const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
+  assert.strictEqual(tagsMc(domains, "col").length, 4, "one col per ledger column");
+  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
+  for (const tree of [domains, budgets]) {
+    const style = tagsMc(tree, "table")[0].props.style as Record<string, unknown> | undefined;
+    assert.strictEqual(style?.tableLayout, "fixed", "widths come from the grid, not the content");
+  }
+});
+
+test("each priced tier links to Cost & usage, and an unpriced one says why its cost is a fallback", () => {
+  for (const pricingKnown of [true, false]) {
+    const tree = renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], pricing_known: pricingKnown }]),
+    );
+    const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one Cost & usage link per tier`);
+    assert.strictEqual(
+      textMc(tree).includes("No price listed"),
+      !pricingKnown,
+      `pricing_known=${pricingKnown}: the fallback note follows pricing_known`,
+    );
+  }
 });
