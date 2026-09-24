@@ -492,6 +492,35 @@ test("buildLedgerSectionsO: an optimistic closure moves the row to Routine befor
   assert.deepStrictEqual(sameRealm(sections[1].rows.map((r) => r.id)), [7]);
 });
 
+test("buildLedgerSectionsO: a closure settled this session leaves the window Needs-you and its total", () => {
+  // 7 is shown in the window list · 8 is on the page but past the window's first N · 5 stays flagged.
+  const pageRows: LedgerRow[] = [
+    { id: 7, result: "done_with_concerns", closed_at: null },
+    { id: 8, result: "done_with_concerns", closed_at: null },
+    { id: 5, result: "done_with_concerns", review_flag: true, closed_at: null },
+    { id: 1, result: "done" },
+  ];
+  const windowRows: LedgerRow[] = [
+    { id: 7, result: "done_with_concerns", closed_at: null },
+    { id: 5, result: "done_with_concerns", review_flag: true, closed_at: null },
+    { id: 2, result: "fail" },
+  ];
+  const closure: ClosureState = {
+    pendingIds: new Set(),
+    closedOverrides: new Map([[7, "2026-08-10T10:00:00.000Z"], [8, "2026-08-10T10:00:00.000Z"], [5, "2026-08-10T10:00:00.000Z"]]),
+  };
+  const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, closure, {
+    rows: windowRows, total: 40, windowLabel: "30d",
+  }));
+
+  const needsIds = needsYou.rows.map((r) => r.id);
+  const routineIds = routine.rows.map((r) => r.id);
+  assert.deepStrictEqual(needsIds.filter((id) => routineIds.includes(id)), [], "no row shows in both sections");
+  assert.deepStrictEqual(sameRealm(needsIds), [5, 2], "a flagged row stays needs-you after its caveat closes");
+  assert.deepStrictEqual(sameRealm(routineIds), [7, 8, 1]);
+  assert.match(needsYou.heading, /Needs you · 38 in 30d/, "the total drops by the two rows the closure settled");
+});
+
 // --- disclosure summaries: a closed section answers without opening, and never fakes calm ---
 
 test("disclosure summaries: loading and failure read as distinct tokens, never as 'all clear'", () => {

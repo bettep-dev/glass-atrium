@@ -2205,6 +2205,7 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
     const closedAt = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
     (isNeedsYouRowO(row, closedAt) ? pageNeedsYou : routine).push(row);
   }
+  windowNeedsYou = windowNeedsYou && applyClosureToWindowO(windowNeedsYou, rows, closure);
   const needsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
   const needsYouHeading = windowNeedsYou
     ? `Needs you · ${formatIntO(windowNeedsYou.total)} in ${windowNeedsYou.windowLabel}`
@@ -2214,6 +2215,23 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
     { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows },
     { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
   ];
+}
+
+// Session closures the window query has not re-read yet → drop them from its rows and total, or a row shows in both sections.
+function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
+  const overrides = closure?.closedOverrides;
+  if (!overrides || overrides.size === 0) return windowNeedsYou;
+  const rowsById = new Map([...pageRows, ...windowNeedsYou.rows].map((row) => [row.id, row]));
+  const settledIds = new Set();
+  for (const [id, closedAt] of overrides) {
+    const row = rowsById.get(id);
+    if (row && isNeedsYouRowO(row, row.closed_at ?? null) && !isNeedsYouRowO(row, closedAt)) settledIds.add(id);
+  }
+  return {
+    ...windowNeedsYou,
+    rows: windowNeedsYou.rows.filter((row) => !settledIds.has(row.id)),
+    total: Math.max(0, windowNeedsYou.total - settledIds.size),
+  };
 }
 
 function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }) {
