@@ -1240,7 +1240,7 @@ function EmptyStateW({ message }) {
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
 //   sparse → MiniBars 대신 compact stat(최신/대표값) + "no activity in range" 빈상태로 대체.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 종전대로 MiniBars 렌더. tone = MiniBars 색(text-* 컨테이너에서 상속).
-function SparseTrendW({ label, series, dates = [], stat, w, h, tone }) {
+function SparseTrendW({ label, series, dates, stat, w, h, tone }) {
 	const { MiniBars } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
 	const caption = [describePeakW(series, dates), stat].filter(Boolean).join(" · ");
