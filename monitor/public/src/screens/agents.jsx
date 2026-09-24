@@ -867,13 +867,11 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
         {isFailureRead
           ? <span className={failTone}>{failCount > 0 ? formatIntAg(failCount) : '—'}</span>
           : <NotLoadedMarkAg title={failTitle}/>}
-        {/* F1: 0건은 em-dash + 막대 미렌더(none-state), 1건 이상은 항상 가시적 crit 막대 —
-            막대의 "존재"가 장애 있음을, 폭이 breakage_rate 를 전달. rate 가 sub-1%라도
-            Bar 의 min-width floor(3px) 로 none-state 와 명확히 구분(1건이 "없음"으로 안 읽힘). */}
+        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = numeral tone. */}
         {isFailureRead && failCount > 0 && (
           <Bar
             value={Math.max(breakageRate, 0.01)}
-            tone="crit"
+            tone={barToneFromClass(failTone)}
             ariaLabel={`breakage rate ${(breakageRate * 100).toFixed(1)}%`}
           />
         )}
@@ -891,7 +889,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
               <span className={p95Tone || 'text-ok'} aria-hidden="true">
                 <Icon name={TONE_ICON[p95Glyph]} size={13}/>
               </span>
-              <span className={p95Tone}>{formatDurationSecAg(p95Sec)}</span>
+              <span className={p95Tone === 'text-crit' ? p95Tone : undefined}>{formatDurationSecAg(p95Sec)}</span>
             </span>
           ) : (
             <span className="text-faint">—</span>
@@ -2246,6 +2244,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         <tbody>
           {pairs.map((p) => {
             const breakage = resolveLastBreakage(p, failureByAgent);
+            const isLowSample = p.rateDenominator < window.UI.LOW_N_MIN;
             return (
               <tr key={`${p.agent}|${p.task_type}`}>
                 <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
@@ -2255,17 +2254,14 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
                   {p.task_type}
                 </td>
                 <td
-                  className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
-                  style={{
-                    color: 'rgb(var(--crit))',
-                    ...(p.rateDenominator < window.UI.LOW_N_MIN ? { fontStyle: 'italic', opacity: 0.75 } : null),
-                  }}
-                  title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${p.rateDenominator < window.UI.LOW_N_MIN ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
+                  className={`text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap${isLowSample ? ' text-faint' : ''}`}
+                  style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : { color: 'rgb(var(--crit))' }}
+                  title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
                   {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
-                  {/* pair 성공률 비례 막대 — % 옆 shape. 전 항목이 임계 미달 failing-pair → crit. */}
+                  {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
                   <window.UI.Bar
                     value={p.pooledRate}
-                    tone="crit"
+                    tone={isLowSample ? 'neutral' : 'crit'}
                     ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
                   />
                 </td>
@@ -3134,11 +3130,12 @@ function p95GlyphTone(p95Sec) {
   return 'ok';
 }
 
-// Summary 행 "장애"(fail+blocked) 컬럼 톤 — 0건=faint · >0건=warn · breakage_rate>20%=crit.
+// Failed-or-blocked numeral — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
 function failureTone(count, rate) {
   if (count === 0) return 'text-faint';
-  if (rate > BREAKAGE_RATE_CRIT_THRESHOLD) return 'text-crit';
-  return 'text-warn';
+  const population = rate > 0 ? Math.round(count / rate) : 0;
+  if (population < window.UI.LOW_N_MIN) return '';
+  return getFailShareTone(count, population) === 'crit' ? 'text-crit' : '';
 }
 
 // CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.

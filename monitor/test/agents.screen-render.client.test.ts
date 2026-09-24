@@ -519,3 +519,75 @@ test("the Refresh control carries a busy state while any region is still loading
     assert.equal(/Refreshing/.test(collectText(tree)), isBusy, `busy=${isBusy}: visible busy label`);
   }
 });
+
+const TONED_CLASS = /\btext-(warn|crit)\b/;
+
+function renderToneRow(mod: Record<string, unknown>, agent: Record<string, unknown>, failure: unknown): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000, ...agent },
+      days: 30, isSelected: false, onSelect: () => {}, trend: null, failure, overage: null,
+      failureStatus: "ready", trendStatus: "ready",
+    }),
+  );
+}
+
+function findCellByTitle(tree: RenderedNode | string | null, pattern: RegExp): RenderedNode | null {
+  return findNodes(tree, (n) => n.type === "td" && pattern.test(String(n.props?.title ?? "")))[0] ?? null;
+}
+
+test("the breakage count takes a tone only once its share of the agent's outcomes crosses the shared crit step", async () => {
+  const mod = await loadAgentsScreen();
+  // breakage_rate = total_breakages / total outcomes, so the population is recoverable from the pair.
+  const rows = [
+    { name: "one of forty stays under the 5% step", total_breakages: 1, breakage_rate: 0.025, crit: false },
+    { name: "two of forty sits on the step", total_breakages: 2, breakage_rate: 0.05, crit: true },
+    { name: "two of four is a sample below LOW_N_MIN", total_breakages: 2, breakage_rate: 0.5, crit: false },
+  ];
+  for (const row of rows) {
+    const failure = { total_breakages: row.total_breakages, fail_count: row.total_breakages, blocked_count: 0, breakage_rate: row.breakage_rate };
+    const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+    const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? ""))).map((n) => String(n.props.className));
+    assert.deepEqual(tonedClasses, row.crit ? ["text-crit"] : [], `${row.name}: numeral tone`);
+    const bar = findNodes(cell, (n) => n.props?.atom === "Bar")[0];
+    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the numeral`);
+  }
+});
+
+test("a P95 numeral is coloured only past the crit cut, while the glyph keeps every latency tier", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "fast tier", p95_ms: 300_000, numeral: [] as string[], glyph: "text-ok" },
+    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-warn" },
+    { name: "crit tier", p95_ms: 1_500_000, numeral: ["text-crit"], glyph: "text-crit" },
+  ];
+  for (const row of rows) {
+    const cell = findCellByTitle(renderToneRow(mod, { p95_ms: row.p95_ms }, null), /^p95 latency tier/);
+    const glyph = findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0];
+    assert.equal(glyph?.props.className, row.glyph, `${row.name}: glyph tier`);
+    const numeralTones = findNodes(cell, (n) => n.props?.["aria-hidden"] !== "true" && TONED_CLASS.test(String(n.props?.className ?? "")))
+      .map((n) => String(n.props.className));
+    assert.deepEqual(numeralTones, row.numeral, `${row.name}: numeral tone`);
+  }
+});
+
+test("a failing pair below LOW_N_MIN stays neutral, as the matrix legend says", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const rows = [
+    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, crit: false },
+    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, crit: true },
+  ];
+  for (const row of rows) {
+    const pair = { agent: "glass-atrium-dev-react", task_type: "feature", ...row, pooledRate: row.successCount / row.rateDenominator, totalCount: row.rateDenominator };
+    const tree = renderScreen(
+      React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
+    );
+    const rateCell = findCellByTitle(tree, /^pooled passed/);
+    const color = String((rateCell?.props.style as Record<string, unknown> | undefined)?.color ?? "");
+    assert.equal(color.includes("--crit"), row.crit, `${row.name}: rate text tint`);
+    const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
+    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tint`);
+  }
+});
