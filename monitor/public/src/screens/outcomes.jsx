@@ -1061,7 +1061,7 @@ const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
-  { label: 'of records', align: 'right' },
+  { label: 'Total records', align: 'right' },
 ];
 
 // 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
@@ -1071,7 +1071,7 @@ function AgentFailureSkeletonO({ stickyStyle }) {
       <thead>
         <tr>
           {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-            <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+            <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
           ))}
         </tr>
       </thead>
@@ -1105,7 +1105,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
         <thead>
           <tr>
             {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-              <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+              <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
             ))}
           </tr>
         </thead>
@@ -1167,7 +1167,7 @@ function AttributionHealthCard({ state, period, onRetry }) {
   return (
     <div className="card mb-4">
       <CardHead
-        title="Reporting health"
+        title="Record attribution"
         sub=""
         right={
           <Badge
@@ -2132,6 +2132,12 @@ function getOptionLabelO(options, value) {
   return options.find((option) => option.value === value)?.label ?? value;
 }
 
+// Drawer value → the filter chip's name for it, so chip, ledger cell and drawer agree.
+function getDetailValueLabelO(axis, value) {
+  const { options } = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES].find((group) => group.axis === axis);
+  return getOptionLabelO(options, String(value ?? 'null'));
+}
+
 // 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
 //   래퍼 div 는 정렬 관례가 호출부마다 달라 각 호출부가 소유 → 공용은 배지 map 만.
 function FilterChipsO({ chips }) {
@@ -2524,7 +2530,7 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
   const titleParts = [
     detailRow?.agent,
     detailRow?.task_type,
-    detailRow?.result,
+    detailRow?.result && window.UI.resolveResultMeta(detailRow.result, null).label,
     formatTimestampO(detailRow?.record_ts),
   ].filter(Boolean);
 
@@ -2579,8 +2585,8 @@ function DetailMetadata({ row, detail }) {
 
   return (
     <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
-      <MetaField label="Confidence"         value={row?.confidence ?? '—'}/>
-      <MetaField label="Self-reported pass" value={row?.metric_pass == null ? '—' : String(row.metric_pass)}/>
+      <MetaField label="Confidence" value={getDetailValueLabelO('confidence', row?.confidence)}/>
+      <MetaField label="Self-check" value={getDetailValueLabelO('metric_pass', row?.metric_pass)}/>
       <div>
         <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
         <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
@@ -2600,7 +2606,7 @@ function DetailMetadata({ row, detail }) {
         </div>
       </div>
       {row?.poisoned_window === true && (
-        <MetaField label="Quarantined window" value="true — excluded from analysis"/>
+        <MetaField label="Quarantined window" value="Yes — excluded from analysis"/>
       )}
       {evalSignal != null && (
         <MetaField label="User signal" value={formatEvaluativeSignalO(evalSignal)}/>
@@ -2623,17 +2629,33 @@ function DetailMetadata({ row, detail }) {
 
 // 서사 영역 (S2 narrative) — lesson(작성자 distilled 패턴) + body_md(전문). 식별/수치 다음, references 앞.
 function DetailNarrative({ row, detailState }) {
+  const { lesson, body } = splitLessonO(detailState?.status === 'ready' ? detailState.data?.body_md || '' : '');
+  const lessonText = lesson || row?.lesson;
+
   return (
     <div className="mb-4">
-      {row?.lesson && (
+      {lessonText && (
         <div className="mb-3">
-          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">lesson</div>
-          <div className="fs-body text-ink">{row.lesson}</div>
+          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">Lesson</div>
+          <div className="fs-body text-ink">{lessonText}</div>
         </div>
       )}
-      <DetailBody detailState={detailState}/>
+      <DetailBody detailState={detailState} markdown={body}/>
     </div>
   );
+}
+
+// body_md '## Lesson' section → lifted out so the narrative block prints the lesson once, in full.
+function splitLessonO(markdown) {
+  const match = /^##\s+Lesson[ \t]*\n([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/m.exec(markdown);
+  if (!match) return { lesson: '', body: markdown };
+  return { lesson: match[1].trim(), body: markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length) };
+}
+
+// Recorder's 'actual=N declared=M' tool-use line → words.
+function formatToolUseLineO(markdown) {
+  return markdown.replace(/^(- \*\*Tool use\*\*: )actual=(\d+)(?: declared=(\d+))?[ \t]*$/m,
+    (_line, prefix, actual, declared) => `${prefix}${actual} tool calls${declared ? ` · ${declared} estimated` : ''}`);
 }
 
 // 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
@@ -2664,7 +2686,7 @@ function MetaField({ label, value, className = '' }) {
   );
 }
 
-function DetailBody({ detailState }) {
+function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
   if (!detailState) return <ChartSkeletonO height={200} aria-label="Loading body"/>;
 
@@ -2679,8 +2701,7 @@ function DetailBody({ detailState }) {
     );
   }
 
-  const bodyMd = detailState?.data?.body_md;
-  if (!bodyMd) {
+  if (!markdown) {
     return (
       <div className="fs-body text-faint font-mono italic">
         No body text — showing metadata only.
@@ -2688,7 +2709,7 @@ function DetailBody({ detailState }) {
     );
   }
 
-  return <MarkdownView markdown={bodyMd}/>;
+  return <MarkdownView markdown={formatToolUseLineO(markdown)}/>;
 }
 
 // SECURITY: marked.parse → DOMPurify.sanitize → HTML. DOMPurify 부재 / parse 실패 시 null 반환 →

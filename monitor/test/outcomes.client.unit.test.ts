@@ -59,6 +59,9 @@ interface OutcomesHelpers {
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
   buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
+  getDetailValueLabelO: (axis: string, value: unknown) => string;
+  splitLessonO: (markdown: string) => { lesson: string; body: string };
+  formatToolUseLineO: (markdown: string) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -338,6 +341,62 @@ describe("buildActiveFilterChipsO: each chip names its axis and value as the fil
   for (const row of rows) {
     test(row.name, () => {
       assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
+    });
+  }
+});
+
+// --- Drawer values: one value, one name across chip, ledger cell and drawer ---
+
+describe("getDetailValueLabelO: a drawer value reads as the filter chip for the same value", () => {
+  const rows = [
+    { name: "a high confidence", axis: "confidence", value: "high", chipValue: "high" },
+    { name: "a low confidence", axis: "confidence", value: "low", chipValue: "low" },
+    { name: "a missing confidence", axis: "confidence", value: null, chipValue: "null" },
+    { name: "a passed self-check", axis: "metric_pass", value: true, chipValue: "true" },
+    { name: "a failed self-check", axis: "metric_pass", value: false, chipValue: "false" },
+    { name: "a missing self-check", axis: "metric_pass", value: null, chipValue: "null" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chip = sameRealm(outcomes.buildActiveFilterChipsO({ days: 30, [row.axis]: row.chipValue }))[0];
+      assert.strictEqual(`${chip.split(": ")[0]}: ${outcomes.getDetailValueLabelO(row.axis, row.value)}`, chip);
+    });
+  }
+});
+
+describe("splitLessonO: the body's Lesson section moves out so the drawer prints it once", () => {
+  const body = "# Outcome Record\n\n- **Agent**: a\n\n## Summary\n\nDid it.\n\n## Lesson\n\nDerive the reader from the writer.\n\n## Concerns\n\nNone.\n";
+
+  test("the lesson text comes out and no Lesson heading stays in the body", () => {
+    const split = outcomes.splitLessonO(body);
+    assert.strictEqual(split.lesson, "Derive the reader from the writer.");
+    assert.doesNotMatch(split.body, /Lesson/);
+  });
+
+  test("the sections around the lesson survive in order", () => {
+    assert.match(outcomes.splitLessonO(body).body, /## Summary\n\nDid it\.\n\n## Concerns\n\nNone\./);
+  });
+
+  test("a trailing lesson section ends at the end of the body", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n\n## Lesson\n\nLast words.\n");
+    assert.strictEqual(split.lesson, "Last words.");
+    assert.doesNotMatch(split.body, /Last words/);
+  });
+
+  test("a body without a lesson is returned unchanged", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n");
+    assert.deepEqual({ ...split }, { lesson: "", body: "## Summary\n\nx\n" });
+  });
+});
+
+describe("formatToolUseLineO: the recorded tool-use count reads as words, not key=value", () => {
+  const rows = [
+    { name: "an actual count alone", line: "- **Tool use**: actual=44", readable: "- **Tool use**: 44 tool calls" },
+    { name: "an actual count with its estimate", line: "- **Tool use**: actual=44 declared=30", readable: "- **Tool use**: 44 tool calls · 30 estimated" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(outcomes.formatToolUseLineO(`- **Agent**: a\n${row.line}\n`), `- **Agent**: a\n${row.readable}\n`);
     });
   }
 });
