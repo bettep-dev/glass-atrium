@@ -11,6 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -32,6 +33,7 @@ interface BandTile {
   population: number;
   tone: "crit" | "warn" | "ok" | "neutral";
   hint: string;
+  jumpTo?: string;
 }
 interface LedgerRow {
   id: number;
@@ -79,7 +81,11 @@ interface OutcomesHelpers {
     rows: LedgerRow[],
     closure?: ClosureState,
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
-  ) => { key: string; label: string; heading: string; rows: LedgerRow[] }[];
+  ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
+  BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
+  ResultTable: (props: Record<string, unknown>) => RenderNode;
+  ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
+  focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
   buildNeedsYouUrlO: (filter: Record<string, unknown>, sort: string, limit: number, includeAll: boolean) => string;
   reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
@@ -582,4 +588,58 @@ test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the secti
   );
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: { events: [{}, {}, {}] } }), "3 recent cycle events");
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: {} }), "0 recent cycle events");
+});
+
+// --- P5: the band's Needs-you count reaches the ledger rows it counts ---
+
+test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and only when there is something to reach", () => {
+  const tiles = helpers.buildStatusBandTilesO(aboveFloor({ done: 150, fail: 50 }), 12);
+  const attention = tileOf(tiles, "attention");
+  const [needsYou] = helpers.buildLedgerSectionsO([{ id: 1, result: "fail" }], undefined, null);
+  assert.ok(attention.jumpTo, "the attention tile names a jump target");
+  assert.strictEqual(attention.jumpTo, needsYou.anchorId, "the target is the ledger's Needs-you section");
+
+  const table = flattenNodes(helpers.ResultTable({
+    rows: [{ id: 1, result: "fail" }], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+  }));
+  const heading = table.find((n) => n.props?.id === attention.jumpTo);
+  assert.ok(heading, "the ledger renders the jump target");
+  assert.strictEqual(heading!.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
+
+  const asRendered = (tile: BandTile) => helpers.BandTileO({ tile, windowLabel: "30d" });
+  const live = asRendered(attention);
+  assert.strictEqual(live.type, "button", "a reachable count is an operable control");
+  assert.strictEqual(typeof live.props!.onClick, "function");
+  for (const count of [0, null]) {
+    assert.strictEqual(asRendered({ ...attention, count }).type, "div", `count ${count} offers no jump`);
+  }
+  assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
+});
+
+test("focusLedgerSectionO: scrolls to and focuses the target, and reports a missing one", () => {
+  const calls: string[] = [];
+  const el = { scrollIntoView: () => calls.push("scroll"), focus: () => calls.push("focus") };
+  assert.strictEqual(helpers.focusLedgerSectionO("x", { getElementById: (id) => (id === "x" ? el : null) }), true);
+  assert.deepStrictEqual(calls, ["scroll", "focus"]);
+  assert.strictEqual(helpers.focusLedgerSectionO("x", { getElementById: () => null }), false);
+});
+
+test("Recorded properly: one label, one population — the band never reuses the attribution category's name", () => {
+  const src = readFileSync(OUTCOMES_SRC, "utf8");
+  const healthyLabel = /healthy:\s*\{\s*label:\s*'([^']+)'/.exec(src)?.[1];
+  assert.ok(healthyLabel, "the attribution healthy label is found");
+  const labels = helpers.buildStatusBandTilesO(aboveFloor({ done: 190 }, 40), 0).map((t) => t.label);
+  assert.ok(!labels.includes(healthyLabel!), `the band's writer-emitted tile must not read '${healthyLabel}'`);
+});
+
+test("ledger row: the accessible name carries the word that tells Done from Closed", () => {
+  const nameOf = (result: string, closedAt: string | null) => String(helpers.ResultTableRow({
+    row: { id: 7, agent: "a", task_type: "feature", result, closed_at: closedAt },
+    onRowClick: () => {},
+    closure: { pendingIds: new Set(), closedOverrides: new Map() },
+  }).props!["aria-label"]);
+  assert.match(nameOf("done", null), /\bDone\b/);
+  assert.match(nameOf("done_with_concerns", "2026-09-01T00:00:00Z"), /\bClosed\b/);
+  assert.doesNotMatch(nameOf("done", null), /\bClosed\b/);
+  assert.match(nameOf("done_with_concerns", null), /Done with caveats/);
 });

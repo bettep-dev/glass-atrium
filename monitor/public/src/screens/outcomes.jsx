@@ -870,6 +870,9 @@ function loopEventsSummaryO(loopEventsState) {
   return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
 }
 
+// Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
+const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
 // 타일 tone/값 산출 — 임계 판정은 공유 SoT(window.UI.outcomeShareTone) 뿐이고 여기서 두 번째 규칙을 만들지 않는다.
@@ -903,6 +906,7 @@ function buildStatusBandTilesO(data, attentionCount) {
         ? 'neutral'
         : (outcomeShareTone(attentionCount, attentionTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
       hint: 'Records in the window, quarantined included, flagged for review, failed, blocked, or carrying an unclosed caveat',
+      jumpTo: LEDGER_NEEDS_YOU_ID,
     },
     {
       key: 'broken',
@@ -916,7 +920,8 @@ function buildStatusBandTilesO(data, attentionCount) {
     },
     {
       key: 'recorded',
-      label: 'Recorded properly',
+      // 'Recorded properly' = attribution healthy 모집단 전용 라벨 — writer 발신 전체(untraceable 포함)는 다른 이름.
+      label: 'Self-reported',
       count: writerTotal,
       population: total,
       // 누락 보고는 여기 글리프가 유일한 등급 채널 — 레인 행으로 올리지 않는다.
@@ -987,9 +992,16 @@ function BandTileO({ tile, windowLabel }) {
   const { TONE_ICON, formatPctWithDenominator } = window.UI;
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
+  const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const Tag = canJump ? 'button' : 'div';
 
   return (
-    <div className="kpi cursor-default" aria-label={`${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}`} title={tile.hint}>
+    <Tag
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
+      className={canJump ? 'kpi' : 'kpi cursor-default'}
+      aria-label={ariaLabel}
+      title={tile.hint}>
       <div className="kpi-label">
         <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
           <GlyphO name={TONE_ICON[tile.tone]} size={12}/>
@@ -998,8 +1010,17 @@ function BandTileO({ tile, windowLabel }) {
       </div>
       <div className="kpi-value">{loaded ? formatIntO(tile.count) : '—'}</div>
       <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
-    </div>
+    </Tag>
   );
+}
+
+// 헤딩으로 즉시 스크롤(모션 없음 → reduced-motion 무관) 후 focus — 스크린리더가 도착 지점을 읽는다.
+function focusLedgerSectionO(id, doc = document) {
+  const el = doc.getElementById(id);
+  if (!el) return false;
+  el.scrollIntoView({ block: 'start' });
+  el.focus({ preventScroll: true });
+  return true;
 }
 
 // registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
@@ -2212,7 +2233,7 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
       + (windowNeedsYou.total > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '')
     : `Needs you · ${formatIntO(needsYouRows.length)} on this page`;
   return [
-    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows },
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, anchorId: LEDGER_NEEDS_YOU_ID },
     { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
   ];
 }
@@ -2259,6 +2280,8 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
               <React.Fragment key={section.key}>
                 <tr>
                   <th
+                    id={section.anchorId}
+                    tabIndex={section.anchorId ? -1 : undefined}
                     colSpan={6}
                     scope="colgroup"
                     className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
@@ -2388,7 +2411,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
           onRowClick(row);
         }
       }}
-      aria-label={`${row.agent} ${row.task_type} ${row.result} check ${grader.label} ${row.summary || ''}`}>
+      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} check ${grader.label} ${row.summary || ''}`}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
