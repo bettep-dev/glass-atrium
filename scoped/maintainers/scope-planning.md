@@ -55,7 +55,9 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 - **Dropped with no planner-body copy — the forbidden-self-spawn bullet** [measured: Grep `spawn` over the planner body → 0]. The prohibition is structural: the planner's frontmatter `tools:` grants no `Agent` tool.
 - **Dropped as a six-label skeleton**: the Pre-drawing decision steps, which carried the labels without the literals. The step names survive as one line; the literals live at `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and in the planner body.
 - **Moved here**: the delivery-status section, the coupled-reader list, the pointer apparatus of `## Output Format Routing [PLANNING]` and `## Designer Co-Emission Trigger [PLANNING]`, the co-edit rosters, and the machine-checked-pointer notices.
-- **Dropped as duplicated in the delivered body — the `[DOC-ROUTE]` exception**: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` carries the same `What the stamp attests` / `Absent the stamp` pair, states the exception as the stamped evidence for the gate's own default, and adds that delegation phrasing never substitutes for the stamp.
+- **Dropped as duplicated in the delivered body — the `[DOC-ROUTE]` exception**: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` → `### Turn-0 routing hard gate` carries the same pair.
+  - What the stamp attests: its `The stamp attests` bullet · that the refusal stands without the stamp: the stamp table's no-stamp row.
+  - It also states the exception as the stamped evidence for the gate's own default, and adds that delegation phrasing never substitutes for the stamp.
   - When it was cut, the rule-file copy was the weaker of the two and reached no agent (see `## Leave-deleted verdicts here are dated, not closed`); what survives under `## Output Format Routing [PLANNING]` is the preamble pointer into that body.
   - The stamp's full linkage — delivered copy, delegation-side canonical, static gate — is the `[DOC-ROUTE]` stamp row of `## Co-edit rosters (what moves together when a rule changes)` above, which never listed the rule file.
 
