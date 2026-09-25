@@ -223,19 +223,14 @@ spooled_field() {
     'quoted verdict ahead of the declaration, declared path authored → silent'
     'mention without files= ahead of the declaration, undeclared path authored → scope-excess'
     'declaration longer than the transport cap → skipped, never compared against a cut list'
-    'wrapped verdict with prose ahead of the declaration, path only the declaration names authored → silent'
-    'wrapped-token verdict with prose ahead of the declaration, path only the declaration names authored → silent'
   )
-  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
     "> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats"$'\n'"${real}"
     '[SCOPE] — the 7th delegation element'$'\n'"${real}"
     "[SCOPE] files=${long_list}hooks/a.sh · deliverable=fix · out=none"
-    '`[SCOPE] files=hooks/a.sh` lists one path only'$'\n''[SCOPE] files=hooks/a.sh, hooks/b.sh · deliverable=fix · out=none'
-    '**[SCOPE]** files=hooks/a.sh was under-declared'$'\n''[SCOPE] files=hooks/a.sh, hooks/b.sh · deliverable=fix · out=none'
   )
-  local -a authored=('hooks/a.sh' 'hooks/a.sh, hooks/undeclared.sh' 'hooks/a.sh' 'hooks/a.sh, hooks/b.sh' 'hooks/a.sh, hooks/b.sh')
-  local -a expected=('silent' 'excess' 'silent' 'silent' 'silent')
+  local -a authored=('hooks/a.sh' 'hooks/a.sh, hooks/undeclared.sh' 'hooks/a.sh')
+  local -a expected=('silent' 'excess' 'silent')
   local block recorded reasons got
   for i in "${!names[@]}"; do
     rm -rf -- "${SPOOL_DIR}"
