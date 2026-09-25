@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
@@ -248,14 +248,35 @@ interface ZoneReading {
 	overlaps: string[];
 	occludedTitles: string[];
 	titleBands: string[];
+	hiddenTitleCount: number;
 	zoneCount: number;
 }
 
+// a zone whose title repeats its lone member's label — the drawn map holds none, so the hidden-title trim needs one supplied
+const REDUNDANT_TITLE_ZONE = [
+	'    subgraph fitprobe["Probe store"]',
+	'        fitprobe_store[("Probe store (fixture)")]',
+	"    end",
+].join("\n");
+
+// serves the drawn diagrams with extra source lines appended to the map the screen opens on
+async function addDiagramSource(page: Page, extraSource: string): Promise<void> {
+	await page.route("**/api/architecture/diagrams", async (route) => {
+		const response = await route.fetch();
+		const payload = (await response.json()) as { diagrams: { id: string; mermaid_source: string }[] };
+		const drawn = payload.diagrams.find((diagram) => diagram.id === "v2-overview-entry");
+		assert.ok(drawn, "fixture precondition: the overview map is served");
+		drawn.mermaid_source += `\n${extraSource}\n`;
+		await route.fulfill({ response, json: payload });
+	});
+}
+
 // 존 상자끼리의 겹침과, 보이는 존 제목의 양 끝이 제 존 위에서 읽히는지를 잼.
-async function readZones(width: number, height: number): Promise<ZoneReading> {
+async function readZones(width: number, height: number, extraSource?: string): Promise<ZoneReading> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
 		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 		await page.waitForFunction(
 			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
@@ -300,8 +321,8 @@ async function readZones(width: number, height: number): Promise<ZoneReading> {
 			const nodeBoxes = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) =>
 				node.getBoundingClientRect(),
 			);
-			const titleBands = zones
-				.filter((zone) => !zone.titleBox)
+			const hiddenTitleZones = zones.filter((zone) => !zone.titleBox);
+			const titleBands = hiddenTitleZones
 				.flatMap((zone) => {
 					const b = zone.box;
 					const members = nodeBoxes.filter((n) => {
@@ -315,7 +336,7 @@ async function readZones(width: number, height: number): Promise<ZoneReading> {
 					return topGap > bottomGap + 2 ? [`${zone.name} top ${topGap.toFixed(1)}px vs bottom ${bottomGap.toFixed(1)}px`] : [];
 				});
 
-			return { overlaps, occludedTitles, titleBands, zoneCount: zones.length };
+			return { overlaps, occludedTitles, titleBands, hiddenTitleCount: hiddenTitleZones.length, zoneCount: zones.length };
 		});
 	} finally {
 		await page.close();
@@ -380,12 +401,11 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 }
 
 for (const { width, height } of VIEWPORTS) {
-	test(`zone boxes never overlap, every zone title reads whole and no hidden title leaves a band at ${width}x${height}`, async () => {
+	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {
 		const r = await readZones(width, height);
 		assert.ok(r.zoneCount > 0, "no zone boxes were measured — the map did not render");
 		assert.deepEqual(r.overlaps, [], `zone boxes overlap: ${r.overlaps.join("; ")}`);
 		assert.deepEqual(r.occludedTitles, [], `zone titles covered or cut: ${r.occludedTitles.join("; ")}`);
-		assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 	});
 
 	test(`AC-FIT-1 the whole map is inside the pane at ${width}x${height}`, async (t) => {
@@ -427,3 +447,9 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 }
+
+test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
+	const r = await readZones(1440, 900, REDUNDANT_TITLE_ZONE);
+	assert.ok(r.hiddenTitleCount > 0, "no hidden-title zone was measured — the band assertion below would be vacuous");
+	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
+});
