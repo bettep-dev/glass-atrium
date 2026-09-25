@@ -77,7 +77,7 @@ test("every disclosure leads its summary with a chevron the screen's own style t
   assert.match(style, /\.w-disclosure\[open\] > summary \.w-chevron\s*\{\s*transform:\s*rotate\(90deg\)/);
 });
 
-test("the notes-per-day bars name their date range and their peak value with its date", async () => {
+test("the notes-per-day chart fills its panel with one dated bar per day and keeps the peak caption", async () => {
   const mod = await loadWikiScreen();
   const SparseTrendW = mod.SparseTrendW as Component;
 
@@ -86,18 +86,17 @@ test("the notes-per-day bars name their date range and their peak value with its
     [[1, 2, 9, 3, 4], "2026-09-03", "9"],
     [[7, 1, 2, 3, 0], "2026-09-01", "7"],
   ] as const) {
-    const tree = renderScreen(
-      mod.React.createElement(SparseTrendW, { label: "Notes per day", series, dates, w: 10, h: 44, tone: "accent" }),
+    const tree = renderScreen(mod.React.createElement(SparseTrendW, { label: "Notes per day", series, dates }));
+    const chart = findNodes(tree, (n) => n.props.atom === "TrendChart");
+    assert.equal(chart.length, 1, "the shared chart atom draws the bars");
+    assert.equal(chart[0].props.kind, "bars");
+    assert.equal(chart[0].props.label, "Notes per day");
+    assert.deepEqual(
+      (chart[0].props.points as Array<{ label: string; value: number }>).map((p) => [p.label, p.value]),
+      dates.map((d, i) => [d, series[i]]),
+      "each bar carries its own date and count for the readout",
     );
-    const figure = findNodes(tree, (n) => n.props.role === "img");
-    assert.equal(figure.length, 1, "the bars sit inside one labelled image");
-    const label = String(figure[0].props["aria-label"]);
-    for (const part of [dates[0], dates[dates.length - 1], `peak ${peak} on ${peakDate}`]) {
-      assert.ok(label.includes(part), `aria label names ${part}: ${label}`);
-    }
-    const visible = collectText(tree);
-    assert.ok(visible.includes(dates[0]) && visible.includes(dates[dates.length - 1]), "the axis shows both end dates");
-    assert.ok(visible.includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
+    assert.ok(collectText(tree).includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
   }
 });
 
@@ -227,4 +226,61 @@ test("the run table sits in page scroll with a caption and scoped column heads",
     assert.equal(style.maxHeight, undefined, "no inner vertical scroller clips the rows");
     assert.doesNotMatch(classOf(node), /overflow-y-auto|max-h-/, "no inner vertical scroller clips the rows");
   }
+});
+
+const ERRORED = { status: "error", data: null, error: "boom" };
+
+test("the merge-proposals disclosure stays in place while loading and after a failure, with its state in the count", async () => {
+  const mod = await loadWikiScreen();
+  const rows = [
+    { name: "loading", state: LOADING, count: "Loading…" },
+    { name: "error", state: ERRORED, count: "Unavailable" },
+    { name: "ready", state: READY_BACKLOG, count: "1" },
+  ];
+  for (const row of rows) {
+    const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: row.state, onRetry: () => {} }));
+    const heading = findSummaryHeading(tree, "Merge proposals");
+    assert.ok(heading, `${row.name}: the disclosure renders`);
+    const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
+    assert.ok(collectText(summary ?? null).includes(row.count), `${row.name}: the count reads ${row.count}`);
+  }
+});
+
+test("a merge proposal's reasons wrap in full and its item is the anchor its alarm opens", async () => {
+  const mod = await loadWikiScreen();
+  const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
+  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const item = findNodes(tree, (n) => n.type === "li")[0];
+  assert.equal(item.props.id, (mod.getProposalAnchorIdW as (h: string) => string)("c1"));
+  assert.equal(item.props.tabIndex, -1, "focus can land on the item without adding a Tab stop");
+  for (const node of findNodes(tree, () => true)) {
+    assert.doesNotMatch(classOf(node), /\btruncate\b/, "no part of the proposal hides behind a hover title");
+  }
+});
+
+test("a proposal alarm is a button that opens its proposal; other alarms stay plain rows", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const tree = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({}),
+      indexState: ready({}),
+      backlogState: READY_BACKLOG,
+      cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  const buttons = findNodes(tree, (n) => n.type === "button");
+  assert.equal(buttons.length, 1, "one waiting proposal → one button");
+  assert.equal(buttons[0].props.type, "button");
+  assert.equal(typeof buttons[0].props.onClick, "function");
+});
+
+test("constant runs render as one row naming the range and the run count", async () => {
+  const mod = await loadWikiScreen();
+  const reports = ["2026-09-24", "2026-09-23", "2026-09-22"].map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports }));
+  const rows = findNodes(tree, (n) => n.type === "tr");
+  assert.equal(rows.length, 1);
+  const text = collectText(rows[0]);
+  assert.ok(text.includes("2026-09-22") && text.includes("2026-09-24") && text.includes("3 runs"), text);
 });

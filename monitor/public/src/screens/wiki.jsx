@@ -95,6 +95,12 @@ function ScreenWiki() {
         .w-disclosure > summary { list-style: none; }
         .w-disclosure > summary::-webkit-details-marker { display: none; }
         .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
+        .w-alarm-open { min-height: 32px; cursor: pointer; }
+        /* Name, bar and count stay within reading distance on a wide panel. */
+        .w-type-list { max-width: 40rem; }
+        .w-type-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 4rem; align-items: center; gap: 0.75rem; }
+        .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
+        .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--info)); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -144,6 +150,7 @@ function ScreenWiki() {
 				{/* Behind the click — working lists, run history, note composition. */}
 				<WikiMaintenanceSection
 					backlogState={backlogState}
+					cyclesState={cyclesState}
 					onRetry={sectionRetry}
 				/>
 				<WikiRunHistorySection
@@ -230,24 +237,23 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 			aria-label="Wiki alarms"
 		>
 			{model.alarms.map((alarm) => (
-				<li
-					key={alarm.key}
-					className="rounded-md border border-line bg-sunken px-3 py-2 flex items-stretch gap-2.5"
-				>
-					<span className={`sev-bar ${alarm.tone}`} aria-hidden="true" />
-					<Icon
-						name={TONE_ICON[alarm.tone]}
-						size={14}
-						className={`text-${alarm.tone} mt-0.5 flex-shrink-0`}
-					/>
-					<span className="min-w-0">
-						<span className="fs-body font-mono text-ink font-medium block">
-							{alarm.label}
-						</span>
-						<span className="fs-micro font-mono text-faint block leading-tight">
-							{alarm.detail}
-						</span>
-					</span>
+				<li key={alarm.key} className="rounded-md border border-line bg-sunken">
+					{alarm.anchorId ? (
+						<button
+							type="button"
+							className="w-alarm-open w-full text-left px-3 py-2 flex items-stretch gap-2.5"
+							onClick={() => openProposalW(alarm.anchorId)}
+						>
+							<WikiAlarmBodyW alarm={alarm} Icon={Icon} TONE_ICON={TONE_ICON} />
+							<span className="ml-auto self-center fs-meta font-mono text-info flex-shrink-0">
+								Open proposal
+							</span>
+						</button>
+					) : (
+						<div className="px-3 py-2 flex items-stretch gap-2.5">
+							<WikiAlarmBodyW alarm={alarm} Icon={Icon} TONE_ICON={TONE_ICON} />
+						</div>
+					)}
 				</li>
 			))}
 			{model.unchecked.length > 0 && (
@@ -257,6 +263,44 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 			)}
 		</ul>
 	);
+}
+
+function WikiAlarmBodyW({ alarm, Icon, TONE_ICON }) {
+	return (
+		<>
+			<span className={`sev-bar ${alarm.tone}`} aria-hidden="true" />
+			<Icon
+				name={TONE_ICON[alarm.tone]}
+				size={14}
+				className={`text-${alarm.tone} mt-0.5 flex-shrink-0`}
+			/>
+			<span className="min-w-0">
+				<span className="fs-body font-mono text-ink font-medium block break-words">
+					{alarm.label}
+				</span>
+				<span className="fs-meta font-mono text-faint block leading-tight">
+					{alarm.detail}
+				</span>
+			</span>
+		</>
+	);
+}
+
+// Element id of a proposal's list item; a pair without a hash has no stable anchor.
+function getProposalAnchorIdW(hash) {
+	if (typeof hash !== "string" || hash === "") return null;
+	return `wiki-proposal-${hash.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+// Opens the disclosure holding the item, then moves focus onto it.
+function openProposalW(anchorId) {
+	const item = document.getElementById(anchorId);
+	if (!item) return;
+
+	const disclosure = item.closest("details");
+	if (disclosure) disclosure.open = true;
+	item.scrollIntoView({ block: "nearest" });
+	item.focus();
 }
 
 // pending = a feeder is still loading, so "no alarms" cannot yet be told apart from
@@ -344,6 +388,8 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 				: describeProposalAgeW(runs, parked, checking),
 			parked,
 			age: typeof age === "number" ? age : 0,
+			anchorId: getProposalAnchorIdW(proposal?.cluster_hash),
+			proposal,
 		};
 	});
 	return rows.sort((x, y) => Number(x.parked) - Number(y.parked) || x.age - y.age);
@@ -658,40 +704,50 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 // The proposals list reports the cost-guard residue, since unverified candidate pairs
 // make the proposal count a floor rather than a total.
 
-function WikiMaintenanceSection({ backlogState, onRetry }) {
-	const { RegionUnavailable } = window.UI;
+function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
+	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const model = useMemoW(
-		() => buildMaintenanceModel(backlogState),
-		[backlogState],
+		() => buildMaintenanceModel(backlogState, cyclesState),
+		[backlogState, cyclesState],
 	);
-
-	if (model.state === "error") {
-		return (
-			<RegionUnavailable
-				source="the maintenance backlog"
-				error={backlogState.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
 
 	return (
 		<div className="flex flex-col gap-2">
-			<div
-				className="fs-body font-mono text-dim"
-				aria-busy={model.state === "loading" ? "true" : undefined}
-			>
-				{model.summaryLine}
-			</div>
-
-			{model.proposals && model.proposals.length > 0 && (
-				<BacklogExplorer
-					label="Merge proposals"
-					count={model.proposals.length}
-					payload={model.proposals}
+			{model.state === "error" ? (
+				<RegionUnavailable
+					source="the maintenance backlog"
+					error={backlogState.error}
+					onRetry={onRetry}
+				/>
+			) : (
+				<div
+					className="fs-body font-mono text-dim"
+					aria-busy={model.state === "loading" ? "true" : undefined}
 				>
+					{model.summaryLine}
+				</div>
+			)}
+
+			{/* Always present, so the lane's "Open proposal" and the page layout never lose it. */}
+			<BacklogExplorer
+				label="Merge proposals"
+				count={describeProposalCountW(model)}
+			>
+				{model.state === "loading" ? (
+					<LoadingPlaceholder label="merge proposals" />
+				) : model.state === "error" ? (
+					<EmptyStateW message="The maintenance backlog could not be read — see above." />
+				) : !model.proposals || model.proposals.length === 0 ? (
+					<EmptyStateW
+						message={
+							model.proposals
+								? "No merge proposals waiting."
+								: "The last cycle did not report merge proposals."
+						}
+					/>
+				) : (
 					<div className="flex flex-col gap-2">
-						<ul className="flex flex-col gap-2 m-0 p-0 list-none max-h-64 overflow-y-auto">
+						<ul className="flex flex-col gap-2 m-0 p-0 list-none">
 							{model.proposals.map((proposal, i) => (
 								<MergeSuggestionItem
 									key={proposal.cluster_hash || i}
@@ -700,13 +756,13 @@ function WikiMaintenanceSection({ backlogState, onRetry }) {
 							))}
 						</ul>
 						{model.residueLine && (
-							<div className="fs-micro font-mono text-faint leading-tight">
+							<div className="fs-meta font-mono text-faint leading-tight">
 								{model.residueLine}
 							</div>
 						)}
 					</div>
-				</BacklogExplorer>
-			)}
+				)}
+			</BacklogExplorer>
 
 			{/* Dead-link lists appear only once the fixer has something to report. */}
 			{model.deadLinks && model.deadLinks.length > 0 && (
@@ -727,7 +783,15 @@ function WikiMaintenanceSection({ backlogState, onRetry }) {
 	);
 }
 
-function buildMaintenanceModel(backlogState) {
+function describeProposalCountW(model) {
+	if (model.state === "loading") return "Loading…";
+	if (model.state === "error") return "Unavailable";
+	return model.proposals ? formatCountW(model.proposals.length) : "Not reported";
+}
+
+const UNKNOWN_CYCLES_W = { status: "idle", data: null, error: null };
+
+function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 	if (backlogState.status === "loading") {
 		return { state: "loading", summaryLine: "Checking the maintenance backlog…" };
 	}
@@ -738,7 +802,7 @@ function buildMaintenanceModel(backlogState) {
 		return { state: "empty", summaryLine: "No maintenance cycle reported yet." };
 	}
 
-	const proposals = readProposalsW(backlog);
+	const proposals = orderProposalsW(backlog, readProposalsW(backlog), cyclesState);
 	const deadLinks = Array.isArray(backlog.deadlink_dryrun)
 		? backlog.deadlink_dryrun
 		: null;
@@ -758,6 +822,12 @@ function buildMaintenanceModel(backlogState) {
 				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
 				: null,
 	};
+}
+
+// The lane's order, so row N in the lane is row N in the list.
+function orderProposalsW(backlog, proposals, cyclesState) {
+	if (!proposals) return proposals;
+	return buildProposalAlarmsW(backlog, proposals, cyclesState).map((row) => row.proposal);
 }
 
 // A missing key reads as "not reported", never as zero.
@@ -826,9 +896,6 @@ function WikiRunHistorySection({
 						series={model.compiledSeries}
 						dates={model.compiledDates}
 						stat={`${model.activeDays} active days of ${model.spanDays}`}
-						w={10}
-						h={44}
-						tone="accent"
 					/>
 					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -930,22 +997,33 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			) : rows.length === 0 ? (
 				<EmptyStateW message="No notes indexed yet." />
 			) : (
-				<ul className="flex flex-col gap-1 m-0 p-0 list-none">
-					{rows.map((t) => (
-						<li
-							key={t.note_type}
-							className="flex items-baseline gap-3 fs-meta font-mono"
-						>
-							<span className="text-dim truncate" title={t.note_type}>
-								{t.note_type}
+				<ul className="w-type-list flex flex-col gap-1.5 m-0 p-0 list-none">
+					{buildNoteTypeRowsW(rows).map((t) => (
+						<li key={t.type} className="w-type-row fs-meta font-mono">
+							<span className="text-dim break-words">{t.type}</span>
+							<span className="w-type-track" aria-hidden="true">
+								<span className="w-type-fill" style={{ width: `${t.share}%` }} />
 							</span>
-							<span className="ml-auto text-ink">{formatCountW(t.count)}</span>
+							<span className="text-ink text-right">{formatCountW(t.count)}</span>
 						</li>
 					))}
 				</ul>
 			)}
 		</WikiDisclosureW>
 	);
+}
+
+// Bar length = the count's share of the largest type.
+function buildNoteTypeRowsW(rows) {
+	const max = Math.max(0, ...rows.map((t) => Number(t.count) || 0));
+	return rows.map((t) => {
+		const count = Number(t.count) || 0;
+		return {
+			type: t.note_type,
+			count,
+			share: max > 0 ? Math.round((count / max) * 100) : 0,
+		};
+	});
 }
 
 function describeNotesByTypeW(state) {
@@ -1135,26 +1213,21 @@ function MergeSuggestionItem({ proposal }) {
 	const action = proposal.suggested_action || proposal.llm_verdict || "";
 
 	return (
-		<li className="rounded border border-line bg-card px-2.5 py-1.5">
-			{/* line 1: target ← source(s) · similarity */}
+		<li
+			id={getProposalAnchorIdW(proposal.cluster_hash) || undefined}
+			tabIndex={-1}
+			className="rounded border border-line bg-card px-2.5 py-1.5"
+		>
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
-				<span className="text-ink font-medium truncate" title={target}>
-					{target}
-				</span>
+				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
 					<Icon name="arrow-left" size={12} />
 				</span>
-				<span className="text-dim truncate" title={sources}>
-					{sources}
-				</span>
+				<span className="text-dim break-words min-w-0">{sources}</span>
 				<span className="ml-auto text-info">sim {sim}</span>
 			</div>
-			{/* line 2: 권장 액션 (DRY-RUN — 승인 필요) */}
 			{action && (
-				<div
-					className="fs-micro font-mono text-faint mt-1 leading-tight truncate"
-					title={window.UI.titleOf(action)}
-				>
+				<div className="fs-meta font-mono text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
 					{action}
 				</div>
 			)}
@@ -1227,15 +1300,15 @@ function WikiReportsTable({ reports, isLoading = false }) {
 	return (
 		<div className="overflow-x-auto rounded-md border border-line">
 			<Table
-				caption="Wiki compile runs, newest first"
+				caption="Wiki compile runs, newest first; unchanged consecutive runs share a row"
 				columns={WIKI_REPORT_COLUMNS}
 				className="w-report-tbl"
 			>
 				{isLoading ? (
 					<SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
 				) : (
-					reports.map((r) => (
-						<WikiReportRow key={r.run_date} report={r} Badge={Badge} />
+					groupConstantRunsW(reports).map((group) => (
+						<WikiReportRow key={group.key} group={group} Badge={Badge} />
 					))
 				)}
 			</Table>
@@ -1245,19 +1318,25 @@ function WikiReportsTable({ reports, isLoading = false }) {
 
 // per-run 보고 1행 — warn/crit 만 좌측 .sev-bar(2px) 강조, OK/neutral 은 강조 없음(전면 flood 금지, S5).
 //   .sev-bar 는 셀 내부 inline-flex 로 얹음 (table row 에는 좌측 막대 직접 부착 불가).
-function WikiReportRow({ report, Badge }) {
+function WikiReportRow({ group, Badge }) {
+	const report = group.newest;
 	const tone = wikiStatusToneW(report.status);
 	const accent = tone === "warn" || tone === "crit";
+	const range =
+		group.count > 1
+			? `${group.oldest.run_date} – ${report.run_date}`
+			: report.run_date;
 
 	return (
-		<tr
-			aria-label={`Wiki report ${report.run_date} ${wikiStatusLabelW(report.status)}`}
-		>
+		<tr>
 			<td>
 				<span className="flex items-stretch gap-2 min-h-[18px]">
 					{accent && <span className={`sev-bar ${tone}`} aria-hidden="true" />}
 					<span className="font-mono text-ink font-medium">
-						{report.run_date}
+						{range}
+						{group.count > 1 && (
+							<span className="text-faint font-normal">{` · ${group.count} runs`}</span>
+						)}
 					</span>
 				</span>
 			</td>
@@ -1285,6 +1364,29 @@ function WikiReportRow({ report, Badge }) {
 	);
 }
 
+// Newest-first runs → one group per streak of equal status and backlog snapshot.
+function groupConstantRunsW(reports) {
+	const groups = [];
+	for (const report of reports) {
+		const current = groups[groups.length - 1];
+		if (current && isSameRunW(current.oldest, report)) {
+			current.oldest = report;
+			current.count += 1;
+		} else {
+			groups.push({ key: report.run_date, newest: report, oldest: report, count: 1 });
+		}
+	}
+	return groups;
+}
+
+function isSameRunW(a, b) {
+	return (
+		a.status === b.status &&
+		a.deadlinks_count === b.deadlinks_count &&
+		a.dedup_count === b.dedup_count
+	);
+}
+
 // Shared chrome (wiki-scoped — health.jsx 패턴 미러).
 
 function EmptyStateW({ message }) {
@@ -1293,14 +1395,12 @@ function EmptyStateW({ message }) {
 }
 
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
-//   sparse → MiniBars 대신 compact stat(최신/대표값) + "no activity in range" 빈상태로 대체.
-//   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 종전대로 MiniBars 렌더. tone = MiniBars 색(text-* 컨테이너에서 상속).
-function SparseTrendW({ label, series, dates, stat, w, h, tone }) {
-	const { MiniBars } = window.UI;
+//   sparse → TrendChart 대신 compact stat(최신/대표값) + "no activity in range" 빈상태로 대체.
+//   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
+function SparseTrendW({ label, series, dates, stat }) {
+	const { TrendChart } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
 	const caption = [describePeakW(series, dates), stat].filter(Boolean).join(" · ");
-	const firstDate = dates[0] || "";
-	const lastDate = dates[dates.length - 1] || "";
 
 	return (
 		<div>
@@ -1308,26 +1408,20 @@ function SparseTrendW({ label, series, dates, stat, w, h, tone }) {
 			{sparse ? (
 				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 flex items-baseline justify-between gap-3">
 					<span className="font-mono fs-body text-dim">{caption}</span>
-					<span className="fs-micro font-mono text-faint">
+					<span className="fs-meta font-mono text-faint">
 						no activity in range
 					</span>
 				</div>
 			) : (
 				<>
-					<div
-						role="img"
-						aria-label={`${label} from ${firstDate} to ${lastDate}: ${caption}`}
-						className="inline-flex flex-col"
-					>
-						<div className={`text-${tone}`}>
-							<MiniBars data={series} w={Math.max(series.length * w, 60)} h={h} />
-						</div>
-						<div className="flex justify-between gap-3 fs-micro font-mono text-faint">
-							<span>{firstDate}</span>
-							<span>{lastDate}</span>
-						</div>
-					</div>
-					<div className="fs-micro font-mono text-dim">{caption}</div>
+					<TrendChart
+						label={label}
+						kind="bars"
+						tone="info"
+						points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+						formatValue={formatCountW}
+					/>
+					<div className="fs-meta font-mono text-dim mt-1">{caption}</div>
 				</>
 			)}
 		</div>

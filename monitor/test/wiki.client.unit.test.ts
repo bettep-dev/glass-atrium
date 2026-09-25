@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/wiki.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -364,4 +364,83 @@ test("the maintenance summary names the proposal count only where no disclosure 
     helpers.buildMaintenanceModel(ready({ backlog: { run_date: isoDaysAgo(0) } })).summaryLine,
     /merge proposals not reported/,
   );
+});
+
+// Run table grouping, note-type bars and the proposal anchor the alarm lane opens.
+
+interface RunGroup {
+  key: string;
+  count: number;
+  newest: { run_date: string };
+  oldest: { run_date: string };
+}
+const layoutHelpers = helpers as unknown as {
+  groupConstantRunsW: (reports: unknown[]) => RunGroup[];
+  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; count: number; share: number }>;
+  getProposalAnchorIdW: (hash: unknown) => string | null;
+  buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => { proposals: Array<{ cluster_hash: string }> };
+};
+
+function runs(statuses: Array<[string, number, number]>): unknown[] {
+  return statuses.map(([status, deadlinks_count, dedup_count], i) => ({
+    run_date: isoDaysAgo(i),
+    status,
+    deadlinks_count,
+    dedup_count,
+  }));
+}
+
+describe("consecutive runs sharing status and backlog collapse into one dated range", () => {
+  const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
+  const rows = [
+    { name: "27 identical runs read as one row of 27", reports: runs(same), counts: [27] },
+    { name: "a status change splits the streak around it", reports: runs([["ok", 0, 3], ["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]), counts: [2, 1, 1] },
+    { name: "a backlog change splits the streak", reports: runs([["ok", 0, 3], ["ok", 1, 3], ["ok", 1, 3]]), counts: [1, 2] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const groups = layoutHelpers.groupConstantRunsW(row.reports);
+      assert.deepEqual([...groups].map((g) => g.count), row.counts);
+      assert.equal(groups[0].newest.run_date, isoDaysAgo(0), "newest first");
+      const last = groups[groups.length - 1];
+      assert.equal(last.oldest.run_date, isoDaysAgo(row.reports.length - 1), "the oldest run closes the last range");
+    });
+  }
+});
+
+test("each note type's bar is its count's share of the largest type, and an all-zero index draws none", () => {
+  const rows = layoutHelpers.buildNoteTypeRowsW([
+    { note_type: "concept", count: 40 },
+    { note_type: "source", count: 10 },
+    { note_type: "empty", count: 0 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.share), [100, 25, 0]);
+  assert.deepEqual(
+    layoutHelpers.buildNoteTypeRowsW([{ note_type: "a", count: 0 }]).map((r) => r.share),
+    [0],
+  );
+});
+
+test("the merge-proposal list follows the alarm lane's order", () => {
+  const backlog = proposalBacklog(["old", "new", "mid"], {
+    old: isoDaysAgo(77),
+    new: isoDaysAgo(1),
+    mid: isoDaysAgo(3),
+  });
+  const lane = helpers.buildAlarmLaneModel(ready({}), ready({}), backlog, unchangedCycles(30)).alarms;
+  const list = layoutHelpers.buildMaintenanceModel(backlog, unchangedCycles(30)).proposals;
+  assert.deepEqual(
+    [...list].map((p) => `proposal-${p.cluster_hash}`),
+    [...lane].map((a) => a.key),
+  );
+});
+
+test("each proposal alarm names its own list item's anchor, and a hashless pair names none", () => {
+  const lane = helpers.buildAlarmLaneModel(ready({}), ready({}), proposalBacklog(["a b/c"]), unchangedCycles(1)).alarms as Array<
+    Alarm & { anchorId?: string | null }
+  >;
+  const anchor = layoutHelpers.getProposalAnchorIdW("a b/c");
+  assert.match(String(anchor), /^[A-Za-z0-9_-]+$/, "the anchor is a valid element id");
+  assert.equal(lane[0].anchorId, anchor);
+  assert.equal(layoutHelpers.getProposalAnchorIdW(undefined), null);
 });
