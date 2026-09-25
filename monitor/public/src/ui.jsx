@@ -237,20 +237,6 @@ function getChartIndexAtRatio(ratio, count, kind = 'line') {
   return Math.min(count - 1, index);
 }
 
-/**
- * Next readout day for a key press; undefined = key not handled, left to the page.
- * The first arrow press with no active day starts on the latest day.
- */
-function getChartKeyIndex(key, index, count) {
-  if (count <= 0) return undefined;
-  const last = count - 1;
-  if (key === 'Home') return 0;
-  if (key === 'End') return last;
-  if (key !== 'ArrowLeft' && key !== 'ArrowRight') return undefined;
-  if (index === null || index === undefined) return last;
-  return key === 'ArrowLeft' ? Math.max(0, index - 1) : Math.min(last, index + 1);
-}
-
 function getChartReadout(point, formatValue = String) {
   if (!point) return '';
   return Number.isFinite(point.value) ? `${point.label}: ${formatValue(point.value)}` : `${point.label}: no data`;
@@ -321,7 +307,8 @@ function ChartTicks({ points, kind, maxTicks }) {
 function useChartReadout(count, kind) {
   const [activeIndex, setActiveIndex] = useState(null);
   const onKeyDown = (event) => {
-    const next = getChartKeyIndex(event.key, activeIndex, count);
+    // no active day → the first arrow press starts on the latest day
+    const next = getRovingIndex(event.key, activeIndex, count, 'horizontal', 'last');
     if (next === undefined) return;
     event.preventDefault();
     setActiveIndex(next);
@@ -765,16 +752,17 @@ const ROVING_KEY_STEP = {
 
 /**
  * Next item of a roving-focus set for a key press; undefined = key not handled, left to the page.
- * Stops at the ends rather than wrapping, like the chart readout keys.
+ * Stops at the ends rather than wrapping.
+ * @param start - 'first' | 'last': where an arrow press lands when no item is active yet
  */
-function getRovingIndex(key, index, count, orientation = 'horizontal') {
+function getRovingIndex(key, index, count, orientation = 'horizontal', start = 'first') {
   if (count <= 0) return undefined;
   const last = count - 1;
   if (key === 'Home') return 0;
   if (key === 'End') return last;
   const step = ROVING_KEY_STEP[orientation]?.[key];
   if (step === undefined) return undefined;
-  if (index === null || index === undefined) return 0;
+  if (index === null || index === undefined) return start === 'last' ? last : 0;
   return Math.min(last, Math.max(0, index + step));
 }
 
@@ -1642,7 +1630,7 @@ window.UI = {
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
-  TrendChart, getChartTicks, getChartIndexAtRatio, getChartKeyIndex, getChartReadout, getChartSummary,
+  TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,

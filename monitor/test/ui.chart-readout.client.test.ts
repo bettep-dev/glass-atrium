@@ -12,7 +12,7 @@ type Point = { label: string; value: number | null };
 type Component = (props: Record<string, unknown>) => unknown;
 const getChartTicks = ui.getChartTicks as (count: number, maxTicks?: number) => number[];
 const getChartIndexAtRatio = ui.getChartIndexAtRatio as (ratio: number, count: number, kind?: string) => number | null;
-const getChartKeyIndex = ui.getChartKeyIndex as (key: string, index: number | null, count: number) => number | undefined;
+const getRovingIndex = ui.getRovingIndex as (key: string, index: number | null, count: number, orientation?: string, start?: string) => number | undefined;
 const getChartReadout = ui.getChartReadout as (point: Point | undefined, formatValue?: (v: number) => string) => string;
 const getChartSummary = ui.getChartSummary as (name: string, points: Point[], formatValue?: (v: number) => string) => string;
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
@@ -71,7 +71,7 @@ describe("keyboard moves the readout one day at a time", () => {
     { name: "an unrelated key is left to the page", key: "Tab", index: 4, next: undefined },
   ];
   for (const row of rows) {
-    test(row.name, () => assert.equal(getChartKeyIndex(row.key, row.index, 7), row.next));
+    test(row.name, () => assert.equal(getRovingIndex(row.key, row.index, 7, 'horizontal', 'last'), row.next));
   }
 });
 

@@ -11,7 +11,7 @@ const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
 type RowAction = { focus?: "row" | "control"; index?: number; activate?: boolean } | undefined;
 type RowKeyInput = { key: string; rowIndex: number; rowCount: number; controlIndex: number | null; controlCount: number };
 type Component = (props: Record<string, unknown>) => unknown;
-const getRovingIndex = ui.getRovingIndex as (key: string, index: number | null, count: number, orientation?: string) => number | undefined;
+const getRovingIndex = ui.getRovingIndex as (key: string, index: number | null, count: number, orientation?: string, start?: string) => number | undefined;
 const getRovingTabIndex = ui.getRovingTabIndex as (index: number, activeIndex: number | null, count: number) => number;
 const getRowKeyAction = ui.getRowKeyAction as (input: RowKeyInput) => RowAction;
 const getRowFocusProps = ui.getRowFocusProps as (opts: Record<string, unknown>) => Record<string, unknown>;
@@ -59,10 +59,11 @@ describe("roving index", () => {
     { name: "a cross-axis arrow is left to the page", key: "ArrowDown", index: 0, count: 3, orientation: "horizontal", next: undefined },
     { name: "an unrelated key is left to the page", key: "a", index: 0, count: 3, orientation: "vertical", next: undefined },
     { name: "an arrow with no active item starts at the first", key: "ArrowRight", index: null, count: 3, orientation: "horizontal", next: 0 },
+    { name: "an arrow with no active item starts at the last when the set starts there", key: "ArrowRight", index: null, count: 3, orientation: "horizontal", start: "last", next: 2 },
     { name: "an empty set handles nothing", key: "Home", index: null, count: 0, orientation: "horizontal", next: undefined },
   ];
   for (const row of rows) {
-    test(row.name, () => assert.equal(getRovingIndex(row.key, row.index, row.count, row.orientation), row.next));
+    test(row.name, () => assert.equal(getRovingIndex(row.key, row.index, row.count, row.orientation, row.start), row.next));
   }
 });
 
