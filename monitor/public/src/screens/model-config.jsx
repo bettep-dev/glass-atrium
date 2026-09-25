@@ -537,12 +537,14 @@ function getFreshnessInputMC(asOfAt, state) {
 	return { at: asOfAt, regions: [state] };
 }
 
-// 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.
+// 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
 function SectionHeadMC({ label, sub, right }) {
+	const { SectionLabel } = window.UI;
+
 	return (
 		<div className="border-t border-line pt-4 mb-3">
 			<div className="flex items-center justify-between gap-2">
-				<span className="section-label">{label}</span>
+				<SectionLabel>{label}</SectionLabel>
 				{right ?? null}
 			</div>
 			{sub && (
@@ -560,6 +562,10 @@ const DOMAIN_TABLE_COLSPAN_MC = 4;
 // One column grid for both ledgers — content-sized cells let Live / Takes effect drift apart.
 const LEDGER_COL_WIDTHS_MC = ["32%", "30%", "22%", "16%"];
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
+// One line of fs-meta — the saved/reset slot holds this height while empty.
+const SAVED_LINE_STYLE_MC = { minHeight: "1.5em" };
+// The page's one link token — section link and inline reset read alike.
+const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 
 function LedgerColsMC() {
 	return (
@@ -586,11 +592,23 @@ function DomainsSectionMC({
 
 	return (
 		<div className="mb-4">
-			<SectionHeadMC label="Model assignment" />
+			<SectionHeadMC
+				label="Model assignment"
+				right={
+					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
+						Cost & usage
+					</a>
+				}
+			/>
+			<TierNotesMC
+				summary="What each tier runs"
+				rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
+			/>
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Model assignment per agent tier</caption>
 					<LedgerColsMC />
 					<thead>
 						<tr>
@@ -643,17 +661,28 @@ function EmptyRowMC({ colSpan, message }) {
 	);
 }
 
-// One-line hint, full text behind a click — a full-width prose row breaks the table rhythm.
-function RowHintMC({ hint, detail }) {
-	if (!hint && !detail) return null;
-	if (!detail || detail === hint) {
-		return <div className="fs-meta text-faint is-wrap">{hint}</div>;
-	}
+function RowHintMC({ hint }) {
+	if (!hint) return null;
+
+	return <div className="fs-meta text-faint is-wrap">{hint}</div>;
+}
+
+// Full descriptions behind one section disclosure — a disclosure per row repeats one affordance N times.
+function TierNotesMC({ summary, rows }) {
+	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
+	if (notes.length === 0) return null;
 
 	return (
-		<details className="fs-meta text-faint">
-			<summary className="is-wrap">{hint}</summary>
-			<div className="is-wrap mt-1">{detail}</div>
+		<details className="fs-meta text-dim mb-2">
+			<summary>{summary}</summary>
+			<dl className="mt-1 flex flex-col gap-1">
+				{notes.map((meta) => (
+					<div key={meta.label}>
+						<dt className="text-ink">{meta.label}</dt>
+						<dd className="is-wrap">{meta.desc}</dd>
+					</div>
+				))}
+			</dl>
 		</details>
 	);
 }
@@ -694,7 +723,7 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				)}
 			</div>
 			{fileRows.length > 0 && (
-				<details className="fs-micro text-faint">
+				<details className="fs-meta text-faint">
 					<summary>{fileRows.length} files</summary>
 					<div className="mt-1 flex flex-col gap-0.5">
 						{fileRows.map((f) => (
@@ -745,7 +774,7 @@ function DomainRowMC({
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
 			<td style={cellPad}>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
-				<RowHintMC hint={meta.hint} detail={meta.desc} />
+				<RowHintMC hint={meta.hint} />
 			</td>
 			<td style={cellPad}>
 				{editable ? (
@@ -852,34 +881,43 @@ function ModelSelectMC({
 	);
 }
 
-// Tier → Cost & usage link; pricing_known=false also says why the cost there is a fallback estimate.
+// Unpriced tier only — the section header carries the one Cost & usage link.
 function PricingNoteMC({ pricingKnown }) {
-	if (pricingKnown === undefined) return null;
+	if (pricingKnown !== false) return null;
 
 	return (
-		<div className={`fs-meta mt-1 ${pricingKnown ? "text-faint" : "text-warn"}`}>
-			{!pricingKnown && "No price listed — billed at the conservative fallback rate · "}
-			<a href="#cost">Cost & usage</a>
+		<div className="fs-meta mt-1 text-warn">
+			No price listed — billed at the conservative fallback rate
 		</div>
 	);
 }
 
-// 기본값 ghost + 되돌리기 (T-MDL-6) — 저장된 baseline 과 다를 때만 노출. model/budget 공용.
+// Saved value + reset, model/budget 공용 — the slot renders even when empty so an edit never grows the row.
 function GhostResetMC({ overridden, defaultValue, onReset }) {
-	if (!overridden) return null;
-
 	return (
-		<div className="fs-micro text-faint mt-1 flex items-center gap-1.5 flex-wrap">
-			<span>Saved:</span>
-			<span className="font-mono text-dim">{defaultValue || "—"}</span>
-			<button
-				type="button"
-				className="text-accent underline underline-offset-2"
-				onClick={onReset}
-				aria-label="Reset this field to the saved value"
-			>
-				reset
-			</button>
+		<div
+			data-slot="saved-line"
+			className="fs-meta text-faint mt-1 flex items-center gap-1.5 flex-wrap"
+			style={SAVED_LINE_STYLE_MC}
+		>
+			{overridden && (
+				<>
+					{defaultValue && (
+						<>
+							<span>Saved:</span>
+							<span className="font-mono text-dim">{defaultValue}</span>
+						</>
+					)}
+					<button
+						type="button"
+						className={LINK_CLASS_MC}
+						onClick={onReset}
+						aria-label="Reset this field to the saved value"
+					>
+						Reset
+					</button>
+				</>
+			)}
 		</div>
 	);
 }
@@ -902,10 +940,15 @@ function BudgetsSectionMC({
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Per-call budget caps" />
+			<TierNotesMC
+				summary="What each cap stops"
+				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+			/>
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Per-call budget cap per background call</caption>
 					<LedgerColsMC />
 					<thead>
 						<tr>
@@ -966,7 +1009,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
 			<td>
 				<div className="fs-body">{meta.label}</div>
-				<RowHintMC hint={meta.hint} detail={meta.desc} />
+				<RowHintMC hint={meta.hint} />
 			</td>
 			<td>
 				<div className="flex items-center gap-2">

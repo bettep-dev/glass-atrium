@@ -500,6 +500,8 @@ async function loadMcScreens(
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: (p: Record<string, unknown>) => hMc("div", { className: "card-head" }, p.title, p.right),
+    SectionLabel: (p: Record<string, unknown>) =>
+      hMc(p.level === 3 ? "h3" : "h2", { className: "section-label" }, p.children),
     DetailSurface: (p: Record<string, unknown>) =>
       hMc("div", { role: "dialog" }, p.title, p.children, p.footer),
     titleOf: (v: unknown) => v,
@@ -1090,14 +1092,58 @@ test("both ledgers sit on one column grid, so Live and Takes effect line up", ()
   }
 });
 
-test("each priced tier links to Cost & usage, and an unpriced one says why its cost is a fallback", () => {
+const THREE_TIERS_MC = ["model.dev", "model.research", "model.meta"].map((domain) => ({
+  ...DOMAIN_ROW_FIXTURE_MC[0],
+  domain,
+}));
+
+test("each ledger is an h2 section with a captioned table, so the outline never skips h1 to h3", () => {
+  for (const [name, props, title] of [
+    ["DomainsSectionMC", domainsPropsMc(), "Model assignment"],
+    ["BudgetsSectionMC", budgetsPropsMc(), "Per-call budget caps"],
+  ] as const) {
+    const tree = renderComponentMc(screens[name], props);
+    assert.deepStrictEqual(textsMc(tagsMc(tree, "h2")), [title], `${name}: one h2 naming the section`);
+    assert.strictEqual(textsMc(tagsMc(tree, "caption")).length, 1, `${name}: the table is named by a caption`);
+  }
+});
+
+test("tier descriptions sit behind one section disclosure, not one per row", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
+  assert.strictEqual(tagsMc(tree, "details").length, 1, "one disclosure for three described tiers");
+  assert.ok(textMc(tree).includes("glass-atrium-meta-agent"), "every description stays reachable");
+});
+
+test("no ledger text drops below the 12px type floor", () => {
+  const overridden = {
+    ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]),
+    baseline: { models: { "model.dev": "claude-sonnet-5" }, budgets: {} },
+  };
+  const tree = renderComponentMc(screens.DomainsSectionMC, overridden);
+  const micro = findAllMc(tree, (n) => String(n.props.className ?? "").includes("fs-micro"));
+  assert.strictEqual(micro.length, 0, "no fs-micro (11px) text");
+});
+
+test("the saved-value line keeps its slot whether or not the field differs, so an edit never grows the row", () => {
+  const slotsOf = (baselineValue: string): number => {
+    const tree = renderComponentMc(screens.DomainsSectionMC, {
+      ...domainsPropsMc(),
+      baseline: { models: { "model.dev": baselineValue }, budgets: {} },
+    });
+    return findAllMc(tree, (n) => n.props["data-slot"] === "saved-line").length;
+  };
+  assert.strictEqual(slotsOf("claude-opus-4-8"), 1, "slot reserved while the field matches");
+  assert.strictEqual(slotsOf("claude-sonnet-5"), 1, "the same slot carries the saved value once it differs");
+});
+
+test("Cost & usage is linked once per ledger, and an unpriced tier says why its cost is a fallback", () => {
   for (const pricingKnown of [true, false]) {
     const tree = renderComponentMc(
       screens.DomainsSectionMC,
-      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], pricing_known: pricingKnown }]),
+      domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, pricing_known: pricingKnown }))),
     );
     const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
-    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one Cost & usage link per tier`);
+    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one section link for three tiers`);
     assert.strictEqual(
       textMc(tree).includes("No price listed"),
       !pricingKnown,
