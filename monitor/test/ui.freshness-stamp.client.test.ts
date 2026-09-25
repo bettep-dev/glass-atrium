@@ -149,11 +149,16 @@ test("the Refresh atom is busy and disabled exactly while a request is in flight
   }
 });
 
-test("the Refresh atom keeps one width across its labels and spins only when motion is allowed", () => {
+test("the Refresh atom keeps one fixed-width box across its idle and busy labels", () => {
   const idle = renderRefresh({ isBusy: false, hasRead: true });
   const busy = renderRefresh({ isBusy: true, hasRead: true });
   assert.equal(idle.props.className, busy.props.className, "same box across states");
   assert.match(String(busy.props.className), /\bw-\d+\b/, "a fixed width class");
+});
+
+test("the Refresh atom spins only while busy and only when motion is allowed", () => {
+  const idle = renderRefresh({ isBusy: false, hasRead: true });
+  const busy = renderRefresh({ isBusy: true, hasRead: true });
   const spinning = findNodes(busy, (n) => /animate-spin/.test(String(n.props.className ?? "")));
   assert.ok(spinning.length > 0, "the busy icon spins");
   for (const node of spinning) assert.match(String(node.props.className), /(^|\s)motion-safe:animate-spin\b/, "never an unconditional spin");
