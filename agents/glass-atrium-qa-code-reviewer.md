@@ -169,10 +169,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 - **Word counting**: split at case humps and `_`/`-` separators; an acronym run (`URL`) is one word; digits join the word before them.
 - **Words not counted**: a rule-mandated `OrThrow`/`OrFail` suffix · an allowlisted class suffix (`Repository`, `Service` …) · a boolean `is`/`has`/`can`/`should` prefix.
 - **Naming exemptions**:
-  - function and method families sharing a verb or suffix, which follow `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**;
-  - class and type names — the Flat prefixed family trigger covers variables, properties, fields and params only;
-  - names sharing only a stative `is`/`has`/`can`/`should` prefix — the leading qualifier is a domain or entity noun, and grouping them would break **Booleans — stative-first**;
-  - qualified locals unpacked from a group, and qualified payload fields where a member leaves its group — **Prefix-family grouping** requires the qualifier there;
+  - the exclusions `scoped/shared-naming.md` → **Prefix-family grouping** states — apply them as written there;
   - names fixed outside the change: a framework or vendor contract, a wire or external API field, generated code.
 
 ### AI-Generated Defect Detection
