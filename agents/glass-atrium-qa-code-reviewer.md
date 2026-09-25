@@ -158,19 +158,53 @@ Checks whose source is outside this agent's rule set — Read the source before 
 ### Naming Checks
 
 - **Identifier scope**: judge only identifiers the change adds or renames — a pre-existing name it leaves untouched is never flagged (`## Prohibitions`).
-- **Naming severity**: every finding is [SHOULD FIX], citing the `scoped/shared-naming.md` bold lead in the right column. The rule text lives there; do not restate it.
+  - An added name that forms or joins a flat family with pre-existing names is a finding on the added name, naming those members. Renaming them is the author's scope decision, recorded in `concerns`, never required.
+- **Naming severity**: every finding is [SHOULD FIX], citing the `scoped/shared-naming.md` bold lead in the right column. The rule text lives there; do not restate it — **Naming edge cases** below settles only the input shapes it leaves open.
 
 | Trigger | Finding when | Cite |
 |---|---|---|
-| Flat prefixed family: 2+ variables, properties, fields or params in one scope sharing a leading qualifier | the scope does not supply that qualifier | **Prefix-family grouping** |
+| Flat prefixed family: 2+ identifiers of a **Prefix-family grouping** kind in one scope sharing a leading noun | the scope does not supply that noun | **Prefix-family grouping** |
 | Identifier of 4+ words | an enclosing domain, class or function supplies a word, or the name belongs to a flat prefixed family | **Read-down naming** · **Prefix-family grouping** |
 
 - **A 4+-word count alone is never a finding**: a long name whose every word adds meaning at its own level passes.
 - **Word counting**: split at case humps and `_`/`-` separators; an acronym run (`URL`) is one word; digits join the word before them.
-- **Words not counted**: a rule-mandated `OrThrow`/`OrFail` suffix · an allowlisted class suffix (`Repository`, `Service` …) · a boolean `is`/`has`/`can`/`should` prefix.
-- **Naming exemptions**:
-  - the exclusions `scoped/shared-naming.md` → **Prefix-family grouping** states — apply them as written there;
-  - names fixed outside the change: a framework or vendor contract, a wire or external API field, generated code.
+- **Words not counted**: a rule-mandated `OrThrow`/`OrFail` suffix · an allowlisted class suffix (`Repository`, `Service` …) · a boolean `is`/`has`/`can`/`should` prefix · a generic `T` prefix (`TChargeKey`) · a DTO direction word (`Request`/`Response`).
+- **Naming edge cases**: apply the exclusions `scoped/shared-naming.md` → **Prefix-family grouping** states, then the one verdict per input shape in the two `### Naming Edge Cases` tables below; a `no finding` row is exempt from both triggers.
+
+### Naming Edge Cases — Scope and Kind
+
+| Input shape | Verdict |
+|---|---|
+| Test function or method name | no finding — `scoped/shared-testing.md` → `### Names, comments and test data` governs it |
+| File, module or directory name | no finding — outside the rule file's scope |
+| Name fixed outside the change: framework or vendor contract, wire or external API field, generated code | no finding |
+| Flat-only name, authored in the change or not: DB column, its ORM field (FK scalars too), env var, CLI flag | no finding — it cannot nest; grouping it is a design call, never a rename |
+| Flat-only name, authored in the change or not: header name, query or path parameter, CSS class name | no finding — it cannot nest; grouping it is a design call, never a rename |
+| Document-store model whose fields can nest | grouped like any other type |
+| Class, type or enum-member name | not a family kind — an enum already groups its members |
+| Function-valued name: method, arrow const `handleChargeSubmit`, callback prop `onChargeSubmit` | not a family (`on`/`handle` is not stative) — `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment** |
+| Accessor `get chargeId()` | a property — in scope |
+| `[x, setX]` state pairs: `[chargeState, setChargeState]` beside `[chargeId, setChargeId]` | no finding — merging state cells is a state-design call, never a rename |
+| Qualified read: `const { status: chargeStatus } = charge` | no finding — not a prefix family |
+| Value derived from an in-scope binding the qualifier names: `const chargeTotal = sum(charge.lines)` | no finding — may move onto that binding's type, never into a second binding of that name |
+
+### Naming Edge Cases — Family Shapes
+
+| Input shape | Verdict |
+|---|---|
+| Acronym or technical-noun qualifier: `dbHost`/`dbPort` | a family: `db: { host, port }` |
+| Adjective, quantifier or determiner lead: `max`, `min`, `prev`, `next`, `default`, `new` | not a qualifier — no family |
+| Shared second qualifier the domain does not supply: `chargeCreditState`/`chargeCreditId`/`chargeRefundId` | nests: `charge: { credit: { state, id }, refundId }` |
+| Plural members: `chargeIds`/`chargeAmounts` | `charge: { ids, amounts }` — the group keeps the qualifier as written, never `charges` |
+| Constants, any declaration keyword: `CHARGE_TIMEOUT_MS`/`CHARGE_MAX_RETRIES` · `const chargeTimeout`/`chargeRetries` | a family keeping its casing: `CHARGE.TIMEOUT_MS` · `charge.timeout` |
+| Alternative values of one kind: `CHARGE_STATUS_PENDING`/`CHARGE_STATUS_PAID` | an enum, whose members are out of scope |
+| Payload or DTO type the change authors: `{ chargeState, chargeId }` | a family: `{ charge: { state, id } }` |
+| Member read outside its group in code (destructured local): `{ expiredAt } = charge`, bare `status` | qualifier kept only where the name fails **Reduction-floor guardrail**: `expiredAt` passes, `status` → `chargeStatus` |
+| Member named in log or error text: a bare `expiredAt` read from `charge` | `chargeExpiredAt` — `ANTI-PATTERNS.md` → **Cross-boundary names keep their qualifier** |
+| Members of different groups: `charge.status` beside `refund.status` | no collision — **No-stutter** holds inside each group |
+| Module word repeated in a member: `referenceUseByReference` in the `reference` module | finding — rename from what this level adds, under **Canonical verb set (PRIMARY)** and **Identifier-kind binary** |
+| Module word where the use site keeps it: package-qualified access, namespace import, class member, group path | stripped; a name imported bare keeps it (`CHARGE_TIMEOUT_MS` from `charge/config.ts`) |
+| Searching for a grouped member | grep the group path or its type name, never a bare member |
 
 ### AI-Generated Defect Detection
 

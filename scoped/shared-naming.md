@@ -2,6 +2,8 @@
 
 Binds every identifier an agent authors or reviews — variable, property, field, parameter, function, method, class, type, enum, constant — renames included. Prose, commit messages and code comments are out of scope: `scoped/shared-comment-logging.md` owns those.
 
+File, module and directory names are out of scope. Test function and method names are out of scope too: `scoped/shared-testing.md` → `### Names, comments and test data` owns them.
+
 ## Agent Injection Core
 
 The delta-core below is the compressed non-inferable subset. It carries the rules an agent gets WRONG without them — a divergence from the model's default, or a closed vocabulary it cannot guess. The lookup half is on-demand detail (`## On-demand detail`).
@@ -16,16 +18,12 @@ The delta-core below is the compressed non-inferable subset. It carries the rule
 6. **Identifier-kind binary** — data identifier (var/property/field/param/class/type) = NOUN · function/method = direct verb (vendor-adapters excepted); no noun↔verb cross-form. (Padding verbs + noise nouns Data/Info/Manager: model-inferable.)
 7. **No-stutter** — strip the domain the enclosing class/module/receiver/type already supplies (`User.userName`→`User.name` · `getBucketImage`→`getImage` in a bucket service).
 8. **Reduction-floor guardrail [NON-COMPRESSIBLE — never trim; counterweight to no-stutter]** — never collapse to a generic terminal (`data`/`value`/`status`/`result`/`count`-unqualified); on sibling collision KEEP the qualifier (`userCount`/`projectCount`); KEEP the verb when it is the sole compute-vs-stored-field signal (`calculateTotal` ≠ stored `total`).
-9. **Read-down naming** — a name reads down domain → class → function → local, carrying only the words its own level adds, never the whole meaning alone; No-stutter applied over the whole chain.
-    - `getChatTurnPoint`→`getPoint` in `ChatTurnService` · `referenceUseByReference` in the `reference` module carries the module's word twice: rename from what this level adds, under the Canonical verb set and the Identifier-kind binary.
-10. **Prefix-family grouping** — variables, properties, fields and params sharing a leading qualifier the scope does not supply go into ONE group (object/type) with short members; class and type names are out of scope.
-    - The leading qualifier is a domain or entity noun: stative `is`/`has`/`can`/`should` prefixes never form a family (`isLoading`/`isOpen` stay flat under **Booleans — stative-first**).
-    - `chargeCreditState`/`chargeCreditId`/`chargeCreditExpiredAt` → `charge: { state, id, expiredAt }` in the credit domain.
-    - The group supplies the qualifier, so a member is judged together with its group: `charge.status` passes the Reduction-floor guardrail, a lone `status` still fails it.
-    - Wherever a member is read without its group — a destructured local, log or error text, a cross-boundary payload, a sibling group's same-named member — the Reduction-floor guardrail binds again: keep the qualifier (`chargeStatus`).
-    - Those qualified locals and payload fields are not a prefix family: `const { status: chargeStatus, id: chargeId } = charge` is compliant.
-    - The group name is the greppable unit: grep the group path or its type name, never a bare member.
-    - Function and method families sharing a verb or suffix are not prefix families: they stay under `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**.
+9. **Read-down naming** — a name reads down domain → class → function → local, carrying only the words its own level adds: `getChatTurnPoint`→`getPoint` in `ChatTurnService` · a name imported bare keeps its module's word.
+10. **Prefix-family grouping** — 2+ variables, constants, properties, fields or params sharing a leading noun the scope does not supply become ONE group with short members: `chargeState`/`chargeId`/`chargeExpiredAt` → `charge: { state, id, expiredAt }`.
+    - The Reduction-floor guardrail reads a member with its group: `charge.status` passes.
+    - A `By<Key>` index map (`chargeById`) stays flat and counts toward no family.
+    - A stative boolean joins via the noun after its prefix (`isChargeActive` → `charge.isActive`), but stays flat and does not count toward the 2+ when that noun ends the name (`hasCharge`) or none follows (`isLoading`).
+    - Names fixed outside the change or in a flat-only medium (DB columns and their ORM fields, env vars) stay flat.
 
 Full skill: 17-category verb taxonomy, scope-proportional length table, abbreviations, anti-pattern tables, boolean stative-first.
 
@@ -42,3 +40,4 @@ These pass the admission test the delta-core applies to itself: they are core ru
 - `skills/glass-atrium-dev-naming/SKILL.md` keeps the User Dictionary's worked rows the delta-core does not carry and the five conciseness principles as prose.
 - Its `references/` keep the lookup tables the delta-core's closing `Full skill:` line names; the verb taxonomy is a fallback beneath the canonical verb set.
 - Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.
+- Edge-case verdicts for **Read-down naming** and **Prefix-family grouping**: `agents/glass-atrium-qa-code-reviewer.md` → `### Naming Checks` → **Naming edge cases**.
