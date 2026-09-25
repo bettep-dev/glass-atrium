@@ -2,7 +2,6 @@
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
-	useRef: useRefW,
 	useCallback: useCallbackW,
 	useMemo: useMemoW,
 } = React;
@@ -17,28 +16,31 @@ const WIKI_REPORT_DAYS_OPTIONS = [
 	{ value: 90, label: "90d" },
 ];
 
-const INITIAL_FETCH_STATE = { status: "loading", data: null, error: null };
-
 // 희소 데이터 공용 임계 — 비0 포인트가 이 값 미만이면 넓은 빈 차트 대신 compact stat 으로 대체 (A4 통일).
 // 종전 KPI spark(≥2) · SparseTrendW(<3) · throughput(<3) 불일치를 단일 기준으로 정합.
 const SPARSE_MIN_NONZERO = 4;
 
 function ScreenWiki() {
-	const { PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const {
+		PageHeader,
+		TypeScaleStyle,
+		FreshnessStamp,
+		RefreshButton,
+		PageErrorBanner,
+		INITIAL_REGION_STATE,
+		getRegionSummary,
+	} = window.UI;
 
-	const [summaryState, setSummaryState] = useStateW(INITIAL_FETCH_STATE);
-	const [cyclesState, setCyclesState] = useStateW(INITIAL_FETCH_STATE);
-	const [indexState, setIndexState] = useStateW(INITIAL_FETCH_STATE);
-	const [backlogState, setBacklogState] = useStateW(INITIAL_FETCH_STATE);
+	const [summaryState, setSummaryState] = useStateW(INITIAL_REGION_STATE);
+	const [cyclesState, setCyclesState] = useStateW(INITIAL_REGION_STATE);
+	const [indexState, setIndexState] = useStateW(INITIAL_REGION_STATE);
+	const [backlogState, setBacklogState] = useStateW(INITIAL_REGION_STATE);
 	// 일일 보고 — /api/health/wiki-reports (라우트 불변, 호출 화면만 이동). 기간 선택 state 동반.
-	const [reportState, setReportState] = useStateW(INITIAL_FETCH_STATE);
+	const [reportState, setReportState] = useStateW(INITIAL_REGION_STATE);
 	const [reportDays, setReportDays] = useStateW(30);
 
 	const [refreshTick, setRefreshTick] = useStateW(0);
 	const [settledAt, setSettledAt] = useStateW(null);
-
-	// AbortController per fetch wave — 언마운트/재요청 시 in-flight 취소.
-	const abortRef = useRefW(null);
 
 	const triggerRefresh = useCallbackW(() => setRefreshTick((t) => t + 1), []);
 
@@ -50,13 +52,15 @@ function ScreenWiki() {
 		[reportState, "per-run table"],
 	];
 	const waveStates = waveSections.map(([state]) => state);
-	const freshness = getFreshnessInputW(settledAt, waveStates);
+	const isBusy = getRegionSummary(waveStates).isBusy;
+	const hasRead = settledAt != null || waveStates.some((st) => st.data != null);
+	const outage = readWikiOutageW(waveSections);
+	// a shared outage owns the page's single Retry → sections stay quiet
+	const sectionRetry = outage ? undefined : triggerRefresh;
 
-	// 4 parallel fetches via Promise.allSettled — 단일 실패 시에도 나머지 섹션 렌더 유지.
+	// Parallel reads — each region keeps its last payload until its own answer lands.
 	useEffectW(() => {
-		const ctrl = new AbortController();
-		abortRef.current?.abort();
-		abortRef.current = ctrl;
+		const request = new AbortController();
 
 		const fetches = [
 			["/api/wiki/summary", setSummaryState],
@@ -66,15 +70,15 @@ function ScreenWiki() {
 			[`/api/health/wiki-reports?days=${reportDays}`, setReportState],
 		];
 
-		const reads = fetches.map(([url, setter]) => {
-			setter(INITIAL_FETCH_STATE);
-			return runFetchW(url, ctrl.signal, setter);
+		const reads = fetches.map(([url, setState]) => {
+			setState((st) => window.UI.putRegionRequest(st, url, request));
+			return runFetchW(url, request, setState);
 		});
 		Promise.all(reads).then((results) => {
-			if (!ctrl.signal.aborted && results.includes(true)) setSettledAt(new Date().toISOString());
+			if (!request.signal.aborted && results.includes(true)) setSettledAt(new Date().toISOString());
 		});
 
-		return () => ctrl.abort();
+		return () => request.abort();
 	}, [refreshTick, reportDays]);
 
 	return (
@@ -82,7 +86,6 @@ function ScreenWiki() {
 			{/* 공유 타입스케일(.fs-* / --fs-*) 마운트 — wiki 화면 폰트 토큰 소비처. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes skelPulseW { 0%,100%{opacity:.7} 50%{opacity:.35} }
         /* 상태 막대 셀 — status mix 비율 바 (0폭 셀도 보더 유지하지 않도록 min-w 0). */
         .w-mix-cell { min-width: 0; }
         /* per-run 보고 표 — 읽기 전용 RECORD(상세 드로어 없음) → .tbl 기본 pointer 커서/hover 무력화 (가짜 인터랙션 암시 방지). */
@@ -99,10 +102,12 @@ function ScreenWiki() {
 					title="Wiki"
 					right={
 						<>
-							<FreshnessStamp {...freshness} />
-							<WikiRefreshButtonW
-								busy={freshness.loading}
+							<FreshnessStamp at={settledAt} regions={waveStates} />
+							<RefreshButton
+								isBusy={isBusy}
+								hasRead={hasRead}
 								onRefresh={triggerRefresh}
+								label="Refresh wiki"
 							/>
 						</>
 					}
@@ -115,6 +120,13 @@ function ScreenWiki() {
 			</div>
 
 			<div className="flex flex-col gap-4">
+				{outage && (
+					<PageErrorBanner
+						sources={outage.sources}
+						error={outage.error}
+						onRetry={triggerRefresh}
+					/>
+				)}
 				{/* Above the fold — what needs a hand, then the health band. */}
 				<WikiAlarmLane
 					summaryState={summaryState}
@@ -126,13 +138,13 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
-					onRetry={triggerRefresh}
+					onRetry={sectionRetry}
 				/>
 
 				{/* Behind the click — working lists, run history, note composition. */}
 				<WikiMaintenanceSection
 					backlogState={backlogState}
-					onRetry={triggerRefresh}
+					onRetry={sectionRetry}
 				/>
 				<WikiRunHistorySection
 					cyclesState={cyclesState}
@@ -140,26 +152,11 @@ function ScreenWiki() {
 					reportState={reportState}
 					days={reportDays}
 					onChangeDays={setReportDays}
-					onRetry={triggerRefresh}
+					onRetry={sectionRetry}
 				/>
-				<WikiNotesByTypeSection state={indexState} onRetry={triggerRefresh} />
+				<WikiNotesByTypeSection state={indexState} onRetry={sectionRetry} />
 			</div>
 		</div>
-	);
-}
-
-function WikiRefreshButtonW({ busy, onRefresh }) {
-	const { Icon } = window.UI;
-	return (
-		<button
-			className="btn ghost sm"
-			onClick={onRefresh}
-			aria-label="Refresh wiki"
-			aria-busy={busy ? "true" : undefined}
-		>
-			<Icon name="refresh" size={14} />
-			{busy ? "Refreshing…" : "Refresh"}
-		</button>
 	);
 }
 
@@ -168,12 +165,23 @@ function describeWikiWaveW(sections) {
 	if (sections.some(([state]) => state.status === "loading")) {
 		return "Loading wiki…";
 	}
+	if (sections.some(([state]) => state.busy)) return "Refreshing wiki…";
+
 	const failed = sections
-		.filter(([state]) => state.status === "error")
+		.filter(([state]) => state.error != null || state.status === "error")
 		.map(([, name]) => name);
-	return failed.length > 0
-		? `Wiki loaded — couldn't load ${failed.join(", ")}.`
-		: "Wiki loaded.";
+	if (failed.length === 0) return "Wiki loaded.";
+	const failedList = failed.join(", ");
+	return failed.length === sections.length
+		? `Couldn't load ${failedList}.`
+		: `Wiki partly loaded — couldn't load ${failedList}.`;
+}
+
+// Non-null when ≥2 sections failed for one cause → one page banner carries the only Retry.
+function readWikiOutageW(sections) {
+	return window.UI.getSharedFailure(
+		sections.map(([state, source]) => ({ source, error: state.error ?? null })),
+	);
 }
 
 // Daily cycle plus a grace window — past this the cycle counts as missed.
@@ -424,6 +432,7 @@ function describeSnapshotAgeW(runDate) {
 // Steady state carries no status word and no tint; only an actionable state tints.
 
 function WikiTileBand({ summaryState, indexState, backlogState, onRetry }) {
+	const { RegionUnavailable } = window.UI;
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState),
 		[summaryState, indexState, backlogState],
@@ -433,8 +442,9 @@ function WikiTileBand({ summaryState, indexState, backlogState, onRetry }) {
 	return (
 		<div className="flex flex-col gap-2">
 			{failures.length > 0 && (
-				<ErrorBannerW
-					title={`Couldn't load the ${failures.join(" and ")} — the tiles below are incomplete`}
+				<RegionUnavailable
+					source={`the ${failures.join(" and ")}`}
+					error={summaryState.error ?? indexState.error}
 					onRetry={onRetry}
 				/>
 			)}
@@ -649,6 +659,7 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 // make the proposal count a floor rather than a total.
 
 function WikiMaintenanceSection({ backlogState, onRetry }) {
+	const { RegionUnavailable } = window.UI;
 	const model = useMemoW(
 		() => buildMaintenanceModel(backlogState),
 		[backlogState],
@@ -656,9 +667,9 @@ function WikiMaintenanceSection({ backlogState, onRetry }) {
 
 	if (model.state === "error") {
 		return (
-			<ErrorBannerW
-				title="Couldn't load the maintenance backlog"
-				detail={backlogState.error}
+			<RegionUnavailable
+				source="the maintenance backlog"
+				error={backlogState.error}
 				onRetry={onRetry}
 			/>
 		);
@@ -784,6 +795,7 @@ function WikiRunHistorySection({
 	onChangeDays,
 	onRetry,
 }) {
+	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const model = useMemoW(
 		() => buildThroughputModel(cyclesState),
 		[cyclesState],
@@ -796,11 +808,11 @@ function WikiRunHistorySection({
 			bodyClassName="px-3 pb-3 flex flex-col gap-3"
 		>
 			{cyclesState.status === "loading" ? (
-				<ChartSkeletonW height={120} />
+				<LoadingPlaceholder label="run history" minHeight={120} />
 			) : cyclesState.status === "error" ? (
-				<ErrorBannerW
-					title="Couldn't load run history"
-					detail={cyclesState.error}
+				<RegionUnavailable
+					source="run history"
+					error={cyclesState.error}
 					onRetry={onRetry}
 				/>
 			) : model.rows.length === 0 ? (
@@ -896,6 +908,7 @@ function WikiDisclosureW({
 // Notes by type — text rows; counts read as a list, not as a card grid.
 
 function WikiNotesByTypeSection({ state, onRetry }) {
+	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
 			? state.data.by_type
@@ -907,13 +920,11 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			count={describeNotesByTypeW(state)}
 		>
 			{state.status === "loading" ? (
-				<div className="fs-meta font-mono text-faint" aria-busy="true">
-					Loading note types…
-				</div>
+				<LoadingPlaceholder label="note types" />
 			) : state.status === "error" ? (
-				<ErrorBannerW
-					title="Couldn't load notes by type"
-					detail={state.error}
+				<RegionUnavailable
+					source="notes by type"
+					error={state.error}
 					onRetry={onRetry}
 				/>
 			) : rows.length === 0 ? (
@@ -1152,14 +1163,15 @@ function MergeSuggestionItem({ proposal }) {
 }
 
 function WikiReportsBody({ state, days, onRetry }) {
+	const { RegionUnavailable } = window.UI;
 	if (state.status === "loading") {
-		return <ChartSkeletonW height={180} />;
+		return <WikiReportsTable reports={[]} isLoading />;
 	}
 	if (state.status === "error") {
 		return (
-			<ErrorBannerW
-				title="Couldn't load wiki reports"
-				detail={state.error}
+			<RegionUnavailable
+				source="the run table"
+				error={state.error}
 				onRetry={onRetry}
 			/>
 		);
@@ -1200,35 +1212,33 @@ function WikiReportsBody({ state, days, onRetry }) {
 	);
 }
 
-// per-run 보고 표 — 동질 카드 grid 대체. sticky thead(STICKY_TH_STYLE) + .num 수치 + relative-time.
-function WikiReportsTable({ reports }) {
-	const { Badge, STICKY_TH_STYLE } = window.UI;
+const WIKI_REPORT_COLUMNS = [
+	{ key: "run_date", label: "Run date" },
+	{ key: "status", label: "Status" },
+	{ key: "deadlinks", label: "Broken links", isNumeric: true },
+	{ key: "dedup", label: "Duplicates", isNumeric: true },
+	{ key: "started", label: "Started" },
+];
+
+// Rows flow in page scroll; the wrapper only scrolls sideways on a narrow pane.
+function WikiReportsTable({ reports, isLoading = false }) {
+	const { Badge, Table, SkeletonRows } = window.UI;
 
 	return (
-		<div
-			className="overflow-x-auto overflow-y-auto rounded-md border border-line"
-			style={{ maxHeight: 420 }}
-		>
-			<table className="tbl w-report-tbl">
-				<thead>
-					<tr>
-						<th style={STICKY_TH_STYLE}>Run date</th>
-						<th style={STICKY_TH_STYLE}>Status</th>
-						<th className="num" style={STICKY_TH_STYLE}>
-							Broken links
-						</th>
-						<th className="num" style={STICKY_TH_STYLE}>
-							Duplicates
-						</th>
-						<th style={STICKY_TH_STYLE}>Started</th>
-					</tr>
-				</thead>
-				<tbody>
-					{reports.map((r) => (
+		<div className="overflow-x-auto rounded-md border border-line">
+			<Table
+				caption="Wiki compile runs, newest first"
+				columns={WIKI_REPORT_COLUMNS}
+				className="w-report-tbl"
+			>
+				{isLoading ? (
+					<SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
+				) : (
+					reports.map((r) => (
 						<WikiReportRow key={r.run_date} report={r} Badge={Badge} />
-					))}
-				</tbody>
-			</table>
+					))
+				)}
+			</Table>
 		</div>
 	);
 }
@@ -1332,55 +1342,6 @@ function describePeakW(series, dates) {
 	return `peak ${formatCountW(series[peakIndex])} on ${dates[peakIndex] || "an unknown day"}`;
 }
 
-function ErrorBannerW({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				{/* 12.5px→fs-title(13) 제목 · 11px→fs-meta(11) 상세. */}
-				<div className="fs-title font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
-				)}
-			</div>
-			{onRetry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
-		</div>
-	);
-}
-
-function ChartSkeletonW({ height = 220 }) {
-	return (
-		<div
-			aria-busy="true"
-			style={{
-				width: "100%",
-				height,
-				borderRadius: 8,
-				background: "rgb(var(--sunken))",
-				opacity: 0.7,
-				animation: "skelPulseW 1.4s ease-in-out infinite",
-			}}
-		/>
-	);
-}
-
 // Pure helpers (wiki-scoped — health.jsx 미러).
 
 async function fetchJsonW(url, signal) {
@@ -1388,47 +1349,22 @@ async function fetchJsonW(url, signal) {
 		signal,
 		headers: { Accept: "application/json" },
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* ignore body parse failure */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 120) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res);
 	return res.json();
 }
 
 // resolves true only on a successful read → only those advance the header stamp
-function runFetchW(url, signal, setter) {
-	return fetchJsonW(url, signal)
+function runFetchW(url, request, setState) {
+	const { putRegionData, putRegionFailure } = window.UI;
+	return fetchJsonW(url, request.signal)
 		.then((data) => {
-			setter({ status: "ready", data, error: null });
+			setState((st) => putRegionData(st, request, data));
 			return true;
 		})
-		.catch((err) => handleErrorW(err, setter));
-}
-
-function handleErrorW(err, setter) {
-	// AbortError = 재요청/언마운트; 사용자 가시 실패 아님.
-	if (err && err.name === "AbortError") return false;
-	setter({
-		status: "error",
-		data: null,
-		error: err && err.message ? err.message : String(err),
-	});
-	return false;
-}
-
-function getFreshnessInputW(settledAt, waveStates) {
-	return {
-		at: settledAt,
-		loading: waveStates.some((st) => st.status === "loading"),
-		failed: waveStates.some((st) => st.status === "error"),
-	};
+		.catch((err) => {
+			setState((st) => putRegionFailure(st, request, err));
+			return false;
+		});
 }
 
 // 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기. formatInt 가 wiki 가드(음수/NaN → '—') 승격 보유.

@@ -18,17 +18,17 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WIKI_SRC = resolve(__dirname, "../public/src/screens/wiki.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
-// window.UI stub — every atom resolves to a transparent host element.
+// window.UI stub — components resolve to transparent host elements; state helpers and constants stay real.
 function uiStub(): unknown {
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        name === "TONE_ICON"
-          ? new Proxy({}, { get: () => "dot" })
-          : name === "formatInt"
-          ? (n: number) => String(n)
+        !/^[A-Z][a-z]/.test(name) && name in realUi
+          ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -101,7 +101,7 @@ test("the notes-per-day bars name their date range and their peak value with its
   }
 });
 
-const LOADING = { status: "loading", data: null, error: null };
+const LOADING = { status: "loading", data: null, error: null, busy: true };
 const READY_BACKLOG = {
   status: "ready",
   error: null,
@@ -156,6 +156,8 @@ test("the wave announcement reads loading, then ready or the sections that faile
     { name: "every read ready", sections: [[ready, "run history"], [ready, "notes by type"]], match: /loaded/, absent: /couldn't/i },
     { name: "one read failed", sections: [[ready, "run history"], [failed, "notes by type"]], match: /couldn't load notes by type/i, absent: /run history/ },
     { name: "failure outranks nothing still loading", sections: [[failed, "run history"], [failed, "notes by type"]], match: /run history, notes by type/ },
+    { name: "every read failed", sections: [[failed, "run history"], [failed, "notes by type"]], match: /^Couldn't load/, absent: /loaded/i },
+    { name: "a refresh over held data", sections: [[{ status: "ready", busy: true } as { status: string }, "run history"], [ready, "notes by type"]], match: /^Refreshing/ },
   ];
   for (const row of cases) {
     const message = describe(row.sections);
@@ -164,23 +166,65 @@ test("the wave announcement reads loading, then ready or the sections that faile
   }
 });
 
-test("Refresh reports busy while a wave is in flight and idle once it settles", async () => {
-  const mod = await loadWikiScreen();
-  for (const [busy, text] of [[true, "Refreshing…"], [false, "Refresh"]] as const) {
-    const tree = renderScreen(mod.React.createElement(mod.WikiRefreshButtonW as Component, { busy, onRefresh: () => {} }));
-    const button = findNodes(tree, (n) => n.type === "button")[0];
-    assert.equal(button.props["aria-label"], "Refresh wiki", "the accessible name stays stable");
-    assert.equal(button.props["aria-busy"], busy ? "true" : undefined, `busy=${busy}`);
-    assert.ok(collectText(button).includes(text), `busy=${busy} shows ${text}`);
-  }
-});
-
-test("the page header carries one Refresh control, busy while the mount wave is in flight", async () => {
+test("the page header carries the shared Refresh control, busy on the mount wave, and feeds every region to the stamp", async () => {
   const mod = await loadWikiScreen();
   const screen = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const header = findNodes(screen, (n) => n.props.atom === "PageHeader")[0];
   const headerRight = renderScreen(header.props.right);
-  const refresh = findNodes(headerRight, (n) => n.props["aria-label"] === "Refresh wiki");
+
+  const refresh = findNodes(headerRight, (n) => n.props.atom === "RefreshButton");
   assert.equal(refresh.length, 1, "the header carries one Refresh control");
-  assert.equal(refresh[0].props["aria-busy"], "true", "the mount wave is in flight, so Refresh reads busy");
+  assert.equal(refresh[0].props.label, "Refresh wiki", "the accessible name stays stable");
+  assert.equal(refresh[0].props.isBusy, true, "the mount wave is in flight");
+  assert.equal(refresh[0].props.hasRead, false, "nothing has been read yet, so the first wave reads as loading");
+
+  const stamp = findNodes(headerRight, (n) => n.props.atom === "FreshnessStamp")[0];
+  assert.equal((stamp.props.regions as unknown[]).length, 5, "every fetched region feeds the stamp");
+});
+
+const OUTAGE = "HTTP 500 Internal Server Error — <html><body>relation wiki.notes does not exist</body></html>";
+
+test("a failed section names its source in plain words and offers Retry only when the page has no shared banner", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  for (const onRetry of [() => {}, undefined]) {
+    const tree = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: failed, onRetry }));
+    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    assert.equal(cards.length, 1, "the section renders one quiet unavailable card");
+    assert.equal(cards[0].props.source, "notes by type");
+    assert.equal(cards[0].props.onRetry, onRetry, "Retry follows the page's choice");
+    assert.doesNotMatch(collectText(tree), /HTTP|relation/, "the raw answer stays behind the card's Details");
+  }
+});
+
+test("the page banner covers an outage only when two or more sections fail for one cause", async () => {
+  const mod = await loadWikiScreen();
+  const readOutage = mod.readWikiOutageW as (sections: Array<[unknown, string]>) => { sources: string[] } | null;
+  const ok = { status: "ready", data: {}, error: null };
+  const down = { status: "error", data: null, error: OUTAGE };
+  const offline = { status: "error", data: null, error: "Failed to fetch" };
+  const rows = [
+    { name: "one failure stays in its section", sections: [[down, "run history"], [ok, "notes by type"]], sources: null },
+    { name: "a shared cause lifts to the page", sections: [[down, "run history"], [down, "notes by type"], [ok, "summary"]], sources: ["run history", "notes by type"] },
+    { name: "different causes stay per section", sections: [[down, "run history"], [offline, "notes by type"]], sources: null },
+  ] as const;
+  for (const row of rows) {
+    const outage = readOutage(row.sections as unknown as Array<[unknown, string]>);
+    assert.deepEqual(outage ? [...outage.sources] : null, row.sources, row.name);
+  }
+});
+
+test("the run table sits in page scroll with a caption and scoped column heads", async () => {
+  const mod = await loadWikiScreen();
+  const reports = [{ run_date: "2026-09-24", status: "ok", deadlinks_count: 0, dedup_count: 3 }];
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports }));
+  const table = findNodes(tree, (n) => n.props.atom === "Table");
+  assert.equal(table.length, 1, "the shared Table atom carries the caption and th scope");
+  assert.ok(String(table[0].props.caption).length > 0, "the table has a caption");
+  for (const node of findNodes(tree, () => true)) {
+    const style = (node.props.style ?? {}) as Record<string, unknown>;
+    assert.equal(style.maxHeight, undefined, "no inner vertical scroller clips the rows");
+    assert.doesNotMatch(classOf(node), /overflow-y-auto|max-h-/, "no inner vertical scroller clips the rows");
+  }
 });
