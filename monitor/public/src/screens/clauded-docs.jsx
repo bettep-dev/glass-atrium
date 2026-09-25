@@ -2270,7 +2270,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 // R6 본문 분리 컨테이너 className — htmlToReactCD 가 <style> 셀렉터를 이 클래스로 prefix scoping.
 const DOC_BODY_SCOPE_CD = "doc-body-isolation";
 
-// Stored-body language — equals the export shell's <html lang> (ADR-B3 R1), pinned here because the app shell declares en
+// Stored-body language = the export shell's <html lang> — declared on the body container since the app shell declares en
 const DOC_BODY_LANG_CD = "ko";
 
 // SYNC: src/server/clauded-docs/mermaid-selector.ts 의 MERMAID_NODE_SELECTOR 가

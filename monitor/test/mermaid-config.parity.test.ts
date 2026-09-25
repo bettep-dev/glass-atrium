@@ -134,7 +134,7 @@ test("P1-2 the export injects the config file itself, with nothing appended", as
 // The two surfaces render the same stored bodies, and the document language is an input
 // to that render: mermaid's C4 renderer measures its row-wrap limit from text metrics the
 // document language feeds, so a viewer declaring one language and the export another lay
-// the same source out at different widths. The value itself is a decision (ADR-B3 R1: ko);
+// the same source out at different widths. The value itself (ko) is a decision;
 // what goes red here is the two surfaces disagreeing about it, whichever way one is edited.
 //
 // Read out of the sources rather than off a rendered page — a width comparison would need a
@@ -175,15 +175,13 @@ test("후속-5 the viewer and the export declare the same document language", ()
   );
 });
 
-// The app shell declares English for its own chrome, so the page-level `<html lang>` no longer
-// reaches a stored body by inheritance: the body container has to declare the export language
-// itself. Read off the rendered viewer, so a pin moved to an element that is not the body
-// container, or dropped from one render branch, goes red.
-
 const DOCS_SCREEN_PATH = resolve(PUBLIC_ROOT, "src/screens/clauded-docs.jsx");
 const DOC_BODY_CONTAINER_CLASS = "doc-body-isolation";
 
-/** The `lang` the viewer's rendered document body container declares. */
+/**
+ * The `lang` the viewer's rendered document body container declares.
+ * Read from the rendered tree → a pin on another element, or missing from one render branch, fails.
+ */
 async function getViewerBodyLang(): Promise<unknown> {
   const react = createReactStub();
   const mod = await loadScreenModule(DOCS_SCREEN_PATH, { React: react, UI: {} });

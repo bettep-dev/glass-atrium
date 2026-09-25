@@ -159,7 +159,7 @@ test("no shell node carries a fixed minimum width, so the layout fits a 1024px v
   assert.match(String(mainRegion(tree).props.className), /\bmin-w-0\b/, "main may shrink below its content");
 });
 
-// index.html keeps the stored-document language (ADR-B3 R1), so the English chrome declares its own
+// index.html carries the stored-document language → the English chrome declares its own
 test("the shell root declares English, so the skip link, sidebar and main region are announced as English", async () => {
   const { render } = await mountShell();
   const [root] = render().children as RenderedNode[]; // the harness wraps App in a component node
