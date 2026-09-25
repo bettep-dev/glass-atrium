@@ -639,6 +639,41 @@ function formatKstFull(iso) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
 }
 
+/**
+ * Per-region fetch state, stale-while-revalidate. `status` says what is showable
+ * ('loading' | 'ready' | 'error'), `busy` says a request is in flight, `error` may sit beside held data.
+ * `pendingKey` names the request whose answer may land; answers for any other key are dropped.
+ */
+const INITIAL_REGION_STATE = Object.freeze({
+  status: 'loading', data: null, error: null, busy: true, key: null, pendingKey: null,
+});
+
+/** Starts a request for `key`; held data stays on screen until the answer settles. */
+function putRegionRequest(state, key) {
+  const hasData = state.data != null;
+  return { ...state, status: hasData ? 'ready' : 'loading', busy: true, pendingKey: key };
+}
+
+/**
+ * Lands the answer for `key` unless a newer request superseded it.
+ * @param merge - optional (prevData, nextData) → data, e.g. load-more append or keeping a dirty edit buffer
+ */
+function putRegionData(state, key, data, merge) {
+  if (!Object.is(key, state.pendingKey)) return state;
+  const nextData = merge ? merge(state.data, data) : data;
+  return { status: 'ready', data: nextData, error: null, busy: false, key, pendingKey: null };
+}
+
+/** Records a failure for `key` without discarding held data; an abort only ends the busy state. */
+function putRegionFailure(state, key, err) {
+  if (!Object.is(key, state.pendingKey)) return state;
+  const settled = { ...state, busy: false, pendingKey: null };
+  if (err && err.name === 'AbortError') return settled;
+
+  const error = err && err.message ? err.message : String(err);
+  return { ...settled, status: state.data != null ? 'ready' : 'error', error };
+}
+
 const FRESHNESS_STALE_MS = 5 * 60_000;
 const FRESHNESS_TICK_MS = 30_000;
 
@@ -1005,6 +1040,7 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState,
+  INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
