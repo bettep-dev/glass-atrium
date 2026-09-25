@@ -201,7 +201,7 @@ test("container-endpoint label backfill: 실 DIAGRAMS 의 bare container id endp
 // 계기는 리터럴 목록이 아니라 source 와의 동치임: `<br/>` 은 그리는 폭을 줄이려고 낱말 사이에
 // 넣은 soft-wrap 이므로, 접고 나면 감축본은 source 가 선언한 그 문자열이어야 함. 리터럴을 여기
 // 다시 적으면 감축본이 바뀔 때마다 두 사본을 함께 고쳐야 하고, 둘이 함께 틀리면 초록이 됨.
-test("ADR-20 the drawn map's labels read exactly as the source declares them", () => {
+test("ADR-20 the drawn map's node labels read exactly as the source declares them", () => {
   const drawn = extract(CANONICAL_MAP.mermaid_drawn);
   const entry = DIAGRAMS.find((d) => d.slug === CANONICAL_MAP.slug);
   assert.ok(entry, `fixture precondition: source entry for slug '${CANONICAL_MAP.slug}' must exist`);
@@ -217,14 +217,13 @@ test("ADR-20 the drawn map's labels read exactly as the source declares them", (
 
   const sourceLabels = new Map<string, string>([
     ...source.nodes.map((n): [string, string] => [n.id, n.label]),
-    ...source.subgraphs.map((g): [string, string] => [g.id, g.label]),
   ]);
 
   const divergent: string[] = [];
-  for (const drawnLabelled of [
-    ...drawn.nodes.map((n) => ({ id: n.id, label: n.label })),
-    ...drawn.subgraphs.map((g) => ({ id: g.id, label: g.label })),
-  ]) {
+  // 존 id 로 참조된 끝점 노드는 존 제목을 이어받음 — 존 제목은 아래 한 낱말 절이 잼
+  const zoneIds = new Set(drawn.subgraphs.map((g) => g.id));
+  const drawnNodes = drawn.nodes.filter((n) => !zoneIds.has(n.id));
+  for (const drawnLabelled of drawnNodes.map((n) => ({ id: n.id, label: n.label }))) {
     const expected = sourceLabels.get(drawnLabelled.id);
     // drawn id 집합 ⊆ source id 집합은 architecture.budget.test.ts 의 부분집합 잠금(차집합이 정확히 원장)이 지킴.
     // 여기서는 짝을 찾은 것만 대조 — 하나도 못 찾으면 아래 개수 절이 붉어짐.
@@ -233,12 +232,24 @@ test("ADR-20 the drawn map's labels read exactly as the source declares them", (
       divergent.push(`${drawnLabelled.id}: drawn ${JSON.stringify(drawnLabelled.label)} vs source ${JSON.stringify(expected)}`);
   }
 
-  const matched = [...drawn.nodes, ...drawn.subgraphs].filter((x) => sourceLabels.has(x.id)).length;
+  const matched = drawnNodes.filter((x) => sourceLabels.has(x.id)).length;
   assert.ok(matched > 0, "fixture precondition: the drawn ids must overlap the source ids, or nothing was compared");
   assert.deepEqual(
     divergent,
     [],
     `a soft wrap must fold back to the source's own string — the panel renders these verbatim as the node NAME and the Layer pill: ${divergent.join(" · ")}`,
+  );
+});
+
+// 존 제목은 한 낱말 표시명 — 두 낱말 이상이면 폭에 묶인 지도가 한 줄에 한 낱말씩 쌓음.
+// source 의 전체 문구는 화면이 존의 툴팁·접근명으로 실음 (architecture.map-fit.e2e 가 그 짝을 잼).
+test("the drawn map's zone titles are one word each", () => {
+  const zones = extract(CANONICAL_MAP.mermaid_drawn).subgraphs;
+  assert.ok(zones.length > 0, "fixture precondition: the drawn map must declare zones");
+  assert.deepEqual(
+    zones.filter((g) => /\s/.test(g.label.trim())).map((g) => `${g.id}: ${g.label}`),
+    [],
+    "a multi-word zone title on the drawn map",
   );
 });
 

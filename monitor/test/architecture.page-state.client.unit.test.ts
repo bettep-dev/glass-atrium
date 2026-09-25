@@ -41,7 +41,6 @@ interface PageStateSandbox {
   window: {
     UI: {
       getFreshnessState: (input: { at: string | null; regions: RegionState[]; now: number }) => string;
-      getRegionSummary: (regions: RegionState[]) => { failedCount: number; regionCount: number };
     };
   };
   getPageReadEntriesAR: (
@@ -50,12 +49,7 @@ interface PageStateSandbox {
     healthStates: Record<string, RegionState>,
   ) => Array<{ source: string; state: RegionState }>;
   getPageFailureAR: (entries: Array<{ source: string; state: RegionState }>) => PageFailure | null;
-  getHealthCaptionAR: (
-    partRows: PartRow[],
-    busy: boolean,
-    errored: number,
-    reads: { failedCount: number; regionCount: number },
-  ) => string;
+  getHealthCaptionAR: (partRows: PartRow[], busy: boolean, errored: number) => string;
   getFreshnessInputAR: (
     healthAsOf: string | null,
     regions: RegionState[],
@@ -118,7 +112,6 @@ test("the alert names each source mid-sentence, so only a proper noun keeps its 
 });
 
 test("the caption states one population — the part rows — once, leaving read failures to the stamp", () => {
-  const tally = sandbox.window.UI.getRegionSummary([HELD, DOWN, HELD, DOWN, HELD, HELD]);
   const tones = (...list: Array<string | null>): PartRow[] => list.map((tone, i) => ({ name: `part ${i}`, tone }));
   const rows: Array<{ name: string; parts: PartRow[]; errored: number }> = [
     { name: "some ok, the rest unreadable", parts: tones("ok", "ok", "ok", null, null, null, null), errored: 1 },
@@ -128,7 +121,7 @@ test("the caption states one population — the part rows — once, leaving read
   ];
 
   for (const row of rows) {
-    const caption = sandbox.getHealthCaptionAR(row.parts, false, row.errored, tally);
+    const caption = sandbox.getHealthCaptionAR(row.parts, false, row.errored);
     const denominators = [...caption.matchAll(/\bof (\d+)\b/g)].map((match) => Number(match[1]));
     assert.ok(denominators.length <= 1, `${row.name}: "${caption}" states ${denominators.length} populations`);
     for (const denominator of denominators) assert.strictEqual(denominator, row.parts.length, `${row.name}: "${caption}"`);

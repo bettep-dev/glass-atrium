@@ -508,9 +508,9 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8) — source 에는 그대로 남고 원장에 오름.
 	 * 자리가 없어서가 아님: `faithful` 아래에서 되돌려도 10노드·8엣지로 여전히 pass 임 (ADR-15 §8).
 	 * 라벨 여유: `main_session` 의 `Plans the work, then assigns it` 이 최장 라벨로 31자, faithful 라벨 상한은 50 임.
-	 * 라벨은 30px 지도 글꼴에서 한 줄에 두 낱말이 들어가는 짧은 표시명임 — 뺀 괄호 설명은 NODE_DESCRIPTIONS 가 실음.
+	 * 라벨은 30px 지도 글꼴에서 한 줄에 두 낱말이 들어가는 짧은 표시명임 — 긴 설명은 NODE_DESCRIPTIONS 가 실음.
 	 * 라벨이 존 제목으로 시작하지 않으므로 존 제목은 모두 보임 (제목 숨김은 단일 멤버가 제목을 되풀이할 때만).
-	 * `autoagent_d` 만 낱말이 늘었음: `Self-improvement` 가 존의 줄 폭을 정하므로 `loop daemon` 이 그 폭 안의 둘째 줄이 됨.
+	 * `autoagent_d` 는 세 낱말임: `Self-improvement` 가 존의 줄 폭을 정하므로 `loop daemon` 이 그 폭 안의 둘째 줄이 됨.
 	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 드로어 Pill 이 거짓이 됨.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
@@ -518,7 +518,8 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 방향 LR — source 일곱 편과 같은 방향임. drawn 만 다른 방향을 쓰면 계수는 같아도(AC-10) 사람이 읽는 형태가 갈라짐.
 	 * 캔버스는 초기 배율을 `max(min(contain, 1), 0.6)` 으로 깔아 하한 0.6 아래로 내려가지 않고 넘치는 만큼을 자름
 	 * (architecture.jsx getLegibleFitScaleAR) — 그래서 잘림은 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
-	 * 라벨·존 제목·엣지 라벨 열세 자리의 `<br/>` 은 폭을 높이로 옮기는 장치임.
+	 * 라벨·존 제목·엣지 라벨의 `<br/>` 은 그림의 줄을 정하지 않음 — 화면(architecture.jsx buildMeasuredMapSourceAR)이 모두 지우고 잰 폭으로 다시 끊음.
+	 * 남기는 이유: 파서가 `<br/>` 을 접어 source 라벨과 같게 읽는지를 flow-extractor ADR-20 절이 이 문자열로 잼.
 	 * 글자는 한 자도 빠지지 않음: `<br/>` 을 이미 있는 공백 옆에 넣었고 계수기가 태그를 지우므로
 	 * (content-budget getLabelText) 라벨 글자 수가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
 	 * 감축은 drawn 에만 넣음 — source 일곱 편은 그려지지 않는 문서인데 flow-extractor 테스트가 그 존 제목
@@ -545,33 +546,33 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
 	mermaid_drawn: `flowchart LR
-    subgraph entry["External inputs"]
+    subgraph entry["Inputs"]
         user[User input]
     end
 
-    subgraph daemon["Scheduled background jobs <br/>(daemons)"]
+    subgraph daemon["Daemons"]
         autoagent_d["Self-improvement <br/>loop daemon"]
         wiki_d[Wiki daemon]
         cron["Scheduled <br/>background jobs"]
     end
 
-    subgraph orch["Orchestrator <br/>(main session)"]
+    subgraph orch["Orchestrator"]
         main_session["Plans the work, <br/>then assigns it"]
     end
 
-    subgraph agents["Specialist agents"]
+    subgraph agents["Agents"]
         agent_layer["23 agents"]
     end
 
-    subgraph hooks["Safety checks <br/>& tracking"]
+    subgraph hooks["Safety"]
         hook_pipeline["Hooks"]
     end
 
-    subgraph data["Data layer <br/>(PostgreSQL <br/>glass_atrium DB)"]
+    subgraph data["Store"]
         pg_db[("PostgreSQL")]
     end
 
-    subgraph export["Document export"]
+    subgraph export["Documents"]
         doc_export["Export via <br/>Chromium"]
     end
 

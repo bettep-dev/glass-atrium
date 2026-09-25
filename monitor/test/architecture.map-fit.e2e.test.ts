@@ -46,7 +46,9 @@ import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
 import {
+	CANONICAL_MAP,
 	DAEMON_NODE_BINDINGS,
+	DIAGRAMS,
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
@@ -343,8 +345,8 @@ async function readZones(width: number, height: number, extraSource?: string): P
 	}
 }
 
-// drawn node-label lines, words grouped by rendered line top
-async function readLabelLines(width: number, height: number): Promise<{ id: string; lines: string[] }[]> {
+// drawn node-label (or zone-title) lines, words grouped by rendered line top
+async function readLabelLines(width: number, height: number, of: "node" | "zone" = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
@@ -354,9 +356,9 @@ async function readLabelLines(width: number, height: number): Promise<{ id: stri
 			null,
 			{ timeout: 60_000 },
 		);
-		return await page.evaluate(() =>
-			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) => {
-				const label = node.querySelector(".nodeLabel") ?? node;
+		return await page.evaluate((kind) =>
+			Array.from(document.querySelectorAll(`.arch-mermaid-canvas svg ${kind === "zone" ? "g.cluster" : "g.node"}`)).map((node) => {
+				const label = node.querySelector(kind === "zone" ? ":scope > .cluster-label" : ".nodeLabel") ?? node;
 				const lineByTop: [number, string[]][] = [];
 				const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
 				for (let text = walker.nextNode(); text; text = walker.nextNode()) {
@@ -370,8 +372,14 @@ async function readLabelLines(width: number, height: number): Promise<{ id: stri
 						else lineByTop.push([top, [word[0]]]);
 					}
 				}
-				return { id: node.getAttribute("data-arch-node-id") || node.id, lines: lineByTop.map(([, words]) => words.join(" ")) };
+				return {
+					id: node.getAttribute("data-arch-node-id") || node.id,
+					lines: lineByTop.map(([, words]) => words.join(" ")),
+					tooltip: node.querySelector(":scope > title")?.textContent ?? "",
+					name: node.getAttribute("aria-label") ?? "",
+				};
 			}),
+			of,
 		);
 	} finally {
 		await page.close();
@@ -399,6 +407,43 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
 	});
 }
+
+// canonical source zone id → its full title; the drawn map shows a one-word display name instead
+const SOURCE_ZONE_TITLES = new Map(
+	[...(DIAGRAMS.find((diagram) => diagram.slug === CANONICAL_MAP.slug)?.mermaid_source ?? "").matchAll(/subgraph\s+(\w+)\["([^"]*)"\]/g)].map(
+		([, id, title]) => [id, title],
+	),
+);
+
+// cluster element id → its zone id, longest suffix match (mermaid prefixes the subgraph id)
+function getZoneIdOf(elementId: string): string {
+	return [...SOURCE_ZONE_TITLES.keys()].filter((id) => elementId === id || elementId.endsWith(`-${id}`)).sort((a, b) => b.length - a.length)[0] ?? "";
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`no zone title stacks one word per line at ${width}x${height}`, async () => {
+		const titles = await readLabelLines(width, height, "zone");
+		assert.ok(titles.length > 0, "no zone title was measured");
+		// a bare symbol ('&') is not a word, so '& tracking' still reads as a one-word line
+		const countWords = (line: string) => line.split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+		const stacked = titles.filter((title) => {
+			const words = countWords(title.lines.join(" "));
+			return words > 1 && title.lines.length >= words;
+		});
+		assert.deepEqual(stacked.map((title) => `${title.id}: ${title.lines.join(" | ")}`), [], "zone titles drawn one word per line");
+	});
+}
+
+test("every drawn zone carries its full source title as tooltip and accessible name", async () => {
+	const zones = await readLabelLines(1440, 900, "zone");
+	const drawnZoneIds = zones.map((zone) => getZoneIdOf(zone.id));
+	assert.equal(drawnZoneIds.filter(Boolean).length, zones.length, `a drawn zone matched no source zone: ${zones.map((zone) => zone.id).join(", ")}`);
+	const mismatched = zones
+		.map((zone, index) => ({ zone, full: SOURCE_ZONE_TITLES.get(drawnZoneIds[index]) }))
+		.filter(({ zone, full }) => zone.tooltip !== full || zone.name !== full)
+		.map(({ zone, full }) => `${zone.id}: tooltip ${JSON.stringify(zone.tooltip)} name ${JSON.stringify(zone.name)} vs source ${JSON.stringify(full)}`);
+	assert.deepEqual(mismatched, [], "zone full titles");
+});
 
 for (const { width, height } of VIEWPORTS) {
 	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {

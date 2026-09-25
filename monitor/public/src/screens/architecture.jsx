@@ -11,28 +11,27 @@ const {
 
 // Constants
 
-// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
-const MAP_LABEL_FONT_PX = 30;
-
-// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
-const MAP_LABEL_LINE_PX = 150;
-
-// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
-const MAP_LABEL_WRAP_PX = 320;
-
-// mermaid-config.js fontFamily — the pre-layout measure must use the face mermaid measures with
-const MAP_LABEL_FONT_FAMILY = "Pretendard, system-ui, -apple-system, sans-serif";
+const MAP_LABEL = {
+	// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
+	fontPx: 30,
+	// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
+	linePx: 150,
+	// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
+	wrapPx: 320,
+	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
+	get directive() {
+		return (
+			`%%{init: {"themeVariables": {"fontSize": "${this.fontPx}px"}, ` +
+			`"flowchart": {"wrappingWidth": ${this.wrapPx}}}}%%\n`
+		);
+	},
+};
 
 // smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
 const MIN_RENDERED_LABEL_PX = 12;
 
 // scale floor derived from the two above, so the floor is a rendered size rather than a bare ratio
-const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL_FONT_PX;
-
-// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
-const MAP_LABEL_DIRECTIVE =
-	`%%{init: {"themeVariables": {"fontSize": "${MAP_LABEL_FONT_PX}px"}, ` +
-	`"flowchart": {"wrappingWidth": ${MAP_LABEL_WRAP_PX}}}}%%\n`;
+const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL.fontPx;
 
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
@@ -93,6 +92,13 @@ const ZONE_UNVERIFIED_CLASS = "arch-zone-unverified";
 
 // 모서리 글리프 — 링 색만으로 tone 을 내면 색각 이상에서 판정이 통째로 사라짐.
 const RING_GLYPH_CLASS = "arch-ring-glyph";
+const RING_GLYPH_PILL_CLASS = "arch-ring-glyph-pill";
+
+// badge text inset from its pill's rounded ends (SVG user units)
+const GLYPH_PILL_PAD_X = 10;
+
+// JetBrains Mono cap height per em — the badge marks are caps-high ink, so the pill hugs that, not the line box
+const GLYPH_CAP_EM = 0.73;
 const RING_GLYPH_MARK = { warn: "!", crit: "!!" };
 
 // 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
@@ -108,6 +114,16 @@ const MAP_BORDER_KEY_AR = [
 ];
 // a group whose title only repeats its single box's label — the title is hidden, the box stays
 const ZONE_TITLE_REDUNDANT_CLASS = "arch-zone-title-redundant";
+// drawn zone titles are one word so none stacks a word per line — the full wording copies the canonical source's subgraph titles (diagrams-source.ts), held together by test/architecture.map-fit.e2e
+const ZONE_FULL_TITLE_AR = {
+	entry: "External inputs",
+	daemon: "Scheduled background jobs (daemons)",
+	orch: "Orchestrator (main session)",
+	agents: "Specialist agents",
+	hooks: "Safety checks & tracking",
+	data: "Data layer (PostgreSQL glass_atrium DB)",
+	export: "Document export",
+};
 
 // 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
 // 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
@@ -407,21 +423,7 @@ function ScreenArchitecture(
 	}, [diagState.status, diagState.data]);
 
 	// node.id → info (탐색용 — 상세 패널이 from/to 노드 라벨을 표시할 때 사용).
-	const nodeIndex = useMemoAR(() => {
-		const idx = new Map();
-		if (!activeDiagram) return idx;
-		for (const layer of activeDiagram.layers || []) {
-			for (const node of layer.nodes || []) {
-				idx.set(node.id, {
-					...node,
-					layer_id: layer.id,
-					layer_label: layer.label,
-					layer_role: layer.role,
-				});
-			}
-		}
-		return idx;
-	}, [activeDiagram]);
+	const nodeIndex = useMemoAR(() => getNodeIndexAR(activeDiagram), [activeDiagram]);
 
 	// 라벨 → node.id (mermaid SVG 의 텍스트 라벨로 backend node 를 fuzzy match 할 때 사용).
 	// mermaid 가 노드 라벨을 임의로 줄바꿈/공백 변환할 수 있어 정규화 후 매칭.
@@ -662,10 +664,13 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over the border
-					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
-					"text-anchor: start; dominant-baseline: text-after-edge; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
+					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
+					"text-anchor: start; } " +
+					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-glyph-pill, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-glyph-pill { display: inline; stroke: rgb(var(--warn)); } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-glyph-pill, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-glyph-pill { display: inline; stroke: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
@@ -933,7 +938,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + rebreakMapLabelsAR(source, getMapTextWidthAR))))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + buildMeasuredMapSourceAR(source, getMapTextWidthAR))))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -1077,6 +1082,7 @@ function MermaidCanvas({
 		root.querySelectorAll("svg g.cluster").forEach((el) => {
 			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
 		});
+		setZoneFullTitlesAR(root);
 		// the member map is a function of source alone — keyed on source, since the plan object changes identity every poll
 		fitZoneBoxesAR(root, zoneRingPlan.zoneIdByMemberId);
 		root.querySelectorAll(`svg g.cluster:not(.${ZONE_TITLE_REDUNDANT_CLASS}) > rect:first-of-type`).forEach((rect) => {
@@ -1925,6 +1931,31 @@ function getFlowPeerLabelAR(flow, direction, nodeIndex) {
 	return nodeIndex.get(peerId)?.label || peerId;
 }
 
+// node.id → drawer info; a whole zone is named by its full wording, since the drawn title is one word
+function getNodeIndexAR(diagram) {
+	const idx = new Map();
+	if (!diagram) return idx;
+
+	for (const layer of diagram.layers || []) {
+		for (const node of layer.nodes || []) {
+			idx.set(node.id, {
+				...node,
+				label: getZoneFullTitleAR(node.id) ?? node.label,
+				layer_id: layer.id,
+				layer_label: getZoneFullTitleAR(layer.id) ?? layer.label,
+				layer_role: layer.role,
+			});
+		}
+	}
+	return idx;
+}
+
+// payload id `${diagramId}.${zoneId}` → the zone's full wording, null for any non-zone id
+function getZoneFullTitleAR(scopedId) {
+	const zoneId = scopedId.slice(scopedId.lastIndexOf(".") + 1);
+	return Object.hasOwn(ZONE_FULL_TITLE_AR, zoneId) ? ZONE_FULL_TITLE_AR[zoneId] : null;
+}
+
 // Shared chrome (AR-suffixed: 다른 screen 의 helper 와 충돌 방지)
 
 function EmptyStateAR({ message }) {
@@ -2220,7 +2251,7 @@ const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
  * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
  * A zone title breaks at that same word floor, so the title never widens its zone past the members.
  */
-function rebreakMapLabelsAR(source, measureText) {
+function buildMeasuredMapSourceAR(source, measureText) {
 	const lines = source.split("\n");
 	const zoneFloor = getZoneWordFloorAR(lines, measureText);
 	let zone = "";
@@ -2236,7 +2267,7 @@ function rebreakMapLabelsAR(source, measureText) {
 			if (/^\s*end\s*$/.test(line)) zone = "";
 			const edge = MAP_EDGE_LABEL_RE.exec(line);
 			if (edge) {
-				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL_LINE_PX);
+				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL.linePx);
 				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
 			}
 			const node = MAP_NODE_LINE_RE.exec(line);
@@ -2244,7 +2275,7 @@ function rebreakMapLabelsAR(source, measureText) {
 			const [, head, open, quotedLabel, bareLabel, close] = node;
 			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
 			if (words.length === 0) return line;
-			const limit = Math.max(MAP_LABEL_LINE_PX, zoneFloor.get(zone) || 0);
+			const limit = Math.max(MAP_LABEL.linePx, zoneFloor.get(zone) || 0);
 			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
 		})
 		.join("\n");
@@ -2274,15 +2305,15 @@ function getZoneWordFloorAR(lines, measureText) {
 function getLabelLinesAR(words, measureText, lineTarget) {
 	const widestWord = Math.max(...words.map(measureText));
 	const limit = Math.max(widestWord, lineTarget);
-	const lineCount = fillLinesAR(words, measureText, limit).length;
+	const lineCount = getGreedyLinesAR(words, measureText, limit).length;
 	for (let width = widestWord; width < limit; width += 2) {
-		const lines = fillLinesAR(words, measureText, width);
+		const lines = getGreedyLinesAR(words, measureText, width);
 		if (lines.length <= lineCount) return lines;
 	}
-	return fillLinesAR(words, measureText, limit);
+	return getGreedyLinesAR(words, measureText, limit);
 }
 
-function fillLinesAR(words, measureText, limit) {
+function getGreedyLinesAR(words, measureText, limit) {
 	const lines = [];
 	for (const word of words) {
 		const last = lines[lines.length - 1];
@@ -2298,7 +2329,8 @@ let mapTextContextAR = null;
 function getMapTextWidthAR(text) {
 	if (!mapTextContextAR) {
 		mapTextContextAR = document.createElement("canvas").getContext("2d");
-		mapTextContextAR.font = `${MAP_LABEL_FONT_PX}px ${MAP_LABEL_FONT_FAMILY}`;
+		// same face mermaid lays out with — a copied family drifts and the pre-layout wrap regresses silently
+		mapTextContextAR.font = `${MAP_LABEL.fontPx}px ${window.MERMAID_CONFIG.themeVariables.fontFamily}`;
 	}
 	return mapTextContextAR.measureText(text).width;
 }
@@ -2686,6 +2718,21 @@ function getPlainLabelAR(label) {
 // mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —
 // 앞부분을 화면이 모르므로 뒤에서 맞춤. 하이픈 경계를 함께 봐서 `data` 가 `metadata` 를 물지 않게 하고,
 // 가장 긴 일치를 골라 한 존 id 가 다른 존 id 의 꼬리인 경우까지 가름.
+// zone → its full wording as accessible name + hover tooltip; the drawn title stays the one-word display name
+function setZoneFullTitlesAR(root) {
+	const zoneIds = Object.keys(ZONE_FULL_TITLE_AR);
+	root.querySelectorAll("svg g.cluster").forEach((el) => {
+		const zoneId = matchZoneIdAR(el.id || "", zoneIds);
+		if (!zoneId) return;
+
+		const fullTitle = ZONE_FULL_TITLE_AR[zoneId];
+		const titleEl = el.querySelector(":scope > title") ?? el.insertBefore(document.createElementNS(SVG_NS_AR, "title"), el.firstChild);
+		titleEl.textContent = fullTitle;
+		el.setAttribute("role", "group");
+		el.setAttribute("aria-label", fullTitle);
+	});
+}
+
 function matchZoneIdAR(elementId, zoneIds) {
 	let matched = "";
 	for (const zoneId of zoneIds) {
@@ -2709,7 +2756,8 @@ function ensureRingRectAR(groupEl, ringClass) {
 	if (!ring) {
 		ring = document.createElementNS(SVG_NS_AR, "rect");
 		ring.setAttribute("class", `arch-ring ${ringClass}`);
-		groupEl.appendChild(ring);
+		// under a corner badge already drawn — the badge's pill is what keeps its text off the ring
+		groupEl.insertBefore(ring, groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`));
 	}
 	const geometry = getRingGeometryAR(box, ringClass);
 	for (const [attr, value] of Object.entries(geometry)) ring.setAttribute(attr, String(value));
@@ -2733,30 +2781,38 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 
 	if (!mark) {
 		if (existing) existing.remove();
+		groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`)?.remove();
 		return;
 	}
 
 	const box = getShapeBoxAR(groupEl);
 	if (!box) return;
 
-	const glyph =
-		existing || document.createElementNS(SVG_NS_AR, "text");
-	if (!existing) {
-		glyph.setAttribute("class", RING_GLYPH_CLASS);
-		groupEl.appendChild(glyph);
-	}
+	const pill = groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`) || document.createElementNS(SVG_NS_AR, "rect");
+	const glyph = existing || document.createElementNS(SVG_NS_AR, "text");
+	pill.setAttribute("class", RING_GLYPH_PILL_CLASS);
+	glyph.setAttribute("class", RING_GLYPH_CLASS);
+	// re-appended last on every pass → painted over the ring and the label, never under them
+	groupEl.append(pill, glyph);
 	glyph.textContent = mark;
-	// on the bottom edge, straddling the right edge — the side padding is narrower than the badge, so a whole-inside badge covers the label
-	glyph.setAttribute("x", String(box.x + box.width - getGlyphInsetAR(groupEl, box, glyph)));
-	glyph.setAttribute("y", String(box.y + box.height - RING_GAP));
+
+	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width);
+	glyph.setAttribute("x", String(geometry.x + GLYPH_PILL_PAD_X));
+	// alphabetic baseline → cap ink centred in the pill
+	glyph.setAttribute("y", String(geometry.y + (geometry.height + MAP_LABEL.fontPx * GLYPH_CAP_EM) / 2));
+	for (const [attr, value] of Object.entries(geometry)) pill.setAttribute(attr, String(value));
 }
 
-// inward reach — half the badge, never past the label's side padding
-function getGlyphInsetAR(groupEl, box, glyph) {
-	const label = groupEl.querySelector(":scope > .label");
-	const labelWidth = label ? label.getBBox().width : 0;
-	const sidePadding = (box.width - labelWidth) / 2 - RING_GAP;
-	return Math.max(0, Math.min(glyph.getComputedTextLength() / 2, sidePadding));
+/**
+ * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner → half on the node, within its sides.
+ * Cap-high, so its upper half stays inside the padding under the label's last line; the lower half stays in the gap to a stacked neighbour.
+ */
+function getCornerBadgeGeometryAR(box, textWidth) {
+	const width = textWidth + GLYPH_PILL_PAD_X * 2;
+	const height = MAP_LABEL.fontPx * GLYPH_CAP_EM + RING_GAP * 2;
+	const inset = NODE_CORNER_RADIUS + RING_GAP;
+	const x = Math.max(box.x + inset, box.x + box.width - inset - width);
+	return { x, y: box.y + box.height - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 
 function getShapeBoxAR(groupEl) {
@@ -2832,4 +2888,4 @@ function extractMermaidNodeLabelAR(nodeEl) {
 window.ScreenArchitecture = ScreenArchitecture;
 window.ARCH_SELECTORS = ARCH_SELECTORS;
 // the font-parity harness renders its baseline with the same override the canvas measured with
-window.ARCH_MAP_LABEL_DIRECTIVE = MAP_LABEL_DIRECTIVE;
+window.ARCH_MAP_LABEL_DIRECTIVE = MAP_LABEL.directive;
