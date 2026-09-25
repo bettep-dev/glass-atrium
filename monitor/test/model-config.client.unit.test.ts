@@ -511,6 +511,7 @@ async function loadMcScreens(
       hMc("div", { ...p, "data-atom": "RegionUnavailable" }, String(p.source)),
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
+    TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
     INITIAL_REGION_STATE: realUiMc.INITIAL_REGION_STATE,
     putRegionRequest: realUiMc.putRegionRequest,
     putRegionData: realUiMc.putRegionData,
@@ -636,6 +637,17 @@ test("both ledgers carry the same three columns — timing is stated once per se
     assert.deepStrictEqual(headers.slice(2), ["Live"], `${name}: live last`);
     for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect"]) {
       assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
+    }
+  }
+});
+
+test("every ledger column header goes through the shared TableHead atom, so it carries scope=col", () => {
+  for (const name of ["DomainsSectionMC", "BudgetsSectionMC"] as const) {
+    const props = name === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
+    const headers = tagsMc(renderComponentMc(screens[name], props), "th");
+    assert.ok(headers.length > 0, `${name}: headers rendered`);
+    for (const th of headers) {
+      assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
     }
   }
 });

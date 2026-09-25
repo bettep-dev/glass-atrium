@@ -586,7 +586,7 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
-	const { SkeletonRows } = window.UI;
+	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const sharedMode = getSharedApplyModeMC(rows);
 
@@ -613,9 +613,9 @@ function DomainsSectionMC({
 					<LedgerColsMC />
 					<thead>
 						<tr>
-							<th>Agent tier</th>
-							<th>Model</th>
-							<th>Live</th>
+							<TableHead>Agent tier</TableHead>
+							<TableHead>Model</TableHead>
+							<TableHead>Live</TableHead>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
@@ -980,7 +980,7 @@ function BudgetsSectionMC({
 	errors,
 	onBudgetChange,
 }) {
-	const { SkeletonRows } = window.UI;
+	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
 	const sharedMode = getSharedApplyModeMC(rows);
 
@@ -1002,9 +1002,9 @@ function BudgetsSectionMC({
 					<LedgerColsMC />
 					<thead>
 						<tr>
-							<th>Background call</th>
-							<th>Per-call cap</th>
-							<th>Live</th>
+							<TableHead>Background call</TableHead>
+							<TableHead>Per-call cap</TableHead>
+							<TableHead>Live</TableHead>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
