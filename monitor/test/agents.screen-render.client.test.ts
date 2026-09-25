@@ -828,17 +828,20 @@ test("every ledger and pairs column header comes from the shared header atom", a
   }
 });
 
-test("a ledger trend chart carries a name a screen reader can announce", async () => {
+test("a ledger trend chart is announced by its agent and by the metric it plots, runs per day", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const tree = renderScreen(
     React.createElement(mod.AgentSummaryRow as Component, {
       agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000 },
-      days: 30, isSelected: false, onSelect: () => {}, trend: [0.9, 0.8, 1], failure: null, overage: null,
+      days: 30, isSelected: false, onSelect: () => {}, trend: [3, 5, 2], failure: null, overage: null,
       failureStatus: "ready", trendStatus: "ready",
     }),
   );
-  assert.match(String(findAtoms(tree, "MiniBars")[0]?.props.label), /dev-react/);
+  const label = String(findAtoms(tree, "MiniBars")[0]?.props.label);
+  assert.match(label, /dev-react/);
+  assert.match(label, /runs per day/i, "the series is buildAgentTrendMap's daily total_count, so the name must say runs");
+  assert.doesNotMatch(label, /success/i, "a runs series must not be announced as a success rate");
 });
 
 test("a matrix sparkline is a named image rather than an unlabelled drawing", async () => {

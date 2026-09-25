@@ -421,7 +421,7 @@ function ScreenAgents() {
 }
 
 // AgentSummary — 5 기본 컬럼 · 행 클릭 → 드로어 · 확장 행이 Runs/Launches/no-record 흡수.
-// 추세 셀 = 50×20 MiniBars (success-rate 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
+// 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
 // Closed-by-default disclosure — second-reader material stays off the first screenful.
 function AgentDisclosure({ title, sub, children }) {
@@ -901,7 +901,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {!isTrendRead ? (
           <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
-          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} 7-day success trend`}/>
+          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} runs per day, last 7 days`}/>
         ) : (
           <span className="text-faint fs-meta font-mono" title="no 7-day daily success-rate breakdown">—</span>
         )}
@@ -3193,7 +3193,7 @@ function getTrendDates(rows) {
   return Array.from(dates).sort().slice(-7);
 }
 
-// MiniBars 추세 — success-rate 일별 합계를 agent × date 로 group → 최근 7일 series.
+// MiniBars 추세 — 일별 실행 수(total_count) 합계를 agent × date 로 group → 최근 7일 series.
 // 7일 모두 0 인 agent → trendMap 미수록 → row 측 "—" 렌더 (정도 점검: 추정값 주입 금지).
 function buildAgentTrendMap(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return new Map();
