@@ -536,6 +536,8 @@ function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkCo
 // 토큰 재사용 — z-index/모션/면 색상은 tokens.css · base.css 단일 SoT (ad-hoc 금지).
 // id sequence for element-title aria-labelledby targets — works without useId (render-harness React stub).
 let detailTitleSeq = 0;
+// open surfaces in mount order — the last one owns the keyboard (a confirm over a drawer).
+const openSurfaces = [];
 
 function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
   const overlayRef = useRef(null);
@@ -550,6 +552,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단. surface 는 open 시에만 마운트.
   useEffect(() => {
     triggerRef.current = document.activeElement;
+    setSurfaceOpen(panelRef, true);
 
     const panel = panelRef.current;
     const focusables = panel ? Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) : [];
@@ -564,6 +567,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     document.body.style.overflow = 'hidden';
 
     return () => {
+      setSurfaceOpen(panelRef, false);
       document.body.style.overflow = prevOverflow;
       // background revived before the trigger refocus — an inert trigger rejects focus.
       for (const node of inertTargets) node.inert = false;
@@ -577,6 +581,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   // 재바인딩 무해 (리스너 add/remove 만 반복, 포커스/scroll 상태 무영향).
   useEffect(() => {
     const onKey = (e) => {
+      if (getTopSurface() !== panelRef) return;
       if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'Tab') {
         const panel = panelRef.current;
@@ -672,6 +677,18 @@ function getInertTargets(overlay) {
     node = node.parentElement;
   }
   return targets;
+}
+
+/** Registers or releases a surface; a repeated open never stacks the same surface twice. */
+function setSurfaceOpen(entry, isOpen) {
+  const index = openSurfaces.indexOf(entry);
+  if (index !== -1) openSurfaces.splice(index, 1);
+  if (isOpen) openSurfaces.push(entry);
+}
+
+/** Surface that owns Tab/Esc/Arrow handling, or null when none is open. */
+function getTopSurface() {
+  return openSurfaces.length > 0 ? openSurfaces[openSurfaces.length - 1] : null;
 }
 
 // 하위호환 별칭 — 기존 Modal API(title/onClose/children/footer) 유지, confirm variant 위임.
@@ -1621,7 +1638,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,

@@ -122,6 +122,30 @@ describe("DetailSurface focus containment", () => {
     });
   }
 
+  describe("stacked surfaces: only the topmost one traps the keyboard", () => {
+    const setSurfaceOpen = ui.setSurfaceOpen as (entry: object, isOpen: boolean) => void;
+    const getTopSurface = ui.getTopSurface as () => unknown;
+    const outer = { name: "drawer" };
+    const inner = { name: "confirm" };
+    const rows = [
+      { name: "a surface opened over another owns the trap", steps: [[outer, true], [inner, true]], expected: inner },
+      { name: "closing the inner surface hands the trap back to the outer one", steps: [[outer, true], [inner, true], [inner, false]], expected: outer },
+      { name: "closing the outer surface first leaves the inner one on top", steps: [[outer, true], [inner, true], [outer, false]], expected: inner },
+      { name: "a re-mount of the same surface never stacks it twice", steps: [[outer, true], [outer, true], [outer, false]], expected: null },
+    ] as const;
+
+    for (const row of rows) {
+      test(row.name, () => {
+        for (const [entry, isOpen] of row.steps) setSurfaceOpen(entry, isOpen);
+        const top = getTopSurface();
+        setSurfaceOpen(outer, false);
+        setSurfaceOpen(inner, false);
+
+        assert.equal(top, row.expected);
+      });
+    }
+  });
+
   test("the panel is focusable by script so an empty surface can still hold focus", () => {
     const dialog = getDialog(renderSurface({ title: "Doc viewer", bare: true, variant: "fullscreen" }));
 
