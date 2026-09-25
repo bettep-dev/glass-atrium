@@ -746,24 +746,47 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
-	test("a fault verdict's corner glyph sits on its own node, not beside it", async () => {
+	test("a fault verdict's corner glyph sits on its own node's corner, clear of every label and other node", async () => {
 		const glyphs = await ctx.page.evaluate((sel) => {
+			// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
+			const shapes = new Map(
+				Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+					group,
+					(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+				]),
+			);
+			const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+				.map((label) => label.getBoundingClientRect())
+				.filter((box) => box.width > 0 && box.height > 0);
 			return Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
 				.filter((glyph) => getComputedStyle(glyph).display !== "none")
 				.map((glyph) => {
-					const node = glyph.parentElement as Element;
-					const shape = node.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element;
+					const owner = glyph.parentElement as Element;
 					const g = glyph.getBoundingClientRect();
-					const n = shape.getBoundingClientRect();
+					const n = shapes.get(owner) as DOMRect;
+					// other nodes only — a cluster box contains its members, so it is not a neighbour
+					const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
+					const covered = [...labels, ...neighbours]
+						.filter((b) => Math.min(g.right, b.right) - Math.max(g.left, b.left) > 0 && Math.min(g.bottom, b.bottom) - Math.max(g.top, b.top) > 0)
+						.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
 					return {
-						id: node.getAttribute("data-arch-node-id") || node.id,
-						inside: g.left >= n.left - 1 && g.right <= n.right + 1 && g.top >= n.top - 1 && g.bottom <= n.bottom + 1,
-						box: `glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
+						id: owner.getAttribute("data-arch-node-id") || owner.id,
+						anchored: g.left >= n.left && g.left <= n.right && g.top >= n.top && g.top <= n.bottom,
+						covered,
+						box:
+							`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
+							`node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
 					};
 				});
 		}, ctx.selectors.canvas);
-		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertion below would be vacuous");
-		const outside = glyphs.filter((glyph) => !glyph.inside);
-		assert.deepEqual(outside, [], `glyphs off their node: ${outside.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertions below would be vacuous");
+		const loose = glyphs.filter((glyph) => !glyph.anchored);
+		assert.deepEqual(loose, [], `glyphs not anchored on their node: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+		const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
+		assert.deepEqual(
+			covering,
+			[],
+			`glyphs over a label or another node: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`,
+		);
 	});
 });

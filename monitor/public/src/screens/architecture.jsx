@@ -662,9 +662,9 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over a border or label
+					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over the border
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
-					"text-anchor: end; dominant-baseline: central; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
+					"text-anchor: start; dominant-baseline: central; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
@@ -2745,9 +2745,9 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 		glyph.setAttribute("class", RING_GLYPH_CLASS);
 		groupEl.appendChild(glyph);
 	}
-	// on the node's top-right corner: right-aligned inside the shape, its halo clear of the top edge
-	glyph.setAttribute("x", String(box.x + box.width - RING_GAP));
-	glyph.setAttribute("y", String(box.y + MAP_LABEL_FONT_PX / 2 + RING_GAP * 2));
+	// straddles the bottom-right corner → starts inside the shape's side padding, so it never reaches the label
+	glyph.setAttribute("x", String(box.x + box.width - RING_GAP * 2));
+	glyph.setAttribute("y", String(box.y + box.height));
 	glyph.textContent = mark;
 }
 
