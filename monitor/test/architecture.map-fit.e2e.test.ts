@@ -61,6 +61,9 @@ const LEGIBLE_FIT_FLOOR = 0.6;
 // 폭을 줄이는 대신 글자를 줄이는 맞바꿈을 막는 다리 — 배율만 재면 이 값이 조용히 내려감.
 const MIN_RENDERED_LABEL_PX = 14 * LEGIBLE_FIT_FLOOR;
 
+// a floor-clamped scale read back from the CTM carries float noise (0.59999…) → compare within it
+const CTM_FLOAT_TOLERANCE = 1e-6;
+
 // 서브픽셀 여유. 링(stroke-width 2.5 사용자 단위)까지 client rect 에 들어오므로
 // 실측 여유는 이 값보다 훨씬 커야 정상이고, 1px 은 반올림만 흡수함.
 const EPS_PX = 1;
@@ -260,11 +263,11 @@ for (const { width, height } of VIEWPORTS) {
 	test(`AC-FIT-2 it fits without shrinking the text at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		assert.ok(
-			r.scale >= LEGIBLE_FIT_FLOOR,
+			r.scale >= LEGIBLE_FIT_FLOOR - CTM_FLOAT_TOLERANCE,
 			`applied scale ${r.scale.toFixed(4)} is under the legibility floor ${LEGIBLE_FIT_FLOOR}`,
 		);
 		assert.ok(
-			r.labelPx >= MIN_RENDERED_LABEL_PX,
+			r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE,
 			`labels render at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor`,
 		);
 	});
@@ -283,8 +286,8 @@ test(`AC-FIT-1024 at ${NARROW_VIEWPORT.width}x${NARROW_VIEWPORT.height} the labe
 			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · width-fit would be ${containScale.toFixed(4)}`,
 	);
 	assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
-	assert.ok(r.scale >= LEGIBLE_FIT_FLOOR, `applied scale ${r.scale.toFixed(4)} is under the floor ${LEGIBLE_FIT_FLOOR}`);
-	assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX, `labels render at ${r.labelPx.toFixed(2)}px`);
+	assert.ok(r.scale >= LEGIBLE_FIT_FLOOR - CTM_FLOAT_TOLERANCE, `applied scale ${r.scale.toFixed(4)} is under the floor ${LEGIBLE_FIT_FLOOR}`);
+	assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `labels render at ${r.labelPx.toFixed(2)}px`);
 	assert.ok(
 		containScale < LEGIBLE_FIT_FLOOR,
 		`width-fit ${containScale.toFixed(4)} now clears the floor — the map fits at 1024, assert AC-FIT-1 there`,
