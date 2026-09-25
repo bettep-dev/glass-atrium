@@ -140,6 +140,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		TypeScaleStyle,
 		DetailSurface,
 		FreshnessStamp,
+		RefreshButton,
+		INITIAL_REGION_STATE,
+		putRegionRequest,
+		putRegionData,
+		putRegionFailure,
 	} = window.UI;
 
 	// 검색어 / 필터.
@@ -151,13 +156,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const [audienceFilter, setAudienceFilter] = useStateCD("all");
 
 	// 목록 / 뷰어 / 폼 상태.
-	// listState.data.rows 는 server 최근 응답만 보유 · 누적 표시 행은 loadedRows 별도 array (Load More append 패턴).
-	const [listState, setListState] = useStateCD({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// Load More 페이지네이션 누적 array. filter/검색 변경 시 [] 리셋 + offset=0 fetch.
+	// region state (stale-while-revalidate) — data = latest page answer · shown rows = loadedRows (Load More append)
+	const [listState, setListState] = useStateCD(INITIAL_REGION_STATE);
+	// held rows stay until the offset=0 answer replaces them → search/refresh never blanks the ledger
 	const [loadedRows, setLoadedRows] = useStateCD([]);
 	const [currentOffset, setCurrentOffset] = useStateCD(0);
 	const [selectedId, setSelectedId] = useStateCD(null);
@@ -269,11 +270,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		return () => clearTimeout(id);
 	}, [keyword]);
 
-	// 필터/검색 변경 = 페이지 초기화 — offset=0 리셋 + loadedRows clear.
-	//   · fetch effect (아래) 가 currentOffset 포함 deps 로 작동 → offset 리셋이 자동 트리거.
+	// filter/search change → offset=0 · held rows stay until the new first page settles
 	useEffectCD(() => {
 		setCurrentOffset(0);
-		setLoadedRows([]);
 	}, [debouncedQ, docStatusFilter, refreshTick]);
 
 	// filter / refresh 변경 시 multi-select clear — chip 토글 = "다른 목록 보기" → 이전 선택 의미 소멸.
@@ -305,16 +304,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 
 		// search mode 는 offset 무시 — buildListUrlCD 가 q 있을 시 search endpoint 진입 + offset 미사용.
 		const isLoadMore = currentOffset > 0 && !debouncedQ;
-		// 첫 페이지 fetch 시만 skeleton — Load More 는 기존 행 유지 + 별도 버튼 spinner.
-		if (!isLoadMore) {
-			setListState({ status: "loading", data: null, error: null });
-		}
-
 		const managedUrl = buildListUrlCD({
 			q: debouncedQ,
 			docStatus: docStatusFilter,
 			offset: currentOffset,
 		});
+		setListState((s) => putRegionRequest(s, managedUrl, ctrl));
 
 		fetchJsonCD(managedUrl, ctrl.signal)
 			.then((managedData) => {
@@ -352,29 +347,20 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					if (typeof managedData?.fetched_at === "string") {
 						setAsOf(managedData.fetched_at);
 					}
-					setListState({
-						status: "ready",
-						data: { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts },
-					error: null,
-				});
+					setListState((s) =>
+						putRegionData(s, ctrl, { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts }),
+					);
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
 				setLoadedRows((prev) => (isLoadMore ? prev.concat(rows) : rows));
 			})
-			.catch((err) => {
-				if (err && err.name === "AbortError") return;
-				setListState({
-					status: "error",
-					data: null,
-					error: err?.message || String(err),
-				});
-			});
+			.catch((err) => setListState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [debouncedQ, docStatusFilter, refreshTick, currentOffset]);
 
 	// Load More callback — 단순 setter. 이미 fetch 중이면 호출 무시 (무한 루프 방지).
 	const loadMore = useCallbackCD(() => {
-		if (listState.status === "loading") return;
+		if (listState.busy) return;
 		if (debouncedQ) return; // search mode 미지원
 		const visibleLen = loadedRows.length;
 		const total =
@@ -806,12 +792,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 
 	// 파생 데이터
 	const isSearchMode = debouncedQ.length > 0;
-	// loadedRows = Load More 누적 array. search mode 는 단일 page = listState rows.
-	const rows = isSearchMode
-		? listState.status === "ready"
-			? (listState.data?.rows ?? [])
-			: []
-		: loadedRows;
+	// loadedRows = Load More 누적 array · search mode 는 단일 page 로 교체된다.
+	const rows = loadedRows;
 	const visibleRows = buildVisibleRowsCD(rows, audienceFilter);
 	const total =
 		listState.status === "ready" ? Number(listState.data?.total ?? 0) : 0;
@@ -834,22 +816,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const canLoadMore =
 		!isSearchMode && listState.status === "ready" && rows.length < total;
 	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
-	const isLoadingMore = listState.status === "loading" && currentOffset > 0;
+	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
 	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
 	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
 	const headerRight = (
 		<>
-			<FreshnessStamp {...getFreshnessInputCD(asOf, listState.status)} />
-			<button
-				type="button"
-				className="btn ghost sm"
-				onClick={triggerRefresh}
-				aria-label="Refresh documents"
-			>
-				<Icon name="refresh" size={13} />
-				Refresh
-			</button>
+			<FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />
+			<RefreshButton
+				isBusy={listState.busy}
+				hasRead={asOf != null}
+				onRefresh={triggerRefresh}
+				label="Refresh documents"
+			/>
 		</>
 	);
 
@@ -1023,9 +1002,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* ID 셀 둘째 줄 계보 · 로딩 행 골격. */
+        /* ID 셀 둘째 줄 계보. */
         .doc-lineage { font-size: var(--fs-micro); color: rgb(var(--faint)); white-space: nowrap; }
-        .doc-skeleton-row { display: grid; grid-template-columns: 135px 72px 1fr 110px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid rgb(var(--line) / 0.4); }
+        /* held rows while a read is in flight — dimmed, still readable and selectable. */
+        .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
+        @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
         .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
         .doc-stage-pill.is-interactive { cursor: pointer; }
@@ -1231,8 +1212,11 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
+	// load-more keeps its own button spinner → only a first-page read dims the held rows
+	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
+	const busyText = isSearchMode ? "Searching…" : "Refreshing…";
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
@@ -1371,10 +1355,16 @@ function DocListCardCD({
 							);
 						})}
 					</div>
+					{isHeldBusy && (
+						<span className="doc-list-busy ml-auto fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
+							{busyText}
+						</span>
+					)}
 					{totalLabel && (
 						<span
-							className="ml-auto fs-meta font-mono"
-							style={{ color: "rgb(var(--dim))" }}>
+							className={`${isHeldBusy ? "" : "ml-auto "}fs-meta font-mono`}
+							style={{ color: "rgb(var(--dim))" }}
+							aria-live="polite">
 							{totalLabel}
 						</span>
 					)}
@@ -1422,13 +1412,9 @@ function DocListCardCD({
 					overflowX: "auto",
 				}}
 			>
-				{state.status === "loading" && <DocListSkeletonCD />}
-				{state.status === "error" && (
-					<ErrorBannerCD
-						title="Couldn't load the list"
-						detail={state.error}
-						onRetry={onRetry}
-					/>
+				{state.status === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
+				{state.error != null && (
+					<RegionUnavailable source="the document list" error={state.error} onRetry={onRetry} className="m-4" />
 				)}
 				{state.status === "ready" && rows.length === 0 && (
 					/* S6 정직한 빈 상태 — 적용 중 필터 echo + reset 제공 (blank 패널 금지). WCAG 4.1.3 announce. */
@@ -1438,7 +1424,7 @@ function DocListCardCD({
 					/>
 				)}
 				{state.status === "ready" && rows.length > 0 && (
-					<table className="tbl">
+					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
 							Documents ledger. Arrow keys move between rows; Enter opens the focused document.
 						</caption>
@@ -2531,17 +2517,10 @@ function ViewerBodyCD({ state }) {
 		return <div className="doc-empty m-4">Select a document from the list</div>;
 	}
 	if (state.status === "loading") {
-		return (
-			<div className="p-4" aria-busy="true">
-				<div style={skeletonBlockStyleCD(40)} />
-				<div style={{ ...skeletonBlockStyleCD(220), marginTop: 12 }} />
-			</div>
-		);
+		return <window.UI.LoadingPlaceholder label="the document" minHeight={260} className="m-4" />;
 	}
 	if (state.status === "error") {
-		return (
-			<ErrorBannerCD title="Couldn't load the document body" detail={state.error} />
-		);
+		return <window.UI.RegionUnavailable source="this document" error={state.error} className="m-4" />;
 	}
 
 	// 본문 렌더 — 분기 (MD primary + 4-format code viewer):
@@ -3169,25 +3148,9 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 	);
 }
 
-function DocListSkeletonCD() {
-	return (
-		<div className="p-4" aria-busy="true" aria-label="Loading documents">
-			{/* 행 모양 그대로 — 로딩이 빈 목록으로 읽히지 않게 한다. */}
-			{Array.from({ length: 6 }).map((_, i) => (
-				<div key={i} className="doc-skeleton-row">
-					<div style={skeletonBlockStyleCD(14)} />
-					<div style={skeletonBlockStyleCD(12)} />
-					<div style={skeletonBlockStyleCD(12)} />
-					<div style={skeletonBlockStyleCD(12)} />
-				</div>
-			))}
-		</div>
-	);
-}
-
-// asOf advances on successful list reads only → a failed read marks the kept stamp stale
-function getFreshnessInputCD(asOf, listStatus) {
-	return { at: asOf, loading: listStatus === "loading", failed: listStatus === "error" };
+// asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
+function getFreshnessInputCD(asOf, listState) {
+	return { at: asOf, regions: [listState] };
 }
 
 // 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
@@ -3319,7 +3282,7 @@ function normalizeGroupToRowCD(group) {
 
 // 에러 envelope 파싱 → describeApiErrorCD 한국어 매핑 진입.
 //   · 서버 ClaudedDocsErrorBody enum (not_found / invalid_param / hash_conflict 등) JSON shape → 사용자 친화 메시지.
-//   · JSON parse 실패 (truncated · non-JSON 500) → HTTP status + raw 본문 160자 fallback (기존 거동 보존).
+//   · JSON parse 실패 (truncated · non-JSON 500) → shared getFetchError (status + tag-free body, Details only).
 //   · AbortError 는 browser fetch 가 그대로 propagate — handleErrorCD 가 swallow (회귀 차단).
 async function fetchJsonCD(url, signal) {
 	const res = await fetch(url, {
@@ -3327,20 +3290,17 @@ async function fetchJsonCD(url, signal) {
 		headers: { Accept: "application/json" },
 	});
 	if (!res.ok) {
+		const fallbackRes = res.clone();
 		let payload = null;
-		let rawText = "";
 		try {
-			rawText = await res.text();
-			payload = JSON.parse(rawText);
+			payload = JSON.parse(await res.text());
 		} catch (_e) {
 			/* non-JSON 본문 → 아래 fallback */
 		}
 		if (payload && typeof payload === "object" && payload.error) {
 			throw new Error(describeApiErrorCD(payload, res.status));
 		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${rawText ? " — " + rawText.slice(0, 160) : ""}`,
-		);
+		throw await window.UI.getFetchError(fallbackRes);
 	}
 	return res.json();
 }

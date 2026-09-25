@@ -171,3 +171,64 @@ test("'rev of #N' is a control that opens the predecessor", async () => {
   (lineage[0].props.onClick as (e: unknown) => void)({ stopPropagation: () => undefined });
   assert.deepEqual(opened, [7]);
 });
+
+function renderListCard(screen: Record<string, unknown>, overrides: Record<string, unknown>) {
+  const props = { ...listCardProps(() => undefined), ...overrides };
+  return renderScreen((screen.DocListCardCD as Component)(props));
+}
+
+test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count and an inline status", async () => {
+  const screen = await loadDocsScreen();
+  const rows = [
+    { name: "a settled list is neither dimmed nor announced", busy: false, isSearchMode: false, isLoadingMore: false, status: null },
+    { name: "a search in flight dims the held rows and says so", busy: true, isSearchMode: true, isLoadingMore: false, status: "Searching…" },
+    { name: "a refresh in flight dims the held rows and says so", busy: true, isSearchMode: false, isLoadingMore: false, status: "Refreshing…" },
+    { name: "a load-more in flight leaves the held rows undimmed", busy: true, isSearchMode: false, isLoadingMore: true, status: null },
+  ];
+
+  for (const row of rows) {
+    const tree = renderListCard(screen, {
+      state: { status: "ready", data: {}, error: null, busy: row.busy },
+      isSearchMode: row.isSearchMode,
+      isLoadingMore: row.isLoadingMore,
+    });
+    const tables = findNodes(tree, (n) => n.type === "table");
+    assert.equal(tables.length, 1, `${row.name}: held rows stay`);
+    assert.equal(tables[0].props["aria-busy"], row.status ? "true" : undefined, row.name);
+    assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 groups/, `${row.name}: held count stays`);
+
+    const inline = findNodes(tree, (n) => n.props.role === "status" && String(n.props.className).includes("doc-list-busy"));
+    assert.deepEqual(inline.map((n) => collectText(n)), row.status ? [row.status] : [], row.name);
+  }
+});
+
+test("a first read with nothing held shows one status placeholder instead of rows", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { state: { status: "loading", data: null, error: null, busy: true }, rows: [] });
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(tree, (n) => n.type === "table").length, 0);
+});
+
+test("a failed read shows one plain-sentence card with one Retry and never the raw HTTP answer", async () => {
+  const screen = await loadDocsScreen();
+  const error = 'HTTP 500 Internal Server Error — {"error":"boom"}';
+  const rows = [
+    { name: "nothing held", state: { status: "error", data: null, error, busy: false }, rows: [], tables: 0 },
+    { name: "rows held", state: { status: "ready", data: {}, error, busy: false }, rows: undefined, tables: 1 },
+  ];
+
+  for (const row of rows) {
+    const overrides: Record<string, unknown> = { state: row.state };
+    if (row.rows) overrides.rows = row.rows;
+    const tree = renderListCard(screen, overrides);
+
+    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    assert.equal(cards.length, 1, row.name);
+    assert.equal(cards[0].props.error, error, row.name);
+    assert.equal(typeof cards[0].props.onRetry, "function", row.name);
+    assert.equal(findNodes(tree, (n) => n.props.role === "alert").length, 0, `${row.name}: no red alert box`);
+    assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
+    assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
+  }
+});
