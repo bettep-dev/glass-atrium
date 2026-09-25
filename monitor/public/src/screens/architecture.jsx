@@ -617,7 +617,7 @@ function ScreenArchitecture(
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
-					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-micro); " +
+					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
@@ -653,7 +653,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
 					`#${ARCH_CANVAS_ID} .node.security > :is(rect, path, polygon, circle, ellipse):not(.arch-ring) { stroke-dasharray: none !important; } ` +
-					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-micro); " +
+					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 700; pointer-events: none; } ` +
@@ -1388,7 +1388,7 @@ function HookChainDetail({ state }) {
 						<div className="arch-hook-head">
 							<span className="fs-meta font-mono text-ink">{row.event}</span>
 							{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
-							<span className="fs-micro text-faint">{row.hookCount} hooks</span>
+							<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 						</div>
 						{row.groups.length > 0 && (
 							<ul className="arch-hook-groups">
@@ -1401,9 +1401,9 @@ function HookChainDetail({ state }) {
 													key={`${group.matcher}-${index}`}
 													className="arch-hook-head fs-meta text-dim">
 													<span className="font-mono text-ink">{hook.command}</span>
-													{hook.type && <span className="fs-micro text-faint">{hook.type}</span>}
+													{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
 													{hook.timeout !== null && hook.timeout !== undefined && (
-														<span className="fs-micro text-faint">timeout {hook.timeout}s</span>
+														<span className="fs-meta text-faint">timeout {hook.timeout}s</span>
 													)}
 												</li>
 											))}
@@ -1492,7 +1492,7 @@ function HookFailureDetail({ state }) {
 								{row.kind.label}
 							</span>
 							{row.retryAttempted && (
-								<span className="fs-micro text-faint">retried</span>
+								<span className="fs-meta text-faint">retried</span>
 							)}
 						</li>
 					))}

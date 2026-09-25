@@ -149,3 +149,16 @@ test("alert role is declared by the alarm row only — region and page failures 
 
   assert.deepEqual(declarers.sort(), ["AlarmRowAR"]);
 });
+
+// the adoption floor is 12px — fs-micro (11px) is the one type step below it, by class or by variable
+test("no text on the screen is set at the micro type step", () => {
+  const sites = SCREEN_SRC.split("\n")
+    .map((line, i) => [i + 1, line] as const)
+    .filter(([, line]) => line.includes("fs-micro"));
+
+  assert.deepEqual(
+    sites.map(([n]) => n),
+    [],
+    `fs-micro in architecture.jsx: ${sites.map(([n, l]) => `${n}: ${l.trim()}`).join(" | ")}`,
+  );
+});
