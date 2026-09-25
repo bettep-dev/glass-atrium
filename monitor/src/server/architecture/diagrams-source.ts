@@ -30,11 +30,11 @@ export const DIAGRAMS = [
 		mermaid_source: `flowchart LR
     subgraph entry["External inputs"]
         repo[Project repository]
-        user[User utterance]
+        user[User input]
     end
 
     subgraph daemon["Scheduled background jobs (daemons)"]
-        autoagent_d[Self-improvement daemon]
+        autoagent_d[Self-improvement loop daemon]
         wiki_d[Wiki daemon]
         cron["Scheduled background jobs"]
     end
@@ -44,19 +44,19 @@ export const DIAGRAMS = [
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["Specialist agents (23)"]
+        agent_layer["23 agents"]
     end
 
     subgraph hooks["Safety checks & tracking"]
-        hook_pipeline["Hook pipeline (safety checks + tracking)"]
+        hook_pipeline["Hooks"]
     end
 
     subgraph data["Data layer (PostgreSQL glass_atrium DB)"]
-        pg_db[("PostgreSQL database")]
+        pg_db[("PostgreSQL")]
     end
 
     subgraph export["Document export"]
-        doc_export["Document export (headless Chromium)"]
+        doc_export["Export via Chromium"]
     end
 
     from_improvement[/"← Data · documents · improvement layer<br/>(boundary: instruction updates)"/]
@@ -507,17 +507,20 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 데이터 존으로 당김 — 39546 ADR-7 이 `to_data` 에 대해 한 것과 같은 흡수임.
 	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8) — source 에는 그대로 남고 원장에 오름.
 	 * 자리가 없어서가 아님: `faithful` 아래에서 되돌려도 10노드·8엣지로 여전히 pass 임 (ADR-15 §8).
-	 * 라벨 여유: `hook_pipeline` 의 `Hook pipeline (safety checks + tracking)` 이 최장 라벨로 정확히 40자이고
-	 * faithful 라벨 상한은 50 임 — 40/50 = 0.8 로 pass 이며 warn(0.9)까지 다섯 글자 남음.
+	 * 라벨 여유: `main_session` 의 `Plans the work, then assigns it` 이 최장 라벨로 31자, faithful 라벨 상한은 50 임.
+	 * 라벨은 30px 지도 글꼴에서 한 줄에 두 낱말이 들어가는 짧은 표시명임 — 뺀 괄호 설명은 NODE_DESCRIPTIONS 가 실음.
+	 * 라벨이 존 제목으로 시작하지 않으므로 존 제목은 모두 보임 (제목 숨김은 단일 멤버가 제목을 되풀이할 때만).
+	 * `autoagent_d` 만 낱말이 늘었음: `Self-improvement` 가 존의 줄 폭을 정하므로 `loop daemon` 이 그 폭 안의 둘째 줄이 됨.
+	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 드로어 Pill 이 거짓이 됨.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
 	 * 방향 LR — source 일곱 편과 같은 방향임. drawn 만 다른 방향을 쓰면 계수는 같아도(AC-10) 사람이 읽는 형태가 갈라짐.
 	 * 캔버스는 초기 배율을 `max(min(contain, 1), 0.6)` 으로 깔아 하한 0.6 아래로 내려가지 않고 넘치는 만큼을 자름
 	 * (architecture.jsx getLegibleFitScaleAR) — 그래서 잘림은 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
-	 * 라벨·존 제목·엣지 라벨 열다섯 자리의 `<br/>` 은 폭을 높이로 옮기는 장치임.
+	 * 라벨·존 제목·엣지 라벨 열세 자리의 `<br/>` 은 폭을 높이로 옮기는 장치임.
 	 * 글자는 한 자도 빠지지 않음: `<br/>` 을 이미 있는 공백 옆에 넣었고 계수기가 태그를 지우므로
-	 * (content-budget getLabelText) 라벨 40 자가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
+	 * (content-budget getLabelText) 라벨 글자 수가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
 	 * 감축은 drawn 에만 넣음 — source 일곱 편은 그려지지 않는 문서인데 flow-extractor 테스트가 그 존 제목
 	 * 문자열을 정확히 대조하므로, 같은 `<br/>` 을 source 에 넣으면 그리는 것은 그대로인 채 그 대조만 깨짐.
 	 * 그래프 변 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): LR 1774.6×471.
@@ -543,11 +546,11 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 */
 	mermaid_drawn: `flowchart LR
     subgraph entry["External inputs"]
-        user[User utterance]
+        user[User input]
     end
 
     subgraph daemon["Scheduled background jobs <br/>(daemons)"]
-        autoagent_d["Self-improvement <br/>daemon"]
+        autoagent_d["Self-improvement <br/>loop daemon"]
         wiki_d[Wiki daemon]
         cron["Scheduled <br/>background jobs"]
     end
@@ -557,19 +560,19 @@ export const CANONICAL_MAP: CanonicalMap = {
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["Specialist agents <br/>(23)"]
+        agent_layer["23 agents"]
     end
 
     subgraph hooks["Safety checks <br/>& tracking"]
-        hook_pipeline["Hook pipeline <br/>(safety checks + tracking)"]
+        hook_pipeline["Hooks"]
     end
 
     subgraph data["Data layer <br/>(PostgreSQL <br/>glass_atrium DB)"]
-        pg_db[("PostgreSQL database")]
+        pg_db[("PostgreSQL")]
     end
 
     subgraph export["Document export"]
-        doc_export["Document export <br/>(headless Chromium)"]
+        doc_export["Export via <br/>Chromium"]
     end
 
     user --> orch

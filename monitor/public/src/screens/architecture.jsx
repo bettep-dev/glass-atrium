@@ -14,8 +14,14 @@ const {
 // map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
 const MAP_LABEL_FONT_PX = 30;
 
-// word-level label wrap — narrower nodes are what let the larger labels fit; the flow itself stays left to right
-const MAP_LABEL_WRAP_PX = 90;
+// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
+const MAP_LABEL_LINE_PX = 150;
+
+// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
+const MAP_LABEL_WRAP_PX = 320;
+
+// mermaid-config.js fontFamily — the pre-layout measure must use the face mermaid measures with
+const MAP_LABEL_FONT_FAMILY = "Pretendard, system-ui, -apple-system, sans-serif";
 
 // smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
 const MIN_RENDERED_LABEL_PX = 12;
@@ -515,10 +521,12 @@ function ScreenArchitecture(
 
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
 	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
-	const healthRegions = Object.values(headlineHealthStates);
-	const healthPending = healthRegions.some((state) => state.status === "loading");
-	// one region list for the stamp, the Refresh button and the caption's failed-read count
-	const pageRegions = [diagState, liveState, ...healthRegions];
+	const healthPending = Object.keys(HEALTH_STORE_LABELS_AR).some(
+		(key) => headlineHealthStates[key].status === "loading",
+	);
+	// one read list for the stamp, the Refresh button and the page alert
+	const pageReadEntries = getPageReadEntriesAR(diagState, liveState, headlineHealthStates);
+	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
@@ -526,7 +534,6 @@ function ScreenArchitecture(
 		healthPartRows,
 		healthPending,
 		healthStoreErrors.length,
-		readTally,
 	);
 
 	const handleSelectNode = useCallbackAR(
@@ -564,9 +571,7 @@ function ScreenArchitecture(
 		liveState.status === "ready" ? liveState.data?.governance : null;
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
-	const pageFailure = getPageFailureAR(
-		getPageReadEntriesAR(diagState, liveState, headlineHealthStates),
-	);
+	const pageFailure = getPageFailureAR(pageReadEntries);
 	// the map's own card would repeat the page alert — the alert already names it and carries the Retry
 	const isMapInPageAlert = Boolean(pageFailure?.sources.includes(DIAGRAM_SOURCE_AR));
 
@@ -657,7 +662,9 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 700; pointer-events: none; } ` +
+					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over the border
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
+					"text-anchor: start; dominant-baseline: text-after-edge; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
@@ -666,7 +673,9 @@ function ScreenArchitecture(
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
-					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
+					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
+					// hover colours only — a transition on `all` also animated the shared focus outline in
+					"transition: color .12s, border-color .12s, background-color .12s; } " +
 					".arch-zoom-btn-labelled { padding: 0 8px; font-family: inherit; font-size: var(--fs-meta); } " +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
@@ -924,7 +933,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + source)))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + rebreakMapLabelsAR(source, getMapTextWidthAR))))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -1068,7 +1077,8 @@ function MermaidCanvas({
 		root.querySelectorAll("svg g.cluster").forEach((el) => {
 			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
 		});
-		fitZoneBoxesAR(root, source);
+		// the member map is a function of source alone — keyed on source, since the plan object changes identity every poll
+		fitZoneBoxesAR(root, zoneRingPlan.zoneIdByMemberId);
 		root.querySelectorAll(`svg g.cluster:not(.${ZONE_TITLE_REDUNDANT_CLASS}) > rect:first-of-type`).forEach((rect) => {
 			if (rect.dataset.archTitleBand === "1") return;
 			const y = Number.parseFloat(rect.getAttribute("y"));
@@ -1335,28 +1345,21 @@ function ArchIconTargetAR() {
 // 값 없음(빈 배열)과 못 읽음을 화면에서 구별하는 유일한 자리임.
 // 머리글이 서 있는 응답 넷만 둠 — 드릴다운 응답(payloadState)은 노드 하나를 연 뒤의 사실이라
 // 여기 들면 행을 펼쳤다는 이유로 지도 전체가 '못 읽음' 이 됨.
+// inSentence — the page alert lists stores mid-sentence, so only the proper noun keeps a capital
 const HEALTH_STORE_LABELS_AR = {
-	daemonState: "Daemons",
-	hookState: "Hook chain",
-	pgState: "PostgreSQL",
-	hookFailState: "Hook failures",
+	daemonState: { name: "Daemons", inSentence: "daemon health" },
+	hookState: { name: "Hook chain", inSentence: "the hook chain" },
+	pgState: { name: "PostgreSQL", inSentence: "PostgreSQL" },
+	hookFailState: { name: "Hook failures", inSentence: "hook failures" },
 };
 
-// the same stores named inside a sentence — the page alert lists them mid-sentence, so only the proper noun keeps a capital
-const HEALTH_STORE_SOURCES_AR = {
-	daemonState: "daemon health",
-	hookState: "the hook chain",
-	pgState: "PostgreSQL",
-	hookFailState: "hook failures",
-};
-
-// every region the page reads, named as the page alert names it
+// every region the page reads, named as the page alert names it — the stamp, Refresh and the alert all read this list
 function getPageReadEntriesAR(diagState, liveState, healthStates) {
 	return [
 		{ source: DIAGRAM_SOURCE_AR, state: diagState },
 		{ source: LIVE_SOURCE_AR, state: liveState },
-		...Object.keys(HEALTH_STORE_SOURCES_AR).map((key) => ({
-			source: HEALTH_STORE_SOURCES_AR[key],
+		...Object.keys(HEALTH_STORE_LABELS_AR).map((key) => ({
+			source: HEALTH_STORE_LABELS_AR[key].inSentence,
 			state: healthStates[key],
 		})),
 	];
@@ -1382,7 +1385,7 @@ function getPageFailureAR(entries) {
 function getHealthStoreErrorsAR(states) {
 	return Object.keys(HEALTH_STORE_LABELS_AR)
 		.filter((key) => states[key] && states[key].status === "error")
-		.map((key) => HEALTH_STORE_LABELS_AR[key]);
+		.map((key) => HEALTH_STORE_LABELS_AR[key].name);
 }
 
 /**
@@ -2109,7 +2112,7 @@ function buildLiveDaemonsByNodeId(daemons) {
  * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
  * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
  */
-function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
+function getHealthCaptionAR(partRows, busy, errored = 0) {
 	const total = partRows.length;
 	if (total === 0)
 		return busy ? "Reading part health…" : "Part health unavailable";
@@ -2127,7 +2130,7 @@ function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
 	// first wave still out → no ok count yet; the early verdicts would read as the whole map
 	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
 	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}${getFailedReadsSuffixAR(errored, reads)}`;
+		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
 
 	return `All ${total} parts ok`;
 }
@@ -2136,12 +2139,6 @@ function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
 function getFlaggedNamesSuffixAR(rows) {
 	const names = rows.map((row) => row.name).filter(Boolean);
 	return names.length > 0 ? `: ${names.join(", ")}` : "";
-}
-
-// the stamp's own failed-read tally → caption and stamp count one population, never parts against reads
-function getFailedReadsSuffixAR(errored, reads) {
-	if (errored === 0 || !reads || reads.failedCount === 0) return "";
-	return `, ${reads.failedCount} of ${reads.regionCount} reads failed`;
 }
 
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
@@ -2211,6 +2208,99 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 	const mark = RING_GLYPH_MARK[tone];
 	if (!mark) return "";
 	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
+}
+
+const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
+
+const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
+
+/**
+ * Re-breaks node and edge labels into lines of several words before layout — mermaid's single wrapping
+ * width gives every wrapped node the same box, so each label gets a box sized from its own words.
+ * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
+ * A zone title breaks at that same word floor, so the title never widens its zone past the members.
+ */
+function rebreakMapLabelsAR(source, measureText) {
+	const lines = source.split("\n");
+	const zoneFloor = getZoneWordFloorAR(lines, measureText);
+	let zone = "";
+	return lines
+		.map((line) => {
+			const zoneMatch = /^(\s*subgraph\s+([\w-]+)\s*\[)"([^"]*)"(\]\s*)$/.exec(line) ?? /^\s*subgraph\s+([\w-]+)/.exec(line);
+			if (zoneMatch) {
+				zone = zoneMatch[2] ?? zoneMatch[1];
+				if (zoneMatch.length < 5) return line;
+				const titleLines = getLabelLinesAR(getLabelWordsAR(zoneMatch[3]), measureText, zoneFloor.get(zone) || 0);
+				return `${zoneMatch[1]}"${titleLines.join(" <br/>")}"${zoneMatch[4]}`;
+			}
+			if (/^\s*end\s*$/.test(line)) zone = "";
+			const edge = MAP_EDGE_LABEL_RE.exec(line);
+			if (edge) {
+				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL_LINE_PX);
+				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
+			}
+			const node = MAP_NODE_LINE_RE.exec(line);
+			if (!node) return line;
+			const [, head, open, quotedLabel, bareLabel, close] = node;
+			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
+			if (words.length === 0) return line;
+			const limit = Math.max(MAP_LABEL_LINE_PX, zoneFloor.get(zone) || 0);
+			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
+		})
+		.join("\n");
+}
+
+function getLabelWordsAR(label) {
+	return label.replace(/<br\s*\/?>/gi, " ").split(/\s+/).filter(Boolean);
+}
+
+// zone id → its longest node-label word
+function getZoneWordFloorAR(lines, measureText) {
+	const floor = new Map();
+	let zone = "";
+	for (const line of lines) {
+		const zoneMatch = /^\s*subgraph\s+([\w-]+)/.exec(line);
+		if (zoneMatch) zone = zoneMatch[1];
+		else if (/^\s*end\s*$/.test(line)) zone = "";
+		const node = zone ? MAP_NODE_LINE_RE.exec(line) : null;
+		if (!node) continue;
+		const widest = Math.max(0, ...getLabelWordsAR(node[3] ?? node[4]).map(measureText));
+		floor.set(zone, Math.max(floor.get(zone) || 0, widest));
+	}
+	return floor;
+}
+
+// greedy fill at the line target, then the narrowest width that keeps that line count — balanced lines, narrow box
+function getLabelLinesAR(words, measureText, lineTarget) {
+	const widestWord = Math.max(...words.map(measureText));
+	const limit = Math.max(widestWord, lineTarget);
+	const lineCount = fillLinesAR(words, measureText, limit).length;
+	for (let width = widestWord; width < limit; width += 2) {
+		const lines = fillLinesAR(words, measureText, width);
+		if (lines.length <= lineCount) return lines;
+	}
+	return fillLinesAR(words, measureText, limit);
+}
+
+function fillLinesAR(words, measureText, limit) {
+	const lines = [];
+	for (const word of words) {
+		const last = lines[lines.length - 1];
+		if (last !== undefined && measureText(`${last} ${word}`) <= limit) lines[lines.length - 1] = `${last} ${word}`;
+		else lines.push(word);
+	}
+	return lines;
+}
+
+let mapTextContextAR = null;
+
+// canvas measure at the map font — runs after document.fonts.ready, so the measured face is the drawn one
+function getMapTextWidthAR(text) {
+	if (!mapTextContextAR) {
+		mapTextContextAR = document.createElement("canvas").getContext("2d");
+		mapTextContextAR.font = `${MAP_LABEL_FONT_PX}px ${MAP_LABEL_FONT_FAMILY}`;
+	}
+	return mapTextContextAR.measureText(text).width;
 }
 
 // every region the page reads feeds the stamp; no read time until the map itself has been read
@@ -2477,8 +2567,7 @@ function buildRedundantZoneIdsAR(source) {
  * centre, which can spill it into the next column — a zone that collides wraps its title inside the member width.
  * Zones clear of every other keep their one-line title: wrapping them only adds a line that grows into the zone above.
  */
-function fitZoneBoxesAR(root, source) {
-	const { zoneIdByMemberId } = buildZoneRingPlanAR(source, {});
+function fitZoneBoxesAR(root, zoneIdByMemberId) {
 	const zoneIds = [...new Set(zoneIdByMemberId.values())];
 	const nodeEls = [...root.querySelectorAll("svg g.node")];
 	const zoneEls = [...root.querySelectorAll("svg g.cluster")];
@@ -2656,9 +2745,18 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 		glyph.setAttribute("class", RING_GLYPH_CLASS);
 		groupEl.appendChild(glyph);
 	}
-	glyph.setAttribute("x", String(box.x + box.width + RING_GAP));
-	glyph.setAttribute("y", String(box.y - RING_GAP));
 	glyph.textContent = mark;
+	// on the bottom edge, straddling the right edge — the side padding is narrower than the badge, so a whole-inside badge covers the label
+	glyph.setAttribute("x", String(box.x + box.width - getGlyphInsetAR(groupEl, box, glyph)));
+	glyph.setAttribute("y", String(box.y + box.height - RING_GAP));
+}
+
+// inward reach — half the badge, never past the label's side padding
+function getGlyphInsetAR(groupEl, box, glyph) {
+	const label = groupEl.querySelector(":scope > .label");
+	const labelWidth = label ? label.getBBox().width : 0;
+	const sidePadding = (box.width - labelWidth) / 2 - RING_GAP;
+	return Math.max(0, Math.min(glyph.getComputedTextLength() / 2, sidePadding));
 }
 
 function getShapeBoxAR(groupEl) {

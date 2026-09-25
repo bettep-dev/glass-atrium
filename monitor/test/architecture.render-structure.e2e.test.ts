@@ -498,7 +498,8 @@ describe("healthy live fixture", () => {
 			}),
 		ctx.selectors.canvas);
 		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
-		assert.deepEqual(hidden.sort(), ["agents", "export"], `hidden group titles — read: ${JSON.stringify(titles)}`);
+		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
+		assert.deepEqual(hidden.sort(), [], `hidden group titles — read: ${JSON.stringify(titles)}`);
 	});
 
 	test("the node drawer is named by the node, reads its kind from its layer and hides an unrecorded path", async () => {
@@ -744,6 +745,52 @@ describe("fault live fixture", () => {
 			[...new Set(litIds.map(getUnscopedNodeId))].sort(),
 			expectedIds,
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
+		);
+	});
+	test("a fault verdict's corner glyph sits on its own node's bottom-right corner, at most half past the right edge, clear of every label and other node", async () => {
+		const glyphs = await ctx.page.evaluate((sel) => {
+			// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
+			const shapes = new Map(
+				Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+					group,
+					(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+				]),
+			);
+			const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+				.map((label) => label.getBoundingClientRect())
+				.filter((box) => box.width > 0 && box.height > 0);
+			return Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
+				.filter((glyph) => getComputedStyle(glyph).display !== "none")
+				.map((glyph) => {
+					const owner = glyph.parentElement as Element;
+					const g = glyph.getBoundingClientRect();
+					const n = shapes.get(owner) as DOMRect;
+					// other nodes only — a cluster box contains its members, so it is not a neighbour
+					const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
+					const covered = [...labels, ...neighbours]
+						.filter((b) => Math.min(g.right, b.right) - Math.max(g.left, b.left) > 0 && Math.min(g.bottom, b.bottom) - Math.max(g.top, b.top) > 0)
+						.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
+					return {
+						id: owner.getAttribute("data-arch-node-id") || owner.id,
+						// the whole glyph box, not its anchor point: inside the bottom edge, at most half its width past the right edge
+						anchored:
+							g.top >= (n.top + n.bottom) / 2 && g.bottom <= n.bottom + 0.5 &&
+							g.left >= (n.left + n.right) / 2 && (g.left + g.right) / 2 <= n.right + 0.5,
+						covered,
+						box:
+							`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
+							`node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
+					};
+				});
+		}, ctx.selectors.canvas);
+		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertions below would be vacuous");
+		const loose = glyphs.filter((glyph) => !glyph.anchored);
+		assert.deepEqual(loose, [], `glyphs past their node's corner overhang: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+		const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
+		assert.deepEqual(
+			covering,
+			[],
+			`glyphs over a label or another node: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`,
 		);
 	});
 });

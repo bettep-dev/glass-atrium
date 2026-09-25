@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
@@ -247,14 +247,36 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 interface ZoneReading {
 	overlaps: string[];
 	occludedTitles: string[];
+	titleBands: string[];
+	hiddenTitleCount: number;
 	zoneCount: number;
 }
 
+// a zone whose title repeats its lone member's label — the drawn map holds none, so the hidden-title trim needs one supplied
+const REDUNDANT_TITLE_ZONE = [
+	'    subgraph fitprobe["Probe store"]',
+	'        fitprobe_store[("Probe store (fixture)")]',
+	"    end",
+].join("\n");
+
+// serves the drawn diagrams with extra source lines appended to the map the screen opens on
+async function addDiagramSource(page: Page, extraSource: string): Promise<void> {
+	await page.route("**/api/architecture/diagrams", async (route) => {
+		const response = await route.fetch();
+		const payload = (await response.json()) as { diagrams: { id: string; mermaid_source: string }[] };
+		const drawn = payload.diagrams.find((diagram) => diagram.id === "v2-overview-entry");
+		assert.ok(drawn, "fixture precondition: the overview map is served");
+		drawn.mermaid_source += `\n${extraSource}\n`;
+		await route.fulfill({ response, json: payload });
+	});
+}
+
 // 존 상자끼리의 겹침과, 보이는 존 제목의 양 끝이 제 존 위에서 읽히는지를 잼.
-async function readZones(width: number, height: number): Promise<ZoneReading> {
+async function readZones(width: number, height: number, extraSource?: string): Promise<ZoneReading> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
 		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 		await page.waitForFunction(
 			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
@@ -295,11 +317,87 @@ async function readZones(width: number, height: number): Promise<ZoneReading> {
 				})
 				.map((zone) => zone.name);
 
-			return { overlaps, occludedTitles, zoneCount: zones.length };
+			// a zone whose title is hidden keeps no band for it — its members sit as close to the top edge as to the bottom
+			const nodeBoxes = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) =>
+				node.getBoundingClientRect(),
+			);
+			const hiddenTitleZones = zones.filter((zone) => !zone.titleBox);
+			const titleBands = hiddenTitleZones
+				.flatMap((zone) => {
+					const b = zone.box;
+					const members = nodeBoxes.filter((n) => {
+						const cx = (n.left + n.right) / 2;
+						const cy = (n.top + n.bottom) / 2;
+						return cx > b.left && cx < b.right && cy > b.top && cy < b.bottom;
+					});
+					if (members.length === 0) return [];
+					const topGap = Math.min(...members.map((n) => n.top)) - b.top;
+					const bottomGap = b.bottom - Math.max(...members.map((n) => n.bottom));
+					return topGap > bottomGap + 2 ? [`${zone.name} top ${topGap.toFixed(1)}px vs bottom ${bottomGap.toFixed(1)}px`] : [];
+				});
+
+			return { overlaps, occludedTitles, titleBands, hiddenTitleCount: hiddenTitleZones.length, zoneCount: zones.length };
 		});
 	} finally {
 		await page.close();
 	}
+}
+
+// drawn node-label lines, words grouped by rendered line top
+async function readLabelLines(width: number, height: number): Promise<{ id: string; lines: string[] }[]> {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		return await page.evaluate(() =>
+			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) => {
+				const label = node.querySelector(".nodeLabel") ?? node;
+				const lineByTop: [number, string[]][] = [];
+				const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+				for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+					for (const word of (text.textContent || "").matchAll(/\S+/g)) {
+						const range = document.createRange();
+						range.setStart(text, word.index ?? 0);
+						range.setEnd(text, (word.index ?? 0) + word[0].length);
+						const top = range.getClientRects()[0]?.top ?? 0;
+						const line = lineByTop.find(([lineTop]) => Math.abs(lineTop - top) <= 2);
+						if (line) line[1].push(word[0]);
+						else lineByTop.push([top, [word[0]]]);
+					}
+				}
+				return { id: node.getAttribute("data-arch-node-id") || node.id, lines: lineByTop.map(([, words]) => words.join(" ")) };
+			}),
+		);
+	} finally {
+		await page.close();
+	}
+}
+
+for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
+	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
+		const labels = await readLabelLines(width, height);
+		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
+		assert.ok(labels.length > 0, "no node label was measured");
+		// fewer lines than words ⟺ at least one line carries two words — held per label, not summed over the map;
+		// a bare symbol ('+') is not a word, so 'checks +' still reads as a one-word line
+		const oneWordPerLine = labels.filter((label) => {
+			const words = label.lines.join(" ").split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+			return words > 1 && label.lines.length >= words;
+		});
+		assert.deepEqual(
+			oneWordPerLine.map((label) => `${label.id}: ${label.lines.join(" | ")}`),
+			[],
+			`labels drawn one word per line: ${drawn}`,
+		);
+		const plans = labels.find((label) => label.id.endsWith("main_session"));
+		assert.ok(plans, `the orchestrator node was not drawn: ${drawn}`);
+		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
+	});
 }
 
 for (const { width, height } of VIEWPORTS) {
@@ -349,3 +447,9 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 }
+
+test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
+	const r = await readZones(1440, 900, REDUNDANT_TITLE_ZONE);
+	assert.ok(r.hiddenTitleCount > 0, "no hidden-title zone was measured — the band assertion below would be vacuous");
+	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
+});
