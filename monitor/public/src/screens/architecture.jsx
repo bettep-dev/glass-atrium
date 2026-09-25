@@ -93,6 +93,10 @@ const ZONE_UNVERIFIED_CLASS = "arch-zone-unverified";
 
 // 모서리 글리프 — 링 색만으로 tone 을 내면 색각 이상에서 판정이 통째로 사라짐.
 const RING_GLYPH_CLASS = "arch-ring-glyph";
+const RING_GLYPH_PILL_CLASS = "arch-ring-glyph-pill";
+
+// badge text inset from its pill's rounded ends (SVG user units)
+const GLYPH_PILL_PAD_X = 10;
 const RING_GLYPH_MARK = { warn: "!", crit: "!!" };
 
 // 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
@@ -662,10 +666,13 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over the border
+					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
-					"text-anchor: start; dominant-baseline: text-after-edge; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
+					"text-anchor: start; dominant-baseline: central; } " +
+					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-glyph-pill, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-glyph-pill { display: inline; stroke: rgb(var(--warn)); } ` +
+					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-glyph-pill, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-glyph-pill { display: inline; stroke: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
@@ -2709,7 +2716,8 @@ function ensureRingRectAR(groupEl, ringClass) {
 	if (!ring) {
 		ring = document.createElementNS(SVG_NS_AR, "rect");
 		ring.setAttribute("class", `arch-ring ${ringClass}`);
-		groupEl.appendChild(ring);
+		// under a corner badge already drawn — the badge's pill is what keeps its text off the ring
+		groupEl.insertBefore(ring, groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`));
 	}
 	const geometry = getRingGeometryAR(box, ringClass);
 	for (const [attr, value] of Object.entries(geometry)) ring.setAttribute(attr, String(value));
@@ -2733,30 +2741,39 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 
 	if (!mark) {
 		if (existing) existing.remove();
+		groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`)?.remove();
 		return;
 	}
 
 	const box = getShapeBoxAR(groupEl);
 	if (!box) return;
 
-	const glyph =
-		existing || document.createElementNS(SVG_NS_AR, "text");
-	if (!existing) {
-		glyph.setAttribute("class", RING_GLYPH_CLASS);
-		groupEl.appendChild(glyph);
-	}
+	const pill = groupEl.querySelector(`:scope > rect.${RING_GLYPH_PILL_CLASS}`) || document.createElementNS(SVG_NS_AR, "rect");
+	const glyph = existing || document.createElementNS(SVG_NS_AR, "text");
+	pill.setAttribute("class", RING_GLYPH_PILL_CLASS);
+	glyph.setAttribute("class", RING_GLYPH_CLASS);
+	// re-appended last on every pass → painted over the ring and the label, never under them
+	groupEl.append(pill, glyph);
 	glyph.textContent = mark;
-	// on the bottom edge, straddling the right edge — the side padding is narrower than the badge, so a whole-inside badge covers the label
-	glyph.setAttribute("x", String(box.x + box.width - getGlyphInsetAR(groupEl, box, glyph)));
-	glyph.setAttribute("y", String(box.y + box.height - RING_GAP));
+
+	const geometry = getCornerBadgeGeometryAR(groupEl, box, glyph.getBBox());
+	glyph.setAttribute("x", String(geometry.x + GLYPH_PILL_PAD_X));
+	glyph.setAttribute("y", String(geometry.y + geometry.height / 2));
+	for (const [attr, value] of Object.entries(geometry)) pill.setAttribute(attr, String(value));
 }
 
-// inward reach — half the badge, never past the label's side padding
-function getGlyphInsetAR(groupEl, box, glyph) {
+/**
+ * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner and pushed right only as far
+ * as the label's right edge — half its height fits the gap to a stacked neighbour, so it never reaches the label or that node.
+ */
+function getCornerBadgeGeometryAR(groupEl, box, textBox) {
+	const width = textBox.width + GLYPH_PILL_PAD_X * 2;
+	const height = textBox.height + RING_GAP * 2;
 	const label = groupEl.querySelector(":scope > .label");
-	const labelWidth = label ? label.getBBox().width : 0;
-	const sidePadding = (box.width - labelWidth) / 2 - RING_GAP;
-	return Math.max(0, Math.min(glyph.getComputedTextLength() / 2, sidePadding));
+	const labelRight = label ? box.x + (box.width + label.getBBox().width) / 2 : -Infinity;
+	const inset = NODE_CORNER_RADIUS + RING_GAP;
+	const x = Math.max(box.x + inset, box.x + box.width - inset - width, labelRight + RING_GAP);
+	return { x, y: box.y + box.height - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 
 function getShapeBoxAR(groupEl) {

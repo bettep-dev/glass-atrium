@@ -747,50 +747,87 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
-	test("a fault verdict's corner glyph sits on its own node's bottom-right corner, at most half past the right edge, clear of every label and other node", async () => {
-		const glyphs = await ctx.page.evaluate((sel) => {
-			// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
-			const shapes = new Map(
-				Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
-					group,
-					(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
-				]),
-			);
-			const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
-				.map((label) => label.getBoundingClientRect())
-				.filter((box) => box.width > 0 && box.height > 0);
-			return Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
-				.filter((glyph) => getComputedStyle(glyph).display !== "none")
-				.map((glyph) => {
-					const owner = glyph.parentElement as Element;
-					const g = glyph.getBoundingClientRect();
-					const n = shapes.get(owner) as DOMRect;
-					// other nodes only — a cluster box contains its members, so it is not a neighbour
-					const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
-					const covered = [...labels, ...neighbours]
-						.filter((b) => Math.min(g.right, b.right) - Math.max(g.left, b.left) > 0 && Math.min(g.bottom, b.bottom) - Math.max(g.top, b.top) > 0)
-						.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
-					return {
-						id: owner.getAttribute("data-arch-node-id") || owner.id,
-						// the whole glyph box, not its anchor point: inside the bottom edge, at most half its width past the right edge
-						anchored:
-							g.top >= (n.top + n.bottom) / 2 && g.bottom <= n.bottom + 0.5 &&
-							g.left >= (n.left + n.right) / 2 && (g.left + g.right) / 2 <= n.right + 0.5,
-						covered,
-						box:
-							`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
-							`node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
-					};
-				});
-		}, ctx.selectors.canvas);
-		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertions below would be vacuous");
-		const loose = glyphs.filter((glyph) => !glyph.anchored);
-		assert.deepEqual(loose, [], `glyphs past their node's corner overhang: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
-		const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
-		assert.deepEqual(
-			covering,
-			[],
-			`glyphs over a label or another node: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`,
-		);
-	});
+	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
+		test(`a counted fault badge reads whole on its own node's bottom border, over the ring and clear of every label, at ${width}x${height}`, async () => {
+			const pattern = "**/api/health/daemons";
+			// two more faulted parts bound to one node → the badge carries its widest text, the count
+			const health = getDaemonHealthFixture(FAULT_VERDICT);
+			for (const daemonName of ["daily-restart-autoagent", "daily-restart-wiki"]) health.daemons.push({ ...health.daemons[0], daemon_name: daemonName });
+			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
+			try {
+				await ctx.page.setViewportSize({ width, height });
+				await ctx.page.reload({ waitUntil: "load" });
+				await ctx.page.waitForFunction(
+					(sel) => Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some((glyph) => (glyph.textContent || "").includes("×")),
+					ctx.selectors.canvas,
+					{ timeout: 30_000 },
+				);
+				const glyphs = await ctx.page.evaluate((sel) => {
+					// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
+					const probe = document.createElement("style");
+					probe.textContent = `${sel} svg :is(rect.arch-ring, text.arch-ring-glyph, rect.arch-ring-glyph-pill) { pointer-events: auto !important; }`;
+					document.head.appendChild(probe);
+					const shapes = new Map(
+						Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+							group,
+							(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+						]),
+					);
+					const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+						.map((label) => label.getBoundingClientRect())
+						.filter((box) => box.width > 0 && box.height > 0);
+					const readings = Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
+						.filter((glyph) => getComputedStyle(glyph).display !== "none")
+						.map((glyph) => {
+							glyph.scrollIntoView({ block: "center", inline: "center" });
+							const owner = glyph.parentElement as Element;
+							const pill = owner.querySelector(":scope > rect.arch-ring-glyph-pill") as Element;
+							const g = glyph.getBoundingClientRect();
+							const p = pill.getBoundingClientRect();
+							const n = shapes.get(owner) as DOMRect;
+							// other nodes only — a cluster box contains its members, so it is not a neighbour
+							const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
+							const covered = [...labels, ...neighbours]
+								.filter((b) => Math.min(g.right, b.right) - Math.max(g.left, b.left) > 0 && Math.min(g.bottom, b.bottom) - Math.max(g.top, b.top) > 0)
+								.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
+							// whole glyph box sampled — anything but the badge on top of a sample point occludes the text
+							const occluders: string[] = [];
+							for (let col = 0; col <= 6; col++)
+								for (let row = 0; row <= 2; row++) {
+									const x = g.left + 1 + ((g.width - 2) * col) / 6;
+									const y = g.top + 1 + ((g.height - 2) * row) / 2;
+									const hit = document.elementFromPoint(x, y);
+									if (hit !== glyph && hit !== pill) occluders.push(`${hit?.tagName}.${hit?.getAttribute("class") || ""}@${x.toFixed(0)},${y.toFixed(0)}`);
+								}
+							return {
+								id: owner.getAttribute("data-arch-node-id") || owner.id,
+								text: glyph.textContent || "",
+								// sitting across its own node's bottom border, starting inside the node's sides
+								attached: p.left > n.left && p.left < n.right && p.top < n.bottom && p.bottom > n.bottom,
+								covered,
+								occluders,
+								box:
+									`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
+									`pill ${p.left.toFixed(0)},${p.top.toFixed(0)}-${p.right.toFixed(0)},${p.bottom.toFixed(0)} ` +
+									`node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
+							};
+						});
+					probe.remove();
+					return readings;
+				}, ctx.selectors.canvas);
+				assert.ok(glyphs.some((glyph) => glyph.text.includes("×2")), `no counted badge drawn: ${glyphs.map((g) => g.text).join(" ")}`);
+				const loose = glyphs.filter((glyph) => !glyph.attached);
+				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+				const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
+				assert.deepEqual(covering, [], `badges over a label or another node: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
+				const hidden = glyphs.filter((glyph) => glyph.occluders.length > 0);
+				assert.deepEqual(hidden, [], `badge text painted over: ${hidden.map((g) => `${g.id} '${g.text}' (${g.box} · ${g.occluders.join(" ")})`).join("; ")}`);
+			} finally {
+				await ctx.page.unroute(pattern);
+				await ctx.page.setViewportSize({ width: 1440, height: 900 });
+				await ctx.page.reload({ waitUntil: "load" });
+				await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });
+			}
+		});
+	}
 });
