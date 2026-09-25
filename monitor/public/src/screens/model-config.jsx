@@ -173,17 +173,28 @@ const BUDGET_META_MC = {
 	},
 };
 
+// Settled ledger row height at 1440 — skeleton rows hold the table's height until the read lands.
+const LEDGER_ROW_HEIGHT_MC = 60;
+// PUT validation answers name the rejected field — kept longer than a GET error body for Details.
+const SAVE_ERROR_BODY_MAX_MC = 300;
+
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 function ScreenModelConfig() {
-	const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const {
+		PageHeader,
+		TypeScaleStyle,
+		FreshnessStamp,
+		RefreshButton,
+		RegionUnavailable,
+		INITIAL_REGION_STATE,
+		putRegionRequest,
+		putRegionData,
+		putRegionFailure,
+	} = window.UI;
 
-	const [configState, setConfigState] = useStateMC({
-		status: "loading",
-		data: null,
-		error: null,
-	});
+	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
 	// form = 편집 버퍼 { models: {domain→value}, budgets: {budgetKey→value} } — GET 의 desired 미러.
 	const [form, setForm] = useStateMC(null);
 	const [saving, setSaving] = useStateMC(false);
@@ -196,6 +207,8 @@ function ScreenModelConfig() {
 	const [discardConfirm, setDiscardConfirm] = useStateMC(false);
 
 	const abortRef = useRefMC(null);
+	// committed read the form buffer was edited against → a landing refresh can tell edits from stale values
+	const configDataRef = useRefMC(null);
 	const toastTimerRef = useRefMC(null);
 
 	const showToast = useCallbackMC((tone, message) => {
@@ -212,26 +225,24 @@ function ScreenModelConfig() {
 		abortRef.current?.abort();
 		abortRef.current = ctrl;
 
-		setConfigState({ status: "loading", data: null, error: null });
+		setConfigState((s) => putRegionRequest(s, "config", ctrl));
 		setSaveError(null);
 		fetchJsonMC("/api/model-config", ctrl.signal)
 			.then((data) => {
-				setConfigState(readyStateMC(data));
-				setForm(buildFormMC(data));
+				if (ctrl.signal.aborted) return;
+				const prevData = configDataRef.current;
+				setConfigState((s) => putRegionData(s, ctrl, data));
+				setForm((f) => getRefreshedFormMC(f, prevData, data));
+				setAsOfAt(Date.now());
 			})
-			.catch((err) => {
-				if (err && err.name === "AbortError") return;
-				setConfigState({
-					status: "error",
-					data: null,
-					error: err && err.message ? err.message : String(err),
-				});
-			});
+			.catch((err) => setConfigState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	useEffectMC(() => setAsOfAt((prevAt) => getLastReadAtMC(prevAt, configState)), [configState]);
+	useEffectMC(() => {
+		configDataRef.current = configState.data;
+	}, [configState.data]);
 
 	const baseline = useMemoMC(
 		() =>
@@ -292,11 +303,14 @@ function ScreenModelConfig() {
 		setSaving(true);
 		setSaveError(null);
 		setSurfaceResults(null);
+		// the PUT answer supersedes an in-flight read → that read must not land over it
+		abortRef.current?.abort();
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
 			const data = await putJsonMC("/api/model-config", body);
-			setConfigState(readyStateMC(data));
+			setConfigState((s) => putRegionData(putRegionRequest(s, "save", body), body, data));
 			setForm(buildFormMC(data));
+			setAsOfAt(Date.now());
 			const problems = extractSurfaceResultsMC(data);
 			setSurfaceResults(problems);
 			// Only a clean save ends in a toast — a failed or skipped surface gets the card instead.
@@ -332,7 +346,7 @@ function ScreenModelConfig() {
 	// the form buffer, so the sticky Save bar is absent exactly then.
 	const resyncPayload = ready ? resyncPayloadMC(data, payload) : null;
 	const hasAlarm = Boolean(
-		configState.status === "error" || saveError || showDrift || surfaceResults,
+		configState.error || saveError || showDrift || surfaceResults,
 	);
 	// state prop per section rather than a lifted header — both keep the headers in every state
 	// → the smaller diff wins (plan Open Question: implementer's call).
@@ -343,11 +357,8 @@ function ScreenModelConfig() {
 			: "unavailable";
 
 	return (
-		<div className="flex flex-col">
+		<div className="flex flex-col min-w-0">
 			<TypeScaleStyle />
-			<style>
-				{"@keyframes skelPulseMC { 0%,100%{opacity:.7} 50%{opacity:.35} }"}
-			</style>
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Models & budgets"
@@ -358,14 +369,12 @@ function ScreenModelConfig() {
 								sync={headerSyncMC(data)}
 							/>
 							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
-							<button
-								className="btn ghost sm"
-								onClick={triggerRefresh}
-								aria-label="Reload model config"
-							>
-								<Icon name="refresh" size={14} />
-								Refresh
-							</button>
+							<RefreshButton
+								isBusy={configState.busy}
+								hasRead={asOfAt !== null}
+								onRefresh={triggerRefresh}
+								label="Reload model config"
+							/>
 						</>
 					}
 				/>
@@ -376,12 +385,11 @@ function ScreenModelConfig() {
 					className="mb-4 flex flex-col gap-3"
 					role="region"
 					aria-label="Alerts">
-					{configState.status === "error" && (
-						<ErrorBannerMC
-							title="Couldn't load model config"
-							detail={configState.error}
-							onRetry={triggerRefresh}
-						/>
+					{/* header Refresh is this outage's one retry → the card carries none */}
+					{configState.error && (
+						<div role="alert">
+							<RegionUnavailable source="model config" error={configState.error} />
+						</div>
 					)}
 					{saveError && (
 						<ErrorBannerMC
@@ -506,8 +514,8 @@ function SyncTokenMC({ state, sync }) {
 		tone: "neutral",
 	};
 
-	// steady glyph (neutral) → the first question reads first · empty roster → no glyph to claim
-	const glyph = sync === "ok" ? "check" : sync === "empty" ? null : "warn";
+	// the freshness stamp owns the one tick → only a state needing action spends a glyph
+	const glyph = sync === "ok" || sync === "empty" ? null : "warn";
 
 	return (
 		<span
@@ -525,21 +533,18 @@ function SyncTokenMC({ state, sync }) {
 	);
 }
 
-// a refresh resets the config to loading → keep the last successful read so the stamp survives it
-function getLastReadAtMC(prevAt, state) {
-	return state.status === "ready" && state.receivedAt ? state.receivedAt : prevAt;
-}
-
 function getFreshnessInputMC(asOfAt, state) {
-	return { at: asOfAt, loading: state.status === "loading", failed: state.status === "error" };
+	return { at: asOfAt, regions: [state] };
 }
 
-// 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.
+// 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
 function SectionHeadMC({ label, sub, right }) {
+	const { SectionLabel } = window.UI;
+
 	return (
 		<div className="border-t border-line pt-4 mb-3">
 			<div className="flex items-center justify-between gap-2">
-				<span className="section-label">{label}</span>
+				<SectionLabel>{label}</SectionLabel>
 				{right ?? null}
 			</div>
 			{sub && (
@@ -551,12 +556,15 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live·Takes effect = 4.
-const DOMAIN_TABLE_COLSPAN_MC = 4;
-
-// One column grid for both ledgers — content-sized cells let Live / Takes effect drift apart.
-const LEDGER_COL_WIDTHS_MC = ["32%", "30%", "22%", "16%"];
+// One column grid for both ledgers — content-sized cells let the Live columns drift apart.
+const LEDGER_COL_WIDTHS_MC = ["36%", "32%", "32%"];
+// Skeleton columns + empty-row colSpan for both ledgers.
+const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
+// One line of fs-meta — the saved/reset slot holds this height while empty.
+const SAVED_LINE_STYLE_MC = { minHeight: "1.5em" };
+// The page's one link token — section link and inline reset read alike.
+const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 
 function LedgerColsMC() {
 	return (
@@ -578,28 +586,48 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
+	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
+	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
 		<div className="mb-4">
-			<SectionHeadMC label="Model assignment" />
-			{state !== "ready" ? (
-				<SectionBodyStateMC state={state} rows={DOMAIN_ORDER_MC.length} />
+			<SectionHeadMC
+				label="Model assignment"
+				sub={getApplyModeSubMC(sharedMode)}
+				right={
+					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
+						Cost & usage
+					</a>
+				}
+			/>
+			<TierNotesMC
+				summary="What each tier runs"
+				rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
+			/>
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Model assignment per agent tier</caption>
 					<LedgerColsMC />
 					<thead>
 						<tr>
-							<th>Agent tier</th>
-							<th>Model</th>
-							<th>Live</th>
-							<th>Takes effect</th>
+							<TableHead>Agent tier</TableHead>
+							<TableHead>Model</TableHead>
+							<TableHead>Live</TableHead>
 						</tr>
 					</thead>
-					<tbody>
-						{rows.length === 0 ? (
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={DOMAIN_ORDER_MC.length}
+								columns={LEDGER_COL_COUNT_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
 							<EmptyRowMC
-								colSpan={DOMAIN_TABLE_COLSPAN_MC}
+								colSpan={LEDGER_COL_COUNT_MC}
 								message="No model domains reported."
 							/>
 						) : (
@@ -611,6 +639,7 @@ function DomainsSectionMC({
 									value={form.models[d.domain] ?? ""}
 									defaultValue={baseline?.models[d.domain] ?? ""}
 									error={errors[d.domain]}
+									sharedMode={sharedMode}
 									onChange={(v) => onModelChange(d.domain, v)}
 								/>
 							))
@@ -633,17 +662,28 @@ function EmptyRowMC({ colSpan, message }) {
 	);
 }
 
-// One-line hint, full text behind a click — a full-width prose row breaks the table rhythm.
-function RowHintMC({ hint, detail }) {
-	if (!hint && !detail) return null;
-	if (!detail || detail === hint) {
-		return <div className="fs-meta text-faint is-wrap">{hint}</div>;
-	}
+function RowHintMC({ hint }) {
+	if (!hint) return null;
+
+	return <div className="fs-meta text-faint is-wrap">{hint}</div>;
+}
+
+// Full descriptions behind one section disclosure — a disclosure per row repeats one affordance N times.
+function TierNotesMC({ summary, rows }) {
+	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
+	if (notes.length === 0) return null;
 
 	return (
-		<details className="fs-meta text-faint">
-			<summary className="is-wrap">{hint}</summary>
-			<div className="is-wrap mt-1">{detail}</div>
+		<details className="fs-meta text-dim mb-2">
+			<summary>{summary}</summary>
+			<dl className="mt-1 flex flex-col gap-1">
+				{notes.map((meta) => (
+					<div key={meta.label}>
+						<dt className="text-ink">{meta.label}</dt>
+						<dd className="is-wrap">{meta.desc}</dd>
+					</div>
+				))}
+			</dl>
 		</details>
 	);
 }
@@ -655,26 +695,44 @@ const INHERIT_LIVE_LABEL_MC = {
 };
 
 function liveLabelMC(value) {
-	return INHERIT_LIVE_LABEL_MC[value] ?? value ?? "—";
+	return INHERIT_LIVE_LABEL_MC[value] ?? value;
 }
 
-// Live value = measured at the consumption point. Matching the saved target → a dim '= saved'
-// (the value sits in the tooltip, never repeated); differing → the value + one warn badge.
+// [model label, files[]] in first-seen order — the model is the parity proof, so it is shown whole once.
+function groupFilesByModelMC(fileRows) {
+	const groups = new Map();
+	for (const f of fileRows) {
+		const model = liveLabelMC(f.model ?? "inherit");
+		groups.set(model, [...(groups.get(model) ?? []), f.file]);
+	}
+	return [...groups];
+}
+
+/**
+ * Live value = measured at the consumption point.
+ * Matching the saved target → 'Matches saved' (tooltip 'Live value: …') · differing → the value + one warn badge · absent → nothing.
+ */
 function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
+	const fileGroups = groupFilesByModelMC(fileRows);
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
-				<span
-					className={`font-mono fs-meta truncate ${drift ? "text-ink" : "text-dim"}`}
-					title={isSteady ? `Live value matches the saved setting: ${label}` : undefined}
-				>
-					{isSteady ? "= saved" : label}
-				</span>
+				{isSteady ? (
+					<span className="fs-meta text-faint" title={`Live value: ${label}`}>
+						Matches saved
+					</span>
+				) : (
+					value != null && (
+						<span className="font-mono fs-meta truncate text-ink" title={label}>
+							{label}
+						</span>
+					)
+				)}
 				{drift && (
 					<span title={driftTitle}>
 						<Badge role="status" tone="warn" icon={true} className="pill--ctl-h">
@@ -684,12 +742,17 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				)}
 			</div>
 			{fileRows.length > 0 && (
-				<details className="fs-micro text-faint">
+				<details className="fs-meta text-faint">
 					<summary>{fileRows.length} files</summary>
-					<div className="mt-1 flex flex-col gap-0.5">
-						{fileRows.map((f) => (
-							<div key={f.file} className="font-mono truncate">
-								{f.file} — {liveLabelMC(f.model ?? "inherit")}
+					<div className="mt-1 flex flex-col gap-1">
+						{fileGroups.map(([model, files]) => (
+							<div key={model}>
+								<div className="font-mono text-dim is-wrap">{model}</div>
+								{files.map((file) => (
+									<div key={file} className="font-mono truncate pl-3" title={file}>
+										{file}
+									</div>
+								))}
 							</div>
 						))}
 					</div>
@@ -699,14 +762,38 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 	);
 }
 
-// Take-effect cell — toneless: a report, not an alarm.
-function ApplyModeMC({ mode }) {
-	const meta = APPLY_MODE_META_MC[mode] || { label: mode || "—", desc: "" };
+function getApplyModeMetaMC(mode) {
+	return APPLY_MODE_META_MC[mode] || { label: mode, desc: "" };
+}
+
+// Most rows share one apply_mode → the section states it once; rows that differ name their own.
+function getSharedApplyModeMC(rows) {
+	const counts = new Map();
+	for (const r of rows) {
+		if (r.apply_mode) counts.set(r.apply_mode, (counts.get(r.apply_mode) ?? 0) + 1);
+	}
+	let shared = null;
+	for (const [mode, n] of counts) {
+		if (shared === null || n > counts.get(shared)) shared = mode;
+	}
+	return shared;
+}
+
+function getApplyModeSubMC(mode) {
+	if (!mode) return null;
+	const meta = getApplyModeMetaMC(mode);
+	return meta.desc ? `Takes effect: ${meta.label} · ${meta.desc}` : `Takes effect: ${meta.label}`;
+}
+
+// Row-level take-effect note — only where the row departs from the section's shared mode.
+function ApplyModeNoteMC({ mode, sharedMode }) {
+	if (!mode || mode === sharedMode) return null;
+	const meta = getApplyModeMetaMC(mode);
 
 	return (
-		<span className="fs-meta text-dim" title={meta.desc}>
-			{meta.label}
-		</span>
+		<div className="fs-meta text-dim" title={meta.desc || undefined}>
+			Takes effect: {meta.label}
+		</div>
 	);
 }
 
@@ -716,6 +803,7 @@ function DomainRowMC({
 	value,
 	defaultValue,
 	error,
+	sharedMode,
 	onChange,
 }) {
 	const { Badge } = window.UI;
@@ -735,7 +823,7 @@ function DomainRowMC({
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
 			<td style={cellPad}>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
-				<RowHintMC hint={meta.hint} detail={meta.desc} />
+				<RowHintMC hint={meta.hint} />
 			</td>
 			<td style={cellPad}>
 				{editable ? (
@@ -749,9 +837,11 @@ function DomainRowMC({
 					/>
 				) : (
 					// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
-					<Badge role="metadata" className="pill--ctl-h">
-						{value || d.desired || "—"}
-					</Badge>
+					(value || d.desired) && (
+						<Badge role="metadata" className="pill--ctl-h">
+							{value || d.desired}
+						</Badge>
+					)
 				)}
 				<PricingNoteMC pricingKnown={d.pricing_known} />
 			</td>
@@ -762,9 +852,7 @@ function DomainRowMC({
 					files={d.files}
 					driftTitle="Live value differs from the saved target — press Save again"
 				/>
-			</td>
-			<td style={cellPad}>
-				<ApplyModeMC mode={d.apply_mode} />
+				<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
 			</td>
 		</tr>
 	);
@@ -842,40 +930,46 @@ function ModelSelectMC({
 	);
 }
 
-// Tier → Cost & usage link; pricing_known=false also says why the cost there is a fallback estimate.
+// Unpriced tier only — the section header carries the one Cost & usage link.
 function PricingNoteMC({ pricingKnown }) {
-	if (pricingKnown === undefined) return null;
+	if (pricingKnown !== false) return null;
 
 	return (
-		<div className={`fs-meta mt-1 ${pricingKnown ? "text-faint" : "text-warn"}`}>
-			{!pricingKnown && "No price listed — billed at the conservative fallback rate · "}
-			<a href="#cost">Cost & usage</a>
+		<div className="fs-meta mt-1 text-warn">
+			No price listed — billed at the conservative fallback rate
 		</div>
 	);
 }
 
-// 기본값 ghost + 되돌리기 (T-MDL-6) — 저장된 baseline 과 다를 때만 노출. model/budget 공용.
+// Saved value + reset, model/budget 공용 — the slot renders even when empty so an edit never grows the row.
 function GhostResetMC({ overridden, defaultValue, onReset }) {
-	if (!overridden) return null;
-
 	return (
-		<div className="fs-micro text-faint mt-1 flex items-center gap-1.5 flex-wrap">
-			<span>Saved:</span>
-			<span className="font-mono text-dim">{defaultValue || "—"}</span>
-			<button
-				type="button"
-				className="text-accent underline underline-offset-2"
-				onClick={onReset}
-				aria-label="Reset this field to the saved value"
-			>
-				reset
-			</button>
+		<div
+			data-slot="saved-line"
+			className="fs-meta text-faint mt-1 flex items-center gap-1.5 flex-wrap"
+			style={SAVED_LINE_STYLE_MC}
+		>
+			{overridden && (
+				<>
+					{defaultValue && (
+						<>
+							<span>Saved:</span>
+							<span className="font-mono text-dim">{defaultValue}</span>
+						</>
+					)}
+					<button
+						type="button"
+						className={LINK_CLASS_MC}
+						onClick={onReset}
+						aria-label="Reset this field to the saved value"
+					>
+						Reset
+					</button>
+				</>
+			)}
 		</div>
 	);
 }
-
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live·Takes effect = 4.
-const BUDGET_TABLE_COLSPAN_MC = 4;
 
 // per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
 function BudgetsSectionMC({
@@ -886,28 +980,43 @@ function BudgetsSectionMC({
 	errors,
 	onBudgetChange,
 }) {
+	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
+	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
 		<div className="mb-4">
-			<SectionHeadMC label="Per-call budget caps" />
-			{state !== "ready" ? (
-				<SectionBodyStateMC state={state} rows={2} />
+			<SectionHeadMC
+				label="Per-call budget caps"
+				sub={getApplyModeSubMC(sharedMode)}
+			/>
+			<TierNotesMC
+				summary="What each cap stops"
+				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+			/>
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Per-call budget cap per background call</caption>
 					<LedgerColsMC />
 					<thead>
 						<tr>
-							<th>Background call</th>
-							<th>Per-call cap</th>
-							<th>Live</th>
-							<th>Takes effect</th>
+							<TableHead>Background call</TableHead>
+							<TableHead>Per-call cap</TableHead>
+							<TableHead>Live</TableHead>
 						</tr>
 					</thead>
-					<tbody>
-						{rows.length === 0 ? (
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={2}
+								columns={LEDGER_COL_COUNT_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
 							<EmptyRowMC
-								colSpan={BUDGET_TABLE_COLSPAN_MC}
+								colSpan={LEDGER_COL_COUNT_MC}
 								message="No budget caps reported."
 							/>
 						) : (
@@ -918,6 +1027,7 @@ function BudgetsSectionMC({
 									value={form.budgets[b.domain] ?? ""}
 									defaultValue={baseline?.budgets[b.domain] ?? ""}
 									error={errors[b.domain]}
+									sharedMode={sharedMode}
 									onChange={(v) => onBudgetChange(b.domain, v)}
 								/>
 							))
@@ -936,20 +1046,21 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// 예산 1행 — $ 입력(2-decimal 문자열) + validate-on-blur + field-adjacent role=alert (T-MDL-4)
-// + 실측/반영 시점 + ghost default/reset (T-MDL-6).
-function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
+/**
+ * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
+ * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
+ */
+function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
-	// touched = blur 1회 후에만 inline 에러 노출 (validate-on-blur — 타이핑 중 noise 억제).
-	const [touched, setTouched] = useStateMC(false);
-	const showError = error && touched;
+	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
+	const showError = Boolean(error);
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
 			<td>
 				<div className="fs-body">{meta.label}</div>
-				<RowHintMC hint={meta.hint} detail={meta.desc} />
+				<RowHintMC hint={meta.hint} />
 			</td>
 			<td>
 				<div className="flex items-center gap-2">
@@ -965,7 +1076,6 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 							value={value}
 							placeholder={budgetPlaceholderMC()}
 							onChange={(e) => onChange(e.target.value)}
-							onBlur={() => setTouched(true)}
 							aria-label={`${meta.label} per-call cap in USD`}
 							aria-invalid={showError ? "true" : undefined}
 						/>
@@ -989,9 +1099,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 					drift={b.drift}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
 				/>
-			</td>
-			<td>
-				<ApplyModeMC mode={b.apply_mode} />
+				<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
 			</td>
 		</tr>
 	);
@@ -1040,19 +1148,27 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 	);
 }
 
+const SURFACE_STATUS_MC = {
+	ok: { word: "Written", tone: "ok" },
+	skipped: { word: "Skipped", tone: "warn" },
+	failed: { word: "Failed", tone: "crit" },
+};
+
+// Words for the status, mono for the surface id alone — an empty field is left out, never dashed.
 function SurfaceResultRowMC({ result: r }) {
 	const { Badge } = window.UI;
-	const tone = r.status === "ok" ? "ok" : r.status === "skipped" ? "warn" : "crit";
+	const status = r.status ? SURFACE_STATUS_MC[r.status] ?? { word: r.status, tone: "crit" } : null;
+	const surface = r.surface ?? r.target ?? r.file ?? r.domain;
 
 	return (
-		<div className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0">
-			<Badge role="status" tone={tone} icon={true}>
-				{r.status || "—"}
-			</Badge>
-			<span className="text-dim truncate">
-				{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
-			</span>
-			{r.reason && <span className="text-faint truncate">— {r.reason}</span>}
+		<div className="flex items-center gap-2 fs-meta py-1 border-b border-line last:border-0">
+			{status && (
+				<Badge role="status" tone={status.tone} icon={true}>
+					{status.word}
+				</Badge>
+			)}
+			{surface && <span className="font-mono text-dim truncate">{surface}</span>}
+			{r.reason && <span className="text-faint truncate">{r.reason}</span>}
 		</div>
 	);
 }
@@ -1154,7 +1270,8 @@ function DiscardConfirmMC({ onConfirm, onCancel }) {
 
 // 공통 chrome
 function ErrorBannerMC({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
+	const { Icon, getErrorCopy } = window.UI;
+	const copy = getErrorCopy(detail, "");
 	return (
 		<div
 			role="alert"
@@ -1167,13 +1284,12 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 			<Icon name="warn" size={16} className="text-crit mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
+				<div className="fs-meta text-dim mt-1">{copy.next}</div>
+				{copy.detail && (
+					<details className="fs-meta text-faint mt-1">
+						<summary className="cursor-pointer">Details</summary>
+						<code className="block mt-1 font-mono break-all">{copy.detail}</code>
+					</details>
 				)}
 			</div>
 			<button className="btn sm" onClick={onRetry} aria-label="Retry">
@@ -1183,28 +1299,8 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-function SectionBodyStateMC({ state, rows }) {
-	if (state === "loading") {
-		return (
-			<div aria-busy="true" aria-label="Loading rows">
-				{Array.from({ length: rows }, (_unused, i) => (
-					<div
-						key={i}
-						style={{
-							height: 34,
-							marginBottom: 6,
-							borderRadius: 6,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-							animation: "skelPulseMC 1.4s ease-in-out infinite",
-						}}
-					/>
-				))}
-			</div>
-		);
-	}
-
-	// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
+// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
+function SectionUnavailableMC() {
 	return (
 		<div className="fs-meta text-faint py-2">
 			Not available — the saved config could not be loaded.
@@ -1299,8 +1395,19 @@ function sortBudgetsMC(budgets) {
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
 }
 
-function readyStateMC(data) {
-	return { status: "ready", data, error: null, receivedAt: Date.now() };
+// Refresh landing — unsaved edits survive; every untouched field takes the new read.
+function getRefreshedFormMC(form, prevData, data) {
+	const next = buildFormMC(data);
+	if (!form || !prevData) return next;
+
+	const saved = buildFormMC(prevData);
+	for (const group of ["models", "budgets"]) {
+		for (const key of Object.keys(next[group])) {
+			const edit = form[group][key];
+			if (edit !== undefined && edit !== saved[group][key]) next[group][key] = edit;
+		}
+	}
+	return next;
 }
 
 // Banner remedy payload — re-sends the saved target of every drifted row, so the PUT reaches the
@@ -1363,17 +1470,7 @@ async function fetchJsonMC(url, signal) {
 		signal,
 		headers: { Accept: "application/json" },
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* body parse 실패 무시 */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 120) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res);
 	return res.json();
 }
 
@@ -1383,17 +1480,7 @@ async function putJsonMC(url, payload) {
 		headers: { "content-type": "application/json", Accept: "application/json" },
 		body: JSON.stringify(payload),
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* body parse 실패 무시 */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 300) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res, SAVE_ERROR_BODY_MAX_MC);
 	return res.json();
 }
 
