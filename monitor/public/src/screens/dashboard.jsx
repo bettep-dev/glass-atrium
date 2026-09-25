@@ -147,8 +147,7 @@ function ScreenDashboard({ onNav, harness }) {
 
 // ≥2 unloaded tiles failing on one cause → one page banner carries the only Retry
 function getTileSharedFailure(tiles) {
-  const failed = tiles.filter((tile) => tile.status === 'error');
-  return window.UI.getSharedFailure(failed.map((tile) => ({ source: tile.source, error: tile.error })));
+  return window.UI.getSharedFailure(tiles.map((tile) => ({ source: tile.source, error: tile.error })));
 }
 
 // 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
@@ -188,7 +187,7 @@ function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob })
 }
 
 // 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
-// flat hairline row (CS-1 .alarm-row) — tone rides on the leading glyph only
+// flat hairline row (.alarm-row) — tone rides on the leading glyph only
 function AlarmRow({ alarm, onNav, children }) {
   const { Icon, TONE_ICON } = window.UI;
   return (
