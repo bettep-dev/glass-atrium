@@ -94,6 +94,9 @@ const ZONE_UNVERIFIED_CLASS = "arch-zone-unverified";
 const RING_GLYPH_CLASS = "arch-ring-glyph";
 const RING_GLYPH_PILL_CLASS = "arch-ring-glyph-pill";
 
+// a node's own drawn shape — never a planted ring or badge pill
+const NODE_SHAPE_SELECTOR = `:is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.${RING_GLYPH_PILL_CLASS})`;
+
 // badge text inset from its pill's rounded ends (SVG user units)
 const GLYPH_PILL_PAD_X = 10;
 
@@ -109,7 +112,8 @@ const HEALTH_WORD_AR = { ok: "ok", info: "not verified", warn: "needs attention"
 const UNVERIFIED_WORD_AR = "not verified";
 // border colours copy the drawn map's classDef strokes (diagrams-source.ts) — a unit test holds the pair together
 const MAP_BORDER_KEY_AR = [
-	{ key: "focal", color: "#60a5fa", label: "Orchestrator" },
+	// dark --cat-2 teal, not --cat-3 blue: blue is the dark --focus-ring, so a focused node would read as the orchestrator
+	{ key: "focal", color: "#2dd4bf", label: "Orchestrator" },
 	{ key: "security", color: "#a78bfa80", label: "Safety checks" },
 ];
 // a group whose title only repeats its single box's label — the title is hidden, the box stays
@@ -628,8 +632,10 @@ function ScreenArchitecture(
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					".arch-mermaid-canvas .node { cursor: pointer; transition: opacity .12s; } " +
-					".arch-mermaid-canvas .node:hover { opacity: 0.78; } " +
+					".arch-mermaid-canvas .node { cursor: pointer; } " +
+					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
+					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
+					`#${ARCH_CANVAS_ID} .node:is(:hover, :focus-visible) > ${NODE_SHAPE_SELECTOR} { filter: brightness(1.35); } ` +
 					// 상태 링 — 판정을 받은 노드·존의 테두리. no-data 는 규칙 자체가 없음.
 					// 채널은 mermaid 의 도형도 outline 도 아니고, 우리가 g 안에 심은 사각형임. 세 번 재서 여기까지 옴:
 					//  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임
@@ -660,7 +666,7 @@ function ScreenArchitecture(
 					// 클래스는 남김: 판정이 왔다는 사실의 유일한 표식이고, 링은 그 사실의 표현일 뿐임.
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
-					`#${ARCH_CANVAS_ID} .node.security > :is(rect, path, polygon, circle, ellipse):not(.arch-ring) { stroke-dasharray: none !important; } ` +
+					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
@@ -721,7 +727,7 @@ function ScreenArchitecture(
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
 					// 모션 게이트 — 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
-					".arch-mermaid-canvas .node, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
+					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > *, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -2817,7 +2823,7 @@ function getCornerBadgeGeometryAR(box, textWidth) {
 
 function getShapeBoxAR(groupEl) {
 	const shape = groupEl.querySelector(
-		":scope > :is(rect, path, polygon, circle, ellipse):not(.arch-ring)",
+		`:scope > ${NODE_SHAPE_SELECTOR}`,
 	);
 	if (!shape) return null;
 

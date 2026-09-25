@@ -674,6 +674,110 @@ describe("healthy live fixture", () => {
 			"a part with a stamped binding but no arrived verdict must stay unlit — an unresolved response is not a healthy one",
 		);
 	});
+
+	/** a node's own drawn shape, mirroring the screen's selector — never a planted ring or badge pill */
+	const NODE_SHAPE = ":is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.arch-ring-glyph-pill)";
+
+	test("hovering a node brightens only its shape — the health ring, declared border colour and layout stay put", async (t) => {
+		const plain = `${ctx.selectors.canvas} svg g.node:not(.focal):not(.security):not(.external)`;
+		const read = () =>
+			ctx.page.evaluate(({ node: nodeSel, shape: shapeSel }) => {
+				const node = document.querySelector(nodeSel);
+				const shape = node?.querySelector(`:scope > ${shapeSel}`);
+				const ring = node?.querySelector(":scope > rect.arch-ring-state");
+				const box = node?.getBoundingClientRect();
+				return {
+					filter: shape ? getComputedStyle(shape).filter : "",
+					stroke: shape ? getComputedStyle(shape).stroke : "",
+					ring: ring ? `${getComputedStyle(ring).display} ${getComputedStyle(ring).stroke} ${getComputedStyle(ring).filter}` : "",
+					box: box ? `${box.x},${box.y},${box.width},${box.height}` : "",
+				};
+			}, { node: plain, shape: NODE_SHAPE });
+
+		// reduced motion drops the 120ms fade, so a reading is the settled highlight rather than a mid-transition frame
+		await ctx.page.emulateMedia({ reducedMotion: "reduce" });
+		try {
+			await ctx.page.mouse.move(0, 0);
+			const rest = await read();
+			await ctx.page.hover(plain);
+			const hovered = await read();
+			t.diagnostic(`rest ${JSON.stringify(rest)} · hover ${JSON.stringify(hovered)}`);
+
+			assert.equal(rest.filter, "none", "a resting node carries no highlight");
+			assert.notEqual(hovered.filter, "none", "hover must lift the node's shape");
+			assert.deepEqual(
+				{ stroke: hovered.stroke, ring: hovered.ring, box: hovered.box },
+				{ stroke: rest.stroke, ring: rest.ring, box: rest.box },
+				"hover keeps the declared border colour (the filter only brightens it, hue kept), the health ring and the node's box",
+			);
+		} finally {
+			await ctx.page.mouse.move(0, 0);
+			await ctx.page.emulateMedia({ reducedMotion: "no-preference" });
+		}
+	});
+
+	test("keyboard-focusing a node brightens its shape while unfocused nodes stay at rest", async () => {
+		await ctx.page.emulateMedia({ reducedMotion: "reduce" });
+		try {
+			await ctx.page.mouse.move(0, 0);
+			let focused = { filter: "", rest: "" };
+			for (let step = 0; step < 60 && !focused.filter; step += 1) {
+				await ctx.page.keyboard.press("Tab");
+				focused = await ctx.page.evaluate(({ canvas, shape: shapeSel }) => {
+					const node = document.activeElement?.closest(`${canvas} svg g.node`);
+					const shape = node?.matches(":focus-visible") ? node.querySelector(`:scope > ${shapeSel}`) : null;
+					const other = [...document.querySelectorAll(`${canvas} svg g.node`)]
+						.find((candidate) => candidate !== node)
+						?.querySelector(`:scope > ${shapeSel}`);
+					return { filter: shape ? getComputedStyle(shape).filter : "", rest: other ? getComputedStyle(other).filter : "" };
+				}, { canvas: ctx.selectors.canvas, shape: NODE_SHAPE });
+			}
+
+			assert.ok(focused.filter, "fixture precondition: Tab must reach a map node within 60 presses");
+			assert.equal(focused.rest, "none", "an unfocused node carries no highlight");
+			assert.notEqual(focused.filter, "none", "keyboard focus must lift the focused node's shape");
+		} finally {
+			await ctx.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+			await ctx.page.emulateMedia({ reducedMotion: "no-preference" });
+		}
+	});
+
+	test("the orchestrator border differs from the focus ring and holds 3:1 against its node and zone fills", async (t) => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const probe = await ctx.page.evaluate(({ canvas, shape: shapeSel }) => {
+			const node = document.querySelector(`${canvas} svg g.node.focal`);
+			const shape = node?.querySelector(`:scope > ${shapeSel}`);
+			const cluster = node?.closest("g.root")?.querySelector("g.cluster[id*='orch'] > rect");
+			const ring = document.createElement("div");
+			ring.style.color = "rgb(var(--focus-ring))";
+			document.body.append(ring);
+			const focusRing = getComputedStyle(ring).color;
+			ring.remove();
+			return {
+				focal: { stroke: shape ? getComputedStyle(shape).stroke : "", fill: shape ? getComputedStyle(shape).fill : "" },
+				clusterFill: cluster ? getComputedStyle(cluster).fill : "",
+				focusRing,
+			};
+		}, { canvas: ctx.selectors.canvas, shape: NODE_SHAPE });
+		const getLuminance = (rgb: string) => {
+			const [r, g, b] = (rgb.match(/[\d.]+/g) ?? []).slice(0, 3).map((v) => {
+				const c = Number(v) / 255;
+				return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+			});
+			return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+		};
+		const getContrast = (a: string, b: string) => {
+			const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
+			return (hi + 0.05) / (lo + 0.05);
+		};
+		const surfaces = [probe.focal.fill, probe.clusterFill].filter(Boolean);
+		const contrast = Math.min(...surfaces.map((surface) => getContrast(probe.focal.stroke, surface)));
+		t.diagnostic(`${JSON.stringify(probe)} · min contrast ${contrast.toFixed(2)}`);
+
+		assert.ok(surfaces.length === 2, `fixture precondition: node fill and zone fill both read — ${JSON.stringify(probe)}`);
+		assert.notEqual(probe.focal.stroke, probe.focusRing, "the orchestrator border must not reuse the focus-ring colour");
+		assert.ok(contrast >= 3, `orchestrator border contrast ${contrast.toFixed(2)} < 3:1`);
+	});
 });
 
 describe("fault live fixture", () => {
