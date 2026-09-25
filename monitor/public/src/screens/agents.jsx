@@ -72,16 +72,15 @@ const TOPN_MIN_SAMPLE = 3;
 const SPARK_WIDTH  = 60;
 const SPARK_HEIGHT = 20;
 
-// Delete reads destructive without the filled weight of a primary action.
 // Every listed pair is failing, so its rate keeps the failure tint whatever its sample size.
 const PAIR_RATE_STYLE = { color: 'rgb(var(--crit))' };
+// Delete reads destructive without the filled weight of a primary action.
 const DELETE_OUTLINE_STYLE = { color: 'rgb(var(--crit))', borderColor: 'rgb(var(--crit))' };
 
 // 드로어 Recent activity 섹션 — per-agent 최근 outcomes 표시 건수 (drawer 높이 대비 확정값).
 const RECENT_ACTIVITY_LIMIT = 8;
-// h-7 row + space-y-2 gap — the height a drawer section settles to per row
+// per-row height reserved while a drawer section loads — matches a settled row, so the section does not jump
 const DRAWER_SKELETON_ROW_PX = 36;
-
 
 // SubagentStop 미페어 outcome 의 learning-aggregator 합성 fallback — 실 에이전트 아님.
 // 100% 성공률은 합성 버킷의 산물 (의미 없음) → 라벨/툴팁 분리로 오인 차단 (CF6).
@@ -106,10 +105,6 @@ const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.ag-chart-fill { flex: 1 1 auto; min-height: 0; width: 100%; } '
   + '.tbl td { vertical-align: top; }';
-
-// Sticky thead 셀 공통 스타일 — window.UI 의 단일 SoT 참조 (S1, cost/outcomes/health/wiki 미러용).
-// ui.js 가 screens 보다 먼저 로드(index.html 순서)되므로 module-eval 시점에 안전.
-const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
 function ScreenAgents() {
   const {
@@ -249,6 +244,10 @@ function ScreenAgents() {
   // useMemo 로 row 마다 재계산 회피.
   const trendByAgent = useMemoAg(
     () => buildAgentTrendMap(readyData(successState)?.rows ?? []),
+    [successState],
+  );
+  const trendDates = useMemoAg(
+    () => getTrendDates(readyData(successState)?.rows ?? []),
     [successState],
   );
 
@@ -402,13 +401,13 @@ function ScreenAgents() {
           revisionState={revisionState}
           reviewByAgentState={reviewByAgentState}
           latencyState={latencyState}
-          successState={successState}
           failureState={failureState}
           lifecycleState={lifecycleState}
           detailState={detailState}
           blockedState={blockedState}
           recentState={recentState}
           trendByAgent={trendByAgent}
+          trendDates={trendDates}
           failureByAgent={failureByAgent}
           days={days}
           onClose={closeDrawer}
@@ -1039,8 +1038,8 @@ function LatencyBars({ agents }) {
 
 function AgentDetailDrawer({
   drawerAgent, sortedAgents, summaryState, revisionState, reviewByAgentState,
-  latencyState, successState, failureState, lifecycleState,
-  detailState, blockedState, recentState, trendByAgent, failureByAgent,
+  latencyState, failureState, lifecycleState,
+  detailState, blockedState, recentState, trendByAgent, trendDates, failureByAgent,
   days, onClose, onNav, onRetry, onDeleted,
 }) {
   const { DetailSurface, AgentName } = window.UI;
@@ -1197,7 +1196,7 @@ function AgentDetailDrawer({
               summaryState={summaryState}
               latencyState={latencyState}
               trendByAgent={trendByAgent}
-              trendDates={getTrendDates(readyData(successState)?.rows ?? [])}
+              trendDates={trendDates}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1445,8 +1444,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
 
       <CompatibilityDetailBlock compatibility={agent.compatibility}/>
 
-      {/* config 한 줄 — dual-phase + origin pill. 부재 데이터(origin unknown)는 dashed muted 변형으로
-          present 데이터보다 조용하게 (#4). pill 은 base .pill(11px) 통일 (fs-meta override 제거, #5b). */}
+      {/* config 한 줄 — dual-phase + origin pill · 부재 origin 은 dashed muted 변형 → present 데이터보다 조용하게 */}
       <div className="flex items-center gap-2 flex-wrap">
         <Pill tone="neutral">{phaseLabel}</Pill>
         {agent.origin ? (
@@ -1764,7 +1762,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
 // 5. Recent activity — 드로어 열림 시 fetch 한 per-agent 최신 outcomes (result dual-encoded).
 function AgentRecentActivitySection({ recentState, days, onRetry }) {
-  if (recentState.status === 'idle' || recentState.status === 'loading') {
+  if (recentState.status === 'loading') {
     return <DrawerSectionSkeleton rows={3} label="recent activity"/>;
   }
   if (recentState.status === 'error') {
@@ -1820,7 +1818,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
     [detailState, blockedState],
   );
 
-  const isLoading = [detailState, blockedState].some((s) => s.status === 'idle' || s.status === 'loading');
+  const isLoading = [detailState, blockedState].some((s) => s.status === 'loading');
   const firstError = [detailState, blockedState].find((s) => s.status === 'error');
 
   return (
