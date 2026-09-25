@@ -268,7 +268,6 @@ function ScreenArchitecture(
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
-		getSharedFailure,
 		getRegionSummary,
 	} = window.UI;
 
@@ -518,12 +517,16 @@ function ScreenArchitecture(
 	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
 	const healthRegions = Object.values(headlineHealthStates);
 	const healthPending = healthRegions.some((state) => state.status === "loading");
+	// one region list for the stamp, the Refresh button and the caption's failed-read count
+	const pageRegions = [diagState, liveState, ...healthRegions];
+	const readTally = getRegionSummary(pageRegions);
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
 	const healthCaption = getHealthCaptionAR(
 		healthPartRows,
 		healthPending,
 		healthStoreErrors.length,
+		readTally,
 	);
 
 	const handleSelectNode = useCallbackAR(
@@ -561,25 +564,20 @@ function ScreenArchitecture(
 		liveState.status === "ready" ? liveState.data?.governance : null;
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
-	// one outage behind every failed read → one banner and one Retry instead of a card per region
-	const sharedFailure = getSharedFailure([
-		{ source: DIAGRAM_SOURCE_AR, error: getRegionErrorAR(diagState) },
-		{ source: LIVE_SOURCE_AR, error: getRegionErrorAR(liveState) },
-		...Object.keys(HEALTH_STORE_LABELS_AR).map((key) => ({
-			source: HEALTH_STORE_LABELS_AR[key],
-			error: getRegionErrorAR(headlineHealthStates[key]),
-		})),
-	]);
+	const pageFailure = getPageFailureAR(
+		getPageReadEntriesAR(diagState, liveState, headlineHealthStates),
+	);
+	// the map's own card would repeat the page alert — the alert already names it and carries the Retry
+	const isMapInPageAlert = Boolean(pageFailure?.sources.includes(DIAGRAM_SOURCE_AR));
 
 	const alarmRows = getAlarmRows({
 		offWriters,
 		healthStoreErrors,
 		liveState,
 		governance,
-	}).filter((row) => !(sharedFailure && row.retry));
+	}).filter((row) => !(pageFailure && row.retry));
 
-	const pageRegions = [diagState, liveState, ...healthRegions];
-	const isRefreshBusy = getRegionSummary(pageRegions).isBusy;
+	const isRefreshBusy = readTally.isBusy;
 
 	return (
 		<div className="h-full flex flex-col min-h-0">
@@ -718,7 +716,7 @@ function ScreenArchitecture(
 					right={
 						<>
 							<FreshnessStamp
-								{...getFreshnessInputAR(healthAsOf, pageRegions)}
+								{...getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null)}
 							/>
 							<RefreshButton
 								isBusy={isRefreshBusy}
@@ -729,14 +727,14 @@ function ScreenArchitecture(
 						</>
 					}
 				/>
-				<MapCaptionAR caption={healthCaption} />
+				<MapCaptionAR caption={healthCaption} hasMap={diagState.data != null} />
 			</div>
 
 			<div className="arch-page">
-				{sharedFailure && (
+				{pageFailure && (
 					<PageErrorBanner
-						sources={sharedFailure.sources}
-						error={sharedFailure.error}
+						sources={pageFailure.sources}
+						error={pageFailure.error}
 						onRetry={triggerRefresh}
 					/>
 				)}
@@ -745,11 +743,13 @@ function ScreenArchitecture(
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
 				<div className="arch-main">
 					{diagState.status === "error" ? (
-						<RegionUnavailable
-							source={DIAGRAM_SOURCE_AR}
-							error={diagState.error}
-							onRetry={sharedFailure ? undefined : triggerRefresh}
-						/>
+						!isMapInPageAlert && (
+							<RegionUnavailable
+								source={DIAGRAM_SOURCE_AR}
+								error={diagState.error}
+								onRetry={triggerRefresh}
+							/>
+						)
 					) : (
 						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
 							<div
@@ -1342,9 +1342,41 @@ const HEALTH_STORE_LABELS_AR = {
 	hookFailState: "Hook failures",
 };
 
-// held data keeps showing on a failed re-read — only a region with nothing to show counts as down
-function getRegionErrorAR(state) {
-	return state.status === "error" ? state.error : null;
+// the same stores named inside a sentence — the page alert lists them mid-sentence, so only the proper noun keeps a capital
+const HEALTH_STORE_SOURCES_AR = {
+	daemonState: "daemon health",
+	hookState: "the hook chain",
+	pgState: "PostgreSQL",
+	hookFailState: "hook failures",
+};
+
+// every region the page reads, named as the page alert names it
+function getPageReadEntriesAR(diagState, liveState, healthStates) {
+	return [
+		{ source: DIAGRAM_SOURCE_AR, state: diagState },
+		{ source: LIVE_SOURCE_AR, state: liveState },
+		...Object.keys(HEALTH_STORE_SOURCES_AR).map((key) => ({
+			source: HEALTH_STORE_SOURCES_AR[key],
+			state: healthStates[key],
+		})),
+	];
+}
+
+/**
+ * The one page alert for failed reads, or null — a shared outage, or any re-read that failed over held data.
+ * A held region keeps status 'ready' and its old rings, so without this alert its failure reached only the stamp.
+ * Null leaves a lone cold failure to its own region card or alarm row, each with its own Retry.
+ */
+function getPageFailureAR(entries) {
+	const failed = entries.filter((entry) => entry.state && entry.state.error != null);
+	const shared = window.UI.getSharedFailure(
+		failed.map((entry) => ({ source: entry.source, error: entry.state.error })),
+	);
+	if (shared) return shared;
+
+	const held = failed.find((entry) => entry.state.data != null);
+	if (!held) return null;
+	return { sources: failed.map((entry) => entry.source), error: held.state.error };
 }
 
 function getHealthStoreErrorsAR(states) {
@@ -1841,6 +1873,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 				{inbound.length > 0 && (
 					<FlowList
 						title="Incoming"
+						direction="in"
 						items={inbound}
 						nodeIndex={nodeIndex}
 					/>
@@ -1848,6 +1881,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 				{outbound.length > 0 && (
 					<FlowList
 						title="Outgoing"
+						direction="out"
 						items={outbound}
 						nodeIndex={nodeIndex}
 					/>
@@ -1857,32 +1891,35 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 	);
 }
 
-function FlowList({ title, items, nodeIndex }) {
-	const { Icon, getDisplayName } = window.UI;
+function FlowList({ title, items, nodeIndex, direction }) {
+	const { getDisplayName } = window.UI;
+	const peerWord = direction === "in" ? "from" : "to";
 	return (
 		<div>
-			<div className="fs-meta font-mono text-dim mb-0.5">{title}</div>
-			<div
-				className="fs-meta font-mono text-dim space-y-0.5"
-				style={{ maxHeight: 160, overflowY: "auto" }}
+			<div className="fs-meta text-dim mb-0.5">{title}</div>
+			<ul
+				className="fs-meta text-dim space-y-0.5"
+				style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 160, overflowY: "auto" }}
 			>
-				{items.map((f) => {
-					const fromLabel = nodeIndex.get(f.from)?.label || f.from;
-					const toLabel = nodeIndex.get(f.to)?.label || f.to;
-					return (
-						<div key={f.id} className="break-words">
-							<span style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
-								●
-							</span>{" "}
-							<span className="text-faint">{getDisplayName("edge", f.edge_type)}:</span> {fromLabel}{" "}
-							<Icon name="arrow-right" size={11} /> {toLabel}
-							{f.label && <span className="text-faint"> · {f.label}</span>}
-						</div>
-					);
-				})}
-			</div>
+				{items.map((f) => (
+					<li key={f.id} className="break-words">
+						<span aria-hidden="true" style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
+							●
+						</span>{" "}
+						<span className="text-faint">{getDisplayName("edge", f.edge_type)}</span>{" "}
+						{peerWord} {getFlowPeerLabelAR(f, direction, nodeIndex)}
+						{f.label && <span className="text-faint"> · {f.label}</span>}
+					</li>
+				))}
+			</ul>
 		</div>
 	);
+}
+
+// the drawer title already names the open node → a row names only the other end of the edge
+function getFlowPeerLabelAR(flow, direction, nodeIndex) {
+	const peerId = direction === "in" ? flow.from : flow.to;
+	return nodeIndex.get(peerId)?.label || peerId;
 }
 
 // Shared chrome (AR-suffixed: 다른 screen 의 helper 와 충돌 방지)
@@ -2072,7 +2109,7 @@ function buildLiveDaemonsByNodeId(daemons) {
  * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
  * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
  */
-function getHealthCaptionAR(partRows, busy, errored = 0) {
+function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
 	const total = partRows.length;
 	if (total === 0)
 		return busy ? "Reading part health…" : "Part health unavailable";
@@ -2090,7 +2127,7 @@ function getHealthCaptionAR(partRows, busy, errored = 0) {
 	// first wave still out → no ok count yet; the early verdicts would read as the whole map
 	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
 	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
+		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}${getFailedReadsSuffixAR(errored, reads)}`;
 
 	return `All ${total} parts ok`;
 }
@@ -2099,6 +2136,12 @@ function getHealthCaptionAR(partRows, busy, errored = 0) {
 function getFlaggedNamesSuffixAR(rows) {
 	const names = rows.map((row) => row.name).filter(Boolean);
 	return names.length > 0 ? `: ${names.join(", ")}` : "";
+}
+
+// the stamp's own failed-read tally → caption and stamp count one population, never parts against reads
+function getFailedReadsSuffixAR(errored, reads) {
+	if (errored === 0 || !reads || reads.failedCount === 0) return "";
+	return `, ${reads.failedCount} of ${reads.regionCount} reads failed`;
 }
 
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
@@ -2115,10 +2158,11 @@ function getMapLegendItemsAR() {
 }
 
 // sentence-case status line over a swatch legend — the page header's sub line is uppercase 11px mono.
-function MapCaptionAR({ caption }) {
+function MapCaptionAR({ caption, hasMap }) {
 	return (
 		<div className="arch-caption">
 			<p className="fs-meta text-dim m-0">{caption}</p>
+			{hasMap && (
 			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
 					<li key={item.key} className="arch-legend-item">
@@ -2132,6 +2176,7 @@ function MapCaptionAR({ caption }) {
 					</li>
 				))}
 			</ul>
+			)}
 		</div>
 	);
 }
@@ -2168,9 +2213,9 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
 }
 
-// every region the page reads → a re-read failing over held data keeps status 'ready', so only the stamp can show it
-function getFreshnessInputAR(healthAsOf, regions) {
-	return { at: healthAsOf, regions };
+// every region the page reads feeds the stamp; no read time until the map itself has been read
+function getFreshnessInputAR(healthAsOf, regions, hasMap) {
+	return { at: hasMap ? healthAsOf : null, regions };
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).

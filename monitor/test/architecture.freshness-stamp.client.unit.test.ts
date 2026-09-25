@@ -31,7 +31,7 @@ interface StampSandbox {
   window: {
     UI: { getFreshnessState: (input: FreshnessInput & { now: number }) => string };
   };
-  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[]) => FreshnessInput;
+  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(ARCH_SRC);
@@ -47,7 +47,7 @@ const FAILED_OVER_HELD: RegionState = { ...HELD, error: "HTTP 502" };
 const DOWN: RegionState = { status: "error", data: null, error: "HTTP 502", busy: false };
 
 function getState(healthAsOf: string | null, regions: RegionState[]): string {
-  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions), now: NOW });
+  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions, true), now: NOW });
 }
 
 test("the stamp answers for every region: a failure over held data shows, and reads in flight keep it busy", () => {
