@@ -530,11 +530,11 @@ test("AC-T17 the map renders no About this diagram prose section", async () => {
 	);
 });
 
-// 범례 표면 셀렉터 — 컴포넌트가 붙이던 클래스 전부. 하나라도 남으면 UI 가 살아 있음.
+// 걷어낸 대화형 범례의 표면 셀렉터 — 하나라도 남으면 그 UI 가 살아 있음.
+// 캡션의 정적 스와치 범례(.arch-legend-item)는 현행이라 대상 밖.
 const LEGEND_SELECTORS = [
 	".arch-legend-details",
 	".arch-legend-grid",
-	".arch-legend-item",
 	".arch-legend-swatch-box",
 	".arch-legend-swatch-line",
 ];
@@ -542,7 +542,7 @@ const LEGEND_SELECTORS = [
 // 분류별 흐림이 노드에 남기던 클래스 — 캔버스의 legend-focus, 대상 노드의 legend-hit.
 const NODE_DIM_SELECTOR = ".legend-focus, .legend-hit";
 
-test("AC-T19 the map renders no legend surface", async () => {
+test("the map renders no surface of the retired interactive legend", async () => {
 	await openMap(getLiveFixture());
 
 	const present = await page.evaluate(
@@ -556,7 +556,7 @@ test("AC-T19 the map renders no legend surface", async () => {
 	assert.deepEqual(
 		present.map(([sel]) => sel),
 		[],
-		`legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
+		`retired legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
 	);
 });
 
@@ -1338,6 +1338,7 @@ interface ClusterVisual {
 	rxComputed: string;
 	rectBox: ProbeRect | null;
 	labelBox: ProbeRect | null;
+	isTitleShown: boolean;
 	firstNodeTop: number | null;
 	scale: number;
 }
@@ -1408,6 +1409,8 @@ async function getVisualProbe(): Promise<VisualProbe> {
 				rxComputed: rcs ? rcs.rx : "",
 				rectBox: box ? (box.toJSON() as ProbeRect) : null,
 				labelBox: label ? (label.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				// a dropped title collapses to a 0×0 box at the origin, so its clearance is not measurable
+				isTitleShown: label ? getComputedStyle(label.closest(".cluster-label") || label).display !== "none" : false,
 				firstNodeTop,
 				scale: rect ? (rect.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
 			};
@@ -1583,12 +1586,15 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 	);
 });
 
-test("P0-2-fix zone titles clear the zone edge and the first box below", async () => {
+test("every shown zone title clears the zone edge and the first box below", async () => {
 	await openMap(getLiveFixture());
 	const probe = await getVisualProbe();
+	const titled = probe.clusters.filter((c) => c.isTitleShown);
+
+	assert.ok(titled.length > 0, "no zone shows its title — the clearance claim is empty");
 
 	// 여백은 확대율과 무관한 주장이므로 사용자 단위로 판정하고 화면 px 은 기록만 한다.
-	const crowded = probe.clusters
+	const crowded = titled
 		.map((c) => {
 			const rect = c.rectBox;
 			const title = c.labelBox;
