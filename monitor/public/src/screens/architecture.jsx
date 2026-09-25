@@ -102,6 +102,13 @@ const RING_FOCUS_CLASS = "arch-ring-focus";
 // one health vocabulary for node accessible names and the caption's ring key.
 const HEALTH_WORD_AR = { ok: "ok", info: "not verified", warn: "needs attention", crit: "critical" };
 const UNVERIFIED_WORD_AR = "not verified";
+// border colours copy the drawn map's classDef strokes (diagrams-source.ts) — a unit test holds the pair together
+const MAP_BORDER_KEY_AR = [
+	{ key: "focal", color: "#60a5fa", label: "Orchestrator" },
+	{ key: "security", color: "#a78bfa80", label: "Safety checks" },
+];
+// a group whose title only repeats its single box's label — the title is hidden, the box stays
+const ZONE_TITLE_REDUNDANT_CLASS = "arch-zone-title-redundant";
 
 // 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
 // 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
@@ -659,16 +666,17 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-micro); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 700; pointer-events: none; } ` +
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 700; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
-					".arch-zoom-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; " +
+					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
+					".arch-zoom-btn-labelled { padding: 0 8px; font-family: inherit; font-size: var(--fs-meta); } " +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
@@ -687,9 +695,19 @@ function ScreenArchitecture(
 					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬(cron). 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
-					".arch-part-drill { align-self: flex-start; background: none; border: 0; margin: 0; padding: 0 0 0 10px; " +
+					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 10px; padding: 0 10px; " +
+					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
 					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
-					".arch-part-drill:hover { color: rgb(var(--ink)); } " +
+					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
+					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
+					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
+					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 14px; " +
+					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; line-height: 1; } ' +
+					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
+					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
+					".arch-legend-swatch-dashed { border-style: dashed; } " +
+					`#${ARCH_CANVAS_ID} .${ZONE_TITLE_REDUNDANT_CLASS} > .cluster-label { display: none; } ` +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
@@ -704,7 +722,6 @@ function ScreenArchitecture(
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="System map"
-					sub={`${healthCaption} · ${getRingKeyTextAR()}`}
 					right={
 						<>
 							<FreshnessStamp
@@ -723,6 +740,7 @@ function ScreenArchitecture(
 						</>
 					}
 				/>
+				<MapCaptionAR caption={healthCaption} />
 			</div>
 
 			<div className="arch-page">
@@ -1054,6 +1072,10 @@ function MermaidCanvas({
 		if (renderState.status !== "ready") return;
 		const root = containerRef.current;
 		if (!root) return;
+		const redundantZoneIds = [...buildRedundantZoneIdsAR(source)];
+		root.querySelectorAll("svg g.cluster").forEach((el) => {
+			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
+		});
 		root.querySelectorAll("svg g.cluster rect").forEach((rect) => {
 			if (rect.dataset.archTitleBand === "1") return;
 			const y = Number.parseFloat(rect.getAttribute("y"));
@@ -1063,7 +1085,7 @@ function MermaidCanvas({
 			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
 			rect.dataset.archTitleBand = "1";
 		});
-	}, [renderState.status, renderState.svgHtml]);
+	}, [renderState.status, renderState.svgHtml, source]);
 
 	/**
 	 * 링 사각형 심기 — 노드와 존마다 자리를 하나씩 만들어 둠. 켜고 끄는 것은 위 tone 효과의 클래스이고
@@ -1286,12 +1308,13 @@ function MermaidCanvas({
 					</button>
 					<button
 						type="button"
-						className="arch-zoom-btn"
+						className="arch-zoom-btn arch-zoom-btn-labelled"
 						onClick={fitToView}
 						aria-label="Fit diagram to view"
 						title="Fit to view (0)"
 					>
 						<ArchIconTargetAR />
+						Fit
 					</button>
 				</div>
 
@@ -2108,10 +2131,39 @@ function getFlaggedNamesSuffixAR(rows) {
 	return names.length > 0 ? `: ${names.join(", ")}` : "";
 }
 
-// ring key — built from the glyph marks and health words the canvas itself draws.
-function getRingKeyTextAR() {
-	const marks = ["warn", "crit"].map((tone) => `${getCornerGlyphTextAR(tone, 1)} ${HEALTH_WORD_AR[tone]}`);
-	return `Rings: ${marks.join(" · ")} · dashed ${UNVERIFIED_WORD_AR}`;
+// legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
+function getMapLegendItemsAR() {
+	const rings = ["warn", "crit"].map((tone) => ({
+		key: tone,
+		kind: "ring",
+		mark: getCornerGlyphTextAR(tone, 1),
+		label: HEALTH_WORD_AR[tone],
+	}));
+	const dashed = { key: "unverified", kind: "dashed", label: UNVERIFIED_WORD_AR };
+	const borders = MAP_BORDER_KEY_AR.map((item) => ({ ...item, kind: "border" }));
+	return [...rings, dashed, ...borders];
+}
+
+// sentence-case status line over a swatch legend — the page header's sub line is uppercase 11px mono.
+function MapCaptionAR({ caption }) {
+	return (
+		<div className="arch-caption">
+			<p className="fs-meta text-dim m-0">{caption}</p>
+			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
+				{getMapLegendItemsAR().map((item) => (
+					<li key={item.key} className="arch-legend-item">
+						<span
+							aria-hidden="true"
+							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind}`}
+							style={item.color ? { borderColor: item.color } : undefined}>
+							{item.mark || ""}
+						</span>
+						{item.kind === "border" ? `${item.label} border` : `Ring ${item.label}`}
+					</li>
+				))}
+			</ul>
+		</div>
+	);
 }
 
 // accessible name = label + health word, so the verdict reaches a screen reader, not only the ring colour.
@@ -2380,6 +2432,33 @@ function buildZoneRingPlanAR(source, partBindings) {
 		zoneByNodeId,
 		zoneIdByMemberId,
 	};
+}
+
+// zones whose only member's label opens with the zone's own title — the title just repeats the box inside it
+function buildRedundantZoneIdsAR(source) {
+	const redundant = new Set();
+	let zone = null;
+	for (const raw of String(source || "").split("\n")) {
+		const line = raw.trim();
+		const opened = /^subgraph\s+([A-Za-z_][\w-]*)(?:\s*\["?(.*?)"?\])?/.exec(line);
+		if (opened) {
+			zone = { id: opened[1], title: getPlainLabelAR(opened[2] || opened[1]), labels: [] };
+			continue;
+		}
+		if (line === "end") {
+			if (zone && zone.labels.length === 1 && zone.labels[0].startsWith(zone.title)) redundant.add(zone.id);
+			zone = null;
+			continue;
+		}
+		const declared = zone && /^[A-Za-z_][\w-]*\s*[[({]+"?(.*?)"?[\])}]+\s*$/.exec(line);
+		if (declared) zone.labels.push(getPlainLabelAR(declared[1]));
+	}
+	return redundant;
+}
+
+// source label → the words the map draws: line breaks as spaces, compared case-blind
+function getPlainLabelAR(label) {
+	return normalizeLabelAR(String(label).replace(/<br\s*\/?>/gi, " "));
 }
 
 // mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —

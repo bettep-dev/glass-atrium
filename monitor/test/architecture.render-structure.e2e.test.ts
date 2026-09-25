@@ -466,6 +466,41 @@ describe("healthy live fixture", () => {
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
 	});
 
+	test("the caption is a sentence-case status line over a legend, all at 12px or larger", async () => {
+		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
+		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
+		const [status, ...legend] = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+				text: (el as HTMLElement).innerText,
+				transform: getComputedStyle(el).textTransform,
+				px: Number.parseFloat(getComputedStyle(el).fontSize),
+			})),
+		);
+		const probe = { status, legend };
+
+		assert.ok(probe.status, "a status line renders under the page title");
+		for (const line of [probe.status, ...probe.legend]) {
+			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
+			assert.ok(line.px >= 12, `"${line.text}" renders at ${line.px}px`);
+		}
+		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
+			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+	});
+
+	test("the Fit control shows its name and only a title repeating its one box is hidden", async () => {
+		const fit = ctx.page.getByRole("button", { name: "Fit diagram to view" });
+		assert.match(await fit.innerText(), /\bFit\b/);
+
+		const titles = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => {
+				const label = el.querySelector(":scope > .cluster-label");
+				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
+			}),
+		ctx.selectors.canvas);
+		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
+		assert.deepEqual(hidden.sort(), ["agents", "export"], `hidden group titles — read: ${JSON.stringify(titles)}`);
+	});
+
 	test("AC-18 no tab controls in the DOM", async () => {
 		const tabCount = await ctx.page.evaluate(
 			(sel) => document.querySelectorAll(sel.tabControl).length,

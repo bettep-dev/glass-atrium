@@ -22,6 +22,8 @@ import { dirname, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import esbuild from "esbuild";
 
+import { CANONICAL_MAP } from "../src/server/architecture/diagrams-source.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
 // KPI 분모의 SoT — index.html:106 이 architecture.js(:116) 보다 먼저 싣는 순수 모델.
@@ -1067,15 +1069,62 @@ test("P1 the attention caption names every flagged part and no settled one", () 
     );
 });
 
-test("P1 the ring key names every mark the canvas can draw", () => {
-  const key = callInCtx<string>(archCtx, "getRingKeyTextAR");
+interface LegendItem {
+  key: string;
+  kind: string;
+  mark?: string;
+  color?: string;
+  label: string;
+}
+
+test("P1 the legend names every mark the canvas can draw", () => {
+  const items = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR");
 
   for (const tone of ["warn", "crit"]) {
     const mark = callInCtx<string>(archCtx, "getCornerGlyphTextAR", tone, 1);
     const word = callInCtx<string>(archCtx, "getNodeAccessibleNameAR", "", tone, false).replace(/^,\s*/, "");
-    assert.ok(key.includes(`${mark} ${word}`), `key must pair ${mark} with "${word}" — read: "${key}"`);
+    assert.ok(
+      items.some((item) => item.mark === mark && item.label === word),
+      `legend must pair ${mark} with "${word}" — read: ${JSON.stringify(items)}`,
+    );
   }
-  assert.ok(key.includes("dashed not verified"), `key must explain the dashed ring — read: "${key}"`);
+  assert.ok(
+    items.some((item) => item.kind === "dashed" && item.label === "not verified"),
+    `legend must explain the dashed ring — read: ${JSON.stringify(items)}`,
+  );
+});
+
+test("P1 every coloured node border the drawn map assigns has a legend swatch in that colour", () => {
+  const source = CANONICAL_MAP.mermaid_drawn;
+  const assigned = new Set([...source.matchAll(/^\s*class\s+\S+\s+(\w+)\s*$/gm)].map((m) => m[1]));
+  const strokeByClass = new Map(
+    [...source.matchAll(/^\s*classDef\s+(\w+)\s+.*?stroke:(#[0-9a-fA-F]+)/gm)].map((m) => [m[1], m[2].toLowerCase()]),
+  );
+  // the 'external' class draws the neutral line colour — it marks no role, so it takes no swatch
+  const coloured = [...assigned].filter((name) => name !== "external");
+  const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+
+  assert.ok(coloured.length > 0, "fixture precondition: the drawn map assigns a coloured border");
+  for (const name of coloured)
+    assert.ok(
+      swatches.some((item) => item.color?.toLowerCase() === strokeByClass.get(name)),
+      `class '${name}' strokes ${strokeByClass.get(name)} with no matching swatch — read: ${JSON.stringify(swatches)}`,
+    );
+  assert.strictEqual(swatches.length, coloured.length, "one swatch per coloured border, none for a colour the map never draws");
+});
+
+test("SM3 a group title is dropped only where its single member's label already says it", () => {
+  const rows = [
+    { name: "a lone member that repeats the title", source: 'subgraph a["Specialist agents"]\n  n1["Specialist agents <br/>(23)"]\nend', dropped: true },
+    { name: "a lone member with its own wording", source: 'subgraph a["Orchestrator"]\n  n1["Plans the work"]\nend', dropped: false },
+    { name: "a group holding two members", source: 'subgraph a["Wiki"]\n  n1[Wiki daemon]\n  n2[Wiki store]\nend', dropped: false },
+    { name: "a line break inside the title", source: 'subgraph a["Document <br/>export"]\n  n1[("Document export (headless)")]\nend', dropped: true },
+  ];
+
+  for (const row of rows) {
+    const ids = callInCtx<Set<string>>(archCtx, "buildRedundantZoneIdsAR", row.source);
+    assert.strictEqual(ids.has("a"), row.dropped, row.name);
+  }
 });
 
 test("P1 a node's accessible name carries its label and a distinct health word per state", () => {
