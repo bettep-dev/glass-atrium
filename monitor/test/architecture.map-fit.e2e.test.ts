@@ -19,12 +19,12 @@
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
 // those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
-// chrome (measured identical at all three: 800→642, 850→692, 1080→922), and the map is
-// width-bound at all three, so the exact height is not load-bearing. The height is a constant
-// subtraction rather than a fraction because the chrome above it is pixel-fixed; the earlier
-// ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by the
-// screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
-// raises — without that strip the same viewports give 687 / 737 / 967.
+// chrome (measured at the 800, 850 and 1080 heights: 800→642, 850→692, 1080→922). The fill
+// reading takes whichever axis binds, so the exact height is not load-bearing. The height is a
+// constant subtraction rather than a fraction because the chrome above it is pixel-fixed; the
+// earlier ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by
+// the screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
+// raises — without that strip those three heights give 687 / 737 / 967.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
@@ -60,7 +60,7 @@ const MIN_RENDERED_LABEL_PX = 12;
 // a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
 
-// a floor-clamped scale read back from the CTM carries float noise (0.59999…) → compare within it
+// CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
 // 서브픽셀 여유. 링(stroke-width 2.5 사용자 단위)까지 client rect 에 들어오므로

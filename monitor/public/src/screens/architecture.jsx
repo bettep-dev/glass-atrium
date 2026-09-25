@@ -266,6 +266,7 @@ function ScreenArchitecture(
 		putRegionData,
 		putRegionFailure,
 		getSharedFailure,
+		getRegionSummary,
 	} = window.UI;
 
 	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
@@ -515,7 +516,7 @@ function ScreenArchitecture(
 	const healthRegions = Object.values(headlineHealthStates);
 	const healthPending = healthRegions.some((state) => state.status === "loading");
 	// any read in flight, polls included → the stamp and the Refresh button turn busy over held verdicts
-	const healthBusy = healthRegions.some((state) => state.busy);
+	const healthBusy = getRegionSummary(healthRegions).isBusy;
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
 	const healthCaption = getHealthCaptionAR(
@@ -576,7 +577,7 @@ function ScreenArchitecture(
 		governance,
 	}).filter((row) => !(sharedFailure && row.retry));
 
-	const isRefreshBusy = diagState.busy || liveState.busy || healthBusy;
+	const isRefreshBusy = getRegionSummary([diagState, liveState, ...healthRegions]).isBusy;
 
 	return (
 		<div className="h-full flex flex-col min-h-0">
@@ -763,7 +764,7 @@ function ScreenArchitecture(
 									nodeByLabel={nodeByLabel}
 									ringToneByNodeId={ringToneByNodeId}
 									unverifiedNodeIds={unverifiedNodeIds}
-									healthBusy={healthPending}
+									healthPending={healthPending}
 									zoneRingPlan={zoneRingPlan}
 									attentionCountByNodeId={attentionCountByNodeId}
 									onSelectNode={handleSelectNode}
@@ -810,14 +811,11 @@ function DiagramBody({
 	nodeByLabel,
 	ringToneByNodeId,
 	unverifiedNodeIds,
-	healthBusy,
+	healthPending,
 	zoneRingPlan,
 	attentionCountByNodeId,
 	onSelectNode,
 }) {
-	const { LoadingPlaceholder } = window.UI;
-	const loadingSlot = <LoadingPlaceholder label="the system map" minHeight={240} className="h-full" />;
-
 	// mermaid CDN polling — 외부 스크립트 로딩 완료 대기 (최대 5s).
 	const [mermaidReady, setMermaidReady] = useStateAR(() =>
 		Boolean(window.mermaid),
@@ -837,7 +835,7 @@ function DiagramBody({
 		};
 	}, [mermaidReady]);
 
-	if (diagState.status === "loading") return loadingSlot;
+	if (diagState.status === "loading") return <MapLoadingAR />;
 	if (!activeDiagram) {
 		return <EmptyStateAR message="No diagrams to show." />;
 	}
@@ -847,7 +845,7 @@ function DiagramBody({
 			<EmptyStateAR message="This diagram has an empty mermaid_source." />
 		);
 	}
-	if (!mermaidReady) return loadingSlot;
+	if (!mermaidReady) return <MapLoadingAR />;
 	return (
 		<MermaidCanvas
 			diagramId={activeDiagram.id}
@@ -856,12 +854,17 @@ function DiagramBody({
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
 			unverifiedNodeIds={unverifiedNodeIds}
-			healthBusy={healthBusy}
+			healthPending={healthPending}
 			zoneRingPlan={zoneRingPlan}
 			attentionCountByNodeId={attentionCountByNodeId}
 			onSelectNode={onSelectNode}
 		/>
 	);
+}
+
+function MapLoadingAR() {
+	const { LoadingPlaceholder } = window.UI;
+	return <LoadingPlaceholder label={DIAGRAM_SOURCE_AR} minHeight={240} className="h-full" />;
 }
 
 // MermaidCanvas — window.mermaid.render 로 SVG 생성 → 컨테이너 주입 → svg-pan-zoom 활성화.
@@ -874,7 +877,7 @@ function MermaidCanvas({
 	nodeByLabel,
 	ringToneByNodeId,
 	unverifiedNodeIds,
-	healthBusy,
+	healthPending,
 	zoneRingPlan,
 	attentionCountByNodeId,
 	onSelectNode,
@@ -1245,8 +1248,7 @@ function MermaidCanvas({
 	);
 
 	if (renderState.status === "rendering" || renderState.status === "idle") {
-		const { LoadingPlaceholder } = window.UI;
-		return <LoadingPlaceholder label="the system map" minHeight={240} className="h-full" />;
+		return <MapLoadingAR />;
 	}
 	if (renderState.status === "error") {
 		const { RegionUnavailable } = window.UI;
@@ -1258,7 +1260,7 @@ function MermaidCanvas({
 				id={ARCH_CANVAS_ID}
 				className="arch-mermaid-canvas"
 				role="group"
-				aria-busy={healthBusy || undefined}
+				aria-busy={healthPending || undefined}
 				aria-label={`${diagramTitle} — pan and zoom diagram`}
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
@@ -1310,7 +1312,7 @@ function MermaidCanvas({
 				</div>
 
 				{/* 가독 fit 안내 — 넓은 LR 그래프는 휠/+−·드래그/화살표·키보드로 탐색 */}
-				{healthBusy && (
+				{healthPending && (
 					<div className="arch-canvas-busy" role="status">
 						Loading health…
 					</div>
