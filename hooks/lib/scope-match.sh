@@ -8,7 +8,8 @@
 # match_file_against_allowed — path vs newline list (full/partial path OR basename).
 # scope_task_type_is_code    — the code task_type set of the files: comparison leg.
 # scope_decl_files           — `[SCOPE] files=` field → newline list.
-# scope_decl_select          — first line-opening `[SCOPE] files=` declaration of a text.
+# scope_decl_select          — first line-opening `[SCOPE] files=` declaration of a text; the ONE
+#                              selector of every reader (drift advisory, recorder, verification gate).
 # scope_decl_from_record0    — that declaration, read from a subagent transcript's record 0.
 
 if [[ -n "${_SCOPE_MATCH_LOADED:-}" ]]; then
@@ -218,8 +219,14 @@ scope_concerns_exempts_path() {
 # `<placeholder>` — a wrap closing right after `files=` quotes the grammar, it declares nothing.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
 # real line → a wrong list (false excess) or an empty one (the real declaration never read).
-# Purely syntactic on purpose, so a non-bash consumer mirrors it as one regex rather than
-# re-implementing the field parser.
+# Purely syntactic on purpose — no reader re-implements the field parser to choose a line.
+# Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
+#   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
+#   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
+#   - a space after `files=`, or a field order not opening with `files=`;
+#   - recorder only: a declaration ending past its 2000-char emit transport, dropped whole.
+# Not closed: a relayed earlier declaration that itself opens a line wins over a later real one
+# (first wins) — a syntactic selector cannot tell them apart; relaying by block-quote is the fix.
 # shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
 readonly SCOPE_DECL_LINE_RE='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(`|[*][*])?[[]SCOPE[]](`|[*][*])?[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
 
