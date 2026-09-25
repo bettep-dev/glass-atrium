@@ -556,11 +556,10 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live = 3.
-const DOMAIN_TABLE_COLSPAN_MC = 3;
-
 // One column grid for both ledgers — content-sized cells let the Live columns drift apart.
 const LEDGER_COL_WIDTHS_MC = ["36%", "32%", "32%"];
+// Skeleton columns + empty-row colSpan for both ledgers.
+const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
 // One line of fs-meta — the saved/reset slot holds this height while empty.
 const SAVED_LINE_STYLE_MC = { minHeight: "1.5em" };
@@ -623,12 +622,12 @@ function DomainsSectionMC({
 						{state === "loading" ? (
 							<SkeletonRows
 								rows={DOMAIN_ORDER_MC.length}
-								columns={DOMAIN_TABLE_COLSPAN_MC}
+								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
 						) : rows.length === 0 ? (
 							<EmptyRowMC
-								colSpan={DOMAIN_TABLE_COLSPAN_MC}
+								colSpan={LEDGER_COL_COUNT_MC}
 								message="No model domains reported."
 							/>
 						) : (
@@ -972,9 +971,6 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	);
 }
 
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live = 3.
-const BUDGET_TABLE_COLSPAN_MC = 3;
-
 // per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
 function BudgetsSectionMC({
 	state,
@@ -1015,12 +1011,12 @@ function BudgetsSectionMC({
 						{state === "loading" ? (
 							<SkeletonRows
 								rows={2}
-								columns={BUDGET_TABLE_COLSPAN_MC}
+								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
 						) : rows.length === 0 ? (
 							<EmptyRowMC
-								colSpan={BUDGET_TABLE_COLSPAN_MC}
+								colSpan={LEDGER_COL_COUNT_MC}
 								message="No budget caps reported."
 							/>
 						) : (
