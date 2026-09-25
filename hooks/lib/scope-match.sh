@@ -118,7 +118,9 @@ scope_decl_files() {
   [[ "${found}" -eq 1 ]] || return 0
   field="${rest%%·*}"
   field="${field%%|*}"
+  # The selector's two wrap characters — a value or whole-line wrap never belongs to a path.
   field="${field//\`/}"
+  field="${field//\*\*/}"
   [[ -z "${field}" ]] && return 0
   # Commas and tabs collapse into the space delimiter, so one expansion splits every accepted form.
   field="${field//,/ }"
@@ -214,21 +216,31 @@ scope_concerns_exempts_path() {
   return 1
 }
 
-# A declaration is a line the `[SCOPE]` token OPENS: optional indentation, one list marker, an
-# optional backtick or `**` wrap, then whitespace and a `files=` value that is neither empty nor a
-# `<placeholder>` — a wrap closing right after `files=` quotes the grammar, it declares nothing.
+# A declaration is a line the `[SCOPE]` token OPENS: optional indentation and one list marker, then
+# the token — bare, wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`), or opening a backtick or `**`
+# wrap that closes at end of line if at all — then whitespace and a `files=` value that is neither
+# empty nor a `<placeholder>`. A wrap closing mid-line with text after it QUOTES a declaration (a
+# verdict citing one), whatever the quoted value: selecting it read the value plus the prose.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
 # real line → a wrong list (false excess) or an empty one (the real declaration never read).
 # Purely syntactic on purpose — no reader re-implements the field parser to choose a line.
 # Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
+#   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
+#   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
 #   - a space after `files=`, or a field order not opening with `files=`;
 #   - recorder only: a declaration ending past its 2000-char emit transport, dropped whole.
 # Not closed: a relayed earlier declaration that itself opens a line wins over a later real one
 # (first wins) — a syntactic selector cannot tell them apart; relaying by block-quote is the fix.
+readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
 # shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
-readonly SCOPE_DECL_LINE_RE='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(`|[*][*])?[[]SCOPE[]](`|[*][*])?[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
+readonly _SCOPE_DECL_TOKEN_FORM='([[]SCOPE[]]|`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
+# shellcheck disable=SC2016
+readonly _SCOPE_DECL_TICK_LINE_FORM='`[[]SCOPE[]][[:space:]]+[Ff]iles=[^<[:space:]`*][^`]*`?[[:space:]]*$'
+# shellcheck disable=SC2016
+readonly _SCOPE_DECL_BOLD_LINE_FORM='[*][*][[]SCOPE[]][[:space:]]+[Ff]iles=`?[^<[:space:]`*][^*]*([*][*])?[[:space:]]*$'
+readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}(${_SCOPE_DECL_TOKEN_FORM}|${_SCOPE_DECL_TICK_LINE_FORM}|${_SCOPE_DECL_BOLD_LINE_FORM})"
 
 # Stdin text → its first declaration line (empty when none). Always returns 0.
 scope_decl_select() {

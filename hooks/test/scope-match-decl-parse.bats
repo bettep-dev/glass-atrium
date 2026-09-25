@@ -200,6 +200,11 @@ record0_entries() {
     'bulleted backtick-wrapped mention with an empty files= value first'
     'bold-wrapped mention with an empty files= value first'
     'backtick-wrapped path value'
+    'bold-wrapped path value'
+    'whole-line bold declaration'
+    'backtick-wrapped verdict with prose after the wrap first'
+    'bulleted backtick-wrapped verdict with prose after the wrap first'
+    'numbered bold-wrapped verdict with prose after the wrap first'
   )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
@@ -219,6 +224,11 @@ record0_entries() {
     '- `[SCOPE] files=` completeness duty: declare tests'$'\n'"${real}"
     '**[SCOPE] files=** is required'$'\n'"${real}"
     '[SCOPE] files=`hooks/real.sh` · deliverable=fix · out=none'
+    '[SCOPE] files=**hooks/real.sh** · deliverable=fix · out=none'
+    '**[SCOPE] files=hooks/real.sh**'
+    '`[SCOPE] files=hooks/real.sh` lists one path only'$'\n'"${real}"
+    '- `[SCOPE] files=hooks/real.sh` omitted hooks/test/real.bats'$'\n'"${real}"
+    '1. **[SCOPE] files=hooks/real.sh** is under-declared'$'\n'"${real}"
   )
   local i got
   for i in "${!names[@]}"; do
