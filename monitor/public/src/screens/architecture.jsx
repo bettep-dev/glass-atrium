@@ -664,7 +664,7 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over the border
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
-					"text-anchor: start; dominant-baseline: central; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
+					"text-anchor: start; dominant-baseline: text-after-edge; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
@@ -2745,10 +2745,18 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 		glyph.setAttribute("class", RING_GLYPH_CLASS);
 		groupEl.appendChild(glyph);
 	}
-	// straddles the bottom-right corner → starts inside the shape's side padding, so it never reaches the label
-	glyph.setAttribute("x", String(box.x + box.width - RING_GAP * 2));
-	glyph.setAttribute("y", String(box.y + box.height));
 	glyph.textContent = mark;
+	// on the bottom edge, straddling the right edge — the side padding is narrower than the badge, so a whole-inside badge covers the label
+	glyph.setAttribute("x", String(box.x + box.width - getGlyphInsetAR(groupEl, box, glyph)));
+	glyph.setAttribute("y", String(box.y + box.height - RING_GAP));
+}
+
+// inward reach — half the badge, never past the label's side padding
+function getGlyphInsetAR(groupEl, box, glyph) {
+	const label = groupEl.querySelector(":scope > .label");
+	const labelWidth = label ? label.getBBox().width : 0;
+	const sidePadding = (box.width - labelWidth) / 2 - RING_GAP;
+	return Math.max(0, Math.min(glyph.getComputedTextLength() / 2, sidePadding));
 }
 
 function getShapeBoxAR(groupEl) {

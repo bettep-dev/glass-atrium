@@ -747,7 +747,7 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
-	test("a fault verdict's corner glyph sits on its own node's corner, clear of every label and other node", async () => {
+	test("a fault verdict's corner glyph sits on its own node's bottom-right corner, at most half past the right edge, clear of every label and other node", async () => {
 		const glyphs = await ctx.page.evaluate((sel) => {
 			// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
 			const shapes = new Map(
@@ -772,7 +772,10 @@ describe("fault live fixture", () => {
 						.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
 					return {
 						id: owner.getAttribute("data-arch-node-id") || owner.id,
-						anchored: g.left >= n.left && g.left <= n.right && g.top >= n.top && g.top <= n.bottom,
+						// the whole glyph box, not its anchor point: inside the bottom edge, at most half its width past the right edge
+						anchored:
+							g.top >= (n.top + n.bottom) / 2 && g.bottom <= n.bottom + 0.5 &&
+							g.left >= (n.left + n.right) / 2 && (g.left + g.right) / 2 <= n.right + 0.5,
 						covered,
 						box:
 							`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
@@ -782,7 +785,7 @@ describe("fault live fixture", () => {
 		}, ctx.selectors.canvas);
 		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertions below would be vacuous");
 		const loose = glyphs.filter((glyph) => !glyph.anchored);
-		assert.deepEqual(loose, [], `glyphs not anchored on their node: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+		assert.deepEqual(loose, [], `glyphs past their node's corner overhang: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
 		const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
 		assert.deepEqual(
 			covering,
