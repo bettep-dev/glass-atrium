@@ -2,7 +2,7 @@
 const { useEffect, useRef, useState } = React;
 
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
-const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
 
 // 짧은 별칭(레거시 call-site 이름) → Lucide UMD PascalCase 키. 손수 관리하던 36개 글리프의 모든
 //   호출 이름을 Lucide 정식 이름으로 매핑 → 기존 <Icon name>/SymI/TONE_ICON 호출 전부 무회귀 +
@@ -394,6 +394,7 @@ function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkCo
 let detailTitleSeq = 0;
 
 function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
+  const overlayRef = useRef(null);
   const panelRef = useRef(null);
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `detail-title-${++detailTitleSeq}`;
@@ -407,8 +408,12 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     triggerRef.current = document.activeElement;
 
     const panel = panelRef.current;
-    const focusables = panel ? panel.querySelectorAll(FOCUSABLE_SELECTOR) : [];
-    if (focusables.length > 0) focusables[0].focus();
+    const focusables = panel ? Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) : [];
+    const initialTarget = panel ? getTrapFocusTarget({ focusables, active: null, panel, shiftKey: false }) : null;
+    if (initialTarget) initialTarget.focus();
+
+    const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
+    for (const node of inertTargets) node.inert = true;
 
     // body scroll-lock — 언마운트/닫힘 시 복원 (현 오버레이엔 부재 → 여기서 단일 추가).
     const prevOverflow = document.body.style.overflow;
@@ -416,6 +421,8 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
 
     return () => {
       document.body.style.overflow = prevOverflow;
+      // background revived before the trigger refocus — an inert trigger rejects focus.
+      for (const node of inertTargets) node.inert = false;
       // 트리거 복원 — 닫힘 시 호출처 요소로 포커스 반환.
       const trigger = triggerRef.current;
       if (trigger && typeof trigger.focus === 'function') trigger.focus();
@@ -429,16 +436,12 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
       if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'Tab') {
         const panel = panelRef.current;
-        const list = panel ? panel.querySelectorAll(FOCUSABLE_SELECTOR) : [];
-        if (list.length === 0) return;
-        const first = list[0];
-        const last = list[list.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
+        if (!panel) return;
+        const focusables = Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR));
+        const target = getTrapFocusTarget({ focusables, active: document.activeElement, panel, shiftKey: e.shiftKey });
+        if (target) {
           e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
+          target.focus();
         }
         return;
       }
@@ -486,14 +489,45 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   const panelCls = `detail-panel${panelClassName ? ` ${panelClassName}` : ''}`;
   const bodyCls = `detail-body${bare ? ' detail-body--bare' : ''}${bodyClassName ? ` ${bodyClassName}` : ''}`;
 
-  return <div className={`detail-overlay detail-${variant}`} onClick={onBackdrop}>
-    <div ref={panelRef} role="dialog" aria-modal="true" {...dialogProps}
+  return <div ref={overlayRef} className={`detail-overlay detail-${variant}`} onClick={onBackdrop}>
+    <div ref={panelRef} role="dialog" aria-modal="true" tabIndex={-1} {...dialogProps}
          className={panelCls} onClick={(e) => e.stopPropagation()}>
       {bare ? bareTitle : head}
       <div className={bodyCls}>{children}</div>
       {foot}
     </div>
   </div>;
+}
+
+/**
+ * Focus target that keeps Tab inside a modal panel; null leaves the move to the browser.
+ * @param active - focused element, or null on open (initial focus)
+ * @param panel - dialog node, the fallback target when it holds no control
+ */
+function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {
+  if (focusables.length === 0) return panel;
+
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const isInsideControl = active != null && active !== panel && panel.contains(active);
+
+  if (!isInsideControl) return shiftKey ? last : first;
+  if (shiftKey && active === first) return last;
+  if (!shiftKey && active === last) return first;
+  return null;
+}
+
+// modal background = every sibling along the overlay's ancestor path up to <body>; already-inert nodes excluded → restore never revives them.
+function getInertTargets(overlay) {
+  const targets = [];
+  let node = overlay;
+  while (node.parentElement && node.tagName !== 'BODY') {
+    for (const sibling of Array.from(node.parentElement.children)) {
+      if (sibling !== node && !sibling.inert) targets.push(sibling);
+    }
+    node = node.parentElement;
+  }
+  return targets;
 }
 
 // 하위호환 별칭 — 기존 Modal API(title/onClose/children/footer) 유지, confirm variant 위임.
@@ -1216,7 +1250,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
