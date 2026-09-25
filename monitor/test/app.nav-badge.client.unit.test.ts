@@ -55,6 +55,7 @@ interface AppHelpers {
   getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
   toStoreState: (settled: PromiseSettledResult<unknown>, prev?: unknown) => { status: string; data: unknown };
+  readHarnessSources: (read: (url: string) => Promise<unknown>) => Promise<Record<string, PromiseSettledResult<unknown>>>;
 }
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
@@ -332,6 +333,22 @@ test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", 
 
   const known = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), hookState: { status: "error", data: null, error: "x" } }));
   assert.strictEqual(app.systemsRollup(known).label, "ISSUES DETECTED", "a known fault still outranks an unread source");
+});
+
+// The harness tile's Retry and the page Refresh run this one read → a source it skipped would stay unread after the Retry.
+test("the harness re-read covers every source the harness can report unread, the failure count included", async () => {
+  const requested: string[] = [];
+  const settled = await app.readHarnessSources(async (url) => {
+    requested.push(url);
+    throw new Error("HTTP 500");
+  });
+  const stores = Object.fromEntries(Object.entries(settled).map(([key, result]) => [key, app.toStoreState(result)]));
+  const unread = app.getHarness(stores).unreadSources;
+
+  assert.strictEqual(requested.length, Object.keys(settled).length, "one request per source");
+  assert.strictEqual(new Set(unread).size, requested.length, "each re-read source maps to its own unread label");
+  assert.ok(unread.includes("the failure count"), "a failed failure-count read is re-read by the same Retry");
+  assert.ok(requested.includes("/api/dashboard/kpi"));
 });
 
 test("harnessToNavBadges: the two contributors share the slot and cannot clobber each other", () => {

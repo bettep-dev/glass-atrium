@@ -155,14 +155,25 @@ function toStoreState(settled, prev) {
 	return prev && prev.status === "ready" ? { ...prev, error } : { status: "error", data: null, error };
 }
 
-// store key → operator label for the "couldn't read …" copy
-const HARNESS_SOURCE_LABELS = {
-	kpiState: "the failure count",
-	liveState: "daemon status",
-	healthState: "the health probe",
-	hookState: "the hook chain",
-	hookFailState: "hook failures",
+// store key → endpoint + operator label for the "couldn't read …" copy; one table → every source that can go unread is re-read by the same poll
+const HARNESS_SOURCES = {
+	kpiState: { url: "/api/dashboard/kpi", label: "the failure count" },
+	liveState: { url: "/api/architecture/live", label: "daemon status" },
+	healthState: { url: "/api/health", label: "the health probe" },
+	hookState: { url: "/api/health/hook-chain", label: "the hook chain" },
+	hookFailState: { url: "/api/health/hook-failures?days=30&limit=50", label: "hook failures" },
 };
+
+/**
+ * One read of every harness source — the shell poll, the harness tile's Retry and the page Refresh.
+ * @param read - fetcher, rejecting on a failed read
+ * @returns settled result per store key
+ */
+async function readHarnessSources(read = fetchJson) {
+	const keys = Object.keys(HARNESS_SOURCES);
+	const settled = await Promise.allSettled(keys.map((key) => read(HARNESS_SOURCES[key].url)));
+	return Object.fromEntries(keys.map((key, i) => [key, settled[i]]));
+}
 
 /**
  * The one harness fact every surface reads: the fold plus the stores whose latest read failed.
@@ -170,10 +181,10 @@ const HARNESS_SOURCE_LABELS = {
  */
 function getHarness(stores) {
 	const fold = window.HealthModel.foldHarness(stores);
-	const failedKeys = Object.keys(HARNESS_SOURCE_LABELS).filter((key) => stores[key]?.error != null);
+	const failedKeys = Object.keys(HARNESS_SOURCES).filter((key) => stores[key]?.error != null);
 	return {
 		...fold,
-		unreadSources: failedKeys.map((key) => HARNESS_SOURCE_LABELS[key]),
+		unreadSources: failedKeys.map((key) => HARNESS_SOURCES[key].label),
 		error: failedKeys.length > 0 ? stores[failedKeys[0]].error : null,
 	};
 }
@@ -256,38 +267,18 @@ function App() {
 		}
 	}, [active]);
 
-	// kpi 배지 폴링 (alerts+health) — 60s. 실패 시 직전 상태 유지
-	useE(() => {
-		let cancelled = false;
-		const fetchBadges = async () => {
-			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
-			if (cancelled) return;
-			setKpiState((prev) => toStoreState(kpiR[0], prev));
-		};
-		fetchBadges();
-		const id = setInterval(fetchBadges, NAV_BADGE_POLL_MS);
-		return () => {
-			cancelled = true;
-			clearInterval(id);
-		};
-	}, []);
-
-	// harness wave — architecture/live + health 를 KPI 와 같은 cadence 로 폴링.
+	// harness wave — every harness source on one 60s cadence; a failed read keeps the held data.
 	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
 	// 같은 폴이 Dashboard 하네스 타일의 Retry → 화면이 두 번째 요청 경로를 갖지 않는다.
 	const isHarnessMountedRef = useR(true);
 	const pollHarness = useC(async () => {
-		const [live, health, hook, hookFail] = await Promise.allSettled([
-			fetchJson("/api/architecture/live"),
-			fetchJson("/api/health"),
-			fetchJson("/api/health/hook-chain"),
-			fetchJson("/api/health/hook-failures?days=30&limit=50"),
-		]);
+		const settled = await readHarnessSources();
 		if (!isHarnessMountedRef.current) return;
-		setHealthState((prev) => toStoreState(health, prev));
-		setLiveState((prev) => toStoreState(live, prev));
-		setHookState((prev) => toStoreState(hook, prev));
-		setHookFailState((prev) => toStoreState(hookFail, prev));
+		setKpiState((prev) => toStoreState(settled.kpiState, prev));
+		setHealthState((prev) => toStoreState(settled.healthState, prev));
+		setLiveState((prev) => toStoreState(settled.liveState, prev));
+		setHookState((prev) => toStoreState(settled.hookState, prev));
+		setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
 	}, []);
 	useE(() => {
 		isHarnessMountedRef.current = true;
