@@ -498,7 +498,8 @@ describe("healthy live fixture", () => {
 			}),
 		ctx.selectors.canvas);
 		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
-		assert.deepEqual(hidden.sort(), ["agents", "export"], `hidden group titles — read: ${JSON.stringify(titles)}`);
+		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
+		assert.deepEqual(hidden.sort(), [], `hidden group titles — read: ${JSON.stringify(titles)}`);
 	});
 
 	test("the node drawer is named by the node, reads its kind from its layer and hides an unrecorded path", async () => {

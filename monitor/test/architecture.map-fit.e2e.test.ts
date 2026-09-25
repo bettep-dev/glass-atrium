@@ -358,10 +358,7 @@ async function readLabelLines(width: number, height: number): Promise<{ id: stri
 }
 
 for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
-	// open, not resolved: two words per line widens the 1024 map past the legibility floor (line target 220 → 123px outside the pane);
-	// the fix is shorter display names, which live in the shared display-name map and the diagram source — an operator call
-	const todo = "MAP-F3a open — 6 of 9 labels one word per line; needs shorter display names";
-	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, { todo }, async () => {
+	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
 		const labels = await readLabelLines(width, height);
 		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
 		assert.ok(labels.length > 0, "no node label was measured");
