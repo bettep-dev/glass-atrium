@@ -290,7 +290,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
       </h2>
       {tile.status === 'error' && !isRetryShared ? (
         <RegionUnavailable source={tile.source} error={tile.error}
-          onRetry={isRetryShared ? undefined : () => onRetry(tile.region)}/>
+          onRetry={() => onRetry(tile.region)}/>
       ) : (
         <>
           <StatusTileValue tile={tile}/>
@@ -696,11 +696,9 @@ function describeOutcomeHint(rate) {
   return `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) open with caveats · writer-emitted only.`;
 }
 
-// headline share without its denominator → a 28px value stays on one line; the counts ride the detail line
+// headline share without its " (n/d)" tail → a 28px value stays on one line; the counts ride the detail line
 function getSharePct(numerator, denominator) {
-  const den = Number(denominator);
-  if (!Number.isFinite(den) || den <= 0) return '—';
-  return `${(((Number(numerator) || 0) / den) * 100).toFixed(1)}%`;
+  return window.UI.formatPctWithDenominator(numerator, denominator).split(' (')[0];
 }
 
 // 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
@@ -754,9 +752,9 @@ function describeVersion(harness) {
   return harness && harness.version ? `v${harness.version}` : 'version unknown';
 }
 
-// wave regions only — update-job also polls on its own, so a poll result must not move the screen's stamp
-function getFreshnessInputD(settledAt, waveStates) {
-  return { at: settledAt, regions: waveStates };
+// wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
+function getFreshnessInputD(settledAt, stampRegions) {
+  return { at: settledAt, regions: stampRegions };
 }
 
 // update-job poll → 실제 row (none 은 무 job).
