@@ -45,13 +45,6 @@ const DOC_STATUS_OPTIONS_CD = [
 	{ value: "", label: "All", countKey: "total" },
 ];
 
-// Chip tint — Done is most rows' resting state, so it stays neutral like open and all.
-const DOC_STATUS_CSS_VAR_CD = {
-	"": "--faint",
-	open: "--dim",
-	done: "--dim",
-};
-
 // Stored token → its stage entry · null = a token no stage covers (rendered as unavailable).
 function stageEntryCD(stored) {
 	if (stored === RETIRED_STAGE_ALIAS_CD) return DOC_STAGES_CD[0];
@@ -866,7 +859,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            대비 보조 = 좌측 막대 폭을 3→4px 로 굵혀 fill 제거에 따른 식별성 손실 보상. */
         .doc-row.is-selected { box-shadow: inset 4px 0 0 rgb(var(--accent)); }
         .doc-row.is-pending-delete { box-shadow: inset 4px 0 0 rgb(var(--crit)); }
-        .doc-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
+        .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         button.doc-lineage { display: block; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-th-note { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; color: rgb(var(--faint)); }
         .doc-snippet mark { background: rgb(var(--warn) / 0.28); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
@@ -893,10 +887,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
-        .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
+        .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }
-        .doc-chip-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; font-size: var(--fs-micro); font-weight: 500; border-radius: var(--radius-badge); font-family: 'JetBrains Mono', monospace; line-height: 1.4; white-space: nowrap; cursor: pointer; }
-        .doc-chip-badge[disabled] { cursor: default; }
         .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { border-color: rgb(var(--accent)); }
         /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
@@ -962,7 +954,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .card button.btn.sm,
         .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
-        button.doc-chip-badge { min-height: 24px; min-width: 24px; }
         /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
@@ -1010,7 +1001,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* ID 셀 둘째 줄 계보. */
-        .doc-lineage { font-size: var(--fs-micro); color: rgb(var(--faint)); white-space: nowrap; }
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1021,23 +1012,23 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
         .doc-meta-danger { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgb(var(--line)); }
         .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
-        .doc-stage-meter { display: inline-flex; gap: 2px; }
-        .doc-stage-step { width: 6px; height: 4px; border-radius: 1px; background: rgb(var(--line)); }
-        .doc-stage-step.is-filled { background: rgb(var(--dim)); }
+        .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .doc-stage-note { font-size: var(--fs-micro); color: rgb(var(--dim)); }
+        .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
         .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
         .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }
-        .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); }
+        .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
+        .doc-filter-label { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
+        .doc-filter-divider { align-self: stretch; width: 1px; margin: 4px 4px; background: rgb(var(--line)); }
         /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
         .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         tr.doc-stage-section > th { padding: 10px 12px 4px; text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
+        .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1230,6 +1221,10 @@ function DocListCardCD({
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
 	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
+	// the stage chips count groups → their label names that unit only while a count is shown
+	const hasStageCounts =
+		groupCounts != null &&
+		DOC_STATUS_OPTIONS_CD.some((opt) => typeof groupCounts[opt.countKey] === "number");
 	const totalLabel =
 		state.status !== "ready"
 			? null
@@ -1322,55 +1317,35 @@ function DocListCardCD({
 							aria-label="Search documents"
 						/>
 					</div>
-					<div
-						className="flex flex-wrap gap-1.5"
-						role="radiogroup"
-						aria-label="Stage filter">
-						{DOC_STATUS_OPTIONS_CD.map((opt) => {
-							const active = inlineFilterProps.docStatusFilter === opt.value;
-							const cssVar = DOC_STATUS_CSS_VAR_CD[opt.value] || "--faint";
-							return (
-								<button
-									key={opt.value || "all"}
-									type="button"
-									role="radio"
-									className="doc-chip-badge"
-									onClick={() => inlineFilterProps.onDocStatusChange(opt.value)}
-									aria-checked={active}
-									aria-pressed={active}
-									style={chipBadgeStyleCD(cssVar, active)}>
+					<span className="doc-filter-label">{hasStageCounts ? "Groups by stage" : "Stage"}</span>
+					<window.UI.ChipGroup
+						label="Stage filter"
+						chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
+							key: opt.value,
+							isPressed: inlineFilterProps.docStatusFilter === opt.value,
+							label: (
+								<>
 									{opt.label}
 									{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
 									{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
-										<span className="doc-chip-count">
-											{formatIntCD(groupCounts[opt.countKey])}
-										</span>
+										<span className="doc-chip-count">{formatIntCD(groupCounts[opt.countKey])}</span>
 									)}
-								</button>
-							);
-						})}
-					</div>
-					<div
-						className="flex flex-wrap gap-1.5"
-						role="radiogroup"
-						aria-label="Audience filter">
-						{AUDIENCE_OPTIONS_CD.map((opt) => {
-							const active = inlineFilterProps.audienceFilter === opt.value;
-							return (
-								<button
-									key={opt.value}
-									type="button"
-									role="radio"
-									className="doc-chip-badge"
-									onClick={() => inlineFilterProps.onAudienceChange(opt.value)}
-									aria-checked={active}
-									aria-pressed={active}
-									style={chipBadgeStyleCD("--info", active)}>
-									{opt.label}
-								</button>
-							);
-						})}
-					</div>
+								</>
+							),
+						}))}
+						onToggle={inlineFilterProps.onDocStatusChange}
+					/>
+					<span className="doc-filter-divider" aria-hidden="true" />
+					<span className="doc-filter-label">Audience</span>
+					<window.UI.ChipGroup
+						label="Audience filter"
+						chips={AUDIENCE_OPTIONS_CD.map((opt) => ({
+							key: opt.value,
+							label: opt.label,
+							isPressed: inlineFilterProps.audienceFilter === opt.value,
+						}))}
+						onToggle={inlineFilterProps.onAudienceChange}
+					/>
 					{isHeldBusy && (
 						<span className="doc-list-busy ml-auto fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
 							{busyText}
@@ -2570,7 +2545,7 @@ function ViewerBodyCD({ state }) {
 		if (isCodeFormat) {
 			rendered = renderCodeFormatCD(doc.body, doc.format, DOC_BODY_SCOPE_CD);
 		} else if (isMdPrimary) {
-			rendered = renderMarkdownCD(doc.body, DOC_BODY_SCOPE_CD);
+			rendered = renderMarkdownCD(doc.body, DOC_BODY_SCOPE_CD, doc.title);
 		} else {
 			rendered = htmlToReactCD(doc.body, DOC_BODY_SCOPE_CD);
 		}
@@ -2647,13 +2622,13 @@ function DocMetaPanelCD({
 						: ""}
 				</span>
 			</div>
-			{/* 목록은 모르는 행위자에 침묵하고, 뷰어가 여기서 한 번 unknown 이라고 말한다. */}
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Last action</span>
-				<span className="doc-meta-value">
-					{doc.last_status_model ? formatActorCD(doc.last_status_model) : "unknown"}
-				</span>
-			</div>
+			{/* an unrecorded actor is left out, never printed as "unknown" */}
+			{doc.last_status_model && (
+				<div className="doc-meta-row">
+					<span className="doc-meta-label">Last action</span>
+					<span className="doc-meta-value">{formatActorCD(doc.last_status_model)}</span>
+				</div>
+			)}
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
 				{/* onPickStage 미주입 → read-only pill · cachedRow=doc → viewer cache 로 GET 스킵. */}
 				<DocStagePillCD
@@ -2743,7 +2718,7 @@ function DocStagePillCD({
 				{DOC_STAGES_CD.map((stage, index) => (
 					<span
 						key={stage.value}
-						className={`doc-stage-step${index < rank ? " is-filled" : ""}${isTerminal ? " is-terminal" : ""}`}
+						className={`stage-pip${index < rank ? " is-filled" : ""}`}
 					/>
 				))}
 			</span>
@@ -2930,7 +2905,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 			style={{ borderTop: "1px solid rgb(var(--line))" }}
 		>
 			<summary
-				className="fs-micro font-mono uppercase tracking-wider"
+				className="fs-meta font-mono uppercase tracking-wider"
 				style={{ color: "rgb(var(--faint))", cursor: "pointer" }}
 			>
 				Version history
@@ -2939,7 +2914,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				{/* 현재 revision — 강조(--ink) · acked 미적용. */}
 				<div className="doc-revision-current">
 					<span
-						className="fs-micro font-mono uppercase tracking-wider"
+						className="fs-meta font-mono uppercase tracking-wider"
 						style={{ color: "rgb(var(--ok))" }}
 					>
 						Current revision
@@ -2969,7 +2944,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 								#{predState.data.id}
 							</span>
 							<span
-								className="fs-micro font-mono uppercase tracking-wider"
+								className="fs-meta font-mono uppercase tracking-wider"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Previous
@@ -3604,6 +3579,14 @@ function stripYamlFrontmatterCD(md) {
 	return md.slice(m[0].length);
 }
 
+// A leading h1 repeating the viewer title is dropped — the dialog heading already says it.
+function dropTitleHeadingCD(md, title) {
+	const heading = md.match(/^#[ \t]+(.*?)[ \t#]*(?:\r?\n|$)/);
+	const expected = String(title ?? "").trim().toLowerCase();
+	if (!heading || !expected || heading[1].trim().toLowerCase() !== expected) return md;
+	return md.slice(heading[0].length).replace(/^\s+/, "");
+}
+
 // MD → HTML 변환 후 dark base default 정합 Tailwind utility class 주입.
 //   · marked.parse 결과는 plain HTML (h1/h2/p/ul/ol/li/code/pre/table/blockquote/hr/a/strong/em) — class 없음
 //   · 호스트 Tailwind CDN JIT 가 className 을 스캔 → utility CSS 동적 생성 (HTML primary 와 동일 메커니즘)
@@ -3629,10 +3612,12 @@ function injectMdTypographyClassesCD(html) {
 				/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
 				'<pre class="mermaid doc-diagram-body">$1</pre>',
 			)
+			// the viewer title is the dialog's h2 → a body h1 renders as h2 with the h1 look (no inverted outline)
 			.replace(
 				/<h1>/g,
-				'<h1 class="text-2xl font-bold text-zinc-100 mt-8 mb-4">',
+				'<h2 class="text-2xl font-bold text-zinc-100 mt-8 mb-4">',
 			)
+			.replace(/<\/h1>/g, "</h2>")
 			.replace(
 				/<h2>/g,
 				'<h2 class="text-xl font-semibold text-zinc-200 mt-6 mb-3">',
@@ -3715,7 +3700,7 @@ function injectMdTypographyClassesCD(html) {
 //   4. dark base default Tailwind utility class 주입
 //   5. <body> wrapper 로 감싸 htmlToReactCD 가 body className 을 컨테이너로 lift → bg-zinc-950 적용
 //   6. htmlToReactCD chain — DOMPurify sanitize → DOMParser → React.createElement (방어층 재사용)
-function renderMarkdownCD(mdBody, scopeClass) {
+function renderMarkdownCD(mdBody, scopeClass, title) {
 	if (
 		typeof window === "undefined" ||
 		!window.marked ||
@@ -3723,7 +3708,7 @@ function renderMarkdownCD(mdBody, scopeClass) {
 	) {
 		throw new Error("marked library unavailable");
 	}
-	const stripped = stripYamlFrontmatterCD(String(mdBody || ""));
+	const stripped = dropTitleHeadingCD(stripYamlFrontmatterCD(String(mdBody || "")), title);
 	// gfm=true → tables / strikethrough / autolink 활성. breaks=false → 한국어 prose semantic newline 보존.
 	// marked default 가 raw HTML inline pass-through 허용 — DOMPurify 가 후속 sanitize 로 backstop.
 	const rawHtml = window.marked.parse(stripped, { gfm: true, breaks: false });
@@ -4554,22 +4539,6 @@ if (
 			console.error("[clauded-docs viewer R6 self-tests] runner failed", e);
 		}
 	}, 0);
-}
-
-// 필터 칩 색상 스타일 (대상·진행상태 chips 공용) — active 만 칩 색상, idle 은 line/dim 으로 톤 다운 (60-30-10 분포 유지).
-function chipBadgeStyleCD(cssVar, active) {
-	if (active) {
-		return {
-			background: `rgb(var(${cssVar}) / 0.16)`,
-			border: `1px solid rgb(var(${cssVar}) / 0.4)`,
-			color: `rgb(var(${cssVar}))`,
-		};
-	}
-	return {
-		background: "rgb(var(--sunken))",
-		border: "1px solid rgb(var(--line))",
-		color: "rgb(var(--dim))",
-	};
 }
 
 function skeletonBlockStyleCD(height) {

@@ -74,13 +74,17 @@ test("a done stage reads in the neutral tone like every other stage, on the pill
     const rule = source.match(new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
     assert.doesNotMatch(rule ? rule[1] : "", /--ok/, `${selector} carries no success tone`);
   }
-  assert.doesNotMatch(source, /\.doc-stage-step\.is-filled\.is-terminal\s*\{[^}]*--ok/);
 
   const screen = await loadDocsScreen();
+  const donePips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" })),
+    (n) => String(n.props.className ?? "").includes("stage-pip"));
+  for (const pip of donePips) assert.doesNotMatch(String(pip.props.className), /is-terminal/, "done pips fill like any stage");
+
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const doneChip = findNodes(tree, (n) => n.props.role === "radio" && collectText(n).startsWith("Done"));
+  const stageGroup = findNodes(tree, (n) => n.props.atom === "ChipGroup" && n.props.label === "Stage filter")[0];
+  const doneChip = (stageGroup.props.chips as Array<Record<string, unknown>>).filter((c) => c.key === "done");
   assert.equal(doneChip.length, 1);
-  assert.doesNotMatch(JSON.stringify(doneChip[0].props.style), /--ok/);
+  assert.equal("style" in doneChip[0], false, "the shared pressed state draws the chip, never a per-stage tint");
 });
 
 test("a done pill renders its check glyph inside the terminal glyph slot and its label outside it", async () => {
@@ -124,6 +128,18 @@ test("the snippet line clamps at two lines", () => {
   const rule = cssRuleBody(readFileSync(DOCS_SRC, "utf8"), ".doc-snippet");
   assert.match(rule, /-webkit-line-clamp\s*:\s*2/);
   assert.match(rule, /overflow\s*:\s*hidden/);
+});
+
+test("the snippet line starts at the title's x: indented by the lead slot plus the title row gap", () => {
+  const source = readFileSync(DOCS_SRC, "utf8");
+  const px = (rule: string, property: string) => {
+    const match = rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`));
+    assert.ok(match, `${property} is set in px`);
+    return Number(match[1]);
+  };
+  const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
+  const rowGap = px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  assert.equal(px(cssRuleBody(source, ".doc-snippet"), "margin-left"), leadWidth + rowGap);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -376,9 +392,11 @@ test("the last stage actor under a pill is labelled as such, never a bare model 
 test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const chipRows = findNodes(tree, (n) => n.props.role === "radiogroup");
-  assert.equal(chipRows.length, 2);
-  for (const group of chipRows) assert.doesNotMatch(collectText(group), HANGUL);
+  const chipGroups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
+  assert.equal(chipGroups.length, 2);
+  for (const group of chipGroups) {
+    for (const chip of group.props.chips as Array<{ label: unknown }>) assert.doesNotMatch(collectText(renderScreen(chip.label)), HANGUL);
+  }
   assert.doesNotMatch(collectText(tree), HANGUL);
   for (const stage of ["doc_review", "implementing", "impl_review", "impl_done", "done"]) {
     const pill = renderScreen((screen.DocStagePillCD as Component)({ docStatus: stage }));
@@ -427,4 +445,95 @@ test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as
   assert.equal(buttons.length, 1);
   (buttons[0].props.onClick as () => void)();
   assert.deepEqual(deleted, [9]);
+});
+
+type Chip = { key: string; label: unknown; isPressed: boolean };
+
+test("stage and audience filters are two separately labelled pressed-chip groups, one chip pressed in each, with no radio role", async () => {
+  const screen = await loadDocsScreen();
+  const picked: string[] = [];
+  const props = listCardProps(() => undefined);
+  (props.inlineFilterProps as Record<string, unknown>).onDocStatusChange = (value: string) => picked.push(value);
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const groups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
+  assert.deepEqual(groups.map((g) => g.props.label), ["Stage filter", "Audience filter"]);
+  assert.deepEqual(groups.map((g) => Array.from((g.props.chips as Chip[]).filter((c) => c.isPressed), (c) => c.key)), [[""], ["all"]]);
+  assert.equal(findNodes(tree, (n) => n.props.role === "radio" || n.props.role === "radiogroup").length, 0);
+  assert.equal(findNodes(tree, (n) => n.props.className === "doc-filter-label").length, 2, "each group carries its own visible label");
+
+  (groups[0].props.onToggle as (key: string) => void)("done");
+  assert.deepEqual(picked, ["done"]);
+});
+
+test("the stage chips name their count unit, and it is the unit the caption leads with", async () => {
+  const screen = await loadDocsScreen();
+  const stageLabel = (tree: ReturnType<typeof renderScreen>) =>
+    collectText(findNodes(tree, (n) => n.props.className === "doc-filter-label")[0]);
+
+  const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
+  const unit = stageLabel(counted).match(/\b(groups|documents)\b/i);
+  assert.ok(unit, "the stage label names what its counts count");
+  assert.match(collectText(counted), new RegExp(`\\b3 ${unit[1].toLowerCase()} · 5 documents`));
+
+  assert.doesNotMatch(stageLabel(renderListCard(screen, {})), /groups|documents/i, "no unit claimed while no count is shown");
+});
+
+describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
+  const rows = [
+    { name: "doc review fills one of five", stage: "doc_review", filled: 1 },
+    { name: "implementing fills two of five", stage: "implementing", filled: 2 },
+    { name: "done fills all five", stage: "done", filled: 5 },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const pips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: row.stage })),
+        (n) => String(n.props.className ?? "").split(" ").includes("stage-pip"));
+      assert.equal(pips.length, 5);
+      assert.equal(pips.filter((n) => String(n.props.className).includes("is-filled")).length, row.filled);
+    });
+  }
+});
+
+test("no Documents style or class draws text on the 11px micro step below the 12px floor", () => {
+  assert.doesNotMatch(readFileSync(DOCS_SRC, "utf8"), /fs-micro/);
+});
+
+test("a markdown body never nests an h1 under the viewer's h2 title", async () => {
+  const screen = await loadDocsScreen();
+  const html = (screen.injectMdTypographyClassesCD as (h: string) => string)("<h1>Part</h1><h2>Sub</h2>");
+  assert.doesNotMatch(html, /<\/?h1\b/);
+  assert.equal(html.match(/<h2\b/g)?.length, 2);
+  assert.ok(html.indexOf("Part") < html.indexOf("Sub"));
+});
+
+describe("a leading markdown heading that repeats the viewer title is dropped, any other heading stays", () => {
+  const rows = [
+    { name: "an h1 equal to the title goes", md: "# Plan A\n\nBody", kept: false },
+    { name: "the match ignores case and edge spaces", md: "#  plan a  \nBody", kept: false },
+    { name: "an h1 with other words stays", md: "# Plan A notes\nBody", kept: true },
+    { name: "an h2 equal to the title stays", md: "## Plan A\nBody", kept: true },
+    { name: "a title heading after prose stays", md: "Intro\n# Plan A\n", kept: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const out = (screen.dropTitleHeadingCD as (md: string, title: string) => string)(row.md, "Plan A");
+      assert.equal(out === row.md, row.kept);
+      if (!row.kept) assert.match(out, /^Body/);
+    });
+  }
+});
+
+test("the viewer rail leaves out Last action when no actor was recorded, and names it when one was", async () => {
+  const screen = await loadDocsScreen();
+  const railText = (extra: Record<string, unknown>) => collectText(renderScreen((screen.DocMetaPanelCD as Component)({
+    doc: { id: 9, title: "Doc 9", doc_status: "open", format: "md", ...extra }, pendingDelete: null, onDelete: () => undefined,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  })));
+  const unrecorded = railText({});
+  assert.doesNotMatch(unrecorded, /Last action/i);
+  assert.doesNotMatch(unrecorded, /\bunknown\b/i);
+  assert.match(railText({ last_status_model: "claude-opus-5-5" }), /Last action/i);
 });

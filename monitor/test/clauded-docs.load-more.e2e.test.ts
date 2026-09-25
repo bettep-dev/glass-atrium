@@ -166,16 +166,16 @@ async function clickAndWaitForListResponse(
 }
 
 // stage 필터 chip 클릭 helper.
-//   · stage filter chip ('열림' / '종료' / '전체') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
+//   · stage filter chip ('Open' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
 //   · chip 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
 //   · 응답 path: managedData.groups[] 정규화 후 setLoadedRows.
 async function clickDocStatusChip(page: Page, label: string): Promise<void> {
   await clickAndWaitForListResponse(
     page,
     async () => {
-      const within = page.getByRole("radiogroup", { name: "Stage filter" });
+      const within = page.getByRole("toolbar", { name: "Stage filter" });
       // 칩 접근명은 라벨 + 그룹 단위 건수 → 부분 일치로 잡는다 (exact 는 건수 때문에 미스).
-      await within.getByRole("radio", { name: label }).click();
+      await within.getByRole("button", { name: label }).click();
     },
     (url) => !url.includes("offset="),
   );
@@ -280,10 +280,10 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
       const afterLoadMore = await countVisibleRows(page);
       assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
 
-      // '전체' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
+      // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
-      await clickDocStatusChip(page, "전체");
+      await clickDocStatusChip(page, "All");
       await waitForRowCountAtMost(page, 50);
       const afterReset = await countVisibleRows(page);
       assert.ok(afterReset <= 50,
