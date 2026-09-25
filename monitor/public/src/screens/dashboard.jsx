@@ -21,7 +21,7 @@ const UPDATE_STATUS_ENDPOINT = '/api/dashboard/update-status';
 //   decoupled job 이 나중에 덮어쓴다. 버전 라벨로 렌더하면 'pending' 이라는 버전이 있는 것처럼 읽힌다.
 const UPDATE_PENDING_VERSION = 'pending';
 
-// one endpoint per region → a Retry reloads its own region; the wave reads all but update-job twice (it also polls)
+// one endpoint per region → a Retry reloads its own region; the wave reads all five once, and UpdateBadge also polls updateJob
 const DASH_REGION_URLS = {
   cost: '/api/cost/kpi',
   agents: '/api/agents/summary?days=7&order=runs&limit=1',
@@ -122,7 +122,7 @@ function ScreenDashboard({ onNav, harness }) {
             <>
               <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates)}/>
-              <RefreshButton isBusy={waveStates.some((state) => state.busy)} hasRead={settledAt !== null}
+              <RefreshButton isBusy={window.UI.getRegionSummary(waveStates).isBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
@@ -582,17 +582,16 @@ const OUTCOME_TILE_STATUS = {
 
 // numbers headline, the verdict rides in the badge (a neutral low-n tile renders no badge)
 const OUTCOME_VERDICT = { ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line' };
-const JUDGED_OUTCOME_STATUSES = new Set(['ok', 'warn', 'crit']);
 
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
-  if (!JUDGED_OUTCOME_STATUSES.has(rate.status)) return '—';
+  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return '—';
   return window.UI.formatPctWithDenominator(rate.breakage, rate.writerTotal);
 }
 
 function describeOutcomeDetail(rate) {
   if (rate.status === 'low-n') return 'outcomes · too few to judge';
-  if (!JUDGED_OUTCOME_STATUSES.has(rate.status)) return null;
+  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
   return `failed · ${window.UI.formatPctWithDenominator(rate.openCaveats, rate.writerTotal)} with caveats`;
 }
 
