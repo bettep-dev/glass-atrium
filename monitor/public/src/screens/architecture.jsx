@@ -1077,7 +1077,8 @@ function MermaidCanvas({
 		root.querySelectorAll("svg g.cluster").forEach((el) => {
 			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
 		});
-		fitZoneBoxesAR(root, source);
+		// the member map is a function of source alone — keyed on source, since the plan object changes identity every poll
+		fitZoneBoxesAR(root, zoneRingPlan.zoneIdByMemberId);
 		root.querySelectorAll(`svg g.cluster:not(.${ZONE_TITLE_REDUNDANT_CLASS}) > rect:first-of-type`).forEach((rect) => {
 			if (rect.dataset.archTitleBand === "1") return;
 			const y = Number.parseFloat(rect.getAttribute("y"));
@@ -2566,8 +2567,7 @@ function buildRedundantZoneIdsAR(source) {
  * centre, which can spill it into the next column — a zone that collides wraps its title inside the member width.
  * Zones clear of every other keep their one-line title: wrapping them only adds a line that grows into the zone above.
  */
-function fitZoneBoxesAR(root, source) {
-	const { zoneIdByMemberId } = buildZoneRingPlanAR(source, {});
+function fitZoneBoxesAR(root, zoneIdByMemberId) {
 	const zoneIds = [...new Set(zoneIdByMemberId.values())];
 	const nodeEls = [...root.querySelectorAll("svg g.node")];
 	const zoneEls = [...root.querySelectorAll("svg g.cluster")];

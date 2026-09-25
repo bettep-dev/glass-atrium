@@ -247,6 +247,7 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 interface ZoneReading {
 	overlaps: string[];
 	occludedTitles: string[];
+	titleBands: string[];
 	zoneCount: number;
 }
 
@@ -295,7 +296,26 @@ async function readZones(width: number, height: number): Promise<ZoneReading> {
 				})
 				.map((zone) => zone.name);
 
-			return { overlaps, occludedTitles, zoneCount: zones.length };
+			// a zone whose title is hidden keeps no band for it — its members sit as close to the top edge as to the bottom
+			const nodeBoxes = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) =>
+				node.getBoundingClientRect(),
+			);
+			const titleBands = zones
+				.filter((zone) => !zone.titleBox)
+				.flatMap((zone) => {
+					const b = zone.box;
+					const members = nodeBoxes.filter((n) => {
+						const cx = (n.left + n.right) / 2;
+						const cy = (n.top + n.bottom) / 2;
+						return cx > b.left && cx < b.right && cy > b.top && cy < b.bottom;
+					});
+					if (members.length === 0) return [];
+					const topGap = Math.min(...members.map((n) => n.top)) - b.top;
+					const bottomGap = b.bottom - Math.max(...members.map((n) => n.bottom));
+					return topGap > bottomGap + 2 ? [`${zone.name} top ${topGap.toFixed(1)}px vs bottom ${bottomGap.toFixed(1)}px`] : [];
+				});
+
+			return { overlaps, occludedTitles, titleBands, zoneCount: zones.length };
 		});
 	} finally {
 		await page.close();
@@ -352,11 +372,12 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 }
 
 for (const { width, height } of VIEWPORTS) {
-	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {
+	test(`zone boxes never overlap, every zone title reads whole and no hidden title leaves a band at ${width}x${height}`, async () => {
 		const r = await readZones(width, height);
 		assert.ok(r.zoneCount > 0, "no zone boxes were measured — the map did not render");
 		assert.deepEqual(r.overlaps, [], `zone boxes overlap: ${r.overlaps.join("; ")}`);
 		assert.deepEqual(r.occludedTitles, [], `zone titles covered or cut: ${r.occludedTitles.join("; ")}`);
+		assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 	});
 
 	test(`AC-FIT-1 the whole map is inside the pane at ${width}x${height}`, async (t) => {
