@@ -465,10 +465,16 @@ function CardHead({ title, sub, right }) {
   </div>;
 }
 
-// title prop 은 단일행 헤더 정책으로 의도적으로 무시 (sub 만 렌더)
-function PageHeader({ title, sub, right }) {
+// shouldRenderTitle — opt-in title + sub-line stack; callers without it keep the sub-only eyebrow.
+function PageHeader({ title, sub, right, shouldRenderTitle = false }) {
+  const eyebrow = <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>;
   return <div className="flex items-center gap-3 mb-4">
-    <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>
+    {shouldRenderTitle ? (
+      <div className="min-w-0">
+        <h1 className="fs-display font-semibold leading-tight">{title}</h1>
+        {eyebrow}
+      </div>
+    ) : eyebrow}
     {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
   </div>;
 }
@@ -496,7 +502,7 @@ function formatRelativeTime(iso) {
   const now = Date.now();
   const diffSec = Math.round((target - now) / 1000);
   const abs = Math.abs(diffSec);
-  const past = diffSec < 0;
+  const past = diffSec <= 0; // sub-second past rounds to -0 → must still read "ago"
   let label;
   if (abs < 60)         label = `${abs}s`;
   else if (abs < 3600)  label = `${Math.round(abs / 60)}m`;

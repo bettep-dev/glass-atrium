@@ -52,7 +52,11 @@ interface WikiHelpers {
     backlogState: FetchState,
     cyclesState: FetchState,
   ) => LaneModel;
-  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean };
+  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
+  buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
+  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
+  describeNotesByTypeW: (state: FetchState) => string;
+  describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
 
@@ -138,6 +142,29 @@ test("loading, error and unreported each read as themselves, never as a value", 
   }
 });
 
+// State contract: loading and failure never share a token, and a failed payload is announced once at its group.
+
+test("notes by type reads loading, failure and a count as three different tokens", () => {
+  const tokens = [
+    helpers.describeNotesByTypeW(loading),
+    helpers.describeNotesByTypeW(errored),
+    helpers.describeNotesByTypeW(ready({ by_type: [{ note_type: "concept", count: 3 }] })),
+  ];
+  assert.equal(new Set(tokens).size, 3, `tokens must differ: ${tokens.join(" / ")}`);
+  assert.equal(tokens[2], "1 types");
+});
+
+test("a failed band feeder is named once for the group, never per tile", () => {
+  const tiles = [...helpers.buildTileBandModel(errored, errored, ready({ backlog: null }))];
+  for (const tile of tiles) {
+    assert.equal(tile.state, "error");
+    assert.doesNotMatch(tile.sub || "", /Couldn't load/, `tile ${tile.key} repeats the banner`);
+  }
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, errored)], ["daily cycle summary", "search index"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, ready({}))], ["daily cycle summary"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(loading, ready({}))], []);
+});
+
 // The alarm lane: a check that could not run is never silence.
 
 test("every feeder that errored is named unchecked, and none is named when all answer", () => {
@@ -187,17 +214,29 @@ test("a first-seen date drives the waiting age and the parked threshold", () => 
   ).alarms[0] as Alarm;
   assert.equal(fresh.parked, false);
   assert.match(fresh.detail, /Waiting 2 days \(since \d{4}-\d{2}-\d{2}\)/);
+});
 
-  // The 30-run streak would park this pair if the run fallback were still in charge.
-  const parked = helpers.buildAlarmLaneModel(
+test("each waiting proposal gets its own lane row and age, parked rows last", () => {
+  // Server order puts the long-parked pair first; the lane must not let its age speak for the others.
+  const alarms = helpers.buildAlarmLaneModel(
     ready({}),
     ready({}),
-    proposalBacklog(["h1", "h2"], { h1: isoDaysAgo(20), h2: isoDaysAgo(1) }),
+    proposalBacklog(["old", "new", "mid"], {
+      old: isoDaysAgo(77),
+      new: isoDaysAgo(1),
+      mid: isoDaysAgo(3),
+    }),
     unchangedCycles(30),
-  ).alarms[0] as Alarm;
-  assert.equal(parked.parked, true);
-  // The oldest waiting pair sets the age, not the newest.
-  assert.match(parked.detail, /Waiting 20 days/);
+  ).alarms.map((a) => ({ ...a })) as Alarm[];
+  const lane = [...alarms];
+
+  assert.equal(alarms.length, 3, "one row per proposal");
+  assert.equal(new Set(alarms.map((a) => a.key)).size, 3, "row keys must be unique");
+  assert.deepEqual(
+    lane.map((a) => a.detail.match(/Waiting (\d+) day/)?.[1]),
+    ["1", "3", "77"],
+  );
+  assert.deepEqual(lane.map((a) => a.parked), [false, false, true]);
 });
 
 test("without a first-seen map the age falls back to the unchanged-run count", () => {
@@ -293,3 +332,21 @@ test("a backlog built without a first-seen map carries an empty map, never undef
 function dedup(hashes: string[]) {
   return { dedup_proposals: { proposals: hashes.map((h) => ({ cluster_hash: h })) } };
 }
+
+// The cycle p95 is demoted to the run-history summary line, not dropped.
+
+test("the run-history summary carries the cycle p95 exactly when the server reports one", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const cycles = unchangedCycles(3);
+  const model = helpers.buildThroughputModel(cycles);
+  assert.ok(model.rows.length > 0, "fixture must yield run rows");
+
+  const reported = helpers.describeRunHistoryW(cycles, model, ready({ cycle_p95_ms: 4200 }));
+  assert.match(reported, /p95 4200ms/);
+
+  for (const summary of [ready({ cycle_p95_ms: null }), loading, errored]) {
+    assert.doesNotMatch(helpers.describeRunHistoryW(cycles, model, summary), /p95/);
+  }
+  helpers.window.UI.formatDuration = originalFormat;
+});

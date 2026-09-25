@@ -1019,7 +1019,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
         .doc-stage-pill.is-interactive { cursor: pointer; }
         .doc-stage-pill.is-interactive:hover { background: rgb(var(--line) / 0.4); }
-        .doc-stage-pill.is-terminal { color: rgb(var(--ok)); border-color: rgb(var(--ok) / 0.45); }
+        .doc-stage-pill.is-terminal { border-color: rgb(var(--ok) / 0.45); }
+        .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--ok)); }
         .doc-stage-meter { display: inline-flex; gap: 2px; }
         .doc-stage-step { width: 6px; height: 4px; border-radius: 1px; background: rgb(var(--line)); }
         .doc-stage-step.is-filled { background: rgb(var(--dim)); }
@@ -2658,7 +2659,11 @@ function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
 					/>
 				))}
 			</span>
-			{isTerminal && <Icon name="check" size={11} />}
+			{isTerminal && (
+				<span className="doc-stage-glyph is-terminal" aria-hidden="true">
+					<Icon name="check" size={11} />
+				</span>
+			)}
 			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 		</>
 	);
@@ -3135,8 +3140,8 @@ function DocListSkeletonCD() {
 // as-of 스탬프 — asOf 는 성공 fetch 만 갱신하므로 첫 fetch 가 실패하면 null 로 남는다.
 // 그 상태를 "loading…" 이라 말하면 에러 배너 옆에서 진행 중이라 거짓말하는 셈.
 function asOfSubCD(asOf, listStatus) {
-	if (asOf) return `as of ${formatDateTimeCD(asOf)}`;
-	return listStatus === "loading" ? "loading…" : "not loaded";
+	if (asOf) return `Documents · as of ${window.UI.formatKstTime(asOf)}`;
+	return `Documents · ${listStatus === "loading" ? "loading…" : "not loaded"}`;
 }
 
 // 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.

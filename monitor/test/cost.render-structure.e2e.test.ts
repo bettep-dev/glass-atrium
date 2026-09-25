@@ -268,6 +268,16 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
+  test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
+    const totalCells = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen .cost-tbl tfoot td")).map((td) =>
+        (td.textContent || "").trim(),
+      ),
+    );
+    assert.strictEqual(totalCells[0], "Total");
+    assert.deepStrictEqual(totalCells.slice(2), ["—", "—"]);
+  });
+
   test("the decision tier draws exactly one chart root", async () => {
     assert.equal(
       await countDecisionChartRoots(ctx.page),

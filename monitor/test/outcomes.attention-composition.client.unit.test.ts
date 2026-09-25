@@ -19,7 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
 
-type PayloadStatus = "loading" | "error" | "unavailable" | "ready";
+type PayloadStatus = "loading" | "error" | "unavailable" | "blocked" | "ready";
 interface PayloadState<T> {
   status: PayloadStatus;
   data?: T;
@@ -54,17 +54,18 @@ interface AgentStackEntry {
 }
 interface OutcomesHelpers {
   buildAttentionParamsO: (days: number | string) => URLSearchParams;
-  buildPayloadGroupsO: (states: {
-    attentionState: unknown;
-    searchState: unknown;
-    analyticsState: unknown;
-  }) => { key: string; label: string; state: unknown }[];
+  AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
+  ErrorBannerO: unknown;
+  BlockedBannerO: unknown;
+  ResultTableBody: (props: Record<string, unknown>) => RenderNode;
+  ResultTableCard: (props: Record<string, unknown>) => RenderNode;
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
   buildByResultCountMapO: (byResult: unknown) => Record<string, number>;
   StatusBandO: (props: {
     analyticsState: PayloadState<AnalyticsData>;
     attentionState: PayloadState<{ total: number }>;
     windowDays: number;
+    onRetry?: () => void;
   }) => RenderNode;
   KpiSkeletonO: unknown;
   PayloadUnavailableO: unknown;
@@ -77,10 +78,14 @@ interface OutcomesHelpers {
   buildLedgerSectionsO: (
     rows: LedgerRow[],
     closure?: ClosureState,
-  ) => { key: string; label: string; rows: LedgerRow[] }[];
+    needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
+  ) => { key: string; label: string; heading: string; rows: LedgerRow[] }[];
+  buildNeedsYouUrlO: (filter: Record<string, unknown>, sort: string, limit: number, includeAll: boolean) => string;
   reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
+  getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
+  AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
 }
 
 interface RenderNode {
@@ -263,7 +268,10 @@ test("status band: done and broken count writer-emitted rows only, never above t
   }
 });
 
-test("StatusBandO: an analytics failure renders as unavailable, never as the loading skeleton", () => {
+const bannerTitles = (nodes: RenderNode[]): string[] =>
+  nodes.filter((n) => n.type === helpers.ErrorBannerO).map((n) => String(n.props?.title));
+
+test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
     analyticsState: { status },
     attentionState: { status: "loading" },
@@ -271,12 +279,57 @@ test("StatusBandO: an analytics failure renders as unavailable, never as the loa
   }));
   const loading = render("loading");
   assert.ok(loading.some((n) => n.type === helpers.KpiSkeletonO), "loading draws the pulsing skeleton");
+  assert.deepStrictEqual(bannerTitles(loading), [], "loading raises no banner");
   for (const status of ["error", "unavailable"] as PayloadStatus[]) {
     const nodes = render(status);
     assert.ok(!nodes.some((n) => n.type === helpers.KpiSkeletonO), `${status} draws no skeleton`);
-    assert.ok(nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} says the payload is unavailable`);
+    assert.ok(!nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} is not a text panel`);
+    assert.strictEqual(bannerTitles(nodes).length, 1, `${status}: one banner for the band's payload`);
     assert.ok(!nodes.some((n) => n.props?.["aria-busy"] === true || n.props?.["aria-busy"] === "true"), `${status} is not busy`);
   }
+});
+
+test("StatusBandO: a needs-you failure sits at the band as its own banner, beside tiles that still load", () => {
+  const nodes = flattenNodes(helpers.StatusBandO({
+    analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) },
+    attentionState: { status: "error", error: "boom" },
+    windowDays: 30,
+  }));
+  assert.strictEqual(bannerTitles(nodes).length, 1, "exactly one banner — the attention group's");
+  assert.match(bannerTitles(nodes)[0], /needs-you/i, "the banner names the group it belongs to");
+  assert.deepStrictEqual(
+    bannerTitles(flattenNodes(helpers.StatusBandO({
+      analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) },
+      attentionState: { status: "ready", data: { total: 3 } },
+      windowDays: 30,
+    }))),
+    [],
+    "a healthy band raises nothing",
+  );
+});
+
+test("AlarmLaneO: payload failures stay at their groups — the lane holds only silence and outages", () => {
+  const liveChannels = { status: "ready" as const, data: { alerting: [] } };
+  assert.strictEqual(
+    helpers.AlarmLaneO({ channelLivenessState: liveChannels, searchState: { status: "error", error: "boom" } }),
+    null,
+    "a ledger failure raises no lane row — the ledger shows it",
+  );
+  const outage = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: liveChannels, searchState: { status: "blocked" } }));
+  assert.ok(outage.some((n) => n.type === helpers.BlockedBannerO), "a sustained outage still owns the lane");
+  assert.deepStrictEqual(bannerTitles(outage), [], "the lane never re-draws a group banner");
+});
+
+test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
+  const body = flattenNodes(helpers.ResultTableBody({ state: { status: "error", error: "boom" }, rows: [] }));
+  assert.strictEqual(bannerTitles(body).length, 1, "the ledger owns its failure banner");
+
+  const card = flattenNodes(helpers.ResultTableCard({
+    state: { status: "error", error: "boom" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: { days: 30 },
+  }));
+  const head = card.find((n) => n.props?.title === "Results")!;
+  assert.doesNotMatch(String(head.props?.sub), /loading/i, "a failed ledger never reads as loading");
+  assert.match(String(head.props?.sub), /unavailable/i);
 });
 
 test("buildStatusBandTilesO: the missing-report level honours the same low-N floor as its sibling tiles", () => {
@@ -300,23 +353,6 @@ test("buildAttentionParamsO: emits a needs_attention literal the route's parser 
     assert.strictEqual(params.get("needs_attention"), "true", "the tile asks for the filtered population");
     assert.strictEqual(params.get("days"), String(days), "the query carries the band's own window");
     assert.strictEqual(params.get("limit"), "1", "only the total is consumed");
-  }
-});
-
-test("buildPayloadGroupsO: every above-the-fold payload owns a lane row carrying its own state", () => {
-  const attentionState = { status: "error", error: "boom" };
-  const searchState = { status: "ready" };
-  const analyticsState = { status: "loading" };
-  const groups = helpers.buildPayloadGroupsO({ attentionState, searchState, analyticsState });
-
-  assert.deepStrictEqual(
-    sameRealm(groups.map((g) => g.key)),
-    ["attention", "ledger", "analytics"],
-    "a read that owns a tile but no lane row fails silently",
-  );
-  for (const [key, state] of [["attention", attentionState], ["ledger", searchState], ["analytics", analyticsState]] as const) {
-    assert.strictEqual(groups.find((g) => g.key === key)!.state, state, `${key} row reads its own payload`);
-    assert.ok(groups.find((g) => g.key === key)!.label.length > 0, `${key} row names the payload in words`);
   }
 });
 
@@ -407,6 +443,28 @@ test("buildLedgerSectionsO: partitions the page — every row lands in exactly o
   assert.deepStrictEqual(sameRealm(sections[1].rows.map((r) => r.id)), [1, 4]);
 });
 
+test("buildLedgerSectionsO: Needs you reads the whole window, not the page it happens to share", () => {
+  const pageRows: LedgerRow[] = [{ id: 1, result: "done" }, { id: 2, result: "fail" }, { id: 4, result: "done" }];
+  const windowRows: LedgerRow[] = [{ id: 2, result: "fail" }, { id: 9, result: "blocked" }, { id: 10, result: "fail" }];
+  const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, undefined, {
+    rows: windowRows, total: 1717, windowLabel: "30d",
+  }));
+
+  assert.deepStrictEqual(sameRealm(needsYou.rows.map((r) => r.id)), [2, 9, 10], "rows off this page still need you");
+  assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1, 4], "routine never repeats a needs-you row");
+  assert.match(needsYou.heading, /1,717/, "the header carries the window count, not the page count");
+  assert.match(needsYou.heading, /30d/, "the header names its window");
+  assert.match(routine.heading, /on this page/);
+});
+
+test("buildNeedsYouUrlO: the ledger's own filter plus the attention predicate, always from the first row", () => {
+  const url = new URL(helpers.buildNeedsYouUrlO({ days: 30, agent: "glass-atrium-dev-react" }, "record_ts:desc", 50, false), "http://x");
+  assert.strictEqual(url.searchParams.get("needs_attention"), "true");
+  assert.strictEqual(url.searchParams.get("offset"), "0");
+  assert.strictEqual(url.searchParams.get("days"), "30");
+  assert.strictEqual(url.searchParams.get("agent"), "glass-atrium-dev-react", "a ledger filter narrows needs-you too");
+});
+
 test("isNeedsYouRowO: the predicate is flagged, broken, or an unclosed caveat — nothing else", () => {
   assert.strictEqual(helpers.isNeedsYouRowO({ id: 1, result: "done", review_flag: true }, null), true);
   assert.strictEqual(helpers.isNeedsYouRowO({ id: 2, result: "fail" }, null), true);
@@ -434,14 +492,78 @@ test("buildLedgerSectionsO: an optimistic closure moves the row to Routine befor
   assert.deepStrictEqual(sameRealm(sections[1].rows.map((r) => r.id)), [7]);
 });
 
+test("buildLedgerSectionsO: a closure settled this session leaves the window Needs-you and its total", () => {
+  // 7 is shown in the window list · 8 is on the page but past the window's first N · 5 stays flagged.
+  const pageRows: LedgerRow[] = [
+    { id: 7, result: "done_with_concerns", closed_at: null },
+    { id: 8, result: "done_with_concerns", closed_at: null },
+    { id: 5, result: "done_with_concerns", review_flag: true, closed_at: null },
+    { id: 1, result: "done" },
+  ];
+  const windowRows: LedgerRow[] = [
+    { id: 7, result: "done_with_concerns", closed_at: null },
+    { id: 5, result: "done_with_concerns", review_flag: true, closed_at: null },
+    { id: 2, result: "fail" },
+  ];
+  const closure: ClosureState = {
+    pendingIds: new Set(),
+    closedOverrides: new Map([[7, "2026-08-10T10:00:00.000Z"], [8, "2026-08-10T10:00:00.000Z"], [5, "2026-08-10T10:00:00.000Z"]]),
+  };
+  const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, closure, {
+    rows: windowRows, total: 40, windowLabel: "30d",
+  }));
+
+  const needsIds = needsYou.rows.map((r) => r.id);
+  const routineIds = routine.rows.map((r) => r.id);
+  assert.deepStrictEqual(needsIds.filter((id) => routineIds.includes(id)), [], "no row shows in both sections");
+  assert.deepStrictEqual(sameRealm(needsIds), [5, 2], "a flagged row stays needs-you after its caveat closes");
+  assert.deepStrictEqual(sameRealm(routineIds), [7, 8, 1]);
+  assert.match(needsYou.heading, /Needs you · 38 in 30d/, "the total drops by the two rows the closure settled");
+});
+
 // --- disclosure summaries: a closed section answers without opening, and never fakes calm ---
 
-test("disclosure summaries: an unloaded payload reads as an em-dash, never as 'all clear'", () => {
-  for (const status of ["loading", "error", "unavailable"] as const) {
-    assert.strictEqual(helpers.reportingHealthSummaryO({ status }), "—", `reporting health @ ${status}`);
-    assert.strictEqual(helpers.selfReportSummaryO({ status }), "—", `self-report @ ${status}`);
-    assert.strictEqual(helpers.loopEventsSummaryO({ status }), "—", `loop events @ ${status}`);
+test("disclosure summaries: loading and failure read as distinct tokens, never as 'all clear'", () => {
+  const summaries = [helpers.reportingHealthSummaryO, helpers.selfReportSummaryO, helpers.loopEventsSummaryO];
+  for (const summarize of summaries) {
+    const loading = summarize({ status: "loading" });
+    for (const status of ["error", "unavailable"] as const) {
+      const failed = summarize({ status });
+      assert.notStrictEqual(failed, loading, `${summarize.name}: ${status} is not drawn as loading`);
+      assert.match(failed, /unavailable/i, `${summarize.name}: ${status} says the payload is unavailable`);
+    }
+    assert.match(loading, /loading/i, `${summarize.name}: loading says so`);
   }
+});
+
+test("getChannelLivenessBadgeO: only a loaded payload may claim 'All recording' or carry a tone", () => {
+  for (const status of ["loading", "error", "unavailable"] as const) {
+    const badge = helpers.getChannelLivenessBadgeO({ status });
+    assert.strictEqual(badge.tone, "neutral", `${status} carries no live tone`);
+    assert.doesNotMatch(badge.text, /all recording/i, `${status} is no all-clear`);
+  }
+  assert.notStrictEqual(
+    helpers.getChannelLivenessBadgeO({ status: "loading" }).text,
+    helpers.getChannelLivenessBadgeO({ status: "error" }).text,
+    "loading and failure read differently",
+  );
+  const live = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: [], days: 7 } });
+  assert.deepStrictEqual(sameRealm(live), { tone: "ok", text: "All recording · 7d" });
+  const silent = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: ["stop"] } });
+  assert.deepStrictEqual(sameRealm(silent), { tone: "crit", text: "Silent: stop" });
+});
+
+test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blank body", () => {
+  const body = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
+  // the body returns its skeleton element — render that one level to read the markup it draws
+  const skeleton = typeof body.type === "function" ? (body.type as (p: unknown) => RenderNode)(body.props) : body;
+  const nodes = flattenNodes(skeleton);
+  const table = nodes.find((n) => n.type === "table");
+  assert.ok(table, "the loading body keeps the table shape");
+  assert.ok(nodes.some((n) => n.props?.["aria-busy"] === true), "the loading body is marked busy");
+  const text = nodes.flatMap((n) => n.children.filter((c) => typeof c === "string")).join(" ");
+  assert.match(text, /Failed/, "the column headers render while loading");
+  assert.ok(nodes.filter((n) => n.type === "tr").length > 1, "skeleton rows sit under the header");
 });
 
 test("reportingHealthSummaryO: a silent channel is named in the closed summary line", () => {

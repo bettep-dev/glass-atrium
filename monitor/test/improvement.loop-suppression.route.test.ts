@@ -111,8 +111,9 @@ interface PatternRow {
 interface LoopSuppressionState {
   parked: SuppressionBucket[];
   parked_patterns: ParkedPatternRow[];
-  per_cycle: SuppressionBucket[];
+  per_cycle: (SuppressionBucket & { cycles: number })[];
   per_cycle_window_days: number;
+  per_cycle_window_cycles: number;
   pending_unpromptable: number;
   pending_total: number;
   off_registry_parked: number;
@@ -349,6 +350,17 @@ test("per-cycle suppressions are reported apart from parked rows, with the windo
     body.loop_suppression_state.per_cycle_window_days > 0,
     "a recurrence count without its window is unreadable",
   );
+});
+
+test("each per-cycle bucket reports its cycle coverage within the window's cycle days", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const state = body.loop_suppression_state;
+  assert.ok(state.per_cycle_window_cycles >= 1, "seeded events put at least one cycle day in the window");
+  for (const b of state.per_cycle) {
+    assert.ok(b.cycles >= 1, `${b.cause} recurred on no cycle day`);
+    assert.ok(b.cycles <= state.per_cycle_window_cycles, `${b.cause} covers more days than the window holds`);
+    assert.ok(b.cycles <= b.count, `${b.cause} counts more cycle days than events`);
+  }
 });
 
 test("the per-cycle counts are not registry-gated, or roster-mismatch self-erases", async (t) => {

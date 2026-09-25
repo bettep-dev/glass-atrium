@@ -54,7 +54,6 @@ window.getTokenRate = function (model) {
   // '[1m]' 등 context-variant 접미사는 routing marker · 단가 불변 — 붙은 채로 prefix 스캔하면
   // 자체 행을 건너뛰고 상위 family 행에 매칭 (hooks/lib/pricing_loader.py normalize_model_key 와 동일 규칙)
   const base = model.split('[')[0];
-  if (base !== model && rates[base]) return rates[base];
 
   let best = null;
   for (const key of Object.keys(rates)) {

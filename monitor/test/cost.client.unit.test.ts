@@ -76,6 +76,7 @@ interface CostHelpers {
   ) => SessionRollup;
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
+  getAsOfText: (ms: number | null, loading: boolean) => string;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -95,7 +96,12 @@ const ready = (data: unknown): PanelState => ({ status: "ready", data, error: nu
 const loading: PanelState = { status: "loading", data: null, error: null };
 const failed: PanelState = { status: "error", data: null, error: "boom" };
 
+// Fetched at UTC noon in a UTC day bucket → 12 hours of the day remain.
+const NOON_UTC = "2026-01-10T12:00:00.000Z";
+const NOON_HOURS_LEFT = 12;
+
 // kpi payload for a chosen today-vs-normal ratio: the normal is the 7-day cost over 7.
+// The burn rate is solved so so-far spend + burn × hours left lands on the chosen pace ratio.
 function getKpiAtRatio(ratio: number, paceRatio: number | null): Record<string, unknown> {
   const week7Cost = 70;
   const normalDaily = week7Cost / 7;
@@ -103,7 +109,9 @@ function getKpiAtRatio(ratio: number, paceRatio: number | null): Record<string, 
     window_7d_cost_usd: week7Cost,
     today_cost_usd: normalDaily * ratio,
     burn_rate_3h_usd_per_hour:
-      paceRatio === null ? null : (paceRatio * normalDaily) / 24,
+      paceRatio === null ? null : ((paceRatio - ratio) * normalDaily) / NOON_HOURS_LEFT,
+    day_bucket_timezone: "UTC",
+    fetched_at: NOON_UTC,
   };
 }
 
@@ -173,7 +181,7 @@ test("a payload that failed or never arrived contributes no lane trigger", () =>
 });
 
 test("tile-1 tone follows the so-far ratio alone, never the pace figure", () => {
-  const hotSoFar = cost.computeHotVerdict(getKpiAtRatio(2, 0.1));
+  const hotSoFar = cost.computeHotVerdict(getKpiAtRatio(2, null));
   assert.strictEqual(hotSoFar.isHot, true);
   assert.strictEqual(hotSoFar.isPaceHot, false);
 
@@ -198,6 +206,41 @@ test("the verdict always carries the so-far clause and adds the pace clause only
   const withoutPace = cost.computeHotVerdict(getKpiAtRatio(1.5, null));
   assert.match(withoutPace.verdict, /so far/);
   assert.doesNotMatch(withoutPace.verdict, /pace/, "a missing burn rate must drop the clause, not guess it");
+});
+
+test("the pace lands today's spend so far plus the burn over the hours left, never below what is spent", () => {
+  const normalDaily = 10;
+  const today = 6.3; // 63% already spent
+  const burn = (0.31 * normalDaily) / 24; // a 3h burn that alone extrapolates to 31% of a day
+
+  for (const hour of [0, 6, 12, 18, 23]) {
+    const fetchedAt = new Date(Date.UTC(2026, 0, 10, hour)).toISOString();
+    const hot = cost.computeHotVerdict({
+      window_7d_cost_usd: normalDaily * 7,
+      today_cost_usd: today,
+      burn_rate_3h_usd_per_hour: burn,
+      day_bucket_timezone: "UTC",
+      fetched_at: fetchedAt,
+    });
+    const expected = (today + burn * (24 - hour)) / normalDaily;
+    assert.ok(hot.paceRatio !== null && Math.abs(hot.paceRatio - expected) < 1e-9, `${hour}h: ${hot.paceRatio}`);
+    assert.ok(hot.paceRatio >= hot.ratio!, `${hour}h: the pace cannot undercut the spend already made`);
+  }
+});
+
+test("the hours left are read in the day bucket's zone, and an unreadable instant or zone drops the pace", () => {
+  const base = { window_7d_cost_usd: 70, today_cost_usd: 5, burn_rate_3h_usd_per_hour: 1, fetched_at: NOON_UTC };
+  const utc = cost.computeHotVerdict({ ...base, day_bucket_timezone: "UTC" });
+  const kst = cost.computeHotVerdict({ ...base, day_bucket_timezone: "Asia/Seoul" }); // 21:00 KST → 3h left
+
+  assert.ok(Math.abs(utc.paceRatio! - (5 + 12) / 10) < 1e-9);
+  assert.ok(Math.abs(kst.paceRatio! - (5 + 3) / 10) < 1e-9);
+
+  for (const broken of [{ day_bucket_timezone: "Not/AZone" }, { day_bucket_timezone: "UTC", fetched_at: "x" }, {}]) {
+    const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 5, burn_rate_3h_usd_per_hour: 1, ...broken });
+    assert.strictEqual(hot.paceRatio, null, JSON.stringify(broken));
+    assert.doesNotMatch(hot.verdict, /pace/);
+  }
 });
 
 test("a missing or unusable kpi figure stays null rather than collapsing to zero", () => {
@@ -242,6 +285,28 @@ test("the trend delta states direction, which the total alone cannot", () => {
     "one day has no first-to-last pair, so there is no change to state",
   );
   assert.strictEqual(cost.computeWindowTotal(getTrendPoints([2, 2, 2])).delta, 0);
+});
+
+test("the trend reads complete days only — today's partial point never moves it", () => {
+  for (const today of [0, 0.1, 4, 100]) {
+    assert.strictEqual(cost.computeWindowTotal(getTrendPoints([4, 4, 4, today])).delta, 0, `today=${today}`);
+  }
+  assert.strictEqual(
+    cost.computeWindowTotal(getTrendPoints([3, 1])).delta,
+    null,
+    "one complete day plus today has no first-to-last pair",
+  );
+});
+
+test("the as-of stamp tells an in-flight wave apart from one where every fetch failed", () => {
+  assert.strictEqual(cost.getAsOfText(null, true), "refreshing…");
+  assert.strictEqual(cost.getAsOfText(Date.now(), true), "refreshing…", "a stamp is withheld while a wave is in flight");
+
+  const failedWave = cost.getAsOfText(null, false);
+  assert.doesNotMatch(failedWave, /refreshing/, "a settled wave must not claim a refresh in flight");
+  assert.match(failedWave, /no successful fetch/);
+
+  assert.match(cost.getAsOfText(Date.UTC(2026, 0, 10, 12), false), /^as of /);
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {

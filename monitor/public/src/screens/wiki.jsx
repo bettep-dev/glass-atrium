@@ -108,6 +108,7 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
+					onRetry={triggerRefresh}
 				/>
 
 				{/* Behind the click — working lists, run history, note composition. */}
@@ -117,6 +118,7 @@ function ScreenWiki() {
 				/>
 				<WikiRunHistorySection
 					cyclesState={cyclesState}
+					summaryState={summaryState}
 					reportState={reportState}
 					days={reportDays}
 					onChangeDays={setReportDays}
@@ -237,26 +239,14 @@ function buildAlarmLaneModel(
 		backlogState.status === "ready"
 			? readProposalsW(backlogState.data?.backlog)
 			: null;
-	const count = proposals ? proposals.length : 0;
-	if (count > 0) {
-		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
-		// Dates win when the server reports them; the run streak covers a payload without them.
-		const wait = readProposalWaitW(backlogState.data?.backlog, proposals);
-		const runs = wait ? null : countUnchangedDedupRunsW(cyclesState);
-		// Cycles still in flight → the streak is unknown, not absent.
-		const checking = !wait && cyclesState.status === "loading";
-		const parked = wait
-			? wait.days >= PROPOSAL_PARKED_DAYS
-			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
-		alarms.push({
-			key: "proposals",
-			tone: parked ? "info" : "warn",
-			label: `${count} merge ${count === 1 ? "proposal" : "proposals"} waiting on approval`,
-			detail: wait
-				? describeProposalWaitW(wait, parked)
-				: describeProposalAgeW(runs, parked, checking),
-			parked,
-		});
+	if (proposals && proposals.length > 0) {
+		alarms.push(
+			...buildProposalAlarmsW(
+				backlogState.data?.backlog,
+				proposals,
+				cyclesState,
+			),
+		);
 	}
 
 	const pending =
@@ -276,18 +266,43 @@ function buildAlarmLaneModel(
 	return { alarms, pending, unchecked };
 }
 
-// Oldest first-seen date among the waiting proposals — the server's dated age source.
-// Absent map, unhashed proposals or an unparseable date → null, and the run streak answers instead.
-function readProposalWaitW(backlog, proposals) {
+// One row per waiting proposal, each with its own age; rows sort by that age, so
+// parked pairs land last and the longest-parked last of all.
+function buildProposalAlarmsW(backlog, proposals, cyclesState) {
+	// Undated rows share the run streak, read once for the whole lane.
+	const runs = countUnchangedDedupRunsW(cyclesState);
+	// Cycles still in flight → the streak is unknown, not absent.
+	const checking = cyclesState.status === "loading";
+
+	const rows = proposals.map((proposal, i) => {
+		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
+		const wait = readProposalWaitW(backlog, proposal);
+		const age = wait ? wait.days : runs;
+		const parked = wait
+			? wait.days >= PROPOSAL_PARKED_DAYS
+			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
+		return {
+			key: `proposal-${proposal?.cluster_hash || i}`,
+			tone: parked ? "info" : "warn",
+			label: `Merge proposal waiting on approval · ${proposal?.target_slug || proposal?.cluster_hash || "unnamed pair"}`,
+			detail: wait
+				? describeProposalWaitW(wait, parked)
+				: describeProposalAgeW(runs, parked, checking),
+			parked,
+			age: typeof age === "number" ? age : 0,
+		};
+	});
+	return rows.sort((x, y) => Number(x.parked) - Number(y.parked) || x.age - y.age);
+}
+
+// The proposal's own first-seen date — the server's dated age source.
+// Absent map, unhashed proposal or an unparseable date → null, and the run streak answers instead.
+function readProposalWaitW(backlog, proposal) {
 	const firstSeen = backlog?.proposal_first_seen;
 	if (!firstSeen || typeof firstSeen !== "object") return null;
 
-	let since = null;
-	for (const p of proposals) {
-		const seen = firstSeen[p?.cluster_hash];
-		if (typeof seen === "string" && (since === null || seen < since)) since = seen;
-	}
-	if (since === null) return null;
+	const since = firstSeen[proposal?.cluster_hash];
+	if (typeof since !== "string") return null;
 
 	const days = ageInUtcDaysW(since);
 	return typeof days === "number" ? { days, since } : null;
@@ -362,19 +377,38 @@ function describeSnapshotAgeW(runDate) {
 // Four-tile band — last run · compiled last cycle · search index · library totals.
 // Steady state carries no status word and no tint; only an actionable state tints.
 
-function WikiTileBand({ summaryState, indexState, backlogState }) {
+function WikiTileBand({ summaryState, indexState, backlogState, onRetry }) {
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState),
 		[summaryState, indexState, backlogState],
 	);
+	const failures = readTileBandFailuresW(summaryState, indexState);
 
 	return (
-		<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-			{tiles.map((tile) => (
-				<WikiTile key={tile.key} tile={tile} />
-			))}
+		<div className="flex flex-col gap-2">
+			{failures.length > 0 && (
+				<ErrorBannerW
+					title={`Couldn't load the ${failures.join(" and ")} — the tiles below are incomplete`}
+					onRetry={onRetry}
+				/>
+			)}
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+				{tiles.map((tile) => (
+					<WikiTile key={tile.key} tile={tile} />
+				))}
+			</div>
 		</div>
 	);
+}
+
+// The band's own feeders; the backlog's failure is announced by the maintenance group it feeds.
+function readTileBandFailuresW(summaryState, indexState) {
+	return [
+		[summaryState, "daily cycle summary"],
+		[indexState, "search index"],
+	]
+		.filter(([state]) => state.status === "error")
+		.map(([, label]) => label);
 }
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
@@ -425,10 +459,11 @@ function buildTileBandModel(summaryState, indexState, backlogState) {
 
 // Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
 // none of them renders as a number (a zero nobody loaded is the failure mode).
+// An errored tile carries no text of its own: the band's single banner names the failure.
 function tilePlaceholderW(key, label, state) {
 	const SUB = {
 		loading: "Loading",
-		error: "Couldn't load",
+		error: null,
 		unavailable: "Not reported yet",
 		empty: "Nothing recorded",
 	};
@@ -694,6 +729,7 @@ function describeMaintenanceW(proposals, deadLinks) {
 
 function WikiRunHistorySection({
 	cyclesState,
+	summaryState,
 	reportState,
 	days,
 	onChangeDays,
@@ -707,7 +743,7 @@ function WikiRunHistorySection({
 	return (
 		<WikiDisclosureW
 			label="Run history"
-			count={describeRunHistoryW(cyclesState, model)}
+			count={describeRunHistoryW(cyclesState, model, summaryState)}
 			bodyClassName="px-3 pb-3 flex flex-col gap-3"
 		>
 			{cyclesState.status === "loading" ? (
@@ -768,11 +804,19 @@ function WikiRunHistorySection({
 	);
 }
 
-function describeRunHistoryW(cyclesState, model) {
+// The server's p95 shares the cycles window, so it rides the same summary line.
+function describeRunHistoryW(cyclesState, model, summaryState) {
 	if (cyclesState.status === "loading") return "Loading…";
 	if (cyclesState.status === "error") return "Unavailable";
 	if (model.rows.length === 0) return "No runs in range";
-	return `${model.spanDays} runs · last ${model.newestDate}`;
+
+	const p95 =
+		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
+	const p95Label =
+		typeof p95 === "number"
+			? ` · p95 ${window.UI.formatDuration(p95, "ms")}`
+			: "";
+	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
 }
 
 // Collapsible section shell — label left, count right, body below the summary.
@@ -804,7 +848,7 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 	return (
 		<WikiDisclosureW
 			label="Notes by type"
-			count={state.status === "ready" ? `${rows.length} types` : "—"}
+			count={describeNotesByTypeW(state)}
 		>
 			{state.status === "loading" ? (
 				<div className="fs-meta font-mono text-faint" aria-busy="true">
@@ -835,6 +879,13 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			)}
 		</WikiDisclosureW>
 	);
+}
+
+function describeNotesByTypeW(state) {
+	if (state.status === "loading") return "Loading…";
+	if (state.status === "error") return "Unavailable";
+	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
+	return `${rows.length} types`;
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.

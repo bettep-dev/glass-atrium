@@ -219,11 +219,16 @@ function ScreenCost({ onNav }) {
  * A freshness claim must never outlive its measurement.
  */
 function AsOfStampC({ ms, loading }) {
-  const text = loading || ms === null
-    ? 'refreshing…'
-    : `as of ${new Date(ms).toLocaleTimeString()}`;
+  const text = getAsOfText(ms, loading);
 
   return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
+}
+
+// Settled wave with no stamp = every fetch failed → says so rather than claiming a refresh in flight.
+function getAsOfText(ms, loading) {
+  if (loading) return 'refreshing…';
+  if (ms === null) return 'no successful fetch';
+  return `as of ${new Date(ms).toLocaleTimeString()}`;
 }
 
 /**
@@ -377,9 +382,13 @@ function computeHotVerdict(kpi) {
   const burnRate = toFiniteOrNull(kpi.burn_rate_3h_usd_per_hour);
   const normalDaily = week7Cost !== null && week7Cost > 0 ? week7Cost / 7 : null;
 
+  const hoursLeft = getDayHoursLeft(kpi.fetched_at, kpi.day_bucket_timezone);
+
   const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
-  // 3h burn extrapolated to a full day — where today lands if the current rate holds.
-  const paceRatio = normalDaily !== null && burnRate !== null ? (burnRate * 24) / normalDaily : null;
+  // Where today lands: spend so far + the 3h burn held for the rest of the bucket day.
+  const paceRatio = ratio !== null && burnRate !== null && hoursLeft !== null
+    ? (todayCost + burnRate * hoursLeft) / normalDaily
+    : null;
 
   return {
     todayCost,
@@ -390,6 +399,25 @@ function computeHotVerdict(kpi) {
     isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
     verdict: getHotVerdictText(ratio, paceRatio),
   };
+}
+
+// Hours left in the day bucket at the kpi's own fetch instant; an unreadable instant or zone → null, never a guess.
+function getDayHoursLeft(fetchedAt, timeZone) {
+  const ms = Date.parse(fetchedAt);
+  if (!Number.isFinite(ms) || typeof timeZone !== 'string') return null;
+
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+      .formatToParts(new Date(ms));
+  } catch (err) {
+    return null; // unknown zone → RangeError → the pace clause drops rather than guessing a zone
+  }
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+  return 24 - hour - minute / 60;
 }
 
 // So-far clause always; the pace clause joins it only when a pace figure exists.
@@ -414,7 +442,8 @@ function computeWindowTotal(trendState) {
   const total = series.reduce((s, v) => s + v, 0);
   return {
     total,
-    delta: computeSparkDeltaC(series),
+    // The series always ends at today (server generate_series → today), a partial day → left out of the trend.
+    delta: computeSparkDeltaC(series.slice(0, -1)),
     dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
@@ -542,13 +571,13 @@ function HotBulletC({ hot }) {
 // Window trend — direction rides on the glyph, never on the text colour.
 function TrendDeltaC({ delta }) {
   if (typeof delta !== 'number' || !Number.isFinite(delta)) {
-    return <div className="cost-foot mt-1.5">No trend — a single day in the window.</div>;
+    return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
   }
   const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
-      {Math.abs(delta).toFixed(0)}% first day to last
+      {Math.abs(delta).toFixed(0)}% first day to yesterday
     </div>
   );
 }
@@ -1037,7 +1066,6 @@ function ModelCostBody({ state, days, onRetry }) {
   const modelRows = buildModelCostRows(rows);
   const { top, other } = rollupModelRows(modelRows, MODEL_TOPN);
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const totalSessions = modelRows.reduce((s, r) => s + r.session_count, 0);
 
   return (
     <>
@@ -1073,16 +1101,16 @@ function ModelCostBody({ state, days, onRetry }) {
             <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
               <td className="font-semibold">Total</td>
               <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-              <td className="num font-semibold">{formatIntC(totalSessions)}</td>
-              <td className="num font-semibold">
-                {totalSessions > 0 ? formatUsdC(totalCost / totalSessions) : '—'}
-              </td>
+              {/* A session spanning several models sits in each model's count → the column does not sum. */}
+              <td className="num text-dim">—</td>
+              <td className="num text-dim">—</td>
             </tr>
           </tfoot>
         </table>
       </div>
       {/* Named gap, never proxied — cost_events carry a model, not an agent. */}
       <div className="cost-foot mt-2">
+        Sessions are counted per model, so a session using several models appears in each — the Total row carries no session count.
         Cost per agent is not available — cost events carry a model, not an agent.
       </div>
     </>

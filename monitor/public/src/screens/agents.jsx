@@ -143,7 +143,7 @@ function ScreenAgents() {
   const [failureState,   setFailureState]   = useStateAg(INITIAL_FETCH_STATE);
   // lifecycleState → start/stop/completed gap(orphan spawn) + duration 분포 패널.
   const [lifecycleState,  setLifecycleState]  = useStateAg(INITIAL_FETCH_STATE);
-  // overageState → budget_overages(P95 옆 near-cap 뱃지). 404/503(테이블 미배포) 시 error → 뱃지 미렌더.
+  // overageState → budget_overages(P95 막대 크로싱 표기). 404/503(테이블 미배포) 시 error → 표기 미렌더.
   const [overageState,    setOverageState]    = useStateAg(INITIAL_FETCH_STATE);
 
   // selectedAgent = 키보드/행 하이라이트 (드릴 진입점) · 드로어 열림과 독립 — 하이라이트는 클릭·포커스로,
@@ -190,7 +190,7 @@ function ScreenAgents() {
       runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl.signal, setReviewByAgentState),
       runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl.signal, setFailureState),
       runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl.signal, setLifecycleState),
-      // budget_overages near-cap 뱃지 — days ∈ {7,30,90} 서버 allowlist 와 동일.
+      // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
       runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl.signal, setOverageState),
     ];
 
@@ -270,7 +270,7 @@ function ScreenAgents() {
     [failureState],
   );
 
-  // budget_overages near-cap 뱃지 — agent_type == agent_id (현 cycle convention) 직접 key join.
+  // budget_overages P95 막대 크로싱 표기 — agent_type == agent_id (현 cycle convention) 직접 key join.
   const overageByAgent = useMemoAg(
     () => buildOverageMap(readyData(overageState)?.rows ?? []),
     [overageState],
@@ -322,6 +322,7 @@ function ScreenAgents() {
         <PageHeader
           title="Agents"
           sub="Triage — who is unsafe to route to, and what is breaking"
+          shouldRenderTitle
           right={
             <>
               <div className="seg" aria-label="Time range">
@@ -693,7 +694,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
   );
 }
 
-// Footer/expand colSpan — expand affordance · Agent · Success · Breakages · P95 · Trend.
+// Footer/expand colSpan — expand affordance · Agent · Success · Failed or blocked · P95 · Trend.
 const SUMMARY_TABLE_COLSPAN = 6;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent }) {
@@ -721,7 +722,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
             <th style={STICKY_TH_STYLE}><span className="sr-only">Expand row</span></th>
             <th style={STICKY_TH_STYLE}>Agent</th>
             <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
-            <th className="num" style={STICKY_TH_STYLE} title="Breakages = failed + blocked (blocked = a compliant halt, not a defect)">Breakages</th>
+            <th className="num" style={STICKY_TH_STYLE} title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</th>
             <th className="num" style={STICKY_TH_STYLE} title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</th>
             <th style={STICKY_TH_STYLE}>Trend</th>
           </tr>
@@ -751,7 +752,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
   const [isExpanded, setExpanded] = useStateAg(false);
-  const { AgentBadge, StatusDot, MiniBars, Bar, Badge, resolveBadge, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
+  const { AgentBadge, StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
@@ -772,10 +773,9 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
   const p95Tone = p95LatencyTone(p95Sec);
   const p95Glyph = p95GlyphTone(p95Sec);
-  // near-cap 뱃지 — overage 행 존재 = 실제 tool_use 예산 크로싱 발생. 미존재/count 0 → 미렌더.
+  // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
-  const overageBadge = overageCount > 0 ? resolveBadge('budget_near_cap') : null;
-  const overageTitle = overage
+  const overageNote = overageCount > 0
     ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${Number(overage.max_crossed_pct) || 0}% of budget`
     : null;
   const status = mapStatusToTone(agent.status);
@@ -859,7 +859,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
       </td>
       <td
         className="num"
-        title={p95Sec == null ? undefined : `p95 latency tier: ${p95Glyph} (warn >${P95_AGENT_WARN_SEC / 60}m · crit >${P95_AGENT_CRIT_SEC / 60}m)`}>
+        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${P95_AGENT_WARN_SEC / 60}m · crit >${P95_AGENT_CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
         {/* tier 글리프 — 초-도메인 톤(p95GlyphTone 600s/1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
@@ -875,18 +875,13 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
           ) : (
             <span className="text-faint">—</span>
           )}
-          {overageBadge && (
-            <Badge role="status" tone={overageBadge.tone} title={overageTitle}>
-              {overageBadge.pill}
-            </Badge>
-          )}
         </span>
         {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
         {p95Sec != null && (
           <Bar
             value={Math.min(p95Sec / P95_AGENT_CRIT_SEC, 1)}
             tone={barToneFromClass(p95Tone)}
-            ariaLabel={`p95 ${formatDurationSecAg(p95Sec)}`}
+            ariaLabel={[`p95 ${formatDurationSecAg(p95Sec)}`, overageNote].filter(Boolean).join(' · ')}
           />
         )}
       </td>
@@ -1801,7 +1796,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
     <div>
       <div
         className="fs-meta font-mono text-faint mb-2 flex items-center gap-1"
-        title="Combined result IN ('fail','blocked') — same scope as the summary Breakages column (needs_context excluded)">
+        title="Combined result IN ('fail','blocked') — same scope as the summary Failed or blocked column (needs_context excluded)">
         <Icon name="x" size={12}/>
         Why tasks failed · fail+blocked ({days}d)
       </div>
@@ -2477,7 +2472,7 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
   return (
     <div className="card h-full flex flex-col min-h-0">
       <CardHead
-        title="Unfinished runs"
+        title="No completion record"
         sub={`Last ${days} days · top ${LIFECYCLE_DISPLAY_LIMIT}`}
         right={state.status === 'ready' && totalOrphans > 0
           ? <Pill tone="warn">{formatIntAg(totalOrphans)} orphan</Pill>
@@ -3018,7 +3013,7 @@ function buildFailureMap(rows) {
   return map;
 }
 
-// budget-overages API → agent_type-keyed Map (near-cap 뱃지 조회). 미배포 테이블(빈 rows) → 빈 Map.
+// budget-overages API → agent_type-keyed Map (P95 막대 크로싱 표기 조회). 미배포 테이블(빈 rows) → 빈 Map.
 function buildOverageMap(rows) {
   const map = new Map();
   if (!Array.isArray(rows)) return map;

@@ -406,6 +406,8 @@ function ScreenOutcomes({ onNav }) {
   const [keywordInput, setKeywordInput] = useStateO(filter.q || '');
 
   const [searchState, setSearchState] = useStateO({ status: 'loading', data: null, error: null });
+  // ledger 의 Needs-you 섹션 — 페이지가 아닌 창 전체를 읽는다(stream 1 attention 술어).
+  const [needsYouState, setNeedsYouState] = useStateO({ status: 'loading', data: null, error: null });
 
   // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
   const analyticsPeriod = analyticsDaysO(filter.days);
@@ -515,6 +517,16 @@ function ScreenOutcomes({ onNav }) {
 
     return () => ctrl.abort();
   }, [filter, sort, page, refreshTick, includeAll]);
+
+  // page 무관 — Needs-you 는 매 페이지 같은 창 전체 집합이라 page hop 에 재요청하지 않는다.
+  useEffectO(() => {
+    const ctrl = new AbortController();
+    setNeedsYouState({ status: 'loading', data: null, error: null });
+    fetchJsonO(buildNeedsYouUrlO(filter, sort, PAGE_LIMIT_DEFAULT, includeAll), ctrl.signal)
+      .then((data) => setNeedsYouState({ status: 'ready', data, error: null }))
+      .catch((err) => handleErrorO(err, setNeedsYouState));
+    return () => ctrl.abort();
+  }, [filter, sort, refreshTick, includeAll]);
 
   // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
@@ -627,6 +639,14 @@ function ScreenOutcomes({ onNav }) {
 
   const rows         = searchState.status === 'ready' ? (searchState.data?.rows ?? [])           : [];
   const totalMatched = searchState.status === 'ready' ? (Number(searchState.data?.total) || 0)   : 0;
+  // 미적재·실패 → null: 섹션은 페이지 분할로 되돌아가고 헤더가 'on this page' 로 범위를 밝힌다.
+  const ledgerNeedsYou = needsYouState.status === 'ready'
+    ? {
+      rows: needsYouState.data?.rows ?? [],
+      total: Number(needsYouState.data?.total) || 0,
+      windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
+    }
+    : null;
 
   // T13 (O2) — facet 옵션을 현재 페이지 rows 대신 canonical registry 집합에서 생성
   // (페이지네이션 안정). registry 소스는 /api/agents/summary 응답의 agent_id 들.
@@ -669,16 +689,13 @@ function ScreenOutcomes({ onNav }) {
         />
       </div>
 
-      <AlarmLaneO
-        channelLivenessState={channelLivenessState}
-        payloadGroups={buildPayloadGroupsO({ attentionState, searchState, analyticsState })}
-        onRetry={triggerRefresh}
-      />
+      <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
       <StatusBandO
         analyticsState={analyticsState}
         attentionState={attentionState}
         windowDays={analyticsPeriod}
+        onRetry={triggerRefresh}
       />
 
       {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
@@ -714,6 +731,7 @@ function ScreenOutcomes({ onNav }) {
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
           onRetry={triggerRefresh}
+          needsYou={ledgerNeedsYou}
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
@@ -749,35 +767,18 @@ function ScreenOutcomes({ onNav }) {
   );
 }
 
-// 예약 레인 — 문제가 없으면 아무것도 렌더하지 않는다. 침묵한 기록 채널과 payload 실패만 레인 행이 되고,
-// 나머지 등급은 status band 글리프가 운반한다 (39573 §4 admission).
-// above-the-fold payload 마다 레인 행 하나 — 실패한 읽기가 타일만 비우고 침묵하면 조작자는 아무것도 못 본다.
-function buildPayloadGroupsO({ attentionState, searchState, analyticsState }) {
-  return [
-    { key: 'attention', label: 'the needs-you tile', state: attentionState },
-    { key: 'ledger',    label: 'the record ledger',  state: searchState },
-    { key: 'analytics', label: 'the status band',    state: analyticsState },
-  ];
-}
-
-function AlarmLaneO({ channelLivenessState, payloadGroups, onRetry }) {
+// 예약 레인 — 침묵한 기록 채널과 지속 장애(blocked)만 싣는다. payload 실패 배너는 소유 그룹 자리에 둔다
+// (stream 3) — 레인에 쌓으면 어느 그룹이 비었는지 떨어져 읽힌다.
+function AlarmLaneO({ channelLivenessState, searchState }) {
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
-  const blocked = payloadGroups.filter((g) => g.state.status === 'blocked');
-  const failed  = payloadGroups.filter((g) => g.state.status === 'error');
+  const isBlocked = searchState.status === 'blocked';
 
-  if (silent.length === 0 && blocked.length === 0 && failed.length === 0) return null;
+  if (silent.length === 0 && !isBlocked) return null;
 
   return (
     <div className="flex flex-col gap-2 mb-4 flex-shrink-0" role="region" aria-label="Alarms">
-      {blocked.map((g) => <BlockedBannerO key={g.key} detail={g.state.error}/>)}
+      {isBlocked && <BlockedBannerO detail={searchState.error}/>}
       {silent.length > 0 && <SilentChannelRowO channels={silent}/>}
-      {failed.map((g) => (
-        <ErrorBannerO
-          key={g.key}
-          title={`Couldn't load ${g.label}`}
-          detail={g.state.error}
-          onRetry={onRetry}/>
-      ))}
     </div>
   );
 }
@@ -846,21 +847,25 @@ function DisclosureO({ title, summary, children }) {
   );
 }
 
-// 미적재 payload 는 em-dash — 닫힌 개시 영역의 요약 줄이 '이상 없음' 으로 읽히면 안 된다.
+// 미적재 payload 의 요약 토큰 — loading 과 실패를 구분하고, 어느 쪽도 '이상 없음' 으로 읽히지 않게.
+function getUnloadedSummaryO(status) {
+  return status === 'loading' ? 'Loading…' : 'Unavailable';
+}
+
 function reportingHealthSummaryO(channelLivenessState) {
-  if (channelLivenessState.status !== 'ready') return '—';
+  if (channelLivenessState.status !== 'ready') return getUnloadedSummaryO(channelLivenessState.status);
   const alerting = channelLivenessState.data?.alerting || [];
   return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
 }
 
 function selfReportSummaryO(analyticsState) {
-  if (analyticsState.status !== 'ready') return '—';
+  if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
   const writerTotal = window.UI.getWriterTotal(analyticsState.data?.overall);
   return `${formatIntO(writerTotal)} writer-emitted records`;
 }
 
 function loopEventsSummaryO(loopEventsState) {
-  if (loopEventsState.status !== 'ready') return '—';
+  if (loopEventsState.status !== 'ready') return getUnloadedSummaryO(loopEventsState.status);
   const events = loopEventsState.data?.events;
   return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
 }
@@ -932,7 +937,7 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
-function StatusBandO({ analyticsState, attentionState, windowDays }) {
+function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   if (analyticsState.status === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
@@ -940,11 +945,18 @@ function StatusBandO({ analyticsState, attentionState, windowDays }) {
       </div>
     );
   }
-  // 실패를 skeleton 으로 그리면 끝없는 적재로 읽힌다 — 레인 알람이 원인을 소유하고 여기선 '적재 실패' 만.
-  if (analyticsState.status !== 'ready') {
+  // blocked 는 레인의 장애 배너가 원인을 소유 → 여기선 '적재 실패' 만. 그 밖의 실패는 band 자리의 배너 하나.
+  if (analyticsState.status === 'blocked') {
     return (
       <div className="card mb-4 flex-shrink-0" aria-label="Status band">
         <PayloadUnavailableO label="Status band"/>
+      </div>
+    );
+  }
+  if (analyticsState.status !== 'ready') {
+    return (
+      <div className="mb-4 flex-shrink-0" aria-label="Status band">
+        <ErrorBannerO title="Couldn't load the status band" detail={analyticsState.error} onRetry={onRetry}/>
       </div>
     );
   }
@@ -957,9 +969,16 @@ function StatusBandO({ analyticsState, attentionState, windowDays }) {
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
 
+  const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
+
   return (
-    <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" role="group" aria-label="Status band">
-      {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
+    <div className="mb-4 flex-shrink-0">
+      <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
+        {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
+      </div>
+      {isAttentionFailed && (
+        <ErrorBannerO title="Couldn't load the needs-you count" detail={attentionState.error} onRetry={onRetry}/>
+      )}
     </div>
   );
 }
@@ -1029,8 +1048,32 @@ const AGENT_FAILURE_COLUMNS_O = [
   { label: 'of records', align: 'right' },
 ];
 
+// 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
+function AgentFailureSkeletonO({ stickyStyle }) {
+  return (
+    <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
+      <thead>
+        <tr>
+          {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+            <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {[0, 1, 2].map((i) => (
+          <tr key={i}>
+            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
+              <div style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))', animation: 'skelPulseO 1.4s ease-in-out infinite' }}/>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
-  if (state.status === 'loading') return <ChartSkeletonO height={140}/>;
+  if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (state.status === 'error') {
     return <ErrorBannerO title="Couldn't load by-agent failures" detail={state.error} onRetry={onRetry}/>;
   }
@@ -1310,9 +1353,7 @@ function AttributionLegend() {
 function ChannelLivenessCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
-  const alerting = state.status === 'ready' ? (state.data?.alerting || []) : [];
-  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
-  const days = state.status === 'ready' ? state.data?.days : null;
+  const badge = getChannelLivenessBadgeO(state);
 
   return (
     <div className="card mb-4">
@@ -1322,11 +1363,10 @@ function ChannelLivenessCard({ state, onRetry }) {
         right={
           <Badge
             role="status"
-            tone={toneFromColorVarO(meta.colorVar)}
+            tone={badge.tone}
             icon
             title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
-            {alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording'}
-            {days ? ` · ${days}d` : ''}
+            {badge.text}
           </Badge>
         }
       />
@@ -1335,6 +1375,17 @@ function ChannelLivenessCard({ state, onRetry }) {
       </div>
     </div>
   );
+}
+
+// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral 배지.
+function getChannelLivenessBadgeO(state) {
+  if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
+
+  const alerting = state.data?.alerting || [];
+  const days = state.data?.days;
+  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
+  const text = alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording';
+  return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
 }
 
 function ChannelLivenessBody({ state, onRetry }) {
@@ -1985,7 +2036,7 @@ function ChipGroup({ options, value, onChange, ariaLabel }) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -1998,7 +2049,7 @@ function ResultTableCard({
         title="Results"
         sub={state.status === 'ready'
           ? `${formatIntO(totalMatched)} matched · ${formatIntO(rows.length)} shown`
-          : 'Loading…'}
+          : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
             <ActiveFilterChips filter={filter}/>
@@ -2018,6 +2069,7 @@ function ResultTableCard({
           onRowClick={onRowClick}
           onRetry={onRetry}
           closure={closure}
+          needsYou={needsYou}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -2079,18 +2131,21 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure }) {
+function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou }) {
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
-  if (state.status === 'error' || state.status === 'blocked') {
+  if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records"/>;
+  }
+  if (state.status !== 'ready') {
+    return <ErrorBannerO title="Couldn't load the record ledger" detail={state.error} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}/>;
+  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure} needsYou={needsYou}/>;
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -2141,25 +2196,49 @@ function isNeedsYouRowO(row, closedAt) {
   return row.result === 'done_with_concerns' && !closedAt;
 }
 
-// 페이지 rows → [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
-function buildLedgerSectionsO(rows, closure) {
-  const needsYou = [];
+// [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
+// windowNeedsYou 가 있으면 Needs-you 는 창 전체 질의 결과, 없으면 이 페이지 분할로 되돌아간다.
+function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
+  const pageNeedsYou = [];
   const routine  = [];
   for (const row of rows) {
     const closedAt = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
-    (isNeedsYouRowO(row, closedAt) ? needsYou : routine).push(row);
+    (isNeedsYouRowO(row, closedAt) ? pageNeedsYou : routine).push(row);
   }
+  windowNeedsYou = windowNeedsYou && applyClosureToWindowO(windowNeedsYou, rows, closure);
+  const needsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
+  const needsYouHeading = windowNeedsYou
+    ? `Needs you · ${formatIntO(windowNeedsYou.total)} in ${windowNeedsYou.windowLabel}`
+      + (windowNeedsYou.total > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '')
+    : `Needs you · ${formatIntO(needsYouRows.length)} on this page`;
   return [
-    { key: 'needs-you', label: 'Needs you', rows: needsYou },
-    { key: 'routine',   label: 'Routine',   rows: routine  },
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
   ];
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
+// Session closures the window query has not re-read yet → drop them from its rows and total, or a row shows in both sections.
+function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
+  const overrides = closure?.closedOverrides;
+  if (!overrides || overrides.size === 0) return windowNeedsYou;
+  const rowsById = new Map([...pageRows, ...windowNeedsYou.rows].map((row) => [row.id, row]));
+  const settledIds = new Set();
+  for (const [id, closedAt] of overrides) {
+    const row = rowsById.get(id);
+    if (row && isNeedsYouRowO(row, row.closed_at ?? null) && !isNeedsYouRowO(row, closedAt)) settledIds.add(id);
+  }
+  return {
+    ...windowNeedsYou,
+    rows: windowNeedsYou.rows.filter((row) => !settledIds.has(row.id)),
+    total: Math.max(0, windowNeedsYou.total - settledIds.size),
+  };
+}
+
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }) {
   // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   // 6열 — confidence · self-check · revision · cid 는 drawer 가 운반한다(행은 판단에 필요한 축만).
-  const sections = buildLedgerSectionsO(rows, closure);
+  const sections = buildLedgerSectionsO(rows, closure, needsYou);
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
@@ -2183,7 +2262,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
                     colSpan={6}
                     scope="colgroup"
                     className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
-                    {section.label} · {formatIntO(section.rows.length)} on this page
+                    {section.heading}
                   </th>
                 </tr>
                 {section.rows.map((row) => (
@@ -2826,6 +2905,11 @@ function buildSearchUrlO(filter, sort, page, limit, includeAll) {
   setOptionalAxesO(params, filter);
   setIncludeAllParamO(params, includeAll);
   return `/api/outcomes/search?${params.toString()}`;
+}
+
+// Needs-you 창 전체 질의 — ledger 필터 그대로 + attention 술어, 항상 첫 행부터 (page 무관).
+function buildNeedsYouUrlO(filter, sort, limit, includeAll) {
+  return `${buildSearchUrlO(filter, sort, 0, limit, includeAll)}&needs_attention=true`;
 }
 
 // T13 (O2) — agent facet 옵션을 canonical registry 집합에서 생성 (현재 페이지 rows
