@@ -22,18 +22,14 @@ function ReviewReasonSegmentsI(props) {
 	);
 }
 
-function ErrorBannerI(props) {
-	return React.createElement(window.ImprovementShared.ErrorBannerI, props);
-}
-
 // One banner per failed payload, in place of the group that payload owns.
 function PayloadErrorCardI({ title, state, onRetry }) {
-	const { CardHead } = window.UI;
+	const { CardHead, RegionUnavailable } = window.UI;
 	return (
 		<div className="card">
 			<CardHead title={title} />
 			<div className="p-4">
-				<ErrorBannerI
+				<RegionUnavailable
 					source={title.toLowerCase()}
 					error={state.error}
 					onRetry={onRetry}

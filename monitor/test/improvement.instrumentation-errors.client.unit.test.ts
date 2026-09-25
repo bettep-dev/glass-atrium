@@ -27,7 +27,7 @@ interface RecordedElement {
 
 interface ViewSandbox {
   React: { createElement: unknown };
-  window: { ImprovementShared?: Record<string, unknown> };
+  window: { UI: Record<string, unknown>; ImprovementShared?: Record<string, unknown> };
   ImprovementInstrumentationViewI: (props: Record<string, unknown>) => RecordedElement;
 }
 
@@ -39,7 +39,8 @@ function isElement(value: unknown): value is RecordedElement {
 
 const sandbox = await buildScreenSandbox<ViewSandbox>(INSTRUMENTATION_SRC);
 const BannerMarker = () => null;
-sandbox.window.ImprovementShared = { ErrorBannerI: BannerMarker };
+sandbox.window.UI.RegionUnavailable = BannerMarker;
+sandbox.window.ImprovementShared = {};
 sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },

@@ -452,7 +452,7 @@ function ScreenImprovement({ onNav }) {
 					title="Learning"
 					right={
 						<div className="flex items-center gap-2">
-							<FreshnessStamp {...getFreshnessInputI(asOf, regionStates)} />
+							<FreshnessStamp at={asOf} regions={regionStates} />
 							<ViewToggleI view={view} onChange={setView} />
 							<RefreshButton
 								isBusy={isBusy}
@@ -711,11 +711,6 @@ function formatCycleStampI(iso) {
 	});
 }
 
-// at = last landed suggestion list; busy/failed state comes from every region
-function getFreshnessInputI(asOf, regions) {
-	return { at: asOf, regions };
-}
-
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
 // 함께 운반한다(색 단독 금지).
 function ViewToggleI({ view, onChange }) {
@@ -749,7 +744,7 @@ function ViewToggleI({ view, onChange }) {
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
 function TrendCardI({ state, aggregate }) {
-	const { CardHead } = window.UI;
+	const { CardHead, TrendChart } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !aggregate) {
 		return (
@@ -787,7 +782,6 @@ function TrendCardI({ state, aggregate }) {
 		);
 	}
 
-	const { TrendChart } = window.UI;
 	const charts = [
 		["Verified cycles per day", "ok", "verified", aggregate.verifiedTotal],
 		["Rejected cycles per day", "warn", "reject", aggregate.rejectTotal],
@@ -2594,17 +2588,6 @@ function ErrorBannerI({ source, error, onRetry }) {
 //   verifiedTotal/rejectTotal = eval_result 분류 합.
 //   trend          = 날짜 오름차순 [{ date, verified, reject }] 2-시리즈.
 //   failBefore/After = 날짜순 전/후반 split 의 reject ÷ (verified+reject) 분자/분모.
-// loop-events carries no day window → the basis is the newest rows up to the fetch cap
-function getLoopBasisI(aggregate) {
-	const { eventCount } = aggregate;
-	const trend = aggregate.trend || [];
-	const span =
-		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
-	if (eventCount >= LOOP_EVENTS_LIMIT)
-		return `Latest ${formatIntI(eventCount)} cycles (fetch cap)${span}`;
-	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
-}
-
 function deriveLoopAggregateI(data) {
 	const events = Array.isArray(data.events) ? data.events : [];
 	let added = 0,
@@ -2651,6 +2634,17 @@ function deriveLoopAggregateI(data) {
 		failBefore: { count: before.reject, total: before.total },
 		failAfter: { count: after.reject, total: after.total },
 	};
+}
+
+// loop-events carries no day window → the basis is the newest rows up to the fetch cap
+function getLoopBasisI(aggregate) {
+	const { eventCount } = aggregate;
+	const trend = aggregate.trend || [];
+	const span =
+		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
+	if (eventCount >= LOOP_EVENTS_LIMIT)
+		return `Latest ${formatIntI(eventCount)} cycles (fetch cap)${span}`;
+	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
 }
 
 // starts one region request; superseded or aborted answers never land (request identity)
@@ -2750,7 +2744,6 @@ window.ImprovementShared = {
 	SymI,
 	confidenceBadgeMetaI,
 	ReviewReasonSegmentsI,
-	ErrorBannerI,
 };
 
 window.ScreenImprovement = ScreenImprovement;
