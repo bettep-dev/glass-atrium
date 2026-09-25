@@ -125,8 +125,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 
       <div className="flex-shrink-0">
         <PageHeader
-          sub="Triage"
           title="Dashboard"
+          sub={<span className="fs-meta">Triage</span>} // the shared eyebrow is 11px → fs-meta holds the 12px floor
           right={
             <>
               <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
@@ -176,6 +176,8 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
     <section className="dash-lane" aria-live="polite" aria-label="Alarms">
       {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
         updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
+      {/* a source still loading may add a row → its reserved slot keeps the band from jumping when it does */}
+      {hasAlarms && readiness.status === 'loading' && <LoadingPlaceholder label="other alarms" className="dash-lane-slot"/>}
       {!hasAlarms && readiness.status === 'loading' && <LoadingPlaceholder label="alarms" className="dash-lane-slot"/>}
       {!hasAlarms && readiness.status === 'unknown' && (
         <p className="dash-lane-slot fs-meta text-dim flex items-center">
@@ -258,6 +260,9 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
   );
 }
 
+// a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
+const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
+
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
@@ -269,14 +274,14 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
         {tile.label}
         {tile.window && <span className="normal-case"> ({tile.window})</span>}
       </h2>
-      {tile.status === 'error' ? (
+      {tile.status === 'error' && !isRetryShared ? (
         <RegionUnavailable source={tile.source} error={tile.error}
           onRetry={isRetryShared ? undefined : () => onRetry(tile.region)}/>
       ) : (
         <>
           <StatusTileValue tile={tile}/>
           <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
-          <div className="fs-meta text-dim dash-tile-hint">{tile.hint}</div>
+          <div className="fs-meta text-dim dash-tile-hint">{tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}</div>
           {tile.canRetry && !isRetryShared && (
             <button type="button" className="btn sm self-start" onClick={() => onRetry(tile.region)}>Retry</button>
           )}
@@ -289,7 +294,15 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
 
 function StatusTileValue({ tile }) {
   const { Badge, KpiValue, LoadingPlaceholder } = window.UI;
-  if (tile.status === 'loading') return <LoadingPlaceholder label={tile.label.toLowerCase()} className="kpi-value"/>;
+  if (tile.status === 'loading') {
+    // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
+    return (
+      <div className="flex items-center gap-2">
+        <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
+        <LoadingPlaceholder label={tile.label.toLowerCase()}/>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2">
       <KpiValue>{tile.value}</KpiValue>
@@ -653,22 +666,27 @@ const OUTCOME_VERDICT = { ok: 'Within lines', warn: 'Caveats above line', crit: 
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
   if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return '—';
-  return window.UI.formatPctWithDenominator(rate.breakage, rate.writerTotal);
+  return getSharePct(rate.breakage, rate.writerTotal);
 }
 
 function describeOutcomeDetail(rate) {
   if (rate.status === 'low-n') return 'outcomes · too few to judge';
   if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  return `failed · ${window.UI.formatPctWithDenominator(rate.openCaveats, rate.writerTotal)} with caveats`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed`;
 }
 
 function describeOutcomeHint(rate) {
   if (rate.status === 'unavailable') return 'No writer-emitted outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
   if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} writer-emitted outcomes to judge.`;
-  if (rate.status === 'crit') return 'Failed or blocked share of writer-emitted outcomes.';
-  if (rate.status === 'warn') return 'Open done-with-caveats share of writer-emitted outcomes.';
-  return 'Failed and caveat shares of writer-emitted outcomes.';
+  return `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) open with caveats · writer-emitted only.`;
+}
+
+// headline share without its denominator → a 28px value stays on one line; the counts ride the detail line
+function getSharePct(numerator, denominator) {
+  const den = Number(denominator);
+  if (!Number.isFinite(den) || den <= 0) return '—';
+  return `${(((Number(numerator) || 0) / den) * 100).toFixed(1)}%`;
 }
 
 // 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
@@ -694,7 +712,8 @@ function buildFleetTile(agentsState) {
   };
 }
 
-const FLEET_VERDICT = { ok: 'None suspended', warn: 'Failing streak', crit: 'Suspended' };
+// the detail line already says "suspended" → the verdict never repeats it
+const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
 function buildSpendTile(costState) {

@@ -129,12 +129,13 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
 })) as Record<string, unknown>;
 const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
 
-test("the Task results tile headlines the failed share and carries a distinct verdict badge per judged status", () => {
+test("the Task results tile headlines a bare failed share on one line, with its counts and caveat share on the lines below", () => {
   const judged = [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
   const verdicts = judged.map(([status, tone]) => {
     const tile = buildOutcomeTile({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
-    assert.equal(tile.value, "7/40", `${status}: the failed share leads`);
-    assert.match(String(tile.detail), /9\/40/, `${status}: the caveat share stays visible`);
+    assert.equal(tile.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
+    assert.match(String(tile.detail), /\b7 of 40\b/, `${status}: the failed count and its denominator stay visible`);
+    assert.match(String(tile.hint), /22\.5%.*\b9\b/, `${status}: the caveat share and count stay visible`);
     assert.doesNotMatch(String(tile.badge), /\d/, `${status}: the badge is a verdict`);
     return tile.badge;
   });
@@ -143,6 +144,18 @@ test("the Task results tile headlines the failed share and carries a distinct ve
   const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
   assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
   assert.match(String(lowN.detail), /too few to judge/i);
+});
+
+const buildFleetTile = rateMod.buildFleetTile as (state: unknown) => Record<string, string>;
+
+test("the fleet tile names suspension once across its value, verdict and detail, whatever the breaker state", () => {
+  const rows: Array<[string, number, number]> = [["nothing tripped", 0, 0], ["a streak", 0, 2], ["a suspended agent", 1, 2]];
+  for (const [name, suspended, streak] of rows) {
+    const breaker = { source: "loaded", suspended_count: suspended, streak_count: streak };
+    const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker } } });
+    const visible = [tile.value, tile.badge, tile.detail].join(" ");
+    assert.equal(visible.match(/suspend/gi)?.length, 1, `${name}: "${visible}" says suspended exactly once`);
+  }
 });
 
 test("a tile renders its number as the KPI value, its verdict as the badge, and the detail after both", () => {
@@ -194,11 +207,12 @@ test("a failed tile shows the shared unavailable card, whose Retry reloads only 
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
 });
 
-test("a tile whose outage the page banner already carries offers no Retry of its own", () => {
+test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].props.onRetry, undefined);
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
+  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "only the tile itself is a card");
+  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the banner owns the only Retry");
+  assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "—", "the value slot keeps its unknown dash");
 });
 
 test("an unavailable harness tile offers a Retry that re-polls the harness, unless the page banner lists it", () => {
@@ -243,6 +257,9 @@ test("a loading tile says so in a status placeholder and reserves the detail slo
   const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(loading, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(loading, (n) => n.props.atom === "KpiValue").length, 0, "no value renders before one loads");
+  const struts = findNodes(loading, (n) => n.type === "span" && classOf(n) === "kpi-value");
+  assert.equal(struts.length, 1, "an empty KPI-scale strut holds the value row's height");
+  assert.equal(struts[0].props["aria-hidden"], "true");
 });
 
 test("a tile refreshing over held data keeps its value and marks itself busy", () => {
@@ -272,8 +289,13 @@ test("the alarm lane reserves its slot with a status line while alarm sources ar
   assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
   assert.match(collectText(settled), /No alarms/, "a settled empty lane keeps its line instead of collapsing");
 
-  const alarmed = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
-  assert.equal(findNodes(alarmed, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "a landed alarm replaces the placeholder");
+  // a source still loading may add a row → an early alarm keeps the reserved slot below it, so a late alarm fills it
+  const slotsFor = (readiness: unknown) => findNodes(
+    render("AlarmLane", { alarms: [HARNESS_ALARM], readiness, onNav: () => {} }),
+    (n) => n.props.atom === "LoadingPlaceholder" && classOf(n).includes("dash-lane-slot"),
+  ).length;
+  assert.equal(slotsFor({ status: "loading", unread: [] }), 1, "an early alarm keeps the reserved slot while a source loads");
+  assert.equal(slotsFor({ status: "read", unread: [] }), 0, "a settled lane holds only its rows");
 });
 
 describe("the empty alarm lane shows the all-clear only when every alarm source was read", () => {
