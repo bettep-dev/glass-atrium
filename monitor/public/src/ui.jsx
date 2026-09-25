@@ -187,28 +187,171 @@ function Delta({ value, inverse=false }) {
   </span>;
 }
 
-function Sparkline({ data, w=60, h=22, color='currentColor', fill=true }) {
+// label → named image · no label → decorative, hidden from assistive tech
+function getTrendSvgA11y(label) {
+  return label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' };
+}
+
+function Sparkline({ data, w=60, h=22, color='currentColor', fill=true, label }) {
   if (!data || data.length < 2) return null;
   const min = Math.min(...data), max = Math.max(...data);
   const range = max - min || 1;
   const pts = data.map((v,i) => [i/(data.length-1) * w, h - ((v-min)/range)*h*0.85 - 1]);
   const path = pts.map(([x,y],i) => `${i===0?'M':'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const area = `${path} L${w},${h} L0,${h} Z`;
-  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} {...getTrendSvgA11y(label)}>
     {fill && <path d={area} fill={color} opacity="0.12"/>}
     <path d={path} fill="none" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>;
 }
 
-function MiniBars({ data, w=60, h=22, color='currentColor' }) {
+function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
   const max = Math.max(...data) || 1;
   const bw = w / data.length - 1;
-  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+  return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} {...getTrendSvgA11y(label)}>
     {data.map((v,i) => {
       const bh = (v/max) * h * 0.9;
       return <rect key={i} x={i*(bw+1)} y={h-bh} width={bw} height={bh} fill={color} opacity="0.85" rx="0.5"/>;
     })}
   </svg>;
+}
+
+// Panel-width day chart: viewBox x runs 0..CHART_VIEW_W and stretches to the panel (preserveAspectRatio none).
+const CHART_VIEW_W = 100;
+const CHART_MAX_TICKS = 7;
+
+// Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
+function getChartTicks(count, maxTicks = CHART_MAX_TICKS) {
+  if (count <= 0) return [];
+  const cap = Math.max(2, maxTicks);
+  if (count <= cap) return Array.from({ length: count }, (_, i) => i);
+  const step = (count - 1) / (cap - 1);
+  return Array.from({ length: cap }, (_, i) => Math.round(i * step));
+}
+
+// Pointer x ratio (0..1 of the plot width) → nearest point (line) or the bar under it; null when empty.
+function getChartIndexAtRatio(ratio, count, kind = 'line') {
+  if (count <= 0) return null;
+  const clamped = Math.min(1, Math.max(0, ratio));
+  const index = kind === 'bars' ? Math.floor(clamped * count) : Math.round(clamped * (count - 1));
+  return Math.min(count - 1, index);
+}
+
+/**
+ * Next readout day for a key press; undefined = key not handled, left to the page.
+ * The first arrow press with no active day starts on the latest day.
+ */
+function getChartKeyIndex(key, index, count) {
+  if (count <= 0) return undefined;
+  const last = count - 1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return last;
+  if (key !== 'ArrowLeft' && key !== 'ArrowRight') return undefined;
+  if (index === null || index === undefined) return last;
+  return key === 'ArrowLeft' ? Math.max(0, index - 1) : Math.min(last, index + 1);
+}
+
+function getChartReadout(point, formatValue = String) {
+  if (!point) return '';
+  return Number.isFinite(point.value) ? `${point.label}: ${formatValue(point.value)}` : `${point.label}: no data`;
+}
+
+// Accessible name for the chart image — range plus latest/low/high, since the plot itself is aria-hidden.
+function getChartSummary(name, points, formatValue = String) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length === 0) return `${name}: no data`;
+  const latest = values[values.length - 1];
+  const range = `${points.length} days from ${points[0].label} to ${points[points.length - 1].label}`;
+  return `${name}, ${range}: latest ${formatValue(latest)}, low ${formatValue(Math.min(...values))}, high ${formatValue(Math.max(...values))}`;
+}
+
+function getChartX(index, count, kind) {
+  if (kind === 'bars') return ((index + 0.5) / count) * CHART_VIEW_W;
+  return count > 1 ? (index / (count - 1)) * CHART_VIEW_W : CHART_VIEW_W / 2;
+}
+
+// null values lift the pen → a gap, never a line drawn through a missing day
+function getChartLinePath(values, getY) {
+  let isPenDown = false;
+  return values.map((value, i) => {
+    if (value === null) { isPenDown = false; return ''; }
+    const command = isPenDown ? 'L' : 'M';
+    isPenDown = true;
+    return `${command}${getChartX(i, values.length, 'line').toFixed(2)},${getY(value).toFixed(2)}`;
+  }).join(' ');
+}
+
+function ChartPlot({ points, kind, h, color, activeIndex }) {
+  const values = points.map((point) => (Number.isFinite(point.value) ? point.value : null));
+  const finite = values.filter((value) => value !== null);
+  const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
+  const range = (finite.length ? Math.max(...finite) : 1) - min || 1;
+  const getY = (value) => h - ((value - min) / range) * h * 0.85 - 1;
+  const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
+  return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
+    {kind === 'bars'
+      ? <ChartBars values={values} h={h} getY={getY} color={color} activeIndex={activeIndex}/>
+      : <path d={getChartLinePath(values, getY)} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
+    {crossX !== null && <line x1={crossX} x2={crossX} y1={0} y2={h} stroke={toneVarColor('neutral')} strokeDasharray="3 3" vectorEffect="non-scaling-stroke"/>}
+  </svg>;
+}
+
+function ChartBars({ values, h, getY, color, activeIndex }) {
+  const slot = CHART_VIEW_W / values.length;
+  return values.map((value, i) => {
+    if (value === null) return null;
+    const y = getY(value);
+    const opacity = activeIndex === null || activeIndex === i ? 0.85 : 0.45;
+    return <rect key={i} x={i * slot + slot * 0.1} y={y} width={slot * 0.8} height={h - y} fill={color} opacity={opacity}/>;
+  });
+}
+
+function ChartTicks({ points, kind, maxTicks }) {
+  const count = points.length;
+  return <div aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
+    {getChartTicks(count, maxTicks).map((i) => {
+      const left = getChartX(i, count, kind);
+      const shift = left <= 0 ? '0' : left >= CHART_VIEW_W ? '-100%' : '-50%';
+      return <span key={i} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${shift})`, whiteSpace: 'nowrap' }}>{points[i].label}</span>;
+    })}
+  </div>;
+}
+
+// Active-day state + the pointer/keyboard handlers that move it; the pure index helpers carry the rules.
+function useChartReadout(count, kind) {
+  const [activeIndex, setActiveIndex] = useState(null);
+  const onKeyDown = (event) => {
+    const next = getChartKeyIndex(event.key, activeIndex, count);
+    if (next === undefined) return;
+    event.preventDefault();
+    setActiveIndex(next);
+  };
+  const onPointerMove = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width > 0) setActiveIndex(getChartIndexAtRatio((event.clientX - rect.left) / rect.width, count, kind));
+  };
+  const onFocus = () => setActiveIndex((index) => (index === null ? count - 1 : index));
+  const onClear = () => setActiveIndex(null);
+  return { activeIndex, handlers: { onKeyDown, onPointerMove, onFocus, onPointerLeave: onClear, onBlur: onClear } };
+}
+
+/**
+ * Day-series chart that fills its panel: named image, day ticks, crosshair + polite live readout on hover and focus.
+ * @param points - `{ label, value }` per day, oldest first; a null value renders as a gap
+ * @param formatValue - formats values in the readout and the accessible summary
+ */
+function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS }) {
+  const count = points ? points.length : 0;
+  const { activeIndex, handlers } = useChartReadout(count, kind);
+  if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
+  const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
+  return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
+    <div role="img" aria-label={getChartSummary(label, points, formatValue)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
+      <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+    </div>
+    <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>
+    <div aria-live="polite" style={{ minHeight: 18, fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }}>{readout}</div>
+  </figure>;
 }
 
 // tone KEY → 색상 토큰 var 명. neutral 은 비측정/중립 막대용 muted line(--faint).
@@ -1322,6 +1465,7 @@ function resolveOutcomeRate(data) {
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  TrendChart, getChartTicks, getChartIndexAtRatio, getChartKeyIndex, getChartReadout, getChartSummary,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
