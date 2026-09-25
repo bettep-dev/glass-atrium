@@ -1,5 +1,5 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
-const { useState: useS, useEffect: useE } = React;
+const { useState: useS, useEffect: useE, useRef: useR } = React;
 
 // NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입
 const NAV = [
@@ -35,6 +35,21 @@ const Screens = {
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
+const MAIN_CONTENT_ID = "main-content";
+
+// page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
+function focusRouteHeading(region) {
+	if (!region) return;
+	const target = region.querySelector("h1") || region;
+	if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+	target.focus();
+}
+
+// the hash is the route key → cancel the #main-content navigation, move focus instead
+function onSkipToContent(event) {
+	event.preventDefault();
+	focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+}
 
 // hash 형식 `#screen?per-screen-query` — '?' 앞부분만 screen id
 function parseHashScreen() {
@@ -47,13 +62,13 @@ function Sidebar({ active, onNav, harness }) {
 	const systems = systemsRollup(harness);
 	const dynamicBadges = harnessToNavBadges(harness);
 	return (
-		<aside aria-label="Sidebar" className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
-			<div className="px-4 py-4 border-b border-line">
+		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
+			<div className="shell-brand px-4 py-4 border-b border-line">
 				<div className="flex items-center gap-2.5">
 					<div className="w-7 h-7 rounded-md overflow-hidden bg-ink">
 						<img src="/assets/favicon/icon-192.png" alt="Atrium Monitor" className="w-full h-full object-cover" />
 					</div>
-					<div>
+					<div className="rail-hide">
 						<div className="text-[13px] font-semibold leading-none">
 							Atrium Monitor
 						</div>
@@ -83,10 +98,11 @@ function Sidebar({ active, onNav, harness }) {
 								key={n.id}
 								className={`nav-item ${active === n.id ? "active" : ""}`}
 								onClick={() => onNav(n.id)}
+								title={n.label}
 							>
 								<Icon name={n.icon} size={14} />
 								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
-								<span className="flex-1 min-w-0 truncate">{n.label}</span>
+								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
 								{badges.map((b, i) => (
 									<span
 										key={i}
@@ -105,7 +121,7 @@ function Sidebar({ active, onNav, harness }) {
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
-						<span className="font-mono text-dim">{systems.label}</span>
+						<span className="rail-hide font-mono text-dim">{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -243,6 +259,14 @@ function App() {
 		};
 	}, []);
 
+	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
+	const focusedRoute = useR(active);
+	useE(() => {
+		if (focusedRoute.current === active) return;
+		focusedRoute.current = active;
+		focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+	}, [active]);
+
 	// NAV 클릭 — state 변경 + screen 전환 시 stale query suffix 제거
 	const onNavClick = (id) => {
 		setActive(id);
@@ -271,12 +295,14 @@ function App() {
 	return (
 		<div
 			className="flex min-h-[100dvh]"
-			style={{ minWidth: 1280 }}
 			data-screen-label={activeNav ? `${activeNav.label}` : ""}
 		>
+			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
+				Skip to content
+			</a>
 			<Sidebar active={active} onNav={onNavClick} harness={harness} />
 			<div className="flex-1 min-w-0 flex flex-col">
-				<main className="flex-1 p-6 flex flex-col min-h-0">
+				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
 						<Screen onNav={onNavClick} harness={harness} />
 					) : (
