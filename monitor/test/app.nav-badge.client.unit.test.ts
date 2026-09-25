@@ -318,7 +318,9 @@ test("harnessToNavBadges: the two contributors share the slot and cannot clobber
   const bySource = new Map(badges.map((b) => [b.source, b.badge]));
   assert.strictEqual(bySource.get("kpi"), "4");
   assert.strictEqual(bySource.get("daemon"), "2");
-  assert.ok(badges.every((b) => b.badgeTone === "warn"));
+  const toneBySource = new Map(badges.map((b) => [b.source, b.badgeTone]));
+  assert.strictEqual(toneBySource.get("daemon"), "crit", "a down part reads crit, as its Dashboard alarm does");
+  assert.strictEqual(toneBySource.get("kpi"), "warn");
 });
 
 test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpolled emits no key", () => {

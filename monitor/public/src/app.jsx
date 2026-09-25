@@ -35,6 +35,12 @@ const Screens = {
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
+// no .nav-badge.crit rule in styles yet → local tone fill mirroring .nav-badge.warn
+const NAV_BADGE_CRIT_STYLE = {
+	background: "rgb(var(--crit) / 0.15)",
+	color: "rgb(var(--crit))",
+	borderColor: "transparent",
+};
 const MAIN_CONTENT_ID = "main-content";
 
 // page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
@@ -107,6 +113,7 @@ function Sidebar({ active, onNav, harness }) {
 									<span
 										key={i}
 										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
+										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
 									>
 										{b.badge}
 									</span>
@@ -157,7 +164,8 @@ function harnessToNavBadges(harness) {
 		badges.push({ badge: String(harness.failCount1h), badgeTone: "warn", source: "kpi" });
 	}
 	if (harness.daemonsDown > 0) {
-		badges.push({ badge: String(harness.daemonsDown), badgeTone: "warn", source: "daemon" });
+		// a down daemon is crit on its Dashboard alarm → the badge follows the worst severity
+		badges.push({ badge: String(harness.daemonsDown), badgeTone: "crit", source: "daemon" });
 	}
 	return { architecture: badges.length > 0 ? { badges } : null };
 }
