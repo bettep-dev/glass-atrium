@@ -13,6 +13,7 @@
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'
+LINE_OPENING_PHRASE='the declaration must open its own line'
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -114,13 +115,15 @@ plain_paths() {
   local -a names=(
     'a quoted mention alone still draws the missing-declaration nudge'
     'quoted sensitive-path text ahead of a plain declaration leaves the depth advisory silent'
+    'a mid-line declaration draws a nudge naming the line-opening requirement'
   )
   local -a prompts=(
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats'
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Earlier round: [SCOPE] files=hooks/old.sh · out=none'$'\n''[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Fix it. [SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
   )
-  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}")
-  local -a expected=('present' 'absent')
+  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}")
+  local -a expected=('present' 'absent' 'present')
   local i got
   for i in "${!names[@]}"; do
     run_gate "${prompts[${i}]}"
