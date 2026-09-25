@@ -89,7 +89,7 @@
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh not found ·
-# 8=a tracked in-scope path carries a tab or newline.
+# 8=a tracked manifest path carries a tab, newline or non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -227,13 +227,16 @@ mode_of() {
   fi
 }
 
-# NUL-delimited paths on stdin → one per line. A tab or newline cannot ride the
-# tab- and newline-delimited pipeline, so such a path is refused by name (exit 8).
+# NUL-delimited paths on stdin → the ones EXCLUDE_RE keeps, one per line. A kept
+# path the line pipeline (tab, newline) or JSON (non-UTF-8 byte) cannot carry is
+# refused by name (exit 8); an excluded one is dropped whatever its bytes.
 nul_paths_to_lines() {
   local path
   while IFS= read -r -d '' path; do
-    if [[ "${path}" == *[$'\t\n']* ]]; then
-      printf 'generate-manifest: tracked in-scope path carries a tab or newline (unsupported): %q\n' \
+    if [[ "${path}" =~ ${EXCLUDE_RE} ]]; then continue; fi
+    # shellcheck disable=SC2310  # a false rc is the refusal below, not an error to abort on
+    if [[ "${path}" == *[$'\t\n']* ]] || ! is_utf8 "${path}"; then
+      printf 'generate-manifest: tracked manifest path carries a tab, newline or non-UTF-8 byte (unsupported): %q\n' \
         "${path}" >&2
       exit 8
     fi
@@ -241,14 +244,20 @@ nul_paths_to_lines() {
   done
 }
 
+# True when $1 is valid UTF-8 — jq -R swaps an invalid byte for U+FFFD, so the
+# round trip differs. jq runs only for a path carrying a byte >= 0x80.
+is_utf8() {
+  local LC_ALL=C roundtrip
+  if [[ "$1" != *[$'\x80'-$'\xff']* ]]; then return 0; fi
+  roundtrip="$(printf '%s' "$1" | jq -Rrj .)"
+  [[ "${roundtrip}" == "$1" ]]
+}
+
 # Emit the generated deploy file list, one path per line, sorted. -z because
 # default ls-files C-quotes a path with a byte >= 0x80, `"` or `\` — naming no file.
-# grep exit 1 (= every tracked file excluded) is absorbed so the empty set
-# reaches the named exit-6 guard instead of dying as an opaque pipefail.
 generate_files() {
   git -C "${GA_ROOT}" ls-files -z -- "${SCOPE_PATHS[@]}" \
     | nul_paths_to_lines \
-    | { grep -vE "${EXCLUDE_RE}" || true; } \
     | LC_ALL=C sort
 }
 

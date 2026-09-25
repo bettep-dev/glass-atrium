@@ -175,17 +175,30 @@ sha256_content() {
   [[ "${output}" == *"manifest matches generated set"* ]] || return 1
 }
 
-@test "generate: exit 8 names a tracked path carrying a tab or newline and leaves the manifest unchanged" {
+# Index-only entry: APFS refuses a non-UTF-8 file name, but git tracks one fine.
+track_index_only() {
+  local blob
+  blob="$(git -C "${WORK}" hash-object -w --stdin </dev/null)"
+  git -C "${WORK}" update-index --add --cacheinfo "100644,${blob},$1"
+}
+
+# Row = "<name>|<path suffix>": one byte class the line pipeline or JSON cannot carry.
+UNCARRIABLE_ROWS=(
+  "tab|tab"$'\t'"name.md"
+  "newline|new"$'\n'"line.md"
+  "non-UTF-8 byte|bad"$'\xe9'"byte.md"
+)
+
+@test "generate: exit 8 names an in-scope path the pipeline cannot carry and leaves the manifest unchanged" {
   "${SCRIPT}" >/dev/null
   git -C "${WORK}" add manifest.json
   git -C "${WORK}" commit -qm 'baseline manifest'
   cp -- "${MANIFEST}" "${WORK}/before.json"
   local row name path quoted
-  for row in "tab|agents/tab"$'\t'"name.md" "newline|agents/new"$'\n'"line.md"; do
-    name="${row%%|*}" path="${row#*|}"
+  for row in "${UNCARRIABLE_ROWS[@]}"; do
+    name="${row%%|*}" path="agents/${row#*|}"
     printf -v quoted '%q' "${path}"
-    printf '# %s\n' "${name}" >"${WORK}/${path}"
-    git -C "${WORK}" add -- "${path}"
+    track_index_only "${path}"
     run "${SCRIPT}"
     [[ "${status}" -eq 8 ]] || {
       echo "${name}: exit ${status}, expected 8"
@@ -200,7 +213,24 @@ sha256_content() {
       return 1
     }
     git -C "${WORK}" rm -q --cached -- "${path}"
-    rm -f -- "${WORK}/${path}"
+  done
+}
+
+@test "generate: an excluded path is dropped whatever bytes it carries" {
+  local row name path
+  for row in "${UNCARRIABLE_ROWS[@]}"; do
+    name="${row%%|*}" path="scripts/lib/archive/${row#*|}"
+    track_index_only "${path}"
+    run "${SCRIPT}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: exit ${status}, expected 0: ${output}"
+      return 1
+    }
+    jq -e 'any(.files[]; test("/archive/")) | not' "${MANIFEST}" >/dev/null || {
+      echo "${name}: excluded path entered files[]"
+      return 1
+    }
+    git -C "${WORK}" rm -q --cached -- "${path}"
   done
 }
 
@@ -404,6 +434,19 @@ ship_lib_a() {
   jq -e 'any(.files[]; . == "scripts/lib/a.sh") | not' "${MANIFEST}" >/dev/null || return 1
   jq -e '(.hashes | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
   jq -e '(.modes | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+}
+
+@test "retired: a dropped path stays retired when a tracked path splits on a newline into its name" {
+  local shipped
+  shipped="$(ship_lib_a)"
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+  track_index_only "docs/x"$'\n'"scripts/lib/a.sh"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"RETIRED + scripts/lib/a.sh"* ]] || return 1
+  jq -e --arg h "${shipped}" '.retired["scripts/lib/a.sh"] == [$h]' "${MANIFEST}" >/dev/null || return 1
 }
 
 @test "retired: a path that left files[] by exclusion rule or gitignore is NOT retired" {
