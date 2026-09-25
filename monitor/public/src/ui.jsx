@@ -131,11 +131,12 @@ function EmptyState({ message, hint, action, className='' }) {
 // 공용 sub-card primitive — 중첩 섹션/메트릭 타일용 작은 면. ring-1 + rounded-lg + 일정 padding.
 //   발산하던 idiom(드로어 1px-hairline · DetailMetric ring 타일 · .i-card-shadow)이 후속 wave 에서 여기로 수렴.
 //   sunken=true → bg-sunken(더 들어간 면) · 기본 bg-elev(떠오른 면). label 지정 시 uppercase --dim 섹션 라벨.
-function SubCard({ children, sunken=false, label, className='' }) {
+// label sits under a card/dialog h2 → h3 by default
+function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) {
   const surface = sunken ? 'bg-sunken' : 'bg-elev';
   return (
     <div className={`sub-card ${surface} ${className}`.trim()}>
-      {label && <div className="sub-card-label">{label}</div>}
+      {label && <SectionLabel level={labelLevel} className="sub-card-label">{label}</SectionLabel>}
       {children}
     </div>
   );
@@ -551,6 +552,50 @@ function CardHead({ title, sub, right }) {
     </div>
     {right && <div className="ml-auto flex items-center gap-2 shrink-0">{right}</div>}
   </div>;
+}
+
+// Section title as a real outline heading, wearing the uppercase section-label style.
+function SectionLabel({ children, level = 2, id, className = '' }) {
+  const Tag = level === 3 ? 'h3' : 'h2';
+  return <Tag id={id} className={`section-label ${className}`.trim()}>{children}</Tag>;
+}
+
+// The one column-header idiom → every table's headers read alike and carry scope="col".
+function TableHead({ children, isNumeric = false, isSticky = false, className = '' }) {
+  return <th scope="col" className={`${isNumeric ? 'num' : ''} ${className}`.trim() || undefined}
+    style={isSticky ? STICKY_TH_STYLE : undefined}>{children}</th>;
+}
+
+/**
+ * Data table named by its caption (visually hidden unless isCaptionShown) with scoped column headers.
+ * @param columns - `{ key, label, isNumeric }` per column; omit to compose the thead yourself.
+ * @param children - tbody rows.
+ */
+function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, children, className = '' }) {
+  return <table className={`tbl ${className}`.trim()}>
+    <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
+    {columns && <thead><tr>
+      {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isHeadSticky}>{c.label}</TableHead>)}
+    </tr></thead>}
+    <tbody>{children}</tbody>
+  </table>;
+}
+
+const DISCLOSURE_CHEVRON_PX = 14;
+
+// Brightens with its `group` ancestor's hover; a 90° turn marks the open state.
+function DisclosureChevron({ isOpen }) {
+  return <Icon name="chevR" size={DISCLOSURE_CHEVRON_PX}
+    className={`text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
+}
+
+// Expand/collapse control: state rides aria-expanded, the visible label names it.
+function DisclosureButton({ isOpen, onToggle, label, controls, className = '' }) {
+  return <button type="button" onClick={onToggle} aria-expanded={isOpen} aria-controls={controls}
+    className={`group inline-flex items-center gap-1 min-h-[32px] text-dim hover:text-ink ${className}`.trim()}>
+    <DisclosureChevron isOpen={isOpen} />
+    <span>{label}</span>
+  </button>;
 }
 
 // title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
@@ -1170,6 +1215,31 @@ function formatPctWithDenominator(numerator, denominator) {
 // (model-config.jsx · clauded-docs.jsx 는 <Icon name={TONE_ICON[tone]}/> 로 이관됨 — 더는 문자열 직접 소비부 아님.)
 const TONE_GLYPH = { ok: '✓', warn: '⚠', crit: '✕', info: 'ℹ', neutral: 'ℹ' };
 
+/**
+ * Attention tone for a value against stated thresholds — no threshold, no tone; a count warns via `{ warnAbove: 0 }`.
+ * @returns 'crit' past critAbove, 'warn' past warnAbove, otherwise null (missing or non-numeric values included).
+ */
+function getSeverityTone(value, { warnAbove, critAbove } = {}) {
+  const n = typeof value === 'number' ? value : Number.NaN;
+
+  if (!Number.isFinite(n)) return null;
+  if (critAbove != null && n > critAbove) return 'crit';
+  if (warnAbove != null && n > warnAbove) return 'warn';
+  return null;
+}
+
+const SEVERITY_RANK = { ok: 1, info: 2, warn: 3, crit: 4 };
+
+// Worst tone of a rollup (a badge follows the worst on its screen); neutral/unknown tones carry none → null.
+function getWorstTone(tones) {
+  let worst = null;
+
+  for (const tone of tones) {
+    if (SEVERITY_RANK[tone] > (SEVERITY_RANK[worst] || 0)) worst = tone;
+  }
+  return worst;
+}
+
 // tone → Icon 이름 lookup (신규) — Badge/보드의 Icon 렌더 경로 전용. TONE_GLYPH(문자열 SoT)와 병존:
 // 문자열 직접 소비부는 TONE_GLYPH 를 그대로 쓰고, Icon 렌더 경로만 여기서 아이콘명을 얻는다(FIX-A 분리).
 // crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
@@ -1251,6 +1321,7 @@ function resolveOutcomeRate(data) {
 
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, Modal, Tabs, CardHead, PageHeader,
+  SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
