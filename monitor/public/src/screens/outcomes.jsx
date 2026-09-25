@@ -389,9 +389,6 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
 .outcome-row.is-fail   { box-shadow: inset 3px 0 0 rgb(var(--crit)); }
 .outcome-row.is-review { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
-.filter-chip { padding: 3px 8px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); cursor: pointer; border: 1px solid rgb(var(--line)); background: rgb(var(--elev)); color: rgb(var(--dim)); transition: background 100ms, color 100ms; }
-.filter-chip:hover { background: rgb(var(--sunken)); color: rgb(var(--ink)); }
-.filter-chip.is-active { background: rgb(var(--accent) / 0.14); border-color: rgb(var(--accent) / 0.5); color: rgb(var(--accent)); font-weight: 500; }
 `;
 
 function ScreenOutcomes({ onNav }) {
@@ -672,13 +669,12 @@ function ScreenOutcomes({ onNav }) {
         onRetry={regionRetry}
       />
 
-      {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
+      {/* page scroll only — no inner scroller; minmax(0, 1fr) keeps the ledger inside the page at 1024 */}
       <div
         className="grid gap-4 mt-4"
         style={{
-          gridTemplateColumns: '280px 1fr',
-          maxHeight: '78vh',
-          minHeight: 0,
+          gridTemplateColumns: 'clamp(208px, 22vw, 280px) minmax(0, 1fr)',
+          alignItems: 'start',
         }}>
         <FilterSidebar
           filter={filter}
@@ -1089,7 +1085,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   }
 
   return (
-    <div className="overflow-auto" style={{ maxHeight: 260, position: 'relative' }}>
+    <div className="overflow-x-auto" style={{ position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         {AgentFailureHeadO({ stickyStyle })}
         <tbody>
@@ -1899,9 +1895,8 @@ function FilterSidebar({
   // 활성 facet 카운트 + 'N of M' 카운터 (T-OUT-3) — 몇 축이 좁혀졌는지 한눈에.
   const activeCount = countActiveFacetsO(filter);
 
-  // 부모 grid 가 column 을 viewport 높이로 stretch → sticky 불필요. 칩 overflow 시 card-body self-scroll.
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div className="card">
       <CardHead
         title="Filters"
         sub=""
@@ -1911,7 +1906,7 @@ function FilterSidebar({
             : null
         }
       />
-      <div className="card-body" style={{ padding: 14, flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
+      <div className="card-body" style={{ padding: 14 }}>
         <FilterAxisGroup label="Agent">
           <select
             className="field field-select"
@@ -1927,7 +1922,7 @@ function FilterSidebar({
 
         {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
           <FilterAxisGroup key={axis} label={label}>
-            <ChipGroup
+            <FilterChipGroupO
               options={options}
               value={filter[axis] || ''}
               onChange={(v) => onPatchFilter({ [axis]: v })}
@@ -1954,7 +1949,7 @@ function FilterSidebar({
           <div className="pt-2">
             {MORE_FILTER_AXES.map(({ axis, label, options }) => (
               <FilterAxisGroup key={axis} label={label}>
-                <ChipGroup
+                <FilterChipGroupO
                   options={options}
                   value={filter[axis] || ''}
                   onChange={(v) => onPatchFilter({ [axis]: v })}
@@ -1964,7 +1959,7 @@ function FilterSidebar({
             ))}
 
             <FilterAxisGroup label="Sort">
-              <ChipGroup
+              <FilterChipGroupO
                 options={SORT_OPTIONS}
                 value={sort}
                 onChange={onSortChange}
@@ -2012,26 +2007,26 @@ function FilterAxisGroup({ label, children }) {
   );
 }
 
-function ChipGroup({ options, value, onChange, ariaLabel }) {
+// '' (All) option value → a non-empty chip key
+const ALL_CHIP_KEY_O = '_all';
+
+// One facet as the shared chip toolbar: one Tab stop per group, arrows between chips.
+function FilterChipGroupO({ options, value, onChange, ariaLabel }) {
   return (
-    <div className="flex flex-wrap gap-1" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((opt) => {
-        const isActive = value === opt.value;
-        return (
-          <button
-            key={opt.value || '_all'}
-            type="button"
-            className={`filter-chip ${isActive ? 'is-active' : ''}`}
-            onClick={() => onChange(opt.value)}
-            role="radio"
-            aria-checked={isActive}
-            aria-label={`${ariaLabel}: ${opt.label}`}>
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
+    <window.UI.ChipGroup
+      label={ariaLabel}
+      chips={buildFilterChipsO(options, value)}
+      onToggle={(key) => onChange(getFilterChipValueO(key))}
+    />
   );
+}
+
+function buildFilterChipsO(options, value) {
+  return options.map((opt) => ({ key: opt.value || ALL_CHIP_KEY_O, label: opt.label, isPressed: opt.value === value }));
+}
+
+function getFilterChipValueO(key) {
+  return key === ALL_CHIP_KEY_O ? '' : key;
 }
 
 // ----- Panel 2: Result table -------------------------------------------------
@@ -2046,7 +2041,7 @@ function ResultTableCard({
   const currentPage = page + 1;
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div className="card">
       <CardHead
         title="Results"
         sub={state.status === 'ready'
@@ -2058,8 +2053,7 @@ function ResultTableCard({
           </div>
         }
       />
-      {/* card-body 가 잔여 높이 흡수 → ResultTable 내부 vertical scroll. */}
-      <div className="card-body" style={{ padding: 0, flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div className="card-body" style={{ padding: 0 }}>
         <ResultTableBody
           state={state}
           rows={rows}
@@ -2245,14 +2239,16 @@ function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
 }
 
 function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }) {
-  // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   // 6열 — confidence · self-check · revision · cid 는 drawer 가 운반한다(행은 판단에 필요한 축만).
   const sections = buildLedgerSectionsO(rows, closure, needsYou);
+  const [activeRow, setActiveRow] = useStateO(0);
+  const rowStarts = getLedgerRowStartsO(sections);
+  const rowCount = sections.reduce((sum, section) => sum + section.rows.length, 0);
 
   return (
     // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
+    <div className="overflow-x-auto" style={{ position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
@@ -2265,7 +2261,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
           </tr>
         </thead>
         <tbody>
-          {sections.map((section) => (
+          {sections.map((section, sectionIndex) => (
             section.rows.length === 0 ? null : (
               <React.Fragment key={section.key}>
                 <tr>
@@ -2278,8 +2274,20 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
                     {section.heading}
                   </th>
                 </tr>
-                {section.rows.map((row) => (
-                  <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
+                {section.rows.map((row, i) => (
+                  <ResultTableRow
+                    key={row.id}
+                    row={row}
+                    onRowClick={onRowClick}
+                    closure={closure}
+                    focusProps={window.UI.getRowFocusProps({
+                      index: rowStarts[sectionIndex] + i,
+                      activeIndex: activeRow,
+                      count: rowCount,
+                      onActivate: () => onRowClick(row),
+                      onActiveChange: setActiveRow,
+                    })}
+                  />
                 ))}
               </React.Fragment>
             )
@@ -2288,6 +2296,16 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
       </table>
     </div>
   );
+}
+
+// section → its first row's index in the one roving sequence the ledger rows share
+function getLedgerRowStartsO(sections) {
+  let next = 0;
+  return sections.map((section) => {
+    const start = next;
+    next += section.rows.length;
+    return start;
+  });
 }
 
 function getSortArrowIcon(isActive, dir) {
@@ -2365,7 +2383,7 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function ResultTableRow({ row, onRowClick, closure }) {
+function ResultTableRow({ row, onRowClick, closure, focusProps }) {
   const isFail   = row.result === 'fail';
   const isReview = !isFail && row.review_flag === true;
   const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
@@ -2394,14 +2412,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
     <tr
       className={rowClass}
       onClick={() => onRowClick(row)}
-      tabIndex={0}
-      role="button"
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onRowClick(row);
-        }
-      }}
+      {...focusProps}
       aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} check ${grader.label} ${row.summary || ''}`}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
@@ -2423,6 +2434,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
             // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
             <button
+              {...window.UI.ROW_CONTROL_PROPS}
               className="btn ghost sm icon shrink-0 -my-1"
               aria-busy={isClosing}
               aria-label={`Mark outcome ${row.id} closed`}

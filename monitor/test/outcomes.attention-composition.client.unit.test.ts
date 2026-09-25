@@ -646,7 +646,7 @@ test("ledger row: the accessible name carries the word that tells Done from Clos
   assert.match(nameOf("done_with_concerns", null), /Done with caveats/);
 });
 
-// --- ledger layout: the page ends where its content ends, the ledger scrolls inside its card ---
+// --- ledger layout: the page is the only vertical scroller; wide tables scroll sideways inside their card ---
 
 const LEDGER_AGENT = "glass-atrium-dev-shell";
 const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}) => ({
@@ -671,11 +671,38 @@ test("ledger: every scroller is the containing block of its visually hidden name
     onRetry: () => {},
   });
   const scrollers = [...flattenNodes(ledger), ...flattenNodes(failures)]
-    .filter((n) => /\boverflow-auto\b/.test(String(n.props?.className ?? "")));
+    .filter((n) => /\boverflow-(x-)?auto\b/.test(String(n.props?.className ?? "")));
   assert.strictEqual(scrollers.length, 2, "the ledger and the by-agent table each render a scroller");
   for (const scroller of scrollers) {
     assert.strictEqual((scroller.props!.style as Record<string, unknown>)?.position, "relative");
   }
+});
+
+test("ledger: the ledger and the by-agent table grow with the page instead of capping their height", () => {
+  const ledger = helpers.ResultTable({
+    rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+  });
+  const failures = helpers.AgentFailureBodyO({
+    state: {
+      status: "ok",
+      data: helpers.buildAnalyticsDataO({ by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 1 }], by_agent_top_10: [] }),
+    } as unknown as PayloadState<unknown>,
+    onRetry: () => {},
+  });
+  const capped = [...flattenNodes(ledger), ...flattenNodes(failures)]
+    .filter((n) => (n.props?.style as Record<string, unknown> | undefined)?.maxHeight != null);
+  assert.deepStrictEqual(capped.map((n) => n.props?.className), []);
+});
+
+test("ledger: the rows form one Tab stop and keep their row semantics", () => {
+  const rows = [ledgerRowOf("done", { id: 1 }), ledgerRowOf("fail", { id: 2 }), ledgerRowOf("done", { id: 3 })];
+  const ledger = helpers.ResultTable({ rows, sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {} });
+  const rendered = flattenNodes(ledger)
+    .filter((n) => n.props?.focusProps != null)
+    .map((n) => helpers.ResultTableRow(n.props as Parameters<typeof helpers.ResultTableRow>[0]));
+  assert.strictEqual(rendered.length, rows.length);
+  assert.strictEqual(rendered.filter((tr) => tr.props!.tabIndex === 0).length, 1);
+  assert.deepStrictEqual(rendered.map((tr) => tr.props!.role), rows.map(() => undefined));
 });
 
 test("ledger: every column header uses sentence case, never a raw field name", () => {

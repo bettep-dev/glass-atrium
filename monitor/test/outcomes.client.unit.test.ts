@@ -64,6 +64,12 @@ interface OutcomesHelpers {
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseLineO: (markdown: string) => string;
   formatResultLineO: (markdown: string) => string;
+  buildFilterChipsO: (
+    options: Array<{ value: string; label: string }>,
+    value: string,
+  ) => Array<{ key: string; label: string; isPressed: boolean }>;
+  getFilterChipValueO: (key: string) => string;
+  getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -547,4 +553,42 @@ describe("putSearchFailureO: only a sustained first-load failure reads as an out
     const started = region.window.UI.putRegionRequest(region.window.UI.INITIAL_REGION_STATE, "/api/search", {});
     assert.strictEqual(region.putSearchFailureO(started, {}, new Error("HTTP 500"), OUTAGE_MS), started);
   });
+});
+
+describe("buildFilterChipsO: the shared chip toolbar selects the same filter value the option carries", () => {
+  const options = [
+    { value: "", label: "All" },
+    { value: "done", label: "Done" },
+    { value: "fail", label: "Failed" },
+  ];
+
+  test("every chip's key maps back to its option's value, so a toggle sets exactly that filter", () => {
+    const chips = sameRealm(outcomes.buildFilterChipsO(options, ""));
+    assert.deepEqual(chips.map((chip) => outcomes.getFilterChipValueO(chip.key)), options.map((opt) => opt.value));
+    assert.equal(new Set(chips.map((chip) => chip.key)).size, options.length);
+  });
+
+  test("exactly the chip holding the current value is pressed, for every value", () => {
+    for (const option of options) {
+      const pressed = sameRealm(outcomes.buildFilterChipsO(options, option.value)).filter((chip) => chip.isPressed);
+      assert.deepEqual(pressed.map((chip) => chip.label), [option.label], `value "${option.value}"`);
+    }
+  });
+});
+
+describe("getLedgerRowStartsO: ledger rows share one roving sequence across the section headings", () => {
+  const rows = [
+    { name: "both sections filled", counts: [2, 3] },
+    { name: "an empty first section", counts: [0, 4] },
+    { name: "an empty last section", counts: [3, 0] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sections = row.counts.map((count) => ({ rows: Array.from({ length: count }, (_, i) => i) }));
+      const starts = sameRealm(outcomes.getLedgerRowStartsO(sections));
+      const indexes = sections.flatMap((section, s) => section.rows.map((_, i) => starts[s] + i));
+      const total = row.counts.reduce((sum, count) => sum + count, 0);
+      assert.deepEqual(indexes, Array.from({ length: total }, (_, i) => i));
+    });
+  }
 });
