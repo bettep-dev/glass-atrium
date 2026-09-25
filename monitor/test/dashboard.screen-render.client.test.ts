@@ -149,3 +149,71 @@ test("a tile with detail renders the headline first and the detail outside the K
   assert.ok(text.includes("40 outcomes"), "the detail renders");
   assert.ok(text.indexOf("Within lines") < text.indexOf("40 outcomes"), "the verdict precedes the count");
 });
+
+const FAILED_TILE = {
+  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—", hint: "",
+  region: "agents", source: "the fleet summary", error: "HTTP 500 Internal Server Error",
+  target: "agents", targetLabel: "Agents",
+};
+
+test("a failed tile shows the shared unavailable card, whose Retry reloads only that tile's region", () => {
+  const retried: string[] = [];
+  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.source, "the fleet summary");
+  assert.equal(cards[0].props.error, "HTTP 500 Internal Server Error");
+  (cards[0].props.onRetry as () => void)();
+  assert.deepEqual(retried, ["agents"]);
+  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
+});
+
+test("a tile whose outage the page banner already carries offers no Retry of its own", () => {
+  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.onRetry, undefined);
+});
+
+test("a loading tile says so in a status placeholder and reserves the detail slot the loaded tile fills", () => {
+  const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
+  for (const tile of [loadingTile, READY_TILE]) {
+    const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+    const detailSlots = findNodes(tree, (n) => classOf(n).includes("dash-tile-detail"));
+    assert.equal(detailSlots.length, 1, `${tile.status}: the detail line is reserved whether or not it has text`);
+  }
+  const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(loading, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(loading, (n) => n.props.atom === "KpiValue").length, 0, "no value renders before one loads");
+});
+
+test("a tile refreshing over held data keeps its value and marks itself busy", () => {
+  for (const isBusy of [true, false]) {
+    const tree = render("StatusTile", { tile: { ...READY_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
+    const card = findNodes(tree, (n) => classOf(n).includes("card"))[0];
+    assert.equal(card.props["aria-busy"], isBusy ? "true" : undefined);
+    assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "40");
+  }
+});
+
+test("the status band reflows to two columns until it has room for four", () => {
+  const tree = render("StatusBand", { tiles: [READY_TILE], onNav: () => {}, onRetry: () => {} });
+  const band = findNodes(tree, (n) => classOf(n).includes("grid"))[0];
+  const classes = classOf(band).split(/\s+/);
+  assert.ok(classes.includes("grid-cols-2"), classOf(band));
+  assert.ok(classes.includes("xl:grid-cols-4"), classOf(band));
+  assert.ok(!classes.includes("grid-cols-4"), "four columns never apply at the narrowest widths");
+});
+
+test("the alarm lane reserves its slot with a status line while alarm sources are still loading", () => {
+  const pending = render("AlarmLane", { alarms: [], isPending: true, onNav: () => {} });
+  const region = findNodes(pending, (n) => n.props["aria-live"] === "polite")[0];
+  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+
+  const settled = render("AlarmLane", { alarms: [], isPending: false, onNav: () => {} });
+  assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
+  assert.match(collectText(settled), /No alarms/, "a settled empty lane keeps its line instead of collapsing");
+
+  const alarmed = render("AlarmLane", { alarms: [HARNESS_ALARM], isPending: true, onNav: () => {} });
+  assert.equal(findNodes(alarmed, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "a landed alarm replaces the placeholder");
+});

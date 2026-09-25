@@ -196,6 +196,28 @@ test("loading, error and unavailable each read differently and none reads as a v
   }
 });
 
+test("a failed tile names its own region and source, so its Retry reloads that region alone", () => {
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+  const regions = [["outcomes", "outcomes"], ["fleet", "agents"], ["spend", "cost"]];
+  for (const [tileId, region] of regions) {
+    const tile = tileOf(tiles, tileId) as Tile & { region: string; source: string; error: string };
+    assert.equal(tile.status, "error", tileId);
+    assert.equal(tile.region, region, tileId);
+    assert.ok(tile.source, `${tileId} names what failed to load`);
+    assert.equal(tile.error, "HTTP 500", `${tileId} carries the raw answer for Details`);
+  }
+});
+
+test("a tile refreshing over held data is busy; a first load is not a refresh", () => {
+  const refreshing = { ...(kpi(10, 10) as object), busy: true };
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: refreshing, agentsState: { ...LOADING, busy: true }, outcomesState: LOADING });
+  const spend = tileOf(tiles, "spend") as Tile & { isBusy: boolean };
+  const fleet = tileOf(tiles, "fleet") as Tile & { isBusy: boolean };
+  assert.equal(spend.status, "ready");
+  assert.equal(spend.isBusy, true);
+  assert.equal(fleet.isBusy, false);
+});
+
 test("the fleet tile separates an empty population from an unavailable one", () => {
   const empty = tileOf(
     dash.buildTiles({
