@@ -230,9 +230,9 @@ scope_concerns_exempts_path() {
 # Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
-#   - a wrapped token whose value list runs into anything else (prose, a trailing comma, a
-#     space-separated path list, a separator or grammar key glued to a value without whitespace:
-#     `a.sh·prose`, `a.sh|prose`, `hooks/layout=x prose`) or whose value ends in `.` `:` `;` `)`;
+#   - a wrapped token whose value list runs into anything else — prose words even behind a glued
+#     `·` or `=` (`a.sh·this was wrong`, `hooks/layout=x was narrow`), a glued `|` (`a.sh|prose`),
+#     a trailing comma, a space-separated path list — or whose value ends in `.` `:` `;` `)`;
 #   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
 #   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
 #   - a space after `files=`, or a field order not opening with `files=`;
@@ -242,6 +242,8 @@ scope_concerns_exempts_path() {
 #   - a wrapped-token relay whose value closes at a spaced separator or grammar key, with prose in a
 #     later field (`**[SCOPE]** files=a.sh · deliverable=fix — too narrow`): its tail reads as field
 #     text, so it cannot be told from a real declaration;
+#   - a wrapped-token relay whose value glues a `·` to ONE prose word (`` `[SCOPE]` files=a.sh·prose ``):
+#     value text may hold `·`, so it reads like the glued real form `files=a.sh·deliverable=fix`;
 #   - a line-opening wrap that closes at end of line or never, with prose after the value inside it
 #     (`` `[SCOPE] files=a.sh lists one path `` · `` **[SCOPE] files=`a.sh` lists one path** ``).
 readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'

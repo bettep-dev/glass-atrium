@@ -1068,7 +1068,7 @@
     "hooks/lib/inject_chunk.py": "8c9b30940dd78852edff2fc29e921e0239e547ecb7a0acf6b82e6696512a0b68",
     "hooks/lib/pricing_loader.py": "c2efb513aeb0ec1e425a6c43b01d336880c144adb77a59b2a6121d257302a6a0",
     "hooks/lib/review-flag-reasons.sh": "d6ed8982db4fe98b2e9d4c14c9d2b89cd8f2842ee401a93b00374a0db6ed20b6",
-    "hooks/lib/scope-match.sh": "540f4d4a3d5aff8efedce83710bb6db8b7271f9c528eb8dae587fd48ea2e8848",
+    "hooks/lib/scope-match.sh": "cfa1c5e2559321f7c5e623ada8c5d948c037987f99b2c374a784bbcffd698884",
     "hooks/lib/style-ref-consts.sh": "16c11b66d28058df3212142ee6eedb444c719d36244e3d48408919dd3a563fdd",
     "hooks/lib/style_ref_match.py": "98b9d9a886efe11ac5918139dcc86ad9c4b0a2b81425b9ed8a4a5883cdf96ea3",
     "hooks/lib/styleref-roster.sh": "1dc12580b4e91ba4fa2fa1817be45e80f49c888f845c00fac3815e8932090353",
