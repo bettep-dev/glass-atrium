@@ -89,7 +89,8 @@
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh not found ·
-# 8=a tracked manifest path carries a backslash, tab, newline or non-UTF-8 byte.
+# 8=a tracked manifest path carries a backslash, a control byte (0x01-0x1f, DEL)
+# or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -228,16 +229,17 @@ mode_of() {
 }
 
 # NUL-delimited paths on stdin → the ones EXCLUDE_RE keeps, one per line. A kept
-# path the line pipeline (tab, newline), JSON (non-UTF-8 byte) or a consumer's
-# by-name shasum (backslash → `\`-prefixed digest) cannot carry is refused by name
-# (exit 8); an excluded one is dropped whatever its bytes.
+# path the line pipeline (tab, newline), JSON (non-UTF-8 byte), a consumer's by-name
+# shasum (backslash → `\`-prefixed digest) or a reader assuming git never emits a
+# raw control byte cannot carry is refused by name (exit 8); an excluded one is
+# dropped whatever its bytes.
 nul_paths_to_lines() {
   local path
   while IFS= read -r -d '' path; do
     if [[ "${path}" =~ ${EXCLUDE_RE} ]]; then continue; fi
     # shellcheck disable=SC2310  # a false rc is the refusal below, not an error to abort on
-    if [[ "${path}" == *[$'\\\t\n']* ]] || ! is_utf8 "${path}"; then
-      printf 'generate-manifest: tracked manifest path carries a backslash, tab, newline or non-UTF-8 byte (unsupported): %q\n' \
+    if ! is_carriable "${path}"; then
+      printf 'generate-manifest: tracked manifest path carries a backslash, control byte or non-UTF-8 byte (unsupported): %q\n' \
         "${path}" >&2
       exit 8
     fi
@@ -245,10 +247,12 @@ nul_paths_to_lines() {
   done
 }
 
-# True when $1 is valid UTF-8 — jq -R swaps an invalid byte for U+FFFD, so the
-# round trip differs. jq runs only for a path carrying a byte >= 0x80.
-is_utf8() {
+# True when $1 has no backslash, no control byte and is valid UTF-8. C locale pins
+# [[:cntrl:]] to 0x00-0x1f + DEL. jq -R swaps an invalid byte for U+FFFD, so the
+# round trip differs; jq runs only for a path carrying a byte >= 0x80.
+is_carriable() {
   local LC_ALL=C roundtrip
+  if [[ "$1" == *[[:cntrl:]\\]* ]]; then return 1; fi
   if [[ "$1" != *[$'\x80'-$'\xff']* ]]; then return 0; fi
   roundtrip="$(printf '%s' "$1" | jq -Rrj .)"
   [[ "${roundtrip}" == "$1" ]]

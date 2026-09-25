@@ -111,22 +111,25 @@ untrack_in_scope() {
   [[ "${recorded}" == "${actual}" ]]
 }
 
-# Row = "<name>|<path>": one path per byte class that default git output C-quotes.
-QUOTED_PATH_ROWS=(
+# Row = "<name>|<path>": a path the manifest records verbatim — one per byte class
+# default git output C-quotes, plus the printable bytes bordering the refused control class.
+CARRIED_PATH_ROWS=(
   "non-ASCII byte|agents/한글-agent.md"
   "double quote|agents/q\"b.md"
+  "space 0x20|agents/sp ace.md"
+  "tilde 0x7e|agents/til~de.md"
 )
 
-# Track one file per QUOTED_PATH_ROWS path. core.quotePath is pinned to git's default
+# Track one file per CARRIED_PATH_ROWS path. core.quotePath is pinned to git's default
 # so an ambient `false` cannot hide the non-ASCII row.
-track_quoted_paths() {
+track_carried_paths() {
   local row
   git -C "${WORK}" config core.quotePath true
-  for row in "${QUOTED_PATH_ROWS[@]}"; do
+  for row in "${CARRIED_PATH_ROWS[@]}"; do
     printf '# %s\n' "${row%%|*}" >"${WORK}/${row#*|}"
     git -C "${WORK}" add -- "${row#*|}"
   done
-  git -C "${WORK}" commit -qm 'track quoted-byte paths'
+  git -C "${WORK}" commit -qm 'track carriable paths'
 }
 
 sha256_content() {
@@ -139,12 +142,12 @@ sha256_content() {
   printf '%s\n' "${out%% *}"
 }
 
-@test "generate: records a path git would quote verbatim, hashed from its content" {
-  track_quoted_paths
+@test "generate: records every carriable path verbatim, hashed from its content" {
+  track_carried_paths
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   local row name path recorded content mode
-  for row in "${QUOTED_PATH_ROWS[@]}"; do
+  for row in "${CARRIED_PATH_ROWS[@]}"; do
     name="${row%%|*}" path="${row#*|}"
     jq -e --arg f "${path}" 'any(.files[]; . == $f)' "${MANIFEST}" >/dev/null \
       || {
@@ -166,8 +169,8 @@ sha256_content() {
   done
 }
 
-@test "--check: exit 0 on a generated tree whose paths git would quote" {
-  track_quoted_paths
+@test "--check: exit 0 on a generated tree holding every carriable path" {
+  track_carried_paths
   "${SCRIPT}" >/dev/null
   run "${SCRIPT}" --check
   [[ "${status}" -eq 0 ]] || return 1
@@ -186,6 +189,11 @@ UNCARRIABLE_ROWS=(
   "backslash|back\\slash.md"
   "tab|tab"$'\t'"name.md"
   "newline|new"$'\n'"line.md"
+  "C0 low end 0x01|soh"$'\x01'"name.md"
+  "carriage return|cr"$'\r'"name.md"
+  "escape|esc"$'\x1b'"name.md"
+  "C0 high end 0x1f|us"$'\x1f'"name.md"
+  "DEL 0x7f|del"$'\x7f'"name.md"
   "non-UTF-8 byte|bad"$'\xe9'"byte.md"
 )
 
