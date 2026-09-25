@@ -96,6 +96,9 @@ const RING_GLYPH_PILL_CLASS = "arch-ring-glyph-pill";
 
 // badge text inset from its pill's rounded ends (SVG user units)
 const GLYPH_PILL_PAD_X = 10;
+
+// JetBrains Mono cap height per em — the badge marks are caps-high ink, so the pill hugs that, not the line box
+const GLYPH_CAP_EM = 0.73;
 const RING_GLYPH_MARK = { warn: "!", crit: "!!" };
 
 // 링을 그리는 사각형의 클래스 — 상태용과 포커스용 둘. 클래스가 켜고 끄고, 이 사각형이 그림.
@@ -667,7 +670,7 @@ function ScreenArchitecture(
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
-					"text-anchor: start; dominant-baseline: central; } " +
+					"text-anchor: start; } " +
 					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-glyph-pill, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-glyph-pill { display: inline; stroke: rgb(var(--warn)); } ` +
@@ -2756,23 +2759,22 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 	groupEl.append(pill, glyph);
 	glyph.textContent = mark;
 
-	const geometry = getCornerBadgeGeometryAR(groupEl, box, glyph.getBBox());
+	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width);
 	glyph.setAttribute("x", String(geometry.x + GLYPH_PILL_PAD_X));
-	glyph.setAttribute("y", String(geometry.y + geometry.height / 2));
+	// alphabetic baseline → cap ink centred in the pill
+	glyph.setAttribute("y", String(geometry.y + (geometry.height + MAP_LABEL.fontPx * GLYPH_CAP_EM) / 2));
 	for (const [attr, value] of Object.entries(geometry)) pill.setAttribute(attr, String(value));
 }
 
 /**
- * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner and pushed right only as far
- * as the label's right edge — half its height fits the gap to a stacked neighbour, so it never reaches the label or that node.
+ * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner → half on the node, within its sides.
+ * Cap-high, so its upper half stays inside the padding under the label's last line; the lower half stays in the gap to a stacked neighbour.
  */
-function getCornerBadgeGeometryAR(groupEl, box, textBox) {
-	const width = textBox.width + GLYPH_PILL_PAD_X * 2;
-	const height = textBox.height + RING_GAP * 2;
-	const label = groupEl.querySelector(":scope > .label");
-	const labelRight = label ? box.x + (box.width + label.getBBox().width) / 2 : -Infinity;
+function getCornerBadgeGeometryAR(box, textWidth) {
+	const width = textWidth + GLYPH_PILL_PAD_X * 2;
+	const height = MAP_LABEL.fontPx * GLYPH_CAP_EM + RING_GAP * 2;
 	const inset = NODE_CORNER_RADIUS + RING_GAP;
-	const x = Math.max(box.x + inset, box.x + box.width - inset - width, labelRight + RING_GAP);
+	const x = Math.max(box.x + inset, box.x + box.width - inset - width);
 	return { x, y: box.y + box.height - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 

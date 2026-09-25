@@ -748,7 +748,7 @@ describe("fault live fixture", () => {
 		);
 	});
 	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
-		test(`a counted fault badge reads whole on its own node's bottom border, over the ring and clear of every label, at ${width}x${height}`, async () => {
+		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
 			const pattern = "**/api/health/daemons";
 			// two more faulted parts bound to one node → the badge carries its widest text, the count
 			const health = getDaemonHealthFixture(FAULT_VERDICT);
@@ -773,8 +773,19 @@ describe("fault live fixture", () => {
 							(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
 						]),
 					);
+					const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
+					// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
 					const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
-						.map((label) => label.getBoundingClientRect())
+						.flatMap((label) => {
+							const rects: DOMRect[] = [];
+							const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+							for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+								const range = document.createRange();
+								range.selectNodeContents(text);
+								rects.push(...Array.from(range.getClientRects()));
+							}
+							return rects;
+						})
 						.filter((box) => box.width > 0 && box.height > 0);
 					const readings = Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
 						.filter((glyph) => getComputedStyle(glyph).display !== "none")
@@ -787,9 +798,16 @@ describe("fault live fixture", () => {
 							const n = shapes.get(owner) as DOMRect;
 							// other nodes only — a cluster box contains its members, so it is not a neighbour
 							const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
-							const covered = [...labels, ...neighbours]
-								.filter((b) => Math.min(g.right, b.right) - Math.max(g.left, b.left) > 0 && Math.min(g.bottom, b.bottom) - Math.max(g.top, b.top) > 0)
-								.map((b) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
+							// a zone not holding the owner's centre — the pill crossing into it reads as that zone's badge
+							const foreignZones = zones.filter((z) => !(z.left < (n.left + n.right) / 2 && (n.left + n.right) / 2 < z.right && z.top < (n.top + n.bottom) / 2 && (n.top + n.bottom) / 2 < z.bottom));
+							// labels by the ink the pill paints over; nodes and zones with a 2px clearance, so a touching pill fails
+							const covered = [
+								...labels.map((b) => ({ b, gap: 0 })),
+								...[...neighbours, ...foreignZones].map((b) => ({ b, gap: 2 })),
+							]
+								.filter(({ b, gap }) => Math.min(p.right, b.right) - Math.max(p.left, b.left) > -gap && Math.min(p.bottom, b.bottom) - Math.max(p.top, b.top) > -gap)
+								.map(({ b }) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
+							const onNode = Math.max(0, Math.min(p.right, n.right) - Math.max(p.left, n.left)) * Math.max(0, Math.min(p.bottom, n.bottom) - Math.max(p.top, n.top));
 							// whole glyph box sampled — anything but the badge on top of a sample point occludes the text
 							const occluders: string[] = [];
 							for (let col = 0; col <= 6; col++)
@@ -802,8 +820,9 @@ describe("fault live fixture", () => {
 							return {
 								id: owner.getAttribute("data-arch-node-id") || owner.id,
 								text: glyph.textContent || "",
-								// sitting across its own node's bottom border, starting inside the node's sides
-								attached: p.left > n.left && p.left < n.right && p.top < n.bottom && p.bottom > n.bottom,
+								// across its own node's bottom border, wholly within the node's sides → at most half the pill off the node
+								attached: p.left >= n.left && p.right <= n.right && p.top < n.bottom && p.bottom > n.bottom,
+								offShare: 1 - onNode / (p.width * p.height),
 								covered,
 								occluders,
 								box:
@@ -816,10 +835,11 @@ describe("fault live fixture", () => {
 					return readings;
 				}, ctx.selectors.canvas);
 				assert.ok(glyphs.some((glyph) => glyph.text.includes("×2")), `no counted badge drawn: ${glyphs.map((g) => g.text).join(" ")}`);
-				const loose = glyphs.filter((glyph) => !glyph.attached);
-				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+				// half the pill below the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
+				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);
+				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
 				const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
-				assert.deepEqual(covering, [], `badges over a label or another node: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
+				assert.deepEqual(covering, [], `badges over a label, another node or another zone: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
 				const hidden = glyphs.filter((glyph) => glyph.occluders.length > 0);
 				assert.deepEqual(hidden, [], `badge text painted over: ${hidden.map((g) => `${g.id} '${g.text}' (${g.box} · ${g.occluders.join(" ")})`).join("; ")}`);
 			} finally {
