@@ -769,6 +769,145 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
   );
 }
 
+const FETCH_ERROR_BODY_MAX = 120;
+
+/**
+ * Error for a non-OK response; the message keeps the status plus a tag-free body slice for the Details toggle.
+ * Region state stores this message, and getErrorCopy turns it into operator copy.
+ * @param bodyMax - body characters kept in the message
+ */
+async function getFetchError(res, bodyMax = FETCH_ERROR_BODY_MAX) {
+  const statusLine = `HTTP ${res.status} ${res.statusText || ''}`.trim();
+  const body = await getErrorBody(res);
+  return new Error(body ? `${statusLine} — ${body.slice(0, bodyMax)}` : statusLine);
+}
+
+async function getErrorBody(res) {
+  try {
+    return stripHtmlTags(await res.text());
+  } catch (_err) {
+    return ''; // unreadable body → status line alone
+  }
+}
+
+const FETCH_ERROR_NEXT_STEP = {
+  network: 'The monitor server did not answer. Check that it is running, then retry.',
+  server: 'The server hit an error. Retry in a moment.',
+  client: 'The server refused this request. Open Details for its answer.',
+  unknown: 'Retry in a moment, or open Details for more.',
+};
+
+// browser fetch rejections: Chromium "Failed to fetch" · Firefox "NetworkError…" · WebKit "Load failed"
+const NETWORK_FAILURE_PATTERN = /failed to fetch|networkerror|load failed/i;
+
+function getErrorCause(error) {
+  const detail = typeof error?.message === 'string' ? error.message : String(error ?? '');
+  const status = Number(/^HTTP (\d{3})\b/.exec(detail)?.[1]) || null;
+
+  if (status >= 500) return { kind: 'server', status, detail };
+  if (status >= 400) return { kind: 'client', status, detail };
+  if (NETWORK_FAILURE_PATTERN.test(detail)) return { kind: 'network', status, detail };
+  return { kind: 'unknown', status, detail };
+}
+
+/** Operator copy for a failed read: one plain sentence naming the source, a next step, and the raw answer for Details only. */
+function getErrorCopy(error, source) {
+  const { kind, detail } = getErrorCause(error);
+  return { sentence: `Couldn't load ${source}.`, next: FETCH_ERROR_NEXT_STEP[kind], detail, kind };
+}
+
+/**
+ * The outage ≥2 failed regions share, or null — a non-null answer means one page banner and one Retry.
+ * @param entries - `{ source, error }` per region; a null error is a healthy region
+ */
+function getSharedFailure(entries) {
+  const failed = (entries || []).filter((entry) => entry && entry.error != null);
+  if (failed.length < 2) return null;
+
+  const causeKeys = new Set(failed.map((entry) => {
+    const { kind, status } = getErrorCause(entry.error);
+    return `${kind}:${status}`;
+  }));
+  if (causeKeys.size !== 1) return null;
+  return { sources: failed.map((entry) => entry.source), error: failed[0].error };
+}
+
+function ErrorDetails({ detail }) {
+  if (!detail) return null;
+  return (
+    <details className="fs-meta text-faint">
+      <summary className="cursor-pointer">Details</summary>
+      <code className="block mt-1 font-mono break-all">{detail}</code>
+    </details>
+  );
+}
+
+/**
+ * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
+ * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
+ * @param minHeight - reserved slot height so the grid keeps its shape
+ */
+function RegionUnavailable({ source, error, onRetry, minHeight, className = '' }) {
+  const copy = getErrorCopy(error, source);
+  return (
+    <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
+      <div className="fs-body flex items-center gap-1.5">
+        <Icon name={TONE_ICON.crit} size={14} className="text-crit"/>
+        <span>{copy.sentence}</span>
+      </div>
+      <div className="fs-meta text-dim">{copy.next}</div>
+      <ErrorDetails detail={copy.detail}/>
+      {onRetry && <button type="button" className="btn sm self-start" onClick={onRetry}>Retry</button>}
+    </div>
+  );
+}
+
+/** One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure). */
+function PageErrorBanner({ sources, error, onRetry }) {
+  const sourceList = new Intl.ListFormat('en', { type: 'conjunction' }).format(sources || []);
+  const copy = getErrorCopy(error, sourceList);
+  return (
+    <div role="alert" className="card p-3 flex items-start gap-2">
+      <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
+      <div className="flex flex-col gap-1 min-w-0 flex-1">
+        <span className="fs-body font-medium">{copy.sentence}</span>
+        <span className="fs-meta text-dim">{copy.next}</span>
+        <ErrorDetails detail={copy.detail}/>
+      </div>
+      <button type="button" className="btn sm" onClick={onRetry}>Retry</button>
+    </div>
+  );
+}
+
+/** Visible loading slot under a status role; minHeight reserves the settled height so nothing shifts on arrival. */
+function LoadingPlaceholder({ label, minHeight, className = '' }) {
+  return (
+    <div role="status" className={`fs-meta text-dim flex items-center justify-center gap-1.5 ${className}`.trim()}
+      style={minHeight ? { minHeight } : undefined}>
+      <Icon name="refresh" size={14} className="motion-safe:animate-spin"/>
+      <span>{label ? `Loading ${label}…` : 'Loading…'}</span>
+    </div>
+  );
+}
+
+const SKELETON_BAR_STYLE = {
+  display: 'block', height: 10, width: '70%', borderRadius: 'var(--radius-inline)', background: 'rgb(var(--faint) / 0.3)',
+};
+
+/** Placeholder rows at the real row height — render inside the real tbody, under the real header. */
+function SkeletonRows({ rows = 5, columns, rowHeight }) {
+  const cellIndexes = Array.from({ length: columns }, (_, index) => index);
+  return (
+    <>
+      {Array.from({ length: rows }, (_, rowIndex) => (
+        <tr key={rowIndex} aria-hidden="true" style={{ height: rowHeight }}>
+          {cellIndexes.map((cellIndex) => <td key={cellIndex}><span style={SKELETON_BAR_STYLE}/></td>)}
+        </tr>
+      ))}
+    </>
+  );
+}
+
 // 배지 5-tier canonical taxonomy SoT (T1) — 톤별 pill 토큰 + 기본 라벨 단일 출처.
 //   drift 근절: health 카드 인라인 "WARN"↔"Warning" 케이싱 발산 + 중복 "Healthy" 를 여기서 단일화.
 //   status 톤(ok/warn/crit/info)만 pill 토큰 보유 · neutral = non-status 서술자 → pill 토큰 없음(글리프리스 neutral shell).
@@ -1081,6 +1220,7 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
+  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
