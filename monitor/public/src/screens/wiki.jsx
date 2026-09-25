@@ -100,7 +100,7 @@ function ScreenWiki() {
         .w-type-list { max-width: 40rem; }
         .w-type-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 4rem; align-items: center; gap: 0.75rem; }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
-        .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--info)); }
+        .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -225,7 +225,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
 	if (model.alarms.length === 0 && model.unchecked.length === 0) {
 		return model.pending ? (
-			<div className="fs-meta font-mono text-faint" aria-busy="true">
+			<div className="fs-meta text-faint" aria-busy="true">
 				Checking what needs attention…
 			</div>
 		) : null;
@@ -233,56 +233,40 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 
 	return (
 		<ul
-			className="flex flex-col gap-2 m-0 p-0 list-none"
+			className="rounded-md border border-line m-0 p-0 list-none"
 			aria-label="Wiki alarms"
 		>
 			{model.alarms.map((alarm) => (
-				<li key={alarm.key} className="rounded-md border border-line bg-sunken">
-					{alarm.anchorId ? (
+				<li key={alarm.key} className="alarm-row" data-tone={alarm.tone}>
+					<span className="alarm-row-glyph" aria-hidden="true">
+						<Icon name={TONE_ICON[alarm.tone]} size={14} />
+					</span>
+					<span className="min-w-0">
+						<span className="fs-body text-ink font-medium block break-words">
+							{alarm.label}
+						</span>
+						<span className="fs-meta text-faint block leading-tight">
+							{alarm.detail}
+						</span>
+					</span>
+					{alarm.anchorId && (
 						<button
 							type="button"
-							className="w-alarm-open w-full text-left px-3 py-2 flex items-stretch gap-2.5"
+							className="w-alarm-open fs-meta text-info px-2 self-center"
+							aria-label={`Open proposal: ${alarm.label}`}
 							onClick={() => openProposalW(alarm.anchorId)}
 						>
-							<WikiAlarmBodyW alarm={alarm} Icon={Icon} TONE_ICON={TONE_ICON} />
-							<span className="ml-auto self-center fs-meta font-mono text-info flex-shrink-0">
-								Open proposal
-							</span>
+							Open proposal
 						</button>
-					) : (
-						<div className="px-3 py-2 flex items-stretch gap-2.5">
-							<WikiAlarmBodyW alarm={alarm} Icon={Icon} TONE_ICON={TONE_ICON} />
-						</div>
 					)}
 				</li>
 			))}
 			{model.unchecked.length > 0 && (
-				<li className="fs-micro font-mono text-faint">
+				<li className="fs-meta text-faint px-4 py-2">
 					{`Couldn't check: ${model.unchecked.join(", ")} — the lane is incomplete.`}
 				</li>
 			)}
 		</ul>
-	);
-}
-
-function WikiAlarmBodyW({ alarm, Icon, TONE_ICON }) {
-	return (
-		<>
-			<span className={`sev-bar ${alarm.tone}`} aria-hidden="true" />
-			<Icon
-				name={TONE_ICON[alarm.tone]}
-				size={14}
-				className={`text-${alarm.tone} mt-0.5 flex-shrink-0`}
-			/>
-			<span className="min-w-0">
-				<span className="fs-body font-mono text-ink font-medium block break-words">
-					{alarm.label}
-				</span>
-				<span className="fs-meta font-mono text-faint block leading-tight">
-					{alarm.detail}
-				</span>
-			</span>
-		</>
 	);
 }
 
@@ -522,13 +506,13 @@ function WikiTile({ tile }) {
 	return (
 		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
 			<div
-				className="fs-micro font-mono text-faint uppercase tracking-wider truncate"
+				className="fs-meta text-faint truncate"
 				title={tile.label}
 			>
 				{tile.label}
 			</div>
 			<div
-				className={`font-mono fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
+				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
 				aria-busy={tile.state === "loading" ? "true" : undefined}
 			>
 				{alarmed && (
@@ -540,7 +524,7 @@ function WikiTile({ tile }) {
 			</div>
 			{tile.sub && (
 				<div
-					className="fs-micro font-mono text-faint mt-1 leading-tight truncate"
+					className="fs-meta text-faint mt-1 leading-tight truncate"
 					title={tile.sub}
 				>
 					{tile.sub}
@@ -645,13 +629,22 @@ function buildIndexTileW(state) {
 	const flagMissing =
 		d.has_dirty_flag === false ||
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
-	if (flagMissing) return tilePlaceholderW("index", label, "unavailable");
+	// No row yet → say what is unknown rather than show a bare dash.
+	if (flagMissing) {
+		return {
+			...tilePlaceholderW("index", label, "unavailable"),
+			value: "Untracked",
+			sub: "No dirty flag on record — cleanliness unknown",
+			isWord: true,
+		};
+	}
 	if (d.dirty === true) {
 		return {
 			key: "index",
 			label,
 			state: "ready",
 			value: "Dirty",
+			isWord: true,
 			sub:
 				typeof d.last_dirty_ms === "number"
 					? `Since ${window.UI.formatRelativeTime(new Date(d.last_dirty_ms).toISOString())}`
@@ -665,6 +658,7 @@ function buildIndexTileW(state) {
 		label,
 		state: "ready",
 		value: "Clean",
+		isWord: true,
 		sub: "Master index current",
 		tone: "neutral",
 	};
@@ -692,12 +686,23 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 		label,
 		state: "ready",
 		value: formatCountW(total),
-		sub:
-			typeof backlog === "number"
-				? `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting${describeSnapshotAgeW(payload?.run_date)}`
-				: "Backlog not reported",
+		sub: payload
+			? `${describeOriginalsW(backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}${describeSnapshotAgeW(payload.run_date)}`
+			: "Backlog not reported",
 		tone: "neutral",
 	};
+}
+
+function describeOriginalsW(backlog) {
+	if (typeof backlog !== "number") return "originals not reported";
+	return `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting`;
+}
+
+// A missing key reads as "not reported", never as zero.
+function describeBrokenLinksW(deadLinks) {
+	if (!Array.isArray(deadLinks)) return "broken links not reported";
+	const count = deadLinks.length;
+	return `${formatCountW(count)} broken ${count === 1 ? "link" : "links"}`;
 }
 
 // Maintenance — one summary line above the fold, the working lists behind a click.
@@ -719,14 +724,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 					error={backlogState.error}
 					onRetry={onRetry}
 				/>
-			) : (
-				<div
-					className="fs-body font-mono text-dim"
-					aria-busy={model.state === "loading" ? "true" : undefined}
-				>
-					{model.summaryLine}
-				</div>
-			)}
+			) : null}
 
 			{/* Always present, so the lane's "Open proposal" and the page layout never lose it. */}
 			<BacklogExplorer
@@ -756,7 +754,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 							))}
 						</ul>
 						{model.residueLine && (
-							<div className="fs-meta font-mono text-faint leading-tight">
+							<div className="fs-meta text-faint leading-tight">
 								{model.residueLine}
 							</div>
 						)}
@@ -793,13 +791,13 @@ const UNKNOWN_CYCLES_W = { status: "idle", data: null, error: null };
 
 function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 	if (backlogState.status === "loading") {
-		return { state: "loading", summaryLine: "Checking the maintenance backlog…" };
+		return { state: "loading" };
 	}
 	if (backlogState.status === "error") return { state: "error" };
 
 	const backlog = backlogState.data?.backlog;
 	if (!backlog) {
-		return { state: "empty", summaryLine: "No maintenance cycle reported yet." };
+		return { state: "empty" };
 	}
 
 	const proposals = orderProposalsW(backlog, readProposalsW(backlog), cyclesState);
@@ -816,7 +814,6 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 		proposals,
 		deadLinks,
 		linkFixes,
-		summaryLine: `${describeMaintenanceW(proposals, deadLinks)}${describeSnapshotAgeW(backlog.run_date)}`,
 		residueLine:
 			typeof notVerified === "number" && notVerified > 0
 				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
@@ -828,29 +825,6 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 function orderProposalsW(backlog, proposals, cyclesState) {
 	if (!proposals) return proposals;
 	return buildProposalAlarmsW(backlog, proposals, cyclesState).map((row) => row.proposal);
-}
-
-// A missing key reads as "not reported", never as zero.
-function describeMaintenanceW(proposals, deadLinks) {
-	const proposalCount = proposals ? proposals.length : null;
-	const deadCount = deadLinks ? deadLinks.length : null;
-
-	if (proposalCount === 0 && deadCount === 0) {
-		return "Nothing waiting — no merge proposals, no broken links.";
-	}
-
-	// Waiting proposals already carry their count on the disclosure header below.
-	const parts = [
-		proposalCount == null
-			? "merge proposals not reported"
-			: proposalCount === 0
-				? "no merge proposals"
-				: null,
-		deadCount == null
-			? "broken links not reported"
-			: `${formatCountW(deadCount)} broken ${deadCount === 1 ? "link" : "links"}`,
-	];
-	return parts.filter(Boolean).join(" · ");
 }
 
 // Run history — volume and the per-run table, both behind one closed disclosure.
@@ -865,7 +839,7 @@ function WikiRunHistorySection({
 	onChangeDays,
 	onRetry,
 }) {
-	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
+	const { RegionUnavailable, LoadingPlaceholder, SectionLabel } = window.UI;
 	const model = useMemoW(
 		() => buildThroughputModel(cyclesState),
 		[cyclesState],
@@ -904,9 +878,9 @@ function WikiRunHistorySection({
 
 			<div className="pt-3 border-t border-line flex flex-col gap-2">
 				<div className="flex items-center gap-2 flex-wrap">
-					<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+					<SectionLabel level={3} className="m-0">
 						Per-run table
-					</span>
+					</SectionLabel>
 					<div
 						className="seg ml-auto"
 						role="group"
@@ -924,7 +898,7 @@ function WikiRunHistorySection({
 						))}
 					</div>
 				</div>
-				<div className="fs-micro font-mono text-faint leading-tight">
+				<div className="fs-meta text-faint leading-tight">
 					{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
 				</div>
 				<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
@@ -961,11 +935,11 @@ function WikiDisclosureW({
 	return (
 		<details className="w-disclosure rounded-md border border-line bg-sunken">
 			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				<span className="w-chevron inline-block fs-micro text-faint" aria-hidden="true">
+				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
 					▶
 				</span>
-				<h2 className="m-0 font-mono fs-body text-ink font-medium">{label}</h2>
-				<span className="ml-auto font-mono fs-meta text-dim">{count}</span>
+				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
+				<span className="ml-auto fs-meta text-dim">{count}</span>
 			</summary>
 			<div className={bodyClassName}>{children}</div>
 		</details>
@@ -1081,7 +1055,7 @@ function WikiStatusMixW({ mix }) {
 					style={{ width: `${mix.quota}%`, background: "rgb(var(--faint))" }}
 				/>
 			</div>
-			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
+			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-meta text-faint mt-1.5">
 				{["ok", "partial", "error", "quota"].map((k) => (
 					<span key={k} className="inline-flex items-center gap-1">
 						<Icon
@@ -1224,10 +1198,10 @@ function MergeSuggestionItem({ proposal }) {
 					<Icon name="arrow-left" size={12} />
 				</span>
 				<span className="text-dim break-words min-w-0">{sources}</span>
-				<span className="ml-auto text-info">sim {sim}</span>
+				<span className="ml-auto text-dim">sim {sim}</span>
 			</div>
 			{action && (
-				<div className="fs-meta font-mono text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
+				<div className="fs-meta text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
 					{action}
 				</div>
 			)}
@@ -1279,7 +1253,7 @@ function WikiReportsBody({ state, days, onRetry }) {
 	return (
 		<div>
 			{/* per-run 보고는 동질 카드 N개 → 슬롭 card-grid 가 아니라 RECORD 표(.tbl)로 노출 (S1/S6).
-          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · warn/crit 행만 .sev-bar 좌측 강조(전면 flood 금지). */}
+          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 배지만 담당. */}
 			<WikiReportsTable reports={sortedDesc} />
 		</div>
 	);
@@ -1316,12 +1290,10 @@ function WikiReportsTable({ reports, isLoading = false }) {
 	);
 }
 
-// per-run 보고 1행 — warn/crit 만 좌측 .sev-bar(2px) 강조, OK/neutral 은 강조 없음(전면 flood 금지, S5).
-//   .sev-bar 는 셀 내부 inline-flex 로 얹음 (table row 에는 좌측 막대 직접 부착 불가).
+// The status badge carries the tone; the row takes no stripe.
 function WikiReportRow({ group, Badge }) {
 	const report = group.newest;
 	const tone = wikiStatusToneW(report.status);
-	const accent = tone === "warn" || tone === "crit";
 	const range =
 		group.count > 1
 			? `${group.oldest.run_date} – ${report.run_date}`
@@ -1330,14 +1302,11 @@ function WikiReportRow({ group, Badge }) {
 	return (
 		<tr>
 			<td>
-				<span className="flex items-stretch gap-2 min-h-[18px]">
-					{accent && <span className={`sev-bar ${tone}`} aria-hidden="true" />}
-					<span className="font-mono text-ink font-medium">
-						{range}
-						{group.count > 1 && (
-							<span className="text-faint font-normal">{` · ${group.count} runs`}</span>
-						)}
-					</span>
+				<span className="font-mono text-ink font-medium">
+					{range}
+					{group.count > 1 && (
+						<span className="text-faint font-normal">{` · ${group.count} runs`}</span>
+					)}
 				</span>
 			</td>
 			<td>
@@ -1407,8 +1376,8 @@ function SparseTrendW({ label, series, dates, stat }) {
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
 				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 flex items-baseline justify-between gap-3">
-					<span className="font-mono fs-body text-dim">{caption}</span>
-					<span className="fs-meta font-mono text-faint">
+					<span className="fs-body text-dim">{caption}</span>
+					<span className="fs-meta text-faint">
 						no activity in range
 					</span>
 				</div>
@@ -1421,7 +1390,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 						points={series.map((value, i) => ({ label: dates[i] || "", value }))}
 						formatValue={formatCountW}
 					/>
-					<div className="fs-meta font-mono text-dim mt-1">{caption}</div>
+					<div className="fs-meta text-dim mt-1">{caption}</div>
 				</>
 			)}
 		</div>

@@ -284,3 +284,75 @@ test("constant runs render as one row naming the range and the run count", async
   const text = collectText(rows[0]);
   assert.ok(text.includes("2026-09-22") && text.includes("2026-09-24") && text.includes("3 runs"), text);
 });
+
+test("the maintenance section adds no broken-link line of its own", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
+  assert.doesNotMatch(collectText(tree), /broken link/i);
+});
+
+test("alarms are flat hairline rows whose tone rides a leading glyph, with no stripe", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const lane = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }),
+      backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  const rows = findNodes(lane, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
+  assert.equal(rows.length, 2, "the dirty index and the waiting proposal");
+  for (const row of rows) {
+    assert.ok(row.props["data-tone"], "each row names its tone");
+    assert.equal(findNodes(row, (n) => /\balarm-row-glyph\b/.test(classOf(n))).length, 1);
+  }
+  const table = renderScreen(
+    mod.React.createElement(mod.WikiReportsTable as Component, { reports: [{ run_date: "2026-09-24", status: "error", deadlinks_count: 0, dedup_count: 0 }] }),
+  );
+  for (const tree of [lane, table]) {
+    assert.equal(findNodes(tree, (n) => /\bsev-bar\b/.test(classOf(n))).length, 0, "no left-border stripe");
+  }
+});
+
+test("wiki text never drops below the 12px step and words are never set in mono", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const trees = [
+    renderScreen(createElement(mod.WikiAlarmLane, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }) })),
+    renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} })),
+    renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
+    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
+  ];
+  const words = ["Search index", "Clean", "Merge proposals", "Run history", "merge because both notes describe one concept"];
+  for (const tree of trees) {
+    for (const node of findNodes(tree, () => true)) {
+      assert.doesNotMatch(classOf(node), /\bfs-micro\b/, "the 11px step is retired");
+      const ownText = node.children.filter((c) => typeof c === "string").join("");
+      if (words.includes(ownText.trim())) {
+        assert.doesNotMatch(classOf(node), /\bfont-mono\b/, `"${ownText}" is words, not an id or figure`);
+      }
+    }
+  }
+});
+
+test("the similarity figure is not tinted with the accent cyan", async () => {
+  const mod = await loadWikiScreen();
+  const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], similarity_score: 1 };
+  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const sim = findNodes(tree, (n) => n.children.includes("sim ")).pop();
+  assert.ok(sim, "the similarity renders");
+  assert.doesNotMatch(classOf(sim), /\btext-info\b/);
+});
+
+test("the per-run table is introduced by an h3 under the Run history h2", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(
+    mod.React.createElement(mod.WikiRunHistorySection as Component, {
+      cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
+    }),
+  );
+  const label = findNodes(tree, (n) => n.props.atom === "SectionLabel" && collectText(n).includes("Per-run table"))[0];
+  assert.ok(label, "the table label is the shared SectionLabel");
+  assert.equal(label.props.level, 3);
+});

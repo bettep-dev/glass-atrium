@@ -57,7 +57,6 @@ interface WikiHelpers {
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
   describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
-  buildMaintenanceModel: (backlogState: FetchState) => { summaryLine: string; proposals: unknown[] | null };
   window: { UI: Record<string, unknown> };
 }
 
@@ -352,18 +351,26 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
   helpers.window.UI.formatDuration = originalFormat;
 });
 
-// The proposals disclosure header carries the count, so the summary line above it names proposals only when none wait.
-test("the maintenance summary names the proposal count only where no disclosure carries it", () => {
-  for (const hashes of [["h1"], ["h1", "h2", "h3"]]) {
-    const model = helpers.buildMaintenanceModel(proposalBacklog(hashes));
-    assert.equal(model.proposals?.length, hashes.length, "the disclosure still receives every proposal");
-    assert.doesNotMatch(model.summaryLine, /proposal/, `count shown once, in the disclosure: ${model.summaryLine}`);
+// Broken links ride the library tile's caption, not a line of their own.
+test("the library tile's caption carries the broken-link count, and says so when the backlog omits it", () => {
+  const index = ready({ notes_total: 40 });
+  const rows = [
+    { name: "none found", deadlinks: [], expected: /0 broken links/ },
+    { name: "one found", deadlinks: [{ from: "a", to: "b" }], expected: /1 broken link\b/ },
+    { name: "not reported", deadlinks: undefined, expected: /broken links not reported/ },
+  ];
+  for (const row of rows) {
+    const backlog = ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 0, deadlink_dryrun: row.deadlinks } });
+    const library = helpers.buildTileBandModel(ready({}), index, backlog).find((tile) => tile.key === "library");
+    assert.match(library?.sub ?? "", row.expected, `${row.name}: ${library?.sub}`);
   }
-  assert.match(helpers.buildMaintenanceModel(proposalBacklog([])).summaryLine, /no merge proposals/i);
-  assert.match(
-    helpers.buildMaintenanceModel(ready({ backlog: { run_date: isoDaysAgo(0) } })).summaryLine,
-    /merge proposals not reported/,
-  );
+});
+
+test("an index with no dirty flag on record explains itself instead of showing a dash", () => {
+  const tile = helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null }));
+  assert.equal(tile.state, "unavailable");
+  assert.notEqual(tile.value, "—");
+  assert.match(tile.sub ?? "", /no dirty flag/i);
 });
 
 // Run table grouping, note-type bars and the proposal anchor the alarm lane opens.
