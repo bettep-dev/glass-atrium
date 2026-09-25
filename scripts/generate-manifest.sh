@@ -89,7 +89,7 @@
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh not found ·
-# 8=a tracked manifest path carries a tab, newline or non-UTF-8 byte.
+# 8=a tracked manifest path carries a backslash, tab, newline or non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -201,8 +201,8 @@ git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   exit 3
 }
 
-# Echo the lowercase 64-hex SHA-256 of a single file. Content goes in on stdin:
-# both tools escape a filename carrying a backslash and prefix the digest with `\`.
+# Echo the lowercase 64-hex SHA-256 of a single file. Content goes in on stdin so
+# the digest field never carries a filename-escape prefix.
 sha256_of() {
   "${SHA256_CMD[@]}" <"$1" | awk '{print $1}'
 }
@@ -228,15 +228,16 @@ mode_of() {
 }
 
 # NUL-delimited paths on stdin → the ones EXCLUDE_RE keeps, one per line. A kept
-# path the line pipeline (tab, newline) or JSON (non-UTF-8 byte) cannot carry is
-# refused by name (exit 8); an excluded one is dropped whatever its bytes.
+# path the line pipeline (tab, newline), JSON (non-UTF-8 byte) or a consumer's
+# by-name shasum (backslash → `\`-prefixed digest) cannot carry is refused by name
+# (exit 8); an excluded one is dropped whatever its bytes.
 nul_paths_to_lines() {
   local path
   while IFS= read -r -d '' path; do
     if [[ "${path}" =~ ${EXCLUDE_RE} ]]; then continue; fi
     # shellcheck disable=SC2310  # a false rc is the refusal below, not an error to abort on
-    if [[ "${path}" == *[$'\t\n']* ]] || ! is_utf8 "${path}"; then
-      printf 'generate-manifest: tracked manifest path carries a tab, newline or non-UTF-8 byte (unsupported): %q\n' \
+    if [[ "${path}" == *[$'\\\t\n']* ]] || ! is_utf8 "${path}"; then
+      printf 'generate-manifest: tracked manifest path carries a backslash, tab, newline or non-UTF-8 byte (unsupported): %q\n' \
         "${path}" >&2
       exit 8
     fi

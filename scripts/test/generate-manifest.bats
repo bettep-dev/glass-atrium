@@ -115,7 +115,6 @@ untrack_in_scope() {
 QUOTED_PATH_ROWS=(
   "non-ASCII byte|agents/한글-agent.md"
   "double quote|agents/q\"b.md"
-  "backslash|agents/back\\slash.md"
 )
 
 # Track one file per QUOTED_PATH_ROWS path. core.quotePath is pinned to git's default
@@ -182,8 +181,9 @@ track_index_only() {
   git -C "${WORK}" update-index --add --cacheinfo "100644,${blob},$1"
 }
 
-# Row = "<name>|<path suffix>": one byte class the line pipeline or JSON cannot carry.
+# Row = "<name>|<path suffix>": one byte class a manifest path cannot carry (exit 8).
 UNCARRIABLE_ROWS=(
+  "backslash|back\\slash.md"
   "tab|tab"$'\t'"name.md"
   "newline|new"$'\n'"line.md"
   "non-UTF-8 byte|bad"$'\xe9'"byte.md"
