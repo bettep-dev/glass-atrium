@@ -881,3 +881,71 @@ test("the review-flag total sits under a card title in every state, never as a h
     assert.match(String(cardHead?.props.sub), /30 days/, row.name);
   }
 });
+
+function findCaption(tree: RenderedNode | string | null, text: string): RenderedNode | undefined {
+  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n) === text).at(-1);
+}
+
+const PERFORMANCE_AGENT = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 12, needs_context_count: 0 };
+
+function getPerformanceProps(trend: number[] | null, trendDates: string[]): Record<string, unknown> {
+  return {
+    agent: PERFORMANCE_AGENT, drawerAgent: PERFORMANCE_AGENT.agent_id,
+    summaryState: { status: "ready", data: { agents: [PERFORMANCE_AGENT] }, error: null },
+    latencyState: { status: "idle", data: null, error: null },
+    trendByAgent: trend ? new Map([[PERFORMANCE_AGENT.agent_id, trend]]) : null, trendDates, onRetry: () => undefined,
+  };
+}
+
+test("the drawer trend is a readable chart with one dated point per day", async () => {
+  const dates = ["2026-09-22", "2026-09-23", "2026-09-24"];
+  const tree = await renderComponent("AgentPerformanceSection", getPerformanceProps([3, 0, 5], dates));
+  const [chart] = findAtoms(tree, "TrendChart");
+  // The screen module runs in its own realm → compare plain copies.
+  assert.deepEqual(JSON.parse(JSON.stringify(chart?.props.points)), [
+    { label: "2026-09-22", value: 3 },
+    { label: "2026-09-23", value: 0 },
+    { label: "2026-09-24", value: 5 },
+  ]);
+  assert.match(String(chart?.props.label), /dev-react/);
+  assert.equal(findAtoms(tree, "MiniBars").length, 0, "no unreadable bar strip beside it");
+});
+
+test("the trend dates are the last seven days any agent reported, oldest first", async () => {
+  const mod = await loadAgentsScreen();
+  const getTrendDates = mod.getTrendDates as (rows: unknown[]) => string[];
+  const rows = Array.from({ length: 9 }, (_, i) => ({ agent: "a", event_date: `2026-09-${String(20 - i).padStart(2, "0")}`, total_count: 1 }));
+  assert.deepEqual([...getTrendDates(rows)], ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20"]);
+});
+
+test("caption words render in the sans face, leaving mono to ids and numbers", async () => {
+  const rows = [
+    { name: "drawer trend", component: "AgentPerformanceSection", props: getPerformanceProps([1, 2], ["2026-09-23", "2026-09-24"]), caption: "Runs per day · last 7 days" },
+    { name: "compatibility", component: "CompatibilityDetailBlock", props: { compatibility: "monitor daemon running" }, caption: "Requires" },
+    { name: "matrix legend", component: "SuccessRateLegend", props: {}, caption: "Legend" },
+  ];
+  for (const row of rows) {
+    const caption = findCaption(await renderComponent(row.component, row.props), row.caption);
+    assert.ok(caption, `${row.name}: caption rendered`);
+    assert.doesNotMatch(String(caption.props.className ?? ""), /font-mono|uppercase/, row.name);
+  }
+});
+
+test("review-flag chart axis text stays at or above the 12px floor", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: [{ date: "09-24", empty_metric_count: 1, polar_mismatch_count: 0, review_flag_ratio_pct: 5 }] });
+  const axes = [...findAtoms(tree, "XAxis"), ...findAtoms(tree, "YAxis")];
+  assert.equal(axes.length, 3);
+  for (const axis of axes) {
+    const tick = axis.props.tick as { fontSize: number };
+    const label = axis.props.label as { fontSize: number } | undefined;
+    assert.ok(tick.fontSize >= 12, `tick ${tick.fontSize}px`);
+    if (label) assert.ok(label.fontSize >= 12, `label ${label.fontSize}px`);
+  }
+});
+
+test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {
+  const tree = await renderComponent("DetailMetric", { label: "Runs", value: "12" });
+  const root = tree as RenderedNode;
+  assert.doesNotMatch(String(root.props.className), /ring-|bg-sunken|rounded/);
+  assert.equal(collectText(root), "Runs 12");
+});

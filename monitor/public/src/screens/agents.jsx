@@ -673,7 +673,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
       <div className="px-4 py-2.5 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
         <span role="status" className="font-mono">{sortNote}</span>
         <div className="flex items-center gap-2">
-          <span className="font-mono">Sort:</span>
+          <span>Sort:</span>
           <select
             className="field field-select"
             value={sortBy}
@@ -972,7 +972,7 @@ function CompatibilityDetailBlock({ compatibility }) {
   if (!compatibility) return null;
   return (
     <div className="mb-4 agent-compatibility-detail">
-      <div className="fs-meta font-mono text-faint uppercase tracking-wider mb-2">Requires</div>
+      <div className="fs-meta text-faint mb-2">Requires</div>
       <div className="rounded-md border border-info/30 bg-info/[0.06] px-3 py-2 fs-body leading-relaxed text-dim">
         {compatibility}
       </div>
@@ -1197,6 +1197,7 @@ function AgentDetailDrawer({
               summaryState={summaryState}
               latencyState={latencyState}
               trendByAgent={trendByAgent}
+              trendDates={getTrendDates(readyData(successState)?.rows ?? [])}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1524,8 +1525,8 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
 
 // 2. Performance — RED-method 단일 agent 뷰. success-rate 는 hero 가 소유 → 여기선 중복 박스 폐지.
 // runs/launches/needs-info/P95 2-col + latency p50/p95/p99 (허용된 단일 3-up 예외) + 7일 추세.
-function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, onRetry }) {
-  const { MiniBars } = window.UI;
+function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, trendDates, onRetry }) {
+  const { TrendChart } = window.UI;
   if (summaryState.status === 'loading') {
     return <DrawerSectionSkeleton rows={3} label="performance"/>;
   }
@@ -1560,9 +1561,15 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
       {/* 7일 성공-기반 추세 — 데이터 없으면 미렌더 (추정값 주입 금지). */}
       <div>
-        <div className="fs-meta font-mono text-faint mb-2">7-day trend</div>
+        <div className="fs-meta text-faint mb-2">Runs per day · last 7 days</div>
         {hasTrend ? (
-          <MiniBars data={trend} w={120} h={28} color={trendBarColor(agent.status, getSummaryRateAg(agent).tone)}/>
+          <TrendChart
+            label={`${agent.agent_name || drawerAgent} runs per day`}
+            points={trend.map((value, i) => ({ label: trendDates?.[i] ?? '', value }))}
+            kind="bars"
+            tone={getTrendTone(agent.status, getSummaryRateAg(agent).tone)}
+            formatValue={(v) => `${formatIntAg(v)} runs`}
+          />
         ) : (
           <DrawerSectionEmpty message="No 7-day daily breakdown."/>
         )}
@@ -1640,7 +1647,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
 
   return (
     <div className="space-y-3">
-      <div className="fs-meta font-mono text-faint mb-1">Breakages</div>
+      <div className="fs-meta text-faint mb-1">Breakages</div>
       {failure && failure.total_breakages > 0 ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
@@ -1667,7 +1674,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
           />
           {topConcerns.length > 0 && (
             <div>
-              <div className="fs-meta font-mono text-faint mb-2">Top concerns</div>
+              <div className="fs-meta text-faint mb-2">Top concerns</div>
               <div className="flex flex-col gap-2">
                 {topConcerns.map((c, i) => (
                   <div key={i} className="fs-body text-dim rounded border border-line px-2 py-1 leading-snug">{c}</div>
@@ -1707,7 +1714,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
   if (!row) {
     return (
       <div className="space-y-3">
-        <div className="fs-meta font-mono text-faint mb-1">Lifecycle</div>
+        <div className="fs-meta text-faint mb-1">Lifecycle</div>
         <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
         <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
       </div>
@@ -1728,7 +1735,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
   return (
     <div className="space-y-3">
-      <div className="fs-meta font-mono text-faint mb-1">Lifecycle</div>
+      <div className="fs-meta text-faint mb-1">Lifecycle</div>
       <div className="flex items-center gap-2 flex-wrap">
         <Badge role="status" tone={orphanTone}>
           {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
@@ -1819,7 +1826,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
   return (
     <div>
       <div
-        className="fs-meta font-mono text-faint mb-2 flex items-center gap-1"
+        className="fs-meta text-faint mb-2 flex items-center gap-1"
         title="Combined result IN ('fail','blocked') — same scope as the summary Failed or blocked column (needs_context excluded)">
         <Icon name="x" size={12}/>
         Why tasks failed · fail+blocked ({days}d)
@@ -1901,14 +1908,10 @@ function mergeBreakageReasons(failData, blockedData) {
   return { reasons, failTotal, blockedTotal, total: failTotal + blockedTotal };
 }
 
-// 드로어 메트릭 타일 SoT — 모든 2-col/3-col 수치 박스 + Overview hero 가 공유하는 단일 chrome.
-// 다크 인버전 회피: bg-sunken(panel elev 보다 어두워 구멍) 대신 panel-fill(elev) + ring (shadow-as-border,
-//   base.css 다크 .card inset 하이라이트 idiom 정합). hero=true 면 값만 28px 로 키워 패널 단일 focal point.
-// value 폰트: hero 28px(.hero-stat) / 일반 13px(.fs-title) — 3단 사다리(hero>metric>meta) 강제.
-// 섹션 SubCard(bg-elev raised) 위에 얹히는 메트릭 타일 — bg-sunken 으로 한 단 들어간 면 → 타일 경계 확보.
+// Drawer metric — label over a mono value, flat on its section (no card inside the section card); hero enlarges the value only.
 function DetailMetric({ label, value, tone = '', hero = false }) {
   return (
-    <div className="flex flex-col rounded-md p-3 bg-sunken ring-1 ring-line">
+    <div className="flex flex-col py-1">
       <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
       <div className={`font-mono font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
     </div>
@@ -2035,7 +2038,7 @@ function SuccessRateMatrixRow({ agent, cells }) {
 function SuccessRateLegend() {
   return (
     <div className="flex items-center gap-3 mb-3 fs-meta text-dim flex-shrink-0">
-      <span className="font-mono text-faint">Legend</span>
+      <span className="text-faint">Legend</span>
       <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
       <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
       <span className="text-faint">n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</span>
@@ -2310,7 +2313,7 @@ const QH_TIMELINE_COUNT_AXIS_LABEL = {
   angle: -90,
   position: 'insideLeft',
   fill: 'rgb(var(--dim))',
-  fontSize: 11,
+  fontSize: 12,
   style: { textAnchor: 'middle' },
 };
 const QH_TIMELINE_RATIO_AXIS_LABEL = {
@@ -2318,7 +2321,7 @@ const QH_TIMELINE_RATIO_AXIS_LABEL = {
   angle: 90,
   position: 'insideRight',
   fill: 'rgb(var(--crit))',
-  fontSize: 11,
+  fontSize: 12,
   style: { textAnchor: 'middle' },
 };
 
@@ -2387,7 +2390,7 @@ function QualityHealthTimelineChart({ rows }) {
           <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
           />
@@ -2395,7 +2398,7 @@ function QualityHealthTimelineChart({ rows }) {
             yAxisId="count"
             allowDecimals={false}
             label={QH_TIMELINE_COUNT_AXIS_LABEL}
-            tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={48}
@@ -2406,7 +2409,7 @@ function QualityHealthTimelineChart({ rows }) {
             domain={[0, 100]}
             tickFormatter={(v) => v.toFixed(0) + '%'}
             label={QH_TIMELINE_RATIO_AXIS_LABEL}
-            tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={56}
@@ -3176,8 +3179,20 @@ const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
 // 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
 //   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
 function trendBarColor(status, failShareTone) {
-  const tone = status === 'error' ? 'crit' : failShareTone || 'neutral';
-  return window.UI.toneVarColor(tone);
+  return window.UI.toneVarColor(getTrendTone(status, failShareTone));
+}
+
+function getTrendTone(status, failShareTone) {
+  return status === 'error' ? 'crit' : failShareTone || 'neutral';
+}
+
+// Last seven reported dates, oldest first — shared by the series map and the drawer's day labels.
+function getTrendDates(rows) {
+  const dates = new Set();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (r && r.agent && r.event_date) dates.add(String(r.event_date));
+  }
+  return Array.from(dates).sort().slice(-7);
 }
 
 // MiniBars 추세 — success-rate 일별 합계를 agent × date 로 group → 최근 7일 series.
@@ -3187,11 +3202,9 @@ function buildAgentTrendMap(rows) {
 
   // 1단계 — (agent, date) → cumulative count.
   const byAgent = new Map();
-  const allDates = new Set();
   for (const r of rows) {
     if (!r || !r.agent || !r.event_date) continue;
     const date = String(r.event_date);
-    allDates.add(date);
     let dateMap = byAgent.get(r.agent);
     if (!dateMap) {
       dateMap = new Map();
@@ -3200,10 +3213,8 @@ function buildAgentTrendMap(rows) {
     const total = Number(r.total_count) || 0;
     dateMap.set(date, (dateMap.get(date) || 0) + total);
   }
-  if (allDates.size === 0) return new Map();
-
-  // 2단계 — YYYY-MM-DD lex sort + 마지막 7개.
-  const lastSeven = Array.from(allDates).sort().slice(-7);
+  const lastSeven = getTrendDates(rows);
+  if (lastSeven.length === 0) return new Map();
 
   // 3단계 — agent → 7개 슬롯 배열 (없는 일자=0). 전체 0 시리즈는 제외.
   const trendMap = new Map();
