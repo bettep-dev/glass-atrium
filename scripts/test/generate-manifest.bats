@@ -111,6 +111,99 @@ untrack_in_scope() {
   [[ "${recorded}" == "${actual}" ]]
 }
 
+# Row = "<name>|<path>": one path per byte class that default git output C-quotes.
+QUOTED_PATH_ROWS=(
+  "non-ASCII byte|agents/한글-agent.md"
+  "double quote|agents/q\"b.md"
+  "backslash|agents/back\\slash.md"
+)
+
+# Track one file per QUOTED_PATH_ROWS path. core.quotePath is pinned to git's default
+# so an ambient `false` cannot hide the non-ASCII row.
+track_quoted_paths() {
+  local row
+  git -C "${WORK}" config core.quotePath true
+  for row in "${QUOTED_PATH_ROWS[@]}"; do
+    printf '# %s\n' "${row%%|*}" >"${WORK}/${row#*|}"
+    git -C "${WORK}" add -- "${row#*|}"
+  done
+  git -C "${WORK}" commit -qm 'track quoted-byte paths'
+}
+
+sha256_content() {
+  local out
+  if command -v shasum >/dev/null 2>&1; then
+    out="$(shasum -a 256 <"$1")"
+  else
+    out="$(sha256sum <"$1")"
+  fi
+  printf '%s\n' "${out%% *}"
+}
+
+@test "generate: records a path git would quote verbatim, hashed from its content" {
+  track_quoted_paths
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  local row name path recorded content mode
+  for row in "${QUOTED_PATH_ROWS[@]}"; do
+    name="${row%%|*}" path="${row#*|}"
+    jq -e --arg f "${path}" 'any(.files[]; . == $f)' "${MANIFEST}" >/dev/null \
+      || {
+        echo "files[] lacks the ${name} path verbatim"
+        return 1
+      }
+    recorded="$(jq -r --arg f "${path}" '.hashes[$f]' "${MANIFEST}")"
+    content="$(sha256_content "${WORK}/${path}")"
+    [[ "${recorded}" == "${content}" ]] \
+      || {
+        echo "hash of the ${name} path is not its content hash"
+        return 1
+      }
+    mode="$(jq -r --arg f "${path}" '.modes[$f]' "${MANIFEST}")"
+    [[ "${mode}" =~ ^[0-7]{3,4}$ ]] || {
+      echo "modes lacks the ${name} path"
+      return 1
+    }
+  done
+}
+
+@test "--check: exit 0 on a generated tree whose paths git would quote" {
+  track_quoted_paths
+  "${SCRIPT}" >/dev/null
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"manifest matches generated set"* ]] || return 1
+}
+
+@test "generate: exit 8 names a tracked path carrying a tab or newline and leaves the manifest unchanged" {
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm 'baseline manifest'
+  cp -- "${MANIFEST}" "${WORK}/before.json"
+  local row name path quoted
+  for row in "tab|agents/tab"$'\t'"name.md" "newline|agents/new"$'\n'"line.md"; do
+    name="${row%%|*}" path="${row#*|}"
+    printf -v quoted '%q' "${path}"
+    printf '# %s\n' "${name}" >"${WORK}/${path}"
+    git -C "${WORK}" add -- "${path}"
+    run "${SCRIPT}"
+    [[ "${status}" -eq 8 ]] || {
+      echo "${name}: exit ${status}, expected 8"
+      return 1
+    }
+    [[ "${output}" == *"${quoted}"* ]] || {
+      echo "${name}: path not named"
+      return 1
+    }
+    cmp -s -- "${WORK}/before.json" "${MANIFEST}" || {
+      echo "${name}: manifest rewritten"
+      return 1
+    }
+    git -C "${WORK}" rm -q --cached -- "${path}"
+    rm -f -- "${WORK}/${path}"
+  done
+}
+
 @test "generate: deterministic — two runs produce a byte-identical manifest" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
@@ -339,6 +432,26 @@ ship_lib_a() {
   [[ -f "${WORK}/scripts/lib/b.sh" ]] || return 1
   jq -e '(.retired | has("scripts/lib/archive/old.sh")) | not' "${MANIFEST}" >/dev/null || return 1
   jq -e '(.retired | has("scripts/lib/b.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+}
+
+@test "retired: a still-tracked path git would quote is NOT retired once it leaves the disk" {
+  # The on-disk arm is removed so only the tracked-paths oracle can keep the row out.
+  git -C "${WORK}" config core.quotePath true
+  mkdir -p "${WORK}/scripts/lib/archive"
+  printf '# archived\n' >"${WORK}/scripts/lib/archive/한글.sh"
+  git -C "${WORK}" add scripts/lib/archive/한글.sh
+  git -C "${WORK}" commit -qm 'track an excluded non-ASCII path'
+  "${SCRIPT}" >/dev/null
+  rm -f -- "${WORK}/scripts/lib/archive/한글.sh"
+  jq '.files += ["scripts/lib/archive/한글.sh"]
+      | .hashes["scripts/lib/archive/한글.sh"] = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"RETIRED +"* ]] || return 1
+  jq -e '(.retired | has("scripts/lib/archive/한글.sh")) | not' "${MANIFEST}" >/dev/null || return 1
 }
 
 @test "retired: a second drop of the same path appends, dedupes and sorts its hashes" {

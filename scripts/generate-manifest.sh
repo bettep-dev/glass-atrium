@@ -88,7 +88,8 @@
 #
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
-# manifest that fails structural validation · 7=apply-spine.sh not found.
+# manifest that fails structural validation · 7=apply-spine.sh not found ·
+# 8=a tracked in-scope path carries a tab or newline.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -171,7 +172,7 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 # SHA-256 tool — shasum (macOS / perl-backed, also on CI ubuntu) preferred,
-# coreutils sha256sum as the Linux fallback. Both honor `--` end-of-options.
+# coreutils sha256sum as the Linux fallback.
 if command -v shasum >/dev/null 2>&1; then
   readonly -a SHA256_CMD=(shasum -a 256)
 elif command -v sha256sum >/dev/null 2>&1; then
@@ -200,10 +201,10 @@ git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   exit 3
 }
 
-# Echo the lowercase 64-hex SHA-256 of a single file (first whitespace field of
-# the tool output, dropping the trailing filename column).
+# Echo the lowercase 64-hex SHA-256 of a single file. Content goes in on stdin:
+# both tools escape a filename carrying a backslash and prefix the digest with `\`.
 sha256_of() {
-  "${SHA256_CMD[@]}" -- "$1" | awk '{print $1}'
+  "${SHA256_CMD[@]}" <"$1" | awk '{print $1}'
 }
 
 # Echo the octal permission mode (e.g. 644 / 755) of a single file. `-L`
@@ -226,11 +227,27 @@ mode_of() {
   fi
 }
 
-# Emit the generated deploy file list, one path per line, sorted.
+# NUL-delimited paths on stdin → one per line. A tab or newline cannot ride the
+# tab- and newline-delimited pipeline, so such a path is refused by name (exit 8).
+nul_paths_to_lines() {
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ "${path}" == *[$'\t\n']* ]]; then
+      printf 'generate-manifest: tracked in-scope path carries a tab or newline (unsupported): %q\n' \
+        "${path}" >&2
+      exit 8
+    fi
+    printf '%s\n' "${path}"
+  done
+}
+
+# Emit the generated deploy file list, one path per line, sorted. -z because
+# default ls-files C-quotes a path with a byte >= 0x80, `"` or `\` — naming no file.
 # grep exit 1 (= every tracked file excluded) is absorbed so the empty set
 # reaches the named exit-6 guard instead of dying as an opaque pipefail.
 generate_files() {
-  git -C "${GA_ROOT}" ls-files -- "${SCOPE_PATHS[@]}" \
+  git -C "${GA_ROOT}" ls-files -z -- "${SCOPE_PATHS[@]}" \
+    | nul_paths_to_lines \
     | { grep -vE "${EXCLUDE_RE}" || true; } \
     | LC_ALL=C sort
 }
@@ -289,10 +306,14 @@ read_manifest_retired_lines() {
 }
 
 # Every path git tracks anywhere in the repo, sorted — the "the vendor still ships
-# this" oracle. Deliberately unscoped and unfiltered; the rationale is the
-# retired-map contract note in the header.
+# this" oracle. Deliberately unscoped and not EXCLUDE_RE-filtered; the rationale is
+# the retired-map contract note in the header. -z as in generate_files; a newline
+# path is skipped, not refused — never a manifest key, and split it could fake a match.
 raw_tracked_paths() {
-  git -C "${GA_ROOT}" ls-files | LC_ALL=C sort
+  local path
+  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
+    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
+  done | LC_ALL=C sort
 }
 
 # Emit `<path>\t<sha256>` for each committed files[] path the vendor has dropped —
