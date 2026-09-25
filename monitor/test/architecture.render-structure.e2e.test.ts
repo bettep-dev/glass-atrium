@@ -674,6 +674,105 @@ describe("healthy live fixture", () => {
 			"a part with a stamped binding but no arrived verdict must stay unlit — an unresolved response is not a healthy one",
 		);
 	});
+
+	test("hovering or keyboard-focusing a node lifts only its shape — rings, borders and layout stay put", async (t) => {
+		const canvas = ctx.selectors.canvas;
+		const plain = `${canvas} svg g.node:not(.focal):not(.security):not(.external)`;
+		const read = () =>
+			ctx.page.evaluate((sel) => {
+				const node = document.querySelector(sel);
+				const shape = node?.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring):not(.arch-ring-glyph-pill)");
+				const ring = node?.querySelector(":scope > rect.arch-ring-state");
+				const box = node?.getBoundingClientRect();
+				return {
+					filter: shape ? getComputedStyle(shape).filter : "",
+					stroke: shape ? getComputedStyle(shape).stroke : "",
+					ring: ring ? `${getComputedStyle(ring).display} ${getComputedStyle(ring).stroke} ${getComputedStyle(ring).filter}` : "",
+					box: box ? `${box.x},${box.y},${box.width},${box.height}` : "",
+				};
+			}, plain);
+
+		// reduced motion drops the 120ms fade, so a reading is the settled highlight rather than a mid-transition frame
+		await ctx.page.emulateMedia({ reducedMotion: "reduce" });
+		await ctx.page.mouse.move(0, 0);
+		const rest = await read();
+		await ctx.page.hover(plain);
+		const hovered = await read();
+		t.diagnostic(`rest ${JSON.stringify(rest)} · hover ${JSON.stringify(hovered)}`);
+		assert.equal(rest.filter, "none", "a resting node carries no highlight");
+		assert.notEqual(hovered.filter, "none", "hover must lift the node's shape");
+		assert.deepEqual(
+			{ stroke: hovered.stroke, ring: hovered.ring, box: hovered.box },
+			{ stroke: rest.stroke, ring: rest.ring, box: rest.box },
+			"hover must not touch the border colour, the health ring or the node's box",
+		);
+
+		await ctx.page.mouse.move(0, 0);
+		let focusedFilter = "";
+		for (let step = 0; step < 60 && !focusedFilter; step += 1) {
+			await ctx.page.keyboard.press("Tab");
+			focusedFilter = await ctx.page.evaluate((sel) => {
+				const node = document.activeElement?.closest(`${sel} svg g.node`);
+				const shape = node?.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring):not(.arch-ring-glyph-pill)");
+				return node && node.matches(":focus-visible") && shape ? getComputedStyle(shape).filter : "";
+			}, canvas);
+		}
+		await ctx.page.emulateMedia({ reducedMotion: "no-preference" });
+		assert.equal(focusedFilter, hovered.filter, "keyboard focus must carry the same highlight as hover");
+	});
+
+	test("the orchestrator border differs from the focus ring and holds 3:1, other role borders unchanged", async (t) => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const probe = await ctx.page.evaluate((canvas) => {
+			const read: Record<string, CSSStyleDeclaration | null> = {};
+			for (const role of ["focal", "security", "external"]) {
+				const shape = document.querySelector(
+					`${canvas} svg g.node.${role} > :is(rect, path, polygon):not(.arch-ring):not(.arch-ring-glyph-pill)`,
+				);
+				read[role] = shape ? getComputedStyle(shape) : null;
+			}
+			const cluster = document.querySelector(`${canvas} svg g.node.focal`)?.closest("g.root")?.querySelector("g.cluster#orch > rect, g.cluster[id$='-orch'] > rect, g.cluster[id*='orch'] > rect");
+			const swatch = [...document.querySelectorAll(".arch-legend-item")].find((li) => (li as HTMLElement).innerText.includes("Orchestrator border"));
+			const ring = document.createElement("div");
+			ring.style.color = "rgb(var(--focus-ring))";
+			document.body.append(ring);
+			const focusRing = getComputedStyle(ring).color;
+			ring.remove();
+			return {
+				focalStroke: read.focal?.stroke ?? "",
+				focalFill: read.focal?.fill ?? "",
+				clusterFill: cluster ? getComputedStyle(cluster).fill : "",
+				focusRing,
+				securityStroke: read.security?.stroke ?? "",
+				externalStroke: read.external?.stroke ?? "",
+				swatch: swatch ? getComputedStyle(swatch.querySelector(".arch-legend-swatch") as Element).borderTopColor : "",
+			};
+		}, ctx.selectors.canvas);
+		const getLuminance = (rgb: string) => {
+			const [r, g, b] = (rgb.match(/[\d.]+/g) ?? []).slice(0, 3).map((v) => {
+				const c = Number(v) / 255;
+				return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+			});
+			return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+		};
+		const getContrast = (a: string, b: string) => {
+			const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
+			return (hi + 0.05) / (lo + 0.05);
+		};
+		const surfaces = [probe.focalFill, probe.clusterFill].filter(Boolean);
+		const contrast = Math.min(...surfaces.map((surface) => getContrast(probe.focalStroke, surface)));
+		t.diagnostic(`${JSON.stringify(probe)} · min contrast ${contrast.toFixed(2)}`);
+
+		assert.ok(surfaces.length === 2, `fixture precondition: node fill and zone fill both read — ${JSON.stringify(probe)}`);
+		assert.notEqual(probe.focalStroke, probe.focusRing, "the orchestrator border must not reuse the focus-ring colour");
+		assert.ok(contrast >= 3, `orchestrator border contrast ${contrast.toFixed(2)} < 3:1`);
+		assert.equal(probe.swatch, probe.focalStroke, "the legend swatch must match the drawn orchestrator border");
+		assert.deepEqual(
+			{ security: probe.securityStroke, external: probe.externalStroke },
+			{ security: "rgba(167, 139, 250, 0.5)", external: "rgb(84, 76, 71)" },
+			"the other role borders keep their colours",
+		);
+	});
 });
 
 describe("fault live fixture", () => {
