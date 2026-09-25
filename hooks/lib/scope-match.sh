@@ -214,12 +214,14 @@ scope_concerns_exempts_path() {
 }
 
 # A declaration is a line the `[SCOPE]` token OPENS: optional indentation, one list marker, an
-# optional backtick or `**` wrap, then whitespace and a non-placeholder `files=`. A substring match
-# would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the real line → a wrong list
-# (false excess) or an empty one (the real declaration never read). Purely syntactic on purpose, so a
-# non-bash consumer mirrors it as one regex rather than re-implementing the field parser.
+# optional backtick or `**` wrap, then whitespace and a `files=` value that is neither empty nor a
+# `<placeholder>` — a wrap closing right after `files=` quotes the grammar, it declares nothing.
+# A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
+# real line → a wrong list (false excess) or an empty one (the real declaration never read).
+# Purely syntactic on purpose, so a non-bash consumer mirrors it as one regex rather than
+# re-implementing the field parser.
 # shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
-readonly SCOPE_DECL_LINE_RE='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(`|[*][*])?[[]SCOPE[]](`|[*][*])?[[:space:]]+[Ff]iles=[^<]'
+readonly SCOPE_DECL_LINE_RE='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(`|[*][*])?[[]SCOPE[]](`|[*][*])?[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
 
 # Stdin text → its first declaration line (empty when none). Always returns 0.
 scope_decl_select() {
