@@ -31,6 +31,9 @@ const MAP_LABEL_DIRECTIVE =
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
 
+// zone inset around its members (SVG user units) — the gap ELK itself leaves under the last member
+const ZONE_PAD = 12;
+
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
 
@@ -1065,7 +1068,8 @@ function MermaidCanvas({
 		root.querySelectorAll("svg g.cluster").forEach((el) => {
 			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
 		});
-		root.querySelectorAll("svg g.cluster rect").forEach((rect) => {
+		fitZoneBoxesAR(root, source);
+		root.querySelectorAll(`svg g.cluster:not(.${ZONE_TITLE_REDUNDANT_CLASS}) > rect:first-of-type`).forEach((rect) => {
 			if (rect.dataset.archTitleBand === "1") return;
 			const y = Number.parseFloat(rect.getAttribute("y"));
 			const height = Number.parseFloat(rect.getAttribute("height"));
@@ -1074,6 +1078,7 @@ function MermaidCanvas({
 			rect.setAttribute("height", String(height + ZONE_TITLE_BAND));
 			rect.dataset.archTitleBand = "1";
 		});
+		growViewBoxToContentAR(root.querySelector("svg"));
 	}, [renderState.status, renderState.svgHtml, source]);
 
 	/**
@@ -2419,6 +2424,124 @@ function buildRedundantZoneIdsAR(source) {
 		if (declared) zone.labels.push(getPlainLabelAR(declared[1]));
 	}
 	return redundant;
+}
+
+/**
+ * Refits every zone box to its members.
+ * ELK sizes a zone from its members alone; mermaid then widens the rect to the unwrapped title around the zone
+ * centre, which can spill it into the next column — a zone that collides wraps its title inside the member width.
+ * Zones clear of every other keep their one-line title: wrapping them only adds a line that grows into the zone above.
+ */
+function fitZoneBoxesAR(root, source) {
+	const { zoneIdByMemberId } = buildZoneRingPlanAR(source, {});
+	const zoneIds = [...new Set(zoneIdByMemberId.values())];
+	const nodeEls = [...root.querySelectorAll("svg g.node")];
+	const zoneEls = [...root.querySelectorAll("svg g.cluster")];
+	const crowdedZoneEls = getCrowdedZonesAR(zoneEls);
+
+	zoneEls.forEach((zoneEl) => {
+		const zoneId = matchZoneIdAR(zoneEl.id || "", zoneIds);
+		const rect = zoneEl.querySelector(":scope > rect");
+		if (!zoneId || !rect || rect.dataset.archZoneFit === "1") return;
+		const members = nodeEls.filter((el) => zoneIdByMemberId.get(getSourceNodeIdAR(el.id)) === zoneId);
+		const memberBox = getUnionBoxAR(rect, members);
+		if (!memberBox) return;
+
+		rect.dataset.archZoneFit = "1";
+		if (zoneEl.classList.contains(ZONE_TITLE_REDUNDANT_CLASS)) trimZoneTopAR(rect, memberBox);
+		else if (crowdedZoneEls.has(zoneEl)) wrapZoneTitleAR(zoneEl, rect, memberBox);
+	});
+}
+
+// zones whose drawn box runs into another zone's box — zone rects share one parent group, so their bboxes compare directly
+function getCrowdedZonesAR(zoneEls) {
+	const boxes = zoneEls.map((el) => el.querySelector(":scope > rect")?.getBBox());
+	const crowded = new Set();
+	boxes.forEach((a, i) =>
+		boxes.forEach((b, j) => {
+			if (i >= j || !a || !b) return;
+			if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+				crowded.add(zoneEls[i]);
+				crowded.add(zoneEls[j]);
+			}
+		}),
+	);
+	return crowded;
+}
+
+// a title line gained above a zone can pass the viewBox top → the fit reads the viewBox, so it grows to cover the drawing
+function growViewBoxToContentAR(svgEl) {
+	const view = svgEl?.viewBox?.baseVal;
+	if (!view || !(view.width > 0)) return;
+	const drawn = svgEl.getBBox();
+	const left = Math.min(view.x, drawn.x - ZONE_TITLE_BAND);
+	const top = Math.min(view.y, drawn.y - ZONE_TITLE_BAND);
+	const right = Math.max(view.x + view.width, drawn.x + drawn.width + ZONE_TITLE_BAND);
+	const bottom = Math.max(view.y + view.height, drawn.y + drawn.height + ZONE_TITLE_BAND);
+	if (left === view.x && top === view.y && right === view.x + view.width && bottom === view.y + view.height) return;
+	svgEl.setAttribute("viewBox", `${left} ${top} ${right - left} ${bottom - top}`);
+}
+
+// mermaid node element id `…flowchart-<sourceId>-<n>` → the source id
+function getSourceNodeIdAR(elementId) {
+	return /flowchart-(.+)-\d+$/.exec(elementId || "")?.[1] ?? "";
+}
+
+// members' union box in the frame's user space — nodes and zones sit in sibling groups with different CTMs
+function getUnionBoxAR(frameEl, shapeEls) {
+	const toFrame = frameEl.getCTM()?.inverse();
+	if (!toFrame || shapeEls.length === 0) return null;
+
+	const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+	for (const el of shapeEls) {
+		const ctm = el.getCTM();
+		if (!ctm) return null;
+		const b = el.getBBox();
+		const m = toFrame.multiply(ctm);
+		box.left = Math.min(box.left, b.x * m.a + m.e);
+		box.top = Math.min(box.top, b.y * m.d + m.f);
+		box.right = Math.max(box.right, (b.x + b.width) * m.a + m.e);
+		box.bottom = Math.max(box.bottom, (b.y + b.height) * m.d + m.f);
+	}
+	return box;
+}
+
+// hidden title → the band reserved for it goes too; the bottom edge stays
+function trimZoneTopAR(rect, memberBox) {
+	const bottom = Number.parseFloat(rect.getAttribute("y")) + Number.parseFloat(rect.getAttribute("height"));
+	const top = memberBox.top - ZONE_PAD;
+	rect.setAttribute("y", String(top));
+	rect.setAttribute("height", String(bottom - top));
+}
+
+// title wrapped to the member width, box hugging members; a title line gained or lost moves the top edge only
+function wrapZoneTitleAR(zoneEl, rect, memberBox) {
+	const titleEl = zoneEl.querySelector(":scope > .cluster-label");
+	const frameEl = titleEl?.querySelector("foreignObject");
+	const textEl = frameEl?.firstElementChild;
+	const at = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/.exec(titleEl?.getAttribute("transform") || "");
+	if (!textEl || !at) return;
+
+	const title = getWrappedTitleSizeAR(textEl, memberBox.right - memberBox.left);
+	const addedHeight = title.height - Number.parseFloat(frameEl.getAttribute("height"));
+	const centerX = (memberBox.left + memberBox.right) / 2;
+	const zoneWidth = title.width + ZONE_PAD * 2;
+
+	frameEl.setAttribute("width", String(title.width));
+	frameEl.setAttribute("height", String(title.height));
+	titleEl.setAttribute("transform", `translate(${centerX - title.width / 2}, ${Number(at[2]) - addedHeight})`);
+	rect.setAttribute("x", String(centerX - zoneWidth / 2));
+	rect.setAttribute("width", String(zoneWidth));
+	rect.setAttribute("y", String(Number.parseFloat(rect.getAttribute("y")) - addedHeight));
+	rect.setAttribute("height", String(Number.parseFloat(rect.getAttribute("height")) + addedHeight));
+}
+
+// mermaid pre-breaks the title for a narrower font → drop those breaks and let the drawn font wrap at word boundaries
+function getWrappedTitleSizeAR(textEl, maxWidth) {
+	textEl.querySelectorAll("br").forEach((br) => br.replaceWith(" "));
+	Object.assign(textEl.style, { whiteSpace: "normal", width: `${maxWidth}px`, maxWidth: `${maxWidth}px` });
+	// a word longer than the member width widens the box rather than being cut
+	return { width: Math.max(maxWidth, textEl.offsetWidth), height: textEl.offsetHeight };
 }
 
 // source label → the words the map draws: line breaks as spaces, compared case-blind

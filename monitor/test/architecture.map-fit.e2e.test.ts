@@ -244,7 +244,72 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 	}
 }
 
+interface ZoneReading {
+	overlaps: string[];
+	occludedTitles: string[];
+	zoneCount: number;
+}
+
+// 존 상자끼리의 겹침과, 보이는 존 제목의 양 끝이 제 존 위에서 읽히는지를 잼.
+async function readZones(width: number, height: number): Promise<ZoneReading> {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+
+		return await page.evaluate(() => {
+			const zones = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
+				const box = (el.querySelector(":scope > rect") as SVGRectElement).getBoundingClientRect();
+				const title = el.querySelector(":scope > .cluster-label");
+				const titleBox = title && getComputedStyle(title).display !== "none" ? title.getBoundingClientRect() : null;
+				return { el, name: (title?.textContent || el.id).trim(), box, titleBox };
+			});
+
+			const overlaps: string[] = [];
+			for (let i = 0; i < zones.length; i++)
+				for (let j = i + 1; j < zones.length; j++) {
+					const a = zones[i].box;
+					const b = zones[j].box;
+					const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+					const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+					if (overlapX > 0 && overlapY > 0)
+						overlaps.push(`${zones[i].name} ∩ ${zones[j].name} ${overlapX.toFixed(0)}x${overlapY.toFixed(0)}px`);
+				}
+
+			// 제목의 첫 글자와 끝 글자 자리에서 맨 위에 그려진 것이 제 존이어야 함 — 이웃 존이 덮으면 잘려 읽힘.
+			const occludedTitles = zones
+				.filter((zone) => zone.titleBox && zone.titleBox.width > 0)
+				.filter((zone) => {
+					const t = zone.titleBox as DOMRect;
+					const midY = (t.top + t.bottom) / 2;
+					return [t.left + 2, t.right - 2].some((x) => {
+						const owner = document.elementFromPoint(x, midY)?.closest("g.cluster");
+						return owner !== zone.el || t.left < zone.box.left || t.right > zone.box.right;
+					});
+				})
+				.map((zone) => zone.name);
+
+			return { overlaps, occludedTitles, zoneCount: zones.length };
+		});
+	} finally {
+		await page.close();
+	}
+}
+
 for (const { width, height } of VIEWPORTS) {
+	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {
+		const r = await readZones(width, height);
+		assert.ok(r.zoneCount > 0, "no zone boxes were measured — the map did not render");
+		assert.deepEqual(r.overlaps, [], `zone boxes overlap: ${r.overlaps.join("; ")}`);
+		assert.deepEqual(r.occludedTitles, [], `zone titles covered or cut: ${r.occludedTitles.join("; ")}`);
+	});
+
 	test(`AC-FIT-1 the whole map is inside the pane at ${width}x${height}`, async (t) => {
 		const r = await readFit(width, height);
 		// 통과했을 때의 여유를 남김 — 다음 사람이 "얼마나 아슬아슬한가" 를 다시 재지 않아도 됨.
