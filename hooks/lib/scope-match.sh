@@ -217,30 +217,40 @@ scope_concerns_exempts_path() {
 }
 
 # A declaration is a line the `[SCOPE]` token OPENS: optional indentation and one list marker, then
-# the token — bare, wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`), or opening a backtick or `**`
-# wrap that closes at end of line if at all — then whitespace and a `files=` value that is neither
-# empty nor a `<placeholder>`. A wrap closing mid-line with text after it QUOTES a declaration (a
-# verdict citing one), whatever the quoted value: selecting it read the value plus the prose.
+# the token and a `files=` value that is neither empty nor a `<placeholder>`. The token is
+#   - bare — any text may follow the value;
+#   - wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`) — the value list must end at end of line, a `·`
+#     or `|` separator, or a grammar key: prose after it marks a verdict quoting a declaration;
+#   - opening a backtick or `**` wrap that closes at end of line if at all — a wrap closing mid-line
+#     with text after it marks a quoted verdict the same way.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
 # real line → a wrong list (false excess) or an empty one (the real declaration never read).
 # Purely syntactic on purpose — no reader re-implements the field parser to choose a line.
 # Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
+#   - a wrapped token whose value list runs into anything else (prose, a trailing comma, a
+#     space-separated path list);
 #   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
 #   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
 #   - a space after `files=`, or a field order not opening with `files=`;
 #   - recorder only: a declaration ending past its 2000-char emit transport, dropped whole.
-# Not closed: a relayed earlier declaration that itself opens a line wins over a later real one
-# (first wins) — a syntactic selector cannot tell them apart; relaying by block-quote is the fix.
+# Not closed — a quoted line still selected, winning over a later real declaration (first wins):
+#   - a relayed declaration opening its own line unwrapped — relaying by block-quote is the fix;
+#   - a line-opening wrap that closes at end of line or never, with prose after the value inside it
+#     (`` `[SCOPE] files=a.sh lists one path `` · `` **[SCOPE] files=`a.sh` lists one path** ``).
 readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
 # shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
-readonly _SCOPE_DECL_TOKEN_FORM='([[]SCOPE[]]|`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
+readonly _SCOPE_DECL_BARE_FORM='[[]SCOPE[]][[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
+# The parser's own closed field-key vocabulary, case-insensitive like its drop list.
+readonly _SCOPE_DECL_FIELD_KEY='([Ff][Ii][Ll][Ee][Ss]|[Dd][Ee][Ll][Ii][Vv][Ee][Rr][Aa][Bb][Ll][Ee]|[Oo][Uu][Tt])='
+# shellcheck disable=SC2016
+readonly _SCOPE_DECL_WRAPPED_TOKEN_FORM='(`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*][^[:space:],|]*([[:space:]]*,[[:space:]]*[^[:space:],|]+)*[[:space:]]*($|·|[|]|'"${_SCOPE_DECL_FIELD_KEY}"')'
 # shellcheck disable=SC2016
 readonly _SCOPE_DECL_TICK_LINE_FORM='`[[]SCOPE[]][[:space:]]+[Ff]iles=[^<[:space:]`*][^`]*`?[[:space:]]*$'
 # shellcheck disable=SC2016
 readonly _SCOPE_DECL_BOLD_LINE_FORM='[*][*][[]SCOPE[]][[:space:]]+[Ff]iles=`?[^<[:space:]`*][^*]*([*][*])?[[:space:]]*$'
-readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}(${_SCOPE_DECL_TOKEN_FORM}|${_SCOPE_DECL_TICK_LINE_FORM}|${_SCOPE_DECL_BOLD_LINE_FORM})"
+readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}(${_SCOPE_DECL_BARE_FORM}|${_SCOPE_DECL_WRAPPED_TOKEN_FORM}|${_SCOPE_DECL_TICK_LINE_FORM}|${_SCOPE_DECL_BOLD_LINE_FORM})"
 
 # Stdin text → its first declaration line (empty when none). Always returns 0.
 scope_decl_select() {

@@ -205,6 +205,11 @@ record0_entries() {
     'backtick-wrapped verdict with prose after the wrap first'
     'bulleted backtick-wrapped verdict with prose after the wrap first'
     'numbered bold-wrapped verdict with prose after the wrap first'
+    'backtick-wrapped token with prose after its value first'
+    'bulleted bold-wrapped token with prose after a path list first'
+    'backtick-wrapped token closed by a pipe separator'
+    'bold-wrapped token closed by a grammar key'
+    'bold-wrapped token with a wrapped value closed by end of line'
   )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
@@ -229,12 +234,34 @@ record0_entries() {
     '`[SCOPE] files=hooks/real.sh` lists one path only'$'\n'"${real}"
     '- `[SCOPE] files=hooks/real.sh` omitted hooks/test/real.bats'$'\n'"${real}"
     '1. **[SCOPE] files=hooks/real.sh** is under-declared'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh lists one path only'$'\n'"${real}"
+    '- **[SCOPE]** files=hooks/old.sh, hooks/test/old.bats omitted the manifest'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
+    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
+    '**[SCOPE]** files=`hooks/real.sh`'
   )
   local i got
   for i in "${!names[@]}"; do
     got="$(record0_entries "${prompts[${i}]}")"
     [[ "${got}" == 'hooks/real.sh' ]] || {
       echo "${names[${i}]}: expected [hooks/real.sh], got [${got}]" >&2
+      return 1
+    }
+  done
+}
+
+@test "a wrapped token keeps every path of a comma-separated list closed by a separator or end of line" {
+  local -a names=('middot-closed list' 'end-of-line-closed list')
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
+  local -a prompts=(
+    '`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    '**[SCOPE]** files=`hooks/a.sh`,`hooks/test/a.bats`'
+  )
+  local i got
+  for i in "${!names[@]}"; do
+    got="$(record0_entries "${prompts[${i}]}")"
+    [[ "${got}" == 'hooks/a.sh'$'\n''hooks/test/a.bats' ]] || {
+      echo "${names[${i}]}: expected [hooks/a.sh hooks/test/a.bats], got [${got}]" >&2
       return 1
     }
   done
