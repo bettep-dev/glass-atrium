@@ -51,7 +51,11 @@ type Component = (props: unknown) => unknown;
 
 const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
 const shippedUi = ui.UI as Record<string, unknown>;
-const ROW_FOCUS_ATOMS = { ROW_CONTROL_PROPS: shippedUi.ROW_CONTROL_PROPS, getRowKeyAction: shippedUi.getRowKeyAction };
+const ROW_FOCUS_ATOMS = {
+  ROW_CONTROL_PROPS: shippedUi.ROW_CONTROL_PROPS,
+  getRowKeyAction: shippedUi.getRowKeyAction,
+  getDisplayName: shippedUi.getDisplayName,
+};
 
 async function loadDocsScreen(react: Record<string, unknown> = createReactStub()): Promise<Record<string, unknown>> {
   return loadScreenModule(DOCS_SRC, { UI: uiStub(ROW_FOCUS_ATOMS), React: react });
@@ -64,17 +68,22 @@ function cssRuleBody(source: string, selector: string): string {
   return match[1];
 }
 
-test("the terminal stage pill carries the ok tone on border and glyph, never on its label text", () => {
+test("a done stage reads in the neutral tone like every other stage, on the pill and on its filter chip", async () => {
   const source = readFileSync(DOCS_SRC, "utf8");
-  const terminalPill = cssRuleBody(source, ".doc-stage-pill.is-terminal");
-  const glyph = cssRuleBody(source, ".doc-stage-glyph.is-terminal");
+  for (const selector of [".doc-stage-pill.is-terminal", ".doc-stage-glyph.is-terminal"]) {
+    const rule = source.match(new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
+    assert.doesNotMatch(rule ? rule[1] : "", /--ok/, `${selector} carries no success tone`);
+  }
+  assert.doesNotMatch(source, /\.doc-stage-step\.is-filled\.is-terminal\s*\{[^}]*--ok/);
 
-  assert.doesNotMatch(terminalPill, /(^|[;\s])color\s*:/, "terminal pill must not recolor its text");
-  assert.match(terminalPill, /border-color\s*:\s*rgb\(var\(--ok\)/);
-  assert.match(glyph, /(^|[;\s])color\s*:\s*rgb\(var\(--ok\)\)/);
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const doneChip = findNodes(tree, (n) => n.props.role === "radio" && collectText(n).startsWith("Done"));
+  assert.equal(doneChip.length, 1);
+  assert.doesNotMatch(JSON.stringify(doneChip[0].props.style), /--ok/);
 });
 
-test("a done pill renders its check glyph inside the ok-toned glyph slot and its label outside it", async () => {
+test("a done pill renders its check glyph inside the terminal glyph slot and its label outside it", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" }));
 
@@ -130,6 +139,7 @@ test("the Tags column states the page's majority format once and prints only exc
     findNodes(renderScreen(DocTagsCell(props)), (n) => n.props.atom === "Badge").map((n) => collectText(n));
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: "md" }), []);
   assert.deepEqual(chips({ audience: "hidden", format: "html", commonFormat: "md" }), ["agent-only", "html"]);
+  assert.deepEqual(chips({ audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }), []);
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
 });
 
@@ -245,7 +255,9 @@ test("the opened viewer settles focus on Close after the dialog's own first-cont
 test("below the icon-rail width the ledger drops its Tags column and lets the title column narrow", async () => {
   const source = readFileSync(DOCS_SRC, "utf8");
   const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const props = listCardProps(() => undefined);
+  (props.rows as Array<Record<string, unknown>>)[0].format = "html";
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
   const tagCells = findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
   assert.equal(tagCells.length, 3, "the Tags header and both row cells carry the column class");
@@ -326,4 +338,93 @@ test("a failed read shows one plain-sentence card with one Retry and never the r
     assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
     assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
   }
+});
+
+const HANGUL = /\p{Script=Hangul}/u;
+
+describe("the ledger names the Tags column only when a row differs, and states a shared value once", () => {
+  const tagCellsOf = (tree: ReturnType<typeof renderScreen>) =>
+    findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
+  const rows = [
+    { name: "every row agent-only md → no column, 'agent-only' said once", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent-only" },
+    { name: "one row in another format → the column stays", patch: [{ format: "html" }, {}], cells: 3, onceText: null },
+    { name: "one agent-only row among public rows → the column stays", patch: [{ audience: "hidden" }, {}], cells: 3, onceText: null },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      (props.rows as Array<Record<string, unknown>>).forEach((r, i) => Object.assign(r, row.patch[i]));
+      const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+      assert.equal(tagCellsOf(tree).length, row.cells);
+      assert.equal(findNodes(tree, (n) => n.props.className === "doc-th-note").length, 0, "no two-line header note");
+      if (row.onceText) assert.equal(collectText(tree).split(row.onceText).length - 1, 1);
+    });
+  }
+});
+
+test("the last stage actor under a pill is labelled as such, never a bare model id", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  (props.rows as Array<Record<string, unknown>>)[0].last_status_model = "claude-opus-5-5[1m]";
+  const actors = findNodes(renderScreen((screen.DocListCardCD as Component)(props)), (n) => n.props.className === "doc-stage-actor");
+  assert.equal(actors.length, 1);
+  assert.match(collectText(actors[0]), /^set by \S/);
+});
+
+test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const chipRows = findNodes(tree, (n) => n.props.role === "radiogroup");
+  assert.equal(chipRows.length, 2);
+  for (const group of chipRows) assert.doesNotMatch(collectText(group), HANGUL);
+  assert.doesNotMatch(collectText(tree), HANGUL);
+  for (const stage of ["doc_review", "implementing", "impl_review", "impl_done", "done"]) {
+    const pill = renderScreen((screen.DocStagePillCD as Component)({ docStatus: stage }));
+    assert.doesNotMatch(collectText(pill), HANGUL, stage);
+  }
+});
+
+test("inside a stage section the pill drops the word its section header already says, keeping its accessible name", async () => {
+  const screen = await loadDocsScreen();
+  const labelsIn = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => n.props.className === "doc-stage-label");
+  const inReview = (props: Record<string, unknown>) => {
+    for (const r of props.rows as Array<Record<string, unknown>>) r.doc_status = "doc_review";
+    return props;
+  };
+  const sectioned = renderScreen((screen.DocListCardCD as Component)(inReview(listCardProps(() => undefined))));
+  const rowPills = findNodes(sectioned, (n) => n.type === "button" && n.props["aria-haspopup"] === "menu");
+  assert.equal(rowPills.length, 2);
+  assert.equal(labelsIn(sectioned).length, 0);
+  for (const pill of rowPills) assert.match(String(pill.props["aria-label"]), /^Doc review — stage 1 of 5/);
+
+  const searched = renderListCard(screen, { isSearchMode: true, rows: inReview(listCardProps(() => undefined)).rows });
+  assert.equal(labelsIn(searched).length, 2, "search mode has no section header, so the pill names the stage");
+});
+
+test("a pill that changes the stage shows a menu caret, and a read-only pill does not", async () => {
+  const screen = await loadDocsScreen();
+  const carets = (props: Record<string, unknown>) =>
+    findNodes(renderScreen((screen.DocStagePillCD as Component)(props)), (n) => n.props.atom === "Icon" && n.props.name === "chevron-down").length;
+  assert.equal(carets({ docStatus: "implementing", onPickStage: () => undefined }), 1);
+  assert.equal(carets({ docStatus: "implementing" }), 0);
+});
+
+test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as a labelled button", async () => {
+  const screen = await loadDocsScreen();
+  const bar = renderScreen((screen.ViewerActionsCD as Component)({
+    doc: { id: 9, title: "Doc 9" }, onClose: () => undefined, showToast: () => undefined,
+  }));
+  assert.equal(findNodes(bar, (n) => /delete/i.test(String(n.props["aria-label"] ?? ""))).length, 0);
+
+  const deleted: number[] = [];
+  const rail = renderScreen((screen.DocMetaPanelCD as Component)({
+    doc: { id: 9, title: "Doc 9", doc_status: "open", format: "md" }, pendingDelete: null, onDelete: (id: number) => deleted.push(id),
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  }));
+  const buttons = findNodes(rail, (n) => n.type === "button" && /Delete/.test(collectText(n)));
+  assert.equal(buttons.length, 1);
+  (buttons[0].props.onClick as () => void)();
+  assert.deepEqual(deleted, [9]);
 });

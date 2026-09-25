@@ -438,7 +438,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
-      await clickDocStatusChip(page, "종료");
+      await clickDocStatusChip(page, "Done");
 
       // B + C 가 done 필터에서 가시 — server cascade 의 UI 가시화 확인.
       // 단, B/C 는 folder_id 가 동일하므로 group 1개 (representative_id=B 또는 C — created_at DESC 기준) → 1 row 가시.
