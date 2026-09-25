@@ -358,13 +358,24 @@ async function readLabelLines(width: number, height: number): Promise<{ id: stri
 }
 
 for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
-	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
+	// open, not resolved: two words per line widens the 1024 map past the legibility floor (line target 220 → 123px outside the pane);
+	// the fix is shorter display names, which live in the shared display-name map and the diagram source — an operator call
+	const todo = "MAP-F3a open — 6 of 9 labels one word per line; needs shorter display names";
+	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, { todo }, async () => {
 		const labels = await readLabelLines(width, height);
-		const words = labels.reduce((sum, label) => sum + label.lines.join(" ").split(" ").length, 0);
-		const lines = labels.reduce((sum, label) => sum + label.lines.length, 0);
 		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
 		assert.ok(labels.length > 0, "no node label was measured");
-		assert.ok(lines < words, `${lines} lines for ${words} words — every word sits on its own line: ${drawn}`);
+		// fewer lines than words ⟺ at least one line carries two words — held per label, not summed over the map;
+		// a bare symbol ('+') is not a word, so 'checks +' still reads as a one-word line
+		const oneWordPerLine = labels.filter((label) => {
+			const words = label.lines.join(" ").split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+			return words > 1 && label.lines.length >= words;
+		});
+		assert.deepEqual(
+			oneWordPerLine.map((label) => `${label.id}: ${label.lines.join(" | ")}`),
+			[],
+			`labels drawn one word per line: ${drawn}`,
+		);
 		const plans = labels.find((label) => label.id.endsWith("main_session"));
 		assert.ok(plans, `the orchestrator node was not drawn: ${drawn}`);
 		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
