@@ -385,10 +385,13 @@ function ScreenModelConfig() {
 					className="mb-4 flex flex-col gap-3"
 					role="region"
 					aria-label="Alerts">
-					{/* header Refresh is this outage's one retry → the card carries none */}
 					{configState.error && (
 						<div role="alert">
-							<RegionUnavailable source="model config" error={configState.error} />
+							<RegionUnavailable
+								source="model config"
+								error={configState.error}
+								onRetry={triggerRefresh}
+							/>
 						</div>
 					)}
 					{saveError && (

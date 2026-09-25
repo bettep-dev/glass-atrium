@@ -965,25 +965,39 @@ test("a refresh keeps every unsaved edit and takes every untouched field from th
   );
 });
 
-test("the header Refresh is the one retry: busy while a read is in flight, and a failed load adds no second Retry", async () => {
+test("a read in flight keeps the header Refresh busy until the first answer lands", () => {
   const inFlight = findAllMc(renderComponentMc(screens.ScreenModelConfig, {}), (n) => n.props["data-atom"] === "RefreshButton");
   assert.strictEqual(inFlight[0]?.props.isBusy, true, "first read in flight → the atom is busy");
   assert.strictEqual(inFlight[0]?.props.hasRead, false, "nothing read yet → the atom says Loading");
+});
 
-  const failed = { ...(realUiMc.INITIAL_REGION_STATE as object), status: "error", busy: false, error: "HTTP 500 Internal Server Error — boom" };
-  const failedScreens = await loadMcScreens({
-    react: {
-      useState: (init: unknown) => [init === realUiMc.INITIAL_REGION_STATE ? failed : init, () => {}],
-    },
-  });
-  const tree = renderComponentMc(failedScreens.ScreenModelConfig, {});
-  const refresh = findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton");
-  assert.strictEqual(refresh[0]?.props.isBusy, false, "a settled failure leaves Refresh pressable");
-  const alerts = findAllMc(tree, (n) => n.props.role === "alert");
-  const cards = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
-  assert.strictEqual(cards.length, 1, "the failed load is announced once, as a plain-sentence card");
-  assert.strictEqual(cards[0].props.onRetry, undefined, "the card carries no Retry of its own");
-  assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 0, "no Retry beside Refresh");
+describe("a failed config read carries the shared error card with one Retry that reloads the config", () => {
+  const error = "HTTP 500 Internal Server Error — boom";
+  const rows = [
+    { name: "cold — nothing was ever read", state: { status: "error", data: null, error, busy: false } },
+    { name: "warm — a refresh failed after an earlier read", state: { status: "ready", data: {}, error, busy: false } },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const failed = { ...(realUiMc.INITIAL_REGION_STATE as object), ...row.state };
+      const failedScreens = await loadMcScreens({
+        react: {
+          useState: (init: unknown) => [init === realUiMc.INITIAL_REGION_STATE ? failed : init, () => {}],
+        },
+      });
+      const tree = renderComponentMc(failedScreens.ScreenModelConfig, {});
+      const refresh = findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton");
+      const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+      const cards = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
+
+      assert.strictEqual(refresh[0]?.props.isBusy, false, "a settled failure leaves Refresh pressable");
+      assert.strictEqual(cards.length, 1, "the failed load is announced once, as the shared card");
+      assert.strictEqual(typeof cards[0].props.onRetry, "function", "the card carries its Retry");
+      assert.strictEqual(cards[0].props.onRetry, refresh[0]?.props.onRefresh, "Retry performs the same reload as Refresh");
+      assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 0, "no second, page-local Retry");
+    });
+  }
 });
 
 test("a failed save names the next step and keeps the server's raw answer behind Details", () => {
