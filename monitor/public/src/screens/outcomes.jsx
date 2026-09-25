@@ -660,7 +660,7 @@ function ScreenOutcomes({ onNav }) {
 
       {sharedFailure && (
         <div className="mb-4 flex-shrink-0">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={regionRetry}/>
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
         </div>
       )}
 
@@ -2828,11 +2828,8 @@ function DetailBody({ detailState, markdown }) {
     return <ChartSkeletonO height={200} label="body"/>;
   }
   if (detailState?.status === 'error') {
-    return (
-      <div className="fs-body text-crit font-mono">
-        Couldn't load the body: {detailState?.error || 'unknown error'}
-      </div>
-    );
+    const { RegionUnavailable } = window.UI;
+    return <RegionUnavailable source="the record body" error={detailState.error}/>;
   }
 
   if (!markdown) {
