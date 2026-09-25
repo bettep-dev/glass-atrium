@@ -87,7 +87,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
 				</div>
 				{/* is-wrap 필수 — 사유 세그먼트가 잘리면 수만 남고 모집단이 사라진다. */}
-				<div className="card-sub is-wrap fs-micro mt-1">
+				<div className="card-sub is-wrap fs-meta mt-1">
 					<ReviewReasonSegmentsI
 						segments={reviewReasons}
 						fallback="Outcomes flagged in the last 7 days"
@@ -267,7 +267,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-center gap-1.5 fs-micro font-mono">
+						<div className="flex items-center gap-1.5 fs-meta font-mono">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -401,7 +401,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -522,7 +522,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-3 pb-3 card-sub fs-micro">
+			<div className="px-3 pb-3 card-sub fs-meta">
 				{summary.truncation_caveat}
 			</div>
 		</div>
@@ -663,7 +663,7 @@ function StyleRefCardI({ state, styleRef }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -924,7 +924,7 @@ function CorrectionSignalsCardI({ state }) {
 					<span className="text-faint">stage1/stage2 agreement</span>
 				</div>
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
 					</span>
@@ -941,7 +941,7 @@ function CorrectionSignalsCardI({ state }) {
 						{formatIntI(agr.neither_matched)}
 					</span>
 				</div>
-				<div className="fs-micro font-mono text-faint">
+				<div className="fs-meta font-mono text-faint">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
 					{formatIntI(d.revision_delta_max)}
 				</div>
@@ -1040,7 +1040,7 @@ function CorpusGrowthCardI({ state }) {
 						</span>
 					)}
 				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
 					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
 					<span>
@@ -1050,7 +1050,7 @@ function CorpusGrowthCardI({ state }) {
 						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
 					)}
 				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						gate{" "}
 						<span className="text-ok">
@@ -1066,7 +1066,7 @@ function CorpusGrowthCardI({ state }) {
 					<span>override {override}</span>
 				</div>
 				{(latest.compliance_rate === null || latest.override_rate === null) && (
-					<div className="card-sub fs-micro">
+					<div className="card-sub fs-meta">
 						— = insufficient data, never a measured zero.
 					</div>
 				)}
