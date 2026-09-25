@@ -189,3 +189,43 @@ test("the applied tile is counted over the same population it names", () => {
   );
   assert.match(String(applied.props.population), /cycles in the last 7 days/);
 });
+
+test("the decision tile carries the warning glyph only while something awaits a decision", () => {
+  const renderAwaiting = (awaiting: number) =>
+    collectElements(
+      sandbox.StatusBandI({
+        statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+        listState: { status: "ready", data: {} },
+        learningLogState: { status: "ready" },
+        suppression: { pending_total: 0, parked: [] },
+        awaiting,
+        onRetry: () => {},
+      }),
+      [],
+    ).find((el) => el.props.label === "Awaiting your decision");
+
+  const idle = renderAwaiting(0);
+  const pending = renderAwaiting(2);
+
+  assert.ok(idle && pending, "the band must render the decision tile");
+  assert.equal(idle.props.symbol, null, "a zero count is not a warning");
+  assert.equal(pending.props.symbol, "⚠");
+  assert.equal(pending.props.tone, "text-warn");
+});
+
+test("backlog tiles are counts, not statuses, so they carry no status glyph", () => {
+  const band = sandbox.StatusBandI({
+    statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 5, pending_unpromptable: 1, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const backlog = collectElements(band, []).filter((el) =>
+    ["Backlog that can propose", "Held, needs a human"].includes(String(el.props.label)),
+  );
+
+  assert.equal(backlog.length, 2);
+  assert.ok(backlog.every((el) => el.props.symbol === null));
+});

@@ -23,7 +23,8 @@ const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 // loop-events 는 per-event raw 운영 로그가 outcomes 소유 (line 13 경계). 본 화면은 AGGREGATE
 // 만 소비 — 사이클 변경량 합계(self-improvement 적용 효과) + verified/reject 날짜 추세.
 // raw event 행은 렌더하지 않음 → 집계 학습 신호만 유지 (경계 위반 아님).
-const LOOP_EVENTS_URL = "/api/improvement/loop-events?limit=200";
+const LOOP_EVENTS_LIMIT = 200;
+const LOOP_EVENTS_URL = `/api/improvement/loop-events?limit=${LOOP_EVENTS_LIMIT}`;
 // correction_signals AGGREGATE — stage1-vs-stage2 검출 일치 + revision_count delta.
 // 집계 필드만 소비(list 는 미렌더) → 최소 limit.
 const CORRECTION_SIGNALS_URL = "/api/improvement/correction-signals?limit=1";
@@ -424,7 +425,7 @@ function ScreenImprovement({ onNav }) {
            ≥1건 = 상단 full-width --warn 배너(populated-대기에만 amber 소비 · T7). */
         .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
           background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); }
+          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
         .i-await-banner { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
           background:rgb(var(--warn) / 0.08); padding:10px 12px; animation:iAwaitInI 200ms ease-out; }
         .i-await-head { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace;
@@ -447,7 +448,7 @@ function ScreenImprovement({ onNav }) {
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); cursor:pointer; }
+          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
 
@@ -581,8 +582,8 @@ function StatusBandI({
 		<div className="grid grid-cols-4 gap-3 mb-3">
 			<StatusTileI
 				status={bandTileStatusI(listState, listState.data)}
-				tone="text-warn"
-				symbol="⚠"
+				tone={awaiting > 0 ? "text-warn" : "text-faint"}
+				symbol={awaiting > 0 ? "⚠" : null}
 				label="Awaiting your decision"
 				value={formatIntI(awaiting)}
 				owner="suggestion board"
@@ -601,8 +602,7 @@ function StatusBandI({
 			/>
 			<StatusTileI
 				status={bandTileStatusI(learningLogState, suppression)}
-				tone="text-info"
-				symbol="ℹ"
+				symbol={null}
 				label="Backlog that can propose"
 				value={formatIntI(promptable)}
 				owner="pattern ledger"
@@ -611,8 +611,7 @@ function StatusBandI({
 			/>
 			<StatusTileI
 				status={bandTileStatusI(learningLogState, suppression)}
-				tone="text-info"
-				symbol="ℹ"
+				symbol={null}
 				label="Held, needs a human"
 				value={formatIntI(heldNeedingHuman)}
 				owner="pattern ledger"
@@ -653,7 +652,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, owner, on
 		<KPI
 			label={
 				<span className="inline-flex items-center gap-1.5">
-					<SymI s={symbol} className={tone} size={12} />
+					{symbol ? <SymI s={symbol} className={tone} size={12} /> : null}
 					{label}
 				</span>
 			}
@@ -671,7 +670,7 @@ function TilePlaceholderI({ status, label, owner, onRetry }) {
 			className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 			aria-busy={status === "loading" ? "true" : undefined}
 		>
-			<div className="fs-micro font-mono text-faint min-h-[2.4em]">{label}</div>
+			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
 			{status === "loading" ? (
 				<div
 					className="i-anim-skel mt-1"
@@ -750,9 +749,7 @@ function ViewToggleI({ view, onChange }) {
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
 //
-// loop-events 날짜별 verified(성공 → CTM 인접) vs reject 계열(실패 → EPM 인접) 2-시리즈.
-// 색 단독 인코딩 금지 — CTM=solid · EPM=dashed 선스타일이 비색 1차 신호 (Sparkline 은
-// dash 미지원 → 인라인 SVG 직접 path 2개). 윈도우 합계 텍스트 동반 (a11y).
+// loop-events 날짜별 verified vs reject — 시리즈당 TrendChart 하나(포커스 · 읽기값 · 날짜 눈금).
 
 // 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
@@ -796,96 +793,33 @@ function TrendCardI({ state, aggregate }) {
 		);
 	}
 
-	const verified = series.map((d) => d.verified);
-	const reject = series.map((d) => d.reject);
-
+	const { TrendChart } = window.UI;
+	const charts = [
+		["Verified cycles per day", "ok", "verified", aggregate.verifiedTotal],
+		["Rejected cycles per day", "warn", "reject", aggregate.rejectTotal],
+	];
 	return (
 		<div className="card">
 			<CardHead
 				title="Verified vs rejected (trend)"
-				sub={`Daily improvement cycles across ${formatIntI(series.length)} days`}
+				sub={getLoopBasisI(aggregate)}
 			/>
-			<div className="px-3 pb-3">
-				<TrendSparkI verified={verified} reject={reject} />
-				<div className="flex items-center gap-4 mt-2 fs-micro font-mono text-faint flex-wrap">
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--ok))"
-								strokeWidth="1.6"
-							/>
-						</svg>
-						<span>Verified</span>{" "}
-						{formatIntI(aggregate.verifiedTotal)}
-					</span>
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--warn))"
-								strokeWidth="1.6"
-								strokeDasharray="3 2"
-							/>
-						</svg>
-						<span>Rejected</span>{" "}
-						{formatIntI(aggregate.rejectTotal)}
-					</span>
-				</div>
+			<div className="px-3 pb-3 flex flex-col gap-3">
+				{charts.map(([label, tone, key, total]) => (
+					<div key={key}>
+						<div className="fs-meta text-faint mb-1">
+							{label} · {formatIntI(total)} in range
+						</div>
+						<TrendChart
+							label={label}
+							tone={tone}
+							h={48}
+							points={series.map((d) => ({ label: d.date, value: d[key] }))}
+						/>
+					</div>
+				))}
 			</div>
 		</div>
-	);
-}
-
-// 2-시리즈 라인 스파크 — Sparkline atom 은 단일 시리즈/dash 미지원 → 인라인 SVG.
-// 공통 y-scale (두 시리즈 max 기준) — verified solid · reject dashed (비색 구분 1차 신호).
-function TrendSparkI({ verified, reject }) {
-	const w = 100,
-		h = 40;
-	const max = Math.max(1, ...verified, ...reject);
-	const toPath = (data) =>
-		data
-			.map((v, i) => {
-				const x = (i / (data.length - 1)) * w;
-				const y = h - (v / max) * h * 0.9 - 1;
-				return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-			})
-			.join(" ");
-	return (
-		<svg
-			width="100%"
-			height={h}
-			viewBox={`0 0 ${w} ${h}`}
-			preserveAspectRatio="none"
-			role="img"
-			aria-label={`Trend over ${verified.length} days — verified peak ${Math.max(...verified)}, rejected peak ${Math.max(...reject)} cycles per day`}
-		>
-			<path
-				d={toPath(verified)}
-				fill="none"
-				stroke="rgb(var(--ok))"
-				strokeWidth="1.4"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-			<path
-				d={toPath(reject)}
-				fill="none"
-				stroke="rgb(var(--warn))"
-				strokeWidth="1.4"
-				strokeDasharray="3 2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
 	);
 }
 
@@ -989,7 +923,7 @@ function CycleDecompositionRowI({ stats }) {
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
 		<div className="flex items-center gap-2.5 mt-2 flex-wrap">
-			<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+			<span className="fs-meta text-faint uppercase tracking-wider">
 				Run breakdown (7 days)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
@@ -1120,7 +1054,7 @@ function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
 				<SymI s={SAFETY_COLUMN.symbol} size={13} />
 				<span>{SAFETY_COLUMN.label}</span>
 				<span className="tnum">{formatIntI(rows.length)}</span>
-				<span className="ml-auto fs-micro">Your call</span>
+				<span className="ml-auto fs-meta">Your call</span>
 			</div>
 			<div className="i-await-body">
 				{rows.map((row) => (
@@ -1258,7 +1192,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 	);
 }
 
-// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-micro 라벨 ≈ 2:1). 부피막대 없음.
+// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-meta 라벨 ≈ 2:1). 부피막대 없음.
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
@@ -1270,7 +1204,7 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 			</span>
 			<span className="inline-flex items-center gap-1.5">
 				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-micro font-mono uppercase tracking-wider text-ok">
+				<span className="fs-meta uppercase tracking-wider text-ok">
 					{label}
 				</span>
 			</span>
@@ -1317,9 +1251,14 @@ function RejectBucketSplitI({ summary }) {
 			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
 		],
 	];
+	const windowDays = Number(summary.window_days);
 	return (
-		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-micro font-mono">
-			{cells.map(([label, count, hint]) => (
+		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
+			{[
+				Number.isFinite(windowDays) ? (
+					<span key="basis" className="text-faint">{`Last ${formatIntI(windowDays)} days, by cause`}</span>
+				) : null,
+				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
 					className="inline-flex items-baseline gap-1"
@@ -1327,7 +1266,8 @@ function RejectBucketSplitI({ summary }) {
 					<span className="text-faint uppercase tracking-wider">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
-			))}
+			)),
+			]}
 		</div>
 	);
 }
@@ -1420,7 +1360,7 @@ function RejectedCompactListI({ rows, onRowClick }) {
 function RejectedGroupI({ label, rows, onRowClick }) {
 	return (
 		<div className="flex flex-col gap-1">
-			<div className="fs-micro text-faint truncate" title={label}>
+			<div className="fs-meta text-faint truncate" title={label}>
 				{label}
 			</div>
 			{rows.map((row) => (
@@ -1553,7 +1493,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-micro font-mono text-faint mt-1 line-clamp-1"
+					className="fs-meta text-faint mt-1 line-clamp-1"
 					title={String(title)}
 				>
 					{truncateI(title, 80)}
@@ -1585,7 +1525,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	return (
 		<div className="px-2.5 pb-2.5 pt-0">
 			{isSafety && (
-				<div className="fs-micro font-mono text-warn mb-1.5 flex items-center gap-1">
+				<div className="fs-meta text-warn mb-1.5 flex items-center gap-1">
 					<SymI s="⚠" size={11} /> Your call
 				</div>
 			)}
@@ -1765,7 +1705,7 @@ function BucketRowI({ state, buckets }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+						<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
 							<span>{label}</span>
 						</div>
@@ -1878,7 +1818,7 @@ function HeldCauseGroupI({ bucket, rows }) {
 				{formatIntI(agents)} {agents === 1 ? "agent" : "agents"}
 			</summary>
 			{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
-			<div className="card-sub is-wrap fs-micro mt-1">{bucket.hint}</div>
+			<div className="card-sub is-wrap fs-meta mt-1">{bucket.hint}</div>
 			<LedgerPlainRowsI rows={rows} />
 		</details>
 	);
@@ -1954,7 +1894,7 @@ function LedgerRecurrenceDisclosureI({ suppression }) {
 			</summary>
 			<div className="mt-2">
 				<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
-				<div className="card-sub is-wrap fs-micro mt-1">
+				<div className="card-sub is-wrap fs-meta mt-1">
 					Recurrences, not distinct patterns — these mechanisms write no lifecycle
 					transition, so the same row is re-suppressed on every cycle.
 				</div>
@@ -1980,7 +1920,7 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 					<tr key={b.cause} className="border-t border-line/50 align-top">
 						<td className="text-left py-1.5 pl-1.5">
 							<div className="text-ink">{b.label}</div>
-							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
+							<div className="card-sub is-wrap fs-meta mt-0.5">{b.hint}</div>
 						</td>
 						<td className="text-right py-1.5 pl-4 text-ink">
 							{formatIntI(Number(b.agents ?? 0))}
@@ -2007,13 +1947,13 @@ function LedgerFooterI({ total, declined, suppression }) {
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="px-3 pb-3 flex flex-col gap-1">
-			<div className="card-sub is-wrap fs-micro">
+			<div className="card-sub is-wrap fs-meta">
 				{formatIntI(total)} patterns recorded all time · {formatIntI(declined)}{" "}
 				declined all time · the live and inert rows above are the last 7 days of
 				discovery
 			</div>
 			{suppression ? (
-				<div className="card-sub is-wrap fs-micro">
+				<div className="card-sub is-wrap fs-meta">
 					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can
 					never propose — counted
 					across every agent, because the intake skip reads the label. The held
@@ -2021,7 +1961,7 @@ function LedgerFooterI({ total, declined, suppression }) {
 				</div>
 			) : null}
 			{offRegistry > 0 ? (
-				<div className="card-sub is-wrap fs-micro">
+				<div className="card-sub is-wrap fs-meta">
 					{formatIntI(offRegistry)} parked{" "}
 					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
 					held figure: the agent is not in agent-registry.json. Still parked, still
@@ -2069,11 +2009,11 @@ function DetailDrawerI({ row, onClose }) {
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
 function DetailBodyI({ fields, sections, footnote, preVerify }) {
-	const labelCls = "fs-micro font-mono text-faint uppercase tracking-wider";
+	const labelCls = "fs-meta text-faint uppercase tracking-wider";
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
-				{fields.map(([k, v]) => (
+				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
 						<dd className="fs-body text-ink font-mono break-words">
@@ -2215,7 +2155,7 @@ function buildDetailPropsI(row) {
 			["Target agent", row?.target_agent || "—"],
 			["Target file", row?.target_file || "—"],
 			["Cycle date", row?.cycle_date || "—"],
-			["Haiku status", row?.haiku_status || "—"],
+			["Model check", row?.haiku_status],
 			["Cost guard", row?.cost_guard_state || "—"],
 			// reviewed_at = real-UTC ISO instant → formatKstFull. cycle_date 는 date-only 문자열 → raw 유지(위).
 			[
@@ -2347,32 +2287,32 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Self-improvement changes (applied)" />
+			<CardHead
+				title="Self-improvement changes (applied)"
+				sub={getLoopBasisI(aggregate)}
+			/>
 			<div className="px-3 pt-3 flex items-center gap-2 flex-wrap">
-				<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+				<span className="fs-meta text-faint uppercase tracking-wider">
 					Lines changed
 				</span>
 				<span
-					className="inline-flex items-center gap-1 fs-micro font-mono text-ink"
+					className="inline-flex items-center gap-1 fs-meta text-ink"
 					title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
 				>
 					<SymI s="＋" className="text-ok" size={11} />
 					<span>{formatIntI(added)} added</span>
 				</span>
 				<span
-					className="inline-flex items-center gap-1 fs-micro font-mono text-ink"
+					className="inline-flex items-center gap-1 fs-meta text-ink"
 					title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
 				>
 					<SymI s="−" className="text-crit" size={11} />
 					<span>{formatIntI(removed)} removed</span>
 				</span>
-				<span className="fs-micro font-mono text-faint ml-auto">
-					{formatIntI(eventCount)} cycles
-				</span>
 			</div>
 			<div className="grid grid-cols-2 gap-2 p-3">
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 						<SymI s="ℹ" className="text-info" size={12} />
 						<span>Reject rate — earlier half</span>
 					</div>
@@ -2381,7 +2321,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 					</div>
 				</div>
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 						<SymI s={failTrend.symbol} className={failTrend.tone} size={12} />
 						<span>Reject rate — recent half</span>
 					</div>
@@ -2573,7 +2513,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			aria-label={`Candidate ${rank}: ${label} — seen ${freq} times`}
 		>
 			<span
-				className="fs-micro font-mono text-faint"
+				className="fs-meta text-faint"
 				style={{ width: "2ch", textAlign: "right" }}
 			>
 				{rank}
@@ -2586,10 +2526,10 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 				{truncateI(label, 120)}
 			</span>
 			{pattern.agent && (
-				<window.UI.AgentName name={pattern.agent} className="fs-micro font-mono text-dim shrink-0" />
+				<window.UI.AgentName name={pattern.agent} className="fs-meta text-dim shrink-0" />
 			)}
 			<span
-				className={`fs-micro font-mono shrink-0 ${badge.tone}`}
+				className={`fs-meta shrink-0 ${badge.tone}`}
 				title={`Status: ${badge.label}`}
 			>
 				<SymI s={badge.symbol} size={11} />
@@ -2660,6 +2600,17 @@ function ErrorBannerI({ source, error, onRetry }) {
 //   verifiedTotal/rejectTotal = eval_result 분류 합.
 //   trend          = 날짜 오름차순 [{ date, verified, reject }] 2-시리즈.
 //   failBefore/After = 날짜순 전/후반 split 의 reject ÷ (verified+reject) 분자/분모.
+// loop-events carries no day window → the basis is the newest rows up to the fetch cap
+function getLoopBasisI(aggregate) {
+	const { eventCount } = aggregate;
+	const trend = aggregate.trend || [];
+	const span =
+		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
+	if (eventCount >= LOOP_EVENTS_LIMIT)
+		return `Latest ${formatIntI(eventCount)} cycles (fetch cap)${span}`;
+	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
+}
+
 function deriveLoopAggregateI(data) {
 	const events = Array.isArray(data.events) ? data.events : [];
 	let added = 0,
