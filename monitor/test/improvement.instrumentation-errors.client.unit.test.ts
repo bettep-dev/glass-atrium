@@ -1,7 +1,8 @@
 // Render guard for the instrumentation view's failure surface in
 // public/src/screens/improvement-instrumentation.jsx. A failed payload must stay
-// visible as exactly one retryable error banner at the group that owns it; a card
-// that returns null on error makes the failure vanish from the whole screen.
+// visible as exactly one error banner at the group that owns it, naming its own source; a card
+// that returns null on error makes the failure vanish from the whole screen. The banner itself
+// is the shared plain-sentence atom, and a page-level outage banner takes over the Retry.
 //
 // Runner: npx tsx --test test/improvement.instrumentation-errors.client.unit.test.ts
 
@@ -17,6 +18,7 @@ const INSTRUMENTATION_SRC = resolve(
   __dirname,
   "../public/src/screens/improvement-instrumentation.jsx",
 );
+const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
 
 interface RecordedElement {
   type: unknown;
@@ -25,7 +27,7 @@ interface RecordedElement {
 
 interface ViewSandbox {
   React: { createElement: unknown };
-  window: { ImprovementShared?: Record<string, unknown> };
+  window: { UI: Record<string, unknown>; ImprovementShared?: Record<string, unknown> };
   ImprovementInstrumentationViewI: (props: Record<string, unknown>) => RecordedElement;
 }
 
@@ -37,7 +39,8 @@ function isElement(value: unknown): value is RecordedElement {
 
 const sandbox = await buildScreenSandbox<ViewSandbox>(INSTRUMENTATION_SRC);
 const BannerMarker = () => null;
-sandbox.window.ImprovementShared = { ErrorBannerI: BannerMarker };
+sandbox.window.UI.RegionUnavailable = BannerMarker;
+sandbox.window.ImprovementShared = {};
 sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
@@ -79,9 +82,89 @@ for (const failed of subsets) {
 
     assert.equal(banners.length, failed.length);
     assert.deepEqual(
-      banners.map((b) => b.props.detail).sort(),
+      banners.map((b) => b.props.error).sort(),
       failed.map((name) => `${name} HTTP 500`).sort(),
     );
+    assert.equal(new Set(banners.map((b) => b.props.source)).size, failed.length);
     for (const banner of banners) assert.equal(banner.props.onRetry, onRetry);
   });
 }
+
+test("a page-level outage banner leaves no per-card Retry", () => {
+  const props: Record<string, unknown> = { onRetry: undefined };
+  for (const name of PAYLOADS) props[name] = { status: "error", data: null, error: "HTTP 503 Service Unavailable" };
+
+  const banners = collectBanners(sandbox.ImprovementInstrumentationViewI(props), []);
+
+  assert.equal(banners.length, PAYLOADS.length);
+  for (const banner of banners) assert.equal(banner.props.onRetry, undefined);
+});
+
+interface PageSandbox {
+  React: { createElement: unknown };
+  window: { UI: { RegionUnavailable: unknown } };
+  ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
+  getPageFailureI: (
+    regions: Array<{ source: string; state: { error: string | null } }>,
+  ) => { sources: string[]; error: string } | null;
+}
+
+const page = await buildScreenSandbox<PageSandbox>(IMPROVEMENT_SRC);
+page.React.createElement = sandbox.React.createElement;
+
+test("a failed region renders the shared unavailable card with its own source, never the raw answer as copy", () => {
+  const onRetry = () => {};
+  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry });
+
+  assert.equal(banner.type, page.window.UI.RegionUnavailable);
+  assert.deepEqual(
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry },
+    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry },
+  );
+});
+
+test("the page outage names exactly the regions that failed with one shared cause", () => {
+  const ok = { error: null };
+  const down = { error: "HTTP 503 Service Unavailable" };
+  const rows = [
+    { name: "one failed region stays on its own card", regions: [["suggestion list", down], ["loop stats", ok]], sources: null },
+    { name: "two regions sharing a cause become one outage", regions: [["suggestion list", down], ["loop stats", down], ["pattern ledger", ok]], sources: ["suggestion list", "loop stats"] },
+  ] as const;
+
+  for (const row of rows) {
+    const failure = page.getPageFailureI(row.regions.map(([source, state]) => ({ source, state })));
+    assert.deepEqual(failure ? [...failure.sources] : null, row.sources ? [...row.sources] : null, row.name);
+  }
+});
+
+// A held-back card must say so in words: a silent skeleton reads as an empty card to a screen reader.
+test("while every payload loads, each card announces itself through the status-role placeholder", () => {
+  const LoadingMarker = () => null;
+  const shared = sandbox.window.UI.LoadingPlaceholder;
+  sandbox.window.UI.LoadingPlaceholder = LoadingMarker;
+  const props: Record<string, unknown> = { onRetry: () => {} };
+  for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
+
+  const cards: RecordedElement[][] = [];
+  const walk = (node: unknown, card: RecordedElement[] | null): void => {
+    if (Array.isArray(node)) return node.forEach((child) => walk(child, card));
+    if (!isElement(node)) return;
+    if (node.type === LoadingMarker) return void card?.push(node);
+    if (typeof node.type === "function") return walk((node.type as (p: unknown) => unknown)(node.props), card);
+    const isCard = String(node.props.className ?? "").split(" ").includes("card");
+    const scope = isCard ? [] : card;
+    if (isCard && scope) cards.push(scope);
+    walk(node.props.children, scope);
+  };
+  try {
+    walk(sandbox.ImprovementInstrumentationViewI(props), null);
+  } finally {
+    sandbox.window.UI.LoadingPlaceholder = shared;
+  }
+
+  assert.ok(cards.length > 0, "the loading view must still lay out its cards");
+  for (const placeholders of cards) {
+    assert.equal(placeholders.length, 1, "each loading card carries exactly one announced placeholder");
+    assert.match(String(placeholders[0]?.props.label ?? ""), /\w/, "the placeholder names what is loading");
+  }
+});

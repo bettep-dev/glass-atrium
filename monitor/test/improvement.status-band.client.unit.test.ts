@@ -102,25 +102,24 @@ test("the three non-ready states render distinctly", () => {
     const nodes = collectElements(tree, []);
     return {
       status,
-      busy: String(nodes[0]?.props["aria-busy"] ?? ""),
-      skeleton: nodes.some((el) => String(el.props.className ?? "").includes("i-anim-skel")),
+      placeholder: nodes.find((el) => el.type === sandbox.window.UI.LoadingPlaceholder),
       retry: nodes.filter((el) => el.type === "button"),
       text: textOf(tree),
     };
   });
   const [loading, error, unavailable] = shapes;
 
-  assert.ok(loading?.skeleton, "loading must show a skeleton, not a value");
-  assert.equal(loading?.busy, "true", "a loading tile declares aria-busy");
+  assert.ok(loading?.placeholder, "loading must announce itself through the status-role placeholder");
+  assert.equal(loading?.placeholder?.props.label, "Applied (7 days)", "the visible loading text names the tile");
   assert.equal(loading?.retry.length, 0);
 
   assert.equal(error?.retry.length, 1, "a failed payload must offer a retry");
   (error?.retry[0]?.props.onClick as () => void)();
   assert.deepEqual(retries, ["error"], "the retry button is wired to onRetry");
-  assert.ok(!error?.skeleton);
+  assert.ok(!error?.placeholder);
 
   assert.match(unavailable?.text ?? "", /Not measured/);
-  assert.ok(!unavailable?.skeleton);
+  assert.ok(!unavailable?.placeholder);
   assert.equal(unavailable?.retry.length, 0);
 });
 
@@ -188,4 +187,44 @@ test("the applied tile is counted over the same population it names", () => {
     "the value must be the cycle count its population denominates, not the proposal count",
   );
   assert.match(String(applied.props.population), /cycles in the last 7 days/);
+});
+
+test("the decision tile carries the warning glyph only while something awaits a decision", () => {
+  const renderAwaiting = (awaiting: number) =>
+    collectElements(
+      sandbox.StatusBandI({
+        statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+        listState: { status: "ready", data: {} },
+        learningLogState: { status: "ready" },
+        suppression: { pending_total: 0, parked: [] },
+        awaiting,
+        onRetry: () => {},
+      }),
+      [],
+    ).find((el) => el.props.label === "Awaiting your decision");
+
+  const idle = renderAwaiting(0);
+  const pending = renderAwaiting(2);
+
+  assert.ok(idle && pending, "the band must render the decision tile");
+  assert.equal(idle.props.symbol, null, "a zero count is not a warning");
+  assert.equal(pending.props.symbol, "⚠");
+  assert.equal(pending.props.tone, "text-warn");
+});
+
+test("backlog tiles are counts, not statuses, so they carry no status glyph", () => {
+  const band = sandbox.StatusBandI({
+    statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 5, pending_unpromptable: 1, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const backlog = collectElements(band, []).filter((el) =>
+    ["Backlog that can propose", "Held, needs a human"].includes(String(el.props.label)),
+  );
+
+  assert.equal(backlog.length, 2);
+  assert.ok(backlog.every((el) => el.props.symbol === null));
 });
