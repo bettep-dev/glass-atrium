@@ -1693,7 +1693,8 @@ function SessionDetailDrawerC({ session, onClose, onNav }) {
       </dl>
       <div className="flex flex-wrap gap-2 mt-4">
         <SessionIdCopyC id={session.session_id}/>
-        <button type="button" className="btn sm" onClick={() => onNav('outcomes')}>Task results ›</button>
+        {/* Task results has no session filter → label the unscoped list, never imply this session's rows */}
+        <button type="button" className="btn sm" onClick={() => onNav('outcomes')}>All task results ›</button>
       </div>
     </DetailSurface>
   );

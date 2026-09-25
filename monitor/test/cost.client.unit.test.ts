@@ -564,6 +564,45 @@ test("the session drawer hides a field it has no value for, and keeps the full i
   assert.ok(!terms({ ...full, last_event_at: null }).includes("Last seen"), "no instant → no Last seen row");
 });
 
+test("the session drawer's task-results link does not promise a session-scoped view it cannot open", async () => {
+  interface DrawerElement {
+    type: unknown;
+    props: Record<string, unknown>;
+  }
+  interface DrawerSandbox {
+    React: { createElement: unknown };
+    SessionDetailDrawerC: (props: Record<string, unknown>) => DrawerElement;
+  }
+  // Own sandbox → the element-recording factory never leaks into the shared `cost` one.
+  const sandbox = await buildScreenSandbox<DrawerSandbox>(COST_SRC);
+  sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+    type,
+    props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+  });
+  const collectButtons = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
+    if (Array.isArray(node)) {
+      for (const child of node) collectButtons(child, out);
+      return out;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return out;
+    const el = node as DrawerElement;
+    if (el.type === "button") out.push(el);
+    return collectButtons(el.props.children, out);
+  };
+  const navCalls: unknown[][] = [];
+  const session = { session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d", total_cost_usd: 1 };
+  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
+
+  const [link] = collectButtons(drawer, []).filter((b) => {
+    const before = navCalls.length;
+    (b.props.onClick as () => void)();
+    return navCalls.length > before;
+  });
+  assert.ok(link, "the drawer still links to Task results");
+  assert.deepEqual(navCalls, [["outcomes"]], "the destination carries no session scope");
+  assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
+});
+
 test("the running-hot sentence is stated once — in the lane when it fires, on tile 1 otherwise", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
