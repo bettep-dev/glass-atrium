@@ -229,6 +229,40 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
 	await ctx?.app?.close();
 }
 
+/**
+ * Reloads with the diagrams read held open (or answered with `failure`), runs `body`, then restores the rendered map.
+ * The real route still answers once released, so the context is back to its fixture state for the next test.
+ */
+async function withDiagramsHeld(
+	ctx: RenderContext,
+	body: () => Promise<void>,
+	failure?: { status: number; body: string },
+): Promise<void> {
+	const pattern = "**/api/architecture/diagrams";
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolveGate) => {
+		release = resolveGate;
+	});
+	await ctx.page.route(pattern, async (route) => {
+		if (failure) return route.fulfill({ status: failure.status, contentType: "application/json", body: failure.body });
+		await gate;
+		return route.continue();
+	});
+	try {
+		await ctx.page.reload({ waitUntil: "load" });
+		await body();
+	} finally {
+		// held read: let it land on this page before unrouting · failed read: reload onto the real route
+		release();
+		if (failure) {
+			await ctx.page.unroute(pattern);
+			await ctx.page.reload({ waitUntil: "load" });
+		}
+		await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });
+		if (!failure) await ctx.page.unroute(pattern);
+	}
+}
+
 // 리터럴 tone 클래스 한 종의 캔버스 내 개수.
 function countLiveToneClass(
 	page: Page,
@@ -358,6 +392,63 @@ describe("healthy live fixture", () => {
 			ctx.expectedDescription.length,
 			`exposed ${normalized.length} chars from <${probe.tagName}> vs payload ${ctx.expectedDescription.length} — exposed="${normalized}"`,
 		);
+	});
+
+	test("the first read of the map shows a named loading status and no description", async () => {
+		await withDiagramsHeld(ctx, async () => {
+			const status = ctx.page.getByRole("status").filter({ hasText: "Loading the system map" });
+			await status.waitFor({ timeout: 10_000 });
+
+			const probe = await ctx.page.evaluate((desc) => ({
+				descCount: document.querySelectorAll(desc).length,
+				text: document.body.innerText,
+			}), ctx.selectors.desc);
+			assert.equal(probe.descCount, 0, "the description target waits for the diagram");
+			assert.ok(!probe.text.includes("No description available"), "no placeholder description while loading");
+		});
+	});
+
+	test("one outage behind every failed read raises one banner with one Retry and no raw status text", async () => {
+		// the harness leaves three health stores unrouted (404) — a 404 diagrams read joins that same outage
+		await withDiagramsHeld(ctx, async () => {
+			await ctx.page.getByRole("alert").first().waitFor({ timeout: 10_000 });
+			const probe = await ctx.page.evaluate(() => ({
+				retries: [...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry").length,
+				alerts: document.querySelectorAll('[role="alert"]').length,
+				text: document.body.innerText,
+			}));
+			assert.equal(probe.retries, 1, "one Retry per outage");
+			assert.equal(probe.alerts, 1, "one announced banner per outage");
+			assert.ok(!/HTTP \d{3}/.test(probe.text), `raw status stays behind Details — read: ${probe.text.slice(0, 300)}`);
+		}, { status: 404, body: '{"message":"Route not found"}' });
+	});
+
+	test("Refresh keeps the rendered map on screen until the new answer lands", async () => {
+		const { page, selectors } = ctx;
+		await page.evaluate((canvas) => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgGap = false;
+			w.archSvgObserver = new MutationObserver(() => {
+				if (!document.querySelector(`${canvas} svg`)) w.archSvgGap = true;
+			});
+			w.archSvgObserver.observe(document.body, { childList: true, subtree: true });
+		}, selectors.canvas);
+
+		const landed = page.waitForResponse((r) => r.url().includes("/api/architecture/diagrams"), { timeout: 30_000 });
+		await page.click('[aria-label="Refresh system map"]');
+		await landed;
+		await page.waitForFunction(
+			() => document.querySelector('[aria-label="Refresh system map"]')?.getAttribute("aria-busy") !== "true",
+			null,
+			{ timeout: 30_000 },
+		);
+
+		const gap = await page.evaluate(() => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgObserver.disconnect();
+			return w.archSvgGap;
+		});
+		assert.equal(gap, false, "the map svg must never leave the canvas during a refresh");
 	});
 
 	test("AC-18 exactly one rendered diagram SVG", async () => {

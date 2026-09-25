@@ -142,11 +142,11 @@ test("AC-T-tone no status badge drops its glyph, which would put tone on the lab
 });
 
 // 경보 자리를 이름으로 셈 — 개수로 재면 한 자리를 지우고 다른 자리를 들여도 통과함.
-test("AC-T-tone alert role is declared by the alarm row and the canvas error banner only", () => {
+test("AC-T-tone alert role is declared by the alarm row only — region and page failures use the shared atoms", () => {
   const declarers = SCREEN_SRC.split(/^function /m)
     .slice(1)
     .filter((block) => block.includes('role="alert"'))
     .map((block) => block.slice(0, block.indexOf("(")));
 
-  assert.deepEqual(declarers.sort(), ["AlarmRowAR", "ErrorBannerAR"]);
+  assert.deepEqual(declarers.sort(), ["AlarmRowAR"]);
 });

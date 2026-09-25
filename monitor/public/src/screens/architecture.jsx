@@ -108,9 +108,9 @@ const RING_TONE_RANK = { ok: 1, info: 2, warn: 3, crit: 4 };
 // 카드/KPI 모델(window.HealthModel)은 index.html 이 화면과 무관하게 싣고 있어
 // health 화면이 사라져도 고아가 되지 않음.
 
-// 로딩 초기 상태 — 다섯 응답이 같은 모양을 씀. 상태 객체는 교체만 하고 변형하지 않으므로
-// 참조를 공유해도 안전하고, 재요청 시 같은 참조를 다시 넣으면 불필요한 렌더가 생기지 않음.
-const INITIAL_FETCH_STATE_AR = { status: "loading", data: null, error: null };
+// error-copy source names — the banner, the region card and the lane row name one outage alike
+const DIAGRAM_SOURCE_AR = "the system map";
+const LIVE_SOURCE_AR = "the live overlay";
 
 // 페이로드 드릴다운 기본 데몬 — payload 를 실제로 기록하는 데몬(autoagent/wiki) 중 첫째.
 // daily-restart-* 는 run status 만 남기고 payload 를 쓰지 않아 항상 빈 entries 임.
@@ -243,25 +243,29 @@ const RUN_VERDICT_NOTE = {
 function ScreenArchitecture(
 	/* { onNav } unused — uniform Screen signature per app.jsx */
 ) {
-	const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const {
+		PageHeader,
+		TypeScaleStyle,
+		FreshnessStamp,
+		RefreshButton,
+		PageErrorBanner,
+		RegionUnavailable,
+		INITIAL_REGION_STATE,
+		putRegionRequest,
+		putRegionData,
+		putRegionFailure,
+		getSharedFailure,
+	} = window.UI;
 
-	const [diagState, setDiagState] = useStateAR({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	const [liveState, setLiveState] = useStateAR({
-		status: "loading",
-		data: null,
-		error: null,
-	});
+	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
+	const [liveState, setLiveState] = useStateAR(INITIAL_REGION_STATE);
 
 	// health 응답 5종 — 각각 독립적으로 실패 가능. 한 응답이 죽어도 나머지 사실은 그대로 보임.
-	const [daemonHealthState, setDaemonHealthState] = useStateAR(INITIAL_FETCH_STATE_AR);
-	const [hookState, setHookState] = useStateAR(INITIAL_FETCH_STATE_AR);
-	const [pgState, setPgState] = useStateAR(INITIAL_FETCH_STATE_AR);
-	const [payloadState, setPayloadState] = useStateAR(INITIAL_FETCH_STATE_AR);
-	const [hookFailState, setHookFailState] = useStateAR(INITIAL_FETCH_STATE_AR);
+	const [daemonHealthState, setDaemonHealthState] = useStateAR(INITIAL_REGION_STATE);
+	const [hookState, setHookState] = useStateAR(INITIAL_REGION_STATE);
+	const [pgState, setPgState] = useStateAR(INITIAL_REGION_STATE);
+	const [payloadState, setPayloadState] = useStateAR(INITIAL_REGION_STATE);
+	const [hookFailState, setHookFailState] = useStateAR(INITIAL_REGION_STATE);
 
 	// 페이로드 드릴다운 대상 — 확장 행이 고름 (T9c). 접어도 되돌리지 않음: 되돌리면 다섯 응답이
 	// 한 번 더 나가고 방금 읽은 실패가 표에서도 지워짐.
@@ -291,13 +295,11 @@ function ScreenArchitecture(
 		diagAbortRef.current?.abort();
 		diagAbortRef.current = ctrl;
 
-		setDiagState({ status: "loading", data: null, error: null });
+		setDiagState((s) => putRegionRequest(s, refreshTick, ctrl));
 
 		fetchJsonAR("/api/architecture/diagrams", ctrl.signal)
-			.then((data) => {
-				setDiagState({ status: "ready", data, error: null });
-			})
-			.catch((err) => handleErrorAR(err, setDiagState));
+			.then((data) => setDiagState((s) => putRegionData(s, ctrl, data)))
+			.catch((err) => setDiagState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
@@ -308,11 +310,11 @@ function ScreenArchitecture(
 		liveAbortRef.current?.abort();
 		liveAbortRef.current = ctrl;
 
+		setLiveState((s) => putRegionRequest(s, refreshTick, ctrl));
+
 		fetchJsonAR("/api/architecture/live", ctrl.signal)
-			.then((data) => {
-				if (!ctrl.signal.aborted) setLiveState({ status: "ready", data, error: null });
-			})
-			.catch((err) => handleErrorAR(err, setLiveState));
+			.then((data) => setLiveState((s) => putRegionData(s, ctrl, data)))
+			.catch((err) => setLiveState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
@@ -335,15 +337,15 @@ function ScreenArchitecture(
 
 		urls.forEach((url, i) => {
 			const setter = setters[i];
-			setter(INITIAL_FETCH_STATE_AR);
+			setter((s) => putRegionRequest(s, url, ctrl));
 			fetchJsonAR(url, ctrl.signal)
 				.then((data) => {
 					if (ctrl.signal.aborted) return;
-					setter({ status: "ready", data, error: null });
+					setter((s) => putRegionData(s, ctrl, data));
 					// a failed read is no reading — the stamp keeps the last one that answered.
 					setHealthAsOf(new Date().toISOString());
 				})
-				.catch((err) => handleErrorAR(err, setter));
+				.catch((err) => setter((s) => putRegionFailure(s, ctrl, err)));
 		});
 
 		return () => ctrl.abort();
@@ -358,12 +360,13 @@ function ScreenArchitecture(
 
 		const url = getMapHealthEndpoints(payloadDaemon)[MAP_PAYLOAD_URL_INDEX];
 
-		setPayloadState(INITIAL_FETCH_STATE_AR);
+		// another daemon's runs never stand in for this one's while its answer is on the way
+		setPayloadState((s) =>
+			putRegionRequest(s.key === payloadDaemon ? s : INITIAL_REGION_STATE, payloadDaemon, ctrl),
+		);
 		fetchJsonAR(url, ctrl.signal)
-			.then((data) => {
-				if (!ctrl.signal.aborted) setPayloadState({ status: "ready", data, error: null });
-			})
-			.catch((err) => handleErrorAR(err, setPayloadState));
+			.then((data) => setPayloadState((s) => putRegionData(s, ctrl, data)))
+			.catch((err) => setPayloadState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick, payloadDaemon]);
@@ -498,14 +501,15 @@ function ScreenArchitecture(
 
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
 	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
-	const healthBusy = Object.values(headlineHealthStates).some(
-		(state) => state.status === "loading",
-	);
+	const healthRegions = Object.values(headlineHealthStates);
+	const healthPending = healthRegions.some((state) => state.status === "loading");
+	// any read in flight, polls included → the stamp and the Refresh button turn busy over held verdicts
+	const healthBusy = healthRegions.some((state) => state.busy);
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
 	const healthCaption = getHealthCaptionAR(
 		healthPartRows,
-		healthBusy,
+		healthPending,
 		healthStoreErrors.length,
 	);
 
@@ -544,19 +548,30 @@ function ScreenArchitecture(
 		liveState.status === "ready" ? liveState.data?.governance : null;
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
+	// one outage behind every failed read → one banner and one Retry instead of a card per region
+	const sharedFailure = getSharedFailure([
+		{ source: DIAGRAM_SOURCE_AR, error: getRegionErrorAR(diagState) },
+		{ source: LIVE_SOURCE_AR, error: getRegionErrorAR(liveState) },
+		...Object.keys(HEALTH_STORE_LABELS_AR).map((key) => ({
+			source: HEALTH_STORE_LABELS_AR[key],
+			error: getRegionErrorAR(headlineHealthStates[key]),
+		})),
+	]);
+
 	const alarmRows = getAlarmRows({
 		offWriters,
 		healthStoreErrors,
 		liveState,
 		governance,
-	});
+	}).filter((row) => !(sharedFailure && row.retry));
+
+	const isRefreshBusy = diagState.busy || liveState.busy || healthBusy;
 
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			<TypeScaleStyle />
 			<style>
-				{"@keyframes skelPulseAR { 0%,100%{opacity:.7} 50%{opacity:.35} } " +
-					// arch-page: h-full flex 컨텍스트 안에서 부모 100% 차지 (viewport fit).
+				{// arch-page: h-full flex 컨텍스트 안에서 부모 100% 차지 (viewport fit).
 					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; gap: 8px; } " +
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
@@ -667,9 +682,9 @@ function ScreenArchitecture(
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
-					// 신규 모션 게이트 — skeleton pulse + 노드/줌 컨트롤 transition 정지 (§8.4 계약).
+					// 모션 게이트 — 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
-					"[style*=\"skelPulseAR\"], .arch-mermaid-canvas .node, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
+					".arch-mermaid-canvas .node, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -685,45 +700,62 @@ function ScreenArchitecture(
 									healthStoreErrors.length,
 								)}
 							/>
-							<button
-								className="btn ghost sm"
-								onClick={triggerRefresh}
-								aria-label="Refresh system map"
-							>
-								<Icon name="refresh" size={14} />
-								Refresh
-							</button>
+							<RefreshButton
+								isBusy={isRefreshBusy}
+								hasRead={diagState.data != null}
+								onRefresh={triggerRefresh}
+								label="Refresh system map"
+							/>
 						</>
 					}
 				/>
 			</div>
 
 			<div className="arch-page">
+				{sharedFailure && (
+					<PageErrorBanner
+						sources={sharedFailure.sources}
+						error={sharedFailure.error}
+						onRetry={triggerRefresh}
+					/>
+				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
-				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) */}
+				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
 				<div className="arch-main">
-					<div className="card arch-col-card">
-						<div className="card-body" style={{ padding: 10 }}>
-							<DiagramBody
-								diagState={diagState}
-								activeDiagram={activeDiagram}
-								nodeByLabel={nodeByLabel}
-								ringToneByNodeId={ringToneByNodeId}
-								unverifiedNodeIds={unverifiedNodeIds}
-								healthBusy={healthBusy}
-								zoneRingPlan={zoneRingPlan}
-								attentionCountByNodeId={attentionCountByNodeId}
-								onSelectNode={handleSelectNode}
-								onRetry={triggerRefresh}
-							/>
+					{diagState.status === "error" ? (
+						<RegionUnavailable
+							source={DIAGRAM_SOURCE_AR}
+							error={diagState.error}
+							onRetry={sharedFailure ? undefined : triggerRefresh}
+						/>
+					) : (
+						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
+							<div
+								className="card-body"
+								style={{ padding: 10, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
+							>
+								<DiagramBody
+									diagState={diagState}
+									activeDiagram={activeDiagram}
+									nodeByLabel={nodeByLabel}
+									ringToneByNodeId={ringToneByNodeId}
+									unverifiedNodeIds={unverifiedNodeIds}
+									healthBusy={healthPending}
+									zoneRingPlan={zoneRingPlan}
+									attentionCountByNodeId={attentionCountByNodeId}
+									onSelectNode={handleSelectNode}
+								/>
+							</div>
 						</div>
-					</div>
+					)}
 				</div>
 
-				<div id={ARCH_DESC_ID} className="arch-desc-a11y">
-					{activeDiagram?.description || "No description available."}
-				</div>
+				{activeDiagram && (
+					<div id={ARCH_DESC_ID} className="arch-desc-a11y">
+						{activeDiagram.description || "No description available."}
+					</div>
+				)}
 
 			</div>
 
@@ -760,8 +792,10 @@ function DiagramBody({
 	zoneRingPlan,
 	attentionCountByNodeId,
 	onSelectNode,
-	onRetry,
 }) {
+	const { LoadingPlaceholder } = window.UI;
+	const loadingSlot = <LoadingPlaceholder label="the system map" minHeight={240} className="h-full" />;
+
 	// mermaid CDN polling — 외부 스크립트 로딩 완료 대기 (최대 5s).
 	const [mermaidReady, setMermaidReady] = useStateAR(() =>
 		Boolean(window.mermaid),
@@ -781,16 +815,7 @@ function DiagramBody({
 		};
 	}, [mermaidReady]);
 
-	if (diagState.status === "loading") return <ChartSkeletonAR />;
-	if (diagState.status === "error") {
-		return (
-			<ErrorBannerAR
-				title="Couldn't load the system map"
-				detail={diagState.error}
-				onRetry={onRetry}
-			/>
-		);
-	}
+	if (diagState.status === "loading") return loadingSlot;
 	if (!activeDiagram) {
 		return <EmptyStateAR message="No diagrams to show." />;
 	}
@@ -800,9 +825,7 @@ function DiagramBody({
 			<EmptyStateAR message="This diagram has an empty mermaid_source." />
 		);
 	}
-	if (!mermaidReady) {
-		return <ChartSkeletonAR />;
-	}
+	if (!mermaidReady) return loadingSlot;
 	return (
 		<MermaidCanvas
 			diagramId={activeDiagram.id}
@@ -1195,12 +1218,12 @@ function MermaidCanvas({
 	);
 
 	if (renderState.status === "rendering" || renderState.status === "idle") {
-		return <ChartSkeletonAR />;
+		const { LoadingPlaceholder } = window.UI;
+		return <LoadingPlaceholder label="the system map" minHeight={240} className="h-full" />;
 	}
 	if (renderState.status === "error") {
-		return (
-			<ErrorBannerAR title="Diagram failed to render" detail={renderState.error} />
-		);
+		const { RegionUnavailable } = window.UI;
+		return <RegionUnavailable source={DIAGRAM_SOURCE_AR} error={renderState.error} />;
 	}
 	return (
 		<>
@@ -1288,6 +1311,11 @@ const HEALTH_STORE_LABELS_AR = {
 	pgState: "PostgreSQL",
 	hookFailState: "Hook failures",
 };
+
+// held data keeps showing on a failed re-read — only a region with nothing to show counts as down
+function getRegionErrorAR(state) {
+	return state.status === "error" ? state.error : null;
+}
 
 function getHealthStoreErrorsAR(states) {
 	return Object.keys(HEALTH_STORE_LABELS_AR)
@@ -1860,38 +1888,6 @@ function EmptyStateAR({ message }) {
 	);
 }
 
-function ErrorBannerAR({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className={`${TONE_GLYPH_CLASS.crit} mt-0.5`} />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
-				)}
-			</div>
-			{onRetry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
-		</div>
-	);
-}
-
 // tone → 글리프 색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
 // 읽는 쪽은 아이콘뿐임 — 글자에 얹으면 meta/micro 크기에서 AA 대비에 못 미침 (39578 §D).
 // 둘째 표를 들이면 같은 tone 이 화면 자리마다 다른 색으로 갈라짐.
@@ -1927,6 +1923,12 @@ function AlarmRowAR({ row, onRetry }) {
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{row.title}</div>
 				<div className="fs-meta text-dim mt-1">{row.note}</div>
+				{row.detail && (
+					<details className="fs-meta text-faint mt-1">
+						<summary className="cursor-pointer">Details</summary>
+						<code className="block mt-1 font-mono break-all">{row.detail}</code>
+					</details>
+				)}
 				{row.badges.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
 						{row.badges.map((name) => (
@@ -1937,7 +1939,7 @@ function AlarmRowAR({ row, onRetry }) {
 					</div>
 				)}
 			</div>
-			{onRetry && (
+			{onRetry && row.retry && (
 				<button className="btn sm" onClick={onRetry}>
 					Retry
 				</button>
@@ -1961,23 +1963,6 @@ function AlarmLaneAR({ rows, onRetry }) {
 	);
 }
 
-function ChartSkeletonAR() {
-	return (
-		<div
-			aria-busy="true"
-			style={{
-				width: "100%",
-				height: "100%",
-				minHeight: 240,
-				borderRadius: 8,
-				background: "rgb(var(--sunken))",
-				opacity: 0.7,
-				animation: "skelPulseAR 1.4s ease-in-out infinite",
-			}}
-		/>
-	);
-}
-
 // Pure helpers
 
 async function fetchJsonAR(url, signal) {
@@ -1985,27 +1970,8 @@ async function fetchJsonAR(url, signal) {
 		signal,
 		headers: { Accept: "application/json" },
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* body parse 실패는 무시 */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 120) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res);
 	return res.json();
-}
-
-function handleErrorAR(err, setter) {
-	if (err && err.name === "AbortError") return;
-	setter({
-		status: "error",
-		data: null,
-		error: err && err.message ? err.message : String(err),
-	});
 }
 
 // 초기 줌 절대 스케일 — 인자만으로 계산(DOM·instance 미참조). 하한은 폭-fit 으로 내려 클램프되지 않음.
@@ -2114,6 +2080,8 @@ function getHealthCaptionAR(partRows, busy, errored = 0) {
 	if (attention.length > 0)
 		return `${attention.length} of ${total} parts need attention${getFlaggedNamesSuffixAR(attention)}`;
 	if (judged.length === 0) return getNoVerdictCaptionAR(total, busy, errored);
+	// first wave still out → no ok count yet; the early verdicts would read as the whole map
+	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
 	if (unverified > 0)
 		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
 
@@ -2204,6 +2172,7 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 			title: "Couldn't load system health",
 			note: "These stores did not answer; the parts they judge carry no verdict.",
 			badges: healthStoreErrors,
+			retry: true,
 		});
 
 	if (liveState.status === "error")
@@ -2212,8 +2181,10 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 			tone: "crit",
 			icon: "warn",
 			title: "Couldn't load the live overlay",
-			note: liveState.error || "The live endpoint did not answer.",
+			note: "The live endpoint did not answer; ring verdicts and part bindings are missing.",
+			detail: liveState.error,
 			badges: [],
+			retry: true,
 		});
 
 	const absent = governance?.absent || [];

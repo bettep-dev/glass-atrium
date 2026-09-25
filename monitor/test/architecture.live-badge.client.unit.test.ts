@@ -788,6 +788,7 @@ const CAPTION_CASES: {
   { name: "nothing judged, nothing failed", rows: partRows(null, null), busy: false, errored: 0, must: ["No verdict yet", "2"] },
   { name: "nothing judged because stores failed", rows: partRows(null, null), busy: false, errored: 2, must: ["Couldn't read", "2"] },
   { name: "some ok, rest not yet judged", rows: partRows("ok", null), busy: false, errored: 0, must: ["1 of 2", "not verified"] },
+  { name: "some ok while the rest is still being read", rows: partRows("ok", null), busy: true, errored: 0, must: ["Reading 1 of 2"] },
   { name: "some ok, rest unreadable", rows: partRows("ok", null), busy: false, errored: 1, must: ["1 of 2", "unreadable"] },
   { name: "attention outranks everything", rows: partRows("crit", null), busy: true, errored: 1, must: ["1 of 2", "need attention"] },
   { name: "all judged ok", rows: partRows("ok", "ok"), busy: false, errored: 0, must: ["All 2 parts ok"] },
@@ -867,10 +868,9 @@ test("M1 a live-overlay failure is named in the lane and names its own reason", 
   const failed = alarmRows({ liveState: { status: "error", data: null, error: "ECONNREFUSED" } });
   assert.deepStrictEqual([...failed.map((r) => r.key)], ["live-overlay"], "the failure must stand alone as a row");
   assert.strictEqual(failed[0].tone, "crit");
-  assert.ok(
-    failed[0].note.includes("ECONNREFUSED"),
-    `the row must carry the endpoint's own reason — read: "${failed[0].note}"`,
-  );
+  const detail = (failed[0] as { detail?: string }).detail ?? "";
+  assert.ok(detail.includes("ECONNREFUSED"), `the row must carry the endpoint's own reason behind Details — read: "${detail}"`);
+  assert.ok(!failed[0].note.includes("ECONNREFUSED"), `the visible note must be a plain next step, not the raw reason — read: "${failed[0].note}"`);
 
   // 이유 없는 실패도 조용히 지나가면 안 됨 — strip 이 사라진 뒤 이 행이 유일한 표면임.
   const bare = alarmRows({ liveState: { status: "error", data: null, error: null } });
