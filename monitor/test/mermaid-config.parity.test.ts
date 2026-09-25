@@ -198,7 +198,7 @@ async function getViewerBodyLang(): Promise<unknown> {
   return container.props.lang;
 }
 
-test("후속-5 the viewer's document body container declares the export shell's document language", async () => {
+test("the viewer's document body container declares the export shell's document language", async () => {
   const bodyLang = await getViewerBodyLang();
   const exportLang = getExportShellHtmlLang();
   assert.equal(
