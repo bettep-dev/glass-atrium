@@ -1285,9 +1285,8 @@ else:
 # Record-0 pinned `[SCOPE]` declaration — the parent-authored delegation prompt. Pinned to the
 # FIRST transcript record on purpose: a whole-transcript scan would let the child emit a wider
 # declaration of its own and nullify a check whose whole value is sitting outside its control.
-# Two or more declarations inside record 0 → the first wins (deterministic, never merged).
-# Extraction only: the comparison itself stays on the bash side against the shared lib predicate.
-# Fail-open on every anomaly — an empty value skips the comparison entirely.
+# Extraction only: selecting the declaration and comparing against it both stay on the bash side,
+# through the shared lib. Fail-open on every anomaly — an empty value skips the comparison entirely.
 _DELEGATION_PROMPT_MEMO = {}
 
 
@@ -1318,11 +1317,25 @@ def _read_delegation_prompt(payload_d):
     return text
 
 
-def _read_scope_decl(payload_d):
+# Every `[SCOPE]`-bearing line of record 0, `\x1f`-joined for the single-line emit seam. Selecting the
+# declaration among them is the bash side's, through the shared scope_decl_select — a Python copy of
+# the selector would be a second implementation to drift. Lines past the out() clamp are dropped
+# whole, never cut: a cut declaration compares against a partial list (false excess), a dropped one
+# is skipped.
+_SCOPE_DECL_SEP = '\x1f'
+_SCOPE_DECL_MAX_CHARS = 2000
+
+
+def _read_scope_decl_lines(payload_d):
+    kept, size = [], 0
     for line in _read_delegation_prompt(payload_d).splitlines():
-        if '[SCOPE]' in line:
-            return line.strip()
-    return ''
+        if '[SCOPE]' not in line:
+            continue
+        size += len(line) + len(_SCOPE_DECL_SEP)
+        if size > _SCOPE_DECL_MAX_CHARS:
+            break
+        kept.append(line)
+    return _SCOPE_DECL_SEP.join(kept)
 
 
 # Same literal + bounded-gap shape as enforce-workflow-verify-stage.sh's SIZE_EST_TOOLUSES_RE, so the
@@ -1344,7 +1357,7 @@ def _read_size_est_declared(payload_d):
 # field — and a synthesized row takes its files: from synth_files. Neither present ⇒ no candidate
 # can exist ⇒ reading the declaration would buy one transcript open and no signal.
 if _cc_files or synth_files:
-    out('scope_decl', _read_scope_decl(d))
+    out('scope_decl', _read_scope_decl_lines(d))
 else:
     out('scope_decl', '')
 # Ungated, unlike the sibling above: the estimate-vs-actual comparison has a candidate on EVERY
@@ -2524,14 +2537,17 @@ fi
 # files: field, metric_pass=true and result done|done_with_concerns — an excess row outside that
 # shape is compared on files: alone.
 # A delegation with no declaration skips the comparison entirely (fail-open, older delegations).
-SCOPE_DECL=$(extract_field scope_decl)
+# The emit row carries record 0's `[SCOPE]`-bearing lines `\x1f`-joined; the declaration among them
+# is chosen by the same shared selector the drift advisory and the verification gate use.
+SCOPE_DECL_LINES=$(extract_field scope_decl)
 SCOPE_EXCESS_FOUND=0
-if [[ -n "${SCOPE_DECL}" ]]; then
+if [[ -n "${SCOPE_DECL_LINES}" ]]; then
   # shellcheck source=lib/scope-match.sh
   source "${BASH_SOURCE%/*}/lib/scope-match.sh"
   # shellcheck source=lib/code-based-grader.sh
   #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
   source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
+  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | scope_decl_select)"
   SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
 
   # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
