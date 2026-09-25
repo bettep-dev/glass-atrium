@@ -746,4 +746,24 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
+	test("a fault verdict's corner glyph sits on its own node, not beside it", async () => {
+		const glyphs = await ctx.page.evaluate((sel) => {
+			return Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
+				.filter((glyph) => getComputedStyle(glyph).display !== "none")
+				.map((glyph) => {
+					const node = glyph.parentElement as Element;
+					const shape = node.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element;
+					const g = glyph.getBoundingClientRect();
+					const n = shape.getBoundingClientRect();
+					return {
+						id: node.getAttribute("data-arch-node-id") || node.id,
+						inside: g.left >= n.left - 1 && g.right <= n.right + 1 && g.top >= n.top - 1 && g.bottom <= n.bottom + 1,
+						box: `glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
+					};
+				});
+		}, ctx.selectors.canvas);
+		assert.ok(glyphs.length > 0, "no corner glyph drawn under a crit verdict — the assertion below would be vacuous");
+		const outside = glyphs.filter((glyph) => !glyph.inside);
+		assert.deepEqual(outside, [], `glyphs off their node: ${outside.map((g) => `${g.id} (${g.box})`).join("; ")}`);
+	});
 });

@@ -302,6 +302,55 @@ async function readZones(width: number, height: number): Promise<ZoneReading> {
 	}
 }
 
+// drawn node-label lines, words grouped by rendered line top
+async function readLabelLines(width: number, height: number): Promise<{ id: string; lines: string[] }[]> {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		return await page.evaluate(() =>
+			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) => {
+				const label = node.querySelector(".nodeLabel") ?? node;
+				const lineByTop: [number, string[]][] = [];
+				const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+				for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+					for (const word of (text.textContent || "").matchAll(/\S+/g)) {
+						const range = document.createRange();
+						range.setStart(text, word.index ?? 0);
+						range.setEnd(text, (word.index ?? 0) + word[0].length);
+						const top = range.getClientRects()[0]?.top ?? 0;
+						const line = lineByTop.find(([lineTop]) => Math.abs(lineTop - top) <= 2);
+						if (line) line[1].push(word[0]);
+						else lineByTop.push([top, [word[0]]]);
+					}
+				}
+				return { id: node.getAttribute("data-arch-node-id") || node.id, lines: lineByTop.map(([, words]) => words.join(" ")) };
+			}),
+		);
+	} finally {
+		await page.close();
+	}
+}
+
+for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
+	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
+		const labels = await readLabelLines(width, height);
+		const words = labels.reduce((sum, label) => sum + label.lines.join(" ").split(" ").length, 0);
+		const lines = labels.reduce((sum, label) => sum + label.lines.length, 0);
+		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
+		assert.ok(labels.length > 0, "no node label was measured");
+		assert.ok(lines < words, `${lines} lines for ${words} words — every word sits on its own line: ${drawn}`);
+		const plans = labels.find((label) => label.id.endsWith("main_session"));
+		assert.ok(plans, `the orchestrator node was not drawn: ${drawn}`);
+		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
+	});
+}
+
 for (const { width, height } of VIEWPORTS) {
 	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {
 		const r = await readZones(width, height);

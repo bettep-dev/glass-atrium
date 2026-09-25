@@ -14,8 +14,14 @@ const {
 // map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
 const MAP_LABEL_FONT_PX = 30;
 
-// word-level label wrap — narrower nodes are what let the larger labels fit; the flow itself stays left to right
-const MAP_LABEL_WRAP_PX = 90;
+// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
+const MAP_LABEL_LINE_PX = 150;
+
+// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
+const MAP_LABEL_WRAP_PX = 320;
+
+// mermaid-config.js fontFamily — the pre-layout measure must use the face mermaid measures with
+const MAP_LABEL_FONT_FAMILY = "Pretendard, system-ui, -apple-system, sans-serif";
 
 // smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
 const MIN_RENDERED_LABEL_PX = 12;
@@ -657,7 +663,9 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 700; pointer-events: none; } ` +
+					// corner badge at the label size, so it holds the same 12px floor; the surface halo keeps it readable over a border or label
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
+					"text-anchor: end; dominant-baseline: central; paint-order: stroke; stroke: rgb(var(--surface)); stroke-width: 6px; stroke-linejoin: round; } " +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-crit > text.arch-ring-glyph { display: inline; fill: rgb(var(--crit)); } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
@@ -666,7 +674,9 @@ function ScreenArchitecture(
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
-					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; transition: all .12s; } ' +
+					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
+					// hover colours only — a transition on `all` also animated the shared focus outline in
+					"transition: color .12s, border-color .12s, background-color .12s; } " +
 					".arch-zoom-btn-labelled { padding: 0 8px; font-family: inherit; font-size: var(--fs-meta); } " +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
@@ -924,7 +934,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + source)))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + rebreakMapLabelsAR(source, getMapTextWidthAR))))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -2213,6 +2223,99 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
 }
 
+const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
+
+const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
+
+/**
+ * Re-breaks node and edge labels into lines of several words before layout — mermaid's single wrapping
+ * width gives every wrapped node the same box, so each label gets a box sized from its own words.
+ * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
+ * A zone title breaks at that same word floor, so the title never widens its zone past the members.
+ */
+function rebreakMapLabelsAR(source, measureText) {
+	const lines = source.split("\n");
+	const zoneFloor = getZoneWordFloorAR(lines, measureText);
+	let zone = "";
+	return lines
+		.map((line) => {
+			const zoneMatch = /^(\s*subgraph\s+([\w-]+)\s*\[)"([^"]*)"(\]\s*)$/.exec(line) ?? /^\s*subgraph\s+([\w-]+)/.exec(line);
+			if (zoneMatch) {
+				zone = zoneMatch[2] ?? zoneMatch[1];
+				if (zoneMatch.length < 5) return line;
+				const titleLines = getLabelLinesAR(getLabelWordsAR(zoneMatch[3]), measureText, zoneFloor.get(zone) || 0);
+				return `${zoneMatch[1]}"${titleLines.join(" <br/>")}"${zoneMatch[4]}`;
+			}
+			if (/^\s*end\s*$/.test(line)) zone = "";
+			const edge = MAP_EDGE_LABEL_RE.exec(line);
+			if (edge) {
+				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL_LINE_PX);
+				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
+			}
+			const node = MAP_NODE_LINE_RE.exec(line);
+			if (!node) return line;
+			const [, head, open, quotedLabel, bareLabel, close] = node;
+			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
+			if (words.length === 0) return line;
+			const limit = Math.max(MAP_LABEL_LINE_PX, zoneFloor.get(zone) || 0);
+			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
+		})
+		.join("\n");
+}
+
+function getLabelWordsAR(label) {
+	return label.replace(/<br\s*\/?>/gi, " ").split(/\s+/).filter(Boolean);
+}
+
+// zone id → its longest node-label word
+function getZoneWordFloorAR(lines, measureText) {
+	const floor = new Map();
+	let zone = "";
+	for (const line of lines) {
+		const zoneMatch = /^\s*subgraph\s+([\w-]+)/.exec(line);
+		if (zoneMatch) zone = zoneMatch[1];
+		else if (/^\s*end\s*$/.test(line)) zone = "";
+		const node = zone ? MAP_NODE_LINE_RE.exec(line) : null;
+		if (!node) continue;
+		const widest = Math.max(0, ...getLabelWordsAR(node[3] ?? node[4]).map(measureText));
+		floor.set(zone, Math.max(floor.get(zone) || 0, widest));
+	}
+	return floor;
+}
+
+// greedy fill at the line target, then the narrowest width that keeps that line count — balanced lines, narrow box
+function getLabelLinesAR(words, measureText, lineTarget) {
+	const widestWord = Math.max(...words.map(measureText));
+	const limit = Math.max(widestWord, lineTarget);
+	const lineCount = fillLinesAR(words, measureText, limit).length;
+	for (let width = widestWord; width < limit; width += 2) {
+		const lines = fillLinesAR(words, measureText, width);
+		if (lines.length <= lineCount) return lines;
+	}
+	return fillLinesAR(words, measureText, limit);
+}
+
+function fillLinesAR(words, measureText, limit) {
+	const lines = [];
+	for (const word of words) {
+		const last = lines[lines.length - 1];
+		if (last !== undefined && measureText(`${last} ${word}`) <= limit) lines[lines.length - 1] = `${last} ${word}`;
+		else lines.push(word);
+	}
+	return lines;
+}
+
+let mapTextContextAR = null;
+
+// canvas measure at the map font — runs after document.fonts.ready, so the measured face is the drawn one
+function getMapTextWidthAR(text) {
+	if (!mapTextContextAR) {
+		mapTextContextAR = document.createElement("canvas").getContext("2d");
+		mapTextContextAR.font = `${MAP_LABEL_FONT_PX}px ${MAP_LABEL_FONT_FAMILY}`;
+	}
+	return mapTextContextAR.measureText(text).width;
+}
+
 // every region the page reads feeds the stamp; no read time until the map itself has been read
 function getFreshnessInputAR(healthAsOf, regions, hasMap) {
 	return { at: hasMap ? healthAsOf : null, regions };
@@ -2656,8 +2759,9 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 		glyph.setAttribute("class", RING_GLYPH_CLASS);
 		groupEl.appendChild(glyph);
 	}
-	glyph.setAttribute("x", String(box.x + box.width + RING_GAP));
-	glyph.setAttribute("y", String(box.y - RING_GAP));
+	// on the node's top-right corner: right-aligned inside the shape, its halo clear of the top edge
+	glyph.setAttribute("x", String(box.x + box.width - RING_GAP));
+	glyph.setAttribute("y", String(box.y + MAP_LABEL_FONT_PX / 2 + RING_GAP * 2));
 	glyph.textContent = mark;
 }
 
