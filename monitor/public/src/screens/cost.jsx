@@ -1849,7 +1849,7 @@ function ParseErrorBody({ state, days, onRetry }) {
         </div>
         <div>
           <div className="fs-meta text-dim">Last seen</div>
-          {/* 날짜 = 보조 stat — text-[16px]→fs-stat(18px) 최근접 매핑 (16↔18 차 2 < 16↔12 차 4). */}
+          {/* 날짜 = 보조 stat — fs-stat(18px). */}
           <div className="font-mono fs-stat text-fg/80">
             {lastErrorDate || <span className="text-dim">—</span>}
           </div>
@@ -2185,7 +2185,7 @@ const tooltipStyle = {
   border: '1px solid rgb(var(--line))',
   borderRadius: 8,
   padding: '8px 12px',
-  // 툴팁 = HTML DOM div → 11.5px→var(--fs-meta)(11px) 매핑 (밀도 높은 보조 콘텐츠 tier).
+  // 툴팁 = HTML DOM div → fs-meta(12px) 보조 콘텐츠 tier.
   fontSize: 'var(--fs-meta)',
   fontFamily: 'JetBrains Mono, monospace',
   boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
