@@ -8,7 +8,8 @@
 # match_file_against_allowed — path vs newline list (full/partial path OR basename).
 # scope_task_type_is_code    — the code task_type set of the files: comparison leg.
 # scope_decl_files           — `[SCOPE] files=` field → newline list.
-# scope_decl_from_record0    — first `[SCOPE]` line of a subagent transcript's record 0.
+# scope_decl_select          — first line-opening `[SCOPE] files=` declaration of a text.
+# scope_decl_from_record0    — that declaration, read from a subagent transcript's record 0.
 
 if [[ -n "${_SCOPE_MATCH_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
@@ -212,7 +213,20 @@ scope_concerns_exempts_path() {
   return 1
 }
 
-# The FIRST `[SCOPE]` line of a subagent transcript's record 0 — the parent-authored delegation
+# A declaration is a line the `[SCOPE]` token OPENS: optional indentation, one list marker, an
+# optional backtick or `**` wrap, then whitespace and a non-placeholder `files=`. A substring match
+# would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the real line → a wrong list
+# (false excess) or an empty one (the real declaration never read). Purely syntactic on purpose, so a
+# non-bash consumer mirrors it as one regex rather than re-implementing the field parser.
+# shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
+readonly SCOPE_DECL_LINE_RE='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(`|[*][*])?[[]SCOPE[]](`|[*][*])?[[:space:]]+[Ff]iles=[^<]'
+
+# Stdin text → its first declaration line (empty when none). Always returns 0.
+scope_decl_select() {
+  grep -m 1 -E -- "${SCOPE_DECL_LINE_RE}" 2>/dev/null || true # GA-ABSORB[benign]: no declaration ⇒ grep status 1 ⇒ empty output, callers fail-open
+}
+
+# The first declaration in a subagent transcript's record 0 — the parent-authored delegation
 # prompt. Pinned to record 0 on purpose: a whole-transcript grep would let the child emit a wider
 # `[SCOPE]` line of its own and nullify the very check that exists to sit outside its control.
 # Two or more declarations inside record 0 → the first wins (deterministic, never merged).
@@ -221,9 +235,10 @@ scope_decl_from_record0() {
   local tpath="${1:-}"
   [[ -r "${tpath}" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2312  # a failed head/jq stage yields empty text → no declaration, fail-open.
   head -n 1 "${tpath}" \
     | jq -r 'if (.message.content | type) == "string" then .message.content
              elif (.message.content | type) == "array" then ([.message.content[]? | .text? // ""] | join("\n"))
              else "" end' 2>/dev/null \
-    | grep -m 1 '\[SCOPE\]' 2>/dev/null || true # GA-ABSORB[benign]: no declaration ⇒ grep status 1 ⇒ empty output, callers fail-open
+    | scope_decl_select
 }

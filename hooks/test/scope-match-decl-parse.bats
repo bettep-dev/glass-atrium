@@ -166,3 +166,67 @@ hooks/x.sh' \
 @test "every field name drops in either case" {
   assert_entries '[SCOPE] Files=hooks/a.sh DELIVERABLE=bug-fix Out=none' 'hooks/a.sh'
 }
+
+# --- declaration-line selection from record 0 ------------------------------------------------
+# A delegation prompt routinely quotes earlier `[SCOPE]`-bearing text (a verdict, a rule excerpt)
+# ahead of its own declaration. Selecting that quoted line either read a wrong file list (a FALSE
+# excess on the declared path) or read nothing and skipped the comparison (a silently lost signal).
+
+# $1 = record-0 prompt text → prints the entries scope_decl_from_record0 hands the field parser.
+record0_entries() {
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is set by bats per test.
+  local tpath="${BATS_TEST_TMPDIR}/transcript.jsonl" line
+  jq -cn --arg t "${1}" '{type:"user", message:{role:"user", content:$t}}' >"${tpath}"
+  line="$(scope_decl_from_record0 "${tpath}")"
+  scope_decl_files "${line}"
+}
+
+@test "record 0 yields the line-opening declaration whatever [SCOPE] text precedes or decorates it" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none'
+  local -a names=(
+    'quoted verdict first'
+    'earlier-round prose declaration first'
+    'placeholder rule excerpt first'
+    'mention without files= first'
+    'block-quoted declaration first'
+    'JSON-quoted fix prose first'
+    'a later line-opening declaration does not override the first'
+    'harness-indented declaration'
+    'list-marker bullet declaration'
+    'numbered-item declaration'
+    'backtick-wrapped declaration'
+    'bold-wrapped token'
+  )
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
+  local -a prompts=(
+    "> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats"$'\n'"${real}"
+    "Earlier round: [SCOPE] files=hooks/old.sh · out=none"$'\n'"${real}"
+    '  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<type> · out=<excluded|none>`'$'\n'"${real}"
+    '[SCOPE] — the 7th delegation element'$'\n'"${real}"
+    '> [SCOPE] files=hooks/quoted.sh · out=none'$'\n'"${real}"
+    '"fix": "Add hooks/y.sh to [SCOPE] files=. Rewrite the rest"'$'\n'"${real}"
+    "${real}"$'\n''[SCOPE] files=hooks/later.sh · out=none'
+    "Fix E1."$'\n'"  ${real}"
+    "- ${real}"
+    "1. ${real}"
+    "\`${real}\`"
+    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
+  )
+  local i got
+  for i in "${!names[@]}"; do
+    got="$(record0_entries "${prompts[${i}]}")"
+    [[ "${got}" == 'hooks/real.sh' ]] || {
+      echo "${names[${i}]}: expected [hooks/real.sh], got [${got}]" >&2
+      return 1
+    }
+  done
+}
+
+@test "record 0 with [SCOPE] only mid-line yields no declaration (the comparison is skipped)" {
+  local got
+  got="$(record0_entries 'Implement it. [SCOPE] files=hooks/a.sh · out=none')"
+  [[ -z "${got}" ]] || {
+    echo "mid-line prose parsed as a declaration: [${got}]" >&2
+    return 1
+  }
+}
