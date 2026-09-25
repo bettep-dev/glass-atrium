@@ -62,8 +62,7 @@ interface OutcomesHelpers {
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
-  formatToolUseLineO: (markdown: string) => string;
-  formatResultLineO: (markdown: string) => string;
+  formatToolUseO: (value: string) => string;
   buildFilterChipsO: (
     options: Array<{ value: string; label: string }>,
     value: string,
@@ -400,36 +399,17 @@ describe("splitLessonO: the body's Lesson section moves out so the drawer prints
   });
 });
 
-describe("formatToolUseLineO: the recorded tool-use count reads as words, not key=value", () => {
+describe("formatToolUseO: the recorded tool-use count reads as words, not key=value", () => {
   const rows = [
-    { name: "an actual count alone", line: "- **Tool use**: actual=44", readable: "- **Tool use**: 44 tool calls" },
-    { name: "an actual count with its estimate", line: "- **Tool use**: actual=44 declared=30", readable: "- **Tool use**: 44 tool calls · 30 estimated" },
-    { name: "a single call reads singular", line: "- **Tool use**: actual=1 declared=3", readable: "- **Tool use**: 1 tool call · 3 estimated" },
-    { name: "zero calls read plural", line: "- **Tool use**: actual=0", readable: "- **Tool use**: 0 tool calls" },
+    { name: "an actual count alone", value: "actual=44", readable: "44 tool calls" },
+    { name: "an actual count with its estimate", value: "actual=44 declared=30", readable: "44 tool calls · 30 estimated" },
+    { name: "a single call reads singular", value: "actual=1 declared=3", readable: "1 tool call · 3 estimated" },
+    { name: "zero calls read plural", value: "actual=0", readable: "0 tool calls" },
+    { name: "an unrecognised shape passes through", value: "unknown", readable: "unknown" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      assert.strictEqual(outcomes.formatToolUseLineO(`- **Agent**: a\n${row.line}\n`), `- **Agent**: a\n${row.readable}\n`);
-    });
-  }
-});
-
-describe("formatResultLineO: the body's Result line reads as the drawer title names the result", () => {
-  const rows = [
-    { name: "a done result", result: "done" },
-    { name: "a result done with caveats", result: "done_with_concerns" },
-    { name: "a failed result", result: "fail" },
-    { name: "a blocked result", result: "blocked" },
-    { name: "a result needing info", result: "needs_context" },
-    { name: "an unknown result keeps its recorded value", result: "mystery" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const label = ui.resolveResultMeta(row.result, null).label;
-      assert.strictEqual(
-        outcomes.formatResultLineO(`- **Task type**: review\n- **Result**: ${row.result}\n`),
-        `- **Task type**: review\n- **Result**: ${label}\n`,
-      );
+      assert.strictEqual(outcomes.formatToolUseO(row.value), row.readable);
     });
   }
 });

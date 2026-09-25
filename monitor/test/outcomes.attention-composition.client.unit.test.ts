@@ -586,7 +586,8 @@ test("reportingHealthSummaryO: a silent channel is named in the closed summary l
 test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the section holds", () => {
   assert.strictEqual(
     helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 190 }, 40) }),
-    "160 writer-emitted records",
+    "160 writer-emitted of 200 records",
+    "the closed line names both populations, so the card's all-records counts reconcile with it",
   );
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: { events: [{}, {}, {}] } }), "3 recent cycle events");
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: {} }), "0 recent cycle events");
@@ -712,7 +713,7 @@ test("ledger: every column header uses sentence case, never a raw field name", (
   const labels = flattenNodes(table)
     .filter((n) => typeof n.type === "function" && /Header$/.test((n.type as { name: string }).name))
     .map((n) => String(n.props!.label));
-  assert.strictEqual(labels.length, 6);
+  assert.strictEqual(labels.length, 5);
   for (const label of labels) assert.match(label, /^[A-Z][a-z]*(?: [a-z]+)*$/, `header '${label}'`);
 });
 
@@ -742,4 +743,90 @@ test("ledger row and filter chips name the same value the same way", () => {
 test("the agent filter chip names the agent by the display name the ledger shows", () => {
   const agentChip = helpers.buildActiveFilterChipsO({ days: 30, agent: LEDGER_AGENT })[0];
   assert.strictEqual(agentChip, `Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`);
+});
+
+// --- drawer order, Needs-you cap, record fields, empty chart days ---
+
+interface LedgerViewHelpers {
+  buildLedgerSectionsO: (
+    rows: LedgerRow[],
+    closure?: ClosureState,
+    needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
+    needsYouCap?: number | null,
+  ) => { key: string; heading: string; rows: LedgerRow[]; hiddenCount: number }[];
+  getLedgerDisplayRowsO: (sections: { rows: LedgerRow[] }[]) => LedgerRow[];
+  getDetailPositionLabelO: (rows: LedgerRow[], row: LedgerRow) => string;
+  splitRecordFieldsO: (markdown: string) => { fields: { label: string; value: string }[]; body: string };
+  AttributionLegend: () => RenderNode;
+}
+const view = helpers as unknown as LedgerViewHelpers;
+const collectText = (nodes: RenderNode[]): string =>
+  nodes.flatMap((n) => n.children.filter((c) => typeof c === "string" || typeof c === "number")).join(" ");
+
+const needsYouRows = (count: number): LedgerRow[] => Array.from({ length: count }, (_, i) => ({ id: 100 + i, result: "fail" }));
+
+test("buildLedgerSectionsO: a capped Needs-you shows the first N and counts the rest, a null cap shows all", () => {
+  const rows = [...needsYouRows(12), { id: 1, result: "done" }];
+  const [capped, routine] = sameRealm(view.buildLedgerSectionsO(rows, undefined, null, 10));
+  assert.strictEqual(capped.rows.length, 10);
+  assert.strictEqual(capped.hiddenCount, 2, "the rows the cap hides are counted, not dropped silently");
+  assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1], "the cap never moves a row into Routine");
+
+  const [open] = sameRealm(view.buildLedgerSectionsO(rows, undefined, null, null));
+  assert.strictEqual(open.rows.length, 12);
+  assert.strictEqual(open.hiddenCount, 0);
+});
+
+test("buildLedgerSectionsO: the window heading counts the rows actually shown under the cap", () => {
+  const [needsYou] = sameRealm(view.buildLedgerSectionsO([], undefined, {
+    rows: needsYouRows(50), total: 1718, windowLabel: "30d",
+  }, 10));
+  assert.match(needsYou.heading, /1,718 in 30d · first 10 shown/);
+});
+
+test("getDetailPositionLabelO: the drawer counts position in the grouped order the ledger displays", () => {
+  // search order puts the routine row first; the ledger shows Needs-you first
+  const searchRows: LedgerRow[] = [{ id: 1, result: "done" }, { id: 2, result: "fail" }, { id: 3, result: "blocked" }];
+  const shown = view.getLedgerDisplayRowsO(view.buildLedgerSectionsO(searchRows));
+  assert.deepStrictEqual(sameRealm(shown.map((r) => r.id)), [2, 3, 1]);
+  assert.strictEqual(view.getDetailPositionLabelO(shown, shown[0]), "1 of 3 shown", "the first displayed row reads as first");
+  assert.strictEqual(view.getDetailPositionLabelO(shown, { id: 99, result: "done" }), "not in the list shown");
+});
+
+test("ResultTable: no Check column, and a capped Needs-you offers one control to show the rest", () => {
+  let toggled = 0;
+  const nodes = flattenNodes(helpers.ResultTable({
+    rows: needsYouRows(12), sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+    needsYouCap: 10, onToggleNeedsYou: () => { toggled += 1; },
+  }));
+  const headerLabels = nodes.map((n) => n.props?.label).filter((l) => typeof l === "string");
+  assert.ok(headerLabels.includes("Summary"), "the header row still renders");
+  assert.ok(!headerLabels.includes("Check"), "the check verdict lives in the drawer, not a mostly-N/A column");
+
+  // the toggle row is its own component — render it one level to read its control
+  const toggle = nodes.find((n) => n.props?.section !== undefined)!;
+  const buttons = flattenNodes((toggle.type as (p: unknown) => RenderNode)(toggle.props)).filter((n) => n.type === "button");
+  assert.strictEqual(buttons.length, 1);
+  assert.match(collectText([buttons[0]]), /Show all 12/);
+  (buttons[0].props!.onClick as () => void)();
+  assert.strictEqual(toggled, 1);
+});
+
+test("splitRecordFieldsO: record fields become KV pairs, minus the ones the drawer already shows elsewhere", () => {
+  const md = [
+    "# Outcome Record", "", "- **Agent**: glass-atrium-qa-code-reviewer", "- **Task type**: review",
+    "- **Result**: done", "- **Correlation ID**: 2026-09-25T1150_x_9e1a", "- **Tool use**: actual=18 declared=20", "",
+    "## Summary", "", "Passes.",
+  ].join("\n");
+  const { fields, body } = sameRealm(view.splitRecordFieldsO(md));
+  assert.deepStrictEqual(fields, [{ label: "Tool use", value: "18 tool calls · 20 estimated" }], "the cid stays in references");
+  assert.doesNotMatch(body, /Outcome Record|\*\*Agent\*\*/, "the bullet list leaves the narrative");
+  assert.match(body, /## Summary/);
+  assert.deepStrictEqual(sameRealm(view.splitRecordFieldsO("## Summary\n\nx")), { fields: [], body: "## Summary\n\nx" });
+});
+
+test("AttributionLegend: an empty day's two meanings are labelled — no records versus not read", () => {
+  const text = collectText(flattenNodes(view.AttributionLegend()));
+  assert.match(text, /No records/);
+  assert.match(text, /Not read/);
 });

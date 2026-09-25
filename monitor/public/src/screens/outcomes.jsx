@@ -122,6 +122,8 @@ function GlyphO({ name, size = 12, className = '' }) {
 
 // Pagination — 테이블 응답성 보존.
 const PAGE_LIMIT_DEFAULT = 50;
+// Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
+const NEEDS_YOU_PAGE_CAP = 10;
 
 // Sort options — 백엔드 allowlist 와 동일 wire format (chip → hash → URL 변환 미경유).
 const SORT_OPTIONS = [
@@ -428,6 +430,7 @@ function ScreenOutcomes({ onNav }) {
 
   // Detail modal — active row + body_md (optional).
   const [detailRow,   setDetailRow]   = useStateO(null);
+  const [isNeedsYouExpanded, setNeedsYouExpanded] = useStateO(false);
   const [detailState, setDetailState] = useStateO({ status: 'idle', data: null, error: null });
 
   const [refreshTick, setRefreshTick] = useStateO(0);
@@ -602,6 +605,9 @@ function ScreenOutcomes({ onNav }) {
       windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
     }
     : null;
+  const needsYouCap = isNeedsYouExpanded ? null : NEEDS_YOU_PAGE_CAP;
+  // drawer Prev/Next + counter walk the grouped order the ledger draws, not the search order
+  const displayRows = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closureState, ledgerNeedsYou, needsYouCap));
 
   // T13 (O2) — facet 옵션을 현재 페이지 rows 대신 canonical registry 집합에서 생성
   // (페이지네이션 안정). registry 소스는 /api/agents/summary 응답의 agent_id 들.
@@ -614,13 +620,13 @@ function ScreenOutcomes({ onNav }) {
   // Modal navigation — 현재 페이지 내 prev/next 만 지원. cross-page (TODO MON-OUTCOMES-NAV-PERSIST):
   // 가장자리 진입 시 page hop + index 복원이 필요해 v1 에서는 페이지네이션으로 더 로드 후 재선택.
   const handleNavDetail = useCallbackO((direction) => {
-    if (!detailRow || rows.length === 0) return;
-    const idx = rows.findIndex((r) => r.id === detailRow.id);
+    if (!detailRow || displayRows.length === 0) return;
+    const idx = displayRows.findIndex((r) => r.id === detailRow.id);
     if (idx < 0) return;
     const nextIdx = direction === 'next' ? idx + 1 : idx - 1;
-    if (nextIdx < 0 || nextIdx >= rows.length) return;
-    setDetailRow(rows[nextIdx]);
-  }, [detailRow, rows]);
+    if (nextIdx < 0 || nextIdx >= displayRows.length) return;
+    setDetailRow(displayRows[nextIdx]);
+  }, [detailRow, displayRows]);
 
   const stampRegions = [searchState, needsYouState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState];
   // one outage → one banner + one Retry; the regions then drop their own Retry
@@ -702,6 +708,8 @@ function ScreenOutcomes({ onNav }) {
           onRowClick={setDetailRow}
           onRetry={regionRetry}
           needsYou={ledgerNeedsYou}
+          needsYouCap={needsYouCap}
+          onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
@@ -728,7 +736,7 @@ function ScreenOutcomes({ onNav }) {
         <DetailModal
           detailRow={detailRow}
           detailState={detailState}
-          rows={rows}
+          rows={displayRows}
           onClose={() => setDetailRow(null)}
           onNav={handleNavDetail}
         />
@@ -826,8 +834,8 @@ function reportingHealthSummaryO(channelLivenessState) {
 
 function selfReportSummaryO(analyticsState) {
   if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
-  const writerTotal = window.UI.getWriterTotal(analyticsState.data?.overall);
-  return `${formatIntO(writerTotal)} writer-emitted records`;
+  const overall = analyticsState.data?.overall;
+  return `${formatIntO(window.UI.getWriterTotal(overall))} writer-emitted of ${formatIntO(Number(overall?.total) || 0)} records`;
 }
 
 function loopEventsSummaryO(loopEventsState) {
@@ -1279,7 +1287,7 @@ function AttributionDailyChart({ grid }) {
                 fill="rgb(var(--line))"
                 opacity={isOut ? '0.22' : '0.6'}
                 strokeDasharray={isOut ? '1.5 1.5' : undefined}>
-                <title>{isOut ? `${point.day} · before data window (out-of-range)` : `${point.day} · no activity`}</title>
+                <title>{isOut ? `${point.day} · ${EMPTY_DAY_LABEL_NOT_READ}` : `${point.day} · ${EMPTY_DAY_LABEL_NO_RECORDS}`}</title>
               </rect>
             );
           }
@@ -1317,6 +1325,9 @@ function AttributionDailyChart({ grid }) {
   );
 }
 
+const EMPTY_DAY_LABEL_NO_RECORDS = 'No records';
+const EMPTY_DAY_LABEL_NOT_READ = 'Not read (before the data window)';
+
 // dual-encoded 범례 — 색상 + 기호 + 라벨 3중 부호화 (color-blind safety).
 function AttributionLegend() {
   return (
@@ -1335,6 +1346,15 @@ function AttributionLegend() {
           </span>
         );
       })}
+      {/* the chart's two empty-day hairlines: solid = a read day with no records, dashed = a day before the data window */}
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 inline-block" style={{ borderTop: '1px solid rgb(var(--line))' }} aria-hidden="true"/>
+        {EMPTY_DAY_LABEL_NO_RECORDS}
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 inline-block" style={{ borderTop: '1px dashed rgb(var(--line))' }} aria-hidden="true"/>
+        {EMPTY_DAY_LABEL_NOT_READ}
+      </span>
     </div>
   );
 }
@@ -2033,7 +2053,7 @@ function getFilterChipValueO(key) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -2066,6 +2086,8 @@ function ResultTableCard({
           onRetry={onRetry}
           closure={closure}
           needsYou={needsYou}
+          needsYouCap={needsYouCap}
+          onToggleNeedsYou={onToggleNeedsYou}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -2135,7 +2157,9 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou }) {
+function ResultTableBody({
+  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+}) {
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} label="results"/>;
   }
@@ -2149,7 +2173,11 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure} needsYou={needsYou}/>;
+  return (
+    <ResultTable
+      rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}
+      needsYou={needsYou} needsYouCap={needsYouCap} onToggleNeedsYou={onToggleNeedsYou}/>
+  );
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -2202,7 +2230,8 @@ function isNeedsYouRowO(row, closedAt) {
 
 // [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
 // windowNeedsYou 가 있으면 Needs-you 는 창 전체 질의 결과, 없으면 이 페이지 분할로 되돌아간다.
-function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
+// needsYouCap → Needs-you shows its first N rows and counts the rest in hiddenCount; null shows all.
+function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null) {
   const pageNeedsYou = [];
   const routine  = [];
   for (const row of rows) {
@@ -2210,15 +2239,27 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
     (isNeedsYouRowO(row, closedAt) ? pageNeedsYou : routine).push(row);
   }
   windowNeedsYou = windowNeedsYou && applyClosureToWindowO(windowNeedsYou, rows, closure);
-  const needsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
-  const needsYouHeading = windowNeedsYou
-    ? `Needs you · ${formatIntO(windowNeedsYou.total)} in ${windowNeedsYou.windowLabel}`
-      + (windowNeedsYou.total > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '')
-    : `Needs you · ${formatIntO(needsYouRows.length)} on this page`;
+  const allNeedsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
+  const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
+  const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
+  const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
+  const needsYouHeading = (windowNeedsYou
+    ? `Needs you · ${formatIntO(needsYouTotal)} in ${windowNeedsYou.windowLabel}`
+    : `Needs you · ${formatIntO(needsYouTotal)} on this page`)
+    + (needsYouTotal > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '');
   return [
-    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, anchorId: LEDGER_NEEDS_YOU_ID },
-    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine, hiddenCount: 0 },
   ];
+}
+
+function getLedgerDisplayRowsO(sections) {
+  return sections.flatMap((section) => section.rows);
+}
+
+function getDetailPositionLabelO(displayRows, row) {
+  const idx = displayRows.findIndex((r) => r.id === row?.id);
+  return idx >= 0 ? `${idx + 1} of ${displayRows.length} shown` : 'not in the list shown';
 }
 
 // Session closures the window query has not re-read yet → drop them from its rows and total, or a row shows in both sections.
@@ -2238,10 +2279,10 @@ function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
   };
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }) {
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, needsYouCap = null, onToggleNeedsYou }) {
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
-  // 6열 — confidence · self-check · revision · cid 는 drawer 가 운반한다(행은 판단에 필요한 축만).
-  const sections = buildLedgerSectionsO(rows, closure, needsYou);
+  // 5 columns — confidence · self-check · automatic check · reworks · cid live in the drawer; nearly every row's check is 'not checked'.
+  const sections = buildLedgerSectionsO(rows, closure, needsYou, needsYouCap);
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
   const rowCount = sections.reduce((sum, section) => sum + section.rows.length, 0);
@@ -2256,7 +2297,6 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
             <PlainHeader label="Agent" minWidth={110}/>
             <PlainHeader label="Task type"/>
             <PlainHeader label="Result"/>
-            <PlainHeader label="Check" align="center" width={52}/>
             <PlainHeader label="Summary"/>
           </tr>
         </thead>
@@ -2268,7 +2308,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
                   <th
                     id={section.anchorId}
                     tabIndex={section.anchorId ? -1 : undefined}
-                    colSpan={6}
+                    colSpan={LEDGER_COLUMN_COUNT}
                     scope="colgroup"
                     className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
                     {section.heading}
@@ -2289,12 +2329,34 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
                     })}
                   />
                 ))}
+                {section.key === 'needs-you' && (
+                  <NeedsYouToggleRowO section={section} isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>
+                )}
               </React.Fragment>
             )
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+const LEDGER_COLUMN_COUNT = 5;
+
+// Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
+function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
+  const shownCount = section.rows.length + section.hiddenCount;
+  const hasToggle = typeof onToggle === 'function'
+    && (isCapped ? section.hiddenCount > 0 : shownCount > NEEDS_YOU_PAGE_CAP);
+  if (!hasToggle) return null;
+  return (
+    <tr>
+      <td colSpan={LEDGER_COLUMN_COUNT} className="px-2 py-1.5 border-b border-line">
+        <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
+          {isCapped ? `Show all ${formatIntO(shownCount)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
+        </button>
+      </td>
+    </tr>
   );
 }
 
@@ -2390,15 +2452,6 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
 
   const ts       = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
-  const grader   = graderVerdictMetaO(row.grader_verdict);
-  // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
-  const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
-    row.grader_verdict === 'unverified'
-      ? ' — no test artifact to grade for this task type.'
-      : row.grader_verdict == null
-      ? ' — recorded before the grader existed, not a failure.'
-      : ''
-  }`;
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
   const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
@@ -2413,7 +2466,7 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       className={rowClass}
       onClick={() => onRowClick(row)}
       {...focusProps}
-      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} check ${grader.label} ${row.summary || ''}`}>
+      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} ${row.summary || ''}`}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
@@ -2448,18 +2501,6 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
               <GlyphO name="circle-check" size={14}/>
             </button>
           )}
-        </span>
-      </td>
-      <td
-        className="text-center px-2 py-1.5 border-b border-line"
-        title={graderTitle}>
-        {/* 아이콘 단독 — 상태별 모양(✓/○/✕/–)이 다르므로 색+모양 듀얼인코딩은 유지되고, 전문은 title + 행 aria-label 이 운반. */}
-        <span
-          className="inline-flex items-center justify-center"
-          style={{ color: `rgb(var(${grader.colorVar}))` }}
-          role="img"
-          aria-label={graderTitle}>
-          <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
@@ -2519,8 +2560,9 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
 
   if (!detailRow) return null;
 
-  // list-index → prev/next 어댑터 — 현재 페이지 결과 행에서 detailRow 위치 도출.
+  // rows = the ledger's displayed order → counter and Prev/Next match what the operator sees.
   const idx     = rows.findIndex((r) => r.id === detailRow?.id);
+  const { fields, body } = splitRecordFieldsO(detailState?.status === 'ready' ? detailState.data?.body_md || '' : '');
   const hasPrev = idx > 0;
   const hasNext = idx >= 0 && idx < rows.length - 1;
 
@@ -2535,7 +2577,7 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
   const extraFoot = (
     <>
       <div className="fs-meta text-dim font-mono mr-auto">
-        {idx >= 0 ? `${idx + 1} of ${rows.length} on this page` : 'not on this page'}
+        {getDetailPositionLabelO(rows, detailRow)}
       </div>
       <button className="btn sm primary" onClick={onClose} aria-label="Close">
         Close
@@ -2552,11 +2594,17 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
       nav={{ onPrev: () => onNav('prev'), onNext: () => onNav('next'), hasPrev, hasNext }}
       footer={extraFoot}>
       {/* T-OUT-5 / S2 body order: identity(title) → numeric grid → narrative → references. */}
-      <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null}/>
-      <DetailNarrative row={detailRow} detailState={detailState}/>
+      <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null} recordFields={fields}/>
+      <DetailNarrative row={detailRow} detailState={detailState} markdown={body}/>
       <DetailReferences row={detailRow}/>
     </DetailSurface>
   );
+}
+
+function getGraderNoteO(verdict) {
+  if (verdict === 'unverified') return 'No test artifact to grade for this task type.';
+  if (verdict == null) return 'Recorded before the grader existed, not a failure.';
+  return '';
 }
 
 function reviewFlagLabel(flag) {
@@ -2565,7 +2613,7 @@ function reviewFlagLabel(flag) {
   return '—';
 }
 
-function DetailMetadata({ row, detail }) {
+function DetailMetadata({ row, detail, recordFields = [] }) {
   // defensive guard — row undefined 에서 React batching edge case 회피 (내부 optional chaining 도 이중 안전망).
   if (!row) return null;
   const { Badge } = window.UI;
@@ -2590,6 +2638,7 @@ function DetailMetadata({ row, detail }) {
           <GlyphO name={grader.icon}/>
           {grader.label}
         </div>
+        {getGraderNoteO(row?.grader_verdict) && <div className="text-dim">{getGraderNoteO(row?.grader_verdict)}</div>}
       </div>
       <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
       <div>
@@ -2611,6 +2660,7 @@ function DetailMetadata({ row, detail }) {
       {metricType != null && metricType !== '' && (
         <MetaField label="Check type" value={String(metricType)}/>
       )}
+      {recordFields.map((field) => <MetaField key={field.label} label={field.label} value={field.value}/>)}
       {parseQaScoreO(row?.qa_score) != null && (
         <div>
           <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
@@ -2625,8 +2675,8 @@ function DetailMetadata({ row, detail }) {
 }
 
 // 서사 영역 (S2 narrative) — lesson(작성자 distilled 패턴) + body_md(전문). 식별/수치 다음, references 앞.
-function DetailNarrative({ row, detailState }) {
-  const { lesson, body } = splitLessonO(detailState?.status === 'ready' ? detailState.data?.body_md || '' : '');
+function DetailNarrative({ row, detailState, markdown }) {
+  const { lesson, body } = splitLessonO(markdown);
   const lessonText = lesson || row?.lesson;
 
   return (
@@ -2649,16 +2699,26 @@ function splitLessonO(markdown) {
   return { lesson: match[1].trim(), body: markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length) };
 }
 
-// Recorder's 'actual=N declared=M' tool-use line → words.
-function formatToolUseLineO(markdown) {
-  return markdown.replace(/^(- \*\*Tool use\*\*: )actual=(\d+)(?: declared=(\d+))?[ \t]*$/m,
-    (_line, prefix, actual, declared) => `${prefix}${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`);
+// Fields the drawer already shows — title (agent/type/result) and references (cid).
+const RECORD_FIELDS_SHOWN_ELSEWHERE = new Set(['Agent', 'Task type', 'Result', 'Correlation ID']);
+
+// body_md '# Outcome Record' bullet list → KV pairs for the metadata grid, so the drawer holds one KV grid.
+function splitRecordFieldsO(markdown) {
+  const match = /^#\s+Outcome Record[ \t]*\n((?:[ \t]*\n|- \*\*[^*\n]+\*\*:[^\n]*\n?)*)/m.exec(markdown);
+  if (!match) return { fields: [], body: markdown };
+  const fields = [];
+  for (const [, label, value] of match[1].matchAll(/^- \*\*([^*\n]+)\*\*:[ \t]*(.*?)[ \t]*$/gm)) {
+    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label)) fields.push({ label, value: label === 'Tool use' ? formatToolUseO(value) : value });
+  }
+  return { fields, body: (markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length)).trim() };
 }
 
-// Recorder's '- **Result**: <enum>' line → the label the drawer title and chip show.
-function formatResultLineO(markdown) {
-  return markdown.replace(/^(- \*\*Result\*\*: )(\S+)[ \t]*$/m,
-    (_line, prefix, result) => `${prefix}${window.UI.resolveResultMeta(result, null).label}`);
+// Recorder's 'actual=N declared=M' → words; any other shape passes through.
+function formatToolUseO(value) {
+  const match = /^actual=(\d+)(?: declared=(\d+))?$/.exec(value);
+  if (!match) return value;
+  const [, actual, declared] = match;
+  return `${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`;
 }
 
 // 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
@@ -2712,7 +2772,7 @@ function DetailBody({ detailState, markdown }) {
     );
   }
 
-  return <MarkdownView markdown={formatResultLineO(formatToolUseLineO(markdown))}/>;
+  return <MarkdownView markdown={markdown}/>;
 }
 
 // SECURITY: marked.parse → DOMPurify.sanitize → HTML. DOMPurify 부재 / parse 실패 시 null 반환 →
