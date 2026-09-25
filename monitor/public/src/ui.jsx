@@ -903,7 +903,7 @@ function getDisplayName(kind, value) {
 function DetailField({ label, value, mono = false }) {
   if (!hasFieldValue(value)) return null;
   return <div>
-    <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
+    <div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
     <div className={`fs-body ${mono ? 'font-mono text-dim' : 'text-ink'} break-words`}>{value}</div>
   </div>;
 }
