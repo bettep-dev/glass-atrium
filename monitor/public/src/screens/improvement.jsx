@@ -2575,9 +2575,13 @@ function getLoopBasisI(aggregate) {
 	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
 }
 
+// newest request per region setter → a superseded answer cannot move the stamp either
+const latestRequestI = new WeakMap();
+
 // starts one region request; superseded or aborted answers never land (request identity)
 function loadRegionI(url, setState, onData) {
 	const request = new AbortController();
+	latestRequestI.set(setState, request);
 	setState((state) => window.UI.putRegionRequest(state, url, request));
 	fetch(url, { signal: request.signal, headers: { Accept: "application/json" } })
 		.then(async (res) => {
@@ -2585,7 +2589,7 @@ function loadRegionI(url, setState, onData) {
 			return res.json();
 		})
 		.then((data) => {
-			if (request.signal.aborted) return;
+			if (request.signal.aborted || latestRequestI.get(setState) !== request) return;
 			setState((state) => window.UI.putRegionData(state, request, data));
 			if (onData) onData();
 		})
