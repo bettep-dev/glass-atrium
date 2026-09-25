@@ -862,7 +862,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         button.doc-lineage { display: block; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-        .doc-th-note { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; color: rgb(var(--faint)); }
         .doc-snippet mark { background: rgb(var(--warn) / 0.28); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
@@ -1474,6 +1473,8 @@ function DocListCardCD({
 								const isGroupRoot = memberCount > 1 && row.folder_id != null;
 								const isExpanded =
 									isGroupRoot && expandedFolderIds.has(row.folder_id);
+								const storedStage = rowStageCD(row);
+								const shownStage = optimisticStatusOverrides.get(row.id) ?? storedStage;
 								const snippetText =
 									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
@@ -1532,18 +1533,13 @@ function DocListCardCD({
 											<td>
 													<DocStagePillCD
 														isRowControl
-														docStatus={
-															optimisticStatusOverrides.get(row.id) ?? rowStageCD(row)
-														}
-														isLabelVisible={
-															!isSectioned ||
-															(optimisticStatusOverrides.get(row.id) ?? rowStageCD(row)) !== rowStageCD(row)
-														}
+														docStatus={shownStage}
+														isLabelVisible={!isSectioned || shownStage !== storedStage}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
-													{/* 마지막 상태 변경 행위자 — 모를 때는 여기서 침묵하고 뷰어가 한 번 말한다. */}
+													{/* 마지막 상태 변경 행위자 — 모를 때는 목록도 뷰어도 표시하지 않는다. */}
 													{row.last_status_model && (
 														<div
 															className="doc-stage-actor"
@@ -2695,7 +2691,7 @@ function DocDeleteButtonCD({ docId, pendingDelete, onDelete }) {
 
 // Stage pill — a monotone 5-step meter + the stage label, and the stage menu it opens.
 //   · tone rides on the meter fill and the terminal glyph, never on the label text (39578 §E).
-//   · 종료 keeps today's success tone · every open stage renders neutral (no new colour).
+//   · every stage, 종료 included, renders in the neutral tone; 종료 adds only the check glyph.
 //   · a token no stage covers renders as unavailable — distinct from a stage and from empty.
 //   · onPickStage 미제공 → read-only 표시 · pending 중 메뉴 차단 (중복 PUT 가드).
 function DocStagePillCD({
@@ -2768,7 +2764,7 @@ function DocStagePillCD({
 			}}>
 			<button
 				type="button"
-				className={`doc-stage-pill is-interactive${isTerminal ? " is-terminal" : ""}`}
+				className="doc-stage-pill is-interactive"
 				aria-haspopup="menu"
 				aria-expanded={menuOpen}
 				aria-busy={isChanging || undefined}
@@ -2811,7 +2807,7 @@ function DocStagePillCD({
 }
 
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
-// and reads as such; a model id renders verbatim. Unknown is absent here and stated in the viewer.
+// and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", model);
 }
@@ -3490,7 +3486,6 @@ function dropTitleEchoCD(flat, title) {
 	return rest.replace(/^(\u0001?)[^\p{L}\p{N}\u0001]+/u, "$1");
 }
 
-// Majority format of the rendered page → stated once in the Tags header; cells keep only the exceptions.
 // Audience every row shares · null = mixed or no rows.
 function getCommonAudienceCD(rows) {
 	if (rows.length === 0) return null;
@@ -3505,6 +3500,7 @@ function hasOwnTagCD(row, commonFormat, commonAudience) {
 	return isOwnAudience || isOwnFormat;
 }
 
+// Majority format of the rendered page → said once beside the count; cells keep only the exceptions.
 function getCommonFormatCD(rows) {
 	const counts = new Map();
 	for (const row of rows) counts.set(row.format, (counts.get(row.format) || 0) + 1);
