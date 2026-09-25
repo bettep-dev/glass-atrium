@@ -33,7 +33,9 @@ import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
 import {
+	CANONICAL_MAP,
 	DAEMON_NODE_BINDINGS,
+	DIAGRAMS,
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
@@ -521,7 +523,13 @@ describe("healthy live fixture", () => {
 				brokenWords: [...el.querySelectorAll(".break-all")].length,
 			}));
 			assert.equal(await dialog.getAttribute("aria-labelledby").then((id) => ctx.page.locator(`#${id}`).innerText()), target.node.label);
-			assert.equal(probe.sub, target.layer.label);
+			// the drawn zone title is one word → the drawer carries the canonical source's full zone wording
+			const zoneId = target.layer.id.slice(target.layer.id.lastIndexOf(".") + 1);
+			const sourceZoneTitle = (DIAGRAMS.find((d) => d.slug === CANONICAL_MAP.slug)?.mermaid_source ?? "").match(
+				new RegExp(`subgraph\\s+${zoneId}\\["([^"]*)"\\]`),
+			)?.[1];
+			assert.ok(sourceZoneTitle, `fixture precondition: source zone title for ${zoneId}`);
+			assert.equal(probe.sub, sourceZoneTitle);
 			assert.ok(!/Not recorded|File path/i.test(probe.text), `an unrecorded path renders as a field — read: ${probe.text.slice(0, 300)}`);
 			assert.ok(!/\[[a-z]+_[a-z_]+\]/.test(probe.text), `a raw bracketed edge type renders — read: ${probe.text.slice(0, 300)}`);
 			assert.equal(probe.brokenWords, 0, "drawer text breaks words mid-word");

@@ -423,21 +423,7 @@ function ScreenArchitecture(
 	}, [diagState.status, diagState.data]);
 
 	// node.id → info (탐색용 — 상세 패널이 from/to 노드 라벨을 표시할 때 사용).
-	const nodeIndex = useMemoAR(() => {
-		const idx = new Map();
-		if (!activeDiagram) return idx;
-		for (const layer of activeDiagram.layers || []) {
-			for (const node of layer.nodes || []) {
-				idx.set(node.id, {
-					...node,
-					layer_id: layer.id,
-					layer_label: layer.label,
-					layer_role: layer.role,
-				});
-			}
-		}
-		return idx;
-	}, [activeDiagram]);
+	const nodeIndex = useMemoAR(() => getNodeIndexAR(activeDiagram), [activeDiagram]);
 
 	// 라벨 → node.id (mermaid SVG 의 텍스트 라벨로 backend node 를 fuzzy match 할 때 사용).
 	// mermaid 가 노드 라벨을 임의로 줄바꿈/공백 변환할 수 있어 정규화 후 매칭.
@@ -1943,6 +1929,31 @@ function FlowList({ title, items, nodeIndex, direction }) {
 function getFlowPeerLabelAR(flow, direction, nodeIndex) {
 	const peerId = direction === "in" ? flow.from : flow.to;
 	return nodeIndex.get(peerId)?.label || peerId;
+}
+
+// node.id → drawer info; a whole zone is named by its full wording, since the drawn title is one word
+function getNodeIndexAR(diagram) {
+	const idx = new Map();
+	if (!diagram) return idx;
+
+	for (const layer of diagram.layers || []) {
+		for (const node of layer.nodes || []) {
+			idx.set(node.id, {
+				...node,
+				label: getZoneFullTitleAR(node.id) ?? node.label,
+				layer_id: layer.id,
+				layer_label: getZoneFullTitleAR(layer.id) ?? layer.label,
+				layer_role: layer.role,
+			});
+		}
+	}
+	return idx;
+}
+
+// payload id `${diagramId}.${zoneId}` → the zone's full wording, null for any non-zone id
+function getZoneFullTitleAR(scopedId) {
+	const zoneId = scopedId.slice(scopedId.lastIndexOf(".") + 1);
+	return Object.hasOwn(ZONE_FULL_TITLE_AR, zoneId) ? ZONE_FULL_TITLE_AR[zoneId] : null;
 }
 
 // Shared chrome (AR-suffixed: 다른 screen 의 helper 와 충돌 방지)
