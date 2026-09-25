@@ -14,7 +14,6 @@ const {
 // 숫자 포맷 — ui.jsx 공용 SoT 소비 (ui.js 가 cost.js 보다 먼저 로드 → window.UI 가용).
 // C-suffix 로컬 별칭 유지 — 차트 tickFormatter 등 다수 call site 식별자 보존.
 const formatUsdC = window.UI.formatUsdCompact;
-const formatUsdAxisC = window.UI.formatUsdCompact;
 const formatTokenCompactC = window.UI.formatTokenCompact;
 const formatIntC = window.UI.formatInt;
 
@@ -454,24 +453,34 @@ function getHotVerdictText(ratio, paceRatio) {
   return `Today is ${soFar}, ${pace}.`;
 }
 
-// Window total + first-to-last trend over the period the toggle selects.
+// Window total + the recent-half trend over the period the toggle selects.
 function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
   const points = getTrendPoints(trendState);
   if (points.length === 0) {
-    return { total: null, delta: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
+    return { total: null, delta: null, deltaSpan: 0, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
   }
   const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
   const total = series.reduce((s, v) => s + v, 0);
+  // The series always ends at today (server generate_series → today), a partial day → left out of the trend.
+  const { delta, span } = computeHalfWindowDelta(series.slice(0, -1));
   return {
     total,
-    // The series always ends at today (server generate_series → today), a partial day → left out of the trend.
-    delta: computeSparkDeltaC(series.slice(0, -1)),
+    delta,
+    deltaSpan: span,
     dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
     isEmpty: false,
   };
+}
+
+// Recent half of the complete days against the equal span before it → never two arbitrary endpoints.
+function computeHalfWindowDelta(series) {
+  const span = Math.floor(series.length / 2);
+  if (span === 0) return { delta: null, span: 0 };
+  const sum = (part) => part.reduce((s, v) => s + v, 0);
+  return { delta: computeSparkDeltaC([sum(series.slice(-2 * span, -span)), sum(series.slice(-span))]), span };
 }
 
 /**
@@ -526,7 +535,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
             ? ''
             : `${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
           unavailableNote="Trend payload carries no cost figure.">
-          <TrendDeltaC delta={windowTotal.delta}/>
+          <TrendDeltaC delta={windowTotal.delta} span={windowTotal.deltaSpan}/>
         </CostTileC>
 
         <CostTileC
@@ -592,7 +601,7 @@ function HotBulletC({ hot }) {
 }
 
 // Window trend — direction rides on the glyph, never on the text colour.
-function TrendDeltaC({ delta }) {
+function TrendDeltaC({ delta, span }) {
   if (typeof delta !== 'number' || !Number.isFinite(delta)) {
     return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
   }
@@ -600,7 +609,7 @@ function TrendDeltaC({ delta }) {
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
-      {Math.abs(delta).toFixed(0)}% first day to yesterday
+      {Math.abs(delta).toFixed(0)}% {span === 1 ? 'last complete day vs the day before' : `last ${span} days vs the ${span} before`}
     </div>
   );
 }
@@ -658,15 +667,39 @@ function CostTrendBody({ state, days, bandOn, onRetry }) {
   }
 
   // Band rows extend buildTrendRow, so both chart modes read one row shape.
-  const rows = bandOn
+  const rows = markPartialDay(bandOn
     ? computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA)
-    : points.map((p) => buildTrendRow(p));
+    : points.map((p) => buildTrendRow(p)));
 
-  return (
-    <div style={{ width: '100%', height: 260 }}>
-      <CostTrendChart rows={rows} bandOn={bandOn}/>
-    </div>
-  );
+  return <CostTrendChart rows={rows} bandOn={bandOn}/>;
+}
+
+// The newest row is today → drawn apart as a dashed "so far" segment, never as a finished day.
+function markPartialDay(rows) {
+  const last = rows.length - 1;
+  return rows.map((row, i) => ({
+    ...row,
+    isPartial: i === last,
+    completeCost: i === last ? null : row.actual,
+    partialCost: i >= last - 1 ? row.actual : null,
+  }));
+}
+
+// One decimal count for every tick of an axis → "$0" never sits beside "$0.00"; under $100 ticks step in cents.
+function getUsdAxisFormatter(maxValue) {
+  const decimals = maxValue >= 100 ? 0 : 2;
+  return (value) => '$' + (Number(value) || 0).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function getTrendMax(rows) {
+  return rows.reduce((max, row) => Math.max(max, row.actual || 0, row.upperBand || 0), 0);
+}
+
+function toTrendReadoutPoint(row) {
+  return { label: row.isPartial ? `${row.fullDate} so far` : row.fullDate, value: row.actual };
 }
 
 /**
@@ -675,69 +708,165 @@ function CostTrendBody({ state, days, bandOn, onRetry }) {
  * in the card surface, the layering Recharts 2.x needs because an array dataKey is unstable there.
  */
 function CostTrendChart({ rows, bandOn }) {
-  const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
+  const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
+  const { getChartTicks, getChartSummary, getChartReadout, getRovingIndex } = window.UI;
+  const [activeIndex, setActiveIndex] = useStateC(null);
+
+  const points = rows.map(toTrendReadoutPoint);
+  const tickDates = getChartTicks(rows.length).map((i) => rows[i].date);
+  const activeRow = activeIndex === null ? null : rows[activeIndex];
+
+  // no active day → the first arrow press lands on the latest day, as the shared chart atom does
+  const onKeyDown = (event) => {
+    const next = getRovingIndex(event.key, activeIndex, rows.length, 'horizontal', 'last');
+    if (next === undefined) return;
+    event.preventDefault();
+    setActiveIndex(next);
+  };
+  const onChartMove = (chartState) => {
+    const index = chartState?.activeTooltipIndex;
+    setActiveIndex(Number.isInteger(index) ? index : null);
+  };
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
-        <XAxis
-          dataKey="date"
-          tick={anomalyAxisTickStyle}
-          axisLine={anomalyAxisLineStyle}
-          tickLine={false}
-        />
-        <YAxis
-          tickFormatter={formatUsdAxisC}
-          tick={anomalyAxisTickStyle}
-          axisLine={anomalyAxisLineStyle}
-          tickLine={false}
-          width={56}
-        />
-        <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
-        {bandOn && (
-          <Area
-            type="linear"
-            dataKey="upperBand"
-            stroke="none"
-            fill="rgb(var(--faint) / 0.18)"
-            isAnimationActive={false}
-            connectNulls={false}
-          />
-        )}
-        {bandOn && (
-          <Area
-            type="linear"
-            dataKey="lowerBand"
-            stroke="none"
-            fill="rgb(var(--elev))"
-            isAnimationActive={false}
-            connectNulls={false}
-          />
-        )}
-        {bandOn && (
-          <Line
-            type="linear"
-            dataKey="rollingMean"
-            stroke="rgb(var(--dim))"
-            strokeDasharray="4 4"
-            strokeWidth={1.5}
-            dot={false}
-            isAnimationActive={false}
-            connectNulls={false}
-          />
-        )}
-        <Line
-          type="linear"
-          dataKey="actual"
-          stroke="rgb(var(--accent))"
-          strokeWidth={2}
-          dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
-          activeDot={{ r: 4 }}
-          isAnimationActive={false}
-        />
-      </ComposedChart>
-    </ResponsiveContainer>
+    <figure style={{ margin: 0, minWidth: 0 }}>
+      <div
+        role="img"
+        tabIndex={0}
+        aria-label={getChartSummary('Daily cost', points, formatUsdC)}
+        style={{ width: '100%', height: 260, cursor: 'crosshair' }}
+        onKeyDown={onKeyDown}
+        onFocus={() => setActiveIndex((index) => (index === null ? rows.length - 1 : index))}
+        onBlur={() => setActiveIndex(null)}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={rows}
+            margin={{ top: 6, right: 8, left: 0, bottom: 0 }}
+            onMouseMove={onChartMove}
+            onMouseLeave={() => setActiveIndex(null)}>
+            <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
+            <XAxis
+              dataKey="date"
+              ticks={tickDates}
+              interval={0}
+              tick={anomalyAxisTickStyle}
+              axisLine={anomalyAxisLineStyle}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={getUsdAxisFormatter(getTrendMax(rows))}
+              tick={anomalyAxisTickStyle}
+              axisLine={anomalyAxisLineStyle}
+              tickLine={false}
+              width={56}
+            />
+            <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
+            {bandOn && (
+              <Area
+                type="linear"
+                dataKey="upperBand"
+                stroke="none"
+                fill="rgb(var(--faint) / 0.18)"
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            )}
+            {bandOn && (
+              <Area
+                type="linear"
+                dataKey="lowerBand"
+                stroke="none"
+                fill="rgb(var(--elev))"
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            )}
+            {bandOn && (
+              <Line
+                type="linear"
+                dataKey="rollingMean"
+                stroke="rgb(var(--dim))"
+                strokeDasharray="4 4"
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            )}
+            <Line
+              type="linear"
+              dataKey="completeCost"
+              stroke="rgb(var(--accent))"
+              strokeWidth={2}
+              dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Line
+              type="linear"
+              dataKey="partialCost"
+              stroke="rgb(var(--accent))"
+              strokeWidth={2}
+              strokeDasharray="4 3"
+              dot={renderPartialDot}
+              activeDot={false}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            {activeRow && (
+              <ReferenceLine x={activeRow.date} stroke="rgb(var(--dim))" strokeDasharray="2 2"/>
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <CostTrendLegendC bandOn={bandOn}/>
+      <div aria-live="polite" className="fs-meta tnum" style={{ minHeight: 18 }}>
+        {activeRow ? getChartReadout(points[activeIndex], formatUsdC) : ''}
+      </div>
+    </figure>
+  );
+}
+
+// Hollow ring on today's point only → the partial day never reads as a finished low day.
+function renderPartialDot({ cx, cy, index, payload }) {
+  return (
+    <circle
+      key={`partial-${index}`}
+      cx={cx}
+      cy={cy}
+      r={payload && payload.isPartial ? 3.5 : 0}
+      fill="rgb(var(--elev))"
+      stroke="rgb(var(--accent))"
+      strokeWidth={1.5}
+    />
+  );
+}
+
+function CostTrendLegendC({ bandOn }) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap mt-2 fs-meta text-dim">
+      <span className="flex items-center gap-1.5">
+        <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--accent))' }}/>
+        Daily cost
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--accent))' }}/>
+        Today so far
+      </span>
+      {bandOn && (
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" style={{ width: 14, borderTop: '1.5px dashed rgb(var(--dim))' }}/>
+          7-day average
+        </span>
+      )}
+      {bandOn && (
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgb(var(--faint) / 0.35)' }}/>
+          ±2σ normal range
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -753,7 +882,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        Daily cost {formatUsdC(row.actual)}
+        {row.isPartial ? 'Today so far' : 'Daily cost'} {formatUsdC(row.actual)}
       </div>
       {hasBand && (
         <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
@@ -1077,7 +1206,7 @@ function rollupModelRows(modelRows, topN) {
 }
 
 function ModelCostBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { LoadingPlaceholder, RegionUnavailable, SectionLabel } = window.UI;
   const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
   if (state.status === 'loading') {
@@ -1098,7 +1227,9 @@ function ModelCostBody({ state, days, onRetry }) {
 
   return (
     <>
+      <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
       <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
+      <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
       <div style={{ maxHeight: 360, overflowY: 'auto' }}>
         <table className="tbl cost-tbl">
           <thead>
@@ -1785,7 +1916,7 @@ function pointCostC(p) {
 }
 
 // Axis style hoist — JSX inline-object 할당 회피.
-const anomalyAxisTickStyle = { fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
+const anomalyAxisTickStyle = { fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.

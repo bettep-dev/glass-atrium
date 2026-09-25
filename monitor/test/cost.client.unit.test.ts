@@ -43,6 +43,7 @@ interface AlarmRow {
 interface WindowTotal {
   total: number | null;
   delta: number | null;
+  deltaSpan: number;
   dayCount: number;
   avgDaily: number | null;
   peakCost: number | null;
@@ -103,6 +104,13 @@ interface CostHelpers {
   fetch: (url: string, init?: unknown) => Promise<unknown>;
   getSessionModelLabel: (model: string | null | undefined) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
+  markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
+    actual: number;
+    isPartial: boolean;
+    completeCost: number | null;
+    partialCost: number | null;
+  }>;
+  getUsdAxisFormatter: (maxValue: number) => (value: number) => string;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -313,6 +321,17 @@ test("the trend delta states direction, which the total alone cannot", () => {
   assert.strictEqual(cost.computeWindowTotal(getTrendPoints([2, 2, 2])).delta, 0);
 });
 
+test("the trend compares the recent half of the complete days with the equal span before it", () => {
+  for (const firstDay of [0, 10, 1000]) {
+    const flat = cost.computeWindowTotal(getTrendPoints([firstDay, 1, 1, 1, 1, 9]));
+    assert.strictEqual(flat.delta, 0, `a first day of ${firstDay} outside both halves never moves it`);
+    assert.strictEqual(flat.deltaSpan, 2);
+  }
+  const doubled = cost.computeWindowTotal(getTrendPoints([7, 1, 1, 2, 2, 9]));
+  assert.strictEqual(doubled.delta, 100, "the recent two days spent twice the two before");
+  assert.strictEqual(cost.computeWindowTotal(getTrendPoints([5])).deltaSpan, 0);
+});
+
 test("the trend reads complete days only — today's partial point never moves it", () => {
   for (const today of [0, 0.1, 4, 100]) {
     assert.strictEqual(cost.computeWindowTotal(getTrendPoints([4, 4, 4, today])).delta, 0, `today=${today}`);
@@ -487,4 +506,34 @@ test("a stop reason's session share is taken over the whole session population, 
   assert.equal(cost.getStopReasonSessionShare(6, 10), 0.6);
   assert.equal(cost.getStopReasonSessionShare(10, 10), 1);
   assert.equal(cost.getStopReasonSessionShare(0, 0), null, "an empty population has no share");
+});
+
+test("only today's point is partial, and its dashed segment joins the last complete day", () => {
+  for (const count of [1, 2, 5]) {
+    const rows = [...cost.markPartialDay(Array.from({ length: count }, (_, i) => ({ actual: i + 1 })))];
+    const last = count - 1;
+    rows.forEach((row, i) => {
+      assert.strictEqual(row.isPartial, i === last, `row ${i} of ${count}`);
+      assert.strictEqual(row.completeCost, i === last ? null : row.actual, `complete line, row ${i} of ${count}`);
+      assert.strictEqual(row.partialCost, i >= last - 1 ? row.actual : null, `so-far segment, row ${i} of ${count}`);
+    });
+  }
+});
+
+test("every tick on one cost axis carries the same decimals and reads back as its own value", () => {
+  const axes = [
+    { max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] },
+    { max: 10, ticks: [0, 2.5, 5, 7.5, 10] },
+    { max: 600, ticks: [0, 150, 300, 450, 600] },
+    { max: 12000, ticks: [0, 3000, 6000, 9000, 12000] },
+  ];
+  for (const { max, ticks } of axes) {
+    const format = cost.getUsdAxisFormatter(max);
+    const labels = ticks.map((t) => format(t));
+    const decimals = new Set(labels.map((l) => (l.split(".")[1] ?? "").length));
+    assert.strictEqual(decimals.size, 1, `max ${max}: ${labels.join(" ")}`);
+    labels.forEach((label, i) => {
+      assert.strictEqual(Number(label.replace(/[$,]/g, "")), ticks[i], `max ${max}: ${label}`);
+    });
+  }
 });
