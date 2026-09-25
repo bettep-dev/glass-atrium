@@ -46,8 +46,9 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
-  # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header.
-  SCOPE_DECL="[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
+  # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header. The
+  # leading newline makes it open its own line, the only place the gate reads a declaration.
+  SCOPE_DECL=$'\n'"[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
 }
 
 # The ONE Agent-envelope builder. $1=subagent_type $2=prompt; $3=agent_id and $4=hook_event_name
@@ -463,7 +464,11 @@ mint_bad_sink() {
   )
   local row stype prompt seed
   for row in "${table[@]}"; do
-    IFS='|' read -r stype prompt seed <<<"${row}"
+    # Split by expansion, not `read`: the prompt column spans lines once it carries SCOPE_DECL.
+    stype="${row%%|*}"
+    prompt="${row#*|}"
+    prompt="${prompt%|*}"
+    seed="${row##*|}"
     echo "row=${row}"
     rm -f "${SINK}" "${DATA_DIR}/session-spawns/sess-test-001"
     if [[ "${seed}" == "seed-reviewer" ]]; then seed_reviewer; fi

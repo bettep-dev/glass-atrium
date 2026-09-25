@@ -20,9 +20,10 @@
 #      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
 #      clear THIS branch (but still face surface 2).
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no [SCOPE] declaration. Advisory-first deliberately: a prompt scan cannot tell a
-#      declaration from a mention of one, so promotion to exit 2 waits on accumulated false-positive
-#      data plus an explicit user decision. Emitted on the PASS paths only, after every verdict above.
+#      prompt carries no line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
+#      scan cannot tell a relayed line-opening declaration from the real one, so promotion to exit 2
+#      waits on accumulated false-positive data plus an explicit user decision. Emitted on the PASS
+#      paths only, after every verdict above.
 #   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
 #      DEEP_REVIEW_FILE_THRESHOLD or more paths, or any path under DEEP_REVIEW_SENSITIVE_PREFIXES,
 #      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
@@ -106,8 +107,8 @@ fi
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# The `[SCOPE]` declaration parser is shared with validate-scope-drift.sh and track-outcome.sh — one
-# parser, so surface 5 below cannot disagree with them about what a declared path is.
+# The `[SCOPE]` declaration selector and parser are shared with validate-scope-drift.sh and
+# track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
 
@@ -326,9 +327,14 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
 # [SCOPE] delegation-scope declaration — the orchestrator's record of the delegation's literal file
-# and deliverable scope. Anchored bracketed literal, PRESENCE only: whether the declaration matches
-# the user's instruction is honor-system, the same ceiling as its sibling tokens.
-has_scope_token() { has_token "${1}" '[SCOPE]'; }
+# and deliverable scope. PRESENCE only: whether the declaration matches the user's instruction is
+# honor-system, the same ceiling as its sibling tokens. Present = a line the shared scope_decl_select
+# accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
+has_scope_token() {
+  local decl
+  decl="$(printf '%s\n' "${1}" | scope_decl_select)"
+  [[ -n "${decl}" ]]
+}
 
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
@@ -358,7 +364,7 @@ scope_files_sensitive_prefix() {
 # guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
 warn_deep_review() {
   local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | grep -m1 -F '[SCOPE]' || true)"
+  scope_line="$(printf '%s\n' "${prompt_full}" | scope_decl_select)"
   [[ -n "${scope_line}" ]] || return 0
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
@@ -381,7 +387,7 @@ warn_scope_advisories() {
   # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if ! has_scope_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
+    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, the declaration must open its own line. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
     return 0
   fi
