@@ -377,7 +377,9 @@ for (const processTimezone of ["UTC", "America/Los_Angeles"]) {
     const previousTimezone = process.env.TZ;
     process.env.TZ = processTimezone;
     t.after(async () => {
-      process.env.TZ = previousTimezone;
+      // env assignment stringifies → an unset TZ must be deleted, not assigned undefined
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
       await getPrisma().$executeRaw`DELETE FROM core.cost_events WHERE session_id = ${LAST_EVENT_SESSION}`;
     });
     const instant = new Date(Math.floor(Date.now() / 1000) * 1000 - 3_600_000);
