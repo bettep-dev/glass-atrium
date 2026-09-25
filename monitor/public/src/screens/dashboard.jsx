@@ -95,7 +95,7 @@ function ScreenDashboard({ onNav, harness }) {
   const waveStates = [costState, agentsState, outcomesState, updateState];
   const alarms = buildAlarms({ harness, costState, installKind });
   const isAlarmPending = [harness, costState, updateState].some((source) => !source || source.status === 'loading');
-  const tiles = buildTiles({ harness, costState, agentsState, outcomesState });
+  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, alarms });
   const sharedFailure = getTileSharedFailure(tiles);
 
   return (
@@ -107,8 +107,6 @@ function ScreenDashboard({ onNav, harness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        /* 레인 행 — 톤은 왼쪽 테두리 + 선행 글리프가 운반한다(문구에 색을 싣지 않음). */
-        .dash-alarm { border-left-width: 3px; }
         /* one alarm row's height — the lane keeps it while loading and when empty, so the band never jumps */
         .dash-lane-slot { min-height: calc(var(--fs-body) * 1.5 + var(--fs-meta) * 1.4 + 1.5rem); }
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
@@ -173,7 +171,7 @@ function AlarmLane({ alarms, isPending = false, onNav, updateState, updateJobSta
 
 function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
   return (
-    <div role="list" className="flex flex-col gap-2">
+    <div role="list" className="flex flex-col">
       {alarms.map((alarm) => (
         <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
           {alarm.id === 'install' && (
@@ -190,25 +188,20 @@ function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob })
 }
 
 // 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
+// flat hairline row (CS-1 .alarm-row) — tone rides on the leading glyph only
 function AlarmRow({ alarm, onNav, children }) {
   const { Icon, TONE_ICON } = window.UI;
   return (
-    <div
-      role="listitem"
-      className="dash-alarm rounded-md p-3 flex items-center gap-3"
-      style={{
-        background: `rgb(var(--${alarm.tone}) / 0.08)`,
-        borderColor: `rgb(var(--${alarm.tone}) / 0.5)`,
-      }}>
-      <Icon name={TONE_ICON[alarm.tone]} size={16} className={`text-${alarm.tone}`}/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink truncate" title={alarm.title}>{alarm.title}</div>
-        {alarm.detail && (
-          <div className="fs-meta font-mono text-dim truncate" title={alarm.detail}>{alarm.detail}</div>
-        )}
+    <div role="listitem" className="alarm-row" data-tone={alarm.tone}>
+      <span className="alarm-row-glyph"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
+      <div className="min-w-0">
+        <div className="fs-body font-medium text-ink">{alarm.title}</div>
+        {alarm.detail && <div className="fs-meta text-dim">{alarm.detail}</div>}
       </div>
-      {children}
-      {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
+      <div className="flex items-center gap-2">
+        {children}
+        {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
+      </div>
     </div>
   );
 }
@@ -243,7 +236,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
           <StatusTileValue tile={tile}/>
           <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
           <div className="fs-meta text-dim dash-tile-hint">{tile.hint}</div>
-          <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start"/>
+          {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
         </>
       )}
     </div>
@@ -256,7 +249,7 @@ function StatusTileValue({ tile }) {
   return (
     <div className="flex items-center gap-2">
       <KpiValue>{tile.value}</KpiValue>
-      {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{TONE_WORD[tile.tone]}</Badge>}
+      {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
     </div>
   );
 }
@@ -463,7 +456,6 @@ const TONE_WORD = { crit: 'Down', warn: 'Attention', ok: 'Healthy', info: 'No da
 
 // 레인 union — harness · fleet · spend · install 만 합친다. Learning/Wiki/Task-results/Models
 // 경보는 각 화면의 nav 숫자가 운반하므로 여기서 합성하지 않는다(같은 사실 이중 신고 방지).
-// fleet 정지(suspension) 행은 소스가 아직 없다 — 없는 사실을 지어내지 않고 타일 힌트로만 고지한다.
 function buildAlarms({ harness, costState, installKind }) {
   const rows = [];
 
@@ -519,7 +511,9 @@ function resolveSpendPace(costState) {
 }
 
 // 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
-function buildTiles({ harness, costState, agentsState, outcomesState }) {
+// a destination an alarm row already drills loses its tile drill → one Tab stop per destination
+function buildTiles({ harness, costState, agentsState, outcomesState, alarms = [] }) {
+  const drilled = new Set(alarms.map((alarm) => alarm.target).filter(Boolean));
   const regionStates = { outcomes: outcomesState, agents: agentsState, cost: costState };
   const tiles = [
     buildHarnessTile(harness),
@@ -528,7 +522,11 @@ function buildTiles({ harness, costState, agentsState, outcomesState }) {
     buildSpendTile(costState),
   ];
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
-  return tiles.map((tile) => ({ ...tile, isBusy: tile.status !== 'loading' && Boolean(regionStates[tile.region]?.busy) }));
+  return tiles.map((tile) => ({
+    ...tile,
+    target: drilled.has(tile.target) ? null : tile.target,
+    isBusy: tile.status !== 'loading' && Boolean(regionStates[tile.region]?.busy),
+  }));
 }
 
 // 타일 1 — 하네스 파트. 분모는 셸이 실제로 관측한 파트 수: 미관측 파트를 정상으로 세지 않는다.
@@ -544,8 +542,8 @@ function buildHarnessTile(harness) {
     ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`
     : '';
   const downCount = harness.downNames.length;
-  // 다운 파트 이름은 경보 행이 이미 싣는다 — 타일은 가리키기만.
-  const down = downCount > 0 ? 'Down parts are named in the alarm above' : 'All polled parts healthy';
+  // down part names ride on the alarm row → the tile states the healthy share instead
+  const down = downCount > 0 ? `${harness.partsOk} of ${harness.partsChecked} healthy` : 'All polled parts healthy';
   return {
     ...base,
     status: 'ready',
@@ -571,7 +569,10 @@ function buildOutcomeTile(outcomesState) {
   const pending = buildPendingTile(base, outcomesState);
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
-  return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate) };
+  return {
+    ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
+    value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
+  };
 }
 
 // 판정 → 타일 상태. low-n 은 ready 가 아니다 — 표본 부족을 '정상'으로 읽히게 두지 않는다.
@@ -579,20 +580,20 @@ const OUTCOME_TILE_STATUS = {
   unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
 };
 
-// 판정이 헤드라인, 수는 detail 보조 — low-n 도 판정 문구를 가진다(표본 부족이 빈칸으로 읽히지 않게).
-const OUTCOME_VERDICT = {
-  'low-n': 'Too few to judge', ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line',
-};
+// numbers headline, the verdict rides in the badge (a neutral low-n tile renders no badge)
+const OUTCOME_VERDICT = { ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line' };
+const JUDGED_OUTCOME_STATUSES = new Set(['ok', 'warn', 'crit']);
 
 function describeOutcomeValue(rate) {
-  return OUTCOME_VERDICT[rate.status] ?? '—';
+  if (rate.status === 'low-n') return formatInt(rate.writerTotal);
+  if (!JUDGED_OUTCOME_STATUSES.has(rate.status)) return '—';
+  return window.UI.formatPctWithDenominator(rate.breakage, rate.writerTotal);
 }
 
 function describeOutcomeDetail(rate) {
-  if (rate.status === 'low-n' || rate.status === 'ok') return `${formatInt(rate.writerTotal)} outcomes`;
-  if (rate.status !== 'warn' && rate.status !== 'crit') return null;
-  const share = rate.status === 'crit' ? rate.breakage : rate.openCaveats;
-  return window.UI.formatPctWithDenominator(share, rate.writerTotal);
+  if (rate.status === 'low-n') return 'outcomes · too few to judge';
+  if (!JUDGED_OUTCOME_STATUSES.has(rate.status)) return null;
+  return `failed · ${window.UI.formatPctWithDenominator(rate.openCaveats, rate.writerTotal)} with caveats`;
 }
 
 function describeOutcomeHint(rate) {
@@ -604,8 +605,7 @@ function describeOutcomeHint(rate) {
   return 'Failed and caveat shares of writer-emitted outcomes.';
 }
 
-// 타일 3 — 함대. 정지(suspension) 사실은 Agents 계획(clauded-docs/39585 T1)이 아직 발행하지 않는다.
-// 없는 수를 지어내지 않고 unavailable 로 고지 — 그 필드가 붙으면 힌트만 교체된다.
+// 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
 function buildFleetTile(agentsState) {
   const base = {
     id: 'fleet', label: 'Fleet', window: '7 d', target: 'agents', targetLabel: 'Agents',
@@ -613,13 +613,22 @@ function buildFleetTile(agentsState) {
   };
   const pending = buildPendingTile(base, agentsState);
   if (pending) return pending;
-  const total = Number(agentsState.data?.meta?.total_agents);
-  if (!Number.isFinite(total)) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Fleet population unavailable.' };
+  const meta = agentsState.data?.meta;
+  const breaker = meta?.circuit_breaker;
+  const suspended = Number(breaker?.suspended_count);
+  const streak = Number(breaker?.streak_count);
+  if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) {
+    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Suspension state unavailable.' };
   }
-  const suffix = 'Suspension markers are not published yet — check Agents.';
-  return { ...base, status: total > 0 ? 'ready' : 'empty', tone: 'neutral', value: formatInt(total), hint: total > 0 ? `Agents with runs in 7 days · ${suffix}` : `No agent ran in the last 7 days · ${suffix}` };
+  const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
+  const runs = Number.isFinite(Number(meta.total_agents)) ? ` · ${formatInt(Number(meta.total_agents))} agents with runs` : '';
+  return {
+    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), detail: 'suspended',
+    hint: `${formatInt(streak)} on a failing streak${runs}`,
+  };
 }
+
+const FLEET_VERDICT = { ok: 'None suspended', warn: 'Failing streak', crit: 'Suspended' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
 function buildSpendTile(costState) {
@@ -628,15 +637,16 @@ function buildSpendTile(costState) {
   };
   const pending = buildPendingTile(base, costState);
   if (pending) return pending;
+
   const pace = resolveSpendPace(costState);
   const hint = describeSpendHint(pace);
   return { ...base, status: 'ready', tone: pace.status === 'hot' ? 'warn' : 'neutral', value: formatUsd(pace.today), hint };
 }
 
-// hot 이면 경보 행이 금액·기준을 싣는다 — 타일 힌트가 같은 수를 반복하지 않는다.
+// hot → the alarm row carries the amounts, so the tile states the multiple instead
 function describeSpendHint(pace) {
   if (pace.status === 'no-basis') return 'No spend in the last 7 days — no baseline to compare against.';
-  if (pace.status === 'hot') return 'Ahead of the 7-day average — see the alarm above.';
+  if (pace.status === 'hot') return `${(pace.today / pace.basis).toFixed(1)}× the 7-day daily average so far.`;
   return `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
 }
 

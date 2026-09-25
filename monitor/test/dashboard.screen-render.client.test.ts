@@ -128,26 +128,51 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
 })) as Record<string, unknown>;
 const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
 
-test("the Task results tile headlines a verdict for every judged status and keeps the count as secondary detail", () => {
-  const judged = [["low-n", "neutral"], ["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
+test("the Task results tile headlines the failed share and carries a distinct verdict badge per judged status", () => {
+  const judged = [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
   const verdicts = judged.map(([status, tone]) => {
     const tile = buildOutcomeTile({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
-    assert.doesNotMatch(tile.value, /\d|—/, `${status}: the headline is a verdict, not a number or a blank`);
-    assert.match(String(tile.detail), /40/, `${status}: the count stays visible beside the verdict`);
-    return tile.value;
+    assert.equal(tile.value, "7/40", `${status}: the failed share leads`);
+    assert.match(String(tile.detail), /9\/40/, `${status}: the caveat share stays visible`);
+    assert.doesNotMatch(String(tile.badge), /\d/, `${status}: the badge is a verdict`);
+    return tile.badge;
   });
   assert.equal(new Set(verdicts).size, judged.length, "each judged status reads as its own verdict");
+
+  const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
+  assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
+  assert.match(String(lowN.detail), /too few to judge/i);
 });
 
-test("a tile with detail renders the headline first and the detail outside the KPI-scale value", () => {
-  const tile = { ...READY_TILE, value: "Within lines", detail: "40 outcomes", hint: "Shares of writer-emitted outcomes." };
+test("a tile renders its number as the KPI value, its verdict as the badge, and the detail after both", () => {
+  const tile = { ...READY_TILE, tone: "crit", value: "17.5% (7/40)", badge: "Failures above line", detail: "failed · 9/40 with caveats" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
   assert.equal(value.length, 1);
-  assert.equal(collectText(value[0]), "Within lines");
+  assert.equal(collectText(value[0]), "17.5% (7/40)");
+  const badges = findNodes(tree, (n) => n.props.atom === "Badge");
+  assert.equal(badges.length, 1);
+  assert.equal(collectText(badges[0]), "Failures above line");
   const text = collectText(tree);
-  assert.ok(text.includes("40 outcomes"), "the detail renders");
-  assert.ok(text.indexOf("Within lines") < text.indexOf("40 outcomes"), "the verdict precedes the count");
+  assert.ok(text.indexOf("17.5%") < text.indexOf("with caveats"), "the number precedes the detail");
+});
+
+test("a tile's drill sits at the tile foot, and a tile whose destination the lane drills has none", () => {
+  const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
+  assert.equal(drills.length, 1);
+  assert.match(classOf(drills[0]), /\bmt-auto\b/, "the CTA is pinned to the foot so baselines line up");
+  const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
+});
+
+test("an alarm row is a flat hairline row whose tone rides on the leading glyph, with sans detail text", () => {
+  const tree = render("AlarmRow", { alarm: HARNESS_ALARM, onNav: () => {} });
+  const rows = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].props["data-tone"], "crit");
+  assert.equal(rows[0].props.style, undefined, "no tinted fill or stripe");
+  assert.equal(findNodes(tree, (n) => classOf(n).includes("alarm-row-glyph")).length, 1);
+  assert.equal(findNodes(tree, (n) => classOf(n).includes("font-mono")).length, 0, "part names are words, not mono");
 });
 
 const FAILED_TILE = {
