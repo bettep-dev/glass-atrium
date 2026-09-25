@@ -285,7 +285,8 @@ async function handleSessionDistribution(
           SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)::bigint
             AS total_tokens,
           COUNT(*)::bigint AS event_count,
-          MAX(event_date + event_time) AS last_event_at
+          -- zone-less day-bucket wall-clock → timestamptz, else the driver reads it as UTC
+          (MAX(event_date + event_time) AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text) AS last_event_at
         FROM core.cost_events e
         WHERE event_date >= ${windowLowerBound}
         GROUP BY session_id
