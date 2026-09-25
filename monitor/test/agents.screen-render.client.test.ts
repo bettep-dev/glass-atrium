@@ -616,7 +616,7 @@ test("a loading region shows a labelled status placeholder with its height reser
   const tree = await renderComponent("TopNFailingAgentsCard", { state: LOADING_STATE, days: 30, onRetry: () => undefined, failureByAgent: new Map() });
   const [placeholder] = findAtoms(tree, "LoadingPlaceholder");
   assert.ok(placeholder, "the pairs region renders the shared loading placeholder");
-  assert.match(String(placeholder.props.label), /\w/, "the placeholder names what is loading");
+  assert.equal(placeholder.props.label, "most-failing pairs", "the placeholder names what is loading");
   assert.ok(Number(placeholder.props.minHeight) > 0, "the settled height is reserved");
 });
 
