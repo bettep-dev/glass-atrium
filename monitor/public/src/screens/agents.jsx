@@ -72,8 +72,10 @@ const TOPN_MIN_SAMPLE = 3;
 const SPARK_WIDTH  = 60;
 const SPARK_HEIGHT = 20;
 
-// registry compatibility 필드 시각화 — chip 표시 trunc 길이.
-const COMPATIBILITY_TRUNCATE_LENGTH = 28;
+// Delete reads destructive without the filled weight of a primary action.
+// Every listed pair is failing, so its rate keeps the failure tint whatever its sample size.
+const PAIR_RATE_STYLE = { color: 'rgb(var(--crit))' };
+const DELETE_OUTLINE_STYLE = { color: 'rgb(var(--crit))', borderColor: 'rgb(var(--crit))' };
 
 // 드로어 Recent activity 섹션 — per-agent 최근 outcomes 표시 건수 (drawer 높이 대비 확정값).
 const RECENT_ACTIVITY_LIMIT = 8;
@@ -744,7 +746,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
         <thead>
           <tr>
             <th style={STICKY_TH_STYLE}><span className="sr-only">Expand row</span></th>
-            <th style={STICKY_TH_STYLE}>Agent</th>
+            <th style={STICKY_TH_STYLE}>Agent <span className="text-faint">· activity</span></th>
             <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
             <th className="num" style={STICKY_TH_STYLE} title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</th>
             <th className="num" style={STICKY_TH_STYLE} title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</th>
@@ -776,7 +778,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
   const [isExpanded, setExpanded] = useStateAg(false);
-  const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
+  const { MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
@@ -798,7 +800,6 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   const overageNote = overageCount > 0
     ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${Number(overage.max_crossed_pct) || 0}% of budget`
     : null;
-  const status = mapStatusToTone(agent.status);
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const trendColor = trendBarColor(agent.status, failShareTone);
@@ -835,7 +836,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       </td>
       <td>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <StatusDot status={status}/>
+          <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
           {isUnknownAgent
             ? <span className="font-medium">{nonActionableLabel}</span>
             : <AgentName name={agent.agent_name} className="font-medium"/>}
@@ -845,11 +846,10 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       <td className="num" title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
           <FailShareGlyph tone={failShareTone}/>
-          <span
-            className={successDenominator > 0 ? '' : 'text-faint'}
-            style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : undefined}>
+          <span className={successDenominator > 0 ? '' : 'text-faint'}>
             {formatPctWithDenominator(successNumerator, successDenominator)}
           </span>
+          {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
         {/* 비례 막대 — % 숫자 옆 즉시-스캔 shape. 측정 불가(분모 0)면 미렌더. */}
         {successDenominator > 0 && (
@@ -924,7 +924,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
               </span>
             </span>
             <span title={`needs_context ${needsContextCount} — excluded from success rate`}>
-              No completion record {needsContextCount > 0 ? formatIntAg(needsContextCount) : '—'}
+              Needs info {needsContextCount > 0 ? formatIntAg(needsContextCount) : '—'}
             </span>
           </div>
         </td>
@@ -941,15 +941,33 @@ function CompatibilityBadge({ compatibility }) {
   if (!compatibility) return null;
   const { Badge } = window.UI;
   const text = String(compatibility);
-  const truncated = text.length > COMPATIBILITY_TRUNCATE_LENGTH
-    ? `${text.slice(0, COMPATIBILITY_TRUNCATE_LENGTH)}…`
-    : text;
-  // 단일 Badge SoT 로 통합 — info tone 은 .pill shell(neutral 유지)이 아니라 선행 Icon 이 운반
-  //   (icon=true → TONE_ICON.info). title 이 full 텍스트를 보존(트렁케이트 라벨 보완).
+  // Short tag in the row; the full requirement lives in the tooltip, screen-reader text and drawer.
   return (
     <Badge role="status" tone="info" icon title={`Requires: ${text}`} className="agent-compatibility-badge">
-      {truncated}
+      Requires setup<span className="sr-only">: {text}</span>
     </Badge>
+  );
+}
+
+// Activity only — health lives in the success column, so the mark takes no ok/warn tone.
+const ACTIVITY_MARK = {
+  active:   { word: 'Active',   glyph: '●', tone: 'text-dim' },
+  idle:     { word: 'Idle',     glyph: '◐', tone: 'text-faint' },
+  inactive: { word: 'Inactive', glyph: '○', tone: 'text-faint' },
+  error:    { word: 'Error',    glyph: '✕', tone: 'text-crit' },
+};
+const UNKNOWN_ACTIVITY_MARK = { word: 'Unknown', glyph: '–', tone: 'text-faint' };
+
+function ActivityMark({ status, lastRunAt }) {
+  const mark = Object.hasOwn(ACTIVITY_MARK, status) ? ACTIVITY_MARK[status] : UNKNOWN_ACTIVITY_MARK;
+  const lastRun = lastRunAt ? ` · last run ${formatRelativeTimeAg(lastRunAt)}` : '';
+  const label = `Activity: ${mark.word}${lastRun}`;
+
+  return (
+    <span className={`inline-block leading-none ${mark.tone}`} title={label}>
+      <span aria-hidden="true">{mark.glyph}</span>
+      <span className="sr-only">{label}</span>
+    </span>
   );
 }
 
@@ -1028,7 +1046,7 @@ function AgentDetailDrawer({
   detailState, blockedState, recentState, trendByAgent, failureByAgent,
   days, onClose, onNav, onRetry, onDeleted,
 }) {
-  const { DetailSurface, StatusDot, AgentName } = window.UI;
+  const { DetailSurface, AgentName } = window.UI;
 
   // summary 행에서 선택 agent 도출 — 모든 섹션의 1차 소스. 미발견 시 id 만으로 헤더 표시.
   const agent = (readyData(summaryState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
@@ -1046,7 +1064,6 @@ function AgentDetailDrawer({
   const hasPrev = idx > 0;
   const hasNext = idx >= 0 && idx < sortedAgents.length - 1;
 
-  const statusTone = agent ? mapStatusToTone(agent.status) : 'info';
   const isDeletable = agent?.origin === 'user';
 
   // name-row health verdict — Overview hero 와 동일 entry/verdict SoT 공유 (양 badge site 일관).
@@ -1065,7 +1082,7 @@ function AgentDetailDrawer({
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
       <AgentName name={agentName}/>
-      <StatusDot status={statusTone}/>
+      <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
       <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}/>
     </span>
   );
@@ -1120,12 +1137,12 @@ function AgentDetailDrawer({
     </>
   ) : (
     <>
+      {isDeletable && (
+        <button className="btn sm" style={DELETE_OUTLINE_STYLE} onClick={startConfirm} aria-label={`Delete ${agentName}`}>Delete</button>
+      )}
       <div className="fs-meta text-dim font-mono mr-auto">
         {idx >= 0 ? `${idx + 1} of ${sortedAgents.length} agents` : 'not in the current list'}
       </div>
-      {isDeletable && (
-        <button className="btn danger sm" onClick={startConfirm} aria-label={`Delete ${agentName}`}>Delete</button>
-      )}
       <button className="btn sm primary" onClick={onClose} aria-label="Close">Close</button>
     </>
   );
@@ -1338,7 +1355,7 @@ function QualityHealthVerdictPill({ entry, hasSignal }) {
     <Badge role="status" tone={verdict.tone}>
       {verdict.label}
       {driver && <span className="opacity-80"> · {driver}</span>}
-      <span className="opacity-70"> · {indexPct}</span>
+      <span className="opacity-70"> · health {indexPct}</span>
     </Badge>
   );
 }
@@ -1419,7 +1436,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
 
       {/* status + last-run 1 메타 라인. 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
       <div className="fs-meta font-mono text-dim">
-        {agent.status || 'unknown'} · active <span title={agent.last_run_at || undefined}>{lastRun}</span>
+        {agent.status || 'unknown'} · last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
         {!agent.description && (
           <span className="text-faint" title="No role description in the agent .md frontmatter."> · — no role description</span>
         )}
@@ -1485,8 +1502,8 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
       <div className="space-y-2">
         <DrawerInfoRow
           label="reworks"
-          value={`${formatIntAg(entry.totalRevisions)} (avg ${entry.avgRevision.toFixed(2)})`}
-          title="revision_count weighted average — higher means more user-requested rework"
+          value={`${formatIntAg(entry.buckets.weightedRevisions)} in ${formatIntAg(entry.totalRevisions)} runs (avg ${entry.avgRevision.toFixed(2)})`}
+          title="sum of revision_count across runs (a 4+ bucket counts as 4) — higher means more user-requested rework"
         />
         <DrawerInfoRow
           label="review_flag rate"
@@ -1731,7 +1748,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
         <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
       </div>
       {/* duration triplet — 3-box grid 대신 1 mono 라인 (tnum 자릿수 정렬, #5c). */}
-      <div className="fs-meta font-mono text-dim tnum">
+      <div className="fs-meta font-mono text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
         avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
       </div>
     </div>
@@ -2021,6 +2038,7 @@ function SuccessRateLegend() {
       <span className="font-mono text-faint">Legend</span>
       <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
       <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
+      <span className="text-faint">n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</span>
     </div>
   );
 }
@@ -2086,13 +2104,9 @@ function SuccessRateCell({ agent, taskType, cell }) {
         <SuccessRateSparkline points={cell.points} colorVar={colorVar}/>
         <div className="flex items-center gap-1 fs-micro">
           <FailShareGlyph tone={failShareTone}/>
-          <span
-            style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : undefined}
-            className="font-semibold">
-            {(cell.pooledRate * 100).toFixed(0)}%
-          </span>
+          <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
           <span className="text-faint">·</span>
-          <span className="text-dim">n={cell.rateDenominator}</span>
+          <span className="text-dim">n={cell.rateDenominator}{isLowSample ? ' · low sample' : ''}</span>
         </div>
       </div>
     </td>
@@ -2242,10 +2256,11 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
                   {p.task_type}
                 </td>
                 <td
-                  className={`text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap${isLowSample ? ' text-faint' : ''}`}
-                  style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : { color: 'rgb(var(--crit))' }}
+                  className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
+                  style={PAIR_RATE_STYLE}
                   title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
                   {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
+                  {isLowSample && <span className="fs-meta font-normal text-dim ml-1">low sample</span>}
                   {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
                   <window.UI.Bar
                     value={p.pooledRate}

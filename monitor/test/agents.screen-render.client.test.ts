@@ -690,12 +690,12 @@ test("a P95 numeral is coloured only past the crit cut, while the glyph keeps ev
   }
 });
 
-test("a failing pair below LOW_N_MIN stays neutral, as the matrix legend says", async () => {
+test("a failing pair keeps its failure tint at any sample, and a small sample says so in words instead of grey italics", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
-    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, crit: false },
-    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, crit: true },
+    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, isLowSample: true },
+    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, isLowSample: false },
   ];
   for (const row of rows) {
     const pair = { agent: "glass-atrium-dev-react", task_type: "feature", ...row, pooledRate: row.successCount / row.rateDenominator, totalCount: row.rateDenominator };
@@ -703,9 +703,84 @@ test("a failing pair below LOW_N_MIN stays neutral, as the matrix legend says", 
       React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
     );
     const rateCell = findCellByTitle(tree, /^pooled passed/);
-    const color = String((rateCell?.props.style as Record<string, unknown> | undefined)?.color ?? "");
-    assert.equal(color.includes("--crit"), row.crit, `${row.name}: rate text tint`);
+    const style = (rateCell?.props.style as Record<string, unknown> | undefined) ?? {};
+    assert.ok(String(style.color ?? "").includes("--crit"), `${row.name}: rate text keeps the failure tint`);
+    assert.notEqual(style.fontStyle, "italic", `${row.name}: no unexplained italics`);
+    assert.equal(/low sample/.test(collectText(rateCell)), row.isLowSample, `${row.name}: low-sample tag`);
     const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tint`);
+    assert.equal(bar?.props.tone, row.isLowSample ? "neutral" : "crit", `${row.name}: bar tint`);
   }
+});
+
+test("the ledger's activity mark names activity under a labelled column, never a health word that contradicts the success rate", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const table = renderScreen(
+    React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
+  );
+  const headers = findNodes(table, (n) => n.type === "th").map((n) => collectText(n));
+  assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
+
+  const rows = [
+    { status: "active", word: "Active" },
+    { status: "inactive", word: "Inactive" },
+    { status: "idle", word: "Idle" },
+  ];
+  for (const row of rows) {
+    const tree = renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null);
+    assert.equal(findNodes(tree, (n) => n.props?.atom === "StatusDot").length, 0, `${row.status}: no OK/Warning health dot`);
+    const mark = findNodes(tree, (n) => /^Activity: /.test(String(n.props?.title ?? "")))[0];
+    assert.match(String(mark?.props.title), new RegExp(`^Activity: ${row.word}`), `${row.status}: mark names activity`);
+    assert.doesNotMatch(String(mark?.props.className), /text-(ok|warn)/, `${row.status}: no health tone`);
+  }
+});
+
+test("the drawer's rework count sums revisions across runs rather than repeating the run count", async () => {
+  const revisionRows = [
+    { agent: "glass-atrium-dev-react", revision_bucket: "0", occurrence_count: 40 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "1", occurrence_count: 5 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "2", occurrence_count: 1 },
+  ];
+  const mod = await loadAgentsScreen({ formatInt: (n: number) => String(n) });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.AgentQualitySignalsSection as Component, {
+      drawerAgent: "glass-atrium-dev-react",
+      revisionState: { status: "ready", data: { rows: revisionRows }, error: null },
+      reviewByAgentState: { status: "ready", data: { rows: [] }, error: null },
+      onRetry: () => undefined,
+    }),
+  );
+  const text = collectText(tree);
+  assert.match(text, /reworks\s*7 in 46 runs/, text);
+});
+
+test("the health verdict pill labels its index instead of trailing a bare number", async () => {
+  const tree = await renderComponent("QualityHealthVerdictPill", {
+    entry: { healthIndex: 0.9, dominantDriver: { kind: "flag", value: 0.22 } },
+    hasSignal: true,
+  });
+  // The Badge atom stays unexpanded here, so its label is read from the element's own children.
+  const getLabel = (v: unknown): string => {
+    if (typeof v === "string" || typeof v === "number") return String(v);
+    if (Array.isArray(v)) return v.map(getLabel).join("");
+    if (!v || typeof v !== "object") return "";
+    const node = v as { props?: { children?: unknown }; children?: unknown };
+    return getLabel(node.props?.children ?? node.children);
+  };
+  assert.match(getLabel(tree), /health 90/);
+});
+
+test("the matrix legend states which outcomes its n leaves out", async () => {
+  const tree = await renderComponent("SuccessRateLegend", {});
+  assert.match(collectText(tree), /reconstructed/);
+});
+
+test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
+  const mod = await loadAgentsScreen();
+  const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
+  const tree = renderToneRow(mod, { compatibility: requirement }, null);
+  const badge = findNodes(tree, (n) => n.props?.atom === "Badge")[0];
+  assert.equal(badge?.props.title, `Requires: ${requirement}`);
+  assert.doesNotMatch(collectText(badge), /…/);
 });
