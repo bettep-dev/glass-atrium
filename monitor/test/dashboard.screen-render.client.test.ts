@@ -201,19 +201,21 @@ test("a tile whose outage the page banner already carries offers no Retry of its
   assert.equal(cards[0].props.onRetry, undefined);
 });
 
-test("an unavailable harness tile offers a Retry that re-polls the harness, even beside a page banner", () => {
+test("an unavailable harness tile offers a Retry that re-polls the harness, unless the page banner lists it", () => {
   const harnessTile = {
     id: "harness", label: "Harness health", status: "unavailable", tone: "neutral", value: "—",
     hint: "Harness readings unavailable.", region: "harness", canRetry: true, target: "architecture", targetLabel: "System map",
   };
-  for (const isRetryShared of [false, true]) {
-    const retried: string[] = [];
-    const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region), isRetryShared });
-    const buttons = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retry"));
-    assert.equal(buttons.length, 1, `isRetryShared=${isRetryShared}`);
-    (buttons[0].props.onClick as () => void)();
-    assert.deepEqual(retried, ["harness"]);
-  }
+  const retried: string[] = [];
+  const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
+  const buttons = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retry"));
+  assert.equal(buttons.length, 1);
+  (buttons[0].props.onClick as () => void)();
+  assert.deepEqual(retried, ["harness"]);
+
+  // one Retry per outage → a tile whose source the banner already lists defers to the banner's Retry
+  const shared = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
+  assert.equal(findNodes(shared, (n) => n.type === "button" && collectText(n).includes("Retry")).length, 0);
   const readyTree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(readyTree, (n) => n.type === "button").length, 0, "a read tile carries no Retry");
 });
