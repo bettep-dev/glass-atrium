@@ -709,12 +709,14 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
-// Live value = measured at the consumption point. Matching the saved target → a dim '= saved'
-// (the value sits in the tooltip, never repeated); differing → the value + one warn badge.
+/**
+ * Live value = measured at the consumption point.
+ * Matching the saved target → 'Matches saved' (tooltip 'Live value: …') · differing → the value + one warn badge · absent → nothing.
+ */
 function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
-		const isSteady = !drift && value != null;
+	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
 	const fileGroups = groupFilesByModelMC(fileRows);
 
@@ -801,7 +803,7 @@ function DomainRowMC({
 	knownModels,
 	value,
 	defaultValue,
-		error,
+	error,
 	sharedMode,
 	onChange,
 }) {
@@ -848,9 +850,9 @@ function DomainRowMC({
 					drift={d.drift}
 					files={d.files}
 					driftTitle="Live value differs from the saved target — press Save again"
-					/>
-					<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
-				</td>
+				/>
+				<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
+			</td>
 		</tr>
 	);
 }
@@ -1046,8 +1048,10 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// 예산 1행 — $ 입력(2-decimal 문자열) + validate-on-blur + field-adjacent role=alert (T-MDL-4)
-// + 실측/반영 시점 + ghost default/reset (T-MDL-6).
+/**
+ * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
+ * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
+ */
 function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
@@ -1096,9 +1100,9 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
-					/>
-					<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
-				</td>
+				/>
+				<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
+			</td>
 		</tr>
 	);
 }

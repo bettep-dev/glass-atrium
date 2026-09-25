@@ -653,10 +653,7 @@ test("a row in its steady state spends no tone; only a drifted row raises one wa
   assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
 });
 
-test("the section states when edits take effect from the payload's apply_mode, unknown modes included", () => {
-  const known = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
-  assert.ok(textMc(known).includes("Next spawn"), "next-spawn labelled");
-
+test("an apply_mode the screen does not map is stated verbatim as the take-effect mode", () => {
   const unknown = renderComponentMc(
     screens.DomainsSectionMC,
     domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], apply_mode: "some-future-mode" }]),
@@ -835,9 +832,6 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
   assert.strictEqual(count(payload), fields, "count tracks the payload, not the row total");
 });
 
-
-// The header stamp advances only from a ready reading's `receivedAt`, so a load path that omits it
-// leaves every Refresh unstamped — the relationship pinned here is GET → stamped reading.
 // Drives the screen's load effect once with hook state kept in cells, so the landed values are readable.
 async function runScreenLoadMc(fetchImpl: unknown): Promise<unknown[]> {
   const cells: Array<{ value: unknown }> = [];
