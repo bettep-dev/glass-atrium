@@ -26,6 +26,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
 
+import { buildUiSandbox } from "./client-sandbox.js";
+
 import {
   FREE_TEXT_MODEL_PATTERN,
   BUDGET_VALUE_PATTERN,
@@ -471,6 +473,9 @@ function findAllMc(nodes: McNode[], match: (node: McTag) => boolean): McTag[] {
 const tagsMc = (nodes: McNode[], tag: string): McTag[] => findAllMc(nodes, (n) => n.tag === tag);
 const textsMc = (nodes: McTag[]): string[] => nodes.map((n) => textMc(n.children));
 
+// Pure region/error helpers come from the real ui.jsx; its components stay stubbed so their props are readable.
+const realUiMc = await buildUiSandbox<Record<string, unknown>>();
+
 async function loadMcScreens(
   overrides: { react?: Record<string, unknown>; fetch?: unknown } = {},
 ): Promise<Record<string, unknown>> {
@@ -498,6 +503,18 @@ async function loadMcScreens(
     DetailSurface: (p: Record<string, unknown>) =>
       hMc("div", { role: "dialog" }, p.title, p.children, p.footer),
     titleOf: (v: unknown) => v,
+    FreshnessStamp: () => null,
+    RefreshButton: (p: Record<string, unknown>) => hMc("button", { ...p, "data-atom": "RefreshButton" }, "Refresh"),
+    RegionUnavailable: (p: Record<string, unknown>) =>
+      hMc("div", { ...p, "data-atom": "RegionUnavailable" }, String(p.source)),
+    SkeletonRows: (p: Record<string, unknown>) =>
+      Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
+    INITIAL_REGION_STATE: realUiMc.INITIAL_REGION_STATE,
+    putRegionRequest: realUiMc.putRegionRequest,
+    putRegionData: realUiMc.putRegionData,
+    putRegionFailure: realUiMc.putRegionFailure,
+    getErrorCopy: realUiMc.getErrorCopy,
+    getFetchError: realUiMc.getFetchError,
   };
   const ctx: Record<string, unknown> = {
     window: { UI: uiStub, addEventListener: () => {}, removeEventListener: () => {} },
@@ -717,9 +734,15 @@ test("section headers survive every state, and a non-ready body never reads as z
     );
     assert.ok(label.length > 0, `${name}: section header present when ready`);
 
+    const ready = renderComponentMc(screens[name], { ...props, state: "ready" });
     const loading = renderComponentMc(screens[name], { ...props, state: "loading" });
-    assert.strictEqual(textMc(loading), label, `${name}: header text unchanged while loading`);
-    assert.strictEqual(tagsMc(loading, "table").length, 0, "no table while loading");
+    const columnsOf = (tree: McNode[]) => textsMc(tagsMc(tagsMc(tree, "thead"), "th"));
+    assert.ok(textMc(loading).startsWith(label), `${name}: section header unchanged while loading`);
+    assert.deepStrictEqual(
+      columnsOf(loading),
+      columnsOf(ready),
+      `${name}: the skeleton sits under the real column headers, so nothing shifts when rows land`,
+    );
     assert.ok(
       findAllMc(loading, (n) => n.props["aria-busy"] === "true").length === 1,
       `${name}: loading is announced as busy, not as empty`,
@@ -738,20 +761,13 @@ test("the header sync token answers once per state and leaves the as-of stamp to
   });
   assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
   assert.ok(!textMc(ready).includes("as of"), "the header freshness atom owns the stamp, not the token");
-  const readyGlyphs = tagsMc(ready, "i");
-  assert.strictEqual(readyGlyphs.length, 1, "the steady state carries its own glyph, so it reads first");
-  assert.strictEqual(tonedMc(ready, "ok").length, 0, "the steady glyph spends no ok tone");
+  assert.strictEqual(tagsMc(ready, "i").length, 0, "the freshness stamp owns the one tick, so the steady state spends no glyph");
 
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "drift",
   });
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
-  assert.notStrictEqual(
-    tagsMc(drifted, "i")[0].props["data-icon"],
-    readyGlyphs[0].props["data-icon"],
-    "drift and in-sync never share a glyph",
-  );
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
   for (const [state, expected] of [
@@ -820,39 +836,121 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
 
 // The header stamp advances only from a ready reading's `receivedAt`, so a load path that omits it
 // leaves every Refresh unstamped — the relationship pinned here is GET → stamped reading.
-test("a completed GET stamps the reading with its receive time", async () => {
-  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
-  const states: Record<string, unknown>[] = [];
+// Drives the screen's load effect once with hook state kept in cells, so the landed values are readable.
+async function runScreenLoadMc(fetchImpl: unknown): Promise<unknown[]> {
+  const cells: Array<{ value: unknown }> = [];
   const live = await loadMcScreens({
-    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => fixture }),
+    fetch: fetchImpl,
     react: {
       useEffect: (fn: () => unknown) => {
         fn();
       },
-      useState: (init: unknown) => [
-        typeof init === "function" ? (init as () => unknown)() : init,
-        (next: unknown) => {
-          if (next !== null && typeof next === "object" && "status" in (next as object)) {
-            states.push(next as Record<string, unknown>);
-          }
-        },
-      ],
+      useState: (init: unknown) => {
+        const cell = { value: typeof init === "function" ? (init as () => unknown)() : init };
+        cells.push(cell);
+        return [cell.value, (next: unknown) => {
+          cell.value = typeof next === "function" ? (next as (prev: unknown) => unknown)(cell.value) : next;
+        }];
+      },
     },
   });
-
-  const before = Date.now();
   renderComponentMc(live.ScreenModelConfig, {});
   await new Promise((resolve) => setTimeout(resolve, 0));
+  return cells.map((cell) => cell.value);
+}
 
-  const ready = states.filter((s) => s.status === "ready");
-  assert.strictEqual(ready.length, 1, "the resolved GET produced one ready reading");
-  const receivedAt = ready[0]?.receivedAt;
-  assert.ok(
-    typeof receivedAt === "number" && receivedAt >= before,
-    "the ready reading carries the time it was received",
+const isRegionMc = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && "pendingRequest" in v;
+
+test("a completed GET lands the config and stamps the header with its receive time", async () => {
+  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
+  const before = Date.now();
+  const values = await runScreenLoadMc(() =>
+    Promise.resolve({ ok: true, status: 200, json: async () => fixture }),
   );
-  const getLastReadAt = live.getLastReadAtMC as (prevAt: unknown, state: unknown) => unknown;
-  assert.strictEqual(getLastReadAt(null, ready[0]), receivedAt, "that receive time is what the header stamp reads");
+
+  const config = values.find(isRegionMc);
+  assert.strictEqual(config?.status, "ready", "the read landed");
+  assert.strictEqual(config?.busy, false, "nothing is in flight once it landed");
+  assert.deepStrictEqual(sameRealm(config?.data), fixture, "the region holds the read");
+  const stamps = values.filter((v) => typeof v === "number" && v >= before);
+  assert.strictEqual(stamps.length, 1, "the header stamp carries the time the read was received");
+});
+
+test("a failed GET keeps the region out of ready and never advances the stamp", async () => {
+  const before = Date.now();
+  const values = await runScreenLoadMc(() =>
+    Promise.resolve({ ok: false, status: 500, statusText: "Internal Server Error", text: async () => "boom" }),
+  );
+
+  const config = values.find(isRegionMc);
+  assert.strictEqual(config?.status, "error", "no data was ever read");
+  assert.ok(String(config?.error).startsWith("HTTP 500"), "the failure keeps its cause for Details");
+  assert.strictEqual(values.filter((v) => typeof v === "number" && v >= before).length, 0, "no stamp from a failure");
+});
+
+test("a refresh keeps every unsaved edit and takes every untouched field from the new read", () => {
+  type FormMc = { models: Record<string, string>; budgets: Record<string, string> };
+  const getRefreshedForm = sandboxFnMc<(form: FormMc | null, prevData: unknown, data: unknown) => FormMc>(
+    "getRefreshedFormMC",
+  );
+  const readOf = (dev: string, dp: string, worker: string) => ({
+    domains: [
+      { domain: "model.dev", desired: dev },
+      { domain: "model.dp", desired: dp },
+    ],
+    budgets: [{ domain: "budget.worker_max_usd", desired: worker }],
+  });
+  const prevRead = readOf("claude-opus-4-8", "claude-sonnet-4-6", "10.00");
+  const nextRead = readOf("claude-opus-5", "claude-haiku-4-5", "12.00");
+  const edited: FormMc = {
+    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-sonnet-4-6" },
+    budgets: { "budget.worker_max_usd": "3.00" },
+  };
+
+  assert.deepStrictEqual(sameRealm(getRefreshedForm(edited, prevRead, nextRead)), {
+    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-haiku-4-5" },
+    budgets: { "budget.worker_max_usd": "3.00" },
+  });
+  assert.deepStrictEqual(
+    sameRealm(getRefreshedForm(null, null, nextRead)),
+    { models: { "model.dev": "claude-opus-5", "model.dp": "claude-haiku-4-5" }, budgets: { "budget.worker_max_usd": "12.00" } },
+    "the first read has no buffer to keep",
+  );
+});
+
+test("the header Refresh is the one retry: busy while a read is in flight, and a failed load adds no second Retry", async () => {
+  const inFlight = findAllMc(renderComponentMc(screens.ScreenModelConfig, {}), (n) => n.props["data-atom"] === "RefreshButton");
+  assert.strictEqual(inFlight[0]?.props.isBusy, true, "first read in flight → the atom is busy");
+  assert.strictEqual(inFlight[0]?.props.hasRead, false, "nothing read yet → the atom says Loading");
+
+  const failed = { ...(realUiMc.INITIAL_REGION_STATE as object), status: "error", busy: false, error: "HTTP 500 Internal Server Error — boom" };
+  const failedScreens = await loadMcScreens({
+    react: {
+      useState: (init: unknown) => [init === realUiMc.INITIAL_REGION_STATE ? failed : init, () => {}],
+    },
+  });
+  const tree = renderComponentMc(failedScreens.ScreenModelConfig, {});
+  const refresh = findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton");
+  assert.strictEqual(refresh[0]?.props.isBusy, false, "a settled failure leaves Refresh pressable");
+  const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+  const cards = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
+  assert.strictEqual(cards.length, 1, "the failed load is announced once, as a plain-sentence card");
+  assert.strictEqual(cards[0].props.onRetry, undefined, "the card carries no Retry of its own");
+  assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 0, "no Retry beside Refresh");
+});
+
+test("a failed save names the next step and keeps the server's raw answer behind Details", () => {
+  const raw = "HTTP 422 Unprocessable Entity — budget.worker_max_usd must be between 0.05 and 50.00";
+  const tree = renderComponentMc(screens.ErrorBannerMC, { title: "Couldn't save changes", detail: raw, onRetry: () => {} });
+
+  const details = tagsMc(tree, "details");
+  assert.strictEqual(details.length, 1, "one Details toggle");
+  assert.ok(textMc(details).includes(raw), "the raw answer stays reachable");
+  const visible = textMc(tree).replace(textMc(details), "");
+  assert.ok(!visible.includes("HTTP 422"), "no raw status in the visible copy");
+  assert.ok(visible.includes("Open Details"), "a refused request points at Details");
+  assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 1, "one Retry for the save");
 });
 
 test("the drift banner triggers on any drifted row, not on the file state alone", () => {

@@ -173,17 +173,28 @@ const BUDGET_META_MC = {
 	},
 };
 
+// Settled ledger row height at 1440 — skeleton rows hold the table's height until the read lands.
+const LEDGER_ROW_HEIGHT_MC = 60;
+// PUT validation answers name the rejected field — kept longer than a GET error body for Details.
+const SAVE_ERROR_BODY_MAX_MC = 300;
+
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 function ScreenModelConfig() {
-	const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const {
+		PageHeader,
+		TypeScaleStyle,
+		FreshnessStamp,
+		RefreshButton,
+		RegionUnavailable,
+		INITIAL_REGION_STATE,
+		putRegionRequest,
+		putRegionData,
+		putRegionFailure,
+	} = window.UI;
 
-	const [configState, setConfigState] = useStateMC({
-		status: "loading",
-		data: null,
-		error: null,
-	});
+	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
 	// form = 편집 버퍼 { models: {domain→value}, budgets: {budgetKey→value} } — GET 의 desired 미러.
 	const [form, setForm] = useStateMC(null);
 	const [saving, setSaving] = useStateMC(false);
@@ -196,6 +207,8 @@ function ScreenModelConfig() {
 	const [discardConfirm, setDiscardConfirm] = useStateMC(false);
 
 	const abortRef = useRefMC(null);
+	// committed read the form buffer was edited against → a landing refresh can tell edits from stale values
+	const configDataRef = useRefMC(null);
 	const toastTimerRef = useRefMC(null);
 
 	const showToast = useCallbackMC((tone, message) => {
@@ -212,26 +225,24 @@ function ScreenModelConfig() {
 		abortRef.current?.abort();
 		abortRef.current = ctrl;
 
-		setConfigState({ status: "loading", data: null, error: null });
+		setConfigState((s) => putRegionRequest(s, "config", ctrl));
 		setSaveError(null);
 		fetchJsonMC("/api/model-config", ctrl.signal)
 			.then((data) => {
-				setConfigState(readyStateMC(data));
-				setForm(buildFormMC(data));
+				if (ctrl.signal.aborted) return;
+				const prevData = configDataRef.current;
+				setConfigState((s) => putRegionData(s, ctrl, data));
+				setForm((f) => getRefreshedFormMC(f, prevData, data));
+				setAsOfAt(Date.now());
 			})
-			.catch((err) => {
-				if (err && err.name === "AbortError") return;
-				setConfigState({
-					status: "error",
-					data: null,
-					error: err && err.message ? err.message : String(err),
-				});
-			});
+			.catch((err) => setConfigState((s) => putRegionFailure(s, ctrl, err)));
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	useEffectMC(() => setAsOfAt((prevAt) => getLastReadAtMC(prevAt, configState)), [configState]);
+	useEffectMC(() => {
+		configDataRef.current = configState.data;
+	}, [configState.data]);
 
 	const baseline = useMemoMC(
 		() =>
@@ -292,11 +303,14 @@ function ScreenModelConfig() {
 		setSaving(true);
 		setSaveError(null);
 		setSurfaceResults(null);
+		// the PUT answer supersedes an in-flight read → that read must not land over it
+		abortRef.current?.abort();
 		try {
 			// PUT 응답 = GET shape + per-surface 결과 → 응답으로 화면/버퍼 재초기화 (재fetch 불요).
 			const data = await putJsonMC("/api/model-config", body);
-			setConfigState(readyStateMC(data));
+			setConfigState((s) => putRegionData(putRegionRequest(s, "save", body), body, data));
 			setForm(buildFormMC(data));
+			setAsOfAt(Date.now());
 			const problems = extractSurfaceResultsMC(data);
 			setSurfaceResults(problems);
 			// Only a clean save ends in a toast — a failed or skipped surface gets the card instead.
@@ -332,7 +346,7 @@ function ScreenModelConfig() {
 	// the form buffer, so the sticky Save bar is absent exactly then.
 	const resyncPayload = ready ? resyncPayloadMC(data, payload) : null;
 	const hasAlarm = Boolean(
-		configState.status === "error" || saveError || showDrift || surfaceResults,
+		configState.error || saveError || showDrift || surfaceResults,
 	);
 	// state prop per section rather than a lifted header — both keep the headers in every state
 	// → the smaller diff wins (plan Open Question: implementer's call).
@@ -343,11 +357,8 @@ function ScreenModelConfig() {
 			: "unavailable";
 
 	return (
-		<div className="flex flex-col">
+		<div className="flex flex-col min-w-0">
 			<TypeScaleStyle />
-			<style>
-				{"@keyframes skelPulseMC { 0%,100%{opacity:.7} 50%{opacity:.35} }"}
-			</style>
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Models & budgets"
@@ -358,14 +369,12 @@ function ScreenModelConfig() {
 								sync={headerSyncMC(data)}
 							/>
 							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
-							<button
-								className="btn ghost sm"
-								onClick={triggerRefresh}
-								aria-label="Reload model config"
-							>
-								<Icon name="refresh" size={14} />
-								Refresh
-							</button>
+							<RefreshButton
+								isBusy={configState.busy}
+								hasRead={asOfAt !== null}
+								onRefresh={triggerRefresh}
+								label="Reload model config"
+							/>
 						</>
 					}
 				/>
@@ -376,12 +385,11 @@ function ScreenModelConfig() {
 					className="mb-4 flex flex-col gap-3"
 					role="region"
 					aria-label="Alerts">
-					{configState.status === "error" && (
-						<ErrorBannerMC
-							title="Couldn't load model config"
-							detail={configState.error}
-							onRetry={triggerRefresh}
-						/>
+					{/* header Refresh is this outage's one retry → the card carries none */}
+					{configState.error && (
+						<div role="alert">
+							<RegionUnavailable source="model config" error={configState.error} />
+						</div>
 					)}
 					{saveError && (
 						<ErrorBannerMC
@@ -506,8 +514,8 @@ function SyncTokenMC({ state, sync }) {
 		tone: "neutral",
 	};
 
-	// steady glyph (neutral) → the first question reads first · empty roster → no glyph to claim
-	const glyph = sync === "ok" ? "check" : sync === "empty" ? null : "warn";
+	// the freshness stamp owns the one tick → only a state needing action spends a glyph
+	const glyph = sync === "ok" || sync === "empty" ? null : "warn";
 
 	return (
 		<span
@@ -525,13 +533,8 @@ function SyncTokenMC({ state, sync }) {
 	);
 }
 
-// a refresh resets the config to loading → keep the last successful read so the stamp survives it
-function getLastReadAtMC(prevAt, state) {
-	return state.status === "ready" && state.receivedAt ? state.receivedAt : prevAt;
-}
-
 function getFreshnessInputMC(asOfAt, state) {
-	return { at: asOfAt, loading: state.status === "loading", failed: state.status === "error" };
+	return { at: asOfAt, regions: [state] };
 }
 
 // 구획 헤더 — thin rule + .section-label (카드 박스 아님, T-MDL-2). title 좌측 라벨 + 우측 슬롯.
@@ -578,13 +581,14 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
+	const { SkeletonRows } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
-			{state !== "ready" ? (
-				<SectionBodyStateMC state={state} rows={DOMAIN_ORDER_MC.length} />
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
 					<LedgerColsMC />
@@ -596,8 +600,14 @@ function DomainsSectionMC({
 							<th>Takes effect</th>
 						</tr>
 					</thead>
-					<tbody>
-						{rows.length === 0 ? (
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={DOMAIN_ORDER_MC.length}
+								columns={DOMAIN_TABLE_COLSPAN_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
 							<EmptyRowMC
 								colSpan={DOMAIN_TABLE_COLSPAN_MC}
 								message="No model domains reported."
@@ -886,13 +896,14 @@ function BudgetsSectionMC({
 	errors,
 	onBudgetChange,
 }) {
+	const { SkeletonRows } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
 
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Per-call budget caps" />
-			{state !== "ready" ? (
-				<SectionBodyStateMC state={state} rows={2} />
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
 			) : (
 				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
 					<LedgerColsMC />
@@ -904,8 +915,14 @@ function BudgetsSectionMC({
 							<th>Takes effect</th>
 						</tr>
 					</thead>
-					<tbody>
-						{rows.length === 0 ? (
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={2}
+								columns={BUDGET_TABLE_COLSPAN_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
 							<EmptyRowMC
 								colSpan={BUDGET_TABLE_COLSPAN_MC}
 								message="No budget caps reported."
@@ -1154,7 +1171,8 @@ function DiscardConfirmMC({ onConfirm, onCancel }) {
 
 // 공통 chrome
 function ErrorBannerMC({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
+	const { Icon, getErrorCopy } = window.UI;
+	const copy = getErrorCopy(detail, "");
 	return (
 		<div
 			role="alert"
@@ -1167,13 +1185,12 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 			<Icon name="warn" size={16} className="text-crit mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="fs-body font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
+				<div className="fs-meta text-dim mt-1">{copy.next}</div>
+				{copy.detail && (
+					<details className="fs-meta text-faint mt-1">
+						<summary className="cursor-pointer">Details</summary>
+						<code className="block mt-1 font-mono break-all">{copy.detail}</code>
+					</details>
 				)}
 			</div>
 			<button className="btn sm" onClick={onRetry} aria-label="Retry">
@@ -1183,28 +1200,8 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-function SectionBodyStateMC({ state, rows }) {
-	if (state === "loading") {
-		return (
-			<div aria-busy="true" aria-label="Loading rows">
-				{Array.from({ length: rows }, (_unused, i) => (
-					<div
-						key={i}
-						style={{
-							height: 34,
-							marginBottom: 6,
-							borderRadius: 6,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-							animation: "skelPulseMC 1.4s ease-in-out infinite",
-						}}
-					/>
-				))}
-			</div>
-		);
-	}
-
-	// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
+// Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
+function SectionUnavailableMC() {
 	return (
 		<div className="fs-meta text-faint py-2">
 			Not available — the saved config could not be loaded.
@@ -1299,8 +1296,19 @@ function sortBudgetsMC(budgets) {
 	return budgets.slice().sort((a, b) => orderOf(a) - orderOf(b));
 }
 
-function readyStateMC(data) {
-	return { status: "ready", data, error: null, receivedAt: Date.now() };
+// Refresh landing — unsaved edits survive; every untouched field takes the new read.
+function getRefreshedFormMC(form, prevData, data) {
+	const next = buildFormMC(data);
+	if (!form || !prevData) return next;
+
+	const saved = buildFormMC(prevData);
+	for (const group of ["models", "budgets"]) {
+		for (const key of Object.keys(next[group])) {
+			const edit = form[group][key];
+			if (edit !== undefined && edit !== saved[group][key]) next[group][key] = edit;
+		}
+	}
+	return next;
 }
 
 // Banner remedy payload — re-sends the saved target of every drifted row, so the PUT reaches the
@@ -1363,17 +1371,7 @@ async function fetchJsonMC(url, signal) {
 		signal,
 		headers: { Accept: "application/json" },
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* body parse 실패 무시 */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 120) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res);
 	return res.json();
 }
 
@@ -1383,17 +1381,7 @@ async function putJsonMC(url, payload) {
 		headers: { "content-type": "application/json", Accept: "application/json" },
 		body: JSON.stringify(payload),
 	});
-	if (!res.ok) {
-		let body = "";
-		try {
-			body = await res.text();
-		} catch (_e) {
-			/* body parse 실패 무시 */
-		}
-		throw new Error(
-			`HTTP ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 300) : ""}`,
-		);
-	}
+	if (!res.ok) throw await window.UI.getFetchError(res, SAVE_ERROR_BODY_MAX_MC);
 	return res.json();
 }
 
