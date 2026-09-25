@@ -1014,32 +1014,40 @@ function formatKstFull(iso) {
 /**
  * Per-region fetch state, stale-while-revalidate. `status` says what is showable
  * ('loading' | 'ready' | 'error'), `busy` says a request is in flight, `error` may sit beside held data.
- * `pendingKey` names the request whose answer may land; answers for any other key are dropped.
+ * `pendingRequest` is the one request whose answer may land, matched by identity — a same-key
+ * re-request (Refresh, poll, StrictMode re-run) aborting its older twin must not drop the live answer.
  */
 const INITIAL_REGION_STATE = Object.freeze({
-  status: 'loading', data: null, error: null, busy: true, key: null, pendingKey: null,
+  status: 'loading', data: null, error: null, busy: true, key: null, pendingKey: null, pendingRequest: null,
 });
 
-/** Starts a request for `key`; held data stays on screen until the answer settles. */
-function putRegionRequest(state, key) {
+/**
+ * Starts a request for `key`; held data stays on screen until the answer settles.
+ * @param request - fresh object per request (e.g. its AbortController), passed back to settle it
+ * @throws TypeError when `request` carries no object identity — a reused key cannot tell twins apart
+ */
+function putRegionRequest(state, key, request) {
+  const hasIdentity = request !== null && (typeof request === 'object' || typeof request === 'function');
+  if (!hasIdentity) throw new TypeError('putRegionRequest: request must be a fresh object per request (e.g. an AbortController)');
+
   const hasData = state.data != null;
-  return { ...state, status: hasData ? 'ready' : 'loading', busy: true, pendingKey: key };
+  return { ...state, status: hasData ? 'ready' : 'loading', busy: true, pendingKey: key, pendingRequest: request };
 }
 
 /**
- * Lands the answer for `key` unless a newer request superseded it.
+ * Lands the answer for `request` unless a newer request superseded it.
  * @param merge - optional (prevData, nextData) → data, e.g. load-more append or keeping a dirty edit buffer
  */
-function putRegionData(state, key, data, merge) {
-  if (!Object.is(key, state.pendingKey)) return state;
+function putRegionData(state, request, data, merge) {
+  if (!Object.is(request, state.pendingRequest)) return state;
   const nextData = merge ? merge(state.data, data) : data;
-  return { status: 'ready', data: nextData, error: null, busy: false, key, pendingKey: null };
+  return { status: 'ready', data: nextData, error: null, busy: false, key: state.pendingKey, pendingKey: null, pendingRequest: null };
 }
 
-/** Records a failure for `key` without discarding held data; an abort only ends the busy state. */
-function putRegionFailure(state, key, err) {
-  if (!Object.is(key, state.pendingKey)) return state;
-  const settled = { ...state, busy: false, pendingKey: null };
+/** Records a failure for `request` without discarding held data; an abort only ends the busy state. */
+function putRegionFailure(state, request, err) {
+  if (!Object.is(request, state.pendingRequest)) return state;
+  const settled = { ...state, busy: false, pendingKey: null, pendingRequest: null };
   if (err && err.name === 'AbortError') return settled;
 
   const error = err && err.message ? err.message : String(err);
