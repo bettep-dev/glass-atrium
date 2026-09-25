@@ -170,28 +170,42 @@ function getTileSharedFailure(tiles) {
 // polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
 // 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
 function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
-  const { LoadingPlaceholder } = window.UI;
   const hasAlarms = alarms.length > 0;
+  const [reserved, setReserved] = useStateD(0);
+  const slots = getLaneSlots(alarms.length, readiness, reserved);
+  if (slots.reserved !== reserved) setReserved(slots.reserved);
   return (
     <section className="dash-lane" aria-live="polite" aria-label="Alarms">
       {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
         updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-      {/* a source still loading may add a row → its reserved slot keeps the band from jumping when it does */}
-      {hasAlarms && readiness.status === 'loading' && <LoadingPlaceholder label="other alarms" className="dash-lane-slot"/>}
-      {!hasAlarms && readiness.status === 'loading' && <LoadingPlaceholder label="alarms" className="dash-lane-slot"/>}
-      {!hasAlarms && readiness.status === 'unknown' && (
-        <p className="dash-lane-slot fs-meta text-dim flex items-center">
-          Alarms unknown — couldn't read {readiness.unread.join(' · ')}.
-        </p>
-      )}
-      {!hasAlarms && readiness.status === 'read' && (
-        <p className="dash-lane-slot fs-meta text-dim flex items-center">No alarms need you right now.</p>
-      )}
-      {hasAlarms && readiness.status === 'unknown' && (
-        <p className="fs-meta text-dim">Couldn't read {readiness.unread.join(' · ')} — more alarms may be hidden.</p>
-      )}
+      {slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>}
     </section>
   );
+}
+
+/**
+ * The lane's height plan: its rows plus at most one trailing line.
+ * A loading source reserves one slot below the rows; once it settles the lane holds that slot with a
+ * status line until a row takes it → a settle moves the band neither when it adds a row nor when it adds none.
+ * @param reserved - most slots the lane reserved while a source loaded (0 before any)
+ * @returns reserved - the next reservation · trailer - 'loading' | 'unknown' | 'clear', or null for rows only
+ */
+function getLaneSlots(rowCount, readiness, reserved) {
+  if (readiness.status === 'loading') return { reserved: Math.max(reserved, rowCount + 1), trailer: 'loading' };
+  if (readiness.status === 'unknown') return { reserved, trailer: 'unknown' };
+  return { reserved, trailer: rowCount === 0 || rowCount < reserved ? 'clear' : null };
+}
+
+// one slot-high line under the rows — its wording depends on whether rows sit above it
+function LaneTrailer({ trailer, hasAlarms, unread }) {
+  const { LoadingPlaceholder } = window.UI;
+  if (trailer === 'loading') return <LoadingPlaceholder label={hasAlarms ? 'other alarms' : 'alarms'} className="dash-lane-slot"/>;
+  const sources = unread.join(' · ');
+  const text = {
+    unknown: hasAlarms ? `Couldn't read ${sources} — more alarms may be hidden.` : `Alarms unknown — couldn't read ${sources}.`,
+    clear: hasAlarms ? 'No other alarms.' : 'No alarms need you right now.',
+  }[trailer];
+  return <p className="dash-lane-slot fs-meta text-dim flex items-center">{text}</p>;
 }
 
 const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });

@@ -298,6 +298,41 @@ test("the alarm lane reserves its slot with a status line while alarm sources ar
   assert.equal(slotsFor({ status: "read", unread: [] }), 0, "a settled lane holds only its rows");
 });
 
+// The lane's height is its rows plus its one trailing line → a source settling must not change that sum either way.
+describe("a source settling never changes the lane's height, whether or not it adds a row", () => {
+  type LaneSlots = { reserved: number; trailer: string | null };
+  const getLaneSlots = mod.getLaneSlots as (rowCount: number, readiness: unknown, reserved: number) => LaneSlots;
+  const heightOf = (rowCount: number, slots: LaneSlots) => rowCount + (slots.trailer === null ? 0 : 1);
+  const LOADING = { status: "loading", unread: [] };
+  const rows = [
+    { name: "an early alarm, the loading source adds none", before: 1, after: 1, settled: { status: "read", unread: [] } },
+    { name: "an early alarm, the loading source adds one", before: 1, after: 2, settled: { status: "read", unread: [] } },
+    { name: "an early alarm, the loading source fails", before: 1, after: 1, settled: { status: "unknown", unread: ["today's spend"] } },
+    { name: "no alarm yet, the loading source adds none", before: 0, after: 0, settled: { status: "read", unread: [] } },
+    { name: "no alarm yet, the loading source adds one", before: 0, after: 1, settled: { status: "read", unread: [] } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const loading = getLaneSlots(row.before, LOADING, 0);
+      const settled = getLaneSlots(row.after, row.settled, loading.reserved);
+      assert.equal(heightOf(row.after, settled), heightOf(row.before, loading));
+    });
+  }
+
+  test("the held line clears once a later row takes its slot", () => {
+    const loading = getLaneSlots(1, LOADING, 0);
+    const held = getLaneSlots(1, { status: "read", unread: [] }, loading.reserved);
+    const filled = getLaneSlots(2, { status: "read", unread: [] }, held.reserved);
+    assert.equal(heightOf(2, filled), heightOf(1, held), "a late alarm fills the held slot instead of pushing the band");
+  });
+});
+
+test("an alarm lane holding a settled source's slot says no other alarm is waiting", () => {
+  const text = collectText(render("LaneTrailer", { trailer: "clear", hasAlarms: true, unread: [] }));
+  assert.match(text, /No other alarms/);
+  assert.doesNotMatch(text, /No alarms need you/, "the all-clear stays for an empty lane");
+});
+
 describe("the empty alarm lane shows the all-clear only when every alarm source was read", () => {
   const READY = { status: "ready", data: {} };
   const rows = [
