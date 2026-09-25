@@ -4,7 +4,7 @@
 //
 // Runner: npx tsx --test test/dashboard.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -87,6 +87,7 @@ test("every drill is an anchor to its screen's hash; a plain click routes in-app
     const anchors = findNodes(tree, (n) => n.type === "a");
     assert.equal(anchors.length, 1);
     assert.equal(anchors[0].props.href, `#${target}`);
+    assert.match(classOf(anchors[0]), /\bbtn\b/, "the drill takes the shared .btn 32px control floor");
     assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "no drill stays a button");
 
     const onClick = anchors[0].props.onClick as (e: unknown) => void;
@@ -128,24 +129,142 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
 })) as Record<string, unknown>;
 const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
 
-test("the Task results tile headlines a verdict for every judged status and keeps the count as secondary detail", () => {
-  const judged = [["low-n", "neutral"], ["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
+test("the Task results tile headlines the failed share and carries a distinct verdict badge per judged status", () => {
+  const judged = [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
   const verdicts = judged.map(([status, tone]) => {
     const tile = buildOutcomeTile({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
-    assert.doesNotMatch(tile.value, /\d|—/, `${status}: the headline is a verdict, not a number or a blank`);
-    assert.match(String(tile.detail), /40/, `${status}: the count stays visible beside the verdict`);
-    return tile.value;
+    assert.equal(tile.value, "7/40", `${status}: the failed share leads`);
+    assert.match(String(tile.detail), /9\/40/, `${status}: the caveat share stays visible`);
+    assert.doesNotMatch(String(tile.badge), /\d/, `${status}: the badge is a verdict`);
+    return tile.badge;
   });
   assert.equal(new Set(verdicts).size, judged.length, "each judged status reads as its own verdict");
+
+  const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
+  assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
+  assert.match(String(lowN.detail), /too few to judge/i);
 });
 
-test("a tile with detail renders the headline first and the detail outside the KPI-scale value", () => {
-  const tile = { ...READY_TILE, value: "Within lines", detail: "40 outcomes", hint: "Shares of writer-emitted outcomes." };
+test("a tile renders its number as the KPI value, its verdict as the badge, and the detail after both", () => {
+  const tile = { ...READY_TILE, tone: "crit", value: "17.5% (7/40)", badge: "Failures above line", detail: "failed · 9/40 with caveats" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
   assert.equal(value.length, 1);
-  assert.equal(collectText(value[0]), "Within lines");
+  assert.equal(collectText(value[0]), "17.5% (7/40)");
+  const badges = findNodes(tree, (n) => n.props.atom === "Badge");
+  assert.equal(badges.length, 1);
+  assert.equal(collectText(badges[0]), "Failures above line");
   const text = collectText(tree);
-  assert.ok(text.includes("40 outcomes"), "the detail renders");
-  assert.ok(text.indexOf("Within lines") < text.indexOf("40 outcomes"), "the verdict precedes the count");
+  assert.ok(text.indexOf("17.5%") < text.indexOf("with caveats"), "the number precedes the detail");
+});
+
+test("a tile's drill sits at the tile foot, and a tile whose destination the lane drills has none", () => {
+  const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
+  assert.equal(drills.length, 1);
+  assert.match(classOf(drills[0]), /\bmt-auto\b/, "the CTA is pinned to the foot so baselines line up");
+  const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
+});
+
+test("an alarm row is a flat hairline row whose tone rides on the leading glyph, with sans detail text", () => {
+  const tree = render("AlarmRow", { alarm: HARNESS_ALARM, onNav: () => {} });
+  const rows = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].props["data-tone"], "crit");
+  assert.equal(rows[0].props.style, undefined, "no tinted fill or stripe");
+  assert.equal(findNodes(tree, (n) => classOf(n).includes("alarm-row-glyph")).length, 1);
+  assert.equal(findNodes(tree, (n) => classOf(n).includes("font-mono")).length, 0, "part names are words, not mono");
+});
+
+const FAILED_TILE = {
+  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—", hint: "",
+  region: "agents", source: "the fleet summary", error: "HTTP 500 Internal Server Error",
+  target: "agents", targetLabel: "Agents",
+};
+
+test("a failed tile shows the shared unavailable card, whose Retry reloads only that tile's region", () => {
+  const retried: string[] = [];
+  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.source, "the fleet summary");
+  assert.equal(cards[0].props.error, "HTTP 500 Internal Server Error");
+  (cards[0].props.onRetry as () => void)();
+  assert.deepEqual(retried, ["agents"]);
+  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
+});
+
+test("a tile whose outage the page banner already carries offers no Retry of its own", () => {
+  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.onRetry, undefined);
+});
+
+test("a loading tile says so in a status placeholder and reserves the detail slot the loaded tile fills", () => {
+  const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
+  for (const tile of [loadingTile, READY_TILE]) {
+    const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+    const detailSlots = findNodes(tree, (n) => classOf(n).includes("dash-tile-detail"));
+    assert.equal(detailSlots.length, 1, `${tile.status}: the detail line is reserved whether or not it has text`);
+  }
+  const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(loading, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(loading, (n) => n.props.atom === "KpiValue").length, 0, "no value renders before one loads");
+});
+
+test("a tile refreshing over held data keeps its value and marks itself busy", () => {
+  for (const isBusy of [true, false]) {
+    const tree = render("StatusTile", { tile: { ...READY_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
+    const card = findNodes(tree, (n) => classOf(n).includes("card"))[0];
+    assert.equal(card.props["aria-busy"], isBusy ? "true" : undefined);
+    assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "40");
+  }
+});
+
+test("the status band reflows to two columns until it has room for four", () => {
+  const tree = render("StatusBand", { tiles: [READY_TILE], onNav: () => {}, onRetry: () => {} });
+  const band = findNodes(tree, (n) => classOf(n).includes("grid"))[0];
+  const classes = classOf(band).split(/\s+/);
+  assert.ok(classes.includes("grid-cols-2"), classOf(band));
+  assert.ok(classes.includes("xl:grid-cols-4"), classOf(band));
+  assert.ok(!classes.includes("grid-cols-4"), "four columns never apply at the narrowest widths");
+});
+
+test("the alarm lane reserves its slot with a status line while alarm sources are still loading", () => {
+  const pending = render("AlarmLane", { alarms: [], readiness: { status: "loading", unread: [] }, onNav: () => {} });
+  const region = findNodes(pending, (n) => n.props["aria-live"] === "polite")[0];
+  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+
+  const settled = render("AlarmLane", { alarms: [], readiness: { status: "read", unread: [] }, onNav: () => {} });
+  assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
+  assert.match(collectText(settled), /No alarms/, "a settled empty lane keeps its line instead of collapsing");
+
+  const alarmed = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
+  assert.equal(findNodes(alarmed, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "a landed alarm replaces the placeholder");
+});
+
+describe("the empty alarm lane shows the all-clear only when every alarm source was read", () => {
+  const READY = { status: "ready", data: {} };
+  const rows = [
+    { name: "every source read → all-clear", sources: { harness: READY, costState: READY, updateState: READY }, status: "read", unread: [] },
+    { name: "a source still loading → loading, even beside a failed one", sources: { harness: { status: "loading" }, costState: { status: "error" }, updateState: READY }, status: "loading", unread: [] },
+    { name: "harness fold unavailable → unknown", sources: { harness: { status: "unavailable" }, costState: READY, updateState: READY }, status: "unknown", unread: ["harness health"] },
+    { name: "spend read failed → unknown", sources: { harness: READY, costState: { status: "error" }, updateState: READY }, status: "unknown", unread: ["today's spend"] },
+    { name: "install read failed → unknown", sources: { harness: READY, costState: READY, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const readiness = (mod.getAlarmReadiness as (s: unknown) => { status: string; unread: string[] })(row.sources);
+      assert.equal(readiness.status, row.status);
+      assert.deepEqual([...readiness.unread], row.unread);
+
+      const text = collectText(render("AlarmLane", { alarms: [], readiness, onNav: () => {} }));
+      assert.equal(/No alarms need you/.test(text), row.status === "read", `all-clear shown only when read: ${text}`);
+      if (row.status === "unknown") {
+        assert.match(text, /Alarms unknown/);
+        for (const source of row.unread) assert.ok(text.includes(source), `names the unread source ${source}`);
+      }
+    });
+  }
 });
