@@ -21,6 +21,7 @@ interface PanelState {
   status: string;
   data: unknown;
   error: string | null;
+  busy?: boolean;
 }
 
 interface HotVerdict {
@@ -58,7 +59,12 @@ interface CostHelpers {
   window: {
     getTokenRate?: (model: string) => Record<string, number> | null;
     UI: {
-      getFreshnessState: (input: { at: string | null; loading: boolean; failed: boolean; now: number }) => string;
+      INITIAL_REGION_STATE: PanelState;
+      getFreshnessState: (input: {
+        at: string | null;
+        regions: ReadonlyArray<PanelState>;
+        now: number;
+      }) => string;
     };
   };
   computeAlarmRows: (input: {
@@ -84,7 +90,17 @@ interface CostHelpers {
   getFreshnessInputC: (
     asOfAt: string | null,
     panelStates: ReadonlyArray<PanelState>,
-  ) => { at: string | null; loading: boolean; failed: boolean };
+  ) => { at: string | null; regions: ReadonlyArray<PanelState> };
+  runFetchC: (
+    url: string,
+    request: AbortController,
+    setter: (update: (prev: PanelState) => PanelState) => void,
+    onReceived?: () => void,
+  ) => Promise<void>;
+  getSharedFailureC: (
+    namedStates: ReadonlyArray<readonly [string, PanelState]>,
+  ) => { sources: string[]; error: string } | null;
+  fetch: (url: string, init?: unknown) => Promise<unknown>;
   getSessionModelLabel: (model: string | null | undefined) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
 }
@@ -102,9 +118,9 @@ function getKeys(rows: ReadonlyArray<AlarmRow>): string[] {
   return [...rows].map((r) => r.key);
 }
 
-const ready = (data: unknown): PanelState => ({ status: "ready", data, error: null });
-const loading: PanelState = { status: "loading", data: null, error: null };
-const failed: PanelState = { status: "error", data: null, error: "boom" };
+const ready = (data: unknown): PanelState => ({ status: "ready", data, error: null, busy: false });
+const loading: PanelState = { status: "loading", data: null, error: null, busy: true };
+const failed: PanelState = { status: "error", data: null, error: "HTTP 500 Internal Server Error", busy: false };
 
 // Fetched at UTC noon in a UTC day bucket → 12 hours of the day remain.
 const NOON_UTC = "2026-01-10T12:00:00.000Z";
@@ -308,23 +324,59 @@ test("the trend reads complete days only — today's partial point never moves i
   );
 });
 
-test("the stamp keeps the last successful read: a wave in flight is busy, a failed panel marks it stale", () => {
+test("the stamp reads the region states: busy is never fresh, and one failed region of several is partial", () => {
   const ui = cost.window.UI;
   const now = Date.parse(NOON_UTC);
   const readAt = new Date(now - 60_000).toISOString();
   const getState = (at: string | null, panels: PanelState[]) =>
     ui.getFreshnessState({ ...cost.getFreshnessInputC(at, panels), now });
+  const refreshing: PanelState = { ...ready({}), busy: true };
+  const heldFailure: PanelState = { ...ready({}), error: "HTTP 500 Internal Server Error" };
 
-  const settled = [ready({}), ready({})];
-  assert.deepEqual({ ...cost.getFreshnessInputC(readAt, settled) }, { at: readAt, loading: false, failed: false });
-  assert.strictEqual(getState(readAt, settled), "fresh");
+  const rows: ReadonlyArray<{ name: string; at: string | null; panels: PanelState[]; expected: string }> = [
+    { name: "every region settled", at: readAt, panels: [ready({}), ready({})], expected: "fresh" },
+    { name: "a refresh over held data", at: readAt, panels: [refreshing, ready({})], expected: "refreshing" },
+    { name: "the first wave", at: null, panels: [loading, loading], expected: "loading" },
+    { name: "one region failed with nothing held", at: readAt, panels: [ready({}), failed], expected: "partial" },
+    { name: "one region failed over held data", at: readAt, panels: [ready({}), heldFailure], expected: "partial" },
+    { name: "every region failed after a read", at: readAt, panels: [failed, failed], expected: "stale" },
+    { name: "every region failed before any read", at: null, panels: [failed, failed], expected: "not-read" },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(getState(row.at, row.panels), row.expected, row.name);
+  }
+});
 
-  assert.strictEqual(cost.getFreshnessInputC(readAt, [ready({}), loading]).loading, true, "any panel in flight = busy");
-  assert.strictEqual(getState(readAt, [loading, loading]), "refreshing", "a refresh in flight keeps the last stamp, never fresh");
-  assert.strictEqual(getState(null, [loading, loading]), "loading");
+test("a refresh keeps the last payload on screen while in flight and after the request fails", async () => {
+  const held = { points: [{ day: "d0", cost_usd: 4 }] };
+  let state: PanelState = { ...cost.window.UI.INITIAL_REGION_STATE, ...ready(held) };
+  const setter = (update: (prev: PanelState) => PanelState) => { state = update(state); };
+  cost.fetch = async () => ({
+    ok: false,
+    status: 500,
+    statusText: "Internal Server Error",
+    text: async () => "<html><b>relation core.outcomes does not exist</b></html>",
+  });
 
-  assert.strictEqual(getState(readAt, [ready({}), failed]), "stale", "a failed panel never reads as fresh");
-  assert.strictEqual(getState(null, [failed, failed]), "not-read", "every fetch failed and nothing was ever read");
+  const pending = cost.runFetchC("/api/cost/kpi", new AbortController(), setter);
+  assert.strictEqual(state.busy, true, "the request is in flight");
+  assert.strictEqual(state.data, held, "held data stays while the request is in flight");
+
+  await pending;
+  assert.strictEqual(state.data, held, "a failed refresh never wipes the held payload");
+  assert.strictEqual(state.status, "ready");
+  assert.strictEqual(state.busy, false);
+  assert.match(String(state.error), /^HTTP 500\b/, "the failure is recorded for the stamp and the error copy");
+  assert.doesNotMatch(String(state.error), /</, "response markup never reaches the operator");
+});
+
+test("an outage shared by two payloads is one banner naming both, and a lone failure stays on its region", () => {
+  const named = (kpi: PanelState, trend: PanelState) =>
+    [["cost KPIs", kpi], ["cost trend", trend], ["cost by model", ready({})]] as const;
+
+  const shared = cost.getSharedFailureC(named(failed, { ...ready({}), error: failed.error }));
+  assert.deepEqual(shared && [...shared.sources], ["cost KPIs", "cost trend"], "a failure over held data still joins the outage");
+  assert.strictEqual(cost.getSharedFailureC(named(failed, ready({}))), null, "one failed payload is no page-level outage");
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {

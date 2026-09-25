@@ -57,7 +57,9 @@ const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
 function ScreenCost({ onNav }) {
-  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+  } = window.UI;
 
   const [days, setDays] = useStateC(30);
   const [refreshTick, setRefreshTick] = useStateC(0);
@@ -65,13 +67,13 @@ function ScreenCost({ onNav }) {
   const [asOfAt, setAsOfAt] = useStateC(null);
 
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
-  const [kpiState,      setKpiState]      = useStateC({ status: 'loading', data: null, error: null }); // KPI band (고정 윈도우 — days 무관)
-  const [tokenState,    setTokenState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [modelState,    setModelState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [cacheState,    setCacheState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [sessionState,  setSessionState]  = useStateC({ status: 'loading', data: null, error: null });
-  const [errorState,    setErrorState]    = useStateC({ status: 'loading', data: null, error: null });
-  const [turnState,     setTurnState]     = useStateC({ status: 'loading', data: null, error: null }); // 턴 통계 (stop_reason 분포 + turns 집계)
+  const [kpiState,      setKpiState]      = useStateC(INITIAL_REGION_STATE); // KPI band (고정 윈도우 — days 무관)
+  const [tokenState,    setTokenState]    = useStateC(INITIAL_REGION_STATE);
+  const [modelState,    setModelState]    = useStateC(INITIAL_REGION_STATE);
+  const [cacheState,    setCacheState]    = useStateC(INITIAL_REGION_STATE);
+  const [sessionState,  setSessionState]  = useStateC(INITIAL_REGION_STATE);
+  const [errorState,    setErrorState]    = useStateC(INITIAL_REGION_STATE);
+  const [turnState,     setTurnState]     = useStateC(INITIAL_REGION_STATE); // 턴 통계 (stop_reason 분포 + turns 집계)
 
   // wave 당 단일 AbortController — period 변경 / refresh 시 in-flight 요청 취소.
   const abortRef = useRefC(null);
@@ -91,25 +93,17 @@ function ScreenCost({ onNav }) {
     abortRef.current?.abort();
     abortRef.current = ctrl;
 
-    setKpiState({ status: 'loading', data: null, error: null });
-    setTokenState({ status: 'loading', data: null, error: null });
-    setModelState({ status: 'loading', data: null, error: null });
-    setCacheState({ status: 'loading', data: null, error: null });
-    setSessionState({ status: 'loading', data: null, error: null });
-    setErrorState({ status: 'loading', data: null, error: null });
-    setTurnState({ status: 'loading', data: null, error: null });
-
     const markReceived = () => setAsOfAt(new Date().toISOString());
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
     // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
-    runFetchC('/api/cost/kpi',                               ctrl.signal, setKpiState, markReceived);
-    runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl.signal, setTokenState, markReceived);
-    runFetchC(`/api/cost/by-model?days=${days}`,             ctrl.signal, setModelState, markReceived);
-    runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl.signal, setCacheState, markReceived);
-    runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl.signal, setSessionState, markReceived);
-    runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl.signal, setErrorState, markReceived);
-    runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl.signal, setTurnState, markReceived);
+    runFetchC('/api/cost/kpi',                               ctrl, setKpiState, markReceived);
+    runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl, setTokenState, markReceived);
+    runFetchC(`/api/cost/by-model?days=${days}`,             ctrl, setModelState, markReceived);
+    runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl, setCacheState, markReceived);
+    runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl, setSessionState, markReceived);
+    runFetchC(`/api/cost/parse-errors?days=${days}`,         ctrl, setErrorState, markReceived);
+    runFetchC(`/api/cost/turn-stats?days=${days}`,           ctrl, setTurnState, markReceived);
 
     return () => ctrl.abort();
   }, [days, refreshTick]);
@@ -118,7 +112,19 @@ function ScreenCost({ onNav }) {
   // Every payload counts: a gate reading a subset lets the toggle fire while a panel is still in flight.
   const panelStates = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState];
   const freshnessInput = getFreshnessInputC(asOfAt, panelStates);
-  const anyLoading = freshnessInput.loading;
+  const isBusy = getRegionSummary(panelStates).isBusy;
+
+  const sharedFailure = getSharedFailureC([
+    ['cost KPIs', kpiState],
+    ['cost trend', tokenState],
+    ['cost by model', modelState],
+    ['cache hit rate', cacheState],
+    ['session costs', sessionState],
+    ['unreadable log entries', errorState],
+    ['turn statistics', turnState],
+  ]);
+  // shared outage → the banner owns the one Retry, so regions drop theirs
+  const regionRetry = sharedFailure ? undefined : triggerRefresh;
 
   return (
     <div className="cost-screen flex flex-col">
@@ -133,7 +139,7 @@ function ScreenCost({ onNav }) {
         .cost-tbl td { padding-top: 11px; padding-bottom: 11px; }
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
-        .cost-foot { font-size: 11.5px; line-height: 1.5; color: rgb(var(--dim)); }
+        .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
         .cost-screen .kpi-hint { color: rgb(var(--dim)); }
         .cost-disc > summary { list-style: none; }
         .cost-disc > summary::-webkit-details-marker { display: none; }
@@ -149,12 +155,13 @@ function ScreenCost({ onNav }) {
           sub="Cost & token usage"
           right={
             <>
-              <div className="seg" aria-label="Time range">
+              <div className="seg" role="group" aria-label="Time range">
                 {COST_PERIODS.map((p) => (
                   <button
                     key={p.value}
+                    type="button"
                     className={days === p.value ? 'active' : ''}
-                    disabled={anyLoading && days !== p.value}
+                    disabled={isBusy && days !== p.value}
                     onClick={() => setDays(p.value)}
                     aria-pressed={days === p.value}
                     aria-label={`Last ${p.label}`}>
@@ -162,65 +169,89 @@ function ScreenCost({ onNav }) {
                   </button>
                 ))}
               </div>
-              <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh cost data">
-                <Icon name="refresh" size={14}/>
-                Refresh
-              </button>
+              <RefreshButton isBusy={isBusy} hasRead={asOfAt !== null} onRefresh={triggerRefresh} label="Refresh cost data"/>
               <FreshnessStamp {...freshnessInput}/>
             </>
           }
         />
       </div>
 
+      {sharedFailure && (
+        <div className="mb-4">
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+        </div>
+      )}
+
       <AlarmLaneC rows={alarmRows}/>
 
       {/* Decision tier — the facts a spend decision is made on, in priority order. */}
-      <KpiRowC
-        kpiState={kpiState}
-        hot={hotVerdict}
-        trendState={tokenState}
-        modelState={modelState}
-        days={days}
-        onRetry={triggerRefresh}
-      />
+      <RefreshingRegionC states={[kpiState, tokenState, modelState]}>
+        <KpiRowC
+          kpiState={kpiState}
+          hot={hotVerdict}
+          trendState={tokenState}
+          modelState={modelState}
+          days={days}
+          onRetry={regionRetry}
+        />
+      </RefreshingRegionC>
 
-      <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh}/>
+      <RefreshingRegionC states={[tokenState]}>
+        <CostTrendCard state={tokenState} days={days} onRetry={regionRetry}/>
+      </RefreshingRegionC>
 
-      <div className="mb-4">
-        <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} onNav={onNav}/>
-      </div>
+      <RefreshingRegionC states={[modelState]} className="mb-4">
+        <ModelCostCard state={modelState} days={days} onRetry={regionRetry} onNav={onNav}/>
+      </RefreshingRegionC>
 
-      <div className="mb-4">
-        <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh}/>
-      </div>
+      <RefreshingRegionC states={[sessionState]} className="mb-4">
+        <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry}/>
+      </RefreshingRegionC>
 
       {/* Instrumentation tier — rare reads, closed by default. */}
       <CostDisclosureC title="Token volume" hint="Category split over time, with the cache-hit line">
         <div className="mb-3"><TokenLegend/></div>
-        <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}/>
-        <div className="mt-5">
-          <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh}/>
-        </div>
+        <RefreshingRegionC states={[tokenState]}>
+          <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}/>
+        </RefreshingRegionC>
+        <RefreshingRegionC states={[cacheState]} className="mt-5">
+          <CacheHitBody state={cacheState} days={days} onRetry={regionRetry}/>
+        </RefreshingRegionC>
       </CostDisclosureC>
 
       <CostDisclosureC title="Turn statistics" hint="Stop reasons and per-turn aggregates">
-        <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh}/>
+        <RefreshingRegionC states={[turnState]}>
+          <TurnStatsBody state={turnState} days={days} onRetry={regionRetry}/>
+        </RefreshingRegionC>
       </CostDisclosureC>
 
       <CostDisclosureC title="Log integrity" hint="Unreadable log entries over the window">
-        <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh}/>
+        <RefreshingRegionC states={[errorState]}>
+          <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
+        </RefreshingRegionC>
       </CostDisclosureC>
     </div>
   );
 }
 
-// any failed panel → the kept stamp reads stale, so a partial wave never claims full freshness
+// the stamp derives loading / refreshing / partial from the region states themselves
 function getFreshnessInputC(asOfAt, panelStates) {
-  return {
-    at: asOfAt,
-    loading: panelStates.some((st) => st.status === 'loading'),
-    failed: panelStates.some((st) => st.status === 'error'),
-  };
+  return { at: asOfAt, regions: panelStates };
+}
+
+function getSharedFailureC(namedStates) {
+  return window.UI.getSharedFailure(namedStates.map(([source, state]) => ({ source, error: state.error })));
+}
+
+/** Held payloads stay rendered during a refresh, dimmed and marked busy until the answer settles. */
+function RefreshingRegionC({ states, className = '', children }) {
+  const isRefreshing = states.some((state) => state.busy && state.data != null);
+  const busyClass = isRefreshing ? 'opacity-60 motion-safe:transition-opacity' : '';
+  return (
+    <div className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -464,6 +495,7 @@ function computeCacheShare(modelState) {
 }
 
 function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
+  const { RegionUnavailable } = window.UI;
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
@@ -472,13 +504,11 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
   return (
     <>
-      {/* Payload failure is a banner at the owning group — the KPI payload feeds tiles 1 and 3. */}
+      {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
       {kpiState.status === 'error' && (
-        <div className="mb-4">
-          <ErrorBannerC title="Couldn't load cost KPIs" detail={kpiState.error} onRetry={onRetry}/>
-        </div>
+        <RegionUnavailable source="cost KPIs" error={kpiState.error} onRetry={onRetry} className="mb-4"/>
       )}
-      <div className="grid grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <CostTileC
           label="Today vs. normal"
           status={getTileStatus(kpiState, hot.ratio, false)}
@@ -529,7 +559,7 @@ function CostTileC({ label, status, value, hint, unavailableNote, children }) {
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       <div className="kpi-label">{label}</div>
-      {isReady && hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+      {isReady && hint && <div className="fs-meta text-faint font-mono kpi-hint">{hint}</div>}
       <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
       </KpiValue>
@@ -613,11 +643,13 @@ function CostTrendCard({ state, days, onRetry }) {
 }
 
 function CostTrendBody({ state, days, bandOn, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={260} aria-label="Loading cost trend"/>;
+    return <LoadingPlaceholder label="cost trend" minHeight={260}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load cost trend" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="cost trend" error={state.error} onRetry={onRetry} minHeight={260}/>;
   }
 
   const points = getTrendPoints(state);
@@ -749,11 +781,13 @@ function TokenLegend() {
 }
 
 function TokenStackedBody({ state, days, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={300} aria-label="Loading token trend"/>;
+    return <LoadingPlaceholder label="token trend" minHeight={300}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load token trend" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="token trend" error={state.error} onRetry={onRetry} minHeight={300}/>;
   }
 
   const points = getTrendPoints(state);
@@ -1043,13 +1077,14 @@ function rollupModelRows(modelRows, topN) {
 }
 
 function ModelCostBody({ state, days, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
   const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={300} aria-label="Loading cost by model"/>;
+    return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load cost by model" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="cost by model" error={state.error} onRetry={onRetry} minHeight={300}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1196,11 +1231,13 @@ function buildModelCostRows(rows) {
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
 function CacheHitBody({ state, days, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading cache hit rate"/>;
+    return <LoadingPlaceholder label="cache hit rate" minHeight={220}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load cache hit rate" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="cache hit rate" error={state.error} onRetry={onRetry} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1357,6 +1394,7 @@ function SessionDistributionCard({ state, days, onRetry }) {
 }
 
 function SessionDistributionBody({ state, days, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
 
@@ -1366,10 +1404,10 @@ function SessionDistributionBody({ state, days, onRetry }) {
   const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading session costs"/>;
+    return <LoadingPlaceholder label="session costs" minHeight={220}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load session costs" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="session costs" error={state.error} onRetry={onRetry} minHeight={220}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -1548,13 +1586,13 @@ function SessionBinTooltipC({ active, payload }) {
 }
 
 function ParseErrorBody({ state, days, onRetry }) {
-  const { Badge } = window.UI;
+  const { Badge, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading parse_error trend"/>;
+    return <LoadingPlaceholder label="unreadable log entries" minHeight={220}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load parse_error data" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="unreadable log entries" error={state.error} onRetry={onRetry} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1767,11 +1805,13 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+
   if (state.status === 'loading') {
-    return <ChartSkeletonC height={220} aria-label="Loading turn statistics"/>;
+    return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerC title="Couldn't load turn statistics" detail={state.error} onRetry={onRetry}/>;
+    return <RegionUnavailable source="turn statistics" error={state.error} onRetry={onRetry} minHeight={220}/>;
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
@@ -1904,43 +1944,6 @@ function EmptyStateC({ message }) {
   return <EmptyState message={message} />;
 }
 
-function ErrorBannerC({ title, detail, onRetry }) {
-  const { Icon } = window.UI;
-  return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3"
-      style={{
-        background: 'rgb(var(--crit) / 0.08)',
-        borderColor: 'rgb(var(--crit) / 0.4)',
-      }}>
-      <Icon name="warn" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{title}</div>
-        {detail && <div className="fs-meta font-mono text-dim mt-1 truncate" title={window.UI.titleOf(detail)}>{detail}</div>}
-      </div>
-      <button className="btn sm" onClick={onRetry} aria-label="Retry">Retry</button>
-    </div>
-  );
-}
-
-function ChartSkeletonC({ height = 220, 'aria-label': ariaLabel }) {
-  return (
-    <div
-      aria-busy="true"
-      aria-label={ariaLabel}
-      style={{
-        width: '100%',
-        height,
-        borderRadius: 8,
-        background: 'rgb(var(--sunken))',
-        opacity: 0.7,
-        animation: 'skelPulseC 1.4s ease-in-out infinite',
-      }}
-    />
-  );
-}
-
 // 인라인 skeleton — sunken 토큰 pulse placeholder.
 function SkelC({ w = '100%', h = 14, style }) {
   return (
@@ -1981,30 +1984,20 @@ const tooltipRowStyle = {
 
 async function fetchJsonC(url, signal) {
   const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    let body = '';
-    try { body = await res.text(); } catch (_e) { /* body parse 실패 무시 */ }
-    throw new Error(`HTTP ${res.status} ${res.statusText}${body ? ' — ' + body.slice(0, 120) : ''}`);
-  }
+  if (!res.ok) throw await window.UI.getFetchError(res);
   return res.json();
 }
 
-// fetch + setter wiring 통합 — useEffect 본문 단순화.
-function runFetchC(url, signal, setter, onReceived) {
-  return fetchJsonC(url, signal)
+// one wave-scoped request per region → a superseded wave never lands, held data stays until settle
+function runFetchC(url, request, setter, onReceived) {
+  const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
+  setter((state) => putRegionRequest(state, url, request));
+  return fetchJsonC(url, request.signal)
     .then((data) => {
-      setter({ status: 'ready', data, error: null });
+      setter((state) => putRegionData(state, request, data));
       onReceived?.();
     })
-    .catch((err) => handleErrorC(err, setter));
-}
-
-function handleErrorC(err, setter) {
-  // AbortError = period 변경 / 네비게이션 — 사용자 가시 실패 아님.
-  if (err && err.name === 'AbortError') {
-    return;
-  }
-  setter({ status: 'error', data: null, error: err && err.message ? err.message : String(err) });
+    .catch((err) => setter((state) => putRegionFailure(state, request, err)));
 }
 
 function computeSessionBins(sessions) {
