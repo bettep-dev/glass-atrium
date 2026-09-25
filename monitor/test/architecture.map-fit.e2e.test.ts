@@ -262,7 +262,7 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`AC-FIT-2 every label stays legible at ${width}x${height}`, async () => {
+	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		assert.ok(r.labelPx > 0, "no drawn label was measured");
 		assert.ok(
@@ -271,7 +271,7 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`AC-FIT-3 the map fills the pane on its binding axis and still flows left to right at ${width}x${height}`, async () => {
+	test(`the map fills the pane on its binding axis and still flows left to right at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.paneWidth, r.drawnHeightPx / r.paneHeight);
 		assert.ok(

@@ -18,12 +18,11 @@ const SCREEN_SRC = readFileSync(
   "utf8",
 );
 
-// 범례가 남길 수 있는 흔적 전부 — 스타일 선택자 · 상태 클래스 · 컴포넌트 · 상태 훅.
-// UI 만 지우고 배선을 남기면 화면은 조용한데 소스에는 죽은 상호작용이 남음.
+// 걷어낸 대화형 범례(접이식 · 포커스 · 히트)가 남길 수 있는 흔적 — 스타일 선택자 · 상태 클래스 · 컴포넌트 · 상태 훅.
+// 캡션의 정적 스와치 범례(.arch-legend · .arch-legend-item · .arch-legend-swatch)는 현행이라 대상 밖.
 const LEGEND_TOKENS = [
   ".arch-legend-details",
   ".arch-legend-grid",
-  ".arch-legend-item",
   ".arch-legend-swatch-box",
   ".arch-legend-swatch-line",
   ".arch-mermaid-canvas.legend-focus",
@@ -54,7 +53,7 @@ function countOccurrences(haystack: string, needle: string): number {
   return n;
 }
 
-test("AC-T19 no legend rule or wiring survives in the screen source", () => {
+test("no rule or wiring of the retired interactive legend survives in the screen source", () => {
   const residue = LEGEND_TOKENS.map(
     (token) => [token, countOccurrences(SCREEN_SRC, token)] as const,
   ).filter(([, count]) => count > 0);
@@ -62,7 +61,7 @@ test("AC-T19 no legend rule or wiring survives in the screen source", () => {
   assert.deepEqual(
     residue.map(([token]) => token),
     [],
-    `legend residue in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
+    `retired legend residue in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
   );
 });
 
@@ -142,7 +141,7 @@ test("AC-T-tone no status badge drops its glyph, which would put tone on the lab
 });
 
 // 경보 자리를 이름으로 셈 — 개수로 재면 한 자리를 지우고 다른 자리를 들여도 통과함.
-test("AC-T-tone alert role is declared by the alarm row only — region and page failures use the shared atoms", () => {
+test("alert role is declared by the alarm row only — region and page failures use the shared atoms", () => {
   const declarers = SCREEN_SRC.split(/^function /m)
     .slice(1)
     .filter((block) => block.includes('role="alert"'))

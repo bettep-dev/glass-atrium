@@ -1077,7 +1077,7 @@ interface LegendItem {
   label: string;
 }
 
-test("P1 the legend names every mark the canvas can draw", () => {
+test("the legend names every mark the canvas can draw", () => {
   const items = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR");
 
   for (const tone of ["warn", "crit"]) {
@@ -1094,7 +1094,7 @@ test("P1 the legend names every mark the canvas can draw", () => {
   );
 });
 
-test("P1 every coloured node border the drawn map assigns has a legend swatch in that colour", () => {
+test("every coloured node border the drawn map assigns has a legend swatch in that colour", () => {
   const source = CANONICAL_MAP.mermaid_drawn;
   const assigned = new Set([...source.matchAll(/^\s*class\s+\S+\s+(\w+)\s*$/gm)].map((m) => m[1]));
   const strokeByClass = new Map(
@@ -1113,7 +1113,7 @@ test("P1 every coloured node border the drawn map assigns has a legend swatch in
   assert.strictEqual(swatches.length, coloured.length, "one swatch per coloured border, none for a colour the map never draws");
 });
 
-test("SM3 a group title is dropped only where its single member's label already says it", () => {
+test("a group title is dropped only where its single member's label already says it", () => {
   const rows = [
     { name: "a lone member that repeats the title", source: 'subgraph a["Specialist agents"]\n  n1["Specialist agents <br/>(23)"]\nend', dropped: true },
     { name: "a lone member with its own wording", source: 'subgraph a["Orchestrator"]\n  n1["Plans the work"]\nend', dropped: false },
