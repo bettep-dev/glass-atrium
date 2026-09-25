@@ -136,3 +136,35 @@ test("the page outage names exactly the regions that failed with one shared caus
     assert.deepEqual(failure ? [...failure.sources] : null, row.sources ? [...row.sources] : null, row.name);
   }
 });
+
+// A held-back card must say so in words: a silent skeleton reads as an empty card to a screen reader.
+test("while every payload loads, each card announces itself through the status-role placeholder", () => {
+  const LoadingMarker = () => null;
+  const shared = sandbox.window.UI.LoadingPlaceholder;
+  sandbox.window.UI.LoadingPlaceholder = LoadingMarker;
+  const props: Record<string, unknown> = { onRetry: () => {} };
+  for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
+
+  const cards: RecordedElement[][] = [];
+  const walk = (node: unknown, card: RecordedElement[] | null): void => {
+    if (Array.isArray(node)) return node.forEach((child) => walk(child, card));
+    if (!isElement(node)) return;
+    if (node.type === LoadingMarker) return void card?.push(node);
+    if (typeof node.type === "function") return walk((node.type as (p: unknown) => unknown)(node.props), card);
+    const isCard = String(node.props.className ?? "").split(" ").includes("card");
+    const scope = isCard ? [] : card;
+    if (isCard && scope) cards.push(scope);
+    walk(node.props.children, scope);
+  };
+  try {
+    walk(sandbox.ImprovementInstrumentationViewI(props), null);
+  } finally {
+    sandbox.window.UI.LoadingPlaceholder = shared;
+  }
+
+  assert.ok(cards.length > 0, "the loading view must still lay out its cards");
+  for (const placeholders of cards) {
+    assert.equal(placeholders.length, 1, "each loading card carries exactly one announced placeholder");
+    assert.match(String(placeholders[0]?.props.label ?? ""), /\w/, "the placeholder names what is loading");
+  }
+});

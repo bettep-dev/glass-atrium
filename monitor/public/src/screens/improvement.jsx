@@ -376,7 +376,6 @@ function ScreenImprovement({ onNav }) {
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes skelPulseI { 0%,100%{opacity:.7} 50%{opacity:.35} }
         @keyframes toastInI   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { [class*="i-anim-"], .i-act-spin { animation-duration:0.01ms !important; } }
@@ -385,7 +384,6 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
-        .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
@@ -659,21 +657,12 @@ function StatusTileI({ status, tone, symbol, label, value, population, owner, on
 // 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
 // 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
 function TilePlaceholderI({ status, label, owner, onRetry }) {
+	const { LoadingPlaceholder } = window.UI;
 	return (
-		<div
-			className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-			aria-busy={status === "loading" ? "true" : undefined}
-		>
+		<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
 			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
 			{status === "loading" ? (
-				<div
-					className="i-anim-skel mt-1"
-					style={{
-						height: 28,
-						borderRadius: 6,
-						background: "rgb(var(--sunken))",
-					}}
-				/>
+				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
 			) : null}
 			{status === "error" ? (
 				<button
@@ -744,22 +733,14 @@ function ViewToggleI({ view, onChange }) {
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
 function TrendCardI({ state, aggregate }) {
-	const { CardHead, TrendChart } = window.UI;
+	const { CardHead, TrendChart, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card">
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
+					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
 			</div>
 		);
@@ -936,7 +917,7 @@ function KanbanCardI({
 	pendingActionId,
 	onRetry,
 }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	const isLoading = state.status === "loading";
 	const isError = state.status === "error";
 	const rejectBuckets = state.data?.reject_bucket_summary || null;
@@ -962,51 +943,31 @@ function KanbanCardI({
 						onRetry={onRetry}
 					/>
 				</div>
+			) : isLoading ? (
+				<div className="flex flex-col p-3 flex-1 min-h-0">
+					<LoadingPlaceholder label="suggestions" className="flex-1" />
+				</div>
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
 					{/* ROW-1 — AWAITING 존 (승인 대기, 유일한 행동 유발 레인 → 최상단 배치). */}
-					{isLoading ? (
-						<div
-							className="i-anim-skel flex-shrink-0"
-							style={{
-								minHeight: 30,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					) : (
-						<AwaitingZoneI
-							rows={columnRows.safety || []}
-							onRowClick={onRowClick}
-							onAction={onAction}
-							pendingActionId={pendingActionId}
-						/>
-					)}
+					<AwaitingZoneI
+						rows={columnRows.safety || []}
+						onRowClick={onRowClick}
+						onAction={onAction}
+						pendingActionId={pendingActionId}
+					/>
 					{/* ROW-2 — 종결 그리드 (applied 2fr : rejected 1fr, safety 제외). */}
 					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
-						{TERMINAL_COLUMNS.map((col) =>
-							isLoading ? (
-								<div
-									key={col.key}
-									className="i-anim-skel"
-									style={{
-										borderRadius: 8,
-										background: "rgb(var(--sunken))",
-										opacity: 0.7,
-									}}
-								/>
-							) : (
-								<KanbanColumnI
-									key={col.key}
-									column={col}
-									rows={columnRows[col.key] || []}
-									loopAggregate={loopAggregate}
-									rejectBuckets={rejectBuckets}
-									onRowClick={onRowClick}
-								/>
-							),
-						)}
+						{TERMINAL_COLUMNS.map((col) => (
+							<KanbanColumnI
+								key={col.key}
+								column={col}
+								rows={columnRows[col.key] || []}
+								loopAggregate={loopAggregate}
+								rejectBuckets={rejectBuckets}
+								onRowClick={onRowClick}
+							/>
+						))}
 					</div>
 				</div>
 			)}
@@ -1633,7 +1594,7 @@ function preVerifyBadgeI(status, passed) {
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
 function BucketRowI({ state, buckets }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !buckets) {
 		return (
@@ -1642,19 +1603,8 @@ function BucketRowI({ state, buckets }) {
 					title="Learning memory: wins & mistakes (CTM · EPM)"
 					sub="All time, every agent — not the group's 7-day cycle window"
 				/>
-				<div className="grid grid-cols-2 gap-2 p-3">
-					{Array.from({ length: 2 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="learning memory" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -2207,7 +2157,7 @@ function composePreVerifyI(badge, rationale, axes) {
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
 function ChangeSummaryCardI({ state, aggregate, onRetry }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
@@ -2226,19 +2176,8 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -2369,7 +2308,7 @@ function failTrendMetaI(before, after) {
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
 // 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
 function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
@@ -2388,19 +2327,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Pattern ledger" />
-				<div className="p-3 flex flex-col gap-2" aria-busy="true">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 44,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="the pattern ledger" minHeight={44} />
 				</div>
 			</div>
 		);

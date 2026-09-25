@@ -102,25 +102,24 @@ test("the three non-ready states render distinctly", () => {
     const nodes = collectElements(tree, []);
     return {
       status,
-      busy: String(nodes[0]?.props["aria-busy"] ?? ""),
-      skeleton: nodes.some((el) => String(el.props.className ?? "").includes("i-anim-skel")),
+      placeholder: nodes.find((el) => el.type === sandbox.window.UI.LoadingPlaceholder),
       retry: nodes.filter((el) => el.type === "button"),
       text: textOf(tree),
     };
   });
   const [loading, error, unavailable] = shapes;
 
-  assert.ok(loading?.skeleton, "loading must show a skeleton, not a value");
-  assert.equal(loading?.busy, "true", "a loading tile declares aria-busy");
+  assert.ok(loading?.placeholder, "loading must announce itself through the status-role placeholder");
+  assert.equal(loading?.placeholder?.props.label, "Applied (7 days)", "the visible loading text names the tile");
   assert.equal(loading?.retry.length, 0);
 
   assert.equal(error?.retry.length, 1, "a failed payload must offer a retry");
   (error?.retry[0]?.props.onClick as () => void)();
   assert.deepEqual(retries, ["error"], "the retry button is wired to onRetry");
-  assert.ok(!error?.skeleton);
+  assert.ok(!error?.placeholder);
 
   assert.match(unavailable?.text ?? "", /Not measured/);
-  assert.ok(!unavailable?.skeleton);
+  assert.ok(!unavailable?.placeholder);
   assert.equal(unavailable?.retry.length, 0);
 });
 
