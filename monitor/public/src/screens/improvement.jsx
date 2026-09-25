@@ -411,7 +411,10 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        .board-terminal-grid { display:grid; grid-template-columns:2fr 1fr; gap:12px; }
+        /* loop output — 기준 캡션은 2줄까지 줄바꿈 · 카드는 20rem 미만이면 다음 줄로 */
+        .i-loop-output .card-sub { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+        .i-loop-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(20rem, 1fr)); gap:12px; align-items:start; }
+        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
            운반하고 텍스트 색으로 심각도를 싣지 않는다(라이트 테마 AA 미달). */
@@ -434,14 +437,13 @@ function ScreenImprovement({ onNav }) {
           @keyframes iAwaitInI { from { opacity:0; } to { opacity:1; } }
         }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
-           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-display 22px count 를 담는 높이. */
+           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T6 — APPLIED hero. 큰 22px --ok count 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
+        /* T6 — APPLIED hero. 18px --ok count(상태 밴드 수치보다 작게) 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
            별도 inline-flex 그룹으로 묶어 자기들끼리 세로중앙(✓ mid = 라벨 mid) → 붕 뜸 제거. gap 만 담당. */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
-        .i-compact-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
@@ -729,12 +731,12 @@ function ViewToggleI({ view, onChange }) {
 		["instrumentation", "Instrumentation"],
 	];
 	return (
-		<div className="inline-flex" role="group" aria-label="Screen view">
+		<div className="seg" role="group" aria-label="Screen view">
 			{options.map(([key, label]) => (
 				<button
 					key={key}
 					type="button"
-					className={`btn ghost sm ${view === key ? "text-ink" : "text-faint"}`}
+					className="inline-flex items-center gap-1"
 					aria-pressed={view === key}
 					onClick={() => onChange(key)}
 				>
@@ -898,7 +900,7 @@ function LoopOutputGroupI({
 }) {
 	const { CardHead, Icon } = window.UI;
 	return (
-		<div className="space-y-3">
+		<div className="space-y-3 i-loop-output">
 			<CardHead
 				title="Loop output"
 				sub="Last 7 days of cycles unless a card names its own basis"
@@ -926,7 +928,7 @@ function LoopOutputGroupI({
 			) : null}
 			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
           첫 카드에만 걸린 것으로 읽힌다(와이어프레임 Tier 4 = 3-col). */}
-			<div className="grid grid-cols-3 gap-3 items-start">
+			<div className="i-loop-grid">
 				<ChangeSummaryCardI
 					state={loopEventsState}
 					aggregate={loopAggregate}
@@ -1166,7 +1168,7 @@ function KanbanColumnI({
 			: "Suggestions the loop or a reviewer turned down show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 gap-2">
+		<div className="flex flex-col min-h-0 min-w-0 gap-2">
 			<div
 				className="flex flex-col gap-1 flex-shrink-0"
 				style={{
@@ -1219,31 +1221,49 @@ function AppliedHistoryRowI({ row, onClick }) {
 	const label =
 		patternLabelI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
 	return (
+		<BoardRowI
+			onClick={onClick}
+			title={row.rationale ? String(row.rationale) : undefined}
+			ariaLabel={`View applied suggestion ${row.id} details`}
+			lead={
+				<>
+					<span className="font-mono text-dim truncate shrink-0 max-w-[10rem]">
+						{row.target_agent || "—"}
+					</span>
+					<span className="font-mono text-faint tnum shrink-0">
+						{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
+					</span>
+				</>
+			}
+			text={label}
+			trail={<span className="font-mono text-faint shrink-0">{`#${row.id}`}</span>}
+		/>
+	);
+}
+
+// Board row atom shared by both lanes — sans prose cell flexes and ellipsises, mono only for ids and dates.
+function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
+	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card bg-elev rounded-md w-full text-left px-2 py-1.5 flex items-center gap-2"
-			title={row.rationale ? String(row.rationale) : undefined}
-			aria-label={`View applied suggestion ${row.id} details`}
+			className="i-row-card bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
+			title={title}
+			aria-label={ariaLabel}
 		>
-			<span className="fs-micro font-mono text-dim truncate shrink-0 max-w-[10rem]">
-				{row.target_agent || "—"}
-			</span>
-			<span className="fs-micro font-mono text-faint tnum shrink-0">
-				{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
-			</span>
-			<span className="fs-meta text-ink truncate flex-1 min-w-0">{label}</span>
-			<span className="fs-micro font-mono text-faint shrink-0">{`#${row.id}`}</span>
+			{lead}
+			<span className="text-ink truncate flex-1 min-w-0">{text}</span>
+			{trail}
 		</button>
 	);
 }
 
-// T6 — APPLIED hero 헤더. 22px --ok tnum count + ✓ + 'APPLIED'(fs-micro 라벨 ≈ 2:1). 부피막대 없음.
+// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-micro 라벨 ≈ 2:1). 부피막대 없음.
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
 			<span
-				className="fs-display tnum font-mono text-ok"
+				className="fs-stat tnum font-mono text-ok"
 				style={{ lineHeight: 1 }}
 			>
 				{formatIntI(count)}
@@ -1431,29 +1451,24 @@ function groupByLabelI(rows) {
 function CompactProposalCardI({ row, onClick }) {
 	// group head carries the pattern label → the row leads with its own reason
 	const primary = row.rationale || "No rationale recorded";
+	// 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩
 	return (
-		<div className="i-card-shadow bg-elev rounded-md">
-			<button
-				type="button"
-				onClick={onClick}
-				className="i-row-card fs-micro font-mono w-full text-left px-2 py-1.5 block"
-				aria-label={`View declined suggestion ${row.id} details`}
-			>
-				{/* 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩(중복 제거).
-            primary = content-first(rationale bright, text-ink) 좌측 · id·date tiny/muted(--faint) 우측. */}
-				<div className="flex items-center gap-2">
-					<span className="i-compact-title text-ink" title={String(primary)}>
-						{truncateI(primary, 80)}
-					</span>
-					<span className="text-faint shrink-0">#{row.id}</span>
+		<BoardRowI
+			onClick={onClick}
+			title={String(primary)}
+			ariaLabel={`View declined suggestion ${row.id} details`}
+			text={truncateI(primary, 80)}
+			trail={
+				<>
+					<span className="font-mono text-faint shrink-0">#{row.id}</span>
 					{row.cycle_date && (
-						<span className="text-faint shrink-0">
+						<span className="font-mono text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
 						</span>
 					)}
-				</div>
-			</button>
-		</div>
+				</>
+			}
+		/>
 	);
 }
 
@@ -1882,7 +1897,7 @@ function LedgerPlainRowsI({ rows }) {
 	return (
 		<ul className="mt-1.5 flex flex-col gap-1">
 			{rows.map((r) => (
-				<li key={r.id} className="flex items-center gap-2 fs-micro font-mono">
+				<li key={r.id} className="flex items-center gap-2 fs-meta">
 					<span
 						className="text-ink truncate min-w-0"
 						title={patternLabelI(r.pattern_signature, r.agent)}
@@ -1890,7 +1905,7 @@ function LedgerPlainRowsI({ rows }) {
 						{truncateI(patternLabelI(r.pattern_signature, r.agent), 120)}
 					</span>
 					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
-					<span className="text-faint shrink-0 tnum">
+					<span className="font-mono text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
 				</li>
