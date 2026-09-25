@@ -556,11 +556,11 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live·Takes effect = 4.
-const DOMAIN_TABLE_COLSPAN_MC = 4;
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Agent tier·Model·Live = 3.
+const DOMAIN_TABLE_COLSPAN_MC = 3;
 
-// One column grid for both ledgers — content-sized cells let Live / Takes effect drift apart.
-const LEDGER_COL_WIDTHS_MC = ["32%", "30%", "22%", "16%"];
+// One column grid for both ledgers — content-sized cells let the Live columns drift apart.
+const LEDGER_COL_WIDTHS_MC = ["36%", "32%", "32%"];
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
 // One line of fs-meta — the saved/reset slot holds this height while empty.
 const SAVED_LINE_STYLE_MC = { minHeight: "1.5em" };
@@ -589,11 +589,13 @@ function DomainsSectionMC({
 }) {
 	const { SkeletonRows } = window.UI;
 	const rows = sortDomainsMC(domains || []);
+	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
 		<div className="mb-4">
 			<SectionHeadMC
 				label="Model assignment"
+				sub={getApplyModeSubMC(sharedMode)}
 				right={
 					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
 						Cost & usage
@@ -615,7 +617,6 @@ function DomainsSectionMC({
 							<th>Agent tier</th>
 							<th>Model</th>
 							<th>Live</th>
-							<th>Takes effect</th>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
@@ -639,6 +640,7 @@ function DomainsSectionMC({
 									value={form.models[d.domain] ?? ""}
 									defaultValue={baseline?.models[d.domain] ?? ""}
 									error={errors[d.domain]}
+									sharedMode={sharedMode}
 									onChange={(v) => onModelChange(d.domain, v)}
 								/>
 							))
@@ -694,7 +696,17 @@ const INHERIT_LIVE_LABEL_MC = {
 };
 
 function liveLabelMC(value) {
-	return INHERIT_LIVE_LABEL_MC[value] ?? value ?? "—";
+	return INHERIT_LIVE_LABEL_MC[value] ?? value;
+}
+
+// [model label, files[]] in first-seen order — the model is the parity proof, so it is shown whole once.
+function groupFilesByModelMC(fileRows) {
+	const groups = new Map();
+	for (const f of fileRows) {
+		const model = liveLabelMC(f.model ?? "inherit");
+		groups.set(model, [...(groups.get(model) ?? []), f.file]);
+	}
+	return [...groups];
 }
 
 // Live value = measured at the consumption point. Matching the saved target → a dim '= saved'
@@ -702,18 +714,24 @@ function liveLabelMC(value) {
 function LiveValueMC({ value, drift, files, driftTitle }) {
 	const { Badge } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
-	const isSteady = !drift && value != null;
+		const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
+	const fileGroups = groupFilesByModelMC(fileRows);
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
-				<span
-					className={`font-mono fs-meta truncate ${drift ? "text-ink" : "text-dim"}`}
-					title={isSteady ? `Live value matches the saved setting: ${label}` : undefined}
-				>
-					{isSteady ? "= saved" : label}
-				</span>
+				{isSteady ? (
+					<span className="fs-meta text-faint" title={`Live value: ${label}`}>
+						Matches saved
+					</span>
+				) : (
+					value != null && (
+						<span className="font-mono fs-meta truncate text-ink" title={label}>
+							{label}
+						</span>
+					)
+				)}
 				{drift && (
 					<span title={driftTitle}>
 						<Badge role="status" tone="warn" icon={true} className="pill--ctl-h">
@@ -725,10 +743,15 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 			{fileRows.length > 0 && (
 				<details className="fs-meta text-faint">
 					<summary>{fileRows.length} files</summary>
-					<div className="mt-1 flex flex-col gap-0.5">
-						{fileRows.map((f) => (
-							<div key={f.file} className="font-mono truncate">
-								{f.file} — {liveLabelMC(f.model ?? "inherit")}
+					<div className="mt-1 flex flex-col gap-1">
+						{fileGroups.map(([model, files]) => (
+							<div key={model}>
+								<div className="font-mono text-dim is-wrap">{model}</div>
+								{files.map((file) => (
+									<div key={file} className="font-mono truncate pl-3" title={file}>
+										{file}
+									</div>
+								))}
 							</div>
 						))}
 					</div>
@@ -738,14 +761,38 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 	);
 }
 
-// Take-effect cell — toneless: a report, not an alarm.
-function ApplyModeMC({ mode }) {
-	const meta = APPLY_MODE_META_MC[mode] || { label: mode || "—", desc: "" };
+function getApplyModeMetaMC(mode) {
+	return APPLY_MODE_META_MC[mode] || { label: mode, desc: "" };
+}
+
+// Most rows share one apply_mode → the section states it once; rows that differ name their own.
+function getSharedApplyModeMC(rows) {
+	const counts = new Map();
+	for (const r of rows) {
+		if (r.apply_mode) counts.set(r.apply_mode, (counts.get(r.apply_mode) ?? 0) + 1);
+	}
+	let shared = null;
+	for (const [mode, n] of counts) {
+		if (shared === null || n > counts.get(shared)) shared = mode;
+	}
+	return shared;
+}
+
+function getApplyModeSubMC(mode) {
+	if (!mode) return null;
+	const meta = getApplyModeMetaMC(mode);
+	return meta.desc ? `Takes effect: ${meta.label} · ${meta.desc}` : `Takes effect: ${meta.label}`;
+}
+
+// Row-level take-effect note — only where the row departs from the section's shared mode.
+function ApplyModeNoteMC({ mode, sharedMode }) {
+	if (!mode || mode === sharedMode) return null;
+	const meta = getApplyModeMetaMC(mode);
 
 	return (
-		<span className="fs-meta text-dim" title={meta.desc}>
-			{meta.label}
-		</span>
+		<div className="fs-meta text-dim" title={meta.desc || undefined}>
+			Takes effect: {meta.label}
+		</div>
 	);
 }
 
@@ -754,7 +801,8 @@ function DomainRowMC({
 	knownModels,
 	value,
 	defaultValue,
-	error,
+		error,
+	sharedMode,
 	onChange,
 }) {
 	const { Badge } = window.UI;
@@ -800,11 +848,9 @@ function DomainRowMC({
 					drift={d.drift}
 					files={d.files}
 					driftTitle="Live value differs from the saved target — press Save again"
-				/>
-			</td>
-			<td style={cellPad}>
-				<ApplyModeMC mode={d.apply_mode} />
-			</td>
+					/>
+					<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
+				</td>
 		</tr>
 	);
 }
@@ -922,8 +968,8 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	);
 }
 
-// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live·Takes effect = 4.
-const BUDGET_TABLE_COLSPAN_MC = 4;
+// 총 컬럼 수 (빈 로스터 행 colSpan) — Background call·Per-call cap·Live = 3.
+const BUDGET_TABLE_COLSPAN_MC = 3;
 
 // per-call 예산 상한 섹션 — 입력 + 실측 + 반영 시점 (월 청구 캡이 아니라 단일 호출 캡).
 function BudgetsSectionMC({
@@ -936,10 +982,14 @@ function BudgetsSectionMC({
 }) {
 	const { SkeletonRows } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
+	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
 		<div className="mb-4">
-			<SectionHeadMC label="Per-call budget caps" />
+			<SectionHeadMC
+				label="Per-call budget caps"
+				sub={getApplyModeSubMC(sharedMode)}
+			/>
 			<TierNotesMC
 				summary="What each cap stops"
 				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
@@ -955,7 +1005,6 @@ function BudgetsSectionMC({
 							<th>Background call</th>
 							<th>Per-call cap</th>
 							<th>Live</th>
-							<th>Takes effect</th>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
@@ -978,6 +1027,7 @@ function BudgetsSectionMC({
 									value={form.budgets[b.domain] ?? ""}
 									defaultValue={baseline?.budgets[b.domain] ?? ""}
 									error={errors[b.domain]}
+									sharedMode={sharedMode}
 									onChange={(v) => onBudgetChange(b.domain, v)}
 								/>
 							))
@@ -998,11 +1048,10 @@ function budgetPlaceholderMC() {
 
 // 예산 1행 — $ 입력(2-decimal 문자열) + validate-on-blur + field-adjacent role=alert (T-MDL-4)
 // + 실측/반영 시점 + ghost default/reset (T-MDL-6).
-function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
+function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
-	// touched = blur 1회 후에만 inline 에러 노출 (validate-on-blur — 타이핑 중 noise 억제).
-	const [touched, setTouched] = useStateMC(false);
-	const showError = error && touched;
+	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
+	const showError = Boolean(error);
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
@@ -1025,7 +1074,6 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 							value={value}
 							placeholder={budgetPlaceholderMC()}
 							onChange={(e) => onChange(e.target.value)}
-							onBlur={() => setTouched(true)}
 							aria-label={`${meta.label} per-call cap in USD`}
 							aria-invalid={showError ? "true" : undefined}
 						/>
@@ -1048,11 +1096,9 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
-				/>
-			</td>
-			<td>
-				<ApplyModeMC mode={b.apply_mode} />
-			</td>
+					/>
+					<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
+				</td>
 		</tr>
 	);
 }

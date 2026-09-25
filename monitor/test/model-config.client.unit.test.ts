@@ -626,15 +626,15 @@ function budgetsPropsMc(budgets: unknown[] = BUDGET_ROW_FIXTURE_MC): Record<stri
 const tonedMc = (nodes: McNode[], tone: string): McTag[] =>
   findAllMc(nodes, (n) => n.props["data-tone"] === tone);
 
-test("both ledgers carry the same four columns — no Sync or Enforcement column survives", () => {
+test("both ledgers carry the same three columns — timing is stated once per section, not per row", () => {
   for (const [name, props] of [
     ["DomainsSectionMC", domainsPropsMc()],
     ["BudgetsSectionMC", budgetsPropsMc()],
   ] as const) {
     const headers = textsMc(tagsMc(renderComponentMc(screens[name], props), "th"));
-    assert.strictEqual(headers.length, 4, `${name}: four columns`);
-    assert.deepStrictEqual(headers.slice(2), ["Live", "Takes effect"], `${name}: live + timing`);
-    for (const gone of ["Sync", "Enforcement", "Actual"]) {
+    assert.strictEqual(headers.length, 3, `${name}: three columns`);
+    assert.deepStrictEqual(headers.slice(2), ["Live"], `${name}: live last`);
+    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect"]) {
       assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
     }
   }
@@ -653,7 +653,7 @@ test("a row in its steady state spends no tone; only a drifted row raises one wa
   assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
 });
 
-test("the takes-effect column reads the payload's apply_mode, unknown modes included", () => {
+test("the section states when edits take effect from the payload's apply_mode, unknown modes included", () => {
   const known = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
   assert.ok(textMc(known).includes("Next spawn"), "next-spawn labelled");
 
@@ -1056,10 +1056,10 @@ test("Live repeats nothing in the steady state and shows the value only when it 
     ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
   ] as const) {
     const steady = liveCellMc(renderComponentMc(screens[name], props));
-    assert.strictEqual(textMc([steady]), "= saved", `${name}: a matching live value reads as '= saved'`);
+    assert.strictEqual(textMc([steady]), "Matches saved", `${name}: a matching live value says so in words`);
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
-    assert.ok(!differs.includes("= saved"), `${name}: a differing value is never '= saved'`);
+    assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
     assert.ok(/claude-sonnet-5|\$12\.00/.test(differs), `${name}: the differing value is shown`);
   }
 });
@@ -1079,12 +1079,12 @@ test("an inherit live value names what it inherits from, never a bare 'inherit'"
   }
 });
 
-test("both ledgers sit on one column grid, so Live and Takes effect line up", () => {
+test("both ledgers sit on one column grid, so their Live columns line up", () => {
   const gridOf = (tree: McNode[]): string =>
     JSON.stringify(tagsMc(tree, "col").map((c) => c.props.style ?? c.props.width));
   const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
   const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  assert.strictEqual(tagsMc(domains, "col").length, 4, "one col per ledger column");
+  assert.strictEqual(tagsMc(domains, "col").length, tagsMc(domains, "th").length, "one col per ledger column");
   assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
   for (const tree of [domains, budgets]) {
     const style = tagsMc(tree, "table")[0].props.style as Record<string, unknown> | undefined;
@@ -1150,4 +1150,62 @@ test("Cost & usage is linked once per ledger, and an unpriced tier says why its 
       `pricing_known=${pricingKnown}: the fallback note follows pricing_known`,
     );
   }
+});
+
+const countMc = (text: string, needle: string): number => text.split(needle).length - 1;
+
+test("a take-effect mode shared by every row is stated once, and a row that differs names its own", () => {
+  const uniform = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC)));
+  assert.strictEqual(countMc(uniform, "Next spawn"), 1, "three next-spawn rows → stated once");
+
+  const mixed = THREE_TIERS_MC.map((d, i) => (i === 2 ? { ...d, apply_mode: "next-cycle" } : d));
+  const text = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(mixed)));
+  assert.strictEqual(countMc(text, "Next spawn"), 1, "the shared mode stays stated once");
+  assert.strictEqual(countMc(text, "Next cycle"), 1, "the differing row names its own mode");
+});
+
+test("the per-file list groups files under each model, so every model value is shown whole once", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([
+      {
+        ...DOMAIN_ROW_FIXTURE_MC[0],
+        actual: "mixed",
+        drift: true,
+        files: [
+          { file: "agents/a.md", model: "claude-opus-4-8" },
+          { file: "agents/b.md", model: "claude-opus-4-8" },
+          { file: "agents/c.md", model: "claude-sonnet-5" },
+        ],
+      },
+    ]),
+  );
+  const [details] = tagsMc(tree, "details").filter((d) => textMc(d.children).includes("agents/a.md"));
+  const listed = textMc(details.children);
+  assert.strictEqual(countMc(listed, "claude-opus-4-8"), 1, "a model shared by two files is named once");
+  assert.strictEqual(countMc(listed, "claude-sonnet-5"), 1, "each model gets its group");
+  const truncatedModel = findAllMc(details.children, (n) =>
+    String(n.props.className ?? "").includes("truncate") && textMc(n.children).includes("claude-"));
+  assert.strictEqual(truncatedModel.length, 0, "no model value is cut off");
+});
+
+test("an invalid cap shows its reason and aria-invalid as soon as it is invalid, not only after blur", () => {
+  const props = budgetsPropsMc();
+  const tree = renderComponentMc(screens.BudgetsSectionMC, {
+    ...props,
+    form: { models: {}, budgets: { "budget.worker_max_usd": "-5" } },
+    errors: { "budget.worker_max_usd": "Must be between $0.05 and $50.00" },
+  });
+  const [input] = tagsMc(tree, "input");
+  assert.strictEqual(input.props["aria-invalid"], "true", "the field is marked invalid");
+  const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+  assert.ok(textsMc(alerts).some((t) => t.includes("Must be between")), "the reason sits beside the field");
+});
+
+test("a live value the payload does not carry is left out, never shown as a placeholder dash", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
+  );
+  assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
 });
