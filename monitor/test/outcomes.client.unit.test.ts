@@ -22,7 +22,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
-import { buildUiSandbox } from "./client-sandbox.js";
+import { buildScreenSandbox, buildUiSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -426,4 +426,125 @@ describe("formatResultLineO: the body's Result line reads as the drawer title na
       );
     });
   }
+});
+
+// --- region fetch waves: held data survives a refresh, and only the newest request settles ---
+
+interface RegionState {
+  status: string;
+  data: unknown;
+  error: string | null;
+  busy: boolean;
+}
+type RegionSetter = (next: RegionState | ((prev: RegionState) => RegionState)) => void;
+interface RegionSandbox {
+  fetch: (url: string, init: { signal: AbortSignal }) => Promise<unknown>;
+  AbortController: typeof AbortController;
+  window: { UI: { INITIAL_REGION_STATE: RegionState; putRegionRequest: (s: RegionState, key: string, req: object) => RegionState } };
+  runRegionFetchO: (setter: RegionSetter, url: string, options?: { mapData?: (d: unknown) => unknown; onData?: () => void }) => () => void;
+  putSearchFailureO: (state: RegionState, request: object, err: unknown, elapsedMs: number) => RegionState;
+}
+
+const region = await buildScreenSandbox<RegionSandbox>(OUTCOMES_SRC);
+region.AbortController = AbortController;
+
+function createRegionStore(initial: RegionState) {
+  const store = { state: initial };
+  const setter: RegionSetter = (next) => {
+    store.state = typeof next === "function" ? next(store.state) : next;
+  };
+  return { store, setter };
+}
+
+// Fetch stub whose answers the test releases; an aborted signal rejects the way a browser does.
+function createDeferredFetch() {
+  const pending: Array<{ resolve: (res: unknown) => void }> = [];
+  region.fetch = (_url, { signal }) => new Promise((resolve, reject) => {
+    pending.push({ resolve });
+    signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+  return pending;
+}
+
+const okResponse = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+// Top-level consts stay lexical in the vm realm, so the 30 s outage threshold is restated here.
+const OUTAGE_MS = 30_000;
+const HELD = { status: "ready", data: { rows: ["held"] }, error: null, busy: false } as RegionState;
+
+describe("runRegionFetchO: a refresh never blanks what the page already shows", () => {
+  test("held data stays on screen while the refresh is in flight, then the new answer replaces it", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    assert.deepEqual(sameRealm({ status: store.state.status, data: store.state.data, busy: store.state.busy }), {
+      status: "ready", data: { rows: ["held"] }, busy: true,
+    });
+
+    pending[0].resolve(okResponse({ rows: ["new"] }));
+    await settle();
+    assert.deepEqual(sameRealm({ data: store.state.data, busy: store.state.busy }), { data: { rows: ["new"] }, busy: false });
+  });
+
+  test("a failed refresh keeps the held data and records the failure for the stamp", async () => {
+    region.fetch = async () => ({ ok: false, status: 500, statusText: "Internal Server Error", text: async () => "pg: down" });
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    await settle();
+    assert.deepEqual(sameRealm(store.state.data), { rows: ["held"] });
+    assert.match(String(store.state.error), /^HTTP 500 Internal Server Error/);
+  });
+
+  test("aborting the wave ends the busy state without an error and keeps the held data", async () => {
+    createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    const abort = region.runRegionFetchO(setter, "/api/x");
+    abort();
+    await settle();
+    assert.deepEqual(sameRealm({ busy: store.state.busy, error: store.state.error, data: store.state.data }), {
+      busy: false, error: null, data: { rows: ["held"] },
+    });
+  });
+
+  test("a wave superseded by a window change never lands and never advances the stamp", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore(region.window.UI.INITIAL_REGION_STATE);
+    let landedCount = 0;
+    const onData = () => { landedCount += 1; };
+
+    const abortFirst = region.runRegionFetchO(setter, "/api/x?days=7", { onData });
+    abortFirst();
+    region.runRegionFetchO(setter, "/api/x?days=30", { onData });
+    pending[0].resolve(okResponse({ window: 7 }));
+    pending[1].resolve(okResponse({ window: 30 }));
+    await settle();
+
+    assert.deepEqual(sameRealm(store.state.data), { window: 30 });
+    assert.strictEqual(landedCount, 1, "only the landed read advances the stamp time");
+  });
+});
+
+describe("putSearchFailureO: only a sustained first-load failure reads as an outage", () => {
+  const rows = [
+    { name: "a first-load failure under the threshold is a region error", held: false, elapsed: 0, expected: "error" },
+    { name: "a first-load failure past the threshold is an outage", held: false, elapsed: 1, expected: "blocked" },
+    { name: "a failure over held rows keeps the rows even past the threshold", held: true, elapsed: 1, expected: "ready" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const request = {};
+      const base = row.held ? { ...region.window.UI.INITIAL_REGION_STATE, ...HELD } : region.window.UI.INITIAL_REGION_STATE;
+      const started = region.window.UI.putRegionRequest(base, "/api/search", request);
+      const elapsedMs = row.elapsed * OUTAGE_MS;
+      assert.strictEqual(region.putSearchFailureO(started, request, new Error("HTTP 500"), elapsedMs).status, row.expected);
+    });
+  }
+
+  test("a superseded request's failure leaves the newer request's state untouched", () => {
+    const started = region.window.UI.putRegionRequest(region.window.UI.INITIAL_REGION_STATE, "/api/search", {});
+    assert.strictEqual(region.putSearchFailureO(started, {}, new Error("HTTP 500"), OUTAGE_MS), started);
+  });
 });

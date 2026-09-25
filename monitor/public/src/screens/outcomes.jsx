@@ -395,7 +395,10 @@ const SCREEN_OUTCOMES_CSS = `
 `;
 
 function ScreenOutcomes({ onNav }) {
-  const { PageHeader, Icon, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner,
+    INITIAL_REGION_STATE, getRegionSummary, getSharedFailure,
+  } = window.UI;
 
   // Filter state — URL hash 초기화 → 북마크 / 직접링크 복원.
   const [filter, setFilter] = useStateO(() => readFilterFromHashO());
@@ -405,26 +408,26 @@ function ScreenOutcomes({ onNav }) {
   // 키워드 입력은 filter 와 분리 → debounce 가능 (request thrashing 회피).
   const [keywordInput, setKeywordInput] = useStateO(filter.q || '');
 
-  const [searchState, setSearchState] = useStateO({ status: 'loading', data: null, error: null });
+  const [searchState, setSearchState] = useStateO(INITIAL_REGION_STATE);
   // ledger 의 Needs-you 섹션 — 페이지가 아닌 창 전체를 읽는다(stream 1 attention 술어).
-  const [needsYouState, setNeedsYouState] = useStateO({ status: 'loading', data: null, error: null });
+  const [needsYouState, setNeedsYouState] = useStateO(INITIAL_REGION_STATE);
 
   // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
   const analyticsPeriod = analyticsDaysO(filter.days);
-  const [analyticsState,  setAnalyticsState]  = useStateO({ status: 'loading', data: null, error: null });
+  const [analyticsState,  setAnalyticsState]  = useStateO(INITIAL_REGION_STATE);
 
   // Attribution Health — /api/outcomes/attribution-daily (analyticsPeriod 와 동일 window).
-  const [attributionState, setAttributionState] = useStateO({ status: 'loading', data: null, error: null });
+  const [attributionState, setAttributionState] = useStateO(INITIAL_REGION_STATE);
 
   // Channel liveness — /api/outcomes/channel-liveness. analyticsPeriod 에 연동하지 않는다:
   // eligibility 는 peak-daily 를 읽으므로 창을 넓히면 수 주 전 버스트로 계속 자격이 유지된다.
-  const [channelLivenessState, setChannelLivenessState] = useStateO({ status: 'loading', data: null, error: null });
+  const [channelLivenessState, setChannelLivenessState] = useStateO(INITIAL_REGION_STATE);
 
   // Needs-you 모집단 — 서버 attention 술어(needs_attention) 를 그대로 읽는다. limit=1 → total 만 소비.
-  const [attentionState, setAttentionState] = useStateO({ status: 'loading', data: null, error: null });
+  const [attentionState, setAttentionState] = useStateO(INITIAL_REGION_STATE);
 
   // Loop-events raw 로그 — Learning 에서 이관(operational data). period 무관 all-time → refreshTick 만 의존.
-  const [loopEventsState, setLoopEventsState] = useStateO({ status: 'loading', data: null, error: null });
+  const [loopEventsState, setLoopEventsState] = useStateO(INITIAL_REGION_STATE);
 
   // Detail modal — active row + body_md (optional).
   const [detailRow,   setDetailRow]   = useStateO(null);
@@ -437,7 +440,7 @@ function ScreenOutcomes({ onNav }) {
   const markFreshO = useCallbackO(() => setAsOfAt(new Date().toISOString()), []);
 
   // T13 (O2) — canonical agent facet 소스 (registry 게이트된 /api/agents/summary).
-  const [canonicalAgentsState, setCanonicalAgentsState] = useStateO({ status: 'loading', data: null, error: null });
+  const [canonicalAgentsState, setCanonicalAgentsState] = useStateO(INITIAL_REGION_STATE);
 
   // T7 (O2) — forensic 'show all' 토글: include_all 파라미터로 서버 registry 게이트 해제.
   const [includeAll, setIncludeAll] = useStateO(false);
@@ -499,89 +502,57 @@ function ScreenOutcomes({ onNav }) {
 
   // 탐색기 fetch — filter / sort / page / refresh 변경 시 재실행.
   useEffectO(() => {
+    const { putRegionRequest, putRegionData } = window.UI;
+    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT, includeAll);
     const ctrl = new AbortController();
     filterAbortRef.current?.abort();
     filterAbortRef.current = ctrl;
 
-    setSearchState({ status: 'loading', data: null, error: null });
-
-    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT, includeAll);
+    setSearchState((s) => putRegionRequest(s, searchUrl, ctrl));
 
     fetchJsonO(searchUrl, ctrl.signal)
       .then((data) => {
         firstFailAtRef.current = null;
         markFreshO();
-        setSearchState({ status: 'ready', data, error: null });
+        setSearchState((s) => putRegionData(s, ctrl, data));
       })
-      .catch((err) => handleSearchErrorO(err, setSearchState, firstFailAtRef));
+      .catch((err) => {
+        if (err?.name !== 'AbortError' && firstFailAtRef.current == null) firstFailAtRef.current = Date.now();
+        const elapsedMs = firstFailAtRef.current == null ? 0 : Date.now() - firstFailAtRef.current;
+        setSearchState((s) => putSearchFailureO(s, ctrl, err, elapsedMs));
+      });
 
     return () => ctrl.abort();
   }, [filter, sort, page, refreshTick, includeAll]);
 
   // page 무관 — Needs-you 는 매 페이지 같은 창 전체 집합이라 page hop 에 재요청하지 않는다.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setNeedsYouState({ status: 'loading', data: null, error: null });
-    fetchJsonO(buildNeedsYouUrlO(filter, sort, PAGE_LIMIT_DEFAULT, includeAll), ctrl.signal)
-      .then((data) => setNeedsYouState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setNeedsYouState));
-    return () => ctrl.abort();
+    return runRegionFetchO(setNeedsYouState, buildNeedsYouUrlO(filter, sort, PAGE_LIMIT_DEFAULT, includeAll));
   }, [filter, sort, refreshTick, includeAll]);
 
   // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setAnalyticsState({ status: 'loading', data: null, error: null });
-
-    const crossUrl = `/api/outcomes/cross-analysis?days=${analyticsPeriod}`;
-
-    fetchJsonO(crossUrl, ctrl.signal)
-      .then((overall) => {
-        const data = buildAnalyticsDataO(overall);
-        markFreshO();
-        setAnalyticsState({ status: 'ready', data, error: null });
-      })
-      .catch((err) => handleErrorO(err, setAnalyticsState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setAnalyticsState, `/api/outcomes/cross-analysis?days=${analyticsPeriod}`, {
+      mapData: buildAnalyticsDataO,
+      onData: markFreshO,
+    });
   }, [analyticsPeriod, refreshTick]);
 
   // Attribution Health fetch — 같은 window, AbortController 공유 회피 위해 별도 effect.
   // analyticsPeriod {7,30,90} 가 backend 의 ALLOWED_DAYS_NUMERIC 와 동일 → param 검증 추가 불필요.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setAttributionState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO(`/api/outcomes/attribution-daily?days=${analyticsPeriod}`, ctrl.signal)
-      .then((data) => { markFreshO(); setAttributionState({ status: 'ready', data, error: null }); })
-      .catch((err) => handleErrorO(err, setAttributionState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setAttributionState, `/api/outcomes/attribution-daily?days=${analyticsPeriod}`, { onData: markFreshO });
   }, [analyticsPeriod, refreshTick]);
 
   // Channel liveness fetch — days 파라미터 미전달 → 라우트 기본 창을 그대로 사용(카드가 창 폭을
   // 재선언하지 않도록). 표시 라벨은 응답의 days 에서 파생.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setChannelLivenessState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO('/api/outcomes/channel-liveness', ctrl.signal)
-      .then((data) => { markFreshO(); setChannelLivenessState({ status: 'ready', data, error: null }); })
-      .catch((err) => handleErrorO(err, setChannelLivenessState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setChannelLivenessState, '/api/outcomes/channel-liveness', { onData: markFreshO });
   }, [refreshTick]);
 
   // Loop-events raw 로그 fetch — period 무관(all-time stream). AbortController 분리 → 부분 실패 격리.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setLoopEventsState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO(LOOP_EVENTS_URL, ctrl.signal)
-      .then((data) => { markFreshO(); setLoopEventsState({ status: 'ready', data, error: null }); })
-      .catch((err) => handleErrorO(err, setLoopEventsState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setLoopEventsState, LOOP_EVENTS_URL, { onData: markFreshO });
   }, [refreshTick]);
 
   // T13 (O2) — canonical agent facet 소스 fetch. 레코드 로그는 서버가 registry 로
@@ -590,26 +561,13 @@ function ScreenOutcomes({ onNav }) {
   // 활성 registry 를 커버. 실패 → 빈 facet (graceful · 'All' 옵션은 항상 유지).
   // explorer 필터와 독립 → 페이지네이션·기간 변경에도 안정.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    fetchJsonO('/api/agents/summary?days=90&order=runs&limit=50', ctrl.signal)
-      .then((data) => setCanonicalAgentsState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setCanonicalAgentsState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setCanonicalAgentsState, '/api/agents/summary?days=90&order=runs&limit=50');
   }, [refreshTick]);
 
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setAttentionState({ status: 'loading', data: null, error: null });
-
     // include_all 미전송 — 분모(cross-analysis)가 registry 스코프이므로 분자도 같은 스코프를 읽는다.
     const params = buildAttentionParamsO(analyticsPeriod);
-
-    fetchJsonO(`/api/outcomes/search?${params.toString()}`, ctrl.signal)
-      .then((data) => { markFreshO(); setAttentionState({ status: 'ready', data, error: null }); })
-      .catch((err) => handleErrorO(err, setAttentionState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, { onData: markFreshO });
   }, [analyticsPeriod, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
@@ -667,6 +625,15 @@ function ScreenOutcomes({ onNav }) {
     setDetailRow(rows[nextIdx]);
   }, [detailRow, rows]);
 
+  const stampRegions = [searchState, needsYouState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState];
+  // one outage → one banner + one Retry; the regions then drop their own Retry
+  const sharedFailure = getSharedFailure(buildRegionFailuresO({
+    records: searchState, 'needs-you records': needsYouState, 'result totals': analyticsState,
+    'reporting health': attributionState, 'recording channels': channelLivenessState,
+    'run events': loopEventsState, 'the needs-you count': attentionState,
+  }));
+  const regionRetry = sharedFailure ? undefined : triggerRefresh;
+
   return (
     <div className="flex flex-col min-h-0">
       {/* 공유 타입스케일(fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: outcomes 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비, 미정의 시 클래스 no-op 회귀 차단). */}
@@ -678,16 +645,23 @@ function ScreenOutcomes({ onNav }) {
           sub="Agent task outcomes"
           right={
             <>
-              <FreshnessStamp {...getFreshnessInputO(asOfAt, [searchState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState])}/>
+              <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
               <WindowSeg value={filter.days} onChange={setWindowDays}/>
-              <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh task results">
-                <Icon name="refresh" size={14}/>
-                Refresh
-              </button>
+              <RefreshButton
+                isBusy={getRegionSummary(stampRegions).isBusy}
+                hasRead={asOfAt != null}
+                onRefresh={triggerRefresh}
+                label="Refresh task results"/>
             </>
           }
         />
       </div>
+
+      {sharedFailure && (
+        <div className="mb-4 flex-shrink-0">
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={regionRetry}/>
+        </div>
+      )}
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -695,7 +669,7 @@ function ScreenOutcomes({ onNav }) {
         analyticsState={analyticsState}
         attentionState={attentionState}
         windowDays={analyticsPeriod}
-        onRetry={triggerRefresh}
+        onRetry={regionRetry}
       />
 
       {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
@@ -730,28 +704,28 @@ function ScreenOutcomes({ onNav }) {
           onSortChange={(v) => { setSort(v); setPage(0); }}
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
-          onRetry={triggerRefresh}
+          onRetry={regionRetry}
           needsYou={ledgerNeedsYou}
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
-      <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh}/>
+      <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
 
       {/* 주간·월간 사실 3종 — 닫힌 채로 바닥에 둔다. 매일 읽는 band/ledger 를 밀어내지 않게. */}
       <DisclosureO title="Reporting health" summary={reportingHealthSummaryO(channelLivenessState)}>
-        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={triggerRefresh}/>
-        <ChannelLivenessCard state={channelLivenessState} onRetry={triggerRefresh}/>
+        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
+        <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
       </DisclosureO>
 
       <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
-        <GraderBreakdownCard state={analyticsState} onRetry={triggerRefresh}/>
-        <CrosstabCard state={analyticsState} onRetry={triggerRefresh}/>
+        <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
+        <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
       </DisclosureO>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
       <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
-        <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh}/>
+        <LoopEventsCard state={loopEventsState} onRetry={regionRetry}/>
       </DisclosureO>
 
       {detailRow && (
@@ -802,13 +776,14 @@ function SilentChannelRowO({ channels }) {
   );
 }
 
-// stamping panels only → any failed read marks the kept stamp stale, so a partial refresh never claims full freshness
-function getFreshnessInputO(asOfAt, stampStates) {
-  return {
-    at: asOfAt,
-    loading: stampStates.some((st) => st.status === 'loading'),
-    failed: stampStates.some((st) => st.status === 'error'),
-  };
+// busy or failed regions → the stamp never claims fresh while a panel is refreshing or failed
+function getFreshnessInputO(asOfAt, regions) {
+  return { at: asOfAt, regions };
+}
+
+// { source → region } → getSharedFailure entries; source names read inside "Couldn't load …"
+function buildRegionFailuresO(regionsBySource) {
+  return Object.entries(regionsBySource).map(([source, region]) => ({ source, error: region.error }));
 }
 
 function WindowSeg({ value, onChange }) {
@@ -956,7 +931,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   if (analyticsState.status !== 'ready') {
     return (
       <div className="mb-4 flex-shrink-0" aria-label="Status band">
-        <ErrorBannerO title="Couldn't load the status band" detail={analyticsState.error} onRetry={onRetry}/>
+        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry}/>
       </div>
     );
   }
@@ -974,16 +949,23 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   return (
     <div className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
-        {tiles.map((tile) => <BandTileO key={tile.key} tile={tile} windowLabel={windowLabel}/>)}
+        {tiles.map((tile) => (
+          <BandTileO
+            key={tile.key}
+            tile={tile}
+            windowLabel={windowLabel}
+            unloadedText={tile.key === 'attention' ? getUnloadedSummaryO(attentionState.status) : undefined}/>
+        ))}
       </div>
       {isAttentionFailed && (
-        <ErrorBannerO title="Couldn't load the needs-you count" detail={attentionState.error} onRetry={onRetry}/>
+        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry}/>
       )}
     </div>
   );
 }
 
-function BandTileO({ tile, windowLabel }) {
+// unloadedText → a pending or failed count says so instead of a dash that reads as data
+function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
   const { KpiValue, TONE_ICON, formatPctWithDenominator } = window.UI;
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
@@ -1003,7 +985,7 @@ function BandTileO({ tile, windowLabel }) {
         </span>
         {tile.label}
       </div>
-      <KpiValue>{loaded ? formatIntO(tile.count) : '—'}</KpiValue>
+      <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
       <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
     </Tag>
   );
@@ -1098,7 +1080,7 @@ function AgentFailureSkeletonO({ stickyStyle }) {
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load by-agent failures" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1189,10 +1171,10 @@ function AttributionHealthCard({ state, period, onRetry }) {
 
 function AttributionHealthBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading reporting health"/>;
+    return <ChartSkeletonO height={200} label="reporting health"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load reporting health" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry}/>;
   }
 
   const series  = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
@@ -1407,10 +1389,10 @@ function getChannelLivenessBadgeO(state) {
 
 function ChannelLivenessBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={120} aria-label="Loading recording channels"/>;
+    return <ChartSkeletonO height={120} label="recording channels"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load recording channels" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1498,10 +1480,10 @@ function GraderBreakdownCard({ state, onRetry }) {
 
 function GraderBreakdownBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={120} aria-label="Loading check results"/>;
+    return <ChartSkeletonO height={120} label="check results"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load check results" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1671,10 +1653,10 @@ function CrosstabCard({ state, onRetry }) {
 
 function CrosstabBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={160} aria-label="Loading cross table"/>;
+    return <ChartSkeletonO height={160} label="cross table"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load cross table" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -1811,10 +1793,10 @@ function LoopEventsBody({ state, onRetry }) {
   const { Badge } = window.UI;
 
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading run events"/>;
+    return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load run events" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2161,13 +2143,13 @@ function ActiveFilterChips({ filter }) {
 
 function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={400} aria-label="Loading results"/>;
+    return <ChartSkeletonO height={400} label="results"/>;
   }
   if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records"/>;
   }
   if (state.status !== 'ready') {
-    return <ErrorBannerO title="Couldn't load the record ledger" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -2697,10 +2679,10 @@ function MetaField({ label, value, className = '' }) {
 
 function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
-  if (!detailState) return <ChartSkeletonO height={200} aria-label="Loading body"/>;
+  if (!detailState) return <ChartSkeletonO height={200} label="body"/>;
 
   if (detailState?.status === 'idle' || detailState?.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading body"/>;
+    return <ChartSkeletonO height={200} label="body"/>;
   }
   if (detailState?.status === 'error') {
     return (
@@ -2767,24 +2749,10 @@ function EmptyStateO({ message }) {
   return <EmptyState message={message} />;
 }
 
-function ErrorBannerO({ title, detail, onRetry }) {
-  const { Icon } = window.UI;
-  return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3 m-3"
-      style={{
-        background: 'rgb(var(--crit) / 0.08)',
-        borderColor: 'rgb(var(--crit) / 0.4)',
-      }}>
-      <Icon name="warn" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{title}</div>
-        {detail && <div className="fs-meta font-mono text-dim mt-1 break-all">{detail}</div>}
-      </div>
-      <button className="btn sm" onClick={onRetry} aria-label="Retry">Retry</button>
-    </div>
-  );
+// plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it
+function RegionErrorO({ source, error, onRetry }) {
+  const { RegionUnavailable } = window.UI;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
@@ -2816,9 +2784,10 @@ function BlockedBannerO({ detail }) {
             Not responding. Check the service or try again shortly.
           </div>
           {detail && (
-            <div className="fs-meta font-mono text-faint mt-2 break-all">
-              Last error: {detail}
-            </div>
+            <details className="fs-meta text-faint mt-2">
+              <summary className="cursor-pointer">Details</summary>
+              <code className="block mt-1 font-mono break-all">{detail}</code>
+            </details>
           )}
         </div>
       </div>
@@ -2826,20 +2795,9 @@ function BlockedBannerO({ detail }) {
   );
 }
 
-function ChartSkeletonO({ height = 220 }) {
-  return (
-    <div
-      aria-busy="true"
-      style={{
-        width: '100%',
-        height,
-        borderRadius: 8,
-        background: 'rgb(var(--sunken))',
-        opacity: 0.7,
-        animation: 'skelPulseO 1.4s ease-in-out infinite',
-      }}
-    />
-  );
+function ChartSkeletonO({ label, height = 220 }) {
+  const { LoadingPlaceholder } = window.UI;
+  return <LoadingPlaceholder label={label} minHeight={height}/>;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -2994,12 +2952,37 @@ function extractCanonicalAgentIdsO(summaryData) {
 
 async function fetchJsonO(url, signal) {
   const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    let body = '';
-    try { body = await res.text(); } catch (_e) { /* ignore body parse failure */ }
-    throw new Error(`HTTP ${res.status} ${res.statusText}${body ? ' — ' + body.slice(0, 120) : ''}`);
-  }
+  if (!res.ok) throw await window.UI.getFetchError(res);
   return res.json();
+}
+
+/**
+ * One region fetch wave keyed by its URL — held data stays on screen until the answer settles.
+ * @param options.mapData - payload → region data
+ * @param options.onData - runs only when this wave's answer lands (e.g. advancing the stamp time)
+ * @returns cleanup that aborts the wave; a superseded or aborted wave never lands
+ */
+function runRegionFetchO(setter, url, { mapData, onData } = {}) {
+  const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
+  const ctrl = new AbortController();
+  setter((s) => putRegionRequest(s, url, ctrl));
+
+  fetchJsonO(url, ctrl.signal)
+    .then((data) => {
+      // effects abort before re-running → an unaborted wave is the newest one
+      if (!ctrl.signal.aborted) onData?.();
+      setter((s) => putRegionData(s, ctrl, mapData ? mapData(data) : data));
+    })
+    .catch((err) => setter((s) => putRegionFailure(s, ctrl, err)));
+
+  return () => ctrl.abort();
+}
+
+// no rows held + failing past the threshold → outage ('blocked'); held rows stay on screen instead
+function putSearchFailureO(state, request, err, elapsedMs) {
+  const next = window.UI.putRegionFailure(state, request, err);
+  const isOutage = next !== state && next.status === 'error' && elapsedMs >= BACKEND_FAIL_THRESHOLD_MS;
+  return isOutage ? { ...next, status: 'blocked' } : next;
 }
 
 function errorMessage(err) {
@@ -3012,16 +2995,6 @@ function handleErrorO(err, setter) {
   setter({ status: 'error', data: null, error: errorMessage(err) });
 }
 
-// 연속 5xx/network 실패 BACKEND_FAIL_THRESHOLD_MS 경과 → 'blocked' 상태 + 별도 배너.
-function handleSearchErrorO(err, setter, firstFailRef) {
-  if (err && err.name === 'AbortError') return;
-  const now = Date.now();
-  if (firstFailRef.current == null) firstFailRef.current = now;
-  const elapsed = now - firstFailRef.current;
-  const detail = errorMessage(err);
-  const status = elapsed >= BACKEND_FAIL_THRESHOLD_MS ? 'blocked' : 'error';
-  setter({ status, data: null, error: detail });
-}
 
 function truncateO(str, len) {
   if (typeof str !== 'string') return '';

@@ -57,7 +57,7 @@ interface AgentStackEntry {
 interface OutcomesHelpers {
   buildAttentionParamsO: (days: number | string) => URLSearchParams;
   AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
-  ErrorBannerO: unknown;
+  RegionErrorO: unknown;
   BlockedBannerO: unknown;
   ResultTableBody: (props: Record<string, unknown>) => RenderNode;
   ResultTableCard: (props: Record<string, unknown>) => RenderNode;
@@ -277,7 +277,7 @@ test("status band: done and broken count writer-emitted rows only, never above t
 });
 
 const bannerTitles = (nodes: RenderNode[]): string[] =>
-  nodes.filter((n) => n.type === helpers.ErrorBannerO).map((n) => String(n.props?.title));
+  nodes.filter((n) => n.type === helpers.RegionErrorO).map((n) => String(n.props?.source));
 
 test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
