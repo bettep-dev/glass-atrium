@@ -36,7 +36,7 @@ const UI_SCALARS: Record<string, unknown> = {
 
 // Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
-const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure"];
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 
 function uiStub(overrides: Record<string, unknown> = {}): unknown {
@@ -111,41 +111,92 @@ test("the drawer's latency row renders its bars for every paired percentile it i
   }
 });
 
-test("a keydown from a control inside the row leaves that control's own activation intact", async () => {
-  const mod = await loadAgentsScreen();
-  const AgentSummaryRow = mod.AgentSummaryRow as Component;
-  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+const LEDGER_AGENTS = ["dev-react", "dev-shell", "dev-db"].map((name) => ({
+  agent_id: `glass-atrium-${name}`, agent_name: name, status: "active", success_pct: 92, runs: 40, needs_context_count: 2,
+}));
 
-  const selected: string[] = [];
-  const tree = renderScreen(
-    React.createElement(AgentSummaryRow, {
-      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2 },
-      days: 30,
-      isSelected: false,
-      onSelect: (id: string) => selected.push(id),
-      trend: null,
-      failure: null,
-      overage: null,
+function renderLedger(mod: Record<string, unknown>, onSelect: (id: string) => void = () => {}): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryTable as Component, {
+      agents: LEDGER_AGENTS, pseudoAgents: [], days: 30, selectedAgent: null, onSelect,
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
     }),
   );
+}
 
-  const row = findNodes(tree, (n) => n.type === "tr")[0];
-  assert.ok(row, "the summary row renders a tr");
-  const onKeyDown = row.props.onKeyDown as (e: unknown) => void;
+function getRovingRows(tree: RenderedNode | string | null): RenderedNode[] {
+  return findNodes(tree, (n) => n.type === "tr" && "data-roving-row" in n.props);
+}
 
-  for (const key of ["Enter", " "]) {
-    // A control nested in the row is the keydown target; the row is only the bubble path.
-    let prevented = false;
-    onKeyDown({ key, target: { nested: true }, currentTarget: row, preventDefault: () => { prevented = true; } });
-    assert.equal(prevented, false, `${key} on a nested control is not cancelled by the row`);
-    assert.deepEqual(selected, [], `${key} on a nested control does not open the drawer`);
-  }
+// DOM stand-in for the row a keydown bubbles through: one in-row control, no sibling rows.
+function pressRowKey(row: RenderedNode, key: string, from: "row" | "control"): boolean {
+  const control = { control: true };
+  const currentTarget = { querySelectorAll: () => [control], parentElement: { querySelectorAll: () => [] } };
+  let prevented = false;
+  (row.props.onKeyDown as (e: unknown) => void)({
+    key, target: from === "row" ? currentTarget : control, currentTarget, preventDefault: () => { prevented = true; },
+  });
+  return prevented;
+}
 
-  // The row itself still answers the same keys.
-  let rowPrevented = false;
-  onKeyDown({ key: "Enter", target: row, currentTarget: row, preventDefault: () => { rowPrevented = true; } });
-  assert.equal(rowPrevented, true);
+test("the ledger is one Tab stop, with each row's Expand control off the Tab order", async () => {
+  const tree = renderLedger(await loadAgentsScreen());
+  const rows = getRovingRows(tree);
+
+  assert.deepEqual(rows.map((r) => r.props.tabIndex), [0, -1, -1]);
+  assert.ok(rows.every((r) => r.props.role === undefined), "rows keep table-row semantics");
+  const expands = findNodes(tree, (n) => n.type === "button" && String(n.props["aria-label"] ?? "").includes("counts for"));
+  assert.equal(expands.length, LEDGER_AGENTS.length);
+  assert.ok(expands.every((b) => b.props.tabIndex === -1 && "data-row-control" in b.props), "Expand is an in-row control");
+});
+
+test("Enter on a ledger row opens its drawer, while Enter on its Expand control stays with the control", async () => {
+  const selected: string[] = [];
+  const [row] = getRovingRows(renderLedger(await loadAgentsScreen(), (id) => selected.push(id)));
+
+  assert.equal(pressRowKey(row, "Enter", "control"), false, "the control's native Enter is not cancelled");
+  assert.deepEqual(selected, [], "Enter on the control does not open the drawer");
+  assert.equal(pressRowKey(row, "Enter", "row"), true);
   assert.deepEqual(selected, ["glass-atrium-dev-react"]);
+});
+
+test("the ledger grows with the page instead of a nested vertical scroller that clips its last rows", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.AgentSummaryCard as Component, {
+      state: { status: "ready", data: { agents: LEDGER_AGENTS, meta: { total_agents: 3 } } },
+      days: 30, sortBy: "name", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
+    }),
+  );
+  const classOf = (n: RenderedNode) => String(n.props.className ?? "");
+
+  const [card] = findNodes(tree, (n) => /\bcard\b/.test(classOf(n)) && !/card-body/.test(classOf(n)));
+  assert.match(classOf(card), /\bmin-w-0\b/, "a wide ledger cannot widen the page grid");
+  const [body] = findNodes(tree, (n) => /card-body flush/.test(classOf(n)));
+  assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the ledger");
+  const [scroller] = findNodes(tree, (n) => /agent-table-minibars/.test(classOf(n)));
+  assert.match(classOf(scroller), /\boverflow-x-auto\b/, "wide columns scroll inside the card");
+});
+
+test("the lifecycle table is one Tab stop and Enter on a row opens that agent", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const selected: string[] = [];
+  const tree = renderScreen(
+    React.createElement(mod.LifecycleStatsTable as Component, {
+      rows: ["dev-react", "dev-shell"].map((agent_type) => ({ agent_type, start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 })),
+      onSelect: (id: string) => selected.push(id),
+    }),
+  );
+  const rows = getRovingRows(tree);
+
+  assert.deepEqual(rows.map((r) => r.props.tabIndex), [0, -1]);
+  assert.ok(rows.every((r) => r.props.role === undefined));
+  pressRowKey(rows[1], "Enter", "row");
+  assert.deepEqual(selected, ["dev-shell"]);
 });
 
 test("the failing-pairs denominator counts judged agent x task_type pairs, not the daily rows they came from", async () => {

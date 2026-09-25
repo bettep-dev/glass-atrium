@@ -626,7 +626,7 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
     : (state.status === 'loading' ? 'Loading…' : "Couldn't load");
 
   return (
-    <div className="card h-full flex flex-col min-h-0 mb-0">
+    <div className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
       <CardHead
         title="Performance by agent"
         sub={subText}
@@ -687,7 +687,8 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
           </select>
         </div>
       </div>
-      <div className="card-body flush">
+      {/* page scroll only — the card-body 70vh cap cut the last row and hid the Warning agents below it */}
+      <div className="card-body flush" style={{ maxHeight: 'none', overflowY: 'visible' }}>
         <AgentSummaryTable
           agents={sorted}
           pseudoAgents={pseudoAgents}
@@ -710,11 +711,21 @@ const SUMMARY_TABLE_COLSPAN = 6;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const [showPseudo, setShowPseudo] = useStateAg(false);
+  const [activeIndex, setActiveIndex] = useStateAg(0);
+  const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
   const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
 
-  const renderRow = (a) => (
+  // one roving set per tbody — arrow keys walk the rows of the set they start in
+  const renderRow = (a, index, rowSet) => (
     <AgentSummaryRow
       key={a.agent_id}
+      focusProps={window.UI.getRowFocusProps({
+        index,
+        activeIndex: rowSet === agents ? activeIndex : activePseudoIndex,
+        count: rowSet.length,
+        onActivate: () => onSelect(a.agent_id),
+        onActiveChange: rowSet === agents ? setActiveIndex : setActivePseudoIndex,
+      })}
       agent={a}
       days={days}
       isSelected={selectedAgent === a.agent_id}
@@ -728,7 +739,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   );
 
   return (
-    <div className="agent-table-minibars overflow-auto">
+    <div className="agent-table-minibars overflow-x-auto">
       <table className="tbl">
         <thead>
           <tr>
@@ -763,7 +774,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   );
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
+function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
   const [isExpanded, setExpanded] = useStateAg(false);
   const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
@@ -802,29 +813,19 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
     : 'no breakages (fail+blocked)';
 
   const handleClick = () => onSelect(agent.agent_id);
-  const handleKey = (e) => {
-    // 행 내부 컨트롤(확장 버튼)의 Enter/Space 는 그 컨트롤 소유 — 행이 preventDefault 하면 키보드 접근 불가.
-    if (e.target !== e.currentTarget) return;
-
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      onSelect(agent.agent_id);
-    }
-  };
 
   return (
     <>
     <tr
+      {...focusProps}
       onClick={handleClick}
-      onKeyDown={handleKey}
-      tabIndex={0}
-      role="button"
-      aria-pressed={isSelected}
+      aria-current={isSelected ? 'true' : undefined}
       className={isSelected ? 'bg-sunken' : ''}
       style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
       <td>
         <button
+          {...window.UI.ROW_CONTROL_PROPS}
           className="btn ghost sm"
           onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
           aria-expanded={isExpanded}
@@ -2517,6 +2518,8 @@ const LIFECYCLE_COLUMNS = [
 ];
 
 function LifecycleStatsTable({ rows, onSelect }) {
+  const [activeIndex, setActiveIndex] = useStateAg(0);
+
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
       <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -2535,14 +2538,23 @@ function LifecycleStatsTable({ rows, onSelect }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => <LifecycleStatsRow key={r.agent_type} row={r} onSelect={onSelect}/>)}
+          {rows.map((r, index) => (
+            <LifecycleStatsRow
+              key={r.agent_type}
+              row={r}
+              onSelect={onSelect}
+              focusProps={window.UI.getRowFocusProps({
+                index, activeIndex, count: rows.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
+              })}
+            />
+          ))}
         </tbody>
       </table>
     </div>
   );
 }
 
-function LifecycleStatsRow({ row, onSelect }) {
+function LifecycleStatsRow({ row, onSelect, focusProps }) {
   const startCount = Number(row.start_count) || 0;
   const completedCount = Number(row.completed_count) || 0;
   const orphanCount = Math.max(0, startCount - completedCount);
@@ -2551,19 +2563,11 @@ function LifecycleStatsRow({ row, onSelect }) {
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
 
   const handleClick = () => onSelect(row.agent_type);
-  const handleKey = (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      onSelect(row.agent_type);
-    }
-  };
 
   return (
     <tr
+      {...focusProps}
       onClick={handleClick}
-      onKeyDown={handleKey}
-      tabIndex={0}
-      role="button"
       className="cursor-pointer hover:bg-sunken transition-colors"
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
