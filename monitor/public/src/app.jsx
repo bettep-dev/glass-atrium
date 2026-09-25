@@ -148,9 +148,34 @@ const HARNESS_STORE_INITIAL = { status: "loading", data: null };
 
 // allSettled 결과 → harness 스토어 상태. 실패한 재폴링은 직전 판독을 유지하고,
 // 한 번도 답하지 않은 스토어만 error 로 남겨 fold 가 미수신을 구분한다.
+// `error` = latest read failed, held data included → surfaces read it as unknown, never healthy
 function toStoreState(settled, prev) {
-	if (settled.status === "fulfilled") return { status: "ready", data: settled.value };
-	return prev && prev.status === "ready" ? prev : { status: "error", data: null };
+	if (settled.status === "fulfilled") return { status: "ready", data: settled.value, error: null };
+	const error = settled.reason?.message ?? String(settled.reason);
+	return prev && prev.status === "ready" ? { ...prev, error } : { status: "error", data: null, error };
+}
+
+// store key → operator label for the "couldn't read …" copy
+const HARNESS_SOURCE_LABELS = {
+	kpiState: "the failure count",
+	liveState: "daemon status",
+	healthState: "the health probe",
+	hookState: "the hook chain",
+	hookFailState: "hook failures",
+};
+
+/**
+ * The one harness fact every surface reads: the fold plus the stores whose latest read failed.
+ * @returns unreadSources - labels of failed stores · error - the first failure, for the shared-outage cause
+ */
+function getHarness(stores) {
+	const fold = window.HealthModel.foldHarness(stores);
+	const failedKeys = Object.keys(HARNESS_SOURCE_LABELS).filter((key) => stores[key]?.error != null);
+	return {
+		...fold,
+		unreadSources: failedKeys.map((key) => HARNESS_SOURCE_LABELS[key]),
+		error: failedKeys.length > 0 ? stores[failedKeys[0]].error : null,
+	};
 }
 
 // harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
@@ -171,17 +196,22 @@ function harnessToNavBadges(harness) {
 }
 
 // ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
-// 두 표면이 어긋나지 않는다 — 미관측은 직전 값 보존이 아니라 neutral 'CHECKING…'.
+// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
 function systemsRollup(harness) {
-	if (!harness || harness.status !== "ready") {
+	if (!harness || harness.status === "loading") {
 		return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
 	}
 
+	const isReady = harness.status === "ready";
 	const issues =
-		harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0;
-	if (!issues) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
-	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
+		isReady && (harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0);
+	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
+	// an unread source could hide a fault → unknown, never ALL SYSTEMS
+	if (!isReady || harness.unreadSources?.length > 0) {
+		return { tone: "neutral", dotClass: "bg-faint", label: "STATUS UNKNOWN" };
+	}
+	return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
 }
 
 function App() {
@@ -289,7 +319,7 @@ function App() {
 	};
 
 	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
-	const harness = window.HealthModel.foldHarness({
+	const harness = getHarness({
 		kpiState,
 		liveState,
 		healthState,

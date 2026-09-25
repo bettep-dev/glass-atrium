@@ -52,6 +52,7 @@ interface HarnessFold {
 interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
   systemsRollup: (harness: HarnessFold | null) => Rollup;
+  getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
   toStoreState: (settled: PromiseSettledResult<unknown>, prev?: unknown) => { status: string; data: unknown };
 }
@@ -270,9 +271,9 @@ test("a failed poll keeps the held reading; only a store that never answered bec
   const held = { status: "ready", data: daemonPayload(1) };
   const rejected: PromiseSettledResult<unknown> = { status: "rejected", reason: new Error("HTTP 503") };
   const rows = [
-    { name: "held reading survives the failure", prev: held, expected: held },
-    { name: "no prior reading → error", prev: { status: "loading", data: null }, expected: { status: "error", data: null } },
-    { name: "a prior error stays an error", prev: { status: "error", data: null }, expected: { status: "error", data: null } },
+    { name: "held reading survives the failure, marked failed", prev: held, expected: { ...held, error: "HTTP 503" } },
+    { name: "no prior reading → error", prev: { status: "loading", data: null }, expected: { status: "error", data: null, error: "HTTP 503" } },
+    { name: "a prior error stays an error", prev: { status: "error", data: null }, expected: { status: "error", data: null, error: "HTTP 503" } },
   ];
   for (const row of rows) {
     // spread → the vm realm's object prototype drops out of the strict comparison
@@ -280,8 +281,8 @@ test("a failed poll keeps the held reading; only a store that never answered bec
   }
   assert.deepEqual(
     { ...app.toStoreState({ status: "fulfilled", value: { ok: 1 } }, held) },
-    { status: "ready", data: { ok: 1 } },
-    "a fresh answer replaces the held one",
+    { status: "ready", data: { ok: 1 }, error: null },
+    "a fresh answer replaces the held one and clears the failure",
   );
 });
 
@@ -314,20 +315,23 @@ test("systemsRollup: a down part or a fail count → ISSUES DETECTED", () => {
   assert.strictEqual(fails.label, "ISSUES DETECTED");
 });
 
-// The path a per-surface badge cache used to get wrong: the lane drops the daemon row while
-// the footer keeps the verdict it was holding. One fold makes that disagreement unreachable.
-test("a failed live poll moves the footer and the lane together, not apart", () => {
-  const healthy = app.foldHarness(allHealthy());
-  assert.strictEqual(app.systemsRollup(healthy).label, "ALL SYSTEMS");
+// An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
+test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", () => {
+  assert.strictEqual(app.systemsRollup(app.getHarness(allHealthy())).label, "ALL SYSTEMS");
 
-  const lost = app.foldHarness(allHealthy({ liveState: { status: "error", data: null } }));
-  assert.strictEqual(lost.daemonsDown, null, "the lane reads the daemons as unknown");
-  assert.strictEqual(
-    app.systemsRollup(lost).label,
-    "ALL SYSTEMS",
-    "the footer reports on what the same fold still observed — never on a dropped store",
-  );
-  assert.equal(lost.uncheckedNames.length, 4, "and the unknown parts are named as unknown");
+  const rows = [
+    { name: "cold failure", liveState: { status: "error", data: null, error: "HTTP 500" } },
+    { name: "held reading whose repoll failed", liveState: { status: "ready", data: daemonPayload(0), error: "HTTP 500" } },
+  ];
+  for (const row of rows) {
+    const harness = app.getHarness(allHealthy({ liveState: row.liveState }));
+    assert.deepEqual([...harness.unreadSources], ["daemon status"], row.name);
+    assert.strictEqual(harness.error, "HTTP 500", row.name);
+    assert.strictEqual(app.systemsRollup(harness).label, "STATUS UNKNOWN", row.name);
+  }
+
+  const known = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), hookState: { status: "error", data: null, error: "x" } }));
+  assert.strictEqual(app.systemsRollup(known).label, "ISSUES DETECTED", "a known fault still outranks an unread source");
 });
 
 test("harnessToNavBadges: the two contributors share the slot and cannot clobber each other", () => {
