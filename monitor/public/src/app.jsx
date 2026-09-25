@@ -146,9 +146,11 @@ function fetchJson(url) {
 // harness 스토어 초기값 — 'loading' 은 '아직 모름'이고 0 이 아니다(가짜 정상 차단).
 const HARNESS_STORE_INITIAL = { status: "loading", data: null };
 
-// allSettled 결과 → harness 스토어 상태. 실패한 재폴링은 직전 판독을 유지하고,
-// 한 번도 답하지 않은 스토어만 error 로 남겨 fold 가 미수신을 구분한다.
-// `error` = latest read failed, held data included → surfaces read it as unknown, never healthy
+/**
+ * allSettled 결과 → harness 스토어 상태.
+ * 실패한 재폴링 → 직전 판독 유지 + `error` 기록 → 표면은 unknown 으로 판독, healthy 아님.
+ * 한 번도 답하지 않은 스토어만 error 상태 → fold 가 미수신 구분.
+ */
 function toStoreState(settled, prev) {
 	if (settled.status === "fulfilled") return { status: "ready", data: settled.value, error: null };
 	const error = settled.reason?.message ?? String(settled.reason);
@@ -177,7 +179,7 @@ async function readHarnessSources(read = fetchJson) {
 
 /**
  * The one harness fact every surface reads: the fold plus the stores whose latest read failed.
- * @returns unreadSources - labels of failed stores · error - the first failure, for the shared-outage cause
+ * @returns the harness fold, widened with the failed stores' labels and the first failure as the shared-outage cause
  */
 function getHarness(stores) {
 	const fold = window.HealthModel.foldHarness(stores);

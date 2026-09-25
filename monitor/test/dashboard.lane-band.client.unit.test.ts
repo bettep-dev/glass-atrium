@@ -418,19 +418,25 @@ test("a region whose refresh failed over held data reads last-known and carries 
     { name: "fresh reads", error: null, lastKnown: false },
     { name: "held reads after a failed refresh", error: "HTTP 500", lastKnown: true },
   ];
-  for (const row of rows) {
+  const ids = ["outcomes", "fleet", "spend"];
+  const tilesFor = (row: (typeof rows)[number]) => {
     const wrap = (state: unknown) => (row.error ? held(state, row.error) : state);
-    const tiles = dash.buildTiles({
+    return dash.buildTiles({
       harness: HEALTHY, costState: wrap(kpi(1, 10)), agentsState: wrap(fleet), outcomesState: wrap(ready({})),
     });
-    for (const id of ["outcomes", "fleet", "spend"]) {
+  };
+  for (const row of rows) {
+    const tiles = tilesFor(row);
+    for (const id of ids) {
       const tile = tileOf(tiles, id) as Tile & { error?: string | null };
       assert.equal(tile.badge === "Last known", row.lastKnown, `${row.name}: ${id} badge`);
       assert.equal(tile.error ?? null, row.error, `${row.name}: ${id} carries the failure`);
       assert.equal(tile.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
-      if (row.lastKnown) assert.notEqual(tile.tone, "ok", `${row.name}: ${id} never reads healthy`);
     }
   }
+  // held data → the info tone, never the healthy one
+  const heldTiles = tilesFor(rows[1]);
+  for (const id of ids) assert.equal(tileOf(heldTiles, id).tone, "info", `${id} held after a failed refresh`);
 });
 
 test("held failures sharing one cause collapse into the page banner's single Retry", () => {
