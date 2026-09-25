@@ -146,10 +146,6 @@ function SymI({ s, size = 13, className = "" }) {
 	);
 }
 
-// 통합 endpoint 활성 라벨 (단일 source).
-const SRC_LABEL_UNIFIED = { t: "ok", s: "✓", x: "Unified endpoint" };
-const SRC_LABEL_LOADING = { t: "info", s: "ℹ", x: "Loading…" };
-
 function ScreenImprovement({ onNav }) {
 	const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner } = window.UI;
 
@@ -270,7 +266,8 @@ function ScreenImprovement({ onNav }) {
 	const pageFailure = getPageFailureI(regions);
 	// a shared outage owns the one Retry → cards drop theirs
 	const regionRetry = pageFailure ? undefined : triggerRefresh;
-	const isBusy = regions.some(({ state }) => state.busy);
+	const regionStates = regions.map(({ state }) => state);
+	const { isBusy } = window.UI.getRegionSummary(regionStates);
 
 	const columnRows = useMI(() => {
 		if (listState.status !== "ready" || !listState.data)
@@ -374,9 +371,6 @@ function ScreenImprovement({ onNav }) {
 		return deriveLoopAggregateI(loopEventsState.data);
 	}, [loopEventsState]);
 
-	const srcMeta =
-		listState.source === "unified" ? SRC_LABEL_UNIFIED : SRC_LABEL_LOADING;
-
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
@@ -458,7 +452,7 @@ function ScreenImprovement({ onNav }) {
 					title="Learning"
 					right={
 						<div className="flex items-center gap-2">
-							<FreshnessStamp {...getFreshnessInputI(asOf, regions.map(({ state }) => state))} />
+							<FreshnessStamp {...getFreshnessInputI(asOf, regionStates)} />
 							<ViewToggleI view={view} onChange={setView} />
 							<RefreshButton
 								isBusy={isBusy}
@@ -2101,19 +2095,19 @@ function buildDetailPropsI(row) {
 	// defensive guard — sister 모달 (architecture/outcomes DetailModal) 정합.
 	if (row?.kind === "pattern") {
 		// learning-log 패턴 (RankedCandidate) — pattern_signature/agent/status/discovered_date 노출.
-		// 일부 필드(bucket/score/summary/example)는 learning-log 스키마에 없으므로 || '—' 폴백.
+		// 일부 필드(bucket/score/summary/example)는 learning-log 스키마에 없음 → 빈 값은 DetailBodyI 가 숨김.
 		const statusBadge = learningStatusBadgeI(row?.status);
 		return {
 			fields: [
-				["ID", row?.id ?? row?.pattern_id ?? "—"],
-				["Agent", row?.agent || "—"],
+				["ID", row?.id ?? row?.pattern_id],
+				["Agent", row?.agent],
 				[
 					"Status",
-					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : "—",
+					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : null,
 				],
-				["Approval tier", row?.approval_tier || row?.bucket || "—"],
-				["Frequency", row?.frequency ?? "—"],
-				["First seen", row?.discovered_date || "—"],
+				["Approval tier", row?.approval_tier || row?.bucket],
+				["Frequency", row?.frequency],
+				["First seen", row?.discovered_date],
 				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
@@ -2121,7 +2115,7 @@ function buildDetailPropsI(row) {
 						? window.UI.formatKstFull(row.last_updated)
 						: row?.last_seen
 							? window.UI.formatKstFull(row.last_seen)
-							: "—",
+							: null,
 				],
 			],
 			sections: [
@@ -2148,19 +2142,19 @@ function buildDetailPropsI(row) {
 
 	return {
 		fields: [
-			["ID", row?.id ?? "—"],
-			["Status", row?.status || "—"],
+			["ID", row?.id],
+			["Status", row?.status],
 			["Approval tier", `${isSafety ? "⚠ safety" : "✓ auto"} (${tier})`],
-			["Classification", row?.classification || "—"],
-			["Target agent", row?.target_agent || "—"],
-			["Target file", row?.target_file || "—"],
-			["Cycle date", row?.cycle_date || "—"],
+			["Classification", row?.classification],
+			["Target agent", row?.target_agent],
+			["Target file", row?.target_file],
+			["Cycle date", row?.cycle_date],
 			["Model check", row?.haiku_status],
-			["Cost guard", row?.cost_guard_state || "—"],
+			["Cost guard", row?.cost_guard_state],
 			// reviewed_at = real-UTC ISO instant → formatKstFull. cycle_date 는 date-only 문자열 → raw 유지(위).
 			[
 				"Reviewed at",
-				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : "—",
+				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
 			],
 		],
 		sections: [
