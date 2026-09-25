@@ -34,13 +34,19 @@ const UI_SCALARS: Record<string, unknown> = {
   OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
 };
 
-function uiStub(): unknown {
+// Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
+const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure"];
+for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
+
+function uiStub(overrides: Record<string, unknown> = {}): unknown {
+  const scalars = { ...UI_SCALARS, ...overrides };
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        name in UI_SCALARS
-          ? UI_SCALARS[name]
+        name in scalars
+          ? scalars[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -55,9 +61,9 @@ function uiStub(): unknown {
   );
 }
 
-async function loadAgentsScreen(): Promise<Record<string, unknown>> {
+async function loadAgentsScreen(overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   // Recharts rides the same transparent-atom stub — the matrix sparkline only needs its components to exist.
-  return loadScreenModule(AGENTS_SRC, { UI: uiStub(), Recharts: uiStub(), React: createReactStub() });
+  return loadScreenModule(AGENTS_SRC, { UI: uiStub(overrides), Recharts: uiStub(), React: createReactStub() });
 }
 
 type Component = (props: unknown) => unknown;
@@ -189,6 +195,10 @@ function getBadgeTexts(tree: RenderedNode | string | null): string[] {
   return findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
 }
 
+function getUnavailableSources(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => n.props.atom === "RegionUnavailable").map((n) => String(n.props.source));
+}
+
 function isBusy(tree: RenderedNode | string | null): boolean {
   return findNodes(tree, (n) => n.props["aria-busy"] === "true").length > 0;
 }
@@ -208,7 +218,7 @@ test("the alarm lane renders loading, error, unavailable and a loaded zero disti
 
   assert.ok(isBusy(loading));
   assert.deepEqual(getBadgeTexts(loading), []);
-  assert.match(collectText(failed), /Couldn't load circuit-breaker state/);
+  assert.deepEqual(getUnavailableSources(failed), ["circuit-breaker state"], "the failure names its own source");
   assert.deepEqual(getBadgeTexts(failed), []);
   assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
   assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
@@ -245,7 +255,7 @@ test("the unsafe-to-route tile shows a count only when the breaker state actuall
   assert.deepEqual(getValueTexts(loading), []);
 
   const failed = await getUnsafeTile(ERROR_STATE);
-  assert.match(collectText(failed), /Couldn't load unsafe to route/);
+  assert.deepEqual(getUnavailableSources(failed), ["unsafe to route"]);
   assert.deepEqual(getBadgeTexts(failed), []);
 });
 
@@ -509,15 +519,54 @@ test("the breakage sort orders by breakages only once they are read, and says so
   }
 });
 
-test("the Refresh control carries a busy state while any region is still loading", async () => {
-  const mod = await loadAgentsScreen();
+// The stub's useState hands back each initial value, so the screen renders with every region in that state.
+async function renderScreenAgents(initialRegion?: Record<string, unknown>): Promise<RenderedNode | string | null> {
+  const overrides = initialRegion ? { INITIAL_REGION_STATE: initialRegion } : {};
+  const mod = await loadAgentsScreen(overrides);
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  for (const isBusy of [true, false]) {
-    const tree = renderScreen(React.createElement(mod.RefreshButtonAg as Component, { isBusy, onRefresh: () => {} }));
-    const button = findNodes(tree, (n) => n.type === "button")[0];
-    assert.equal(button?.props["aria-busy"], isBusy ? "true" : undefined, `busy=${isBusy}: aria-busy`);
-    assert.equal(/Refreshing/.test(collectText(tree)), isBusy, `busy=${isBusy}: visible busy label`);
-  }
+  return renderScreen(React.createElement(mod.ScreenAgents as Component, {}));
+}
+
+function findAtoms(tree: RenderedNode | string | null, atom: string): RenderedNode[] {
+  return findNodes(tree, (n) => n.props.atom === atom);
+}
+
+test("the header's Refresh and freshness stamp read every region, so a first load is never announced as fresh", async () => {
+  const [header] = findAtoms(await renderScreenAgents(), "PageHeader");
+  // The stub header keeps its right-hand slot as a prop, so render that slot on its own.
+  const tree = renderScreen(header.props.right);
+  const [refresh] = findAtoms(tree, "RefreshButton");
+  assert.equal(refresh?.props.isBusy, true, "a region in flight keeps Refresh busy");
+  assert.equal(refresh?.props.hasRead, false, "before the first read Refresh says it is loading, not refreshing");
+  const [stamp] = findAtoms(tree, "FreshnessStamp");
+  assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
+});
+
+test("an outage every region shares shows one page banner with the only Retry", async () => {
+  const initial = REAL_UI.INITIAL_REGION_STATE as Record<string, unknown>;
+  const failed = { ...initial, status: "error", busy: false, error: "HTTP 503 Service Unavailable — down" };
+  const tree = await renderScreenAgents(failed);
+  const banners = findAtoms(tree, "PageErrorBanner");
+  assert.equal(banners.length, 1);
+  assert.equal(typeof banners[0].props.onRetry, "function");
+  const regions = findAtoms(tree, "RegionUnavailable");
+  assert.ok(regions.length > 1, "each region still keeps its quiet placeholder");
+  assert.deepEqual(regions.filter((n) => n.props.onRetry !== undefined), [], "no region repeats the Retry");
+});
+
+test("a region that fails alone keeps its own Retry and no page banner appears", async () => {
+  const tree = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry: () => undefined });
+  const [region] = findAtoms(tree, "RegionUnavailable");
+  assert.equal(typeof region?.props.onRetry, "function");
+  assert.deepEqual(findAtoms(tree, "PageErrorBanner"), []);
+});
+
+test("a loading region shows a labelled status placeholder with its height reserved, never an empty box", async () => {
+  const tree = await renderComponent("TopNFailingAgentsCard", { state: LOADING_STATE, days: 30, onRetry: () => undefined, failureByAgent: new Map() });
+  const [placeholder] = findAtoms(tree, "LoadingPlaceholder");
+  assert.ok(placeholder, "the pairs region renders the shared loading placeholder");
+  assert.match(String(placeholder.props.label), /\w/, "the placeholder names what is loading");
+  assert.ok(Number(placeholder.props.minHeight) > 0, "the settled height is reserved");
 });
 
 const TONED_CLASS = /\btext-(warn|crit)\b/;

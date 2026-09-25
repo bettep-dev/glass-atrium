@@ -77,9 +77,9 @@ const COMPATIBILITY_TRUNCATE_LENGTH = 28;
 
 // 드로어 Recent activity 섹션 — per-agent 최근 outcomes 표시 건수 (drawer 높이 대비 확정값).
 const RECENT_ACTIVITY_LIMIT = 8;
+// h-7 row + space-y-2 gap — the height a drawer section settles to per row
+const DRAWER_SKELETON_ROW_PX = 36;
 
-// fetch state 초기값 + helper — runFetchAg 와 함께 보일러플레이트 압축.
-const INITIAL_FETCH_STATE = { status: 'loading', data: null, error: null };
 
 // SubagentStop 미페어 outcome 의 learning-aggregator 합성 fallback — 실 에이전트 아님.
 // 100% 성공률은 합성 버킷의 산물 (의미 없음) → 라벨/툴팁 분리로 오인 차단 (CF6).
@@ -99,9 +99,8 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
   return visualSet.has(agentId);
 }
 
-// 카드 본문 flex 컨테이너 + 스크롤 + skeleton pulse — inline style 으로 빼두면 JSX 노이즈가 큼.
-const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opacity:.35} } '
-  + '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
+// 카드 본문 flex 컨테이너 + 스크롤 — inline style 으로 빼두면 JSX 노이즈가 큼.
+const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.ag-chart-fill { flex: 1 1 auto; min-height: 0; width: 100%; } '
   + '.tbl td { vertical-align: top; }';
@@ -111,7 +110,10 @@ const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opac
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
 function ScreenAgents() {
-  const { PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner,
+    getRegionSummary, getSharedFailure,
+  } = window.UI;
 
   const [days, setDays] = useStateAg(30);
   const [refreshTick, setRefreshTick] = useStateAg(0);
@@ -119,20 +121,20 @@ function ScreenAgents() {
   // Per-panel fetch state — independent so one failure doesn't blank the page.
   // failureState → Summary fail_count 컬럼 client-side merge (failure-patterns 흡수).
   // revisionState + reviewState → 드로어 Quality 섹션과 Instrumentation 타임라인 입력.
-  const [summaryState,   setSummaryState]   = useStateAg(INITIAL_FETCH_STATE);
+  const [summaryState,   setSummaryState]   = useStateAg(window.UI.INITIAL_REGION_STATE);
   const [summaryAsOfAt,  setSummaryAsOfAt]  = useStateAg(null);
-  const [latencyState,   setLatencyState]   = useStateAg(INITIAL_FETCH_STATE);
-  const [successState,   setSuccessState]   = useStateAg(INITIAL_FETCH_STATE);
-  const [revisionState,  setRevisionState]  = useStateAg(INITIAL_FETCH_STATE);
-  const [reviewState,    setReviewState]    = useStateAg(INITIAL_FETCH_STATE);
+  const [latencyState,   setLatencyState]   = useStateAg(window.UI.INITIAL_REGION_STATE);
+  const [successState,   setSuccessState]   = useStateAg(window.UI.INITIAL_REGION_STATE);
+  const [revisionState,  setRevisionState]  = useStateAg(window.UI.INITIAL_REGION_STATE);
+  const [reviewState,    setReviewState]    = useStateAg(window.UI.INITIAL_REGION_STATE);
   // reviewByAgentState → Health Index review_flag 성분 (per-agent ratio · CF1 P0).
   // reviewState(date-only)는 timeline 차트 전용으로 분리 유지.
-  const [reviewByAgentState, setReviewByAgentState] = useStateAg(INITIAL_FETCH_STATE);
-  const [failureState,   setFailureState]   = useStateAg(INITIAL_FETCH_STATE);
+  const [reviewByAgentState, setReviewByAgentState] = useStateAg(window.UI.INITIAL_REGION_STATE);
+  const [failureState,   setFailureState]   = useStateAg(window.UI.INITIAL_REGION_STATE);
   // lifecycleState → start/stop/completed gap(orphan spawn) + duration 분포 패널.
-  const [lifecycleState,  setLifecycleState]  = useStateAg(INITIAL_FETCH_STATE);
+  const [lifecycleState,  setLifecycleState]  = useStateAg(window.UI.INITIAL_REGION_STATE);
   // overageState → budget_overages(P95 막대 크로싱 표기). 404/503(테이블 미배포) 시 error → 표기 미렌더.
-  const [overageState,    setOverageState]    = useStateAg(INITIAL_FETCH_STATE);
+  const [overageState,    setOverageState]    = useStateAg(window.UI.INITIAL_REGION_STATE);
 
   // selectedAgent = 키보드/행 하이라이트 (드릴 진입점) · 드로어 열림과 독립 — 하이라이트는 클릭·포커스로,
   // 드로어는 클릭/Enter 로만 (open trigger 분리).
@@ -141,10 +143,10 @@ function ScreenAgents() {
   const [drawerAgent, setDrawerAgent] = useStateAg(null);
   // P2-B — fail/blocked 2종 분리 fetch. blocked 가 지배적 장애 유형 (fail 0 + blocked 다수 빈번).
   // 드로어 Failures 섹션 데이터 → drawerAgent 변경 시 발화 (드로어 열림과 동기).
-  const [detailState, setDetailState] = useStateAg({ status: 'idle', data: null, error: null });
-  const [blockedState, setBlockedState] = useStateAg({ status: 'idle', data: null, error: null });
+  const [detailState, setDetailState] = useStateAg(window.UI.INITIAL_REGION_STATE);
+  const [blockedState, setBlockedState] = useStateAg(window.UI.INITIAL_REGION_STATE);
   // Recent activity 섹션 — 드로어 열림 시 per-agent outcomes 최신순 fetch (유일한 신규 요청).
-  const [recentState, setRecentState] = useStateAg({ status: 'idle', data: null, error: null });
+  const [recentState, setRecentState] = useStateAg(window.UI.INITIAL_REGION_STATE);
 
   const abortRef = useRefAg(null);
   const detailAbortRef = useRefAg(null);
@@ -157,29 +159,22 @@ function ScreenAgents() {
     abortRef.current?.abort();
     abortRef.current = ctrl;
 
-    const mainSetters = [
-      setSummaryState, setLatencyState, setSuccessState, setRevisionState,
-      setReviewState, setReviewByAgentState, setFailureState,
-      setLifecycleState, setOverageState,
-    ];
-    mainSetters.forEach((s) => s(INITIAL_FETCH_STATE));
-
     // G3 latency 서버 allowlist {1-30} — 캐핑.
     const latencyDays = Math.min(days, 30);
 
     const tasks = [
-      runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl.signal, setSummaryState),
-      runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl.signal, setLatencyState),
-      runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl.signal, setSuccessState),
-      runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl.signal, setRevisionState),
-      runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl.signal, setReviewState),
+      runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl, setSummaryState),
+      runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl, setLatencyState),
+      runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl, setSuccessState),
+      runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl, setRevisionState),
+      runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl, setReviewState),
       // CF1 P0 — Health Index review_flag 성분을 per-agent 실비율로 공급.
       // 404 (pre-deploy) 시 error 상태 → buildQualityHealthRanking 이 revision 단독으로 graceful degrade.
-      runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl.signal, setReviewByAgentState),
-      runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl.signal, setFailureState),
-      runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl.signal, setLifecycleState),
+      runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl, setReviewByAgentState),
+      runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl, setFailureState),
+      runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState),
       // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
-      runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl.signal, setOverageState),
+      runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState),
     ];
 
     return () => ctrl.abort();
@@ -189,26 +184,24 @@ function ScreenAgents() {
   // fail/blocked 2종 동시 fetch — 단일 AbortController 로 동기 abort. 드로어 Failures 섹션 데이터.
   useEffectAg(() => {
     if (!drawerAgent) {
-      setDetailState({ status: 'idle', data: null, error: null });
-      setBlockedState({ status: 'idle', data: null, error: null });
+      setDetailState(window.UI.INITIAL_REGION_STATE);
+      setBlockedState(window.UI.INITIAL_REGION_STATE);
       return undefined;
     }
     const ctrl = new AbortController();
     detailAbortRef.current?.abort();
     detailAbortRef.current = ctrl;
-    setDetailState(INITIAL_FETCH_STATE);
-    setBlockedState(INITIAL_FETCH_STATE);
 
     const agentParam = encodeURIComponent(drawerAgent);
     // result 미지정 → 서버 default fail (기존 동작 유지).
     runFetchAg(
       `/api/agents/failure-reasons?agent=${agentParam}&days=${days}&result=fail`,
-      ctrl.signal,
+      ctrl,
       setDetailState,
     );
     runFetchAg(
       `/api/agents/failure-reasons?agent=${agentParam}&days=${days}&result=blocked`,
-      ctrl.signal,
+      ctrl,
       setBlockedState,
     );
 
@@ -219,18 +212,17 @@ function ScreenAgents() {
   // agent 필터 축 = agent NAME (outcomes/search 계약). drawerAgent==agent_id==agent_name (현 cycle convention).
   useEffectAg(() => {
     if (!drawerAgent) {
-      setRecentState({ status: 'idle', data: null, error: null });
+      setRecentState(window.UI.INITIAL_REGION_STATE);
       return undefined;
     }
     const ctrl = new AbortController();
     recentAbortRef.current?.abort();
     recentAbortRef.current = ctrl;
-    setRecentState(INITIAL_FETCH_STATE);
 
     const agentParam = encodeURIComponent(drawerAgent);
     runFetchAg(
       `/api/outcomes/search?agent=${agentParam}&sort=record_ts:desc&limit=${RECENT_ACTIVITY_LIMIT}`,
-      ctrl.signal,
+      ctrl,
       setRecentState,
     );
 
@@ -239,13 +231,17 @@ function ScreenAgents() {
 
   useEffectAg(() => setSummaryAsOfAt((prevAt) => getLastReadAtAg(prevAt, summaryState)), [summaryState]);
 
-  // 패널 1개라도 loading → period 토글 비활성 (abort storm 방지) + stamp/Refresh busy.
-  const regionStates = [
-    summaryState, latencyState, successState, revisionState,
-    reviewState, reviewByAgentState, failureState,
-    lifecycleState, overageState,
+  // any request in flight → period toggle disabled (abort storm) + stamp/Refresh busy
+  const regionEntries = [
+    ['agent summary', summaryState], ['latency', latencyState], ['success rates', successState],
+    ['revision counts', revisionState], ['review flags', reviewState], ['review flags by agent', reviewByAgentState],
+    ['failure patterns', failureState], ['lifecycle stats', lifecycleState], ['budget overages', overageState],
   ];
-  const isAnyRegionLoading = regionStates.some((s) => s.status === 'loading');
+  const regionStates = regionEntries.map(([, state]) => state);
+  const { isBusy: isAnyRegionBusy } = getRegionSummary(regionStates);
+  const sharedFailure = getSharedFailure(regionEntries.map(([source, state]) => ({ source, error: state.error })));
+  // one outage, one Retry — the page banner owns it and the regions stay quiet
+  const regionRetry = sharedFailure ? undefined : triggerRefresh;
 
   // 추세 셀 데이터 — success-rate 일별 합계를 agent_id 별 group → 최근 7일 시리즈.
   // useMemo 로 row 마다 재계산 회피.
@@ -321,7 +317,7 @@ function ScreenAgents() {
                   <button
                     key={p.value}
                     className={days === p.value ? 'active' : ''}
-                    disabled={isAnyRegionLoading && days !== p.value}
+                    disabled={isAnyRegionBusy && days !== p.value}
                     onClick={() => setDays(p.value)}
                     aria-pressed={days === p.value}
                     aria-label={`Last ${p.label}`}>
@@ -329,14 +325,26 @@ function ScreenAgents() {
                   </button>
                 ))}
               </div>
-              <FreshnessStamp {...getFreshnessInputAg(summaryAsOfAt, summaryState, regionStates)}/>
-              <RefreshButtonAg isBusy={isAnyRegionLoading} onRefresh={triggerRefresh}/>
+              <FreshnessStamp at={summaryAsOfAt} regions={regionStates}/>
+              <RefreshButton
+                isBusy={isAnyRegionBusy}
+                hasRead={summaryAsOfAt != null}
+                onRefresh={triggerRefresh}
+                label="Refresh agent data"/>
             </>
           }
         />
       </div>
 
-      <AgentAlarmLane state={summaryState} onRetry={triggerRefresh}/>
+      {sharedFailure && (
+        <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+      )}
+
+      {/* held values stay on screen, dimmed, until the refresh settles */}
+      <div
+        aria-busy={isAnyRegionBusy ? 'true' : undefined}
+        className={isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity' : undefined}>
+      <AgentAlarmLane state={summaryState} onRetry={regionRetry}/>
 
       <AgentStatusBand
         days={days}
@@ -345,12 +353,12 @@ function ScreenAgents() {
         overageState={overageState}
         failureByAgent={failureByAgent}
         overageByAgent={overageByAgent}
-        onRetry={triggerRefresh}
+        onRetry={regionRetry}
       />
 
       {/* Failing pairs — relocated directly under the band: which agent × task type to stop delegating. */}
       <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
-        <TopNFailingAgentsCard state={successState} days={days} onRetry={triggerRefresh} failureByAgent={failureByAgent}/>
+        <TopNFailingAgentsCard state={successState} days={days} onRetry={regionRetry} failureByAgent={failureByAgent}/>
       </div>
 
       {/* Row 1 — 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
@@ -362,7 +370,7 @@ function ScreenAgents() {
           onSortChange={setSortBy}
           selectedAgent={selectedAgent}
           onSelect={handleSelectRow}
-          onRetry={triggerRefresh}
+          onRetry={regionRetry}
           trendByAgent={trendByAgent}
           failureByAgent={failureByAgent}
           overageByAgent={overageByAgent}
@@ -372,19 +380,20 @@ function ScreenAgents() {
       </div>
 
       <AgentDisclosure title="By task type" sub="Success rate per agent × task type">
-        <SuccessRateMatrixCard state={successState} days={days} onRetry={triggerRefresh}/>
+        <SuccessRateMatrixCard state={successState} days={days} onRetry={regionRetry}/>
       </AgentDisclosure>
 
       <AgentDisclosure title="Instrumentation" sub="Is the measuring apparatus intact">
         <div className="grid grid-cols-1 gap-4 items-stretch">
-          <LifecycleStatsCard state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={triggerRefresh}/>
+          <LifecycleStatsCard state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={regionRetry}/>
           <div className="card flex flex-col min-h-0">
             <div className="card-body ag-card-body">
-              <QualityHealthTimeline state={reviewState} onRetry={triggerRefresh}/>
+              <QualityHealthTimeline state={reviewState} onRetry={regionRetry}/>
             </div>
           </div>
         </div>
       </AgentDisclosure>
+      </div>
 
       {/* 행 클릭 시에만 마운트 (로드 시 자동 열림 없음). DetailSurface variant=drawer — focus-trap/scroll-lock/3 닫기 상속. */}
       {drawerAgent && (
@@ -452,7 +461,7 @@ function AgentAlarmLane({ state, onRetry }) {
     return (
       <div className="card mb-4">
         <div className="card-body">
-          <ErrorBannerAg title="Couldn't load circuit-breaker state" detail={state.error} onRetry={onRetry}/>
+          <window.UI.RegionUnavailable source="circuit-breaker state" error={state.error} onRetry={onRetry}/>
         </div>
       </div>
     );
@@ -578,23 +587,13 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
         <span className="text-faint fs-micro">{label}</span>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
-          <ErrorBannerAg title={`Couldn't load ${label.toLowerCase()}`} detail={error} onRetry={onRetry}/>
+          <window.UI.RegionUnavailable source={label.toLowerCase()} error={error} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
         {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
         <span className="text-faint fs-micro">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
       </div>
     </div>
-  );
-}
-
-function RefreshButtonAg({ isBusy, onRefresh }) {
-  const { Icon } = window.UI;
-  return (
-    <button className="btn ghost sm" onClick={onRefresh} aria-label="Refresh agent data" aria-busy={isBusy ? 'true' : undefined}>
-      <Icon name="refresh" size={14}/>
-      {isBusy ? 'Refreshing…' : 'Refresh'}
-    </button>
   );
 }
 
@@ -653,10 +652,10 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
 
 function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   if (state.status === 'loading') {
-    return <div className="card-body"><ChartSkeletonAg height={240} aria-label="Loading agent performance"/></div>;
+    return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
   }
   if (state.status === 'error') {
-    return <div className="card-body"><ErrorBannerAg title="Couldn't load agent performance" detail={state.error} onRetry={onRetry}/></div>;
+    return <div className="card-body"><window.UI.RegionUnavailable source="agent performance" error={state.error} onRetry={onRetry}/></div>;
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
@@ -1310,13 +1309,8 @@ function AgentDrawerSection({ title, children }) {
 // 섹션마다 status 기반으로 호출, 한 섹션 실패가 다른 섹션을 blank 시키지 않도록 독립 적용.
 
 function DrawerSectionSkeleton({ rows = 2, label }) {
-  return (
-    <div aria-busy="true" aria-label={label} className="space-y-2">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-7 bg-sunken rounded-md" style={{ animation: 'skelPulseAg 1.4s ease-in-out infinite' }}/>
-      ))}
-    </div>
-  );
+  const { LoadingPlaceholder } = window.UI;
+  return <LoadingPlaceholder label={label} minHeight={rows * DRAWER_SKELETON_ROW_PX}/>;
 }
 
 function DrawerSectionEmpty({ message }) {
@@ -1376,10 +1370,10 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
   );
 
   if (summaryState.status === 'loading') {
-    return <DrawerSectionSkeleton rows={3} label="Loading overview"/>;
+    return <DrawerSectionSkeleton rows={3} label="overview"/>;
   }
   if (summaryState.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load overview" detail={summaryState.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="overview" error={summaryState.error} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message={`No summary row for ${drawerAgent} in this window.`}/>;
@@ -1461,13 +1455,13 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
   const bothLoading = revisionState.status === 'loading' && reviewByAgentState.status === 'loading';
   const bothError = revisionState.status === 'error' && reviewByAgentState.status === 'error';
   if (bothLoading) {
-    return <DrawerSectionSkeleton rows={2} label="Loading quality signals"/>;
+    return <DrawerSectionSkeleton rows={2} label="quality signals"/>;
   }
   if (bothError) {
     return (
-      <ErrorBannerAg
-        title="Couldn't load quality signals"
-        detail={revisionState.error || reviewByAgentState.error}
+      <window.UI.RegionUnavailable
+        source="quality signals"
+        error={revisionState.error || reviewByAgentState.error}
         onRetry={onRetry}
       />
     );
@@ -1515,10 +1509,10 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
 function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, onRetry }) {
   const { MiniBars } = window.UI;
   if (summaryState.status === 'loading') {
-    return <DrawerSectionSkeleton rows={3} label="Loading performance"/>;
+    return <DrawerSectionSkeleton rows={3} label="performance"/>;
   }
   if (summaryState.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load performance" detail={summaryState.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="performance" error={summaryState.error} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message="No performance data for this agent in the window."/>;
@@ -1562,10 +1556,10 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).
 function AgentLatencyRow({ latency, state, onRetry }) {
   if (state.status === 'loading') {
-    return <DrawerSectionSkeleton rows={1} label="Loading latency"/>;
+    return <DrawerSectionSkeleton rows={1} label="latency"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load latency" detail={state.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="latency" error={state.error} onRetry={onRetry}/>;
   }
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
@@ -1615,10 +1609,10 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
   const { Badge } = window.UI;
   if (failureState.status === 'loading') {
-    return <DrawerSectionSkeleton rows={2} label="Loading failures"/>;
+    return <DrawerSectionSkeleton rows={2} label="failures"/>;
   }
   if (failureState.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load failure patterns" detail={failureState.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="failure patterns" error={failureState.error} onRetry={onRetry}/>;
   }
 
   const failure = failureByAgent ? failureByAgent.get(drawerAgent) : null;
@@ -1682,10 +1676,10 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
 // (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
 function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry }) {
   if (lifecycleState.status === 'loading') {
-    return <DrawerSectionSkeleton rows={2} label="Loading lifecycle"/>;
+    return <DrawerSectionSkeleton rows={2} label="lifecycle"/>;
   }
   if (lifecycleState.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load lifecycle stats" detail={lifecycleState.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={lifecycleState.error} onRetry={onRetry}/>;
   }
 
   // agent_type == agent_id == drawerAgent (현 cycle convention).
@@ -1746,10 +1740,10 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 // 5. Recent activity — 드로어 열림 시 fetch 한 per-agent 최신 outcomes (result dual-encoded).
 function AgentRecentActivitySection({ recentState, days, onRetry }) {
   if (recentState.status === 'idle' || recentState.status === 'loading') {
-    return <DrawerSectionSkeleton rows={3} label="Loading recent activity"/>;
+    return <DrawerSectionSkeleton rows={3} label="recent activity"/>;
   }
   if (recentState.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load recent activity" detail={recentState.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="recent activity" error={recentState.error} onRetry={onRetry}/>;
   }
   const rows = readyData(recentState)?.rows ?? [];
   if (rows.length === 0) {
@@ -1813,13 +1807,9 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
         Why tasks failed · fail+blocked ({days}d)
       </div>
       {isLoading ? (
-        <div aria-busy="true" className="space-y-2">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-6 bg-sunken rounded-md" style={{ animation: 'skelPulseAg 1.4s ease-in-out infinite' }}/>
-          ))}
-        </div>
+        <DrawerSectionSkeleton rows={3} label="failure causes"/>
       ) : firstError ? (
-        <ErrorBannerAg title="Couldn't load failure causes" detail={firstError.error} onRetry={onRetry}/>
+        <window.UI.RegionUnavailable source="failure causes" error={firstError.error} onRetry={onRetry}/>
       ) : (
         <MergedBreakageBody merged={merged} days={days}/>
       )}
@@ -1947,10 +1937,10 @@ function SuccessRateMatrixBody({ state, days, onRetry }) {
   );
 
   if (state.status === 'loading') {
-    return <ChartSkeletonAg height={280} aria-label="Loading success matrix"/>;
+    return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load success rates" detail={state.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="success rates" error={state.error} onRetry={onRetry}/>;
   }
   if (matrix.agents.length === 0) {
     return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
@@ -2173,10 +2163,10 @@ function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) 
   const { Badge } = window.UI;
 
   if (state.status === 'loading') {
-    return <ChartSkeletonAg height={200} aria-label="Loading most-failing pairs"/>;
+    return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load failure rates" detail={state.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="failure rates" error={state.error} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
     return (
@@ -2319,10 +2309,10 @@ const QH_TIMELINE_RATIO_AXIS_LABEL = {
 
 function QualityHealthTimeline({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonAg height={260} aria-label="Loading review_flag timeline"/>;
+    return <window.UI.LoadingPlaceholder label="review_flag timeline" minHeight={260}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load review_flag data" detail={state.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="review_flag data" error={state.error} onRetry={onRetry}/>;
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
@@ -2502,10 +2492,10 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
 
 function LifecycleStatsBody({ state, days, onSelect, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonAg height={260} aria-label="Loading lifecycle stats"/>;
+    return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerAg title="Couldn't load lifecycle stats" detail={state.error} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={state.error} onRetry={onRetry}/>;
   }
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
@@ -2600,42 +2590,6 @@ function EmptyStateAg({ message }) {
   return <EmptyState message={message} />;
 }
 
-function ErrorBannerAg({ title, detail, onRetry }) {
-  const { Icon } = window.UI;
-  return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3"
-      style={{
-        background: 'rgb(var(--crit) / 0.08)',
-        borderColor: 'rgb(var(--crit) / 0.4)',
-      }}>
-      <Icon name="warn" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{title}</div>
-        {detail && <div className="fs-meta font-mono text-dim mt-1 truncate" title={window.UI.titleOf(detail)}>{detail}</div>}
-      </div>
-      <button className="btn sm" onClick={onRetry} aria-label="Retry">Retry</button>
-    </div>
-  );
-}
-
-function ChartSkeletonAg({ height = 220 }) {
-  return (
-    <div
-      aria-busy="true"
-      style={{
-        width: '100%',
-        height,
-        borderRadius: 8,
-        background: 'rgb(var(--sunken))',
-        opacity: 0.7,
-        animation: 'skelPulseAg 1.4s ease-in-out infinite',
-      }}
-    />
-  );
-}
-
 // Pure helpers
 
 const tooltipStyle = {
@@ -2658,11 +2612,7 @@ const tooltipRowStyle = {
 
 async function fetchJsonAg(url, signal) {
   const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    let body = '';
-    try { body = await res.text(); } catch (_e) { /* ignore body parse failure */ }
-    throw new Error(`HTTP ${res.status} ${res.statusText}${body ? ' — ' + body.slice(0, 120) : ''}`);
-  }
+  if (!res.ok) throw await window.UI.getFetchError(res);
   return res.json();
 }
 
@@ -2704,17 +2654,19 @@ function formatDeleteFailureAg(data) {
   return data.detail || `Unexpected result: ${data.result}`;
 }
 
-// fetch → setter 와이어링 보일러플레이트 통합 (dashboard.jsx runFetch 패턴).
-function runFetchAg(url, signal, setter) {
-  return fetchJsonAg(url, signal)
-    .then((data) => setter({ status: 'ready', data, error: null }))
-    .catch((err) => handleErrorAg(err, setter));
+// the controller doubles as the request identity the region atoms settle on — one per region per wave
+function runFetchAg(url, request, setter) {
+  const { putRegionData, putRegionFailure } = window.UI;
+  setter((state) => putRegionRequestAg(state, url, request));
+  return fetchJsonAg(url, request.signal)
+    .then((data) => setter((state) => putRegionData(state, request, data)))
+    .catch((err) => setter((state) => putRegionFailure(state, request, err)));
 }
 
-function handleErrorAg(err, setter) {
-  // AbortError = period change / unmount — 사용자 가시 실패 아님.
-  if (err && err.name === 'AbortError') return;
-  setter({ status: 'error', data: null, error: err && err.message ? err.message : String(err) });
+// a new key (period or agent change) drops the held payload; a refresh of the same key keeps it on screen
+function putRegionRequestAg(state, key, request) {
+  const { INITIAL_REGION_STATE, putRegionRequest } = window.UI;
+  return putRegionRequest(state.key === key ? state : INITIAL_REGION_STATE, key, request);
 }
 
 // state.status === 'ready' 가드 — body 부 ready data 접근 패턴 압축.
@@ -2722,15 +2674,9 @@ function readyData(state) {
   return state.status === 'ready' ? state.data : null;
 }
 
-// a refresh resets the summary to loading → keep the last successful read so the stamp survives it
+// a failed or in-flight read keeps the last successful read time on the stamp
 function getLastReadAtAg(prevAt, state) {
   return readyData(state)?.fetched_at ?? prevAt;
-}
-
-// stamp time + failure track the summary read; busy while any region is still in flight
-function getFreshnessInputAg(asOfAt, summaryState, regionStates = []) {
-  const isLoading = [summaryState, ...regionStates].some((s) => s.status === 'loading');
-  return { at: asOfAt, loading: isLoading, failed: summaryState.status === 'error' };
 }
 
 // agent × task_type 매트릭스 build — flat row → { agents, cells } projection.
