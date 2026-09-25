@@ -94,6 +94,9 @@ const ZONE_UNVERIFIED_CLASS = "arch-zone-unverified";
 const RING_GLYPH_CLASS = "arch-ring-glyph";
 const RING_GLYPH_PILL_CLASS = "arch-ring-glyph-pill";
 
+// a node's own drawn shape — never a planted ring or badge pill
+const NODE_SHAPE_SELECTOR = `:is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.${RING_GLYPH_PILL_CLASS})`;
+
 // badge text inset from its pill's rounded ends (SVG user units)
 const GLYPH_PILL_PAD_X = 10;
 
@@ -630,9 +633,9 @@ function ScreenArchitecture(
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; } " +
-					// hover and keyboard focus lift the shape only — the planted ring rects and the label keep their paint, the box keeps its size
-					`#${ARCH_CANVAS_ID} .node > :is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.arch-ring-glyph-pill) { transition: filter .12s; } ` +
-					`#${ARCH_CANVAS_ID} .node:is(:hover, :focus-visible) > :is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.arch-ring-glyph-pill) { filter: brightness(1.35); } ` +
+					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
+					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
+					`#${ARCH_CANVAS_ID} .node:is(:hover, :focus-visible) > ${NODE_SHAPE_SELECTOR} { filter: brightness(1.35); } ` +
 					// 상태 링 — 판정을 받은 노드·존의 테두리. no-data 는 규칙 자체가 없음.
 					// 채널은 mermaid 의 도형도 outline 도 아니고, 우리가 g 안에 심은 사각형임. 세 번 재서 여기까지 옴:
 					//  ① mermaid 는 classDef 를 도형의 인라인 style 로 찍고 거기에 !important 를 붙임
@@ -663,7 +666,7 @@ function ScreenArchitecture(
 					// 클래스는 남김: 판정이 왔다는 사실의 유일한 표식이고, 링은 그 사실의 표현일 뿐임.
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
-					`#${ARCH_CANVAS_ID} .node.security > :is(rect, path, polygon, circle, ellipse):not(.arch-ring) { stroke-dasharray: none !important; } ` +
+					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
@@ -2820,7 +2823,7 @@ function getCornerBadgeGeometryAR(box, textWidth) {
 
 function getShapeBoxAR(groupEl) {
 	const shape = groupEl.querySelector(
-		":scope > :is(rect, path, polygon, circle, ellipse):not(.arch-ring)",
+		`:scope > ${NODE_SHAPE_SELECTOR}`,
 	);
 	if (!shape) return null;
 
