@@ -515,8 +515,6 @@ function ScreenArchitecture(
 	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
 	const healthRegions = Object.values(headlineHealthStates);
 	const healthPending = healthRegions.some((state) => state.status === "loading");
-	// any read in flight, polls included → the stamp and the Refresh button turn busy over held verdicts
-	const healthBusy = getRegionSummary(healthRegions).isBusy;
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
 	const healthCaption = getHealthCaptionAR(
@@ -577,7 +575,8 @@ function ScreenArchitecture(
 		governance,
 	}).filter((row) => !(sharedFailure && row.retry));
 
-	const isRefreshBusy = getRegionSummary([diagState, liveState, ...healthRegions]).isBusy;
+	const pageRegions = [diagState, liveState, ...healthRegions];
+	const isRefreshBusy = getRegionSummary(pageRegions).isBusy;
 
 	return (
 		<div className="h-full flex flex-col min-h-0">
@@ -716,11 +715,7 @@ function ScreenArchitecture(
 					right={
 						<>
 							<FreshnessStamp
-								{...getFreshnessInputAR(
-									healthAsOf,
-									healthBusy,
-									healthStoreErrors.length,
-								)}
+								{...getFreshnessInputAR(healthAsOf, pageRegions)}
 							/>
 							<RefreshButton
 								isBusy={isRefreshBusy}
@@ -2168,9 +2163,9 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 	return attentionCount > 1 ? `${mark}×${attentionCount}` : mark;
 }
 
-// unanswered stores are named by the alarm lane → the stamp only turns stale, never counts them
-function getFreshnessInputAR(healthAsOf, healthBusy, erroredCount) {
-	return { at: healthAsOf, loading: healthBusy, failed: erroredCount > 0 };
+// every region the page reads → a re-read failing over held data keeps status 'ready', so only the stamp can show it
+function getFreshnessInputAR(healthAsOf, regions) {
+	return { at: healthAsOf, regions };
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
