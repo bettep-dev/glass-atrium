@@ -12,18 +12,19 @@
 // other. Fit alone passes by shrinking the map until the text is unreadable; the scale
 // floor alone passes by drawing at the floor and letting the overflow be cut.
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
-//   2. legibility  — applied scale >= LEGIBLE_FIT_FLOOR, and the resulting rendered
-//      label size >= MIN_RENDERED_LABEL_PX.
+//   2. legibility  — every node, zone and edge label renders at >= MIN_RENDERED_LABEL_PX.
+// A third reading keeps the fit honest in the other direction: the map fills the pane on its
+// binding axis, so a scale capped below the contain fit turns red.
 //
-// Viewport table: 1396 is the width the user actually runs (their screenshot); 1512 and
-// 1920 are the two the fit was previously reasoned about. Heights are the window heights
+// Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
+// actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
 // those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
-// chrome (measured identical at all three: 800→642, 850→692, 1080→922), and the map is
-// width-bound at all three, so the exact height is not load-bearing. The height is a constant
-// subtraction rather than a fraction because the chrome above it is pixel-fixed; the earlier
-// ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by the
-// screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
-// raises — without that strip the same viewports give 687 / 737 / 967.
+// chrome (measured at the 800, 850 and 1080 heights: 800→642, 850→692, 1080→922). The fill
+// reading takes whichever axis binds, so the exact height is not load-bearing. The height is a
+// constant subtraction rather than a fraction because the chrome above it is pixel-fixed; the
+// earlier ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by
+// the screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
+// raises — without that strip those three heights give 687 / 737 / 967.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
@@ -53,30 +54,26 @@ import type { ArchitectureLiveResponse } from "../src/server/types/architecture.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// architecture.jsx 의 LEGIBLE_FIT_FLOOR 사본 — 화면이 상수를 내보내지 않으므로 하네스가 값을 소유함.
-// 화면 쪽 값을 내리는 "수정"은 이 단언을 통과하지 못함: 두 값이 갈라지면 여기가 먼저 붉어짐.
-const LEGIBLE_FIT_FLOOR = 0.6;
+// the 12px meta step, measured on the drawn labels — owned here so lowering the screen's floor cannot pass
+const MIN_RENDERED_LABEL_PX = 12;
 
-// 라벨 렌더 하한(px) = mermaid-config.js 의 themeVariables.fontSize(14px) × 하한 배율.
-// 폭을 줄이는 대신 글자를 줄이는 맞바꿈을 막는 다리 — 배율만 재면 이 값이 조용히 내려감.
-const MIN_RENDERED_LABEL_PX = 14 * LEGIBLE_FIT_FLOOR;
+// a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
+const MIN_BINDING_AXIS_FILL = 0.9;
 
-// a floor-clamped scale read back from the CTM carries float noise (0.59999…) → compare within it
+// CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
 // 서브픽셀 여유. 링(stroke-width 2.5 사용자 단위)까지 client rect 에 들어오므로
 // 실측 여유는 이 값보다 훨씬 커야 정상이고, 1px 은 반올림만 흡수함.
 const EPS_PX = 1;
 
-// 사용자가 실제로 쓰는 폭(1396)을 첫 행으로 두고 앞선 논의의 두 폭을 뒤에 둠.
 const VIEWPORTS = [
+	{ width: 1024, height: 768 },
 	{ width: 1396, height: 800 },
+	{ width: 1440, height: 900 },
 	{ width: 1512, height: 850 },
 	{ width: 1920, height: 1080 },
 ];
-
-// 1024 is kept out of VIEWPORTS on purpose — AC-FIT-1024 below pins why.
-const NARROW_VIEWPORT = { width: 1024, height: 768 };
 
 const BOUND_DAEMON = "autoagent";
 
@@ -196,8 +193,13 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const vp = canvas.querySelector(".svg-pan-zoom_viewport") as SVGGraphicsElement;
 			const scale = vp.getCTM()?.a ?? 0;
 
-			const label = canvas.querySelector("svg .nodeLabel, svg .node .label, svg .node text");
-			const declared = label ? Number.parseFloat(getComputedStyle(label).fontSize) : 0;
+			// smallest drawn label of any kind — one small zone title or edge label is enough to fail
+			const labels = Array.from(canvas.querySelectorAll("svg .nodeLabel, svg .edgeLabel")).filter(
+				(el) => (el.textContent || "").trim() !== "",
+			);
+			const declared = labels.length
+				? Math.min(...labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize)))
+				: 0;
 
 			// 노드와 존 상자 전부 — 존이 잘리면 그 안의 제목이 잘림.
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
@@ -260,36 +262,25 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`AC-FIT-2 it fits without shrinking the text at ${width}x${height}`, async () => {
+	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
-		assert.ok(
-			r.scale >= LEGIBLE_FIT_FLOOR - CTM_FLOAT_TOLERANCE,
-			`applied scale ${r.scale.toFixed(4)} is under the legibility floor ${LEGIBLE_FIT_FLOOR}`,
-		);
+		assert.ok(r.labelPx > 0, "no drawn label was measured");
 		assert.ok(
 			r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE,
-			`labels render at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor`,
+			`the smallest label renders at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor (scale ${r.scale.toFixed(4)})`,
+		);
+	});
+
+	test(`the map fills the pane on its binding axis and still flows left to right at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		const fill = Math.max(r.drawnWidthPx / r.paneWidth, r.drawnHeightPx / r.paneHeight);
+		assert.ok(
+			fill >= MIN_BINDING_AXIS_FILL || r.scale >= 1 - CTM_FLOAT_TOLERANCE,
+			`the map fills ${(fill * 100).toFixed(0)}% of the pane on its binding axis at scale ${r.scale.toFixed(4)}`,
+		);
+		assert.ok(
+			r.drawnWidthPx > r.drawnHeightPx,
+			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} — the flow no longer reads left to right`,
 		);
 	});
 }
-
-// The map is width-bound (graph ~3.9:1 against a ~2:1 pane), so it fills ~half the pane height
-// and at 1024 fitting the width needs a scale under the floor. Both would take a relayout, which
-// the standing System map decision forbids, or smaller labels → the floor wins and the overflow pans.
-// A layout that fits at 1024 turns this red → move 1024 into VIEWPORTS.
-test(`AC-FIT-1024 at ${NARROW_VIEWPORT.width}x${NARROW_VIEWPORT.height} the labels stay legible, and containment would need a sub-floor scale`, async (t) => {
-	const r = await readFit(NARROW_VIEWPORT.width, NARROW_VIEWPORT.height);
-	const graphWidthAtOne = r.drawnWidthPx / r.scale;
-	const containScale = r.paneWidth / graphWidthAtOne;
-	t.diagnostic(
-		`pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · scale ${r.scale.toFixed(4)} · ` +
-			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · width-fit would be ${containScale.toFixed(4)}`,
-	);
-	assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
-	assert.ok(r.scale >= LEGIBLE_FIT_FLOOR - CTM_FLOAT_TOLERANCE, `applied scale ${r.scale.toFixed(4)} is under the floor ${LEGIBLE_FIT_FLOOR}`);
-	assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `labels render at ${r.labelPx.toFixed(2)}px`);
-	assert.ok(
-		containScale < LEGIBLE_FIT_FLOOR,
-		`width-fit ${containScale.toFixed(4)} now clears the floor — the map fits at 1024, assert AC-FIT-1 there`,
-	);
-});

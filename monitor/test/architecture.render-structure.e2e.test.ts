@@ -229,6 +229,40 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
 	await ctx?.app?.close();
 }
 
+/**
+ * Reloads with the diagrams read held open (or answered with `failure`), runs `body`, then restores the rendered map.
+ * The real route still answers once released, so the context is back to its fixture state for the next test.
+ */
+async function withDiagramsHeld(
+	ctx: RenderContext,
+	body: () => Promise<void>,
+	failure?: { status: number; body: string },
+): Promise<void> {
+	const pattern = "**/api/architecture/diagrams";
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolveGate) => {
+		release = resolveGate;
+	});
+	await ctx.page.route(pattern, async (route) => {
+		if (failure) return route.fulfill({ status: failure.status, contentType: "application/json", body: failure.body });
+		await gate;
+		return route.continue();
+	});
+	try {
+		await ctx.page.reload({ waitUntil: "load" });
+		await body();
+	} finally {
+		// held read: let it land on this page before unrouting · failed read: reload onto the real route
+		release();
+		if (failure) {
+			await ctx.page.unroute(pattern);
+			await ctx.page.reload({ waitUntil: "load" });
+		}
+		await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });
+		if (!failure) await ctx.page.unroute(pattern);
+	}
+}
+
 // 리터럴 tone 클래스 한 종의 캔버스 내 개수.
 function countLiveToneClass(
 	page: Page,
@@ -360,6 +394,63 @@ describe("healthy live fixture", () => {
 		);
 	});
 
+	test("the first read of the map shows a named loading status and no description", async () => {
+		await withDiagramsHeld(ctx, async () => {
+			const status = ctx.page.getByRole("status").filter({ hasText: "Loading the system map" });
+			await status.waitFor({ timeout: 10_000 });
+
+			const probe = await ctx.page.evaluate((desc) => ({
+				descCount: document.querySelectorAll(desc).length,
+				text: document.body.innerText,
+			}), ctx.selectors.desc);
+			assert.equal(probe.descCount, 0, "the description target waits for the diagram");
+			assert.ok(!probe.text.includes("No description available"), "no placeholder description while loading");
+		});
+	});
+
+	test("one outage behind every failed read raises one banner with one Retry and no raw status text", async () => {
+		// the harness leaves three health stores unrouted (404) — a 404 diagrams read joins that same outage
+		await withDiagramsHeld(ctx, async () => {
+			await ctx.page.getByRole("alert").first().waitFor({ timeout: 10_000 });
+			const probe = await ctx.page.evaluate(() => ({
+				retries: [...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry").length,
+				alerts: document.querySelectorAll('[role="alert"]').length,
+				text: document.body.innerText,
+			}));
+			assert.equal(probe.retries, 1, "one Retry per outage");
+			assert.equal(probe.alerts, 1, "one announced banner per outage");
+			assert.ok(!/HTTP \d{3}/.test(probe.text), `raw status stays behind Details — read: ${probe.text.slice(0, 300)}`);
+		}, { status: 404, body: '{"message":"Route not found"}' });
+	});
+
+	test("Refresh keeps the rendered map on screen until the new answer lands", async () => {
+		const { page, selectors } = ctx;
+		await page.evaluate((canvas) => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgGap = false;
+			w.archSvgObserver = new MutationObserver(() => {
+				if (!document.querySelector(`${canvas} svg`)) w.archSvgGap = true;
+			});
+			w.archSvgObserver.observe(document.body, { childList: true, subtree: true });
+		}, selectors.canvas);
+
+		const landed = page.waitForResponse((r) => r.url().includes("/api/architecture/diagrams"), { timeout: 30_000 });
+		await page.click('[aria-label="Refresh system map"]');
+		await landed;
+		await page.waitForFunction(
+			() => document.querySelector('[aria-label="Refresh system map"]')?.getAttribute("aria-busy") !== "true",
+			null,
+			{ timeout: 30_000 },
+		);
+
+		const gap = await page.evaluate(() => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgObserver.disconnect();
+			return w.archSvgGap;
+		});
+		assert.equal(gap, false, "the map svg must never leave the canvas during a refresh");
+	});
+
 	test("AC-18 exactly one rendered diagram SVG", async () => {
 		// 계수 단위 = 캔버스 하위 svg 중 컨트롤 아이콘을 뺀 것 — 캔버스는 줌 버튼의
 		// 15x15 아이콘 svg 도 품으므로 [measured: button.arch-zoom-btn > svg] 하위 svg
@@ -373,6 +464,90 @@ describe("healthy live fixture", () => {
 			).length;
 		}, ctx.selectors);
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
+	});
+
+	test("the caption is a sentence-case status line over a legend, all at 12px or larger", async () => {
+		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
+		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
+		const [status, ...legend] = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+				text: (el as HTMLElement).innerText,
+				transform: getComputedStyle(el).textTransform,
+				px: Number.parseFloat(getComputedStyle(el).fontSize),
+			})),
+		);
+		const probe = { status, legend };
+
+		assert.ok(probe.status, "a status line renders under the page title");
+		for (const line of [probe.status, ...probe.legend]) {
+			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
+			assert.ok(line.px >= 12, `"${line.text}" renders at ${line.px}px`);
+		}
+		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
+			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+	});
+
+	test("the Fit control shows its name and only a title repeating its one box is hidden", async () => {
+		const fit = ctx.page.getByRole("button", { name: "Fit diagram to view" });
+		assert.match(await fit.innerText(), /\bFit\b/);
+
+		const titles = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => {
+				const label = el.querySelector(":scope > .cluster-label");
+				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
+			}),
+		ctx.selectors.canvas);
+		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
+		assert.deepEqual(hidden.sort(), ["agents", "export"], `hidden group titles — read: ${JSON.stringify(titles)}`);
+	});
+
+	test("the node drawer is named by the node, reads its kind from its layer and hides an unrecorded path", async () => {
+		const { doc } = await getArchitecture(ctx.app.log);
+		const diagram = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_DIAGRAM_ID) ?? doc.diagrams.diagrams[0];
+		const rendered = new Set(await getStampedNodeIds(ctx.page, ctx.selectors.canvas));
+		const target = diagram.layers
+			.flatMap((layer) => (layer.nodes ?? []).map((node) => ({ node, layer })))
+			.find(({ node }) => !node.path && rendered.has(node.id) && diagram.flows.some((f) => f.from === node.id || f.to === node.id));
+		assert.ok(target, "fixture precondition: a rendered node with connections and no recorded path");
+
+		await ctx.page.locator(`${ctx.selectors.canvas} svg g.node[data-arch-node-id="${target.node.id}"]`).click();
+		const dialog = ctx.page.getByRole("dialog");
+		await dialog.waitFor({ timeout: 10_000 });
+		try {
+			const probe = await dialog.evaluate((el) => ({
+				text: (el as HTMLElement).innerText,
+				sub: el.querySelector(".detail-sub")?.textContent ?? "",
+				brokenWords: [...el.querySelectorAll(".break-all")].length,
+			}));
+			assert.equal(await dialog.getAttribute("aria-labelledby").then((id) => ctx.page.locator(`#${id}`).innerText()), target.node.label);
+			assert.equal(probe.sub, target.layer.label);
+			assert.ok(!/Not recorded|File path/i.test(probe.text), `an unrecorded path renders as a field — read: ${probe.text.slice(0, 300)}`);
+			assert.ok(!/\[[a-z]+_[a-z_]+\]/.test(probe.text), `a raw bracketed edge type renders — read: ${probe.text.slice(0, 300)}`);
+			assert.equal(probe.brokenWords, 0, "drawer text breaks words mid-word");
+		} finally {
+			await ctx.page.keyboard.press("Escape");
+			await dialog.waitFor({ state: "detached", timeout: 10_000 });
+		}
+	});
+
+	test("Tab moves through the map nodes in left-to-right flow order", async () => {
+		// document order of tabindex=0 stops IS the Tab sequence; one inline mapper (tsx __name)
+		const stops = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
+				const r = el.getBoundingClientRect();
+				return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, top: r.top, width: r.width };
+			}),
+		ctx.selectors.canvas);
+		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+
+		const minWidth = Math.min(...stops.map((s) => s.width));
+		const leftmost = Math.min(...stops.map((s) => s.cx));
+		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
+		for (let i = 1; i < stops.length; i++) {
+			const [prev, next] = [stops[i - 1], stops[i]];
+			const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
+			assert.ok(sameColumn ? next.top >= prev.top : next.cx > prev.cx, `Tab steps back from ${prev.id} to ${next.id}`);
+		}
 	});
 
 	test("AC-18 no tab controls in the DOM", async () => {
