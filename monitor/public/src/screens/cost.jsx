@@ -722,6 +722,13 @@ function toTrendReadoutPoint(row) {
   return { label: row.isPartial ? `${row.fullDate} so far` : row.fullDate, value: row.actual };
 }
 
+// Focus/arrow readout carries the same normal range the hover tooltip shows → keyboard users get the σ context too.
+function getTrendReadout(row, bandOn) {
+  const base = window.UI.getChartReadout(toTrendReadoutPoint(row), formatUsdC);
+  const hasBand = bandOn && Number.isFinite(row.lowerBand) && Number.isFinite(row.upperBand);
+  return hasBand ? `${base}, normal range ${formatUsdC(row.lowerBand)} – ${formatUsdC(row.upperBand)}` : base;
+}
+
 /**
  * Single Y axis, faint horizontal gridlines only.
  * Band on → rolling mean + ±2σ envelope ride the same chart: upper Area over a lower Area masked
@@ -729,7 +736,7 @@ function toTrendReadoutPoint(row) {
  */
 function CostTrendChart({ rows, bandOn }) {
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
-  const { getChartTicks, getChartSummary, getChartReadout, getRovingIndex } = window.UI;
+  const { getChartTicks, getChartSummary, getRovingIndex } = window.UI;
   const [activeIndex, setActiveIndex] = useStateC(null);
 
   const points = rows.map(toTrendReadoutPoint);
@@ -842,7 +849,7 @@ function CostTrendChart({ rows, bandOn }) {
       </div>
       <CostTrendLegendC bandOn={bandOn}/>
       <div aria-live="polite" className="fs-meta tnum" style={{ minHeight: 18 }}>
-        {activeRow ? getChartReadout(points[activeIndex], formatUsdC) : ''}
+        {activeRow ? getTrendReadout(activeRow, bandOn) : ''}
       </div>
     </figure>
   );

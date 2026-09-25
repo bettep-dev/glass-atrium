@@ -61,6 +61,7 @@ interface CostHelpers {
     getTokenRate?: (model: string) => Record<string, number> | null;
     UI: {
       INITIAL_REGION_STATE: PanelState;
+      formatUsdCompact: (value: number | null) => string;
       getFreshnessState: (input: {
         at: string | null;
         regions: ReadonlyArray<PanelState>;
@@ -118,6 +119,17 @@ interface CostHelpers {
     partialCost: number | null;
   }>;
   getUsdAxisFormatter: (maxValue: number) => (value: number) => string;
+  getTrendReadout: (
+    row: {
+      fullDate: string;
+      actual: number | null;
+      isPartial: boolean;
+      rollingMean?: number | null;
+      lowerBand?: number | null;
+      upperBand?: number | null;
+    },
+    bandOn: boolean,
+  ) => string;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -618,4 +630,31 @@ test("every tick on one cost axis carries the same decimals and reads back as it
       assert.strictEqual(Number(label.replace(/[$,]/g, "")), ticks[i], `max ${max}: ${label}`);
     });
   }
+});
+
+test("the focus readout names the normal range exactly when the band is on and the day has one", () => {
+  const banded = { fullDate: "Sep 20", actual: 12, isPartial: false, rollingMean: 10, lowerBand: 4, upperBand: 16 };
+  const unbanded = { fullDate: "Sep 14", actual: 3, isPartial: false, rollingMean: null, lowerBand: null, upperBand: null };
+  const rows = [
+    { name: "band on, day inside the rolling window", row: banded, bandOn: true, hasRange: true },
+    { name: "band off hides the range the tooltip also hides", row: banded, bandOn: false, hasRange: false },
+    { name: "band on, day before the window fills", row: unbanded, bandOn: true, hasRange: false },
+  ];
+  for (const { name, row, bandOn, hasRange } of rows) {
+    const text = cost.getTrendReadout(row, bandOn);
+    assert.ok(text.startsWith("Sep "), `${name}: ${text}`);
+    assert.ok(text.includes(cost.window.UI.formatUsdCompact(row.actual)), `${name}: ${text}`);
+    assert.strictEqual(/normal range/i.test(text), hasRange, `${name}: ${text}`);
+    if (hasRange) {
+      const low = cost.window.UI.formatUsdCompact(4);
+      const high = cost.window.UI.formatUsdCompact(16);
+      assert.ok(text.includes(low) && text.includes(high), `${name}: ${text}`);
+    }
+  }
+});
+
+test("the focus readout marks today's point as so far, never as a finished day", () => {
+  const today = { fullDate: "Sep 25", actual: 2, isPartial: true, rollingMean: null, lowerBand: null, upperBand: null };
+  assert.match(cost.getTrendReadout(today, false), /Sep 25 so far/);
+  assert.doesNotMatch(cost.getTrendReadout({ ...today, isPartial: false }, false), /so far/);
 });
