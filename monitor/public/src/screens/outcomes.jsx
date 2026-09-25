@@ -1251,8 +1251,11 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
         <div
           className="fs-meta text-dim mt-1.5 leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
-          <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-0.5" aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
-          <span className="mr-1">{omissionMeta.label}:</span>
+          {/* glyph + label as one unbreakable unit → the × never wraps onto a line of its own */}
+          <span className="inline-flex items-center gap-0.5 whitespace-nowrap mr-1">
+            <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
+            {omissionMeta.label}:
+          </span>
           budget-kill {formatIntO(omissionBreakdown.budget)} · truncated {formatIntO(omissionBreakdown.truncated)} · missing {formatIntO(omissionBreakdown.missing)}
         </div>
       )}
