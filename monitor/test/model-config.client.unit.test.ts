@@ -817,9 +817,9 @@ test("save results surface only when a surface did not write cleanly", () => {
 
 describe("a save-result row reads as words: status in plain words, mono only on the surface id", () => {
   const rows = [
-    { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written" },
-    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped" },
-    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed" },
+    { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written", reason: null },
+    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped", reason: "session not running" },
+    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed", reason: "permission denied" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -831,7 +831,8 @@ describe("a save-result row reads as words: status in plain words, mono only on 
       assert.ok(text.includes(row.word), `status reads "${row.word}"`);
       assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
       assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [surface], "mono covers the surface id alone");
-      if (row.result.reason) assert.ok(text.includes(row.result.reason), "the reason is kept");
+      const reasons = findAllMc(tree, (n) => String(n.props.className ?? "").includes("text-faint")).map((n) => textMc(n.children));
+      assert.deepStrictEqual(reasons, row.reason === null ? [] : [row.reason], "the reason shows exactly when the row carries one");
     });
   }
 
