@@ -247,6 +247,40 @@ test("a tile Retry routes the harness region to the shell re-poll and every othe
   assert.deepEqual(loaded, ["cost"]);
 });
 
+describe("the page-wide re-reads also re-poll the shell's harness", async () => {
+  const FAILED = { status: "error", data: null, error: "HTTP 500" };
+  // every region failed on one cause → the page banner mounts beside the header Refresh
+  const failedUi = new Proxy(uiStub() as Record<string, unknown>, {
+    get: (target, name: string) => ({
+      INITIAL_REGION_STATE: FAILED,
+      getRegionSummary: () => ({ isBusy: false }),
+      getSharedFailure: () => ({ sources: ["today's spend", "harness health"], error: "HTTP 500" }),
+      formatUsd: String,
+      formatInt: String,
+    } as Record<string, unknown>)[name] ?? target[name],
+  });
+  const screen = (await loadScreenModule(DASH_SRC, { UI: failedUi, React: createReactStub() })) as ScreenModule;
+  const rows = [
+    { name: "the header Refresh", atom: "RefreshButton", handler: "onRefresh" },
+    { name: "the page banner Retry", atom: "PageErrorBanner", handler: "onRetry" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      let polls = 0;
+      const tree = renderScreen(screen.React.createElement(screen.ScreenDashboard as Component, {
+        onNav: () => {}, harness: FAILED, onRetryHarness: () => { polls += 1; },
+      })) as RenderedNode;
+      // the header's controls ride the PageHeader atom's `right` slot, outside its children
+      const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
+      const slots = [tree, renderScreen(header.props.right) as RenderedNode];
+      const controls = slots.flatMap((slot) => findNodes(slot, (n) => n.props.atom === row.atom));
+      assert.equal(controls.length, 1, `${row.name} is mounted`);
+      (controls[0].props[row.handler] as () => void)();
+      assert.equal(polls, 1, `${row.name} re-polls the harness once`);
+    });
+  }
+});
+
 test("a loading tile says so in a status placeholder and reserves the detail slot the loaded tile fills", () => {
   const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
   for (const tile of [loadingTile, READY_TILE]) {
