@@ -730,7 +730,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 			) : null}
 
 			{/* Always present, so the lane's "Open proposal" and the page layout never lose it. */}
-			<BacklogExplorer
+			<WikiDisclosureW
 				label="Merge proposals"
 				count={describeProposalCountW(model)}
 			>
@@ -763,7 +763,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 						)}
 					</div>
 				)}
-			</BacklogExplorer>
+			</WikiDisclosureW>
 
 			{/* Dead-link lists appear only once the fixer has something to report. */}
 			{model.deadLinks && model.deadLinks.length > 0 && (
@@ -1161,17 +1161,13 @@ function computeStatusMix(rows) {
 	};
 }
 
-// children 미지정 = payload JSON dump(<pre>) 기본 거동 · children 지정 시 그 본문으로 대체 (구조 렌더 escape hatch).
-function BacklogExplorer({ label, count, payload, children }) {
+// payload JSON dump(<pre>) 원형 표시 — dead-link · link-fix 목록 전용.
+function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
-			{children != null ? (
-				children
-			) : (
-				<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
-					{stringifyPayloadW(payload)}
-				</pre>
-			)}
+			<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
+				{stringifyPayloadW(payload)}
+			</pre>
 		</WikiDisclosureW>
 	);
 }

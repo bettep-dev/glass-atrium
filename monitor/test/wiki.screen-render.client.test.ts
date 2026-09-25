@@ -258,19 +258,21 @@ test("a merge proposal's reasons wrap in full and its item is the anchor its ala
   }
 });
 
-test("a proposal alarm is a button that opens its proposal; other alarms stay plain rows", async () => {
+test("only the proposal alarm renders as a type=button control; other alarms stay plain rows", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const tree = renderScreen(
     mod.React.createElement(mod.WikiAlarmLane as Component, {
       summaryState: ready({}),
-      indexState: ready({}),
+      indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }),
       backlogState: READY_BACKLOG,
       cyclesState: ready({ cycles: [] }),
     }),
   );
+  const rows = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
+  assert.equal(rows.length, 2, "the dirty index and the waiting proposal");
   const buttons = findNodes(tree, (n) => n.type === "button");
-  assert.equal(buttons.length, 1, "one waiting proposal → one button");
+  assert.equal(buttons.length, 1, "two alarms, one waiting proposal → one button");
   assert.equal(buttons[0].props.type, "button");
   assert.equal(typeof buttons[0].props.onClick, "function");
 });
