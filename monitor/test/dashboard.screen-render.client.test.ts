@@ -87,6 +87,7 @@ test("every drill is an anchor to its screen's hash; a plain click routes in-app
     const anchors = findNodes(tree, (n) => n.type === "a");
     assert.equal(anchors.length, 1);
     assert.equal(anchors[0].props.href, `#${target}`);
+    assert.match(classOf(anchors[0]), /\bbtn\b/, "the drill takes the shared .btn 32px control floor");
     assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "no drill stays a button");
 
     const onClick = anchors[0].props.onClick as (e: unknown) => void;
