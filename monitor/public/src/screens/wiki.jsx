@@ -95,7 +95,7 @@ function ScreenWiki() {
         .w-disclosure > summary { list-style: none; }
         .w-disclosure > summary::-webkit-details-marker { display: none; }
         .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
-        .w-alarm-open { min-height: 32px; cursor: pointer; }
+        .w-alarm-open { min-height: var(--ctl-min-h); cursor: pointer; }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
         .w-type-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 4rem; align-items: center; gap: 0.75rem; }

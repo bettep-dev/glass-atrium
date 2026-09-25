@@ -322,18 +322,22 @@ test("wiki text never drops below the 12px step and words are never set in mono"
     renderScreen(createElement(mod.WikiAlarmLane, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }) })),
     renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} })),
     renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
+    renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
     renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
   ];
   const words = ["Search index", "Clean", "Merge proposals", "Run history", "merge because both notes describe one concept"];
+  const seen = new Set<string>();
   for (const tree of trees) {
     for (const node of findNodes(tree, () => true)) {
       assert.doesNotMatch(classOf(node), /\bfs-micro\b/, "the 11px step is retired");
-      const ownText = node.children.filter((c) => typeof c === "string").join("");
-      if (words.includes(ownText.trim())) {
+      const ownText = node.children.filter((c) => typeof c === "string").join("").trim();
+      if (words.includes(ownText)) {
+        seen.add(ownText);
         assert.doesNotMatch(classOf(node), /\bfont-mono\b/, `"${ownText}" is words, not an id or figure`);
       }
     }
   }
+  assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
 test("the similarity figure is not tinted with the accent cyan", async () => {
