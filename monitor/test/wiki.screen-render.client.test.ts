@@ -340,13 +340,23 @@ test("wiki text never drops below the 12px step and words are never set in mono"
   assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
-test("the similarity figure is not tinted with the accent cyan", async () => {
+test("cyan tints no wiki text: the proposal action reads as a link, the similarity as a figure", async () => {
   const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], similarity_score: 1 };
-  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
-  const sim = findNodes(tree, (n) => n.children.includes("sim ")).pop();
-  assert.ok(sim, "the similarity renders");
-  assert.doesNotMatch(classOf(sim), /\btext-info\b/);
+  const item = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const lane = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({}), indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  const sim = findNodes(item, (n) => n.children.includes("sim ")).pop();
+  const open = findNodes(lane, (n) => n.type === "button")[0];
+  assert.ok(sim && open, "the similarity and the proposal action render");
+  assert.match(classOf(open), /\btext-accent\b/, "the action carries the link colour");
+  for (const tree of [item, lane]) {
+    for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
+  }
 });
 
 test("the per-run table is introduced by an h3 under the Run history h2", async () => {

@@ -239,6 +239,20 @@ test("each waiting proposal gets its own lane row and age, parked rows last", ()
   assert.deepEqual(lane.map((a) => a.parked), [false, false, true]);
 });
 
+test("a parked proposal drops to the neutral tone while a waiting one stays a warning", () => {
+  const alarms = helpers.buildAlarmLaneModel(
+    ready({}),
+    ready({}),
+    proposalBacklog(["old", "new"], { old: isoDaysAgo(77), new: isoDaysAgo(1) }),
+    unchangedCycles(30),
+  ).alarms as Alarm[];
+
+  for (const alarm of alarms) {
+    assert.equal(alarm.tone, alarm.parked ? "neutral" : "warn", alarm.label);
+  }
+  assert.deepEqual([...alarms].map((a) => a.parked).sort(), [false, true], "both states are exercised");
+});
+
 test("without a first-seen map the age falls back to the unchanged-run count", () => {
   const alarm = helpers.buildAlarmLaneModel(
     ready({}),

@@ -96,6 +96,8 @@ function ScreenWiki() {
         .w-disclosure > summary::-webkit-details-marker { display: none; }
         .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
         .w-alarm-open { min-height: var(--ctl-min-h); cursor: pointer; }
+        /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
+        .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
         .w-type-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 4rem; align-items: center; gap: 0.75rem; }
@@ -252,7 +254,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 					{alarm.anchorId && (
 						<button
 							type="button"
-							className="w-alarm-open fs-meta text-info px-2 self-center"
+							className="w-alarm-open fs-meta text-accent px-2 self-center"
 							aria-label={`Open proposal: ${alarm.label}`}
 							onClick={() => openProposalW(alarm.anchorId)}
 						>
@@ -365,7 +367,8 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 			: typeof runs === "number" && runs >= PROPOSAL_PARKED_RUNS;
 		return {
 			key: `proposal-${proposal?.cluster_hash || i}`,
-			tone: parked ? "info" : "warn",
+			// cyan belongs to the chart series → a parked pair recedes to neutral, not info.
+			tone: parked ? "neutral" : "warn",
 			label: `Merge proposal waiting on approval · ${proposal?.target_slug || proposal?.cluster_hash || "unnamed pair"}`,
 			detail: wait
 				? describeProposalWaitW(wait, parked)
