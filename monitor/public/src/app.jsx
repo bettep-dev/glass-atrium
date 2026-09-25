@@ -294,6 +294,7 @@ function App() {
 	// dvh — iOS Safari 주소창 가변 영역 안전 (vh 흔들림 회피)
 	return (
 		<div
+			lang="en"
 			className="flex min-h-[100dvh]"
 			data-screen-label={activeNav ? `${activeNav.label}` : ""}
 		>

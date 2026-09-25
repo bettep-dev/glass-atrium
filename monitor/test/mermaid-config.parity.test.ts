@@ -23,6 +23,13 @@ import {
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
 import { MERMAID_CONFIG_SOURCE } from "./lib/mermaid-config-source.js";
+import {
+  createReactStub,
+  findNodes,
+  loadScreenModule,
+  renderScreen,
+  type RenderedNode,
+} from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
@@ -165,6 +172,40 @@ test("후속-5 the viewer and the export declare the same document language", ()
     exportLang,
     `index.html declares lang="${String(viewerLang)}" while the export shell declares lang="${String(exportLang)}" — ` +
       "one stored body renders under two document languages, and the width difference that causes is reported nowhere",
+  );
+});
+
+// The app shell declares English for its own chrome, so the page-level `<html lang>` no longer
+// reaches a stored body by inheritance: the body container has to declare the export language
+// itself. Read off the rendered viewer, so a pin moved to an element that is not the body
+// container, or dropped from one render branch, goes red.
+
+const DOCS_SCREEN_PATH = resolve(PUBLIC_ROOT, "src/screens/clauded-docs.jsx");
+const DOC_BODY_CONTAINER_CLASS = "doc-body-isolation";
+
+/** The `lang` the viewer's rendered document body container declares. */
+async function getViewerBodyLang(): Promise<unknown> {
+  const react = createReactStub();
+  const mod = await loadScreenModule(DOCS_SCREEN_PATH, { React: react, UI: {} });
+  const createElement = react.createElement as (type: unknown, props: unknown) => unknown;
+  // txt takes the code-format branch, which needs no DOMPurify/DOMParser; every branch mounts the same container
+  const state = { status: "ready", data: { id: 1, title: "Parity probe", format: "txt", body: "probe" } };
+  const tree = renderScreen(createElement(mod.ViewerBodyCD, { state })) as RenderedNode;
+  const [container] = findNodes(tree, (n) =>
+    String(n.props.className ?? "").split(/\s+/).includes(DOC_BODY_CONTAINER_CLASS),
+  );
+  assert.ok(container, `the viewer renders no .${DOC_BODY_CONTAINER_CLASS} body container`);
+  return container.props.lang;
+}
+
+test("후속-5 the viewer's document body container declares the export shell's document language", async () => {
+  const bodyLang = await getViewerBodyLang();
+  const exportLang = getExportShellHtmlLang();
+  assert.equal(
+    bodyLang,
+    exportLang,
+    `the viewer body container declares lang="${String(bodyLang)}" while the export shell declares ` +
+      `lang="${String(exportLang)}" — under the English app shell the stored body inherits en, not the export language`,
   );
 });
 
