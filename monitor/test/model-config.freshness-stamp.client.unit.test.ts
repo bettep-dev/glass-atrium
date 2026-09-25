@@ -52,7 +52,7 @@ test("only a successful config read advances the stamp; loading and failure keep
 test("a refresh keeps the last stamp, and a failed config read never reads as fresh", () => {
   const cases: Array<[number | null, FetchState, string]> = [
     [READ_AT, ready, "fresh"],
-    [READ_AT, loading, "fresh"],
+    [READ_AT, loading, "refreshing"],
     [null, loading, "loading"],
     [READ_AT, failed, "stale"],
     [null, failed, "not-read"],

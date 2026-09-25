@@ -522,12 +522,12 @@ function CardHead({ title, sub, right }) {
 // title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
 function PageHeader({ title, sub, right }) {
   const hasSub = sub && sub !== title;
-  return <div className="flex items-center gap-3 mb-4">
+  return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
     <div className="min-w-0">
       <h1 className="fs-display font-semibold leading-tight">{title}</h1>
       {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
-    {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
+    {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
   </div>;
 }
 
@@ -680,20 +680,37 @@ const FRESHNESS_TICK_MS = 30_000;
 // glyph carries the tone, text stays neutral → state survives without colour
 const FRESHNESS_META = {
   loading:    { tone: null, word: 'Loading' },
+  refreshing: { tone: null, word: 'Refreshing' },
   'not-read': { tone: 'crit', word: 'Not read' },
+  partial:    { tone: 'warn', word: 'Partial' },
   stale:      { tone: 'warn', word: 'Stale' },
   fresh:      { tone: 'ok', word: 'Fresh' },
 };
 
-/**
- * Freshness of the last successful read. Callers pass only successful-read times as `at`,
- * so a failed read never advances the stamp; `failed` marks the kept stamp stale.
- */
-function getFreshnessState({ at, loading = false, failed = false, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
-  const readMs = at ? new Date(at).getTime() : NaN;
+/** Busy and failed tallies over region states (INITIAL_REGION_STATE shape) — one input for the stamp and the Refresh atom. */
+function getRegionSummary(regions) {
+  const list = Array.isArray(regions) ? regions.filter(Boolean) : [];
+  return {
+    isBusy: list.some((region) => region.busy === true),
+    failedCount: list.filter((region) => region.error != null).length,
+    regionCount: list.length,
+  };
+}
 
-  if (!Number.isFinite(readMs)) return loading ? 'loading' : 'not-read';
-  if (failed || now - readMs > staleAfterMs) return 'stale';
+/**
+ * Freshness of the last successful read — Fresh only when nothing is in flight or failed.
+ * Callers pass only successful-read times as `at`, so a failed read never advances the stamp.
+ * @param regions - optional region states; any busy region → refreshing, some failed → partial, all failed → stale
+ */
+function getFreshnessState({ at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
+  const { isBusy, failedCount, regionCount } = getRegionSummary(regions);
+  const readMs = at ? new Date(at).getTime() : NaN;
+  const isInFlight = loading || isBusy;
+
+  if (!Number.isFinite(readMs)) return isInFlight ? 'loading' : 'not-read';
+  if (isInFlight) return 'refreshing';
+  if (failedCount > 0 && failedCount < regionCount) return 'partial';
+  if (failed || failedCount > 0 || now - readMs > staleAfterMs) return 'stale';
   return 'fresh';
 }
 
@@ -701,13 +718,17 @@ function getFreshnessState({ at, loading = false, failed = false, staleAfterMs =
  * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
  * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  */
-function FreshnessStamp({ at, loading = false, failed = false, staleAfterMs, now }) {
+function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
   const [, setTick] = useState(0);
-  const state = getFreshnessState({ at, loading, failed, staleAfterMs, now });
+  const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
   const meta = FRESHNESS_META[state];
   const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
   const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
-  const isRead = state === 'fresh' || state === 'stale';
+  const isRead = state !== 'loading' && state !== 'not-read';
+  const isBusy = state === 'loading' || state === 'refreshing';
+  const { failedCount, regionCount } = getRegionSummary(regions);
+  const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
+  const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
   const shouldTick = isRead && now === undefined;
 
   useEffect(() => {
@@ -716,15 +737,35 @@ function FreshnessStamp({ at, loading = false, failed = false, staleAfterMs, now
     return () => clearInterval(intervalId);
   }, [shouldTick]);
 
-  const text = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
-  const title = isRead ? `${meta.word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : meta.word;
+  const readText = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
+  const text = failedNote ? `${readText} · ${failedNote}` : readText;
+  const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
 
   return (
-    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={loading ? 'true' : undefined}>
+    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      <span className="sr-only">{meta.word}</span>
+      <span className="sr-only">{word}</span>
       <span data-stamp-text="true">{text}</span>
     </span>
+  );
+}
+
+/**
+ * Shared PageHeader Refresh control — one box width across labels, disabled + aria-busy while a request is in flight.
+ * @param hasRead - a prior read exists; the in-flight label reads "Refreshing…" over held data, "Loading…" on the first wave
+ * @param label - accessible name, stable across states (e.g. "Refresh cost data")
+ */
+function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Refresh' }) {
+  const busyText = hasRead ? 'Refreshing…' : 'Loading…';
+  // motion-safe → the icon stays static under prefers-reduced-motion; the label still carries the busy cue
+  const iconClass = isBusy ? 'motion-safe:animate-spin' : '';
+
+  return (
+    <button type="button" className="btn ghost sm w-28 justify-center" onClick={onRefresh} disabled={isBusy}
+      aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
+      <Icon name="refresh" size={14} className={iconClass}/>
+      {isBusy ? busyText : 'Refresh'}
+    </button>
   );
 }
 
@@ -1039,7 +1080,7 @@ window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
-  FreshnessStamp, getFreshnessState,
+  FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

@@ -47,7 +47,7 @@ test("the stamp carries the last successful read and marks a list fetch in fligh
 test("a refresh keeps the last stamp, and a failed list read never reads as fresh", () => {
   const cases: Array<[string | null, string, string]> = [
     [READ_AT, "ready", "fresh"],
-    [READ_AT, "loading", "fresh"],
+    [READ_AT, "loading", "refreshing"],
     [null, "loading", "loading"],
     [READ_AT, "error", "stale"],
     [null, "error", "not-read"],

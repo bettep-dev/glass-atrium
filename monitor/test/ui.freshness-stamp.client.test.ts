@@ -9,7 +9,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 type Component = (props: Record<string, unknown>) => unknown;
-type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean; staleAfterMs?: number; now?: number };
+type RegionInput = { busy?: boolean; error?: string | null };
+type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean; regions?: RegionInput[]; staleAfterMs?: number; now?: number };
 
 const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
@@ -24,7 +25,7 @@ function renderStamp(props: FreshnessInput): RenderedNode {
   return renderScreen(React.createElement(ui.FreshnessStamp as Component, { now: NOW, staleAfterMs: STALE_MS, ...props })) as RenderedNode;
 }
 
-test("state follows the read history: never read → loading or not read, read → fresh until the stale window passes", () => {
+test("state follows the read history: never read → loading or not read, read → fresh only when idle, unfailed and inside the stale window", () => {
   const cases: Array<[FreshnessInput, string]> = [
     [{ at: null, loading: true }, "loading"],
     [{ at: null, loading: false }, "not-read"],
@@ -33,8 +34,14 @@ test("state follows the read history: never read → loading or not read, read �
     [{ at: isoAgo(STALE_MS) }, "fresh"],
     [{ at: isoAgo(STALE_MS + 1) }, "stale"],
     [{ at: isoAgo(1_000), failed: true }, "stale"],
-    [{ at: isoAgo(1_000), loading: true }, "fresh"],
-    [{ at: isoAgo(STALE_MS + 1), loading: true }, "stale"],
+    [{ at: isoAgo(1_000), loading: true }, "refreshing"],
+    [{ at: isoAgo(STALE_MS + 1), loading: true }, "refreshing"],
+    [{ at: null, regions: [{ busy: true }, { busy: false }] }, "loading"],
+    [{ at: null, regions: [{ error: "down" }, { error: "down" }] }, "not-read"],
+    [{ at: isoAgo(1_000), regions: [{ busy: true }, { busy: false }] }, "refreshing"],
+    [{ at: isoAgo(1_000), regions: [{ error: "down" }, { busy: false }] }, "partial"],
+    [{ at: isoAgo(1_000), regions: [{ error: "down" }, { error: "down" }] }, "stale"],
+    [{ at: isoAgo(1_000), regions: [{ busy: false }, { busy: false }] }, "fresh"],
   ];
   for (const [input, expected] of cases) {
     const state = getFreshnessState({ now: NOW, staleAfterMs: STALE_MS, ...input });
@@ -83,11 +90,89 @@ test("a read stamp shows the display-clock time of the read, whatever its age", 
   }
 });
 
-test("a refresh in flight keeps the last stamp and marks the atom busy", () => {
+test("the success tone appears only on an idle, unfailed, in-window read", () => {
+  const inputs: FreshnessInput[] = [
+    { at: null, loading: true },
+    { at: null },
+    { at: isoAgo(1_000), loading: true },
+    { at: isoAgo(1_000), failed: true },
+    { at: isoAgo(1_000), regions: [{ busy: true }] },
+    { at: isoAgo(1_000), regions: [{ error: "down" }, {}] },
+    { at: isoAgo(1_000), regions: [{ error: "down" }] },
+    { at: isoAgo(STALE_MS + 1) },
+    { at: isoAgo(1_000) },
+  ];
+  for (const input of inputs) {
+    const isFresh = getFreshnessState({ now: NOW, staleAfterMs: STALE_MS, ...input }) === "fresh";
+    const okNodes = findNodes(renderStamp(input), (n) => /\btext-ok\b/.test(String(n.props.className ?? "")));
+    assert.equal(okNodes.length, isFresh ? 1 : 0, JSON.stringify(input));
+  }
+});
+
+test("a partial failure names how many regions failed out of how many, in text and for AT", () => {
+  const tree = renderStamp({ at: isoAgo(1_000), regions: [{ error: "down" }, {}, {}] });
+  const srWord = collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]);
+  const visible = collectText(findNodes(tree, (n) => n.props["data-stamp-text"] === "true")[0]);
+  assert.match(srWord, /Partial.*1 of 3 failed/);
+  assert.match(visible, /1 of 3 failed/);
+});
+
+test("a busy region marks the stamp busy and keeps the last stamp, whichever input carries the busy bit", () => {
   const at = isoAgo(1_000);
-  const tree = renderStamp({ at, loading: true });
-  assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1);
-  assert.match(collectText(tree), new RegExp(`as of ${formatKstTime(at)}`));
+  for (const input of [{ at, loading: true }, { at, regions: [{ busy: true }, {}] }]) {
+    const tree = renderStamp(input);
+    assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, JSON.stringify(input));
+    assert.match(collectText(tree), new RegExp(`as of ${formatKstTime(at)}`));
+    assert.match(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]), /Refreshing/);
+  }
+});
+
+type RefreshProps = { isBusy?: boolean; hasRead?: boolean; onRefresh?: () => void; label?: string };
+function renderRefresh(props: RefreshProps): RenderedNode {
+  const tree = renderScreen(React.createElement(ui.RefreshButton as Component, { label: "Refresh cost data", onRefresh: () => {}, ...props })) as RenderedNode;
+  return findNodes(tree, (n) => n.type === "button")[0];
+}
+
+test("the Refresh atom is busy and disabled exactly while a request is in flight, and names the wave", () => {
+  const rows: Array<{ name: string; props: RefreshProps; busy: boolean; text: RegExp }> = [
+    { name: "first wave", props: { isBusy: true, hasRead: false }, busy: true, text: /Loading…/ },
+    { name: "refresh over held data", props: { isBusy: true, hasRead: true }, busy: true, text: /Refreshing…/ },
+    { name: "idle after a read", props: { isBusy: false, hasRead: true }, busy: false, text: /^\s*Refresh\s*$/ },
+    { name: "idle, never read", props: { isBusy: false, hasRead: false }, busy: false, text: /^\s*Refresh\s*$/ },
+  ];
+  for (const row of rows) {
+    const button = renderRefresh(row.props);
+    assert.equal(button.props.disabled === true, row.busy, `${row.name}: disabled`);
+    assert.equal(button.props["aria-busy"] === "true", row.busy, `${row.name}: aria-busy`);
+    assert.match(collectText(button), row.text, row.name);
+    assert.equal(button.props["aria-label"], "Refresh cost data", `${row.name}: stable accessible name`);
+  }
+});
+
+test("the Refresh atom keeps one width across its labels and spins only when motion is allowed", () => {
+  const idle = renderRefresh({ isBusy: false, hasRead: true });
+  const busy = renderRefresh({ isBusy: true, hasRead: true });
+  assert.equal(idle.props.className, busy.props.className, "same box across states");
+  assert.match(String(busy.props.className), /\bw-\d+\b/, "a fixed width class");
+  const spinning = findNodes(busy, (n) => /animate-spin/.test(String(n.props.className ?? "")));
+  assert.ok(spinning.length > 0, "the busy icon spins");
+  for (const node of spinning) assert.match(String(node.props.className), /(^|\s)motion-safe:animate-spin\b/, "never an unconditional spin");
+  assert.equal(findNodes(idle, (n) => /animate-spin/.test(String(n.props.className ?? ""))).length, 0);
+});
+
+test("getRegionSummary tallies busy and failed regions over any region list", () => {
+  const getRegionSummary = ui.getRegionSummary as (regions: unknown) => { isBusy: boolean; failedCount: number; regionCount: number };
+  // spread → a plain object of this realm; the vm-loaded module returns objects with a foreign prototype
+  assert.deepEqual({ ...getRegionSummary(undefined) }, { isBusy: false, failedCount: 0, regionCount: 0 });
+  assert.deepEqual({ ...getRegionSummary([{ busy: true, error: null }, { busy: false, error: "x" }, null, { busy: false, error: null }]) }, { isBusy: true, failedCount: 1, regionCount: 3 });
+});
+
+test("the PageHeader right cluster wraps under the title instead of overflowing", () => {
+  const tree = renderScreen(React.createElement(ui.PageHeader as Component, { title: "Cost", right: "controls" })) as RenderedNode;
+  const [outer] = findNodes(tree, (n) => n.type === "div");
+  const right = findNodes(tree, (n) => n.type === "div" && collectText(n) === "controls")[0];
+  for (const node of [outer, right]) assert.match(String(node.props.className), /\bflex-wrap\b/);
+  assert.match(String(right.props.className), /\bmin-w-0\b/);
 });
 
 // Recording React whose state setter and effects the test drives by hand, plus a settable clock.

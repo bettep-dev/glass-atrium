@@ -320,7 +320,7 @@ test("the stamp keeps the last successful read: a wave in flight is busy, a fail
   assert.strictEqual(getState(readAt, settled), "fresh");
 
   assert.strictEqual(cost.getFreshnessInputC(readAt, [ready({}), loading]).loading, true, "any panel in flight = busy");
-  assert.strictEqual(getState(readAt, [loading, loading]), "fresh", "a refresh in flight keeps the last stamp");
+  assert.strictEqual(getState(readAt, [loading, loading]), "refreshing", "a refresh in flight keeps the last stamp, never fresh");
   assert.strictEqual(getState(null, [loading, loading]), "loading");
 
   assert.strictEqual(getState(readAt, [ready({}), failed]), "stale", "a failed panel never reads as fresh");

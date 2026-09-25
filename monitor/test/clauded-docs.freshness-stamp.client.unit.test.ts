@@ -34,7 +34,7 @@ const READ_AT = new Date(NOW - 60_000).toISOString();
 test("a list refresh keeps the last stamp busy, and a failed list read never reads as fresh", () => {
   const cases: Array<[string | null, string, string]> = [
     [READ_AT, "ready", "fresh"],
-    [READ_AT, "loading", "fresh"],
+    [READ_AT, "loading", "refreshing"],
     [null, "loading", "loading"],
     [READ_AT, "error", "stale"],
     [null, "error", "not-read"],

@@ -49,7 +49,7 @@ function getState(settledAt: string | null, waveStates: FetchState[]): string {
 test("a wave in flight keeps the last stamp busy, and any failed wiki read never reads as fresh", () => {
   const cases: Array<[string | null, FetchState[], string]> = [
     [READ_AT, [ready, ready], "fresh"],
-    [READ_AT, [ready, loading], "fresh"],
+    [READ_AT, [ready, loading], "refreshing"],
     [null, [loading, loading], "loading"],
     [READ_AT, [ready, failed], "stale"],
     [null, [failed, failed], "not-read"],

@@ -55,7 +55,7 @@ test("the stamp carries the last successful read and marks any panel fetch in fl
 test("a refresh keeps the last stamp, and any failed panel read never reads as fresh", () => {
   const cases: Array<[string | null, PanelState[], string]> = [
     [READ_AT, [ready, ready], "fresh"],
-    [READ_AT, [ready, loading], "fresh"],
+    [READ_AT, [ready, loading], "refreshing"],
     [null, [loading, loading], "loading"],
     [READ_AT, [ready, failed], "stale"],
     [null, [failed, failed], "not-read"],

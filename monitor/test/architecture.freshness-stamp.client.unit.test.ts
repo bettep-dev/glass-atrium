@@ -39,7 +39,7 @@ function getState(healthAsOf: string | null, healthBusy: boolean, erroredCount: 
 test("a failed headline store read never reads as fresh, and reads in flight keep the stamp busy", () => {
   const cases: Array<[string | null, boolean, number, string]> = [
     [READ_AT, false, 0, "fresh"],
-    [READ_AT, true, 0, "fresh"],
+    [READ_AT, true, 0, "refreshing"],
     [null, true, 0, "loading"],
     [READ_AT, false, 1, "stale"],
     [null, false, 4, "not-read"],

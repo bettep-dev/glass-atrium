@@ -52,7 +52,7 @@ test("only a successful summary read advances the stamp; loading and failure kee
 test("a refresh keeps the last stamp, and a failed summary read never reads as fresh", () => {
   const cases: Array<[string | null, FetchState, string]> = [
     [READ_AT, ready, "fresh"],
-    [READ_AT, loading, "fresh"],
+    [READ_AT, loading, "refreshing"],
     [null, loading, "loading"],
     [READ_AT, failed, "stale"],
     [null, failed, "not-read"],
