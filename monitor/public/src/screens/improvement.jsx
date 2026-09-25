@@ -150,49 +150,16 @@ const SRC_LABEL_UNIFIED = { t: "ok", s: "✓", x: "Unified endpoint" };
 const SRC_LABEL_LOADING = { t: "info", s: "ℹ", x: "Loading…" };
 
 function ScreenImprovement({ onNav }) {
-	const { Icon, PageHeader, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner } = window.UI;
 
-	const [listState, setListState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-		source: null,
-	});
-	const [statsState, setStatsState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// orphan endpoint — 독립 fetch-state (loading/ready/error · 부분 실패 격리).
-	const [learningLogState, setLearningLogState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// 검토 필요 사유 세그먼트 행 (F12) — 독립 fetch-state (실패 시 KPI 는 plain count 로 degrade).
-	const [reviewReasonState, setReviewReasonState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// loop-events 집계 fetch-state — 부분 실패 격리 (실패 시 변경량/추세 카드만 생략).
-	const [loopEventsState, setLoopEventsState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// correction_signals 집계 fetch-state — 부분 실패 격리 (실패 시 해당 카드만 생략).
-	const [correctionState, setCorrectionState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// corpus-audit fetch-state — 부분 실패 격리 (실패 시 성장 카드만 생략).
-	const [corpusAuditState, setCorpusAuditState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
+	const [listState, setListState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [statsState, setStatsState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [learningLogState, setLearningLogState] = useSI(window.UI.INITIAL_REGION_STATE);
+	// review-reason rows — failure drops the segment row only; the KPI keeps its plain count
+	const [reviewReasonState, setReviewReasonState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [loopEventsState, setLoopEventsState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [correctionState, setCorrectionState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [corpusAuditState, setCorpusAuditState] = useSI(window.UI.INITIAL_REGION_STATE);
 	const [drawerRow, setDrawerRow] = useSI(null);
 	const [toast, setToast] = useSI(null);
 	// 허용/거절 in-flight 카드 id (scalar — 카드 액션은 직렬 1건 · Set 불필요).
@@ -206,12 +173,6 @@ function ScreenImprovement({ onNav }) {
 	// 실패한 새로고침이 최신 데이터처럼 보인다.
 	const [asOf, setAsOf] = useSI(null);
 
-	const listAbortRef = useRI(null);
-	const orphanAbortRef = useRI(null);
-	const reviewReasonAbortRef = useRI(null);
-	const loopEventsAbortRef = useRI(null);
-	const correctionAbortRef = useRI(null);
-	const corpusAuditAbortRef = useRI(null);
 	const toastTimerRef = useRI(null);
 
 	const triggerRefresh = useCI(() => setRefreshTick((t) => t + 1), []);
@@ -280,123 +241,35 @@ function ScreenImprovement({ onNav }) {
 		[],
 	);
 
+	// one request per region → a failed or slow payload never blanks its neighbours, and held data stays through a refresh
 	useEI(() => {
-		const ctrl = new AbortController();
-		listAbortRef.current?.abort();
-		listAbortRef.current = ctrl;
-		setListState({ status: "loading", data: null, error: null, source: null });
-		setStatsState({ status: "loading", data: null, error: null });
-
-		fetchUnifiedI(ctrl.signal)
-			.then(({ list, stats, source }) => {
-				if (ctrl.signal.aborted) return;
-				setListState({ status: "ready", data: list, error: null, source });
-				setStatsState({ status: "ready", data: stats, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				const detail = err?.message || String(err);
-				setListState({
-					status: "error",
-					data: null,
-					error: detail,
-					source: null,
-				});
-				setStatsState({ status: "error", data: null, error: detail });
-				showToast("crit", `Couldn't load data: ${detail.slice(0, 80)}`);
-			});
-
-		return () => ctrl.abort();
-	}, [refreshTick, showToast]);
-
-	// 검토 필요 사유 세그먼트 fetch (F12) — KPI 집계값의 행 단위 재분류용.
-	// 실패는 세그먼트만 생략 (부분 실패 격리 — KPI plain count 유지, 0 조작 금지).
-	useEI(() => {
-		const ctrl = new AbortController();
-		reviewReasonAbortRef.current?.abort();
-		reviewReasonAbortRef.current = ctrl;
-		setReviewReasonState({ status: "loading", data: null, error: null });
-
-		fetch(REVIEW_REASON_ROWS_URL, {
-			signal: ctrl.signal,
-			headers: { Accept: "application/json" },
-		})
-			.then((res) => {
-				if (!res.ok) throw new Error(`outcomes search HTTP ${res.status}`);
-				return res.json();
-			})
-			.then((data) => {
-				if (ctrl.signal.aborted) return;
-				setReviewReasonState({ status: "ready", data, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				setReviewReasonState({
-					status: "error",
-					data: null,
-					error: err?.message || String(err),
-				});
-			});
-
-		return () => ctrl.abort();
+		const requests = [
+			loadRegionI(IMPROVEMENT_LIST_URL, setListState, () => setAsOf(new Date().toISOString())),
+			loadRegionI(IMPROVEMENT_STATS_URL, setStatsState),
+			loadRegionI(REVIEW_REASON_ROWS_URL, setReviewReasonState),
+			loadRegionI(LEARNING_LOG_URL, setLearningLogState),
+			loadRegionI(LOOP_EVENTS_URL, setLoopEventsState),
+			loadRegionI(CORRECTION_SIGNALS_URL, setCorrectionState),
+			loadRegionI(CORPUS_AUDITS_URL, setCorpusAuditState),
+		];
+		return () => {
+			for (const request of requests) request.abort();
+		};
 	}, [refreshTick]);
 
-	// orphan endpoint — AbortController 로 묶은 fetch wave.
-	// 응답은 독립 state 로 분기 (부분 실패 격리 — 5xx 가 나머지 카드를 막지 않음).
-	// unified/attribution wave 와 별도 ref → 상호 abort 간섭 없음.
-	useEI(() => {
-		const ctrl = new AbortController();
-		orphanAbortRef.current?.abort();
-		orphanAbortRef.current = ctrl;
-		setLearningLogState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(LEARNING_LOG_URL, ctrl.signal, setLearningLogState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// loop-events 집계 fetch — orphan helper 재사용 (5xx → error state · 부분 실패 격리).
-	// 집계만 소비 (변경량 합계 + 날짜 추세) → raw event 행 미렌더 (outcomes 경계 유지).
-	useEI(() => {
-		const ctrl = new AbortController();
-		loopEventsAbortRef.current?.abort();
-		loopEventsAbortRef.current = ctrl;
-		setLoopEventsState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(LOOP_EVENTS_URL, ctrl.signal, setLoopEventsState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// correction_signals 집계 fetch — orphan helper 재사용 (5xx/미배포 → error state · 카드 숨김).
-	useEI(() => {
-		const ctrl = new AbortController();
-		correctionAbortRef.current?.abort();
-		correctionAbortRef.current = ctrl;
-		setCorrectionState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(CORRECTION_SIGNALS_URL, ctrl.signal, setCorrectionState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// corpus-audits fetch — orphan helper 재사용 (미배포 테이블/5xx → error state · 카드 숨김).
-	useEI(() => {
-		const ctrl = new AbortController();
-		corpusAuditAbortRef.current?.abort();
-		corpusAuditAbortRef.current = ctrl;
-		setCorpusAuditState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(CORPUS_AUDITS_URL, ctrl.signal, setCorpusAuditState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// 스탬프는 목록 payload 가 ready 로 넘어간 순간에만 갱신된다.
-	useEI(() => {
-		if (listState.status !== "ready") return;
-		setAsOf(new Date().toISOString());
-	}, [listState]);
+	const regions = [
+		{ source: "suggestions", state: listState },
+		{ source: "loop stats", state: statsState },
+		{ source: "review reasons", state: reviewReasonState },
+		{ source: "pattern ledger", state: learningLogState },
+		{ source: "loop events", state: loopEventsState },
+		{ source: "correction signals", state: correctionState },
+		{ source: "corpus audits", state: corpusAuditState },
+	];
+	const pageFailure = getPageFailureI(regions);
+	// a shared outage owns the one Retry → cards drop theirs
+	const regionRetry = pageFailure ? undefined : triggerRefresh;
+	const isBusy = regions.some(({ state }) => state.busy);
 
 	const columnRows = useMI(() => {
 		if (listState.status !== "ready" || !listState.data)
@@ -582,16 +455,14 @@ function ScreenImprovement({ onNav }) {
 					title="Learning"
 					right={
 						<div className="flex items-center gap-2">
-							<FreshnessStamp {...getFreshnessInputI(asOf, listState)} />
+							<FreshnessStamp {...getFreshnessInputI(asOf, regions.map(({ state }) => state))} />
 							<ViewToggleI view={view} onChange={setView} />
-							<button
-								className="btn ghost sm"
-								onClick={triggerRefresh}
-								aria-label="Refresh learning data"
-							>
-								<Icon name="refresh" size={14} />
-								Refresh
-							</button>
+							<RefreshButton
+								isBusy={isBusy}
+								hasRead={asOf !== null}
+								onRefresh={triggerRefresh}
+								label="Refresh learning data"
+							/>
 						</div>
 					}
 				/>
@@ -604,6 +475,13 @@ function ScreenImprovement({ onNav }) {
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
 				<AlarmLaneI applyCap={applyCapState} />
+				{pageFailure ? (
+					<PageErrorBanner
+						sources={pageFailure.sources}
+						error={pageFailure.error}
+						onRetry={triggerRefresh}
+					/>
+				) : null}
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
@@ -616,7 +494,7 @@ function ScreenImprovement({ onNav }) {
 						confidenceDist={confidenceDist}
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
-						onRetry={triggerRefresh}
+						onRetry={regionRetry}
 					/>
 				) : (
 					<>
@@ -626,7 +504,7 @@ function ScreenImprovement({ onNav }) {
 							learningLogState={learningLogState}
 							suppression={loopSuppression}
 							awaiting={columnRows.safety.length}
-							onRetry={triggerRefresh}
+							onRetry={regionRetry}
 						/>
 						<div className="flex-1 min-h-0">
 							<KanbanCardI
@@ -636,14 +514,14 @@ function ScreenImprovement({ onNav }) {
 								onRowClick={setDrawerRow}
 								onAction={runAction}
 								pendingActionId={pendingActionId}
-								onRetry={triggerRefresh}
+								onRetry={regionRetry}
 							/>
 						</div>
 						<PatternLedgerCardI
 							state={learningLogState}
 							suppression={loopSuppression}
 							onRowClick={setDrawerRow}
-							onRetry={triggerRefresh}
+							onRetry={regionRetry}
 						/>
 						<LoopOutputGroupI
 							statsState={statsState}
@@ -652,7 +530,7 @@ function ScreenImprovement({ onNav }) {
 							listState={listState}
 							buckets={buckets}
 							onNav={onNav}
-							onRetry={triggerRefresh}
+							onRetry={regionRetry}
 						/>
 					</>
 				)}
@@ -838,13 +716,9 @@ function formatCycleStampI(iso) {
 	});
 }
 
-// stamp tracks the pattern list only → every other card reports its own state
-function getFreshnessInputI(asOf, listState) {
-	return {
-		at: asOf,
-		loading: listState.status === "loading",
-		failed: listState.status === "error",
-	};
+// at = last landed suggestion list; busy/failed state comes from every region
+function getFreshnessInputI(asOf, regions) {
+	return { at: asOf, regions };
 }
 
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
@@ -1042,8 +916,8 @@ function LoopOutputGroupI({
 			/>
 			{statsState.status === "error" ? (
 				<ErrorBannerI
-					title="Couldn't load the improvement stats — run breakdown and learning memory are missing"
-					detail={statsState.error}
+					source="loop stats"
+					error={statsState.error}
 					onRetry={onRetry}
 				/>
 			) : null}
@@ -1159,8 +1033,8 @@ function KanbanCardI({
 			{isError ? (
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load the suggestion board"
-						detail={state.error}
+						source="suggestions"
+						error={state.error}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2397,8 +2271,8 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load change summary"
-						detail={state.error}
+						source="loop events"
+						error={state.error}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2559,8 +2433,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 				<CardHead title="Pattern ledger" />
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load the pattern ledger"
-						detail={state.error}
+						source="pattern ledger"
+						error={state.error}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2758,36 +2632,10 @@ function ToastI({ tone, message }) {
 	);
 }
 
-function ErrorBannerI({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
-				)}
-			</div>
-			{onRetry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
-		</div>
-	);
+// quiet per-region card: plain sentence + next step, raw answer behind Details
+function ErrorBannerI({ source, error, onRetry }) {
+	const { RegionUnavailable } = window.UI;
+	return <RegionUnavailable source={source} error={error} onRetry={onRetry} />;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -2845,47 +2693,31 @@ function deriveLoopAggregateI(data) {
 	};
 }
 
-// `/api/improvement` + `/stats` 동시 fetch · 5xx → 명시적 throw (silent fallback 금지).
-async function fetchUnifiedI(signal) {
-	const [listRes, statsRes] = await Promise.all([
-		fetch(IMPROVEMENT_LIST_URL, {
-			signal,
-			headers: { Accept: "application/json" },
-		}),
-		fetch(IMPROVEMENT_STATS_URL, {
-			signal,
-			headers: { Accept: "application/json" },
-		}),
-	]);
-	if (!listRes.ok) throw new Error(`improvement list HTTP ${listRes.status}`);
-	if (!statsRes.ok)
-		throw new Error(`improvement stats HTTP ${statsRes.status}`);
-	const list = await listRes.json();
-	const stats = await statsRes.json();
-	return { list, stats, source: "unified" };
-}
-
-// P2-B orphan endpoint 단건 fetch — 5xx → 명시적 error state (silent fallback 금지).
-// abort 는 조용히 무시 (refreshTick 재발화 OR unmount 시 정상 경로). 결과는 setter 위임
-// → 각 카드 state 독립 (부분 실패 격리 — 한 endpoint 실패가 나머지 카드 미차단).
-function fetchOrphanI(url, signal, setState) {
-	fetch(url, { signal, headers: { Accept: "application/json" } })
-		.then((res) => {
-			if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+// starts one region request; superseded or aborted answers never land (request identity)
+function loadRegionI(url, setState, onData) {
+	const request = new AbortController();
+	setState((state) => window.UI.putRegionRequest(state, url, request));
+	fetch(url, { signal: request.signal, headers: { Accept: "application/json" } })
+		.then(async (res) => {
+			if (!res.ok) throw await window.UI.getFetchError(res);
 			return res.json();
 		})
 		.then((data) => {
-			if (signal.aborted) return;
-			setState({ status: "ready", data, error: null });
+			if (request.signal.aborted) return;
+			setState((state) => window.UI.putRegionData(state, request, data));
+			if (onData) onData();
 		})
-		.catch((err) => {
-			if (signal.aborted || err?.name === "AbortError") return;
-			setState({
-				status: "error",
-				data: null,
-				error: err?.message || String(err),
-			});
-		});
+		.catch((err) =>
+			setState((state) => window.UI.putRegionFailure(state, request, err)),
+		);
+	return request;
+}
+
+// null unless 2+ regions failed with one shared cause (then one page banner owns Retry)
+function getPageFailureI(regions) {
+	return window.UI.getSharedFailure(
+		regions.map(({ source, state }) => ({ source, error: state.error || null })),
+	);
 }
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.

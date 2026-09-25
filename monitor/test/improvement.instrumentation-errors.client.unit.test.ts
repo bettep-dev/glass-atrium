@@ -1,7 +1,8 @@
 // Render guard for the instrumentation view's failure surface in
 // public/src/screens/improvement-instrumentation.jsx. A failed payload must stay
-// visible as exactly one retryable error banner at the group that owns it; a card
-// that returns null on error makes the failure vanish from the whole screen.
+// visible as exactly one error banner at the group that owns it, naming its own source; a card
+// that returns null on error makes the failure vanish from the whole screen. The banner itself
+// is the shared plain-sentence atom, and a page-level outage banner takes over the Retry.
 //
 // Runner: npx tsx --test test/improvement.instrumentation-errors.client.unit.test.ts
 
@@ -17,6 +18,7 @@ const INSTRUMENTATION_SRC = resolve(
   __dirname,
   "../public/src/screens/improvement-instrumentation.jsx",
 );
+const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
 
 interface RecordedElement {
   type: unknown;
@@ -79,9 +81,57 @@ for (const failed of subsets) {
 
     assert.equal(banners.length, failed.length);
     assert.deepEqual(
-      banners.map((b) => b.props.detail).sort(),
+      banners.map((b) => b.props.error).sort(),
       failed.map((name) => `${name} HTTP 500`).sort(),
     );
+    assert.equal(new Set(banners.map((b) => b.props.source)).size, failed.length);
     for (const banner of banners) assert.equal(banner.props.onRetry, onRetry);
   });
 }
+
+test("a page-level outage banner leaves no per-card Retry", () => {
+  const props: Record<string, unknown> = { onRetry: undefined };
+  for (const name of PAYLOADS) props[name] = { status: "error", data: null, error: "HTTP 503 Service Unavailable" };
+
+  const banners = collectBanners(sandbox.ImprovementInstrumentationViewI(props), []);
+
+  assert.equal(banners.length, PAYLOADS.length);
+  for (const banner of banners) assert.equal(banner.props.onRetry, undefined);
+});
+
+interface PageSandbox {
+  React: { createElement: unknown };
+  window: { UI: { RegionUnavailable: unknown } };
+  ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
+  getPageFailureI: (
+    regions: Array<{ source: string; state: { error: string | null } }>,
+  ) => { sources: string[]; error: string } | null;
+}
+
+const page = await buildScreenSandbox<PageSandbox>(IMPROVEMENT_SRC);
+page.React.createElement = sandbox.React.createElement;
+
+test("a failed region renders the shared unavailable card with its own source, never the raw answer as copy", () => {
+  const onRetry = () => {};
+  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry });
+
+  assert.equal(banner.type, page.window.UI.RegionUnavailable);
+  assert.deepEqual(
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry },
+    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry },
+  );
+});
+
+test("the page outage names exactly the regions that failed with one shared cause", () => {
+  const ok = { error: null };
+  const down = { error: "HTTP 503 Service Unavailable" };
+  const rows = [
+    { name: "one failed region stays on its own card", regions: [["suggestion list", down], ["loop stats", ok]], sources: null },
+    { name: "two regions sharing a cause become one outage", regions: [["suggestion list", down], ["loop stats", down], ["pattern ledger", ok]], sources: ["suggestion list", "loop stats"] },
+  ] as const;
+
+  for (const row of rows) {
+    const failure = page.getPageFailureI(row.regions.map(([source, state]) => ({ source, state })));
+    assert.deepEqual(failure ? [...failure.sources] : null, row.sources ? [...row.sources] : null, row.name);
+  }
+});

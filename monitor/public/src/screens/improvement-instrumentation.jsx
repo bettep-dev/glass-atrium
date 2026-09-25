@@ -34,8 +34,8 @@ function PayloadErrorCardI({ title, state, onRetry }) {
 			<CardHead title={title} />
 			<div className="p-4">
 				<ErrorBannerI
-					title={`Couldn't load ${title.toLowerCase()}`}
-					detail={state.error}
+					source={title.toLowerCase()}
+					error={state.error}
 					onRetry={onRetry}
 				/>
 			</div>
