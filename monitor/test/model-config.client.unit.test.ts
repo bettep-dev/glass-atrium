@@ -965,10 +965,45 @@ test("a refresh keeps every unsaved edit and takes every untouched field from th
   );
 });
 
-test("a read in flight keeps the header Refresh busy until the first answer lands", () => {
-  const inFlight = findAllMc(renderComponentMc(screens.ScreenModelConfig, {}), (n) => n.props["data-atom"] === "RefreshButton");
-  assert.strictEqual(inFlight[0]?.props.isBusy, true, "first read in flight → the atom is busy");
-  assert.strictEqual(inFlight[0]?.props.hasRead, false, "nothing read yet → the atom says Loading");
+test("a read in flight keeps the header Refresh busy until the first answer lands", async () => {
+  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
+  const cells: unknown[] = [];
+  let hookIndex = 0;
+  let isMounted = false;
+  let land: (res: unknown) => void = () => {};
+  const live = await loadMcScreens({
+    fetch: () => new Promise((resolve) => (land = resolve)),
+    react: {
+      // hook cells persist across renders by call order → each render reads the state the last one left
+      useState: (init: unknown) => {
+        const i = hookIndex++;
+        if (!(i in cells)) cells[i] = typeof init === "function" ? (init as () => unknown)() : init;
+        return [cells[i], (next: unknown) => {
+          cells[i] = typeof next === "function" ? (next as (prev: unknown) => unknown)(cells[i]) : next;
+        }];
+      },
+      useEffect: (fn: () => unknown) => {
+        if (!isMounted) fn();
+      },
+    },
+  });
+  const getRefresh = () => {
+    hookIndex = 0;
+    const tree = renderComponentMc(live.ScreenModelConfig, {});
+    isMounted = true;
+    return findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton")[0]?.props;
+  };
+
+  getRefresh();
+  const inFlight = getRefresh();
+  assert.strictEqual(inFlight?.isBusy, true, "first read in flight → the atom is busy");
+  assert.strictEqual(inFlight?.hasRead, false, "nothing read yet → the atom says Loading");
+
+  land({ ok: true, status: 200, json: async () => fixture });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const landed = getRefresh();
+  assert.strictEqual(landed?.isBusy, false, "the answer landed → Refresh is pressable again");
+  assert.strictEqual(landed?.hasRead, true, "a read landed → the atom stops saying Loading");
 });
 
 describe("a failed config read carries the shared error card with one Retry that reloads the config", () => {
