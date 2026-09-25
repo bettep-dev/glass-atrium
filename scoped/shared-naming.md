@@ -16,6 +16,16 @@ The delta-core below is the compressed non-inferable subset. It carries the rule
 6. **Identifier-kind binary** — data identifier (var/property/field/param/class/type) = NOUN · function/method = direct verb (vendor-adapters excepted); no noun↔verb cross-form. (Padding verbs + noise nouns Data/Info/Manager: model-inferable.)
 7. **No-stutter** — strip the domain the enclosing class/module/receiver/type already supplies (`User.userName`→`User.name` · `getBucketImage`→`getImage` in a bucket service).
 8. **Reduction-floor guardrail [NON-COMPRESSIBLE — never trim; counterweight to no-stutter]** — never collapse to a generic terminal (`data`/`value`/`status`/`result`/`count`-unqualified); on sibling collision KEEP the qualifier (`userCount`/`projectCount`); KEEP the verb when it is the sole compute-vs-stored-field signal (`calculateTotal` ≠ stored `total`).
+9. **Read-down naming** — a name reads down domain → class → function → local, carrying only the words its own level adds, never the whole meaning alone; No-stutter applied over the whole chain.
+    - `getChatTurnPoint`→`getPoint` in `ChatTurnService` · `referenceUseByReference` in the `reference` module carries the module's word twice: rename from what this level adds, under the Canonical verb set and the Identifier-kind binary.
+10. **Prefix-family grouping** — variables, properties, fields and params sharing a leading qualifier the scope does not supply go into ONE group (object/type) with short members; class and type names are out of scope.
+    - The leading qualifier is a domain or entity noun: stative `is`/`has`/`can`/`should` prefixes never form a family (`isLoading`/`isOpen` stay flat under **Booleans — stative-first**).
+    - `chargeCreditState`/`chargeCreditId`/`chargeCreditExpiredAt` → `charge: { state, id, expiredAt }` in the credit domain · `charge.chargeId`→`charge.id` by No-stutter.
+    - The group supplies the qualifier, so a member is judged together with its group: `charge.status` passes the Reduction-floor guardrail, a lone `status` still fails it.
+    - Wherever a member is read without its group — a destructured local, log or error text, a cross-boundary payload, a sibling group's same-named member — the Reduction-floor guardrail binds again: keep the qualifier (`chargeStatus`).
+    - Those qualified locals and payload fields are not a prefix family: `const { status: chargeStatus, id: chargeId } = charge` is compliant.
+    - The group name obeys the Identifier-kind binary and the Reduction-floor guardrail (a specific noun, never `data`/`info`/`values`), and it is the greppable unit: grep the group path or its type name, never a bare member.
+    - Function and method families sharing a verb or suffix are not prefix families: they stay under `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**.
 
 Full skill: 17-category verb taxonomy, scope-proportional length table, abbreviations, anti-pattern tables, boolean stative-first.
 

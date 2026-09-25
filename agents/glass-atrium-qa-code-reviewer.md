@@ -123,7 +123,7 @@ A change to a shared binding — an exported function, a shared regex or detecto
 | Security | Input validation, injection, auth bypass, hardcoded secrets, XSS | core-security.md |
 | Testing | Tests the change adds or edits: one behavior each, no duplicate, home file, behavior name, named rows | shared-testing.md (Testing Checks below) |
 | Performance | N+1 queries, unnecessary re-renders, O(n^2), memory leaks | shared-performance.md (Read list below) |
-| Readability | Naming, magic numbers, guard clauses, import order | shared-naming.md (naming) · rest: skill refs below |
+| Readability | Naming (flat prefixed families, 4+-word identifiers: Naming Checks below), magic numbers, guard clauses, import order | shared-naming.md (naming) · rest: skill refs below |
 | LLM Trust Boundary | Validate LLM-generated values before DB write · Check tool output type/shape | core-security.md |
 
 - A check marked "no rule-file source" cites `glass-atrium-qa-code-reviewer` → 7-Perspective Checklist as its governing rule, plus the code evidence — never a rule file that does not state the check.
@@ -154,6 +154,26 @@ Checks whose source is outside this agent's rule set — Read the source before 
 | Realistic test data; a large byte-identical fixture becomes one named fixture | `### Names, comments and test data` |
 | Matches no row of the prohibited-shapes table | `### Meaningless-Test Prohibitions` → `#### The prohibited shapes` |
 | Mocks only at boundaries | `## Mocking Rules` |
+
+### Naming Checks
+
+- **Identifier scope**: judge only identifiers the change adds or renames — a pre-existing name it leaves untouched is never flagged (`## Prohibitions`).
+- **Naming severity**: every finding is [SHOULD FIX], citing the `scoped/shared-naming.md` bold lead in the right column. The rule text lives there; do not restate it.
+
+| Trigger | Finding when | Cite |
+|---|---|---|
+| Flat prefixed family: 2+ variables, properties, fields or params in one scope sharing a leading qualifier | the scope does not supply that qualifier | **Prefix-family grouping** |
+| Identifier of 4+ words | an enclosing domain, class or function supplies a word, or the name belongs to a flat prefixed family | **Read-down naming** · **Prefix-family grouping** |
+
+- **A 4+-word count alone is never a finding**: a long name whose every word adds meaning at its own level passes.
+- **Word counting**: split at case humps and `_`/`-` separators; an acronym run (`URL`) is one word; digits join the word before them.
+- **Words not counted**: a rule-mandated `OrThrow`/`OrFail` suffix · an allowlisted class suffix (`Repository`, `Service` …) · a boolean `is`/`has`/`can`/`should` prefix.
+- **Naming exemptions**:
+  - function and method families sharing a verb or suffix, which follow `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**;
+  - class and type names — the Flat prefixed family trigger covers variables, properties, fields and params only;
+  - names sharing only a stative `is`/`has`/`can`/`should` prefix — the leading qualifier is a domain or entity noun, and grouping them would break **Booleans — stative-first**;
+  - qualified locals unpacked from a group, and qualified payload fields where a member leaves its group — **Prefix-family grouping** requires the qualifier there;
+  - names fixed outside the change: a framework or vendor contract, a wire or external API field, generated code.
 
 ### AI-Generated Defect Detection
 
