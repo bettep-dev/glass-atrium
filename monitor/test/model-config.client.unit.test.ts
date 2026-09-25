@@ -18,7 +18,7 @@
 // cross-verifies the surviving client constant mirrors against the server SoT
 // (model-config-consts: free-text regex + budget regex/bounds).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
@@ -813,6 +813,43 @@ test("save results surface only when a surface did not write cleanly", () => {
   assert.ok(!("open" in disclosures[0].props), "the disclosure ships closed");
   assert.ok(textMc(card).includes("frontmatter-dev"), "the failed surface is shown unfolded");
   assert.ok(textMc(disclosures[0].children).includes("daemon-config.json"), "ok row still listed");
+});
+
+describe("a save-result row reads as words: status in plain words, mono only on the surface id", () => {
+  const rows = [
+    { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written" },
+    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped" },
+    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: row.result });
+      const text = textMc(tree);
+      const surface = row.result.surface ?? row.result.file;
+      const mono = findAllMc(tree, (n) => String(n.props.className ?? "").includes("font-mono"));
+
+      assert.ok(text.includes(row.word), `status reads "${row.word}"`);
+      assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
+      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [surface], "mono covers the surface id alone");
+      if (row.result.reason) assert.ok(text.includes(row.result.reason), "the reason is kept");
+    });
+  }
+
+  test("a result missing its surface and status renders no placeholder", () => {
+    const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: { reason: "no target resolved" } });
+    assert.ok(!textMc(tree).includes("—"), "no dash stands in for an empty field");
+    assert.ok(textMc(tree).includes("no target resolved"), "the reason still shows");
+  });
+});
+
+test("a read-only model row with no saved value renders no placeholder badge", () => {
+  const readOnly = [{ ...DOMAIN_ROW_FIXTURE_MC[0], desired: "", actual: null, editable: false }];
+  const props = domainsPropsMc(readOnly);
+  (props.form as { models: Record<string, string> }).models["model.dev"] = "";
+  const tree = renderComponentMc(screens.DomainsSectionMC, props);
+  const modelCell = tagsMc(tree, "td")[1];
+
+  assert.strictEqual(textMc(modelCell.children), "", "the empty model cell stays empty");
 });
 
 test("the unsaved-changes count equals the field count the partial PUT sends", () => {

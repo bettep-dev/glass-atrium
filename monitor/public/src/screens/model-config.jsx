@@ -838,9 +838,11 @@ function DomainRowMC({
 					/>
 				) : (
 					// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
-					<Badge role="metadata" className="pill--ctl-h">
-						{value || d.desired || "—"}
-					</Badge>
+					(value || d.desired) && (
+						<Badge role="metadata" className="pill--ctl-h">
+							{value || d.desired}
+						</Badge>
+					)
 				)}
 				<PricingNoteMC pricingKnown={d.pricing_known} />
 			</td>
@@ -1150,19 +1152,27 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 	);
 }
 
+const SURFACE_STATUS_MC = {
+	ok: { word: "Written", tone: "ok" },
+	skipped: { word: "Skipped", tone: "warn" },
+	failed: { word: "Failed", tone: "crit" },
+};
+
+// Words for the status, mono for the surface id alone — an empty field is left out, never dashed.
 function SurfaceResultRowMC({ result: r }) {
 	const { Badge } = window.UI;
-	const tone = r.status === "ok" ? "ok" : r.status === "skipped" ? "warn" : "crit";
+	const status = r.status ? SURFACE_STATUS_MC[r.status] ?? { word: r.status, tone: "crit" } : null;
+	const surface = r.surface ?? r.target ?? r.file ?? r.domain;
 
 	return (
-		<div className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0">
-			<Badge role="status" tone={tone} icon={true}>
-				{r.status || "—"}
-			</Badge>
-			<span className="text-dim truncate">
-				{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
-			</span>
-			{r.reason && <span className="text-faint truncate">— {r.reason}</span>}
+		<div className="flex items-center gap-2 fs-meta py-1 border-b border-line last:border-0">
+			{status && (
+				<Badge role="status" tone={status.tone} icon={true}>
+					{status.word}
+				</Badge>
+			)}
+			{surface && <span className="font-mono text-dim truncate">{surface}</span>}
+			{r.reason && <span className="text-faint truncate">{r.reason}</span>}
 		</div>
 	);
 }
