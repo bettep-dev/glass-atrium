@@ -219,8 +219,9 @@ scope_concerns_exempts_path() {
 # A declaration is a line the `[SCOPE]` token OPENS: optional indentation and one list marker, then
 # the token and a `files=` value that is neither empty nor a `<placeholder>`. The token is
 #   - bare — any text may follow the value;
-#   - wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`) — the value list must end at end of line, a `·`
-#     or `|` separator, or a grammar key: prose after it marks a verdict quoting a declaration;
+#   - wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`) — the value list must end at end of line, or at
+#     whitespace then a `·` or `|` separator or a grammar key, and no value may end in `.` `:` `;`
+#     `)`: prose or sentence punctuation after it marks a verdict quoting a declaration;
 #   - opening a backtick or `**` wrap that closes at end of line if at all — a wrap closing mid-line
 #     with text after it marks a quoted verdict the same way.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
@@ -230,13 +231,17 @@ scope_concerns_exempts_path() {
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
 #   - a wrapped token whose value list runs into anything else (prose, a trailing comma, a
-#     space-separated path list);
+#     space-separated path list, a separator or grammar key glued to a value without whitespace:
+#     `a.sh·prose`, `a.sh|prose`, `hooks/layout=x prose`) or whose value ends in `.` `:` `;` `)`;
 #   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
 #   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
 #   - a space after `files=`, or a field order not opening with `files=`;
 #   - recorder only: a declaration ending past its 2000-char emit transport, dropped whole.
 # Not closed — a quoted line still selected, winning over a later real declaration (first wins):
 #   - a relayed declaration opening its own line unwrapped — relaying by block-quote is the fix;
+#   - a wrapped-token relay whose value closes at a spaced separator or grammar key, with prose in a
+#     later field (`**[SCOPE]** files=a.sh · deliverable=fix — too narrow`): its tail reads as field
+#     text, so it cannot be told from a real declaration;
 #   - a line-opening wrap that closes at end of line or never, with prose after the value inside it
 #     (`` `[SCOPE] files=a.sh lists one path `` · `` **[SCOPE] files=`a.sh` lists one path** ``).
 readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
@@ -244,8 +249,10 @@ readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
 readonly _SCOPE_DECL_BARE_FORM='[[]SCOPE[]][[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
 # The parser's own closed field-key vocabulary, case-insensitive like its drop list.
 readonly _SCOPE_DECL_FIELD_KEY='([Ff][Ii][Ll][Ee][Ss]|[Dd][Ee][Ll][Ii][Vv][Ee][Rr][Aa][Bb][Ll][Ee]|[Oo][Uu][Tt])='
+# A wrapped token's value text — never ending in sentence punctuation, which marks quoting prose.
+readonly _SCOPE_DECL_VALUE_TAIL='[^[:space:],|]*[^[:space:],|.:;)]'
 # shellcheck disable=SC2016
-readonly _SCOPE_DECL_WRAPPED_TOKEN_FORM='(`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*][^[:space:],|]*([[:space:]]*,[[:space:]]*[^[:space:],|]+)*[[:space:]]*($|·|[|]|'"${_SCOPE_DECL_FIELD_KEY}"')'
+readonly _SCOPE_DECL_WRAPPED_TOKEN_FORM='(`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]('"${_SCOPE_DECL_VALUE_TAIL}"')?([[:space:]]*,[[:space:]]*'"${_SCOPE_DECL_VALUE_TAIL}"')*([[:space:]]*$|[[:space:]]+(·|[|]|'"${_SCOPE_DECL_FIELD_KEY}"'))'
 # shellcheck disable=SC2016
 readonly _SCOPE_DECL_TICK_LINE_FORM='`[[]SCOPE[]][[:space:]]+[Ff]iles=[^<[:space:]`*][^`]*`?[[:space:]]*$'
 # shellcheck disable=SC2016

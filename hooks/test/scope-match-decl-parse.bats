@@ -210,6 +210,13 @@ record0_entries() {
     'backtick-wrapped token closed by a pipe separator'
     'bold-wrapped token closed by a grammar key'
     'bold-wrapped token with a wrapped value closed by end of line'
+    'backtick-wrapped token whose value ends in a full stop first'
+    'bold-wrapped token whose value ends in a colon first'
+    'backtick-wrapped token whose value ends in a semicolon first'
+    'bold-wrapped token whose value ends in a closing parenthesis first'
+    'backtick-wrapped token with a middot glued to prose first'
+    'bold-wrapped token with a pipe glued to prose first'
+    'bold-wrapped token whose path embeds a grammar key first'
   )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
@@ -239,6 +246,13 @@ record0_entries() {
     '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
     '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
     '**[SCOPE]** files=`hooks/real.sh`'
+    '`[SCOPE]` files=hooks/old.sh.'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh:'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh;'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh)'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh·this was wrong'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh|this was wrong'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/layout=x was narrow'$'\n'"${real}"
   )
   local i got
   for i in "${!names[@]}"; do
