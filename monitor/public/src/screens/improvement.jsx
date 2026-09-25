@@ -1147,7 +1147,7 @@ function KanbanColumnI({
 // Applied history — one line (agent · date · pattern); the rationale opens in the drawer.
 function AppliedHistoryRowI({ row, onClick }) {
 	const label =
-		patternLabelI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+		patternNameI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
 	return (
 		<BoardRowI
 			onClick={onClick}
@@ -1373,7 +1373,7 @@ function groupByLabelI(rows) {
 	const groups = new Map();
 	for (const row of rows) {
 		const label =
-			patternLabelI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+			patternNameI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
 		if (!groups.has(label)) groups.set(label, []);
 		groups.get(label).push(row);
 	}
@@ -1750,7 +1750,7 @@ function ParkedLoopBannerI({ applyCap }) {
 			<div className="flex items-start gap-2 p-3">
 				<SymI s="⚠" className="text-warn" size={14} />
 				<div className="min-w-0">
-					<div className="fs-meta font-mono">
+					<div className="fs-meta">
 						Repeat-apply cap — {formatIntI(capped)} parked{" "}
 						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
 						{agents === 1 ? "agent" : "agents"}
@@ -1807,7 +1807,7 @@ function HeldCauseGroupI({ bucket, rows }) {
 	const agents = Number(bucket.agents ?? 0);
 	return (
 		<details className="mt-1.5" open={!HELD_DESIGN_DECISION_CAUSES.has(bucket.cause)}>
-			<summary className="fs-meta font-mono text-ink cursor-pointer select-none">
+			<summary className="fs-meta text-ink cursor-pointer select-none">
 				{bucket.label} — {formatIntI(Number(bucket.count ?? 0))} held across{" "}
 				{formatIntI(agents)} {agents === 1 ? "agent" : "agents"}
 			</summary>
@@ -1834,9 +1834,9 @@ function LedgerPlainRowsI({ rows }) {
 				<li key={r.id} className="flex items-center gap-2 fs-meta">
 					<span
 						className="text-ink truncate min-w-0"
-						title={patternLabelI(r.pattern_signature, r.agent)}
+						title={patternNameI(r.pattern_signature, r.agent)}
 					>
-						{truncateI(patternLabelI(r.pattern_signature, r.agent), 120)}
+						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
 					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
 					<span className="font-mono text-faint shrink-0 tnum">
@@ -1851,7 +1851,7 @@ function LedgerPlainRowsI({ rows }) {
 // 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
 function LedgerSectionHeadI({ label, basis, count }) {
 	return (
-		<div className="fs-meta font-mono text-dim mb-1">
+		<div className="fs-meta text-dim mb-1">
 			{label} · {basis} <span className="tnum">({formatIntI(count)})</span>
 		</div>
 	);
@@ -1882,7 +1882,7 @@ function LedgerRecurrenceDisclosureI({ suppression }) {
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
 		<details className="px-3 pb-3">
-			<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
+			<summary className="fs-meta text-dim cursor-pointer select-none">
 				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
 				{formatIntI(windowCycles)} cycle days
 			</summary>
@@ -1900,7 +1900,7 @@ function LedgerRecurrenceDisclosureI({ suppression }) {
 // 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
 function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
-		<table className="w-full fs-meta font-mono">
+		<table className="w-full fs-meta">
 			<thead>
 				<tr className="text-faint uppercase tracking-wider">
 					<th className="text-left py-1.5 pl-1.5">Cause</th>
@@ -1916,13 +1916,13 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 							<div className="text-ink">{b.label}</div>
 							<div className="card-sub is-wrap fs-meta mt-0.5">{b.hint}</div>
 						</td>
-						<td className="text-right py-1.5 pl-4 text-ink">
+						<td className="text-right py-1.5 pl-4 text-ink tnum">
 							{formatIntI(Number(b.agents ?? 0))}
 						</td>
-						<td className="text-right py-1.5 pl-4 text-ink">
+						<td className="text-right py-1.5 pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right py-1.5 pl-4 pr-1.5 text-dim">
+						<td className="text-right py-1.5 pl-4 pr-1.5 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2034,7 +2034,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 				))}
 			{preVerify && <PreVerifyDetailI {...preVerify} labelCls={labelCls} />}
 			{footnote && (
-				<div className="fs-meta font-mono text-faint mt-2">{footnote}</div>
+				<div className="fs-meta text-faint mt-2">{footnote}</div>
 			)}
 		</div>
 	);
@@ -2048,7 +2048,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 		<div>
 			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
 			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
-				<div className="flex items-center gap-1.5 fs-meta font-mono">
+				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className={badge.tone}>{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
@@ -2066,7 +2066,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 						style={{ gridTemplateColumns: "1fr auto" }}>
 						{axes.map(({ key, label, value }) => (
 							<React.Fragment key={key}>
-								<dt className="fs-meta font-mono text-dim">{label}</dt>
+								<dt className="fs-meta text-dim">{label}</dt>
 								<dd className="justify-self-end">
 									{typeof value === "boolean" ? (
 										<Badge
@@ -2077,7 +2077,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 											{value ? "PASS" : "FAIL"}
 										</Badge>
 									) : (
-										<span className="fs-meta font-mono text-ink">
+										<span className="fs-meta text-ink">
 											{String(value)}
 										</span>
 									)}
@@ -2498,7 +2498,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 	const freq = Number(pattern.frequency ?? 0);
 	const status = candidateSeverityI(freq, maxFreq);
 	const badge = learningStatusBadgeI(pattern.status);
-	const label = patternLabelI(pattern.pattern_signature, pattern.agent);
+	const label = patternNameI(pattern.pattern_signature, pattern.agent);
 	return (
 		<button
 			type="button"
@@ -2725,6 +2725,11 @@ function patternLabelI(signature, agent) {
 	const text = String(signature ?? "");
 	const suffix = agent ? `|${agent}` : "";
 	return suffix && text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
+// On-screen pattern name — agent suffix stripped, machine key read as words
+function patternNameI(signature, agent) {
+	return window.UI.getDisplayName("pattern", patternLabelI(signature, agent)) || "";
 }
 
 function truncateI(s, n) {
