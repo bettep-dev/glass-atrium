@@ -16,12 +16,13 @@
 // not a drift-prone copy. NO render harness / component / interaction assertions
 // (the monitor has no jsdom/testing-library; see the plan Task Decomposition preamble).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
+import { buildUiSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -58,6 +59,11 @@ interface OutcomesHelpers {
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
   buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
+  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
+  getDetailValueLabelO: (axis: string, value: unknown) => string;
+  splitLessonO: (markdown: string) => { lesson: string; body: string };
+  formatToolUseLineO: (markdown: string) => string;
+  formatResultLineO: (markdown: string) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -119,6 +125,9 @@ const outcomes = (await loadScreen(OUTCOMES_SRC, { window: { UI: {} } })) as unk
 // agents.jsx reads `window.UI.STICKY_TH_STYLE` at module top level → provide a
 // non-empty UI object so the eval does not throw (the value itself is unused here).
 const agents = (await loadScreen(AGENTS_SRC, { window: { UI: {} } })) as unknown as AgentsHelpers;
+// The real ui.jsx result names — the drawer title, chip and ledger cell all read these.
+const ui = await buildUiSandbox<{ resolveResultMeta: (result: string, closedAt: unknown) => { label: string } }>();
+outcomes.window.UI.resolveResultMeta = ui.resolveResultMeta;
 
 // Helper return arrays originate in the vm realm; re-materialize into this realm
 // before deep-equality (cross-realm prototype mismatch otherwise).
@@ -318,4 +327,103 @@ test("buildSummaryFlagO: review reasons come from the shared SoT and land in the
   const flag = outcomes.buildSummaryFlagO({ review_flag: true });
   assert.strictEqual(flag?.tone, "warn");
   assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
+});
+
+// --- buildActiveFilterChipsO: a chip reads like the filter control that set it ---
+
+describe("buildActiveFilterChipsO: each chip names its axis and value as the filter controls do", () => {
+  const rows = [
+    { name: "the default period adds no chip", filter: { days: 30 }, chips: [] },
+    { name: "another period names its window", filter: { days: 7 }, chips: ["Period: 7d"] },
+    { name: "a result names its label, not its enum", filter: { days: 30, result: "done_with_concerns" }, chips: ["Result: Done with caveats"] },
+    { name: "a flagged filter names its option", filter: { days: 30, review_flag: "false" }, chips: ["Flagged: Clear"] },
+    { name: "a task type keeps its canonical token", filter: { days: 30, task_type: "bug-fix" }, chips: ["Task type: bug-fix"] },
+    { name: "a missing confidence reads None", filter: { days: 30, confidence: "null" }, chips: ["Confidence: None"] },
+    { name: "a self-check names Pass", filter: { days: 30, metric_pass: "true" }, chips: ["Self-check: Pass"] },
+    { name: "an attribution names its short label", filter: { days: 30, attribution_source: "budget-truncation" }, chips: ["Attribution: budget-kill"] },
+    { name: "a keyword is quoted and shortened", filter: { days: 30, q: "a keyword longer than eighteen" }, chips: ['Keyword: "a keyword longer …"'] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
+    });
+  }
+});
+
+// --- Drawer values: one value, one name across chip, ledger cell and drawer ---
+
+describe("getDetailValueLabelO: a drawer value reads as the filter chip for the same value", () => {
+  const rows = [
+    { name: "a high confidence", axis: "confidence", value: "high", chipValue: "high" },
+    { name: "a low confidence", axis: "confidence", value: "low", chipValue: "low" },
+    { name: "a missing confidence", axis: "confidence", value: null, chipValue: "null" },
+    { name: "a passed self-check", axis: "metric_pass", value: true, chipValue: "true" },
+    { name: "a failed self-check", axis: "metric_pass", value: false, chipValue: "false" },
+    { name: "a missing self-check", axis: "metric_pass", value: null, chipValue: "null" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chip = sameRealm(outcomes.buildActiveFilterChipsO({ days: 30, [row.axis]: row.chipValue }))[0];
+      assert.strictEqual(`${chip.split(": ")[0]}: ${outcomes.getDetailValueLabelO(row.axis, row.value)}`, chip);
+    });
+  }
+});
+
+describe("splitLessonO: the body's Lesson section moves out so the drawer prints it once", () => {
+  const body = "# Outcome Record\n\n- **Agent**: a\n\n## Summary\n\nDid it.\n\n## Lesson\n\nDerive the reader from the writer.\n\n## Concerns\n\nNone.\n";
+
+  test("the lesson text comes out and no Lesson heading stays in the body", () => {
+    const split = outcomes.splitLessonO(body);
+    assert.strictEqual(split.lesson, "Derive the reader from the writer.");
+    assert.doesNotMatch(split.body, /Lesson/);
+  });
+
+  test("the sections around the lesson survive in order", () => {
+    assert.match(outcomes.splitLessonO(body).body, /## Summary\n\nDid it\.\n\n## Concerns\n\nNone\./);
+  });
+
+  test("a trailing lesson section ends at the end of the body", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n\n## Lesson\n\nLast words.\n");
+    assert.strictEqual(split.lesson, "Last words.");
+    assert.doesNotMatch(split.body, /Last words/);
+  });
+
+  test("a body without a lesson is returned unchanged", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n");
+    assert.deepEqual({ ...split }, { lesson: "", body: "## Summary\n\nx\n" });
+  });
+});
+
+describe("formatToolUseLineO: the recorded tool-use count reads as words, not key=value", () => {
+  const rows = [
+    { name: "an actual count alone", line: "- **Tool use**: actual=44", readable: "- **Tool use**: 44 tool calls" },
+    { name: "an actual count with its estimate", line: "- **Tool use**: actual=44 declared=30", readable: "- **Tool use**: 44 tool calls · 30 estimated" },
+    { name: "a single call reads singular", line: "- **Tool use**: actual=1 declared=3", readable: "- **Tool use**: 1 tool call · 3 estimated" },
+    { name: "zero calls read plural", line: "- **Tool use**: actual=0", readable: "- **Tool use**: 0 tool calls" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(outcomes.formatToolUseLineO(`- **Agent**: a\n${row.line}\n`), `- **Agent**: a\n${row.readable}\n`);
+    });
+  }
+});
+
+describe("formatResultLineO: the body's Result line reads as the drawer title names the result", () => {
+  const rows = [
+    { name: "a done result", result: "done" },
+    { name: "a result done with caveats", result: "done_with_concerns" },
+    { name: "a failed result", result: "fail" },
+    { name: "a blocked result", result: "blocked" },
+    { name: "a result needing info", result: "needs_context" },
+    { name: "an unknown result keeps its recorded value", result: "mystery" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const label = ui.resolveResultMeta(row.result, null).label;
+      assert.strictEqual(
+        outcomes.formatResultLineO(`- **Task type**: review\n- **Result**: ${row.result}\n`),
+        `- **Task type**: review\n- **Result**: ${label}\n`,
+      );
+    });
+  }
 });

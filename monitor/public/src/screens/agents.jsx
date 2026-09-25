@@ -50,9 +50,6 @@ const UNKNOWN_AGENT_LABEL = 'Unidentified (old)';
 const UNKNOWN_AGENT_TITLE =
   "Work that couldn't be matched to a current agent — agent_id_missing / deprecated_agent / legacy_unknown (PG fallback)";
 
-// breakage = fail + blocked (failure-patterns breakage_rate) — fail 단독 비율 아님.
-const BREAKAGE_RATE_CRIT_THRESHOLD = 0.2;
-
 // 저활용 agent 임계 anchor — 30일 기준 SubagentStart < 3 회.
 // 정보성 badge — 삭제 trigger 아님 (삭제 의사결정은 별도 단계).
 // invocations 는 선택 ?days window 상대값 → 임계도 window 비례 환산 (아래 helper).
@@ -114,7 +111,7 @@ const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opac
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
 function ScreenAgents() {
-  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
+  const { PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [days, setDays] = useStateAg(30);
   const [refreshTick, setRefreshTick] = useStateAg(0);
@@ -242,12 +239,13 @@ function ScreenAgents() {
 
   useEffectAg(() => setSummaryAsOfAt((prevAt) => getLastReadAtAg(prevAt, summaryState)), [summaryState]);
 
-  // 패널 1개라도 loading → period 토글 비활성 (abort storm 방지).
-  const anyLoading = [
+  // 패널 1개라도 loading → period 토글 비활성 (abort storm 방지) + stamp/Refresh busy.
+  const regionStates = [
     summaryState, latencyState, successState, revisionState,
     reviewState, reviewByAgentState, failureState,
-    lifecycleState,
-  ].some((s) => s.status === 'loading');
+    lifecycleState, overageState,
+  ];
+  const isAnyRegionLoading = regionStates.some((s) => s.status === 'loading');
 
   // 추세 셀 데이터 — success-rate 일별 합계를 agent_id 별 group → 최근 7일 시리즈.
   // useMemo 로 row 마다 재계산 회피.
@@ -275,8 +273,8 @@ function ScreenAgents() {
 
   // 드로어 nav 가 walk 하는 현재 정렬된 agent 행 — DetailModal 이 rows 위 idx 도출하는 패턴 미러.
   const sortedAgents = useMemoAg(
-    () => sortAgentSummary(readyData(summaryState)?.agents ?? [], sortBy, failureByAgent),
-    [summaryState, sortBy, failureByAgent],
+    () => sortAgentSummary(readyData(summaryState)?.agents ?? [], sortBy, readyData(failureState) ? failureByAgent : null),
+    [summaryState, sortBy, failureState, failureByAgent],
   );
 
   // 행 클릭 → 하이라이트 + 드로어 동시 (open trigger). 키보드 하이라이트와 독립 유지.
@@ -323,7 +321,7 @@ function ScreenAgents() {
                   <button
                     key={p.value}
                     className={days === p.value ? 'active' : ''}
-                    disabled={anyLoading && days !== p.value}
+                    disabled={isAnyRegionLoading && days !== p.value}
                     onClick={() => setDays(p.value)}
                     aria-pressed={days === p.value}
                     aria-label={`Last ${p.label}`}>
@@ -331,11 +329,8 @@ function ScreenAgents() {
                   </button>
                 ))}
               </div>
-              <FreshnessStamp {...getFreshnessInputAg(summaryAsOfAt, summaryState)}/>
-              <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh agent data">
-                <Icon name="refresh" size={14}/>
-                Refresh
-              </button>
+              <FreshnessStamp {...getFreshnessInputAg(summaryAsOfAt, summaryState, regionStates)}/>
+              <RefreshButtonAg isBusy={isAnyRegionLoading} onRefresh={triggerRefresh}/>
             </>
           }
         />
@@ -371,6 +366,8 @@ function ScreenAgents() {
           trendByAgent={trendByAgent}
           failureByAgent={failureByAgent}
           overageByAgent={overageByAgent}
+          failureStatus={failureState.status}
+          trendStatus={successState.status}
         />
       </div>
 
@@ -591,6 +588,25 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
   );
 }
 
+function RefreshButtonAg({ isBusy, onRefresh }) {
+  const { Icon } = window.UI;
+  return (
+    <button className="btn ghost sm" onClick={onRefresh} aria-label="Refresh agent data" aria-busy={isBusy ? 'true' : undefined}>
+      <Icon name="refresh" size={14}/>
+      {isBusy ? 'Refreshing…' : 'Refresh'}
+    </button>
+  );
+}
+
+// Unread payload mark — a dash would read as a loaded zero.
+function NotLoadedMarkAg({ title }) {
+  return <span className="text-faint fs-micro font-mono" title={title}>not loaded</span>;
+}
+
+function getNotLoadedTitleAg(what, status) {
+  return status === 'error' ? `${what} failed to load` : `${what} still loading`;
+}
+
 const SUMMARY_SORT_OPTIONS = [
   { value: 'name',     label: 'Name (A–Z)' },
   { value: 'runs',     label: 'Most runs' },
@@ -602,7 +618,7 @@ const SUMMARY_SORT_OPTIONS = [
 const MINIBAR_WIDTH = 50;
 const MINIBAR_HEIGHT = 20;
 
-function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
+function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const { CardHead, Badge } = window.UI;
   const data = readyData(state);
   const totalAgents = data?.meta?.total_agents ?? 0;
@@ -628,12 +644,14 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
         trendByAgent={trendByAgent}
         failureByAgent={failureByAgent}
         overageByAgent={overageByAgent}
+        failureStatus={failureStatus}
+        trendStatus={trendStatus}
       />
     </div>
   );
 }
 
-function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
+function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   if (state.status === 'loading') {
     return <div className="card-body"><ChartSkeletonAg height={240} aria-label="Loading agent performance"/></div>;
   }
@@ -648,11 +666,15 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
   // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
   const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
   const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
-  const sorted = sortAgentSummary(actionable, sortBy, failureByAgent);
+  const isFailureRead = failureStatus === 'ready';
+  // unread breakages → run order, announced rather than labelled 'Most breakages'
+  const sorted = sortAgentSummary(actionable, sortBy, isFailureRead ? failureByAgent : null);
+  const sortNote = sortBy === 'failures' && !isFailureRead ? 'Breakages not loaded — rows in run order' : '';
 
   return (
     <>
       <div className="px-4 py-2.5 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
+        <span role="status" className="font-mono">{sortNote}</span>
         <div className="flex items-center gap-2">
           <span className="font-mono">Sort:</span>
           <select
@@ -676,6 +698,8 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
           trendByAgent={trendByAgent}
           failureByAgent={failureByAgent}
           overageByAgent={overageByAgent}
+          failureStatus={failureStatus}
+          trendStatus={trendStatus}
         />
       </div>
     </>
@@ -685,7 +709,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
 // Footer/expand colSpan — expand affordance · Agent · Success · Failed or blocked · P95 · Trend.
 const SUMMARY_TABLE_COLSPAN = 6;
 
-function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent }) {
+function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
 
@@ -699,6 +723,8 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
       failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
       overage={overageByAgent ? overageByAgent.get(a.agent_id) : null}
+      failureStatus={failureStatus}
+      trendStatus={trendStatus}
     />
   );
 
@@ -738,7 +764,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   );
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
+function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
   const [isExpanded, setExpanded] = useStateAg(false);
   const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
@@ -770,7 +796,9 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
   const failCount = failure ? failure.total_breakages : 0;
   const breakageRate = failure ? failure.breakage_rate : 0;
   const failTone = failureTone(failCount, breakageRate);
-  const failTitle = failure
+  const isFailureRead = failureStatus === 'ready';
+  const isTrendRead = trendStatus === 'ready';
+  const failTitle = !isFailureRead ? getNotLoadedTitleAg('breakage data', failureStatus) : failure
     ? `breakages ${failure.total_breakages} = fail ${failure.fail_count} + blocked ${failure.blocked_count} · rate ${(breakageRate * 100).toFixed(1)}%`
     : 'no breakages (fail+blocked)';
 
@@ -833,14 +861,14 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
         )}
       </td>
       <td className="num" title={failTitle}>
-        <span className={failTone}>{failCount > 0 ? formatIntAg(failCount) : '—'}</span>
-        {/* F1: 0건은 em-dash + 막대 미렌더(none-state), 1건 이상은 항상 가시적 crit 막대 —
-            막대의 "존재"가 장애 있음을, 폭이 breakage_rate 를 전달. rate 가 sub-1%라도
-            Bar 의 min-width floor(3px) 로 none-state 와 명확히 구분(1건이 "없음"으로 안 읽힘). */}
-        {failCount > 0 && (
+        {isFailureRead
+          ? <span className={failTone}>{failCount > 0 ? formatIntAg(failCount) : '—'}</span>
+          : <NotLoadedMarkAg title={failTitle}/>}
+        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = numeral tone. */}
+        {isFailureRead && failCount > 0 && (
           <Bar
             value={Math.max(breakageRate, 0.01)}
-            tone="crit"
+            tone={barToneFromClass(failTone)}
             ariaLabel={`breakage rate ${(breakageRate * 100).toFixed(1)}%`}
           />
         )}
@@ -858,7 +886,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
               <span className={p95Tone || 'text-ok'} aria-hidden="true">
                 <Icon name={TONE_ICON[p95Glyph]} size={13}/>
               </span>
-              <span className={p95Tone}>{formatDurationSecAg(p95Sec)}</span>
+              <span className={p95Tone === 'text-crit' ? p95Tone : undefined}>{formatDurationSecAg(p95Sec)}</span>
             </span>
           ) : (
             <span className="text-faint">—</span>
@@ -874,7 +902,9 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
         )}
       </td>
       <td>
-        {hasTrend ? (
+        {!isTrendRead ? (
+          <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
+        ) : hasTrend ? (
           <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor}/>
         ) : (
           <span className="text-faint fs-micro font-mono" title="no 7-day daily success-rate breakdown">—</span>
@@ -1602,7 +1632,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       {failure && failure.total_breakages > 0 ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge role="status" tone={failure.breakage_rate > BREAKAGE_RATE_CRIT_THRESHOLD ? 'crit' : 'warn'}>
+            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
               {formatIntAg(failure.total_breakages - (failure.reconstructed || 0))} breakages · {(failure.breakage_rate * 100).toFixed(1)}%
             </Badge>
             {failure.reconstructed > 0 && (
@@ -2211,6 +2241,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         <tbody>
           {pairs.map((p) => {
             const breakage = resolveLastBreakage(p, failureByAgent);
+            const isLowSample = p.rateDenominator < window.UI.LOW_N_MIN;
             return (
               <tr key={`${p.agent}|${p.task_type}`}>
                 <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
@@ -2220,17 +2251,14 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
                   {p.task_type}
                 </td>
                 <td
-                  className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
-                  style={{
-                    color: 'rgb(var(--crit))',
-                    ...(p.rateDenominator < window.UI.LOW_N_MIN ? { fontStyle: 'italic', opacity: 0.75 } : null),
-                  }}
-                  title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${p.rateDenominator < window.UI.LOW_N_MIN ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
+                  className={`text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap${isLowSample ? ' text-faint' : ''}`}
+                  style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : { color: 'rgb(var(--crit))' }}
+                  title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
                   {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
-                  {/* pair 성공률 비례 막대 — % 옆 shape. 전 항목이 임계 미달 failing-pair → crit. */}
+                  {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
                   <window.UI.Bar
                     value={p.pooledRate}
-                    tone="crit"
+                    tone={isLowSample ? 'neutral' : 'crit'}
                     ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
                   />
                 </td>
@@ -2699,8 +2727,10 @@ function getLastReadAtAg(prevAt, state) {
   return readyData(state)?.fetched_at ?? prevAt;
 }
 
-function getFreshnessInputAg(asOfAt, state) {
-  return { at: asOfAt, loading: state.status === 'loading', failed: state.status === 'error' };
+// stamp time + failure track the summary read; busy while any region is still in flight
+function getFreshnessInputAg(asOfAt, summaryState, regionStates = []) {
+  const isLoading = [summaryState, ...regionStates].some((s) => s.status === 'loading');
+  return { at: asOfAt, loading: isLoading, failed: summaryState.status === 'error' };
 }
 
 // agent × task_type 매트릭스 build — flat row → { agents, cells } projection.
@@ -3097,11 +3127,12 @@ function p95GlyphTone(p95Sec) {
   return 'ok';
 }
 
-// Summary 행 "장애"(fail+blocked) 컬럼 톤 — 0건=faint · >0건=warn · breakage_rate>20%=crit.
+// Failed-or-blocked numeral — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
 function failureTone(count, rate) {
   if (count === 0) return 'text-faint';
-  if (rate > BREAKAGE_RATE_CRIT_THRESHOLD) return 'text-crit';
-  return 'text-warn';
+  const population = rate > 0 ? Math.round(count / rate) : 0;
+  if (population < window.UI.LOW_N_MIN) return '';
+  return getFailShareTone(count, population) === 'crit' ? 'text-crit' : '';
 }
 
 // CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.

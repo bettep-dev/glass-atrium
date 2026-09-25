@@ -390,8 +390,13 @@ function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkCo
 // 계약: 3 닫기(X·Esc·backdrop) · focus-trap(진입 포커스 + Tab 순환 + 트리거 복원) ·
 //   body scroll-lock · nav 제공 시 footer Prev/Next + Arrow 바인딩.
 // 토큰 재사용 — z-index/모션/면 색상은 tokens.css · base.css 단일 SoT (ad-hoc 금지).
+// id sequence for element-title aria-labelledby targets — works without useId (render-harness React stub).
+let detailTitleSeq = 0;
+
 function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
   const panelRef = useRef(null);
+  const titleIdRef = useRef(null);
+  if (titleIdRef.current === null) titleIdRef.current = `detail-title-${++detailTitleSeq}`;
   // 열리기 직전 포커스 트리거 — 닫힘 시 복원 (a11y 포커스 반환).
   const triggerRef = useRef(null);
 
@@ -450,12 +455,16 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
 
   // confirm 만 click-outside 차단 옵션 — destructive 다이얼로그 오작동 방지.
   const onBackdrop = (variant === 'confirm' && suppressOutsideClose) ? undefined : onClose;
-  const dialogProps = labelledBy ? { 'aria-labelledby': labelledBy } : { 'aria-label': title };
+  // non-string title never becomes aria-label → labelledby the rendered title node (bare → hidden node).
+  const isElementTitle = title != null && typeof title !== 'string';
+  const titleId = labelledBy || (isElementTitle ? titleIdRef.current : undefined);
+  const dialogProps = titleId ? { 'aria-labelledby': titleId } : { 'aria-label': title };
+  const bareTitle = bare && isElementTitle && !labelledBy ? <div id={titleId} hidden>{title}</div> : null;
 
   const closeBtn = <button className="btn ghost sm" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
   const head = <div className="detail-head">
     <div className="flex-1 min-w-0">
-      <div id={labelledBy} className="detail-title">{title}</div>
+      <div id={titleId} className="detail-title">{title}</div>
       {sub && <div className="detail-sub">{sub}</div>}
     </div>
     {closeBtn}
@@ -480,7 +489,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   return <div className={`detail-overlay detail-${variant}`} onClick={onBackdrop}>
     <div ref={panelRef} role="dialog" aria-modal="true" {...dialogProps}
          className={panelCls} onClick={(e) => e.stopPropagation()}>
-      {bare ? null : head}
+      {bare ? bareTitle : head}
       <div className={bodyCls}>{children}</div>
       {foot}
     </div>

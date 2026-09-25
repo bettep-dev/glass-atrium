@@ -24,7 +24,7 @@ const INITIAL_FETCH_STATE = { status: "loading", data: null, error: null };
 const SPARSE_MIN_NONZERO = 4;
 
 function ScreenWiki() {
-	const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
+	const { PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [summaryState, setSummaryState] = useStateW(INITIAL_FETCH_STATE);
 	const [cyclesState, setCyclesState] = useStateW(INITIAL_FETCH_STATE);
@@ -41,6 +41,16 @@ function ScreenWiki() {
 	const abortRef = useRefW(null);
 
 	const triggerRefresh = useCallbackW(() => setRefreshTick((t) => t + 1), []);
+
+	const waveSections = [
+		[summaryState, "summary"],
+		[cyclesState, "run history"],
+		[indexState, "notes by type"],
+		[backlogState, "maintenance backlog"],
+		[reportState, "per-run table"],
+	];
+	const waveStates = waveSections.map(([state]) => state);
+	const freshness = getFreshnessInputW(settledAt, waveStates);
 
 	// 4 parallel fetches via Promise.allSettled — 단일 실패 시에도 나머지 섹션 렌더 유지.
 	useEffectW(() => {
@@ -89,26 +99,19 @@ function ScreenWiki() {
 					title="Wiki"
 					right={
 						<>
-							<FreshnessStamp
-								{...getFreshnessInputW(settledAt, [
-									summaryState,
-									cyclesState,
-									indexState,
-									backlogState,
-									reportState,
-								])}
+							<FreshnessStamp {...freshness} />
+							<WikiRefreshButtonW
+								busy={freshness.loading}
+								onRefresh={triggerRefresh}
 							/>
-							<button
-								className="btn ghost sm"
-								onClick={triggerRefresh}
-								aria-label="Refresh wiki"
-							>
-								<Icon name="refresh" size={14} />
-								Refresh
-							</button>
 						</>
 					}
 				/>
+			</div>
+
+			{/* Always mounted — a region inserted with its text is not announced. */}
+			<div className="sr-only" role="status" aria-live="polite">
+				{describeWikiWaveW(waveSections)}
 			</div>
 
 			<div className="flex flex-col gap-4">
@@ -143,6 +146,34 @@ function ScreenWiki() {
 			</div>
 		</div>
 	);
+}
+
+function WikiRefreshButtonW({ busy, onRefresh }) {
+	const { Icon } = window.UI;
+	return (
+		<button
+			className="btn ghost sm"
+			onClick={onRefresh}
+			aria-label="Refresh wiki"
+			aria-busy={busy ? "true" : undefined}
+		>
+			<Icon name="refresh" size={14} />
+			{busy ? "Refreshing…" : "Refresh"}
+		</button>
+	);
+}
+
+// Changes only when the whole wave changes state, so settling reads are not announced one by one.
+function describeWikiWaveW(sections) {
+	if (sections.some(([state]) => state.status === "loading")) {
+		return "Loading wiki…";
+	}
+	const failed = sections
+		.filter(([state]) => state.status === "error")
+		.map(([, name]) => name);
+	return failed.length > 0
+		? `Wiki loaded — couldn't load ${failed.join(", ")}.`
+		: "Wiki loaded.";
 }
 
 // Daily cycle plus a grace window — past this the cycle counts as missed.
@@ -838,7 +869,10 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
 }
 
-// Collapsible section shell — label left, count right, body below the summary.
+/**
+ * Collapsible section shell — label left, count right, body below the summary.
+ * h2 inside the summary (HTML allows one heading there) → heading navigation lands on the toggle.
+ */
 function WikiDisclosureW({
 	label,
 	count,
@@ -851,7 +885,7 @@ function WikiDisclosureW({
 				<span className="w-chevron inline-block fs-micro text-faint" aria-hidden="true">
 					▶
 				</span>
-				<span className="font-mono fs-body text-ink font-medium">{label}</span>
+				<h2 className="m-0 font-mono fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto font-mono fs-meta text-dim">{count}</span>
 			</summary>
 			<div className={bodyClassName}>{children}</div>

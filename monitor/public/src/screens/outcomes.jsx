@@ -1061,20 +1061,27 @@ const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
-  { label: 'of records', align: 'right' },
+  { label: 'Total records', align: 'right' },
 ];
+
+function AgentFailureHeadO({ stickyStyle }) {
+  return (
+    <thead>
+      <tr>
+        {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+          <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
 
 // 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
 function AgentFailureSkeletonO({ stickyStyle }) {
   return (
     <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
-      <thead>
-        <tr>
-          {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-            <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
-          ))}
-        </tr>
-      </thead>
+      {/* called, not mounted → <thead> stays a direct child in the element tree */}
+      {AgentFailureHeadO({ stickyStyle })}
       <tbody>
         {[0, 1, 2].map((i) => (
           <tr key={i}>
@@ -1100,15 +1107,9 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   }
 
   return (
-    <div className="overflow-auto" style={{ maxHeight: 260 }}>
+    <div className="overflow-auto" style={{ maxHeight: 260, position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-              <th key={label} className={`text-${align} text-faint fs-micro font-mono uppercase tracking-wider px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
-            ))}
-          </tr>
-        </thead>
+        {AgentFailureHeadO({ stickyStyle })}
         <tbody>
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
@@ -1167,7 +1168,7 @@ function AttributionHealthCard({ state, period, onRetry }) {
   return (
     <div className="card mb-4">
       <CardHead
-        title="Reporting health"
+        title="Record attribution"
         sub=""
         right={
           <Badge
@@ -1850,7 +1851,8 @@ function LoopEventsBody({ state, onRetry }) {
         ))}
       </div>
       {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤). */}
-      <div className="overflow-y-auto" style={{ maxHeight: '42vh' }}>
+      {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
+      <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
           <thead>
             <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
@@ -1903,6 +1905,8 @@ const MORE_FILTER_AXES = [
   { axis: 'metric_pass', label: 'Self-check',  options: METRIC_PASS_OPTIONS },
   { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
+
+const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
 
 function FilterSidebar({
   filter, keywordInput, distinctAgents, includeAll, sort,
@@ -2114,19 +2118,27 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'key=value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+// 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+//   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
 function buildActiveFilterChipsO(filter) {
   const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`days=${filter.days}`);
-  if (filter.agent)        chips.push(`agent=${filter.agent}`);
-  if (filter.task_type)    chips.push(`task=${filter.task_type}`);
-  if (filter.result)       chips.push(`result=${filter.result}`);
-  if (filter.confidence)   chips.push(`conf=${filter.confidence}`);
-  if (filter.metric_pass)  chips.push(`metric=${filter.metric_pass}`);
-  if (filter.review_flag)  chips.push(`review=${filter.review_flag}`);
-  if (filter.attribution_source) chips.push(`attr=${filter.attribution_source}`);
-  if (filter.q)            chips.push(`q="${truncateO(filter.q, 18)}"`);
+  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
+  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
+  for (const { axis, label, options } of FILTER_AXES_O) {
+    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
+  }
+  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
   return chips;
+}
+
+function getOptionLabelO(options, value) {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
+
+// Drawer value → the filter chip's name for it, so chip, ledger cell and drawer agree.
+function getDetailValueLabelO(axis, value) {
+  const { options } = FILTER_AXES_O.find((group) => group.axis === axis);
+  return getOptionLabelO(options, String(value ?? 'null'));
 }
 
 // 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
@@ -2257,16 +2269,17 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
   const sections = buildLedgerSectionsO(rows, closure, needsYou);
 
   return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
+    // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} align="left" width={120}/>
             <PlainHeader label="Agent" minWidth={110}/>
-            <PlainHeader label="task_type"/>
-            <PlainHeader label="result"/>
+            <PlainHeader label="Task type"/>
+            <PlainHeader label="Result"/>
             <PlainHeader label="Check" align="center" width={52}/>
-            <PlainHeader label="summary"/>
+            <PlainHeader label="Summary"/>
           </tr>
         </thead>
         <tbody>
@@ -2376,7 +2389,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
   const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
 
   const ts       = formatTimestampO(row.record_ts);
-  const summary  = truncateO(row.summary || '', 60);
+  const summary  = row.summary || '';
   const grader   = graderVerdictMetaO(row.grader_verdict);
   // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
   const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
@@ -2390,6 +2403,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
   const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
   const resultMeta  = window.UI.resolveResultMeta(row.result, closedAt);
+  const resultLabel = window.UI.resolveResultMeta(row.result, null).label;
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
@@ -2413,13 +2427,13 @@ function ResultTableRow({ row, onRowClick, closure }) {
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
       </td>
-      <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
+      <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
           <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
-            {row.result}
+            {resultLabel}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
             {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
           </span>
@@ -2454,9 +2468,12 @@ function ResultTableRow({ row, onRowClick, closure }) {
           <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
-        <SummaryFlagSlotO row={row}/>
-        {summary}
+      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
+      <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+        <div className="flex items-center">
+          <SummaryFlagSlotO row={row}/>
+          <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
+        </div>
       </td>
     </tr>
   );
@@ -2516,7 +2533,7 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
   const titleParts = [
     detailRow?.agent,
     detailRow?.task_type,
-    detailRow?.result,
+    detailRow?.result && window.UI.resolveResultMeta(detailRow.result, null).label,
     formatTimestampO(detailRow?.record_ts),
   ].filter(Boolean);
 
@@ -2571,8 +2588,8 @@ function DetailMetadata({ row, detail }) {
 
   return (
     <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
-      <MetaField label="Confidence"         value={row?.confidence ?? '—'}/>
-      <MetaField label="Self-reported pass" value={row?.metric_pass == null ? '—' : String(row.metric_pass)}/>
+      <MetaField label="Confidence" value={getDetailValueLabelO('confidence', row?.confidence)}/>
+      <MetaField label="Self-check" value={getDetailValueLabelO('metric_pass', row?.metric_pass)}/>
       <div>
         <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
         <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
@@ -2592,7 +2609,7 @@ function DetailMetadata({ row, detail }) {
         </div>
       </div>
       {row?.poisoned_window === true && (
-        <MetaField label="Quarantined window" value="true — excluded from analysis"/>
+        <MetaField label="Quarantined window" value="Yes — excluded from analysis"/>
       )}
       {evalSignal != null && (
         <MetaField label="User signal" value={formatEvaluativeSignalO(evalSignal)}/>
@@ -2615,17 +2632,39 @@ function DetailMetadata({ row, detail }) {
 
 // 서사 영역 (S2 narrative) — lesson(작성자 distilled 패턴) + body_md(전문). 식별/수치 다음, references 앞.
 function DetailNarrative({ row, detailState }) {
+  const { lesson, body } = splitLessonO(detailState?.status === 'ready' ? detailState.data?.body_md || '' : '');
+  const lessonText = lesson || row?.lesson;
+
   return (
     <div className="mb-4">
-      {row?.lesson && (
+      {lessonText && (
         <div className="mb-3">
-          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">lesson</div>
-          <div className="fs-body text-ink">{row.lesson}</div>
+          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">Lesson</div>
+          <div className="fs-body text-ink">{lessonText}</div>
         </div>
       )}
-      <DetailBody detailState={detailState}/>
+      <DetailBody detailState={detailState} markdown={body}/>
     </div>
   );
+}
+
+// body_md '## Lesson' section → lifted out so the narrative block prints the lesson once, in full.
+function splitLessonO(markdown) {
+  const match = /^##\s+Lesson[ \t]*\n([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/m.exec(markdown);
+  if (!match) return { lesson: '', body: markdown };
+  return { lesson: match[1].trim(), body: markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length) };
+}
+
+// Recorder's 'actual=N declared=M' tool-use line → words.
+function formatToolUseLineO(markdown) {
+  return markdown.replace(/^(- \*\*Tool use\*\*: )actual=(\d+)(?: declared=(\d+))?[ \t]*$/m,
+    (_line, prefix, actual, declared) => `${prefix}${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`);
+}
+
+// Recorder's '- **Result**: <enum>' line → the label the drawer title and chip show.
+function formatResultLineO(markdown) {
+  return markdown.replace(/^(- \*\*Result\*\*: )(\S+)[ \t]*$/m,
+    (_line, prefix, result) => `${prefix}${window.UI.resolveResultMeta(result, null).label}`);
 }
 
 // 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
@@ -2656,7 +2695,7 @@ function MetaField({ label, value, className = '' }) {
   );
 }
 
-function DetailBody({ detailState }) {
+function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
   if (!detailState) return <ChartSkeletonO height={200} aria-label="Loading body"/>;
 
@@ -2671,8 +2710,7 @@ function DetailBody({ detailState }) {
     );
   }
 
-  const bodyMd = detailState?.data?.body_md;
-  if (!bodyMd) {
+  if (!markdown) {
     return (
       <div className="fs-body text-faint font-mono italic">
         No body text — showing metadata only.
@@ -2680,7 +2718,7 @@ function DetailBody({ detailState }) {
     );
   }
 
-  return <MarkdownView markdown={bodyMd}/>;
+  return <MarkdownView markdown={formatResultLineO(formatToolUseLineO(markdown))}/>;
 }
 
 // SECURITY: marked.parse → DOMPurify.sanitize → HTML. DOMPurify 부재 / parse 실패 시 null 반환 →

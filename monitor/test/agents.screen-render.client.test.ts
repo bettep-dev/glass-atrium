@@ -444,3 +444,168 @@ test("the ledger opens sorted by breakages, riskiest agents first", async () => 
   const source = await readFile(AGENTS_SRC, "utf8");
   assert.match(source, /\[sortBy, setSortBy\] = useStateAg\('failures'\)/);
 });
+
+const NOT_LOADED_WORD = "not loaded";
+
+function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, trendStatus: string): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000 },
+      days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+      failureStatus, trendStatus,
+    }),
+  );
+}
+
+test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero keeps the dash", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "both loading", failureStatus: "loading", trendStatus: "loading", notLoaded: 2 },
+    { name: "both failed", failureStatus: "error", trendStatus: "error", notLoaded: 2 },
+    { name: "breakages read, trend loading", failureStatus: "ready", trendStatus: "loading", notLoaded: 1 },
+    { name: "both read with no data", failureStatus: "ready", trendStatus: "ready", notLoaded: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderLoadRow(mod, row.failureStatus, row.trendStatus);
+    const marks = findNodes(tree, (n) => n.type === "span" && collectText(n) === NOT_LOADED_WORD);
+    assert.equal(marks.length, row.notLoaded, `${row.name}: not-loaded marks`);
+    const failCell = findNodes(tree, (n) => n.type === "td" && String(n.props?.title ?? "").length > 0)
+      .find((n) => /breakage/.test(String(n.props.title)));
+    const failText = collectText(failCell ?? null);
+    assert.equal(failText === "—", row.failureStatus === "ready", `${row.name}: the dash means a read zero only`);
+  }
+});
+
+function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const agents = [
+    { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
+    { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
+  ];
+  const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, breakage_rate: 0.7 }]]);
+  const tree = renderScreen(
+    React.createElement(mod.AgentSummaryBody as Component, {
+      state: { status: "ready", data: { agents }, error: null },
+      days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
+    }),
+  );
+  const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => String((n.props.agent as { agent_id: string }).agent_id));
+  const note = findNodes(tree, (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
+  return [...order, `note:${note}`];
+}
+
+test("the breakage sort orders by breakages only once they are read, and says so while they are not", async () => {
+  const mod = await loadAgentsScreen();
+  const [readFirst, , readNote] = renderSortedBody(mod, "ready");
+  assert.equal(readFirst, "glass-atrium-dev-risky", "read breakages put the riskiest agent first");
+  assert.equal(readNote, "note:", "a read sort carries no caveat");
+
+  for (const status of ["loading", "error"]) {
+    const [first, , note] = renderSortedBody(mod, status);
+    assert.equal(first, "glass-atrium-dev-busy", `${status}: unread breakages fall back to run order`);
+    assert.match(note, /breakages not loaded/i, `${status}: the fallback order is announced`);
+  }
+});
+
+test("the Refresh control carries a busy state while any region is still loading", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  for (const isBusy of [true, false]) {
+    const tree = renderScreen(React.createElement(mod.RefreshButtonAg as Component, { isBusy, onRefresh: () => {} }));
+    const button = findNodes(tree, (n) => n.type === "button")[0];
+    assert.equal(button?.props["aria-busy"], isBusy ? "true" : undefined, `busy=${isBusy}: aria-busy`);
+    assert.equal(/Refreshing/.test(collectText(tree)), isBusy, `busy=${isBusy}: visible busy label`);
+  }
+});
+
+const TONED_CLASS = /\btext-(warn|crit)\b/;
+
+function renderToneRow(mod: Record<string, unknown>, agent: Record<string, unknown>, failure: unknown): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000, ...agent },
+      days: 30, isSelected: false, onSelect: () => {}, trend: null, failure, overage: null,
+      failureStatus: "ready", trendStatus: "ready",
+    }),
+  );
+}
+
+function findCellByTitle(tree: RenderedNode | string | null, pattern: RegExp): RenderedNode | null {
+  return findNodes(tree, (n) => n.type === "td" && pattern.test(String(n.props?.title ?? "")))[0] ?? null;
+}
+
+test("the breakage count takes a tone only once its share of the agent's outcomes crosses the shared crit step", async () => {
+  const mod = await loadAgentsScreen();
+  // breakage_rate = total_breakages / total outcomes, so the population is recoverable from the pair.
+  const rows = [
+    { name: "one of forty stays under the 5% step", total_breakages: 1, breakage_rate: 0.025, crit: false },
+    { name: "two of forty sits on the step", total_breakages: 2, breakage_rate: 0.05, crit: true },
+    { name: "two of four is a sample below LOW_N_MIN", total_breakages: 2, breakage_rate: 0.5, crit: false },
+  ];
+  for (const row of rows) {
+    const failure = { total_breakages: row.total_breakages, fail_count: row.total_breakages, blocked_count: 0, breakage_rate: row.breakage_rate };
+    const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+    const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? ""))).map((n) => String(n.props.className));
+    assert.deepEqual(tonedClasses, row.crit ? ["text-crit"] : [], `${row.name}: numeral tone`);
+    const bar = findNodes(cell, (n) => n.props?.atom === "Bar")[0];
+    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the numeral`);
+  }
+});
+
+test("the drawer breakage badge takes the same crit step as the ledger numeral", async () => {
+  const idle = { status: "idle", data: null, error: null };
+  const rows = [
+    { name: "one of forty stays under the 5% step", total_breakages: 1, breakage_rate: 0.025, tone: "neutral" },
+    { name: "four of forty crosses the step", total_breakages: 4, breakage_rate: 0.1, tone: "crit" },
+    { name: "two of four is a sample below LOW_N_MIN", total_breakages: 2, breakage_rate: 0.5, tone: "neutral" },
+  ];
+  for (const row of rows) {
+    const failureByAgent = new Map([["glass-atrium-dev-react", { total_breakages: row.total_breakages, reconstructed: 0, breakage_rate: row.breakage_rate }]]);
+    const tree = await renderComponent("AgentReliabilityBreakages", {
+      drawerAgent: "glass-atrium-dev-react", failureByAgent, failureState: { status: "ready", data: { rows: [] }, error: null },
+      detailState: idle, blockedState: idle, days: 30, onRetry: () => undefined,
+    });
+    const badge = findNodes(tree, (n) => n.props?.atom === "Badge" && /breakages/.test(collectText(n)))[0];
+    assert.equal(badge?.props.tone, row.tone, `${row.name}: drawer badge tone`);
+  }
+});
+
+test("a P95 numeral is coloured only past the crit cut, while the glyph keeps every latency tier", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "fast tier", p95_ms: 300_000, numeral: [] as string[], glyph: "text-ok" },
+    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-warn" },
+    { name: "crit tier", p95_ms: 1_500_000, numeral: ["text-crit"], glyph: "text-crit" },
+  ];
+  for (const row of rows) {
+    const cell = findCellByTitle(renderToneRow(mod, { p95_ms: row.p95_ms }, null), /^p95 latency tier/);
+    const glyph = findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0];
+    assert.equal(glyph?.props.className, row.glyph, `${row.name}: glyph tier`);
+    const numeralTones = findNodes(cell, (n) => n.props?.["aria-hidden"] !== "true" && TONED_CLASS.test(String(n.props?.className ?? "")))
+      .map((n) => String(n.props.className));
+    assert.deepEqual(numeralTones, row.numeral, `${row.name}: numeral tone`);
+  }
+});
+
+test("a failing pair below LOW_N_MIN stays neutral, as the matrix legend says", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const rows = [
+    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, crit: false },
+    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, crit: true },
+  ];
+  for (const row of rows) {
+    const pair = { agent: "glass-atrium-dev-react", task_type: "feature", ...row, pooledRate: row.successCount / row.rateDenominator, totalCount: row.rateDenominator };
+    const tree = renderScreen(
+      React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
+    );
+    const rateCell = findCellByTitle(tree, /^pooled passed/);
+    const color = String((rateCell?.props.style as Record<string, unknown> | undefined)?.color ?? "");
+    assert.equal(color.includes("--crit"), row.crit, `${row.name}: rate text tint`);
+    const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
+    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tint`);
+  }
+});
