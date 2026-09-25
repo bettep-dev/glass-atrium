@@ -565,6 +565,33 @@ describe("search hits collapse to one row per revision chain: its newest hit, at
   }
 });
 
+describe("the search caption counts collapsed documents, and names the server's hit total as its own unit", () => {
+  const rows = [
+    {
+      name: "a 9-revision chain beside a hidden lone document reads 1 of 2 shown, never 1 of 10",
+      visibleCount: 1, hiddenCount: 1, total: 10, expected: "1 of 2 shown · 10 hits",
+    },
+    {
+      name: "collapsed revisions with nothing hidden read the document count, then the hits",
+      visibleCount: 2, hiddenCount: 0, total: 5, expected: "2 matched · 5 hits",
+    },
+    {
+      name: "hits that collapse into nothing need no second unit",
+      visibleCount: 2, hiddenCount: 0, total: 2, expected: "2 matched",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, {
+        isSearchMode: true, docTotal: null, visibleCount: row.visibleCount, hiddenCount: row.hiddenCount, total: row.total,
+      });
+      const captions = findNodes(tree, (n) => n.props["aria-live"] === "polite");
+      assert.deepEqual(captions.map((n) => collectText(n)), [row.expected]);
+    });
+  }
+});
+
 test("a collapsed search row says how many older revisions it stands for", async () => {
   const screen = await loadDocsScreen();
   const base = listCardProps(() => undefined);

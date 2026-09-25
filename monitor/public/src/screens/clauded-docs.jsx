@@ -1224,14 +1224,17 @@ function DocListCardCD({
 	const hasStageCounts =
 		groupCounts != null &&
 		DOC_STATUS_OPTIONS_CD.some((opt) => typeof groupCounts[opt.countKey] === "number");
+	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
+	const rowCount = visibleCount + hiddenCount;
+	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
 	const totalLabel =
 		state.status !== "ready"
 			? null
 			: !isSearchMode && docTotal != null
 				? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
 				: hiddenCount > 0
-					? `${formatIntCD(visibleCount)} of ${formatIntCD(total)} shown`
-					: `${formatIntCD(total)} matched`;
+					? `${formatIntCD(visibleCount)} of ${formatIntCD(isSearchMode ? rowCount : total)} shown${hitsLabel}`
+					: `${formatIntCD(isSearchMode ? rowCount : total)} matched${hitsLabel}`;
 
 	// multi-select 파생값. server contract 정합 (group ≥ 2, ungroup ≥ 1).
 	const selectionSize = selectedIds.size;
