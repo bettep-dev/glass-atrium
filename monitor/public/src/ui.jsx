@@ -741,6 +741,156 @@ function DisclosureButton({ isOpen, onToggle, label, controls, className = '' })
   </button>;
 }
 
+const ROVING_KEY_STEP = {
+  horizontal: { ArrowLeft: -1, ArrowRight: 1 },
+  vertical: { ArrowUp: -1, ArrowDown: 1 },
+};
+
+/**
+ * Next item of a roving-focus set for a key press; undefined = key not handled, left to the page.
+ * Stops at the ends rather than wrapping, like the chart readout keys.
+ */
+function getRovingIndex(key, index, count, orientation = 'horizontal') {
+  if (count <= 0) return undefined;
+  const last = count - 1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return last;
+  const step = ROVING_KEY_STEP[orientation]?.[key];
+  if (step === undefined) return undefined;
+  if (index === null || index === undefined) return 0;
+  return Math.min(last, Math.max(0, index + step));
+}
+
+// an active index outside the set falls back to the first item → the set never loses its Tab stop
+function getRovingTabIndex(index, activeIndex, count) {
+  const isActiveInSet = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < count;
+  return index === (isActiveInSet ? activeIndex : 0) ? 0 : -1;
+}
+
+// spread onto every in-row control → out of the Tab order, reached by ArrowRight from its row
+const ROW_CONTROL_PROPS = Object.freeze({ tabIndex: -1, 'data-row-control': '' });
+
+/**
+ * Grid-row keys: Up/Down/Home/End move between rows, ArrowRight enters the row's controls,
+ * ArrowLeft past the first control or Escape returns to the row, Enter on the row activates it.
+ * undefined = left to the browser (Tab, and Enter on a control, which clicks it natively).
+ */
+function getRowKeyAction({ key, rowIndex, rowCount, controlIndex, controlCount }) {
+  const nextRow = getRovingIndex(key, rowIndex, rowCount, 'vertical');
+  if (nextRow !== undefined) return { focus: 'row', index: nextRow };
+  if (controlIndex === null || controlIndex === undefined) return getRowOwnKeyAction(key, controlCount);
+  if (key === 'Escape' || (key === 'ArrowLeft' && controlIndex === 0)) return { focus: 'row', index: rowIndex };
+  const nextControl = getRovingIndex(key, controlIndex, controlCount, 'horizontal');
+  return nextControl === undefined ? undefined : { focus: 'control', index: nextControl };
+}
+
+function getRowOwnKeyAction(key, controlCount) {
+  if (key === 'Enter') return { activate: true };
+  if (key === 'ArrowRight' && controlCount > 0) return { focus: 'control', index: 0 };
+  return undefined;
+}
+
+/**
+ * Props for one row of a roving set, spread onto its `tr` so table semantics stay intact.
+ * The page owns activeIndex; onActiveChange follows focus into any row, onActivate runs on Enter.
+ */
+function getRowFocusProps({ index, activeIndex, count, onActivate, onActiveChange }) {
+  return {
+    tabIndex: getRovingTabIndex(index, activeIndex, count),
+    'data-roving-row': index,
+    onFocus: () => onActiveChange?.(index),
+    onKeyDown: (event) => putRowKeyFocus(event, { index, count, onActivate, onActiveChange }),
+  };
+}
+
+function putRowKeyFocus(event, { index, count, onActivate, onActiveChange }) {
+  const row = event.currentTarget;
+  const controls = [...row.querySelectorAll('[data-row-control]')];
+  const controlIndex = controls.indexOf(event.target);
+  const action = getRowKeyAction({ key: event.key, rowIndex: index, rowCount: count, controlIndex: controlIndex < 0 ? null : controlIndex, controlCount: controls.length });
+
+  if (!action) return;
+  event.preventDefault();
+  if (action.activate) {
+    onActivate?.(index);
+    return;
+  }
+  const target = action.focus === 'row' ? row.parentElement.querySelectorAll('[data-roving-row]')[action.index] : controls[action.index];
+  target?.focus();
+  onActiveChange?.(action.focus === 'row' ? action.index : index);
+}
+
+// Filter chips: one Tab stop for the group, arrows move between chips, state rides aria-pressed.
+function ChipGroup({ label, chips, onToggle, className = '' }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const onKeyDown = (event) => {
+    const buttons = [...event.currentTarget.querySelectorAll('button')];
+    const index = buttons.indexOf(event.target);
+    const next = getRovingIndex(event.key, index < 0 ? null : index, buttons.length);
+
+    if (next === undefined) return;
+    event.preventDefault();
+    buttons[next].focus();
+    setActiveIndex(next);
+  };
+  return <div role="toolbar" aria-label={label} onKeyDown={onKeyDown} className={`flex flex-wrap items-center gap-1 ${className}`.trim()}>
+    {chips.map((chip, i) => <button key={chip.key} type="button" className="pill pill--interactive" aria-pressed={chip.isPressed}
+      tabIndex={getRovingTabIndex(i, activeIndex, chips.length)} onFocus={() => setActiveIndex(i)} onClick={() => onToggle(chip.key)}>
+      {chip.label}
+    </button>)}
+  </div>;
+}
+
+const BLANK_FIELD_TEXT = new Set(['', '—', '-', 'unknown', 'n/a', 'null', 'undefined']);
+
+// placeholder text counts as empty → the field is hidden instead of printing "unknown"
+function hasFieldValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'number') return !Number.isNaN(value);
+  if (typeof value !== 'string') return true;
+  return !BLANK_FIELD_TEXT.has(value.trim().toLowerCase());
+}
+
+const MODEL_FAMILIES = new Set(['opus', 'sonnet', 'haiku', 'fable', 'mythos']);
+// minor is 1-2 digits, a trailing date segment 3+ → a dated id never reads its date as the minor
+const MODEL_ID_PATTERN = /^(?:claude-)?([a-z]+)(?:-(\d+)(?:[-.](\d{1,2}))?)?(?:-\d{3,})?$/i;
+
+function getModelDisplayName(id) {
+  const match = id.match(MODEL_ID_PATTERN);
+  if (!match || !MODEL_FAMILIES.has(match[1].toLowerCase())) return id;
+  const [, family, major, minor] = match;
+  const version = major ? ` ${major}${minor ? `.${minor}` : ''}` : '';
+  return `${family.charAt(0).toUpperCase()}${family.slice(1).toLowerCase()}${version}`;
+}
+
+// snake/kebab machine key → sentence-case words; casing inside the key is kept (acronyms survive)
+function getKeyWords(key) {
+  const words = key.replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const DISPLAY_NAME_FORMATTERS = { model: getModelDisplayName, pattern: getKeyWords, edge: getKeyWords };
+
+/**
+ * One display-name map for machine labels shown on screen (model id, pattern key, edge type).
+ * null for an empty or placeholder value → the caller hides the field; an unknown kind passes the value through.
+ */
+function getDisplayName(kind, value) {
+  if (!hasFieldValue(value)) return null;
+  const text = String(value).trim();
+  const format = DISPLAY_NAME_FORMATTERS[kind];
+  return format ? format(text) : text;
+}
+
+// Label + value pair that renders nothing for an empty or placeholder value.
+function DetailField({ label, value, mono = false }) {
+  if (!hasFieldValue(value)) return null;
+  return <div>
+    <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
+    <div className={`fs-body ${mono ? 'font-mono text-dim' : 'text-ink'} break-words`}>{value}</div>
+  </div>;
+}
+
 // title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
 function PageHeader({ title, sub, right }) {
   const hasSub = sub && sub !== title;
@@ -1465,6 +1615,8 @@ function resolveOutcomeRate(data) {
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
+  getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartKeyIndex, getChartReadout, getChartSummary,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
