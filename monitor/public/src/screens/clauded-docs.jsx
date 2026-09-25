@@ -316,7 +316,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 							return r == null ? [] : [r];
 						})
 					: Array.isArray(managedData?.rows)
-						? managedData.rows
+						? getCollapsedSearchRowsCD(managedData.rows)
 						: [];
 				const total = Number(managedData?.total ?? rows.length);
 				// groups 응답 한정 서버 집계 (doc-level 건수 + audience hidden 전체 건수) — search rows 응답엔 부재 → null.
@@ -1318,6 +1318,12 @@ function DocListCardCD({
 						/>
 					</div>
 					<span className="doc-filter-label">{hasStageCounts ? "Groups by stage" : "Stage"}</span>
+					{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores */}
+					{isSearchMode ? (
+						<span className="doc-search-stage-note fs-meta" style={{ color: "rgb(var(--dim))" }}>
+							All stages while searching
+						</span>
+					) : (
 					<window.UI.ChipGroup
 						label="Stage filter"
 						chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
@@ -1335,6 +1341,7 @@ function DocListCardCD({
 						}))}
 						onToggle={inlineFilterProps.onDocStatusChange}
 					/>
+					)}
 					<span className="doc-filter-divider" aria-hidden="true" />
 					<span className="doc-filter-label">Audience</span>
 					<window.UI.ChipGroup
@@ -1560,6 +1567,11 @@ function DocListCardCD({
 															}}>
 															rev of #{row.supersedes_id}
 														</button>
+													)}
+													{row.revision_count > 0 && (
+														<div className="doc-revision-count" title="Older revisions matching this search, open the document's version history to reach them">
+															{`+${row.revision_count} revision${row.revision_count === 1 ? "" : "s"}`}
+														</div>
 													)}
 												</td>
 											<td className="title-cell">
@@ -3219,7 +3231,7 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	).label;
 	const activeFilters = [];
 	if (keyword && keyword.trim()) activeFilters.push(`“${keyword.trim()}”`);
-	if (docStatusFilter) activeFilters.push(`status: ${statusLabel}`);
+	if (docStatusFilter && !isSearchMode) activeFilters.push(`status: ${statusLabel}`);
 	if (audienceFilter !== "all") activeFilters.push(`audience: ${audienceLabel}`);
 	const hasActiveFilters = activeFilters.length > 0;
 
@@ -3276,6 +3288,22 @@ function buildVisibleRowsCD(rows, audienceFilter) {
 //     · rows endpoint (/api/clauded-docs) 는 search mode 만 (FTS 결과 — group 개념 없음)
 //     · groups response shape {total, groups, ...} → 호출처가 normalizeGroupToRowCD 로 row-like 정규화
 //     · docStatus 신규 param — '' 빈 값 시 미송신 (전체)
+// search hits → one row per revision chain: the chain's newest hit, at its best-ranked hit's place
+function getCollapsedSearchRowsCD(hits) {
+	const chains = new Map();
+	for (const hit of hits) {
+		const rootId = hit.chain_root_id ?? hit.id;
+		const chain = chains.get(rootId);
+		if (!chain) {
+			chains.set(rootId, { newest: hit, count: 1 });
+			continue;
+		}
+		chain.count += 1;
+		if (hit.id > chain.newest.id) chain.newest = hit;
+	}
+	return Array.from(chains.values(), ({ newest, count }) => ({ ...newest, revision_count: count - 1 }));
+}
+
 function buildListUrlCD({ q, docStatus, offset = 0 }) {
 	const params = new URLSearchParams();
 	if (q) {

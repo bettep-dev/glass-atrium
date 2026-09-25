@@ -537,3 +537,55 @@ test("the viewer rail leaves out Last action when no actor was recorded, and nam
   assert.doesNotMatch(unrecorded, /\bunknown\b/i);
   assert.match(railText({ last_status_model: "claude-opus-5-5" }), /Last action/i);
 });
+
+describe("search hits collapse to one row per revision chain: its newest hit, at the chain's best rank, counting the rest", () => {
+  const rows = [
+    {
+      name: "three revisions of one chain and a lone document",
+      hits: [{ id: 5, chain_root_id: 1 }, { id: 9, chain_root_id: 9 }, { id: 1, chain_root_id: 1 }, { id: 3, chain_root_id: 1 }],
+      expected: [{ id: 5, revision_count: 2 }, { id: 9, revision_count: 0 }],
+    },
+    {
+      name: "a chain whose newest revision ranks below an older one keeps the older one's place",
+      hits: [{ id: 2, chain_root_id: 2 }, { id: 8, chain_root_id: 8 }, { id: 4, chain_root_id: 2 }],
+      expected: [{ id: 4, revision_count: 1 }, { id: 8, revision_count: 0 }],
+    },
+    {
+      name: "hits from a server that names no chain root stay one row each",
+      hits: [{ id: 2 }, { id: 1 }],
+      expected: [{ id: 2, revision_count: 0 }, { id: 1, revision_count: 0 }],
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const collapsed = (screen.getCollapsedSearchRowsCD as (r: unknown[]) => Array<{ id: number; revision_count: number }>)(row.hits);
+      assert.deepEqual(Array.from(collapsed, ({ id, revision_count }) => ({ id, revision_count })), row.expected);
+    });
+  }
+});
+
+test("a collapsed search row says how many older revisions it stands for", async () => {
+  const screen = await loadDocsScreen();
+  const base = listCardProps(() => undefined);
+  const [first, second] = base.rows as Array<Record<string, unknown>>;
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [{ ...first, revision_count: 2 }, { ...second, revision_count: 0 }] });
+
+  const marks = findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-revision-count"));
+  assert.deepEqual(marks.map((n) => collectText(n)), ["+2 revisions"]);
+});
+
+test("while searching, the stage filter visibly steps aside for all stages, and the empty state does not claim it", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
+  const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
+
+  const groups = findNodes(searching, (n) => n.props.atom === "ChipGroup");
+  assert.deepEqual(groups.map((g) => g.props.label), ["Audience filter"], "no stage chip reads as pressed while it is not applied");
+  assert.match(collectText(searching), /All stages while searching/);
+
+  const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
+  assert.doesNotMatch(collectText(empty), /status:/);
+  assert.match(collectText(empty), /“plan”/);
+});
