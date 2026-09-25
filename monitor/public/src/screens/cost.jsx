@@ -131,7 +131,7 @@ function ScreenCost({ onNav }) {
       <TypeScaleStyle/>
       {/* Screen-scoped readability layer (W3-T5):
           - .cost-tbl: 행 높이 28→32px (vertical padding ↑) · 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier).
-          - .cost-foot: 카드 하단 footnote/helper line — 11.5px --dim (text-faint mono 보다 한 단 밝게, 읽기용).
+          - .cost-foot: 카드 하단 footnote/helper line — fs-meta(12px) --dim (text-faint mono 보다 한 단 밝게, 읽기용).
           - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
       <style>{`
         @keyframes skelPulseC { 0%,100%{opacity:.7} 50%{opacity:.35} }
@@ -151,7 +151,6 @@ function ScreenCost({ onNav }) {
       <div className="flex-shrink-0">
         <PageHeader
           title="Cost & usage"
-          sub="Cost & token usage"
           right={
             <>
               <div className="seg" role="group" aria-label="Time range">
@@ -204,10 +203,11 @@ function ScreenCost({ onNav }) {
       </RefreshingRegionC>
 
       <RefreshingRegionC states={[sessionState]} className="mb-4">
-        <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry}/>
+        <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} onNav={onNav}/>
       </RefreshingRegionC>
 
       {/* Instrumentation tier — rare reads, closed by default. */}
+      <InstrumentationTierC>
       <CostDisclosureC title="Token volume" hint="Category split over time, with the cache-hit line">
         <div className="mb-3"><TokenLegend/></div>
         <RefreshingRegionC states={[tokenState]}>
@@ -229,6 +229,7 @@ function ScreenCost({ onNav }) {
           <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
         </RefreshingRegionC>
       </CostDisclosureC>
+      </InstrumentationTierC>
     </div>
   );
 }
@@ -253,6 +254,18 @@ function RefreshingRegionC({ states, className = '', children }) {
   );
 }
 
+// One h2 over one card → the three rare reads are hairline rows of a group, not three identical cards.
+function InstrumentationTierC({ children }) {
+  const { SectionLabel } = window.UI;
+
+  return (
+    <section aria-labelledby="cost-instrumentation" className="mb-4">
+      <SectionLabel id="cost-instrumentation" className="mb-2">Instrumentation</SectionLabel>
+      <div className="card">{children}</div>
+    </section>
+  );
+}
+
 /**
  * Instrumentation shell — three rare-read groups over one cost-local <details>, not three card idioms.
  * Native disclosure keeps keyboard + screen-reader semantics without a new shared atom.
@@ -261,12 +274,12 @@ function CostDisclosureC({ title, hint, children }) {
   const { Icon } = window.UI;
 
   return (
-    <details className="card mb-4 cost-disc">
+    <details className="cost-disc border-b border-line last:border-b-0">
       <summary className="card-head cursor-pointer select-none">
         {/* card-head is a flex container, which drops the native marker — the caret restores the affordance. */}
         <Icon name="chevron-right" className="disc-caret mt-0.5" size={12}/>
         <div className="flex-1 min-w-0">
-          <div className="card-title">{title}</div>
+          <h3 className="card-title">{title}</h3>
           {hint && <div className="card-sub mt-0.5">{hint}</div>}
         </div>
       </summary>
@@ -285,7 +298,8 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   const rows = [];
 
   if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
-    rows.push({ key: 'hot', tone: 'crit', text: getHotAlarmText(hot, latestOutsideBand) });
+    // red only past the stated so-far cut — a projection or one outlier day is a warning, not a breach
+    rows.push({ key: 'hot', tone: hot.isHot ? 'crit' : 'warn', text: getHotAlarmText(hot, latestOutsideBand) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -296,6 +310,11 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   }
 
   return rows;
+}
+
+// The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
+function getTileVerdictTextC(hot) {
+  return hot.isHot || hot.isPaceHot ? 'Running hot — today\'s pace is in the alert above.' : hot.verdict;
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
@@ -342,14 +361,10 @@ function AlarmLaneC({ rows }) {
   }
 
   return (
-    <div className="flex flex-col gap-2 mb-4">
+    <div className="mb-4 border-y border-line">
       {rows.map((r) => (
-        <div
-          key={r.key}
-          role="alert"
-          className="rounded-md border p-3 flex items-start gap-3"
-          style={{ background: `rgb(var(--${r.tone}) / 0.08)`, borderColor: `rgb(var(--${r.tone}) / 0.4)` }}>
-          <Icon name="warn" size={16} className={`text-${r.tone} mt-0.5`}/>
+        <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
+          <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
           <div className="fs-body text-ink">{r.text}</div>
         </div>
       ))}
@@ -491,7 +506,7 @@ function computeCacheShare(modelState) {
   const ready = modelState.status === 'ready';
   const rows = ready ? (modelState.data?.rows ?? []) : [];
   if (rows.length === 0) {
-    return { share: null, cacheCost: null, isEmpty: ready };
+    return { share: null, cacheCost: null, totalCost: null, isEmpty: ready };
   }
   const split = buildModelCostRows(rows);
   const totalCost = split.reduce((s, r) => s + r.cost_usd, 0);
@@ -499,6 +514,7 @@ function computeCacheShare(modelState) {
   return {
     share: totalCost > 0 ? cacheCost / totalCost : null,
     cacheCost: totalCost > 0 ? cacheCost : null,
+    totalCost: totalCost > 0 ? totalCost : null,
     isEmpty: false,
   };
 }
@@ -543,14 +559,18 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          unavailableNote="No finished task in the last 7 days."/>
+          unavailableNote="No finished task in the last 7 days.">
+          <div className="cost-foot mt-1.5">Fixed 7-day window — the range above does not change it.</div>
+        </CostTileC>
 
         <CostTileC
           label="Cache share of cost"
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
-          unavailableNote="No priced model cost in this window."/>
+          unavailableNote="No priced model cost in this window.">
+          <div className="cost-foot mt-1.5">{`of ${formatUsdC(cacheShare.totalCost)} priced cost, last ${days} days`}</div>
+        </CostTileC>
       </div>
     </>
   );
@@ -568,10 +588,10 @@ function CostTileC({ label, status, value, hint, unavailableNote, children }) {
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       <div className="kpi-label">{label}</div>
-      {isReady && hint && <div className="fs-meta text-faint font-mono kpi-hint">{hint}</div>}
       <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
       </KpiValue>
+      {isReady && hint && <div className="fs-meta kpi-hint mt-1">{hint}</div>}
       {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
     </div>
   );
@@ -595,7 +615,7 @@ function HotBulletC({ hot }) {
         ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
         showValue={false}
       />
-      <div className="cost-foot mt-1.5">{hot.verdict}</div>
+      <div className="cost-foot mt-1.5">{getTileVerdictTextC(hot)}</div>
     </div>
   );
 }
@@ -985,13 +1005,13 @@ function TokenStackedArea({ points }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
           tickFormatter={formatTokenCompactC}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
@@ -1025,13 +1045,13 @@ function TokenStackedColumn({ points }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
           tickFormatter={formatTokenCompactC}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
@@ -1206,8 +1226,7 @@ function rollupModelRows(modelRows, topN) {
 }
 
 function ModelCostBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable, SectionLabel } = window.UI;
-  const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
+  const { LoadingPlaceholder, RegionUnavailable, SectionLabel, TableHead } = window.UI;
 
   if (state.status === 'loading') {
     return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
@@ -1232,12 +1251,13 @@ function ModelCostBody({ state, days, onRetry }) {
       <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
       <div style={{ maxHeight: 360, overflowY: 'auto' }}>
         <table className="tbl cost-tbl">
+          <caption className="sr-only">{`Cost by model, last ${days} days — top ${MODEL_TOPN} plus Other`}</caption>
           <thead>
             <tr>
-              <th style={STICKY_TH_STYLE}>Model</th>
-              <th className="num" style={STICKY_TH_STYLE}>Cost</th>
-              <th className="num" style={STICKY_TH_STYLE}>Sessions</th>
-              <th className="num" style={STICKY_TH_STYLE}>Avg / session</th>
+              <TableHead isSticky>Model</TableHead>
+              <TableHead isNumeric isSticky>Cost</TableHead>
+              <TableHead isNumeric isSticky>Sessions</TableHead>
+              <TableHead isNumeric isSticky>Avg / session</TableHead>
             </tr>
           </thead>
           <tbody>
@@ -1291,7 +1311,7 @@ function ModelCostRow({ r }) {
         <td>
           <button
             type="button"
-            className="flex items-center gap-2 font-mono text-left"
+            className="flex items-center gap-2 text-left"
             aria-expanded={expanded}
             title={r.fullModel}
             onClick={() => setExpanded((v) => !v)}>
@@ -1340,7 +1360,7 @@ function buildModelCostRows(rows) {
     const split = (w) => (weightSum > 0 ? (cost * w) / weightSum : 0);
     return {
       // 미귀속 legacy 행은 축약 정규식 비매치 → 명시 라벨로 치환.
-      model: unattributed ? UNATTRIBUTED_MODEL_LABEL : shortenModelName(r.model),
+      model: getModelLabelC(r.model),
       fullModel: r.model,
       unattributed,
       rateFallback,
@@ -1438,14 +1458,14 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
           domain={yDomain}
           tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={narrow ? 50 : 42}
@@ -1500,7 +1520,7 @@ function rollupSessionRows(sessions, topN) {
   return { top: sorted.slice(0, topN), other, total: sorted.length };
 }
 
-function SessionDistributionCard({ state, days, onRetry }) {
+function SessionDistributionCard({ state, days, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
@@ -1518,16 +1538,25 @@ function SessionDistributionCard({ state, days, onRetry }) {
           : null}
       />
       <div className="card-body">
-        <SessionDistributionBody state={state} days={days} onRetry={onRetry}/>
+        <SessionDistributionBody state={state} days={days} onRetry={onRetry} onNav={onNav}/>
       </div>
     </div>
   );
 }
 
-function SessionDistributionBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+const SESSION_COLUMNS = [
+  { key: 'session', label: 'Session' },
+  { key: 'model', label: 'Model' },
+  { key: 'cost', label: 'Cost', isNumeric: true },
+  { key: 'tokens', label: 'Tokens', isNumeric: true },
+  { key: 'seen', label: 'Last seen', isNumeric: true },
+];
+
+function SessionDistributionBody({ state, days, onRetry, onNav }) {
+  const { LoadingPlaceholder, RegionUnavailable, Table, getRowFocusProps } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
+  const [activeRow, setActiveRow] = useStateC(0);
 
   // Hooks run before any early return — an unready payload reduces to an empty list.
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1544,82 +1573,106 @@ function SessionDistributionBody({ state, days, onRetry }) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
   }
 
+  const rowCount = rollup.top.length + (rollup.other ? 1 : 0);
+  const openRow = (index) => (index < rollup.top.length ? setOpenSession(rollup.top[index]) : setHistogramOpen(true));
+  const getFocusProps = (index) => getRowFocusProps({
+    index, activeIndex: activeRow, count: rowCount, onActivate: openRow, onActiveChange: setActiveRow,
+  });
+
   return (
     <>
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-3 fs-meta text-faint pb-1 border-b border-line" aria-hidden="true">
-          <span className="flex-1">Session · model</span>
-          <span>Cost</span>
-          <span className="w-20 text-right">Tokens</span>
-          <span className="w-32 text-right">Last seen</span>
-        </div>
-        {rollup.top.map((s) => (
-          <SessionRowC key={s.session_id} session={s} onOpen={() => setOpenSession(s)}/>
+      <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS} className="cost-tbl">
+        {rollup.top.map((s, i) => (
+          <SessionRowC key={s.session_id} session={s} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
         {rollup.other && (
-          <button
-            type="button"
-            className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+          <tr
+            {...getFocusProps(rollup.top.length)}
+            className="cursor-pointer"
             aria-label={`Other ${rollup.other.count} of ${rollup.total} sessions, ${formatUsdC(rollup.other.cost_usd)} — open the cost distribution`}
             onClick={() => setHistogramOpen(true)}>
-            <span className="text-dim flex-1">
+            <td colSpan={2} className="text-dim">
               Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
-            </span>
-            <span className="text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</span>
-            <span className="btn sm" aria-hidden="true">Distribution ›</span>
-          </button>
+              <span className="btn sm ml-2" aria-hidden="true">Distribution ›</span>
+            </td>
+            <td className="num font-mono text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</td>
+            <td className="num"/>
+            <td className="num"/>
+          </tr>
         )}
-      </div>
+      </Table>
       {histogramOpen && (
         <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
       {openSession && (
-        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)}/>
+        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)} onNav={onNav}/>
       )}
     </>
   );
 }
 
-function getSessionModelLabel(model) {
-  return !model || isUnattributedModel(model) ? UNATTRIBUTED_MODEL_LABEL : model;
+// One label per model across the ledger, the session table and the drawer.
+function getModelLabelC(model) {
+  if (!model || isUnattributedModel(model)) return UNATTRIBUTED_MODEL_LABEL;
+  return window.UI.getDisplayName('model', model) ?? UNATTRIBUTED_MODEL_LABEL;
 }
 
-function SessionRowC({ session, onOpen }) {
-  const { formatRelativeTime, formatKstFull } = window.UI;
-  const modelLabel = getSessionModelLabel(session.top_model);
+const SESSION_SHORT_ID_LENGTH = 8;
 
-  return (
-    <button
-      type="button"
-      className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
-      aria-label={`Session ${session.session_id}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
-      onClick={onOpen}>
-      <span className="flex-1 min-w-0 flex items-baseline gap-2">
-        <span className="text-dim truncate" title={session.session_id}>{session.session_id}</span>
-        <span className="text-faint truncate shrink-0 max-w-[45%]">{modelLabel}</span>
-      </span>
-      <span className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</span>
-      <span className="text-faint w-20 text-right">{formatTokenCompactC(session.total_tokens)}</span>
-      {/* last_event_at is a real UTC ISO instant — relative label, absolute day-bucket time on hover. */}
-      <span
-        className="text-dim w-32 text-right"
-        title={session.last_event_at ? formatKstFull(session.last_event_at) : undefined}>
-        {session.last_event_at ? formatRelativeTime(session.last_event_at) : '—'}
-      </span>
-    </button>
-  );
+// A UUID prefix is unique enough to scan and still greps; the drawer keeps the whole id.
+function getSessionShortId(id) {
+  return String(id).slice(0, SESSION_SHORT_ID_LENGTH);
 }
 
-function SessionDetailDrawerC({ session, onClose }) {
-  const { DetailSurface, formatKstFull } = window.UI;
+// A last-seen instant after now is a clock or bucketing defect upstream → read it as now, never "in 6h".
+function getClampedInstantC(iso, nowMs) {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  return ms > nowMs ? new Date(nowMs).toISOString() : iso;
+}
+
+// Drawer facts, a field with no value dropped rather than shown as a placeholder.
+function getSessionFactsC(session, nowMs) {
+  const { formatKstFull, hasFieldValue } = window.UI;
+  const lastSeen = getClampedInstantC(session.last_event_at, nowMs);
   const facts = [
     ['Session', session.session_id],
-    ['Model', getSessionModelLabel(session.top_model)],
+    ['Model', getModelLabelC(session.top_model)],
     ['Cost', formatUsdC(session.total_cost_usd)],
     ['Tokens', formatTokenCompactC(session.total_tokens)],
     ['Events', formatIntC(session.event_count)],
-    ['Last seen', session.last_event_at ? formatKstFull(session.last_event_at) : '—'],
+    ['Last seen', lastSeen ? formatKstFull(lastSeen) : null],
   ];
+  return facts.filter(([, value]) => hasFieldValue(value));
+}
+
+function SessionRowC({ session, focusProps, onOpen }) {
+  const { formatRelativeTime, formatKstFull } = window.UI;
+  const modelLabel = getModelLabelC(session.top_model);
+  const shortId = getSessionShortId(session.session_id);
+  const lastSeen = getClampedInstantC(session.last_event_at, Date.now());
+
+  return (
+    <tr
+      {...focusProps}
+      className="cursor-pointer"
+      aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
+      onClick={onOpen}>
+      <td className="font-mono" title={session.session_id}>{shortId}</td>
+      <td>{modelLabel}</td>
+      <td className="num font-mono text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</td>
+      <td className="num font-mono">{formatTokenCompactC(session.total_tokens)}</td>
+      <td className="num" title={lastSeen ? formatKstFull(lastSeen) : undefined}>
+        {lastSeen ? formatRelativeTime(lastSeen) : '—'}
+      </td>
+    </tr>
+  );
+}
+
+function SessionDetailDrawerC({ session, onClose, onNav }) {
+  const { DetailSurface } = window.UI;
+  const facts = getSessionFactsC(session, Date.now());
 
   return (
     <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
@@ -1631,7 +1684,30 @@ function SessionDetailDrawerC({ session, onClose }) {
           </React.Fragment>
         ))}
       </dl>
+      <div className="flex flex-wrap gap-2 mt-4">
+        <SessionIdCopyC id={session.session_id}/>
+        <button type="button" className="btn sm" onClick={() => onNav('outcomes')}>Task results ›</button>
+      </div>
     </DetailSurface>
+  );
+}
+
+function SessionIdCopyC({ id }) {
+  const [copyState, setCopyState] = useStateC('idle');
+
+  if (typeof navigator === 'undefined' || !navigator.clipboard) {
+    return null;
+  }
+
+  const copyId = () => {
+    navigator.clipboard.writeText(id).then(() => setCopyState('copied'), () => setCopyState('failed'));
+  };
+  const label = copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy session id';
+
+  return (
+    <button type="button" className="btn sm" onClick={copyId}>
+      <span aria-live="polite">{label}</span>
+    </button>
   );
 }
 
@@ -1677,7 +1753,7 @@ function SessionDistributionChart({ bins }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 9, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           interval={0}
@@ -1687,7 +1763,7 @@ function SessionDistributionChart({ bins }) {
         />
         <YAxis
           allowDecimals={false}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={36}
@@ -1805,14 +1881,14 @@ function ParseErrorChart({ rows }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
           yAxisId="count"
           allowDecimals={false}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={36}
@@ -1822,7 +1898,7 @@ function ParseErrorChart({ rows }) {
           orientation="right"
           domain={[0, 100]}
           tickFormatter={(v) => v.toFixed(0) + '%'}
-          tick={{ fontSize: 10, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={42}
@@ -2009,6 +2085,8 @@ function getStopReasonSessionShare(sessionCount, population) {
 }
 
 function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
+  const { TableHead } = window.UI;
+
   return (
     <table className="tbl cost-tbl">
       <caption className="fs-meta text-dim text-left pb-2">
@@ -2016,10 +2094,10 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
       </caption>
       <thead>
         <tr>
-          <th>stop_reason</th>
-          <th className="num">Events</th>
-          <th className="num">Sessions</th>
-          <th className="num">Event share</th>
+          <TableHead>Stop reason</TableHead>
+          <TableHead isNumeric>Events</TableHead>
+          <TableHead isNumeric>Sessions</TableHead>
+          <TableHead isNumeric>Event share</TableHead>
         </tr>
       </thead>
       <tbody>
@@ -2166,16 +2244,6 @@ function computeSparkDeltaC(series) {
     return 0;
   }
   return ((last - first) / Math.abs(first)) * 100;
-}
-
-// claude-opus-4-7 → opus-4.7 · claude-opus-5 → opus-5 · claude-haiku-4-5-20251001 → haiku-4.5 (X축 공간 압축).
-// family-major 필수 + minor 옵션 → 2세그먼트 ID도 동일 형식으로 축약.
-// minor 는 1-2자리, 후행 날짜 세그먼트는 3자리 이상 → claude-opus-5-20260101 의 날짜가 minor 로 오독되지 않음.
-function shortenModelName(name) {
-  if (typeof name !== 'string' || name.length === 0) return '—';
-  const m = name.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{3,})?$/i);
-  if (m) return m[3] ? `${m[1]}-${m[2]}.${m[3]}` : `${m[1]}-${m[2]}`;
-  return name;
 }
 
 window.ScreenCost = ScreenCost;

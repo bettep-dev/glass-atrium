@@ -102,7 +102,14 @@ interface CostHelpers {
     namedStates: ReadonlyArray<readonly [string, PanelState]>,
   ) => { sources: string[]; error: string } | null;
   fetch: (url: string, init?: unknown) => Promise<unknown>;
-  getSessionModelLabel: (model: string | null | undefined) => string;
+  getModelLabelC: (model: string | null | undefined) => string;
+  getClampedInstantC: (iso: string | null | undefined, nowMs: number) => string | null;
+  getSessionShortId: (id: string) => string;
+  getSessionFactsC: (
+    session: Record<string, unknown>,
+    nowMs: number,
+  ) => ReadonlyArray<readonly [string, string]>;
+  getTileVerdictTextC: (hot: HotVerdict) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -494,10 +501,85 @@ test("every tile state is distinct, and only ready renders a measured value", ()
   assert.strictEqual(cost.getTileNote("ready", "x"), "", "a ready tile states its value, not a note");
 });
 
-test("a session's model label names the model, and an unattributed model never reads as a model name", () => {
-  assert.equal(cost.getSessionModelLabel("claude-opus-4-1"), "claude-opus-4-1");
+test("a model reads by one display name in every table, and an unattributed model never reads as a model name", () => {
+  assert.equal(
+    cost.getModelLabelC("claude-opus-5"),
+    cost.getModelLabelC("opus-5"),
+    "the full id and its short form are one model, so they must read the same",
+  );
+  assert.notEqual(cost.getModelLabelC("claude-opus-5"), "claude-opus-5", "a raw id is not a display name");
   for (const model of [null, undefined, "", "unknown", "<synthetic>"]) {
-    assert.equal(cost.getSessionModelLabel(model), "Unattributed", `model ${String(model)}`);
+    assert.equal(cost.getModelLabelC(model), "Unattributed", `model ${String(model)}`);
+  }
+});
+
+test("a session's last-seen instant never lands after now, and a past instant passes through", () => {
+  const now = Date.parse("2026-09-25T00:48:00.000Z");
+  const rows: ReadonlyArray<readonly [string, string, number]> = [
+    ["future by hours", "2026-09-25T06:54:20.000Z", now],
+    ["future by a second", "2026-09-25T00:48:01.000Z", now],
+    ["past", "2026-09-24T21:00:00.000Z", Date.parse("2026-09-24T21:00:00.000Z")],
+    ["exactly now", "2026-09-25T00:48:00.000Z", now],
+  ];
+  for (const [name, iso, expectedMs] of rows) {
+    assert.equal(Date.parse(cost.getClampedInstantC(iso, now)!), expectedMs, name);
+  }
+  for (const blank of [null, undefined, "", "not a date"]) {
+    assert.equal(cost.getClampedInstantC(blank, now), null, `blank ${String(blank)}`);
+  }
+});
+
+test("a session reads by the leading 8 characters of its id", () => {
+  const id = "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d";
+  assert.equal(cost.getSessionShortId(id), "b81996da");
+  assert.ok(id.startsWith(cost.getSessionShortId(id)), "the short form is a prefix, so it can be searched");
+  assert.equal(cost.getSessionShortId("short"), "short", "an id at or under 8 characters is kept whole");
+});
+
+test("the session drawer hides a field it has no value for, and keeps the full id", () => {
+  const now = Date.parse("2026-09-25T00:48:00.000Z");
+  const full = {
+    session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d",
+    top_model: "claude-opus-5",
+    total_cost_usd: 12.5,
+    total_tokens: 1000,
+    event_count: 4,
+    last_event_at: "2026-09-24T21:00:00.000Z",
+  };
+  const terms = (session: Record<string, unknown>) => [...cost.getSessionFactsC(session, now)].map((f) => f[0]);
+  assert.ok(terms(full).includes("Last seen"));
+  assert.equal(cost.getSessionFactsC(full, now)[0]![1], full.session_id, "the drawer is where the whole id lives");
+  assert.ok(!terms({ ...full, last_event_at: null }).includes("Last seen"), "no instant → no Last seen row");
+});
+
+test("the running-hot sentence is stated once — in the lane when it fires, on tile 1 otherwise", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
+    ["calm", {}, false],
+    ["so-far ratio", { isHot: true }, false],
+    ["pace ratio", { isPaceHot: true }, false],
+    ["outlier day only", {}, true],
+    ["both ratios", { isHot: true, isPaceHot: true }, true],
+  ];
+  const verdict = "Today is 81% of the 7-day daily normal so far, on pace for 3.1x it.";
+  for (const [name, delta, outsideBand] of cases) {
+    const hot = { ...CALM, verdict, ...delta };
+    const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
+      .map((r) => r.text);
+    const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
+    assert.equal(places, 1, name);
+  }
+});
+
+test("the hot row is red only past the so-far cut; a projection or an outlier day is amber", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean, string]> = [
+    ["so-far ratio", { isHot: true }, false, "crit"],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true, "crit"],
+    ["pace only", { isPaceHot: true }, false, "warn"],
+    ["outlier day only", {}, true, "warn"],
+  ];
+  for (const [name, delta, outsideBand, tone] of cases) {
+    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } });
+    assert.equal(rows[0]!.tone, tone, name);
   }
 });
 
