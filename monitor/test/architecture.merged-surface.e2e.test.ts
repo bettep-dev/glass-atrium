@@ -1555,7 +1555,12 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 
 	// 측정 조건의 실측치 — 같은 소스를 캔버스 CSS 밖(document.body)에 렌더하면 mermaid 자신의
 	// 스타일만 걸린 라벨이 나온다. 그것이 mermaid 가 상자 크기를 잰 서체다.
-	await getRenderProbe(page, "d52-font-baseline", CANONICAL_MAP.mermaid_drawn);
+	// the canvas renders with its map-only label override → the baseline must too, or the parity is against another font
+	const directive = await page.evaluate(
+		() => (window as never as { ARCH_MAP_LABEL_DIRECTIVE?: string }).ARCH_MAP_LABEL_DIRECTIVE ?? "",
+	);
+	assert.ok(directive.startsWith("%%{init"), "the screen no longer exposes its label directive");
+	await getRenderProbe(page, "d52-font-baseline", directive + CANONICAL_MAP.mermaid_drawn);
 	const baseline = await page.evaluate(() => {
 		const label = document.querySelector("#probe-host-d52-font-baseline .nodeLabel") as HTMLElement | null;
 		if (!label) return null;

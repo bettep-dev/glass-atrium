@@ -11,8 +11,22 @@ const {
 
 // Constants
 
-// 가독 하한 — 그래프 크기와 무관한 고정 상수. 폭-fit 이 더 작아도 이 아래로 내려가지 않음.
-const LEGIBLE_FIT_FLOOR = 0.6;
+// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
+const MAP_LABEL_FONT_PX = 30;
+
+// word-level label wrap — narrower nodes are what let the larger labels fit; the flow itself stays left to right
+const MAP_LABEL_WRAP_PX = 90;
+
+// smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
+const MIN_RENDERED_LABEL_PX = 12;
+
+// scale floor derived from the two above, so the floor is a rendered size rather than a bare ratio
+const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL_FONT_PX;
+
+// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
+const MAP_LABEL_DIRECTIVE =
+	`%%{init: {"themeVariables": {"fontSize": "${MAP_LABEL_FONT_PX}px"}, ` +
+	`"flowchart": {"wrappingWidth": ${MAP_LABEL_WRAP_PX}}}}%%\n`;
 
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
@@ -901,7 +915,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, source)))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + source)))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -2482,3 +2496,5 @@ function extractMermaidNodeLabelAR(nodeEl) {
 
 window.ScreenArchitecture = ScreenArchitecture;
 window.ARCH_SELECTORS = ARCH_SELECTORS;
+// the font-parity harness renders its baseline with the same override the canvas measured with
+window.ARCH_MAP_LABEL_DIRECTIVE = MAP_LABEL_DIRECTIVE;
