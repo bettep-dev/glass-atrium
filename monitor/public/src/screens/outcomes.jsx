@@ -253,23 +253,23 @@ function AttributionDevScopeO({ devScope }) {
   const truncCount = Number(devScope.budget_truncation_count) || 0;
   return (
     <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
         DEV agents · truncation baseline
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
           title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
-          <div className="fs-micro font-mono text-dim">Budget-kill rate</div>
+          <div className="fs-meta text-dim">Budget-kill rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
-          <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
+          <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
         </div>
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
           title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
-          <div className="fs-micro font-mono text-dim">Synthesized rate</div>
+          <div className="fs-meta text-dim">Synthesized rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
-          <div className="fs-micro font-mono text-dim mt-0.5">recovered from missing report</div>
+          <div className="fs-meta font-mono text-dim mt-0.5">recovered from missing report</div>
         </div>
       </div>
     </div>
@@ -282,12 +282,12 @@ function AttributionBudgetKillListO({ rows }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return (
     <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
         Budget-killed subagents (7d)
       </div>
       <div className="flex flex-col gap-0.5">
         {rows.map((r) => (
-          <div key={r.agent} className="flex items-center justify-between fs-micro font-mono">
+          <div key={r.agent} className="flex items-center justify-between fs-meta font-mono">
             <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}><window.UI.AgentName name={r.agent}/></span>
             <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
           </div>
@@ -389,8 +389,6 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-md th { background: rgb(var(--sunken)); font-weight: 500; }
 .outcome-row { transition: background 100ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
-.outcome-row.is-fail   { box-shadow: inset 3px 0 0 rgb(var(--crit)); }
-.outcome-row.is-review { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
 `;
 
 function ScreenOutcomes({ onNav }) {
@@ -814,7 +812,7 @@ function DisclosureO({ title, summary, children }) {
     <details className="card mt-4">
       <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
         <span className="fs-title font-medium text-ink">{title}</span>
-        <span className="fs-micro font-mono text-faint ml-auto">{summary}</span>
+        <span className="fs-meta font-mono text-faint ml-auto">{summary}</span>
       </summary>
       <div className="pb-1">{children}</div>
     </details>
@@ -970,7 +968,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
 
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
 function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
-  const { KpiValue, TONE_ICON, formatPctWithDenominator } = window.UI;
+  const { KpiValue, formatPctWithDenominator } = window.UI;
+  const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
   const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
@@ -984,15 +983,24 @@ function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
       aria-label={ariaLabel}
       title={tile.hint}>
       <div className="kpi-label">
-        <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
-          <GlyphO name={TONE_ICON[tile.tone]} size={12}/>
-        </span>
+        {glyph && (
+          <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
+            <GlyphO name={glyph} size={12}/>
+          </span>
+        )}
         {tile.label}
       </div>
       <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
-      <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
+      <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
     </Tag>
   );
+}
+
+// ok/neutral → no glyph: a check on a "Failed or blocked" tile reads as the opposite of its label
+function getBandTileGlyphO(tone) {
+  if (tone === 'crit') return 'x';
+  if (tone === 'warn') return 'warn';
+  return null;
 }
 
 // 헤딩으로 즉시 스크롤(모션 없음 → reduced-motion 무관) 후 focus — 스크린리더가 도착 지점을 읽는다.
@@ -1198,7 +1206,7 @@ function AttributionHealthBody({ state, onRetry }) {
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
       <AttributionDailyChart grid={grid}/>
       <AttributionLegend/>
-      <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
+      <div className="fs-meta text-faint mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
             <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
@@ -1227,21 +1235,21 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
             <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
-              <div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.2em]">
+              <div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
                 <span className="text-dim">{meta.label}</span>
               </div>
               <div className="fs-stat font-semibold text-ink mt-1 font-mono">
                 {formatRateO(rate)}
               </div>
-              <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(count)}</div>
+              <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(count)}</div>
             </div>
           );
         })}
       </div>
       {omissionBreakdown && (
         <div
-          className="fs-micro font-mono text-dim mt-1.5 leading-relaxed"
+          className="fs-meta text-dim mt-1.5 leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
           <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-0.5" aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
           <span className="mr-1">{omissionMeta.label}:</span>
@@ -1255,6 +1263,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
 // 일별 stacked-bar — 각 일자 1막대, 4-category 비례 stack (inline SVG, 외부 라이브러리 없음).
 // bar 폭/간격은 grid 길이 기준 자동 분배. 0건 일자는 빈 트랙 표시.
 function AttributionDailyChart({ grid }) {
+  const { activeIndex, handlers } = useStackedChartReadoutO(grid.length);
   const chartHeight = 132;
   const labelBand   = 16;
   const barAreaH    = chartHeight - labelBand;
@@ -1263,15 +1272,18 @@ function AttributionDailyChart({ grid }) {
   const barGap = (slot - barW) / 2;
 
   return (
-    <div>
+    <figure style={{ margin: 0, minWidth: 0 }}>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
         viewBox={`0 0 100 ${chartHeight}`}
         preserveAspectRatio="none"
-        role="img"
-        aria-label="Daily reporting-health stacked bar chart"
+        aria-hidden="true"
         style={{ display: 'block' }}>
+        {activeIndex !== null && (
+          <rect x={activeIndex * slot} y={0} width={slot} height={barAreaH} fill="rgb(var(--ink) / 0.07)"/>
+        )}
         {grid.map((point, di) => {
           const x = di * slot + barGap;
           if (point.total <= 0) {
@@ -1317,12 +1329,66 @@ function AttributionDailyChart({ grid }) {
           );
         })}
       </svg>
-      <div className="flex items-center justify-between fs-micro font-mono text-faint mt-1">
-        <span>{attributionDayLabelO(grid[0]?.day)}</span>
-        <span>today</span>
       </div>
+      <StackedChartTicksO grid={grid}/>
+      <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
+        {activeIndex === null ? '' : getStackedDayReadoutO(grid[activeIndex])}
+      </div>
+    </figure>
+  );
+}
+
+// pointer + arrow/Home/End → one active day; the first arrow press lands on the latest day
+function useStackedChartReadoutO(count) {
+  const [activeIndex, setActiveIndex] = useStateO(null);
+  const { getRovingIndex, getChartIndexAtRatio } = window.UI;
+  const handlers = {
+    onPointerMove: (e) => {
+      const box = e.currentTarget.getBoundingClientRect();
+      if (box.width > 0) setActiveIndex(getChartIndexAtRatio((e.clientX - box.left) / box.width, count, 'bars'));
+    },
+    onPointerLeave: () => setActiveIndex(null),
+    onBlur: () => setActiveIndex(null),
+    onKeyDown: (e) => {
+      const next = getRovingIndex(e.key, activeIndex, count, 'horizontal', 'last');
+      if (next === undefined) return;
+      e.preventDefault();
+      setActiveIndex(next);
+    },
+  };
+  return { activeIndex, handlers };
+}
+
+function StackedChartTicksO({ grid }) {
+  const ticks = window.UI.getChartTicks(grid.length);
+  const last = grid.length - 1;
+  return (
+    <div className="relative fs-meta font-mono text-faint mt-1" style={{ height: 18 }} aria-hidden="true">
+      {ticks.map((i) => (
+        <span
+          key={i}
+          className="absolute whitespace-nowrap"
+          style={{ left: `${((i + 0.5) / grid.length) * 100}%`, transform: i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)' }}>
+          {attributionDayLabelO(grid[i].day)}
+        </span>
+      ))}
     </div>
   );
+}
+
+function getStackedDayReadoutO(point) {
+  if (!(point.total > 0)) {
+    return `${point.day} · ${point.outOfRange === true ? EMPTY_DAY_LABEL_NOT_READ : EMPTY_DAY_LABEL_NO_RECORDS}`;
+  }
+  const parts = ATTRIBUTION_CATEGORY_ORDER
+    .filter((key) => (point[key] || 0) > 0)
+    .map((key) => `${ATTRIBUTION_CATEGORY_META[key].label} ${point[key]}`);
+  return `${point.day} · ${point.total} records: ${parts.join(', ')}`;
+}
+
+function getStackedChartLabelO(grid) {
+  const total = grid.reduce((sum, point) => sum + (Number(point.total) || 0), 0);
+  return `Daily reporting health, ${grid.length} days, ${total} records. Use the arrow keys to read each day.`;
 }
 
 const EMPTY_DAY_LABEL_NO_RECORDS = 'No records';
@@ -1331,7 +1397,7 @@ const EMPTY_DAY_LABEL_NOT_READ = 'Not read (before the data window)';
 // dual-encoded 범례 — 색상 + 기호 + 라벨 3중 부호화 (color-blind safety).
 function AttributionLegend() {
   return (
-    <div className="flex flex-wrap gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
+    <div className="flex flex-wrap gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
       {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
         const meta = ATTRIBUTION_CATEGORY_META[key];
         return (
@@ -1434,7 +1500,7 @@ function ChannelLivenessBody({ state, onRetry }) {
         ))}
       </div>
       {threshold ? (
-        <div className="fs-micro text-faint font-mono mt-3 leading-relaxed">
+        <div className="fs-meta text-faint mt-3 leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
           within the last {threshold.eligibility_recency_days}d has recorded nothing
           for {threshold.silence_hours}h.
@@ -1452,7 +1518,7 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
   const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
   return (
-    <div className="flex items-center gap-2 fs-micro font-mono">
+    <div className="flex items-center gap-2 fs-meta font-mono">
       <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
       <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
       <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
@@ -1479,7 +1545,7 @@ function GraderBreakdownCard({ state, onRetry }) {
   return (
     <div className="card mb-4">
       <CardHead
-        title="Automatic check results (grader_verdict)"
+        title="Automatic check results"
         sub=""
         right={
           state.status === 'ready' && breakdown && (
@@ -1492,6 +1558,11 @@ function GraderBreakdownCard({ state, onRetry }) {
       </div>
     </div>
   );
+}
+
+// not_measured (legacy NULL) tile only when it counts something → no dead "0" tile
+function getGraderTileKeysO(breakdown) {
+  return GRADER_BREAKDOWN_ORDER.filter((key) => key !== 'not_measured' || (Number(breakdown?.[key]) || 0) > 0);
 }
 
 function GraderBreakdownBody({ state, onRetry }) {
@@ -1508,11 +1579,12 @@ function GraderBreakdownBody({ state, onRetry }) {
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
+  const tileKeys = getGraderTileKeysO(breakdown);
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-3">
-        {GRADER_BREAKDOWN_ORDER.map((key) => {
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
+        {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
           const count = Number(breakdown[key]) || 0;
           // not_measured(레거시 NULL)는 graded_total 분모 밖 → 비율 표기 생략 (오해 차단).
@@ -1520,18 +1592,15 @@ function GraderBreakdownBody({ state, onRetry }) {
           return (
             <div
               key={key}
-              className="rounded-lg p-3 border"
-              style={{
-                borderColor: `rgb(var(${meta.colorVar}) / 0.3)`,
-                background: `rgb(var(${meta.colorVar}) / 0.06)`,
-              }}
+              className="p-3 border border-line"
+              style={{ borderRadius: 'var(--radius-tile)' }}
               title={`${meta.label}: ${formatIntO(count)}${pct != null ? ` (${pct.toFixed(1)}%)` : ' (legacy — not in share denominator)'}`}>
-              <div className="inline-flex items-start gap-1 fs-micro uppercase tracking-wider min-h-[2.2em] text-dim">
+              <div className="inline-flex items-start gap-1 fs-meta min-h-[2.2em] text-dim">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
                 {meta.label}
               </div>
               <div className="mt-1 font-mono fs-title text-ink">{formatIntO(count)}</div>
-              <div className="fs-micro text-faint">{pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator'}</div>
+              <div className="fs-meta text-faint">{pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator'}</div>
             </div>
           );
         })}
@@ -1552,7 +1621,7 @@ function DowngradeBreakdownRowO({ breakdown }) {
   if (segments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-micro font-mono">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-meta font-mono">
       <span className="text-faint uppercase tracking-wider">downgrade origin</span>
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
@@ -1592,7 +1661,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
 function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
   return (
     <div>
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1">{label}</div>
       <div className="flex flex-col gap-1">
         {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
       </div>
@@ -1610,7 +1679,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 
   return (
     <div className="flex items-center gap-2" role="img" aria-label={title} title={title}>
-      <span className={`fs-micro font-mono ${isMuted ? 'text-faint' : 'text-dim'}`} style={{ width: 76, flexShrink: 0 }}>
+      <span className={`fs-meta ${isMuted ? 'text-faint' : 'text-dim'}`} style={{ width: 76, flexShrink: 0 }}>
         {row.task_type}
       </span>
       <div className="flex-1 h-3 rounded-sm overflow-hidden" style={{ background: 'rgb(var(--sunken))' }} aria-hidden="true">
@@ -1628,7 +1697,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
           </div>
         )}
       </div>
-      <span className="fs-micro font-mono text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
+      <span className="fs-meta font-mono text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
         {total > 0 ? formatIntO(total) : '—'}
       </span>
     </div>
@@ -1707,7 +1776,7 @@ function CrosstabBody({ state, onRetry }) {
           </tfoot>
         </table>
       </div>
-      <div className="flex flex-wrap items-center gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
+      <div className="flex flex-wrap items-center gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
         <span className="inline-flex items-center gap-1">
           <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
           polar mismatch (overconfidence high+fail · underconfidence low+pass)
@@ -1906,6 +1975,8 @@ const MORE_FILTER_AXES = [
 
 const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
 
+const FILTER_COLUMN_STYLE_O = { position: 'sticky', top: 16, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' };
+
 function FilterSidebar({
   filter, keywordInput, distinctAgents, includeAll, sort,
   onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
@@ -1916,7 +1987,7 @@ function FilterSidebar({
   const activeCount = countActiveFacetsO(filter);
 
   return (
-    <div className="card">
+    <div className="card" style={FILTER_COLUMN_STYLE_O}>
       <CardHead
         title="Filters"
         sub=""
@@ -1926,7 +1997,7 @@ function FilterSidebar({
             : null
         }
       />
-      <div className="card-body" style={{ padding: 14 }}>
+      <div className="card-body" style={{ padding: 12 }}>
         <FilterAxisGroup label="Agent">
           <select
             className="field field-select"
@@ -1963,7 +2034,7 @@ function FilterSidebar({
         </FilterAxisGroup>
 
         <details className="mb-3">
-          <summary className="fs-micro font-mono text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
+          <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
             More filters
           </summary>
           <div className="pt-2">
@@ -2018,8 +2089,8 @@ function FilterSidebar({
 
 function FilterAxisGroup({ label, children }) {
   return (
-    <div className="mb-3">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+    <div className="mb-2.5">
+      <div className="fs-meta text-faint mb-1">
         {label}
       </div>
       {children}
@@ -2192,7 +2263,7 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
         : 'No results match the active filters'}
       {chips.length > 0 && (
         <div className="flex items-center gap-1 flex-wrap justify-center mt-2">
-          <span className="fs-micro text-faint font-mono">active:</span>
+          <span className="fs-meta text-faint font-mono">active:</span>
           <FilterChipsO chips={chips}/>
         </div>
       )}
@@ -2214,7 +2285,7 @@ function PlainHeader({ label, align = 'left', minWidth, width }) {
   return (
     <th
       scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line`}
+      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line whitespace-nowrap`}
       style={style}>
       {label}
     </th>
@@ -2310,7 +2381,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
                     tabIndex={section.anchorId ? -1 : undefined}
                     colSpan={LEDGER_COLUMN_COUNT}
                     scope="colgroup"
-                    className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
+                    className="text-left fs-meta font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
                     {section.heading}
                   </th>
                 </tr>
@@ -2446,9 +2517,7 @@ function QaScoreDotsO({ qaScore }) {
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
 function ResultTableRow({ row, onRowClick, closure, focusProps }) {
-  const isFail   = row.result === 'fail';
-  const isReview = !isFail && row.review_flag === true;
-  const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
+  const rowClass = 'outcome-row cursor-pointer';
 
   const ts       = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
@@ -2481,7 +2550,7 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
             {resultLabel}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
-            {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
+            {resultMeta.closed && <span className="fs-meta text-dim">{resultMeta.label}</span>}
           </span>
           {canClose && (
             // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
@@ -2633,7 +2702,7 @@ function DetailMetadata({ row, detail, recordFields = [] }) {
       <MetaField label="Confidence" value={getDetailValueLabelO('confidence', row?.confidence)}/>
       <MetaField label="Self-check" value={getDetailValueLabelO('metric_pass', row?.metric_pass)}/>
       <div>
-        <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
+        <div className="fs-meta text-faint uppercase tracking-wider">Automatic check</div>
         <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
           <GlyphO name={grader.icon}/>
           {grader.label}
@@ -2642,7 +2711,7 @@ function DetailMetadata({ row, detail, recordFields = [] }) {
       </div>
       <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
       <div>
-        <div className="fs-micro text-faint uppercase tracking-wider">Flagged for review</div>
+        <div className="fs-meta text-faint uppercase tracking-wider">Flagged for review</div>
         <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
           {reviewFlagLabel(row?.review_flag)}
           {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
@@ -2663,7 +2732,7 @@ function DetailMetadata({ row, detail, recordFields = [] }) {
       {recordFields.map((field) => <MetaField key={field.label} label={field.label} value={field.value}/>)}
       {parseQaScoreO(row?.qa_score) != null && (
         <div>
-          <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
+          <div className="fs-meta text-faint uppercase tracking-wider">QA score</div>
           <div className="text-ink inline-flex items-center gap-2">
             <QaScoreDotsO qaScore={row.qa_score}/>
             <span className="font-mono text-dim">{row.qa_score}</span>
@@ -2683,7 +2752,7 @@ function DetailNarrative({ row, detailState, markdown }) {
     <div className="mb-4">
       {lessonText && (
         <div className="mb-3">
-          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">Lesson</div>
+          <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">Lesson</div>
           <div className="fs-body text-ink">{lessonText}</div>
         </div>
       )}
@@ -2726,7 +2795,7 @@ function DetailReferences({ row }) {
   if (!row?.cid) return null;
   return (
     <div className="pt-3 border-t border-line">
-      <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">references</div>
+      <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">references</div>
       <div className="fs-meta font-mono text-dim">cid: {row.cid}</div>
     </div>
   );
@@ -2743,7 +2812,7 @@ function formatEvaluativeSignalO(signal) {
 function MetaField({ label, value, className = '' }) {
   return (
     <div className={className}>
-      <div className="fs-micro text-faint uppercase tracking-wider">{label}</div>
+      <div className="fs-meta text-faint uppercase tracking-wider">{label}</div>
       <div className="text-ink">{value}</div>
     </div>
   );

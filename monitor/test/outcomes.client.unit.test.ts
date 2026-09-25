@@ -69,6 +69,10 @@ interface OutcomesHelpers {
   ) => Array<{ key: string; label: string; isPressed: boolean }>;
   getFilterChipValueO: (key: string) => string;
   getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
+  getBandTileGlyphO: (tone: string) => string | null;
+  getGraderTileKeysO: (breakdown: Record<string, unknown>) => string[];
+  getStackedDayReadoutO: (point: Record<string, unknown>) => string;
+  getStackedChartLabelO: (grid: Array<Record<string, unknown>>) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -571,4 +575,56 @@ describe("getLedgerRowStartsO: ledger rows share one roving sequence across the 
       assert.deepEqual(indexes, Array.from({ length: total }, (_, i) => i));
     });
   }
+});
+
+describe("getBandTileGlyphO: a status tile shows a glyph only when its tone claims a problem", () => {
+  const rows = [
+    { name: "ok carries no glyph, so a quiet Failed tile never shows a check", tone: "ok", glyph: null },
+    { name: "neutral carries no glyph", tone: "neutral", glyph: null },
+    { name: "warn shows the warning glyph", tone: "warn", glyph: "warn" },
+    { name: "crit shows the cross glyph", tone: "crit", glyph: "x" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(outcomes.getBandTileGlyphO(row.tone), row.glyph);
+    });
+  }
+});
+
+describe("getGraderTileKeysO: the legacy tile appears only when it counts something", () => {
+  const measured = ["verified_pass", "unverified", "verified_fail"];
+
+  test("a zero legacy count drops its tile and keeps every measured tile", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 3, unverified: 0, verified_fail: 1, not_measured: 0 }));
+    assert.deepEqual(keys, measured);
+  });
+
+  test("a non-zero legacy count keeps its tile after the measured ones", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 0, unverified: 0, verified_fail: 0, not_measured: 7 }));
+    assert.deepEqual(keys, [...measured, "not_measured"]);
+  });
+});
+
+describe("getStackedDayReadoutO: the chart readout names the day's total and every present category", () => {
+  test("each non-zero category appears with its count, and zero categories are left out", () => {
+    const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });
+    assert.match(readout, /12 records/);
+    assert.match(readout, /Recorded properly 9/);
+    assert.match(readout, /Missing report 1/);
+    assert.match(readout, /Reconstructed 2/);
+    assert.doesNotMatch(readout, /Untraceable/);
+  });
+
+  test("an empty day says whether it was read or fell before the data window", () => {
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0 }), /No records/);
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0, outOfRange: true }), /Not read/);
+  });
+});
+
+describe("getStackedChartLabelO: the chart's accessible name summarises the range", () => {
+  test("the name states the day count and the summed record total", () => {
+    const label = outcomes.getStackedChartLabelO([{ day: "a", total: 4 }, { day: "b", total: 0 }, { day: "c", total: 6 }]);
+    assert.match(label, /3 days/);
+    assert.match(label, /10 records/);
+  });
 });
