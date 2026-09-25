@@ -22,20 +22,16 @@ function ReviewReasonSegmentsI(props) {
 	);
 }
 
-function ErrorBannerI(props) {
-	return React.createElement(window.ImprovementShared.ErrorBannerI, props);
-}
-
 // One banner per failed payload, in place of the group that payload owns.
 function PayloadErrorCardI({ title, state, onRetry }) {
-	const { CardHead } = window.UI;
+	const { CardHead, RegionUnavailable } = window.UI;
 	return (
 		<div className="card">
 			<CardHead title={title} />
 			<div className="p-4">
-				<ErrorBannerI
-					title={`Couldn't load ${title.toLowerCase()}`}
-					detail={state.error}
+				<RegionUnavailable
+					source={title.toLowerCase()}
+					error={state.error}
 					onRetry={onRetry}
 				/>
 			</div>
@@ -46,7 +42,7 @@ function PayloadErrorCardI({ title, state, onRetry }) {
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
-	const { CardHead, Icon } = window.UI;
+	const { CardHead, Icon, LoadingPlaceholder } = window.UI;
 	const title = "Flagged results (7 days)";
 
 	if (state.status === "error") return null;
@@ -55,15 +51,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 			<div className="card">
 				<CardHead title={title} />
 				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
+					<LoadingPlaceholder label="flagged results" minHeight={60} />
 				</div>
 			</div>
 		);
@@ -91,7 +79,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
 				</div>
 				{/* is-wrap 필수 — 사유 세그먼트가 잘리면 수만 남고 모집단이 사라진다. */}
-				<div className="card-sub is-wrap fs-micro mt-1">
+				<div className="card-sub is-wrap fs-meta mt-1">
 					<ReviewReasonSegmentsI
 						segments={reviewReasons}
 						fallback="Outcomes flagged in the last 7 days"
@@ -184,25 +172,14 @@ function ImprovementInstrumentationViewI({
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 function TierBreakdownCardI({ state, tierBreakdown }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
 			<div className="card">
 				<CardHead title="Results by check status (30 days)" />
-				<div className="grid grid-cols-4 gap-2 p-3">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -271,7 +248,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-center gap-1.5 fs-micro font-mono">
+						<div className="flex items-center gap-1.5 fs-meta font-mono">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -305,25 +282,14 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
-	const { CardHead, BulletBar } = window.UI;
+	const { CardHead, BulletBar, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !confidenceDist) {
 		return (
 			<div className="card">
 				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="grid grid-cols-1 gap-2 p-3">
-					{Array.from({ length: 1 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -405,7 +371,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -526,7 +492,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-3 pb-3 card-sub fs-micro">
+			<div className="px-3 pb-3 card-sub fs-meta">
 				{summary.truncation_caveat}
 			</div>
 		</div>
@@ -556,7 +522,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 // 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
 
 function StyleRefCardI({ state, styleRef }) {
-	const { CardHead, BulletBar } = window.UI;
+	const { CardHead, BulletBar, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !styleRef) {
 		return (
@@ -565,19 +531,8 @@ function StyleRefCardI({ state, styleRef }) {
 					title="Style-check rate (7 days)"
 					sub="Agents that checked existing files before coding"
 				/>
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="style-check rates" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -667,7 +622,7 @@ function StyleRefCardI({ state, styleRef }) {
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
 							<span className={tone}>{label}</span>
 						</div>
@@ -871,7 +826,7 @@ function formatRateI(rate) {
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
-	const { CardHead, formatKstDate } = window.UI;
+	const { CardHead, formatKstDate, LoadingPlaceholder } = window.UI;
 	const title = "Detection agreement (correction signals)";
 
 	if (state.status === "error") return null;
@@ -880,15 +835,7 @@ function CorrectionSignalsCardI({ state }) {
 			<div className="card">
 				<CardHead title={title} />
 				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
+					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
 			</div>
 		);
@@ -928,7 +875,7 @@ function CorrectionSignalsCardI({ state }) {
 					<span className="text-faint">stage1/stage2 agreement</span>
 				</div>
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
 					</span>
@@ -945,7 +892,7 @@ function CorrectionSignalsCardI({ state }) {
 						{formatIntI(agr.neither_matched)}
 					</span>
 				</div>
-				<div className="fs-micro font-mono text-faint">
+				<div className="fs-meta font-mono text-faint">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
 					{formatIntI(d.revision_delta_max)}
 				</div>
@@ -957,7 +904,7 @@ function CorrectionSignalsCardI({ state }) {
 // 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
-	const { CardHead, Sparkline } = window.UI;
+	const { CardHead, Sparkline, LoadingPlaceholder } = window.UI;
 	const title = "Corpus growth (per-cycle audit)";
 
 	if (state.status === "error") return null;
@@ -966,15 +913,7 @@ function CorpusGrowthCardI({ state }) {
 			<div className="card">
 				<CardHead title={title} />
 				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
+					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
 			</div>
 		);
@@ -1044,7 +983,7 @@ function CorpusGrowthCardI({ state }) {
 						</span>
 					)}
 				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
 					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
 					<span>
@@ -1054,7 +993,7 @@ function CorpusGrowthCardI({ state }) {
 						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
 					)}
 				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						gate{" "}
 						<span className="text-ok">
@@ -1070,7 +1009,7 @@ function CorpusGrowthCardI({ state }) {
 					<span>override {override}</span>
 				</div>
 				{(latest.compliance_rate === null || latest.override_rate === null) && (
-					<div className="card-sub fs-micro">
+					<div className="card-sub fs-meta">
 						— = insufficient data, never a measured zero.
 					</div>
 				)}

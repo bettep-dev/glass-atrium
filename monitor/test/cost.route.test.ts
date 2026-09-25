@@ -336,6 +336,63 @@ test("GET /api/cost/session-distribution: each row's top_model is the model carr
   }
 });
 
+// The cost hook stamps event_date + event_time as the host's day-bucket wall-clock, with no zone.
+const LAST_EVENT_SESSION = `last-event-instant-${process.pid}`;
+
+function getBucketWallClock(instant: Date): { date: string; time: string } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: DAY_BUCKET_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(instant)
+      .map((part) => [part.type, part.value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}`,
+  };
+}
+
+async function seedLastEvent(instant: Date): Promise<void> {
+  const { date, time } = getBucketWallClock(instant);
+  await getPrisma().$executeRaw`
+    INSERT INTO core.cost_events
+      (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
+       cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
+       stop_reason, model, parse_error)
+    VALUES (${date}::date, ${time}::time, ${LAST_EVENT_SESSION}, 'turn', ${`${LAST_EVENT_SESSION}-0`},
+            10, 10, 0, 0, 9999, 0, 1, 'end_turn', 'model-cheap', false)
+  `;
+}
+
+for (const processTimezone of ["UTC", "America/Los_Angeles"]) {
+  test(`GET /api/cost/session-distribution: last_event_at is the instant the day-bucket wall-clock names, whatever the process TZ (${processTimezone})`, async (t) => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = processTimezone;
+    t.after(async () => {
+      // env assignment stringifies → an unset TZ must be deleted, not assigned undefined
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+      await getPrisma().$executeRaw`DELETE FROM core.cost_events WHERE session_id = ${LAST_EVENT_SESSION}`;
+    });
+    const instant = new Date(Math.floor(Date.now() / 1000) * 1000 - 3_600_000);
+    await seedLastEvent(instant);
+
+    const res = await app.inject({ method: "GET", url: "/api/cost/session-distribution?days=30" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as { rows: Array<{ session_id: string; last_event_at: string }> };
+    const seeded = body.rows.find((r) => r.session_id === LAST_EVENT_SESSION);
+    assert.strictEqual(seeded?.last_event_at, instant.toISOString());
+  });
+}
+
 test("GET /api/cost/turn-stats: stop_reason_session_count is the distinct session population behind the stop reasons", async (t) => {
   await seedP8Events();
   t.after(clearP8Events);

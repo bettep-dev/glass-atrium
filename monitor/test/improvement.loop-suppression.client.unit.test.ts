@@ -280,10 +280,10 @@ test("the per-cycle window is shown with its counts", () => {
 
 test("held rows appear under their own cause, window-free", () => {
   const text = ledger(SUPPRESSION);
-  assert.match(text, /capped signature/, "the parked rows are the held section's whole content");
+  assert.match(text, /Capped signature/, "the parked rows are the held section's whole content");
   assert.match(
     text,
-    /design-decision signature/,
+    /Design decision signature/,
     "a park older than the discovery window is exactly the one waiting on a human",
   );
 });
@@ -340,7 +340,7 @@ test("the suppression sections stay silent while the payload is unavailable", ()
     "rendering an empty held section during load would report a healthy loop that was never measured",
   );
   assert.doesNotMatch(text, /agent-registry\.json/, "no gate note without the figures it gates");
-  assert.match(text, /live signature/, "the ledger itself still renders — only the join is missing");
+  assert.match(text, /Live signature/, "the ledger itself still renders — only the join is missing");
 });
 
 test("the ledger reports its own payload's loading and error states distinctly", () => {

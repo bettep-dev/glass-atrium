@@ -22,7 +22,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
-import { buildUiSandbox } from "./client-sandbox.js";
+import { buildScreenSandbox, buildUiSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -62,8 +62,17 @@ interface OutcomesHelpers {
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
-  formatToolUseLineO: (markdown: string) => string;
-  formatResultLineO: (markdown: string) => string;
+  formatToolUseO: (value: string) => string;
+  buildFilterChipsO: (
+    options: Array<{ value: string; label: string }>,
+    value: string,
+  ) => Array<{ key: string; label: string; isPressed: boolean }>;
+  getFilterChipValueO: (key: string) => string;
+  getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
+  getBandTileGlyphO: (tone: string) => string | null;
+  getGraderTileKeysO: (breakdown: Record<string, unknown>) => string[];
+  getStackedDayReadoutO: (point: Record<string, unknown>) => string;
+  getStackedChartLabelO: (grid: Array<Record<string, unknown>>) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -394,36 +403,228 @@ describe("splitLessonO: the body's Lesson section moves out so the drawer prints
   });
 });
 
-describe("formatToolUseLineO: the recorded tool-use count reads as words, not key=value", () => {
+describe("formatToolUseO: the recorded tool-use count reads as words, not key=value", () => {
   const rows = [
-    { name: "an actual count alone", line: "- **Tool use**: actual=44", readable: "- **Tool use**: 44 tool calls" },
-    { name: "an actual count with its estimate", line: "- **Tool use**: actual=44 declared=30", readable: "- **Tool use**: 44 tool calls · 30 estimated" },
-    { name: "a single call reads singular", line: "- **Tool use**: actual=1 declared=3", readable: "- **Tool use**: 1 tool call · 3 estimated" },
-    { name: "zero calls read plural", line: "- **Tool use**: actual=0", readable: "- **Tool use**: 0 tool calls" },
+    { name: "an actual count alone", value: "actual=44", readable: "44 tool calls" },
+    { name: "an actual count with its estimate", value: "actual=44 declared=30", readable: "44 tool calls · 30 estimated" },
+    { name: "a single call reads singular", value: "actual=1 declared=3", readable: "1 tool call · 3 estimated" },
+    { name: "zero calls read plural", value: "actual=0", readable: "0 tool calls" },
+    { name: "an unrecognised shape passes through", value: "unknown", readable: "unknown" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      assert.strictEqual(outcomes.formatToolUseLineO(`- **Agent**: a\n${row.line}\n`), `- **Agent**: a\n${row.readable}\n`);
+      assert.strictEqual(outcomes.formatToolUseO(row.value), row.readable);
     });
   }
 });
 
-describe("formatResultLineO: the body's Result line reads as the drawer title names the result", () => {
+// --- region fetch waves: held data survives a refresh, and only the newest request settles ---
+
+interface RegionState {
+  status: string;
+  data: unknown;
+  error: string | null;
+  busy: boolean;
+}
+type RegionSetter = (next: RegionState | ((prev: RegionState) => RegionState)) => void;
+interface RegionSandbox {
+  fetch: (url: string, init: { signal: AbortSignal }) => Promise<unknown>;
+  AbortController: typeof AbortController;
+  window: { UI: { INITIAL_REGION_STATE: RegionState; putRegionRequest: (s: RegionState, key: string, req: object) => RegionState } };
+  runRegionFetchO: (setter: RegionSetter, url: string, options?: { mapData?: (d: unknown) => unknown; onData?: () => void }) => () => void;
+  putSearchFailureO: (state: RegionState, request: object, err: unknown, elapsedMs: number) => RegionState;
+}
+
+const region = await buildScreenSandbox<RegionSandbox>(OUTCOMES_SRC);
+region.AbortController = AbortController;
+
+function createRegionStore(initial: RegionState) {
+  const store = { state: initial };
+  const setter: RegionSetter = (next) => {
+    store.state = typeof next === "function" ? next(store.state) : next;
+  };
+  return { store, setter };
+}
+
+// Fetch stub whose answers the test releases; an aborted signal rejects the way a browser does.
+function createDeferredFetch() {
+  const pending: Array<{ resolve: (res: unknown) => void }> = [];
+  region.fetch = (_url, { signal }) => new Promise((resolve, reject) => {
+    pending.push({ resolve });
+    signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+  return pending;
+}
+
+const okResponse = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+// Top-level consts stay lexical in the vm realm, so the 30 s outage threshold is restated here.
+const OUTAGE_MS = 30_000;
+const HELD = { status: "ready", data: { rows: ["held"] }, error: null, busy: false } as RegionState;
+
+describe("runRegionFetchO: a refresh never blanks what the page already shows", () => {
+  test("held data stays on screen while the refresh is in flight, then the new answer replaces it", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    assert.deepEqual(sameRealm({ status: store.state.status, data: store.state.data, busy: store.state.busy }), {
+      status: "ready", data: { rows: ["held"] }, busy: true,
+    });
+
+    pending[0].resolve(okResponse({ rows: ["new"] }));
+    await settle();
+    assert.deepEqual(sameRealm({ data: store.state.data, busy: store.state.busy }), { data: { rows: ["new"] }, busy: false });
+  });
+
+  test("a failed refresh keeps the held data and records the failure for the stamp", async () => {
+    region.fetch = async () => ({ ok: false, status: 500, statusText: "Internal Server Error", text: async () => "pg: down" });
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    await settle();
+    assert.deepEqual(sameRealm(store.state.data), { rows: ["held"] });
+    assert.match(String(store.state.error), /^HTTP 500 Internal Server Error/);
+  });
+
+  test("aborting the wave ends the busy state without an error and keeps the held data", async () => {
+    createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    const abort = region.runRegionFetchO(setter, "/api/x");
+    abort();
+    await settle();
+    assert.deepEqual(sameRealm({ busy: store.state.busy, error: store.state.error, data: store.state.data }), {
+      busy: false, error: null, data: { rows: ["held"] },
+    });
+  });
+
+  test("a wave superseded by a window change never lands and never advances the stamp", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore(region.window.UI.INITIAL_REGION_STATE);
+    let landedCount = 0;
+    const onData = () => { landedCount += 1; };
+
+    const abortFirst = region.runRegionFetchO(setter, "/api/x?days=7", { onData });
+    abortFirst();
+    region.runRegionFetchO(setter, "/api/x?days=30", { onData });
+    pending[0].resolve(okResponse({ window: 7 }));
+    pending[1].resolve(okResponse({ window: 30 }));
+    await settle();
+
+    assert.deepEqual(sameRealm(store.state.data), { window: 30 });
+    assert.strictEqual(landedCount, 1, "only the landed read advances the stamp time");
+  });
+});
+
+describe("putSearchFailureO: only a sustained first-load failure reads as an outage", () => {
   const rows = [
-    { name: "a done result", result: "done" },
-    { name: "a result done with caveats", result: "done_with_concerns" },
-    { name: "a failed result", result: "fail" },
-    { name: "a blocked result", result: "blocked" },
-    { name: "a result needing info", result: "needs_context" },
-    { name: "an unknown result keeps its recorded value", result: "mystery" },
+    { name: "a first-load failure under the threshold is a region error", held: false, elapsed: 0, expected: "error" },
+    { name: "a first-load failure past the threshold is an outage", held: false, elapsed: 1, expected: "blocked" },
+    { name: "a failure over held rows keeps the rows even past the threshold", held: true, elapsed: 1, expected: "ready" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const label = ui.resolveResultMeta(row.result, null).label;
-      assert.strictEqual(
-        outcomes.formatResultLineO(`- **Task type**: review\n- **Result**: ${row.result}\n`),
-        `- **Task type**: review\n- **Result**: ${label}\n`,
-      );
+      const request = {};
+      const base = row.held ? { ...region.window.UI.INITIAL_REGION_STATE, ...HELD } : region.window.UI.INITIAL_REGION_STATE;
+      const started = region.window.UI.putRegionRequest(base, "/api/search", request);
+      const elapsedMs = row.elapsed * OUTAGE_MS;
+      assert.strictEqual(region.putSearchFailureO(started, request, new Error("HTTP 500"), elapsedMs).status, row.expected);
     });
   }
+
+  test("a superseded request's failure leaves the newer request's state untouched", () => {
+    const started = region.window.UI.putRegionRequest(region.window.UI.INITIAL_REGION_STATE, "/api/search", {});
+    assert.strictEqual(region.putSearchFailureO(started, {}, new Error("HTTP 500"), OUTAGE_MS), started);
+  });
+});
+
+describe("buildFilterChipsO: the shared chip toolbar selects the same filter value the option carries", () => {
+  const options = [
+    { value: "", label: "All" },
+    { value: "done", label: "Done" },
+    { value: "fail", label: "Failed" },
+  ];
+
+  test("every chip's key maps back to its option's value, so a toggle sets exactly that filter", () => {
+    const chips = sameRealm(outcomes.buildFilterChipsO(options, ""));
+    assert.deepEqual(chips.map((chip) => outcomes.getFilterChipValueO(chip.key)), options.map((opt) => opt.value));
+    assert.equal(new Set(chips.map((chip) => chip.key)).size, options.length);
+  });
+
+  test("exactly the chip holding the current value is pressed, for every value", () => {
+    for (const option of options) {
+      const pressed = sameRealm(outcomes.buildFilterChipsO(options, option.value)).filter((chip) => chip.isPressed);
+      assert.deepEqual(pressed.map((chip) => chip.label), [option.label], `value "${option.value}"`);
+    }
+  });
+});
+
+describe("getLedgerRowStartsO: ledger rows share one roving sequence across the section headings", () => {
+  const rows = [
+    { name: "both sections filled", counts: [2, 3] },
+    { name: "an empty first section", counts: [0, 4] },
+    { name: "an empty last section", counts: [3, 0] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sections = row.counts.map((count) => ({ rows: Array.from({ length: count }, (_, i) => i) }));
+      const starts = sameRealm(outcomes.getLedgerRowStartsO(sections));
+      const indexes = sections.flatMap((section, s) => section.rows.map((_, i) => starts[s] + i));
+      const total = row.counts.reduce((sum, count) => sum + count, 0);
+      assert.deepEqual(indexes, Array.from({ length: total }, (_, i) => i));
+    });
+  }
+});
+
+describe("getBandTileGlyphO: a status tile shows a glyph only when its tone claims a problem", () => {
+  const rows = [
+    { name: "ok carries no glyph, so a quiet Failed tile never shows a check", tone: "ok", glyph: null },
+    { name: "neutral carries no glyph", tone: "neutral", glyph: null },
+    { name: "warn shows the warning glyph", tone: "warn", glyph: "warn" },
+    { name: "crit shows the cross glyph", tone: "crit", glyph: "x" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(outcomes.getBandTileGlyphO(row.tone), row.glyph);
+    });
+  }
+});
+
+describe("getGraderTileKeysO: the legacy tile appears only when it counts something", () => {
+  const measured = ["verified_pass", "unverified", "verified_fail"];
+
+  test("a zero legacy count drops its tile and keeps every measured tile", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 3, unverified: 0, verified_fail: 1, not_measured: 0 }));
+    assert.deepEqual(keys, measured);
+  });
+
+  test("a non-zero legacy count keeps its tile after the measured ones", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 0, unverified: 0, verified_fail: 0, not_measured: 7 }));
+    assert.deepEqual(keys, [...measured, "not_measured"]);
+  });
+});
+
+describe("getStackedDayReadoutO: the chart readout names the day's total and every present category", () => {
+  test("each non-zero category appears with its count, and zero categories are left out", () => {
+    const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });
+    assert.match(readout, /12 records/);
+    assert.match(readout, /Recorded properly 9/);
+    assert.match(readout, /Missing report 1/);
+    assert.match(readout, /Reconstructed 2/);
+    assert.doesNotMatch(readout, /Untraceable/);
+  });
+
+  test("an empty day says whether it was read or fell before the data window", () => {
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0 }), /No records/);
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0, outOfRange: true }), /Not read/);
+  });
+});
+
+describe("getStackedChartLabelO: the chart's accessible name summarises the range", () => {
+  test("the name states the day count and the summed record total", () => {
+    const label = outcomes.getStackedChartLabelO([{ day: "a", total: 4 }, { day: "b", total: 0 }, { day: "c", total: 6 }]);
+    assert.match(label, /3 days/);
+    assert.match(label, /10 records/);
+  });
 });

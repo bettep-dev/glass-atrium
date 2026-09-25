@@ -21,6 +21,7 @@ interface PanelState {
   status: string;
   data: unknown;
   error: string | null;
+  busy?: boolean;
 }
 
 interface HotVerdict {
@@ -42,6 +43,7 @@ interface AlarmRow {
 interface WindowTotal {
   total: number | null;
   delta: number | null;
+  deltaSpan: number;
   dayCount: number;
   avgDaily: number | null;
   peakCost: number | null;
@@ -58,7 +60,13 @@ interface CostHelpers {
   window: {
     getTokenRate?: (model: string) => Record<string, number> | null;
     UI: {
-      getFreshnessState: (input: { at: string | null; loading: boolean; failed: boolean; now: number }) => string;
+      INITIAL_REGION_STATE: PanelState;
+      formatUsdCompact: (value: number | null) => string;
+      getFreshnessState: (input: {
+        at: string | null;
+        regions: ReadonlyArray<PanelState>;
+        now: number;
+      }) => string;
     };
   };
   computeAlarmRows: (input: {
@@ -84,9 +92,44 @@ interface CostHelpers {
   getFreshnessInputC: (
     asOfAt: string | null,
     panelStates: ReadonlyArray<PanelState>,
-  ) => { at: string | null; loading: boolean; failed: boolean };
-  getSessionModelLabel: (model: string | null | undefined) => string;
+  ) => { at: string | null; regions: ReadonlyArray<PanelState> };
+  runFetchC: (
+    url: string,
+    request: AbortController,
+    setter: (update: (prev: PanelState) => PanelState) => void,
+    onReceived?: () => void,
+  ) => Promise<void>;
+  getSharedFailureC: (
+    namedStates: ReadonlyArray<readonly [string, PanelState]>,
+  ) => { sources: string[]; error: string } | null;
+  fetch: (url: string, init?: unknown) => Promise<unknown>;
+  getModelLabelC: (model: string | null | undefined) => string;
+  getClampedInstantC: (iso: string | null | undefined, nowMs: number) => string | null;
+  getSessionShortId: (id: string) => string;
+  getSessionFactsC: (
+    session: Record<string, unknown>,
+    nowMs: number,
+  ) => ReadonlyArray<readonly [string, string]>;
+  getTileVerdictTextC: (hot: HotVerdict) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
+  markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
+    actual: number;
+    isPartial: boolean;
+    completeCost: number | null;
+    partialCost: number | null;
+  }>;
+  getUsdAxisFormatter: (maxValue: number) => (value: number) => string;
+  getTrendReadout: (
+    row: {
+      fullDate: string;
+      actual: number | null;
+      isPartial: boolean;
+      rollingMean?: number | null;
+      lowerBand?: number | null;
+      upperBand?: number | null;
+    },
+    bandOn: boolean,
+  ) => string;
 }
 
 const cost = await buildScreenSandbox<CostHelpers>(COST_SRC);
@@ -102,9 +145,9 @@ function getKeys(rows: ReadonlyArray<AlarmRow>): string[] {
   return [...rows].map((r) => r.key);
 }
 
-const ready = (data: unknown): PanelState => ({ status: "ready", data, error: null });
-const loading: PanelState = { status: "loading", data: null, error: null };
-const failed: PanelState = { status: "error", data: null, error: "boom" };
+const ready = (data: unknown): PanelState => ({ status: "ready", data, error: null, busy: false });
+const loading: PanelState = { status: "loading", data: null, error: null, busy: true };
+const failed: PanelState = { status: "error", data: null, error: "HTTP 500 Internal Server Error", busy: false };
 
 // Fetched at UTC noon in a UTC day bucket → 12 hours of the day remain.
 const NOON_UTC = "2026-01-10T12:00:00.000Z";
@@ -297,6 +340,17 @@ test("the trend delta states direction, which the total alone cannot", () => {
   assert.strictEqual(cost.computeWindowTotal(getTrendPoints([2, 2, 2])).delta, 0);
 });
 
+test("the trend compares the recent half of the complete days with the equal span before it", () => {
+  for (const firstDay of [0, 10, 1000]) {
+    const flat = cost.computeWindowTotal(getTrendPoints([firstDay, 1, 1, 1, 1, 9]));
+    assert.strictEqual(flat.delta, 0, `a first day of ${firstDay} outside both halves never moves it`);
+    assert.strictEqual(flat.deltaSpan, 2);
+  }
+  const doubled = cost.computeWindowTotal(getTrendPoints([7, 1, 1, 2, 2, 9]));
+  assert.strictEqual(doubled.delta, 100, "the recent two days spent twice the two before");
+  assert.strictEqual(cost.computeWindowTotal(getTrendPoints([5])).deltaSpan, 0);
+});
+
 test("the trend reads complete days only — today's partial point never moves it", () => {
   for (const today of [0, 0.1, 4, 100]) {
     assert.strictEqual(cost.computeWindowTotal(getTrendPoints([4, 4, 4, today])).delta, 0, `today=${today}`);
@@ -308,23 +362,59 @@ test("the trend reads complete days only — today's partial point never moves i
   );
 });
 
-test("the stamp keeps the last successful read: a wave in flight is busy, a failed panel marks it stale", () => {
+test("the stamp reads the region states: busy is never fresh, and one failed region of several is partial", () => {
   const ui = cost.window.UI;
   const now = Date.parse(NOON_UTC);
   const readAt = new Date(now - 60_000).toISOString();
   const getState = (at: string | null, panels: PanelState[]) =>
     ui.getFreshnessState({ ...cost.getFreshnessInputC(at, panels), now });
+  const refreshing: PanelState = { ...ready({}), busy: true };
+  const heldFailure: PanelState = { ...ready({}), error: "HTTP 500 Internal Server Error" };
 
-  const settled = [ready({}), ready({})];
-  assert.deepEqual({ ...cost.getFreshnessInputC(readAt, settled) }, { at: readAt, loading: false, failed: false });
-  assert.strictEqual(getState(readAt, settled), "fresh");
+  const rows: ReadonlyArray<{ name: string; at: string | null; panels: PanelState[]; expected: string }> = [
+    { name: "every region settled", at: readAt, panels: [ready({}), ready({})], expected: "fresh" },
+    { name: "a refresh over held data", at: readAt, panels: [refreshing, ready({})], expected: "refreshing" },
+    { name: "the first wave", at: null, panels: [loading, loading], expected: "loading" },
+    { name: "one region failed with nothing held", at: readAt, panels: [ready({}), failed], expected: "partial" },
+    { name: "one region failed over held data", at: readAt, panels: [ready({}), heldFailure], expected: "partial" },
+    { name: "every region failed after a read", at: readAt, panels: [failed, failed], expected: "stale" },
+    { name: "every region failed before any read", at: null, panels: [failed, failed], expected: "not-read" },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(getState(row.at, row.panels), row.expected, row.name);
+  }
+});
 
-  assert.strictEqual(cost.getFreshnessInputC(readAt, [ready({}), loading]).loading, true, "any panel in flight = busy");
-  assert.strictEqual(getState(readAt, [loading, loading]), "fresh", "a refresh in flight keeps the last stamp");
-  assert.strictEqual(getState(null, [loading, loading]), "loading");
+test("a refresh keeps the last payload on screen while in flight and after the request fails", async () => {
+  const held = { points: [{ day: "d0", cost_usd: 4 }] };
+  let state: PanelState = { ...cost.window.UI.INITIAL_REGION_STATE, ...ready(held) };
+  const setter = (update: (prev: PanelState) => PanelState) => { state = update(state); };
+  cost.fetch = async () => ({
+    ok: false,
+    status: 500,
+    statusText: "Internal Server Error",
+    text: async () => "<html><b>relation core.outcomes does not exist</b></html>",
+  });
 
-  assert.strictEqual(getState(readAt, [ready({}), failed]), "stale", "a failed panel never reads as fresh");
-  assert.strictEqual(getState(null, [failed, failed]), "not-read", "every fetch failed and nothing was ever read");
+  const pending = cost.runFetchC("/api/cost/kpi", new AbortController(), setter);
+  assert.strictEqual(state.busy, true, "the request is in flight");
+  assert.strictEqual(state.data, held, "held data stays while the request is in flight");
+
+  await pending;
+  assert.strictEqual(state.data, held, "a failed refresh never wipes the held payload");
+  assert.strictEqual(state.status, "ready");
+  assert.strictEqual(state.busy, false);
+  assert.match(String(state.error), /^HTTP 500\b/, "the failure is recorded for the stamp and the error copy");
+  assert.doesNotMatch(String(state.error), /</, "response markup never reaches the operator");
+});
+
+test("an outage shared by two payloads is one banner naming both, and a lone failure stays on its region", () => {
+  const named = (kpi: PanelState, trend: PanelState) =>
+    [["cost KPIs", kpi], ["cost trend", trend], ["cost by model", ready({})]] as const;
+
+  const shared = cost.getSharedFailureC(named(failed, { ...ready({}), error: failed.error }));
+  assert.deepEqual(shared && [...shared.sources], ["cost KPIs", "cost trend"], "a failure over held data still joins the outage");
+  assert.strictEqual(cost.getSharedFailureC(named(failed, ready({}))), null, "one failed payload is no page-level outage");
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {
@@ -423,10 +513,124 @@ test("every tile state is distinct, and only ready renders a measured value", ()
   assert.strictEqual(cost.getTileNote("ready", "x"), "", "a ready tile states its value, not a note");
 });
 
-test("a session's model label names the model, and an unattributed model never reads as a model name", () => {
-  assert.equal(cost.getSessionModelLabel("claude-opus-4-1"), "claude-opus-4-1");
+test("a model reads by one display name in every table, and an unattributed model never reads as a model name", () => {
+  assert.equal(
+    cost.getModelLabelC("claude-opus-5"),
+    cost.getModelLabelC("opus-5"),
+    "the full id and its short form are one model, so they must read the same",
+  );
+  assert.notEqual(cost.getModelLabelC("claude-opus-5"), "claude-opus-5", "a raw id is not a display name");
   for (const model of [null, undefined, "", "unknown", "<synthetic>"]) {
-    assert.equal(cost.getSessionModelLabel(model), "Unattributed", `model ${String(model)}`);
+    assert.equal(cost.getModelLabelC(model), "Unattributed", `model ${String(model)}`);
+  }
+});
+
+test("a session's last-seen instant never lands after now, and a past instant passes through", () => {
+  const now = Date.parse("2026-09-25T00:48:00.000Z");
+  const rows: ReadonlyArray<readonly [string, string, number]> = [
+    ["future by hours", "2026-09-25T06:54:20.000Z", now],
+    ["future by a second", "2026-09-25T00:48:01.000Z", now],
+    ["past", "2026-09-24T21:00:00.000Z", Date.parse("2026-09-24T21:00:00.000Z")],
+    ["exactly now", "2026-09-25T00:48:00.000Z", now],
+  ];
+  for (const [name, iso, expectedMs] of rows) {
+    assert.equal(Date.parse(cost.getClampedInstantC(iso, now)!), expectedMs, name);
+  }
+  for (const blank of [null, undefined, "", "not a date"]) {
+    assert.equal(cost.getClampedInstantC(blank, now), null, `blank ${String(blank)}`);
+  }
+});
+
+test("a session reads by the leading 8 characters of its id", () => {
+  const id = "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d";
+  assert.equal(cost.getSessionShortId(id), "b81996da");
+  assert.ok(id.startsWith(cost.getSessionShortId(id)), "the short form is a prefix, so it can be searched");
+  assert.equal(cost.getSessionShortId("short"), "short", "an id at or under 8 characters is kept whole");
+});
+
+test("the session drawer hides a field it has no value for, and keeps the full id", () => {
+  const now = Date.parse("2026-09-25T00:48:00.000Z");
+  const full = {
+    session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d",
+    top_model: "claude-opus-5",
+    total_cost_usd: 12.5,
+    total_tokens: 1000,
+    event_count: 4,
+    last_event_at: "2026-09-24T21:00:00.000Z",
+  };
+  const terms = (session: Record<string, unknown>) => [...cost.getSessionFactsC(session, now)].map((f) => f[0]);
+  assert.ok(terms(full).includes("Last seen"));
+  assert.equal(cost.getSessionFactsC(full, now)[0]![1], full.session_id, "the drawer is where the whole id lives");
+  assert.ok(!terms({ ...full, last_event_at: null }).includes("Last seen"), "no instant → no Last seen row");
+});
+
+test("the session drawer's task-results link does not promise a session-scoped view it cannot open", async () => {
+  interface DrawerElement {
+    type: unknown;
+    props: Record<string, unknown>;
+  }
+  interface DrawerSandbox {
+    React: { createElement: unknown };
+    SessionDetailDrawerC: (props: Record<string, unknown>) => DrawerElement;
+  }
+  // Own sandbox → the element-recording factory never leaks into the shared `cost` one.
+  const sandbox = await buildScreenSandbox<DrawerSandbox>(COST_SRC);
+  sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+    type,
+    props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+  });
+  const collectButtons = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
+    if (Array.isArray(node)) {
+      for (const child of node) collectButtons(child, out);
+      return out;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return out;
+    const el = node as DrawerElement;
+    if (el.type === "button") out.push(el);
+    return collectButtons(el.props.children, out);
+  };
+  const navCalls: unknown[][] = [];
+  const session = { session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d", total_cost_usd: 1 };
+  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
+
+  const [link] = collectButtons(drawer, []).filter((b) => {
+    const before = navCalls.length;
+    (b.props.onClick as () => void)();
+    return navCalls.length > before;
+  });
+  assert.ok(link, "the drawer still links to Task results");
+  assert.deepEqual(navCalls, [["outcomes"]], "the destination carries no session scope");
+  assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
+});
+
+test("the running-hot sentence is stated once — in the lane when it fires, on tile 1 otherwise", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
+    ["calm", {}, false],
+    ["so-far ratio", { isHot: true }, false],
+    ["pace ratio", { isPaceHot: true }, false],
+    ["outlier day only", {}, true],
+    ["both ratios", { isHot: true, isPaceHot: true }, true],
+  ];
+  const verdict = "Today is 81% of the 7-day daily normal so far, on pace for 3.1x it.";
+  for (const [name, delta, outsideBand] of cases) {
+    const hot = { ...CALM, verdict, ...delta };
+    const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
+      .map((r) => r.text);
+    const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
+    assert.equal(places, 1, name);
+  }
+});
+
+test("the hot row is red only past the so-far cut; a projection or an outlier day is amber", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean, string]> = [
+    ["so-far ratio", { isHot: true }, false, "crit"],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true, "crit"],
+    ["pace only", { isPaceHot: true }, false, "warn"],
+    ["outlier day only", {}, true, "warn"],
+  ];
+  for (const [name, delta, outsideBand, tone] of cases) {
+    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } });
+    assert.equal(rows[0]!.tone, tone, name);
   }
 });
 
@@ -435,4 +639,61 @@ test("a stop reason's session share is taken over the whole session population, 
   assert.equal(cost.getStopReasonSessionShare(6, 10), 0.6);
   assert.equal(cost.getStopReasonSessionShare(10, 10), 1);
   assert.equal(cost.getStopReasonSessionShare(0, 0), null, "an empty population has no share");
+});
+
+test("only today's point is partial, and its dashed segment joins the last complete day", () => {
+  for (const count of [1, 2, 5]) {
+    const rows = [...cost.markPartialDay(Array.from({ length: count }, (_, i) => ({ actual: i + 1 })))];
+    const last = count - 1;
+    rows.forEach((row, i) => {
+      assert.strictEqual(row.isPartial, i === last, `row ${i} of ${count}`);
+      assert.strictEqual(row.completeCost, i === last ? null : row.actual, `complete line, row ${i} of ${count}`);
+      assert.strictEqual(row.partialCost, i >= last - 1 ? row.actual : null, `so-far segment, row ${i} of ${count}`);
+    });
+  }
+});
+
+test("every tick on one cost axis carries the same decimals and reads back as its own value", () => {
+  const axes = [
+    { max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] },
+    { max: 10, ticks: [0, 2.5, 5, 7.5, 10] },
+    { max: 600, ticks: [0, 150, 300, 450, 600] },
+    { max: 12000, ticks: [0, 3000, 6000, 9000, 12000] },
+  ];
+  for (const { max, ticks } of axes) {
+    const format = cost.getUsdAxisFormatter(max);
+    const labels = ticks.map((t) => format(t));
+    const decimals = new Set(labels.map((l) => (l.split(".")[1] ?? "").length));
+    assert.strictEqual(decimals.size, 1, `max ${max}: ${labels.join(" ")}`);
+    labels.forEach((label, i) => {
+      assert.strictEqual(Number(label.replace(/[$,]/g, "")), ticks[i], `max ${max}: ${label}`);
+    });
+  }
+});
+
+test("the focus readout names the normal range exactly when the band is on and the day has one", () => {
+  const banded = { fullDate: "Sep 20", actual: 12, isPartial: false, rollingMean: 10, lowerBand: 4, upperBand: 16 };
+  const unbanded = { fullDate: "Sep 14", actual: 3, isPartial: false, rollingMean: null, lowerBand: null, upperBand: null };
+  const rows = [
+    { name: "band on, day inside the rolling window", row: banded, bandOn: true, hasRange: true },
+    { name: "band off hides the range the tooltip also hides", row: banded, bandOn: false, hasRange: false },
+    { name: "band on, day before the window fills", row: unbanded, bandOn: true, hasRange: false },
+  ];
+  for (const { name, row, bandOn, hasRange } of rows) {
+    const text = cost.getTrendReadout(row, bandOn);
+    assert.ok(text.startsWith("Sep "), `${name}: ${text}`);
+    assert.ok(text.includes(cost.window.UI.formatUsdCompact(row.actual)), `${name}: ${text}`);
+    assert.strictEqual(/normal range/i.test(text), hasRange, `${name}: ${text}`);
+    if (hasRange) {
+      const low = cost.window.UI.formatUsdCompact(4);
+      const high = cost.window.UI.formatUsdCompact(16);
+      assert.ok(text.includes(low) && text.includes(high), `${name}: ${text}`);
+    }
+  }
+});
+
+test("the focus readout marks today's point as so far, never as a finished day", () => {
+  const today = { fullDate: "Sep 25", actual: 2, isPartial: true, rollingMean: null, lowerBand: null, upperBand: null };
+  assert.match(cost.getTrendReadout(today, false), /Sep 25 so far/);
+  assert.doesNotMatch(cost.getTrendReadout({ ...today, isPartial: false }, false), /so far/);
 });

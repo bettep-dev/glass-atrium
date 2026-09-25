@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/improvement.board-ledger-legibility.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -36,6 +36,16 @@ interface Sandbox {
   CandidateRowI: Component;
   RecurrenceRowsI: Component;
   KanbanCardI: Component;
+  KanbanColumnI: Component;
+  CompactProposalCardI: Component;
+  ViewToggleI: Component;
+  LoopOutputGroupI: Component;
+  AppliedHeroHeaderI: Component;
+  LedgerSectionHeadI: Component;
+  HeldCauseGroupI: Component;
+  LedgerRecurrenceDisclosureI: Component;
+  ParkedLoopBannerI: Component;
+  DetailBodyI: Component;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -68,6 +78,12 @@ function findAll(node: unknown, match: (el: RecordedElement) => boolean, out: Re
   return out;
 }
 
+// Renders a row whose top element is a page-local atom, so its button is in the tree.
+function expand(node: unknown): unknown {
+  if (!isElement(node) || typeof node.type !== "function") return node;
+  return (node.type as (props: Record<string, unknown>) => unknown)(node.props);
+}
+
 function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
@@ -89,7 +105,7 @@ test("a ledger row names its agent once, never as a label suffix", () => {
   const rows = [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, discovered_date: "2026-09-10" }];
   const text = visibleText(sandbox.LedgerPlainRowsI({ rows }));
   assert.equal(occurrences(text, AGENT), 1, text);
-  assert.ok(text.includes("size est overrun concentration"), text);
+  assert.ok(text.includes("Size est overrun concentration"), text);
   assert.ok(!text.includes("|"), text);
 });
 
@@ -114,9 +130,9 @@ test("an applied row is one line of agent, date and pattern with the rationale k
     pattern_label: SIGNATURE,
     rationale: "Long rationale that belongs behind the drawer",
   };
-  const tree = sandbox.AppliedHistoryRowI({ row, onClick: () => {} });
+  const tree = expand(sandbox.AppliedHistoryRowI({ row, onClick: () => {} }));
   const text = visibleText(tree);
-  assert.ok(text.includes(AGENT) && text.includes("size est overrun concentration"), text);
+  assert.ok(text.includes(AGENT) && text.includes("Size est overrun concentration"), text);
   assert.ok(text.includes("#7"), text);
   assert.ok(!text.includes("Long rationale"), text);
   const buttons = findAll(tree, (el) => el.type === "button");
@@ -161,5 +177,171 @@ test("recurrence figure columns keep a gap so adjacent headers never run togethe
   const headers = findAll(tree, (el) => el.type === "th");
   for (const th of headers.slice(1)) {
     assert.match(String(th.props.className), /\bpl-\d/, visibleText(th));
+  }
+});
+
+function classOf(el: RecordedElement): string {
+  return String(el.props.className ?? "");
+}
+
+test("the view toggle is a segmented control whose pressed option alone carries aria-pressed", () => {
+  for (const view of ["operator", "instrumentation"]) {
+    const tree = sandbox.ViewToggleI({ view, onChange: () => {} });
+    assert.ok(tree && /\bseg\b/.test(classOf(tree)), "toggle must use the shared .seg selected-state control");
+    const buttons = findAll(tree, (el) => el.type === "button");
+    assert.equal(buttons.length, 2);
+    const pressed = buttons.filter((b) => b.props["aria-pressed"] === true).map((b) => visibleText(b));
+    assert.equal(pressed.length, 1, view);
+    assert.match(pressed[0], view === "operator" ? /Operator/ : /Instrumentation/);
+    for (const b of buttons) assert.doesNotMatch(classOf(b), /\btext-(ink|faint)\b/, "a colour class would mask the selected fill");
+  }
+});
+
+test("applied and declined rows render through one row atom with the prose set in sans", () => {
+  const applied = { id: 7, target_agent: AGENT, cycle_date: "2026-09-20", pattern_label: SIGNATURE };
+  const declined = { id: 8, cycle_date: "2026-09-21", rationale: "Rationale that reads as prose" };
+  const rows = [
+    sandbox.AppliedHistoryRowI({ row: applied, onClick: () => {} }),
+    sandbox.CompactProposalCardI({ row: declined, onClick: () => {} }),
+  ].map((tree) => {
+    const [button] = findAll(expand(tree), (el) => el.type === "button");
+    return button;
+  });
+  assert.equal(classOf(rows[0]), classOf(rows[1]), "both lanes must share the row chrome");
+  for (const button of rows) {
+    const prose = findAll(button, (el) => /\bflex-1\b/.test(classOf(el)));
+    assert.equal(prose.length, 1, "one flexible prose cell per row");
+    assert.doesNotMatch(classOf(prose[0]), /font-mono/);
+    assert.match(classOf(prose[0]), /\bmin-w-0\b/);
+  }
+});
+
+test("a board column may shrink below its content so long rows ellipsise instead of overflowing", () => {
+  const column = { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" };
+  const tree = sandbox.KanbanColumnI({ column, rows: [], onRowClick: () => {} });
+  assert.ok(tree && /\bmin-w-0\b/.test(classOf(tree)), classOf(tree as RecordedElement));
+});
+
+test("the applied count sits below the status band's figure size", () => {
+  const tree = sandbox.AppliedHeroHeaderI({ count: 9, label: "Applied", symbol: "✓" });
+  const [count] = findAll(tree, (el) => el.props.children === "9");
+  assert.ok(count, "count cell missing");
+  assert.doesNotMatch(classOf(count), /\bfs-display\b/);
+});
+
+test("loop output captions wrap and its cards reflow instead of squeezing three abreast", () => {
+  const idle = { status: "loading", data: null };
+  const tree = sandbox.LoopOutputGroupI({
+    statsState: idle,
+    loopEventsState: idle,
+    loopAggregate: null,
+    listState: idle,
+    buckets: null,
+    onNav: () => {},
+    onRetry: () => {},
+  });
+  assert.ok(tree && /\bi-loop-output\b/.test(classOf(tree)), "caption wrap scope missing");
+  const grids = findAll(tree, (el) => /\bi-loop-grid\b/.test(classOf(el)));
+  assert.equal(grids.length, 1);
+  assert.doesNotMatch(classOf(grids[0]), /\bgrid-cols-3\b/);
+});
+
+test("a ledger row sets its pattern label in sans and keeps mono for the date", () => {
+  const rows = [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, discovered_date: "2026-09-10" }];
+  const tree = sandbox.LedgerPlainRowsI({ rows });
+  const [item] = findAll(tree, (el) => el.type === "li");
+  assert.doesNotMatch(classOf(item), /font-mono/);
+  const [label] = findAll(item, (el) => el.props.title !== undefined);
+  assert.doesNotMatch(classOf(label), /font-mono/);
+});
+
+const RAW_PATTERN = "editable-region-arbiter-resolved";
+const PATTERN_NAME = "Editable region arbiter resolved";
+
+describe("every pattern label on the board and ledger reads as words, never as its machine key", () => {
+  const signature = `${RAW_PATTERN}|${AGENT}`;
+  const rows = [
+    {
+      name: "ledger row",
+      render: () =>
+        visibleText(sandbox.LedgerPlainRowsI({ rows: [{ id: 1, pattern_signature: signature, agent: AGENT, discovered_date: "2026-09-10" }] })),
+    },
+    {
+      name: "live candidate row",
+      render: () =>
+        visibleText(sandbox.CandidateRowI({ rank: 1, pattern: { id: 1, pattern_signature: signature, agent: AGENT, frequency: 2 }, maxFreq: 2, onClick: () => {} })),
+    },
+    {
+      name: "applied history row",
+      render: () =>
+        visibleText(expand(sandbox.AppliedHistoryRowI({ row: { id: 7, target_agent: AGENT, cycle_date: "2026-09-20", pattern_label: signature }, onClick: () => {} }))),
+    },
+    {
+      name: "rejected group label",
+      render: () => sandbox.groupByLabelI([{ id: 3, target_agent: AGENT, pattern_label: signature }])[0].label,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = row.render();
+      assert.ok(text.includes(PATTERN_NAME), text);
+      assert.ok(!text.includes(RAW_PATTERN), text);
+    });
+  }
+});
+
+describe("prose on the ledger, banner and drawer is set in sans; mono stays for figures and ids", () => {
+  const rows = [
+    {
+      name: "ledger section head",
+      prose: "Inert rows",
+      tree: () => sandbox.LedgerSectionHeadI({ label: "Inert rows", basis: "last 7 days", count: 2 }),
+    },
+    {
+      name: "held-cause summary",
+      prose: "Missing approval",
+      tree: () => sandbox.HeldCauseGroupI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [] }),
+    },
+    {
+      name: "recurrence disclosure summary",
+      prose: "Recurrence rates",
+      tree: () =>
+        sandbox.LedgerRecurrenceDisclosureI({
+          suppression: { per_cycle: [{ cause: "c", label: "Cause label", hint: "h", agents: 1, cycles: 1, count: 1 }], per_cycle_window_days: 7, per_cycle_window_cycles: 3 },
+        }),
+    },
+    {
+      name: "recurrence cause cell",
+      prose: "Cause label",
+      tree: () => sandbox.RecurrenceRowsI({ buckets: [{ cause: "c", label: "Cause label", hint: "h", agents: 1, cycles: 1, count: 1 }], windowCycles: 3 }),
+    },
+    {
+      name: "parked-loop banner title",
+      prose: "Repeat-apply cap",
+      tree: () => sandbox.ParkedLoopBannerI({ applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: "warn" } }),
+    },
+    {
+      name: "drawer footnote",
+      prose: "Scores come from the grader",
+      tree: () => sandbox.DetailBodyI({ fields: [], sections: [], footnote: "Scores come from the grader" }),
+    },
+    {
+      name: "pre-verify verdict and axis label",
+      prose: "Scope fidelity",
+      tree: () =>
+        sandbox.DetailBodyI({
+          fields: [],
+          sections: [],
+          preVerify: { badge: { symbol: "✓", tone: "text-ok", label: "Passed" }, rationale: "", axes: [{ key: "scope", label: "Scope fidelity", value: "narrow" }] },
+        }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = row.tree();
+      assert.ok(visibleText(tree).includes(row.prose), visibleText(tree));
+      const monoProse = findAll(tree, (el) => /\bfont-mono\b/.test(classOf(el)) && visibleText(el).includes(row.prose));
+      assert.equal(monoProse.length, 0, `${row.name}: mono element carries prose`);
+    });
   }
 });

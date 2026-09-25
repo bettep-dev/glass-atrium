@@ -78,3 +78,111 @@ describe("DetailSurface accessible name", () => {
     assert.notEqual(first, second);
   });
 });
+
+interface FakeNode {
+  name: string;
+  tagName: string;
+  inert: boolean;
+  parentElement: FakeNode | null;
+  children: FakeNode[];
+}
+
+function createNode(name: string, children: FakeNode[] = [], inert = false): FakeNode {
+  const node: FakeNode = { name, tagName: name.toUpperCase(), inert, parentElement: null, children };
+  for (const child of children) child.parentElement = node;
+  return node;
+}
+
+describe("DetailSurface focus containment", () => {
+  type TrapArgs = { focusables: unknown[]; active: unknown; panel: unknown; shiftKey: boolean };
+  const getTrapFocusTarget = ui.getTrapFocusTarget as (args: TrapArgs) => unknown;
+
+  const first = { name: "close" };
+  const middle = { name: "link" };
+  const last = { name: "summary" };
+  const outside = { name: "trigger" };
+  const focusables = [first, middle, last];
+  const panel = { name: "panel", contains: (node: unknown) => node === panel || focusables.includes(node as typeof first) };
+
+  const rows = [
+    { name: "opening moves focus to the first control", args: { focusables, active: null, shiftKey: false }, expected: first },
+    { name: "opening a surface with no control focuses the panel itself", args: { focusables: [], active: null, shiftKey: false }, expected: panel },
+    { name: "Tab in an empty panel keeps focus on the panel", args: { focusables: [], active: panel, shiftKey: false }, expected: panel },
+    { name: "Tab from outside the panel pulls focus to the first control", args: { focusables, active: outside, shiftKey: false }, expected: first },
+    { name: "Shift+Tab from outside the panel pulls focus to the last control", args: { focusables, active: outside, shiftKey: true }, expected: last },
+    { name: "Tab from the focused panel enters at the first control", args: { focusables, active: panel, shiftKey: false }, expected: first },
+    { name: "Tab from the last control wraps to the first", args: { focusables, active: last, shiftKey: false }, expected: first },
+    { name: "Shift+Tab from the first control wraps to the last", args: { focusables, active: first, shiftKey: true }, expected: last },
+    { name: "Tab between inner controls stays native", args: { focusables, active: middle, shiftKey: false }, expected: null },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}`, () => {
+      assert.equal(getTrapFocusTarget({ ...row.args, panel }), row.expected);
+    });
+  }
+
+  describe("stacked surfaces: only the topmost one traps the keyboard", () => {
+    const setSurfaceOpen = ui.setSurfaceOpen as (entry: object, isOpen: boolean) => void;
+    const getTopSurface = ui.getTopSurface as () => unknown;
+    const outer = { name: "drawer" };
+    const inner = { name: "confirm" };
+    const rows = [
+      { name: "a surface opened over another owns the trap", steps: [[outer, true], [inner, true]], expected: inner },
+      { name: "closing the inner surface hands the trap back to the outer one", steps: [[outer, true], [inner, true], [inner, false]], expected: outer },
+      { name: "closing the outer surface first leaves the inner one on top", steps: [[outer, true], [inner, true], [outer, false]], expected: inner },
+      { name: "a re-mount of the same surface never stacks it twice", steps: [[outer, true], [outer, true], [outer, false]], expected: null },
+    ] as const;
+
+    for (const row of rows) {
+      test(row.name, () => {
+        for (const [entry, isOpen] of row.steps) setSurfaceOpen(entry, isOpen);
+        const top = getTopSurface();
+        setSurfaceOpen(outer, false);
+        setSurfaceOpen(inner, false);
+
+        assert.equal(top, row.expected);
+      });
+    }
+  });
+
+  test("the panel is focusable by script so an empty surface can still hold focus", () => {
+    const dialog = getDialog(renderSurface({ title: "Doc viewer", bare: true, variant: "fullscreen" }));
+
+    assert.equal(dialog.props.tabIndex, -1);
+  });
+});
+
+describe("DetailSurface inert background", () => {
+  const getInertTargets = ui.getInertTargets as (overlay: FakeNode) => FakeNode[];
+
+  function buildPage() {
+    const overlay = createNode("overlay");
+    const list = createNode("list");
+    const screen = createNode("screen", [list, overlay]);
+    const nav = createNode("nav");
+    const main = createNode("main", [nav, screen]);
+    const sidebar = createNode("sidebar");
+    const toast = createNode("toast", [], true);
+    const body = createNode("body", [sidebar, main, toast]);
+    const head = createNode("head");
+    createNode("html", [head, body]);
+    return { overlay, ancestors: [screen, main, body], background: [list, nav, sidebar], toast, head };
+  }
+
+  test("every sibling along the overlay's ancestor path up to body is marked, never an ancestor", () => {
+    const page = buildPage();
+    const names = Array.from(getInertTargets(page.overlay), (node) => node.name);
+
+    assert.deepEqual(names.sort(), page.background.map((node) => node.name).sort());
+    for (const ancestor of page.ancestors) assert.ok(!names.includes(ancestor.name), `${ancestor.name} stays live`);
+  });
+
+  test("a node already inert is left out so closing the surface does not revive it", () => {
+    const page = buildPage();
+    const targets = getInertTargets(page.overlay);
+
+    assert.ok(!targets.includes(page.toast));
+    assert.ok(!targets.includes(page.head), "the walk stops at body");
+  });
+});

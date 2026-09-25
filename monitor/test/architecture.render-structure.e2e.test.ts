@@ -33,7 +33,9 @@ import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
 import {
+	CANONICAL_MAP,
 	DAEMON_NODE_BINDINGS,
+	DIAGRAMS,
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
@@ -229,6 +231,40 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
 	await ctx?.app?.close();
 }
 
+/**
+ * Reloads with the diagrams read held open (or answered with `failure`), runs `body`, then restores the rendered map.
+ * The real route still answers once released, so the context is back to its fixture state for the next test.
+ */
+async function withDiagramsHeld(
+	ctx: RenderContext,
+	body: () => Promise<void>,
+	failure?: { status: number; body: string },
+): Promise<void> {
+	const pattern = "**/api/architecture/diagrams";
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolveGate) => {
+		release = resolveGate;
+	});
+	await ctx.page.route(pattern, async (route) => {
+		if (failure) return route.fulfill({ status: failure.status, contentType: "application/json", body: failure.body });
+		await gate;
+		return route.continue();
+	});
+	try {
+		await ctx.page.reload({ waitUntil: "load" });
+		await body();
+	} finally {
+		// held read: let it land on this page before unrouting · failed read: reload onto the real route
+		release();
+		if (failure) {
+			await ctx.page.unroute(pattern);
+			await ctx.page.reload({ waitUntil: "load" });
+		}
+		await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });
+		if (!failure) await ctx.page.unroute(pattern);
+	}
+}
+
 // 리터럴 tone 클래스 한 종의 캔버스 내 개수.
 function countLiveToneClass(
 	page: Page,
@@ -360,6 +396,63 @@ describe("healthy live fixture", () => {
 		);
 	});
 
+	test("the first read of the map shows a named loading status and no description", async () => {
+		await withDiagramsHeld(ctx, async () => {
+			const status = ctx.page.getByRole("status").filter({ hasText: "Loading the system map" });
+			await status.waitFor({ timeout: 10_000 });
+
+			const probe = await ctx.page.evaluate((desc) => ({
+				descCount: document.querySelectorAll(desc).length,
+				text: document.body.innerText,
+			}), ctx.selectors.desc);
+			assert.equal(probe.descCount, 0, "the description target waits for the diagram");
+			assert.ok(!probe.text.includes("No description available"), "no placeholder description while loading");
+		});
+	});
+
+	test("one outage behind every failed read raises one banner with one Retry and no raw status text", async () => {
+		// the harness leaves three health stores unrouted (404) — a 404 diagrams read joins that same outage
+		await withDiagramsHeld(ctx, async () => {
+			await ctx.page.getByRole("alert").first().waitFor({ timeout: 10_000 });
+			const probe = await ctx.page.evaluate(() => ({
+				retries: [...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry").length,
+				alerts: document.querySelectorAll('[role="alert"]').length,
+				text: document.body.innerText,
+			}));
+			assert.equal(probe.retries, 1, "one Retry per outage");
+			assert.equal(probe.alerts, 1, "one announced banner per outage");
+			assert.ok(!/HTTP \d{3}/.test(probe.text), `raw status stays behind Details — read: ${probe.text.slice(0, 300)}`);
+		}, { status: 404, body: '{"message":"Route not found"}' });
+	});
+
+	test("Refresh keeps the rendered map on screen until the new answer lands", async () => {
+		const { page, selectors } = ctx;
+		await page.evaluate((canvas) => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgGap = false;
+			w.archSvgObserver = new MutationObserver(() => {
+				if (!document.querySelector(`${canvas} svg`)) w.archSvgGap = true;
+			});
+			w.archSvgObserver.observe(document.body, { childList: true, subtree: true });
+		}, selectors.canvas);
+
+		const landed = page.waitForResponse((r) => r.url().includes("/api/architecture/diagrams"), { timeout: 30_000 });
+		await page.click('[aria-label="Refresh system map"]');
+		await landed;
+		await page.waitForFunction(
+			() => document.querySelector('[aria-label="Refresh system map"]')?.getAttribute("aria-busy") !== "true",
+			null,
+			{ timeout: 30_000 },
+		);
+
+		const gap = await page.evaluate(() => {
+			const w = window as never as { archSvgGap: boolean; archSvgObserver: MutationObserver };
+			w.archSvgObserver.disconnect();
+			return w.archSvgGap;
+		});
+		assert.equal(gap, false, "the map svg must never leave the canvas during a refresh");
+	});
+
 	test("AC-18 exactly one rendered diagram SVG", async () => {
 		// 계수 단위 = 캔버스 하위 svg 중 컨트롤 아이콘을 뺀 것 — 캔버스는 줌 버튼의
 		// 15x15 아이콘 svg 도 품으므로 [measured: button.arch-zoom-btn > svg] 하위 svg
@@ -373,6 +466,97 @@ describe("healthy live fixture", () => {
 			).length;
 		}, ctx.selectors);
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
+	});
+
+	test("the caption is a sentence-case status line over a legend, all at 12px or larger", async () => {
+		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
+		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
+		const [status, ...legend] = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+				text: (el as HTMLElement).innerText,
+				transform: getComputedStyle(el).textTransform,
+				px: Number.parseFloat(getComputedStyle(el).fontSize),
+			})),
+		);
+		const probe = { status, legend };
+
+		assert.ok(probe.status, "a status line renders under the page title");
+		for (const line of [probe.status, ...probe.legend]) {
+			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
+			assert.ok(line.px >= 12, `"${line.text}" renders at ${line.px}px`);
+		}
+		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
+			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+	});
+
+	test("the Fit control shows its name and only a title repeating its one box is hidden", async () => {
+		const fit = ctx.page.getByRole("button", { name: "Fit diagram to view" });
+		assert.match(await fit.innerText(), /\bFit\b/);
+
+		const titles = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => {
+				const label = el.querySelector(":scope > .cluster-label");
+				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
+			}),
+		ctx.selectors.canvas);
+		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
+		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
+		assert.deepEqual(hidden.sort(), [], `hidden group titles — read: ${JSON.stringify(titles)}`);
+	});
+
+	test("the node drawer is named by the node, reads its kind from its layer and hides an unrecorded path", async () => {
+		const { doc } = await getArchitecture(ctx.app.log);
+		const diagram = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_DIAGRAM_ID) ?? doc.diagrams.diagrams[0];
+		const rendered = new Set(await getStampedNodeIds(ctx.page, ctx.selectors.canvas));
+		const target = diagram.layers
+			.flatMap((layer) => (layer.nodes ?? []).map((node) => ({ node, layer })))
+			.find(({ node }) => !node.path && rendered.has(node.id) && diagram.flows.some((f) => f.from === node.id || f.to === node.id));
+		assert.ok(target, "fixture precondition: a rendered node with connections and no recorded path");
+
+		await ctx.page.locator(`${ctx.selectors.canvas} svg g.node[data-arch-node-id="${target.node.id}"]`).click();
+		const dialog = ctx.page.getByRole("dialog");
+		await dialog.waitFor({ timeout: 10_000 });
+		try {
+			const probe = await dialog.evaluate((el) => ({
+				text: (el as HTMLElement).innerText,
+				sub: el.querySelector(".detail-sub")?.textContent ?? "",
+				brokenWords: [...el.querySelectorAll(".break-all")].length,
+			}));
+			assert.equal(await dialog.getAttribute("aria-labelledby").then((id) => ctx.page.locator(`#${id}`).innerText()), target.node.label);
+			// the drawn zone title is one word → the drawer carries the canonical source's full zone wording
+			const zoneId = target.layer.id.slice(target.layer.id.lastIndexOf(".") + 1);
+			const sourceZoneTitle = (DIAGRAMS.find((d) => d.slug === CANONICAL_MAP.slug)?.mermaid_source ?? "").match(
+				new RegExp(`subgraph\\s+${zoneId}\\["([^"]*)"\\]`),
+			)?.[1];
+			assert.ok(sourceZoneTitle, `fixture precondition: source zone title for ${zoneId}`);
+			assert.equal(probe.sub, sourceZoneTitle);
+			assert.ok(!/Not recorded|File path/i.test(probe.text), `an unrecorded path renders as a field — read: ${probe.text.slice(0, 300)}`);
+			assert.ok(!/\[[a-z]+_[a-z_]+\]/.test(probe.text), `a raw bracketed edge type renders — read: ${probe.text.slice(0, 300)}`);
+			assert.equal(probe.brokenWords, 0, "drawer text breaks words mid-word");
+		} finally {
+			await ctx.page.keyboard.press("Escape");
+			await dialog.waitFor({ state: "detached", timeout: 10_000 });
+		}
+	});
+
+	test("Tab moves through the map nodes in left-to-right flow order", async () => {
+		// document order of tabindex=0 stops IS the Tab sequence; one inline mapper (tsx __name)
+		const stops = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
+				const r = el.getBoundingClientRect();
+				return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, top: r.top, width: r.width };
+			}),
+		ctx.selectors.canvas);
+		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+
+		const minWidth = Math.min(...stops.map((s) => s.width));
+		const leftmost = Math.min(...stops.map((s) => s.cx));
+		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
+		for (let i = 1; i < stops.length; i++) {
+			const [prev, next] = [stops[i - 1], stops[i]];
+			const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
+			assert.ok(sameColumn ? next.top >= prev.top : next.cx > prev.cx, `Tab steps back from ${prev.id} to ${next.id}`);
+		}
 	});
 
 	test("AC-18 no tab controls in the DOM", async () => {
@@ -571,4 +755,107 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
+	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
+		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
+			const pattern = "**/api/health/daemons";
+			// two more faulted parts bound to one node → the badge carries its widest text, the count
+			const health = getDaemonHealthFixture(FAULT_VERDICT);
+			for (const daemonName of ["daily-restart-autoagent", "daily-restart-wiki"]) health.daemons.push({ ...health.daemons[0], daemon_name: daemonName });
+			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
+			try {
+				await ctx.page.setViewportSize({ width, height });
+				await ctx.page.reload({ waitUntil: "load" });
+				await ctx.page.waitForFunction(
+					(sel) => Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some((glyph) => (glyph.textContent || "").includes("×")),
+					ctx.selectors.canvas,
+					{ timeout: 30_000 },
+				);
+				const glyphs = await ctx.page.evaluate((sel) => {
+					// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
+					const probe = document.createElement("style");
+					probe.textContent = `${sel} svg :is(rect.arch-ring, text.arch-ring-glyph, rect.arch-ring-glyph-pill) { pointer-events: auto !important; }`;
+					document.head.appendChild(probe);
+					const shapes = new Map(
+						Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+							group,
+							(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+						]),
+					);
+					const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
+					// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
+					const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+						.flatMap((label) => {
+							const rects: DOMRect[] = [];
+							const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+							for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+								const range = document.createRange();
+								range.selectNodeContents(text);
+								rects.push(...Array.from(range.getClientRects()));
+							}
+							return rects;
+						})
+						.filter((box) => box.width > 0 && box.height > 0);
+					const readings = Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
+						.filter((glyph) => getComputedStyle(glyph).display !== "none")
+						.map((glyph) => {
+							glyph.scrollIntoView({ block: "center", inline: "center" });
+							const owner = glyph.parentElement as Element;
+							const pill = owner.querySelector(":scope > rect.arch-ring-glyph-pill") as Element;
+							const g = glyph.getBoundingClientRect();
+							const p = pill.getBoundingClientRect();
+							const n = shapes.get(owner) as DOMRect;
+							// other nodes only — a cluster box contains its members, so it is not a neighbour
+							const neighbours = [...shapes].filter(([group]) => group !== owner && group.matches("g.node")).map(([, box]) => box);
+							// a zone not holding the owner's centre — the pill crossing into it reads as that zone's badge
+							const foreignZones = zones.filter((z) => !(z.left < (n.left + n.right) / 2 && (n.left + n.right) / 2 < z.right && z.top < (n.top + n.bottom) / 2 && (n.top + n.bottom) / 2 < z.bottom));
+							// labels by the ink the pill paints over; nodes and zones with a 2px clearance, so a touching pill fails
+							const covered = [
+								...labels.map((b) => ({ b, gap: 0 })),
+								...[...neighbours, ...foreignZones].map((b) => ({ b, gap: 2 })),
+							]
+								.filter(({ b, gap }) => Math.min(p.right, b.right) - Math.max(p.left, b.left) > -gap && Math.min(p.bottom, b.bottom) - Math.max(p.top, b.top) > -gap)
+								.map(({ b }) => `${b.left.toFixed(0)},${b.top.toFixed(0)}-${b.right.toFixed(0)},${b.bottom.toFixed(0)}`);
+							const onNode = Math.max(0, Math.min(p.right, n.right) - Math.max(p.left, n.left)) * Math.max(0, Math.min(p.bottom, n.bottom) - Math.max(p.top, n.top));
+							// whole glyph box sampled — anything but the badge on top of a sample point occludes the text
+							const occluders: string[] = [];
+							for (let col = 0; col <= 6; col++)
+								for (let row = 0; row <= 2; row++) {
+									const x = g.left + 1 + ((g.width - 2) * col) / 6;
+									const y = g.top + 1 + ((g.height - 2) * row) / 2;
+									const hit = document.elementFromPoint(x, y);
+									if (hit !== glyph && hit !== pill) occluders.push(`${hit?.tagName}.${hit?.getAttribute("class") || ""}@${x.toFixed(0)},${y.toFixed(0)}`);
+								}
+							return {
+								id: owner.getAttribute("data-arch-node-id") || owner.id,
+								text: glyph.textContent || "",
+								// across its own node's bottom border, wholly within the node's sides → at most half the pill off the node
+								attached: p.left >= n.left && p.right <= n.right && p.top < n.bottom && p.bottom > n.bottom,
+								offShare: 1 - onNode / (p.width * p.height),
+								covered,
+								occluders,
+								box:
+									`glyph ${g.left.toFixed(0)},${g.top.toFixed(0)}-${g.right.toFixed(0)},${g.bottom.toFixed(0)} ` +
+									`pill ${p.left.toFixed(0)},${p.top.toFixed(0)}-${p.right.toFixed(0)},${p.bottom.toFixed(0)} ` +
+									`node ${n.left.toFixed(0)},${n.top.toFixed(0)}-${n.right.toFixed(0)},${n.bottom.toFixed(0)}`,
+							};
+						});
+					probe.remove();
+					return readings;
+				}, ctx.selectors.canvas);
+				assert.ok(glyphs.some((glyph) => glyph.text.includes("×2")), `no counted badge drawn: ${glyphs.map((g) => g.text).join(" ")}`);
+				// half the pill below the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
+				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);
+				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
+				const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
+				assert.deepEqual(covering, [], `badges over a label, another node or another zone: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
+				const hidden = glyphs.filter((glyph) => glyph.occluders.length > 0);
+				assert.deepEqual(hidden, [], `badge text painted over: ${hidden.map((g) => `${g.id} '${g.text}' (${g.box} · ${g.occluders.join(" ")})`).join("; ")}`);
+			} finally {
+				await ctx.page.unroute(pattern);
+				await ctx.page.setViewportSize({ width: 1440, height: 900 });
+				await ctx.page.reload({ waitUntil: "load" });
+				await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });
+			}
+		});
+	}
 });

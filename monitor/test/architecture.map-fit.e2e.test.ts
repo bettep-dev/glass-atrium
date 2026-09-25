@@ -12,18 +12,19 @@
 // other. Fit alone passes by shrinking the map until the text is unreadable; the scale
 // floor alone passes by drawing at the floor and letting the overflow be cut.
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
-//   2. legibility  — applied scale >= LEGIBLE_FIT_FLOOR, and the resulting rendered
-//      label size >= MIN_RENDERED_LABEL_PX.
+//   2. legibility  — every node, zone and edge label renders at >= MIN_RENDERED_LABEL_PX.
+// A third reading keeps the fit honest in the other direction: the map fills the pane on its
+// binding axis, so a scale capped below the contain fit turns red.
 //
-// Viewport table: 1396 is the width the user actually runs (their screenshot); 1512 and
-// 1920 are the two the fit was previously reasoned about. Heights are the window heights
+// Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
+// actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
 // those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
-// chrome (measured identical at all three: 800→642, 850→692, 1080→922), and the map is
-// width-bound at all three, so the exact height is not load-bearing. The height is a constant
-// subtraction rather than a fraction because the chrome above it is pixel-fixed; the earlier
-// ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by the
-// screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
-// raises — without that strip the same viewports give 687 / 737 / 967.
+// chrome (measured at the 800, 850 and 1080 heights: 800→642, 850→692, 1080→922). The fill
+// reading takes whichever axis binds, so the exact height is not load-bearing. The height is a
+// constant subtraction rather than a fraction because the chrome above it is pixel-fixed; the
+// earlier ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by
+// the screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
+// raises — without that strip those three heights give 687 / 737 / 967.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
@@ -40,12 +41,14 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { getArchitecture } from "../src/server/architecture/parser.js";
 import {
+	CANONICAL_MAP,
 	DAEMON_NODE_BINDINGS,
+	DIAGRAMS,
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
@@ -53,27 +56,26 @@ import type { ArchitectureLiveResponse } from "../src/server/types/architecture.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// architecture.jsx 의 LEGIBLE_FIT_FLOOR 사본 — 화면이 상수를 내보내지 않으므로 하네스가 값을 소유함.
-// 화면 쪽 값을 내리는 "수정"은 이 단언을 통과하지 못함: 두 값이 갈라지면 여기가 먼저 붉어짐.
-const LEGIBLE_FIT_FLOOR = 0.6;
+// the 12px meta step, measured on the drawn labels — owned here so lowering the screen's floor cannot pass
+const MIN_RENDERED_LABEL_PX = 12;
 
-// 라벨 렌더 하한(px) = mermaid-config.js 의 themeVariables.fontSize(14px) × 하한 배율.
-// 폭을 줄이는 대신 글자를 줄이는 맞바꿈을 막는 다리 — 배율만 재면 이 값이 조용히 내려감.
-const MIN_RENDERED_LABEL_PX = 14 * LEGIBLE_FIT_FLOOR;
+// a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
+const MIN_BINDING_AXIS_FILL = 0.9;
+
+// CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
+const CTM_FLOAT_TOLERANCE = 1e-6;
 
 // 서브픽셀 여유. 링(stroke-width 2.5 사용자 단위)까지 client rect 에 들어오므로
 // 실측 여유는 이 값보다 훨씬 커야 정상이고, 1px 은 반올림만 흡수함.
 const EPS_PX = 1;
 
-// 사용자가 실제로 쓰는 폭(1396)을 첫 행으로 두고 앞선 논의의 두 폭을 뒤에 둠.
 const VIEWPORTS = [
+	{ width: 1024, height: 768 },
 	{ width: 1396, height: 800 },
+	{ width: 1440, height: 900 },
 	{ width: 1512, height: 850 },
 	{ width: 1920, height: 1080 },
 ];
-
-// 1024 is kept out of VIEWPORTS on purpose — AC-FIT-1024 below pins why.
-const NARROW_VIEWPORT = { width: 1024, height: 768 };
 
 const BOUND_DAEMON = "autoagent";
 
@@ -193,8 +195,13 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const vp = canvas.querySelector(".svg-pan-zoom_viewport") as SVGGraphicsElement;
 			const scale = vp.getCTM()?.a ?? 0;
 
-			const label = canvas.querySelector("svg .nodeLabel, svg .node .label, svg .node text");
-			const declared = label ? Number.parseFloat(getComputedStyle(label).fontSize) : 0;
+			// smallest drawn label of any kind — one small zone title or edge label is enough to fail
+			const labels = Array.from(canvas.querySelectorAll("svg .nodeLabel, svg .edgeLabel")).filter(
+				(el) => (el.textContent || "").trim() !== "",
+			);
+			const declared = labels.length
+				? Math.min(...labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize)))
+				: 0;
 
 			// 노드와 존 상자 전부 — 존이 잘리면 그 안의 제목이 잘림.
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
@@ -239,7 +246,213 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 	}
 }
 
+interface ZoneReading {
+	overlaps: string[];
+	occludedTitles: string[];
+	titleBands: string[];
+	hiddenTitleCount: number;
+	zoneCount: number;
+}
+
+// a zone whose title repeats its lone member's label — the drawn map holds none, so the hidden-title trim needs one supplied
+const REDUNDANT_TITLE_ZONE = [
+	'    subgraph fitprobe["Probe store"]',
+	'        fitprobe_store[("Probe store (fixture)")]',
+	"    end",
+].join("\n");
+
+// serves the drawn diagrams with extra source lines appended to the map the screen opens on
+async function addDiagramSource(page: Page, extraSource: string): Promise<void> {
+	await page.route("**/api/architecture/diagrams", async (route) => {
+		const response = await route.fetch();
+		const payload = (await response.json()) as { diagrams: { id: string; mermaid_source: string }[] };
+		const drawn = payload.diagrams.find((diagram) => diagram.id === "v2-overview-entry");
+		assert.ok(drawn, "fixture precondition: the overview map is served");
+		drawn.mermaid_source += `\n${extraSource}\n`;
+		await route.fulfill({ response, json: payload });
+	});
+}
+
+// 존 상자끼리의 겹침과, 보이는 존 제목의 양 끝이 제 존 위에서 읽히는지를 잼.
+async function readZones(width: number, height: number, extraSource?: string): Promise<ZoneReading> {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+
+		return await page.evaluate(() => {
+			const zones = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
+				const box = (el.querySelector(":scope > rect") as SVGRectElement).getBoundingClientRect();
+				const title = el.querySelector(":scope > .cluster-label");
+				const titleBox = title && getComputedStyle(title).display !== "none" ? title.getBoundingClientRect() : null;
+				return { el, name: (title?.textContent || el.id).trim(), box, titleBox };
+			});
+
+			const overlaps: string[] = [];
+			for (let i = 0; i < zones.length; i++)
+				for (let j = i + 1; j < zones.length; j++) {
+					const a = zones[i].box;
+					const b = zones[j].box;
+					const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+					const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+					if (overlapX > 0 && overlapY > 0)
+						overlaps.push(`${zones[i].name} ∩ ${zones[j].name} ${overlapX.toFixed(0)}x${overlapY.toFixed(0)}px`);
+				}
+
+			// 제목의 첫 글자와 끝 글자 자리에서 맨 위에 그려진 것이 제 존이어야 함 — 이웃 존이 덮으면 잘려 읽힘.
+			const occludedTitles = zones
+				.filter((zone) => zone.titleBox && zone.titleBox.width > 0)
+				.filter((zone) => {
+					const t = zone.titleBox as DOMRect;
+					const midY = (t.top + t.bottom) / 2;
+					return [t.left + 2, t.right - 2].some((x) => {
+						const owner = document.elementFromPoint(x, midY)?.closest("g.cluster");
+						return owner !== zone.el || t.left < zone.box.left || t.right > zone.box.right;
+					});
+				})
+				.map((zone) => zone.name);
+
+			// a zone whose title is hidden keeps no band for it — its members sit as close to the top edge as to the bottom
+			const nodeBoxes = Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.node")).map((node) =>
+				node.getBoundingClientRect(),
+			);
+			const hiddenTitleZones = zones.filter((zone) => !zone.titleBox);
+			const titleBands = hiddenTitleZones
+				.flatMap((zone) => {
+					const b = zone.box;
+					const members = nodeBoxes.filter((n) => {
+						const cx = (n.left + n.right) / 2;
+						const cy = (n.top + n.bottom) / 2;
+						return cx > b.left && cx < b.right && cy > b.top && cy < b.bottom;
+					});
+					if (members.length === 0) return [];
+					const topGap = Math.min(...members.map((n) => n.top)) - b.top;
+					const bottomGap = b.bottom - Math.max(...members.map((n) => n.bottom));
+					return topGap > bottomGap + 2 ? [`${zone.name} top ${topGap.toFixed(1)}px vs bottom ${bottomGap.toFixed(1)}px`] : [];
+				});
+
+			return { overlaps, occludedTitles, titleBands, hiddenTitleCount: hiddenTitleZones.length, zoneCount: zones.length };
+		});
+	} finally {
+		await page.close();
+	}
+}
+
+// drawn node-label (or zone-title) lines, words grouped by rendered line top
+async function readLabelLines(width: number, height: number, of: "node" | "zone" = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		return await page.evaluate((kind) =>
+			Array.from(document.querySelectorAll(`.arch-mermaid-canvas svg ${kind === "zone" ? "g.cluster" : "g.node"}`)).map((node) => {
+				const label = node.querySelector(kind === "zone" ? ":scope > .cluster-label" : ".nodeLabel") ?? node;
+				const lineByTop: [number, string[]][] = [];
+				const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+				for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+					for (const word of (text.textContent || "").matchAll(/\S+/g)) {
+						const range = document.createRange();
+						range.setStart(text, word.index ?? 0);
+						range.setEnd(text, (word.index ?? 0) + word[0].length);
+						const top = range.getClientRects()[0]?.top ?? 0;
+						const line = lineByTop.find(([lineTop]) => Math.abs(lineTop - top) <= 2);
+						if (line) line[1].push(word[0]);
+						else lineByTop.push([top, [word[0]]]);
+					}
+				}
+				return {
+					id: node.getAttribute("data-arch-node-id") || node.id,
+					lines: lineByTop.map(([, words]) => words.join(" ")),
+					tooltip: node.querySelector(":scope > title")?.textContent ?? "",
+					name: node.getAttribute("aria-label") ?? "",
+				};
+			}),
+			of,
+		);
+	} finally {
+		await page.close();
+	}
+}
+
+for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
+	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
+		const labels = await readLabelLines(width, height);
+		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
+		assert.ok(labels.length > 0, "no node label was measured");
+		// fewer lines than words ⟺ at least one line carries two words — held per label, not summed over the map;
+		// a bare symbol ('+') is not a word, so 'checks +' still reads as a one-word line
+		const oneWordPerLine = labels.filter((label) => {
+			const words = label.lines.join(" ").split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+			return words > 1 && label.lines.length >= words;
+		});
+		assert.deepEqual(
+			oneWordPerLine.map((label) => `${label.id}: ${label.lines.join(" | ")}`),
+			[],
+			`labels drawn one word per line: ${drawn}`,
+		);
+		const plans = labels.find((label) => label.id.endsWith("main_session"));
+		assert.ok(plans, `the orchestrator node was not drawn: ${drawn}`);
+		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
+	});
+}
+
+// canonical source zone id → its full title; the drawn map shows a one-word display name instead
+const SOURCE_ZONE_TITLES = new Map(
+	[...(DIAGRAMS.find((diagram) => diagram.slug === CANONICAL_MAP.slug)?.mermaid_source ?? "").matchAll(/subgraph\s+(\w+)\["([^"]*)"\]/g)].map(
+		([, id, title]) => [id, title],
+	),
+);
+
+// cluster element id → its zone id, longest suffix match (mermaid prefixes the subgraph id)
+function getZoneIdOf(elementId: string): string {
+	return [...SOURCE_ZONE_TITLES.keys()].filter((id) => elementId === id || elementId.endsWith(`-${id}`)).sort((a, b) => b.length - a.length)[0] ?? "";
+}
+
 for (const { width, height } of VIEWPORTS) {
+	test(`no zone title stacks one word per line at ${width}x${height}`, async () => {
+		const titles = await readLabelLines(width, height, "zone");
+		assert.ok(titles.length > 0, "no zone title was measured");
+		// a bare symbol ('&') is not a word, so '& tracking' still reads as a one-word line
+		const countWords = (line: string) => line.split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+		const stacked = titles.filter((title) => {
+			const words = countWords(title.lines.join(" "));
+			return words > 1 && title.lines.length >= words;
+		});
+		assert.deepEqual(stacked.map((title) => `${title.id}: ${title.lines.join(" | ")}`), [], "zone titles drawn one word per line");
+	});
+}
+
+test("every drawn zone carries its full source title as tooltip and accessible name", async () => {
+	const zones = await readLabelLines(1440, 900, "zone");
+	const drawnZoneIds = zones.map((zone) => getZoneIdOf(zone.id));
+	assert.equal(drawnZoneIds.filter(Boolean).length, zones.length, `a drawn zone matched no source zone: ${zones.map((zone) => zone.id).join(", ")}`);
+	const mismatched = zones
+		.map((zone, index) => ({ zone, full: SOURCE_ZONE_TITLES.get(drawnZoneIds[index]) }))
+		.filter(({ zone, full }) => zone.tooltip !== full || zone.name !== full)
+		.map(({ zone, full }) => `${zone.id}: tooltip ${JSON.stringify(zone.tooltip)} name ${JSON.stringify(zone.name)} vs source ${JSON.stringify(full)}`);
+	assert.deepEqual(mismatched, [], "zone full titles");
+});
+
+for (const { width, height } of VIEWPORTS) {
+	test(`zone boxes never overlap and every zone title reads whole at ${width}x${height}`, async () => {
+		const r = await readZones(width, height);
+		assert.ok(r.zoneCount > 0, "no zone boxes were measured — the map did not render");
+		assert.deepEqual(r.overlaps, [], `zone boxes overlap: ${r.overlaps.join("; ")}`);
+		assert.deepEqual(r.occludedTitles, [], `zone titles covered or cut: ${r.occludedTitles.join("; ")}`);
+	});
+
 	test(`AC-FIT-1 the whole map is inside the pane at ${width}x${height}`, async (t) => {
 		const r = await readFit(width, height);
 		// 통과했을 때의 여유를 남김 — 다음 사람이 "얼마나 아슬아슬한가" 를 다시 재지 않아도 됨.
@@ -257,36 +470,31 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`AC-FIT-2 it fits without shrinking the text at ${width}x${height}`, async () => {
+	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
+		assert.ok(r.labelPx > 0, "no drawn label was measured");
 		assert.ok(
-			r.scale >= LEGIBLE_FIT_FLOOR,
-			`applied scale ${r.scale.toFixed(4)} is under the legibility floor ${LEGIBLE_FIT_FLOOR}`,
+			r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE,
+			`the smallest label renders at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor (scale ${r.scale.toFixed(4)})`,
+		);
+	});
+
+	test(`the map fills the pane on its binding axis and still flows left to right at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		const fill = Math.max(r.drawnWidthPx / r.paneWidth, r.drawnHeightPx / r.paneHeight);
+		assert.ok(
+			fill >= MIN_BINDING_AXIS_FILL || r.scale >= 1 - CTM_FLOAT_TOLERANCE,
+			`the map fills ${(fill * 100).toFixed(0)}% of the pane on its binding axis at scale ${r.scale.toFixed(4)}`,
 		);
 		assert.ok(
-			r.labelPx >= MIN_RENDERED_LABEL_PX,
-			`labels render at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor`,
+			r.drawnWidthPx > r.drawnHeightPx,
+			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} — the flow no longer reads left to right`,
 		);
 	});
 }
 
-// The map is width-bound (graph ~3.9:1 against a ~2:1 pane), so it fills ~half the pane height
-// and at 1024 fitting the width needs a scale under the floor. Both would take a relayout, which
-// the standing System map decision forbids, or smaller labels → the floor wins and the overflow pans.
-// A layout that fits at 1024 turns this red → move 1024 into VIEWPORTS.
-test(`AC-FIT-1024 at ${NARROW_VIEWPORT.width}x${NARROW_VIEWPORT.height} the labels stay legible, and containment would need a sub-floor scale`, async (t) => {
-	const r = await readFit(NARROW_VIEWPORT.width, NARROW_VIEWPORT.height);
-	const graphWidthAtOne = r.drawnWidthPx / r.scale;
-	const containScale = r.paneWidth / graphWidthAtOne;
-	t.diagnostic(
-		`pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · scale ${r.scale.toFixed(4)} · ` +
-			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · width-fit would be ${containScale.toFixed(4)}`,
-	);
-	assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
-	assert.ok(r.scale >= LEGIBLE_FIT_FLOOR, `applied scale ${r.scale.toFixed(4)} is under the floor ${LEGIBLE_FIT_FLOOR}`);
-	assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX, `labels render at ${r.labelPx.toFixed(2)}px`);
-	assert.ok(
-		containScale < LEGIBLE_FIT_FLOOR,
-		`width-fit ${containScale.toFixed(4)} now clears the floor — the map fits at 1024, assert AC-FIT-1 there`,
-	);
+test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
+	const r = await readZones(1440, 900, REDUNDANT_TITLE_ZONE);
+	assert.ok(r.hiddenTitleCount > 0, "no hidden-title zone was measured — the band assertion below would be vacuous");
+	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
