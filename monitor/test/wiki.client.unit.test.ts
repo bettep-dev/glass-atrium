@@ -57,6 +57,7 @@ interface WikiHelpers {
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
   describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
+  buildMaintenanceModel: (backlogState: FetchState) => { summaryLine: string; proposals: unknown[] | null };
   window: { UI: Record<string, unknown> };
 }
 
@@ -349,4 +350,18 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
     assert.doesNotMatch(helpers.describeRunHistoryW(cycles, model, summary), /p95/);
   }
   helpers.window.UI.formatDuration = originalFormat;
+});
+
+// The proposals disclosure header carries the count, so the summary line above it names proposals only when none wait.
+test("the maintenance summary names the proposal count only where no disclosure carries it", () => {
+  for (const hashes of [["h1"], ["h1", "h2", "h3"]]) {
+    const model = helpers.buildMaintenanceModel(proposalBacklog(hashes));
+    assert.equal(model.proposals?.length, hashes.length, "the disclosure still receives every proposal");
+    assert.doesNotMatch(model.summaryLine, /proposal/, `count shown once, in the disclosure: ${model.summaryLine}`);
+  }
+  assert.match(helpers.buildMaintenanceModel(proposalBacklog([])).summaryLine, /no merge proposals/i);
+  assert.match(
+    helpers.buildMaintenanceModel(ready({ backlog: { run_date: isoDaysAgo(0) } })).summaryLine,
+    /merge proposals not reported/,
+  );
 });

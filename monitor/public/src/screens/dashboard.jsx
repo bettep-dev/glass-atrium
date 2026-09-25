@@ -32,7 +32,7 @@ const SPEND_BASELINE_DAYS = 7;
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness }) {
-  const { Icon, PageHeader, TypeScaleStyle } = window.UI;
+  const { Icon, PageHeader, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_FETCH_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_FETCH_STATE);
@@ -41,7 +41,7 @@ function ScreenDashboard({ onNav, harness }) {
   const [updateJobState, setUpdateJobState] = useStateD(INITIAL_FETCH_STATE);
 
   const [refreshTick, setRefreshTick] = useStateD(0);
-  // as-of 스탬프 — wave 가 정착한 시각. 화면 수치가 언제 것인지 없으면 stale 을 못 읽는다.
+  // last wave that settled with ≥1 successful read → kept across waves, never advanced by an all-failed wave
   const [settledAt, setSettledAt] = useStateD(null);
 
   // AbortController per fetch wave — unmount/refetch 시 in-flight 요청 취소.
@@ -69,8 +69,9 @@ function ScreenDashboard({ onNav, harness }) {
       runFetch('/api/outcomes/cross-analysis?days=7', ctrl.signal, setOutcomesState),
       runFetch(UPDATE_STATUS_ENDPOINT, ctrl.signal, setUpdateState),
       runFetch(UPDATE_JOB_ENDPOINT, ctrl.signal, setUpdateJobState),
-    ]).then(() => {
-      if (!ctrl.signal.aborted) setSettledAt(new Date().toISOString());
+    ]).then((results) => {
+      const hasRead = results.some((r) => r.status === 'fulfilled' && r.value === true);
+      if (!ctrl.signal.aborted && hasRead) setSettledAt(new Date().toISOString());
     });
 
     return () => ctrl.abort();
@@ -105,6 +106,8 @@ function ScreenDashboard({ onNav, harness }) {
         .dash-alarm { border-left-width: 3px; }
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
+        /* live region is always mounted — while empty it must not push the band down. */
+        .space-sections > .dash-lane:empty + * { margin-top: 0; }
       `}</style>
 
       <div className="flex-shrink-0">
@@ -113,7 +116,8 @@ function ScreenDashboard({ onNav, harness }) {
           title="Dashboard"
           right={
             <>
-              <span className="fs-meta font-mono text-dim">{describeStamp(harness, settledAt)}</span>
+              <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
+              <FreshnessStamp {...getFreshnessInputD(settledAt, [costState, agentsState, outcomesState, updateState])}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh dashboard">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -137,12 +141,21 @@ function ScreenDashboard({ onNav, harness }) {
   );
 }
 
-// 경보 레인 — 아무것도 없으면 아무것도 그리지 않는다(빈 카드가 '이상 없음'보다 시끄럽다).
+// 경보 레인 — 빈 레인은 아무것도 보이지 않는다(빈 카드가 '이상 없음'보다 시끄럽다).
+// polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
 // 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
 function AlarmLane({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
-  if (alarms.length === 0) return null;
   return (
-    <div role="list" aria-label="Alarms" className="flex flex-col gap-2">
+    <section className="dash-lane" aria-live="polite" aria-label="Alarms">
+      {alarms.length > 0 && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
+        updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
+    </section>
+  );
+}
+
+function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
+  return (
+    <div role="list" className="flex flex-col gap-2">
       {alarms.map((alarm) => (
         <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
           {alarm.id === 'install' && (
@@ -177,12 +190,7 @@ function AlarmRow({ alarm, onNav, children }) {
         )}
       </div>
       {children}
-      {alarm.target && (
-        <button className="btn sm" onClick={() => onNav(alarm.target)}>
-          {alarm.targetLabel}
-          <window.UI.Icon name="arrow-right" size={14}/>
-        </button>
-      )}
+      {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
     </div>
   );
 }
@@ -199,28 +207,45 @@ function StatusBand({ tiles, onNav, onRetry }) {
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(스켈레톤) · error(재시도) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry }) {
-  const { Badge } = window.UI;
+  const { Badge, KpiValue } = window.UI;
   return (
     <div className="card p-3 flex flex-col gap-1.5">
-      <div className="fs-meta text-dim uppercase tracking-wide">{tile.label}</div>
+      <h2 className="fs-meta text-dim uppercase tracking-wide">
+        {tile.label}
+        {tile.window && <span className="normal-case"> ({tile.window})</span>}
+      </h2>
       {tile.status === 'loading' ? (
         <Skel w={90} h={24}/>
       ) : (
         <div className="flex items-center gap-2">
-          <span className="fs-h2 font-semibold text-ink">{tile.value}</span>
+          <KpiValue>{tile.value}</KpiValue>
           {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{TONE_WORD[tile.tone]}</Badge>}
         </div>
       )}
+      {tile.detail && tile.status !== 'loading' && <div className="fs-body text-dim">{tile.detail}</div>}
       <div className="fs-meta text-dim dash-tile-hint">{tile.hint}</div>
       {tile.status === 'error' ? (
         <button className="btn sm self-start" onClick={onRetry}>Retry</button>
       ) : (
-        <button className="btn sm self-start" onClick={() => onNav(tile.target)}>
-          {tile.targetLabel}
-          <window.UI.Icon name="arrow-right" size={14}/>
-        </button>
+        <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start"/>
       )}
     </div>
+  );
+}
+
+// 소유 화면 링크 — 실제 href(#screen) 앵커. 수식 클릭·가운데 클릭은 브라우저에 맡겨 새 탭으로 연다.
+function DrillLink({ target, label, onNav, className = '' }) {
+  const onClick = (event) => {
+    const isModified = event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (isModified) return;
+    event.preventDefault();
+    onNav(target);
+  };
+  return (
+    <a href={`#${target}`} className={`btn sm ${className}`} onClick={onClick}>
+      {label}
+      <window.UI.Icon name="arrow-right" size={14}/>
+    </a>
   );
 }
 
@@ -487,12 +512,14 @@ function buildHarnessTile(harness) {
   const unchecked = harness.uncheckedNames.length > 0
     ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`
     : '';
-  const down = harness.downNames.length > 0 ? `Down: ${harness.downNames.join(' · ')}` : 'All polled parts healthy';
+  const downCount = harness.downNames.length;
+  // 다운 파트 이름은 경보 행이 이미 싣는다 — 타일은 가리키기만.
+  const down = downCount > 0 ? 'Down parts are named in the alarm above' : 'All polled parts healthy';
   return {
     ...base,
     status: 'ready',
-    tone: harness.downNames.length > 0 ? 'crit' : 'ok',
-    value: `${harness.partsOk} of ${harness.partsChecked}`,
+    tone: downCount > 0 ? 'crit' : 'ok',
+    value: downCount > 0 ? `${downCount} of ${harness.partsChecked} down` : `${harness.partsOk} of ${harness.partsChecked} up`,
     hint: `${down}${unchecked}`,
   };
 }
@@ -506,11 +533,11 @@ function buildPendingTile(base, state, errorHint) {
 
 // 타일 2 — 7일 작업 결과. 판정과 임계는 ui.jsx 공용 규칙 소비 (Task results 와 동일 분모).
 function buildOutcomeTile(outcomesState) {
-  const base = { id: 'outcomes', label: 'Task results (7 d)', target: 'outcomes', targetLabel: 'Task results' };
+  const base = { id: 'outcomes', label: 'Task results', window: '7 d', target: 'outcomes', targetLabel: 'Task results' };
   const pending = buildPendingTile(base, outcomesState, "Couldn't load task results.");
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
-  return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), hint: describeOutcomeHint(rate) };
+  return { ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate) };
 }
 
 // 판정 → 타일 상태. low-n 은 ready 가 아니다 — 표본 부족을 '정상'으로 읽히게 두지 않는다.
@@ -518,9 +545,18 @@ const OUTCOME_TILE_STATUS = {
   unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
 };
 
+// 판정이 헤드라인, 수는 detail 보조 — low-n 도 판정 문구를 가진다(표본 부족이 빈칸으로 읽히지 않게).
+const OUTCOME_VERDICT = {
+  'low-n': 'Too few to judge', ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line',
+};
+
 function describeOutcomeValue(rate) {
-  if (rate.status === 'unavailable' || rate.status === 'empty') return '—';
-  if (rate.status === 'low-n' || rate.status === 'ok') return formatInt(rate.writerTotal);
+  return OUTCOME_VERDICT[rate.status] ?? '—';
+}
+
+function describeOutcomeDetail(rate) {
+  if (rate.status === 'low-n' || rate.status === 'ok') return `${formatInt(rate.writerTotal)} outcomes`;
+  if (rate.status !== 'warn' && rate.status !== 'crit') return null;
   const share = rate.status === 'crit' ? rate.breakage : rate.openCaveats;
   return window.UI.formatPctWithDenominator(share, rate.writerTotal);
 }
@@ -528,16 +564,16 @@ function describeOutcomeValue(rate) {
 function describeOutcomeHint(rate) {
   if (rate.status === 'unavailable') return 'No writer-emitted outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return `Sample below ${window.UI.LOW_N_MIN} — too small to judge.`;
-  if (rate.status === 'crit') return 'Failed or blocked share is above its line.';
-  if (rate.status === 'warn') return 'Open done-with-caveats share is above its line.';
-  return `${formatInt(rate.writerTotal)} writer-emitted outcomes, all shares within their lines.`;
+  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} writer-emitted outcomes to judge.`;
+  if (rate.status === 'crit') return 'Failed or blocked share of writer-emitted outcomes.';
+  if (rate.status === 'warn') return 'Open done-with-caveats share of writer-emitted outcomes.';
+  return 'Failed and caveat shares of writer-emitted outcomes.';
 }
 
 // 타일 3 — 함대. 정지(suspension) 사실은 Agents 계획(clauded-docs/39585 T1)이 아직 발행하지 않는다.
 // 없는 수를 지어내지 않고 unavailable 로 고지 — 그 필드가 붙으면 힌트만 교체된다.
 function buildFleetTile(agentsState) {
-  const base = { id: 'fleet', label: 'Fleet (7 d)', target: 'agents', targetLabel: 'Agents' };
+  const base = { id: 'fleet', label: 'Fleet', window: '7 d', target: 'agents', targetLabel: 'Agents' };
   const pending = buildPendingTile(base, agentsState, "Couldn't load the fleet summary.");
   if (pending) return pending;
   const total = Number(agentsState.data?.meta?.total_agents);
@@ -554,17 +590,29 @@ function buildSpendTile(costState) {
   const pending = buildPendingTile(base, costState, "Couldn't load today's spend.");
   if (pending) return pending;
   const pace = resolveSpendPace(costState);
-  const hint = pace.status === 'no-basis'
-    ? 'No spend in the last 7 days — no baseline to compare against.'
-    : `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
+  const hint = describeSpendHint(pace);
   return { ...base, status: 'ready', tone: pace.status === 'hot' ? 'warn' : 'neutral', value: formatUsd(pace.today), hint };
 }
 
-// 헤더 우측 중립 텍스트 — 설치 버전 + wave 정착 시각. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
-function describeStamp(harness, settledAt) {
-  const version = harness && harness.version ? `v${harness.version}` : 'version unknown';
-  const stamp = settledAt ? window.UI.formatKstTime(settledAt) : '—';
-  return `${version} · as of ${stamp} ${window.UI.tzShortLabel()}`;
+// hot 이면 경보 행이 금액·기준을 싣는다 — 타일 힌트가 같은 수를 반복하지 않는다.
+function describeSpendHint(pace) {
+  if (pace.status === 'no-basis') return 'No spend in the last 7 days — no baseline to compare against.';
+  if (pace.status === 'hot') return 'Ahead of the 7-day average — see the alarm above.';
+  return `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
+}
+
+// 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
+function describeVersion(harness) {
+  return harness && harness.version ? `v${harness.version}` : 'version unknown';
+}
+
+// wave panels only — update-job also polls on its own, so a poll result must not move the screen's stamp
+function getFreshnessInputD(settledAt, waveStates) {
+  return {
+    at: settledAt,
+    loading: waveStates.some((st) => st.status === 'loading'),
+    failed: waveStates.some((st) => st.status === 'error'),
+  };
 }
 
 // update-job poll → 실제 row (none 은 무 job).
@@ -607,16 +655,20 @@ async function fetchJson(url, signal) {
 // fetch + setter wiring 보일러플레이트 통합 — useEffect 본문 단순화.
 function runFetch(url, signal, setter) {
   return fetchJson(url, signal)
-    .then((data) => setter({ status: 'ready', data, error: null }))
+    .then((data) => {
+      setter({ status: 'ready', data, error: null });
+      return true;
+    })
     .catch((err) => handleError(err, setter));
 }
 
 function handleError(err, setter) {
   // AbortError = navigation away (사용자 가시 실패 아님).
   if (err && err.name === 'AbortError') {
-    return;
+    return false;
   }
   setter({ status: 'error', data: null, error: err && err.message ? err.message : String(err) });
+  return false;
 }
 
 window.ScreenDashboard = ScreenDashboard;

@@ -32,16 +32,6 @@ const TASK_TYPE_COLUMNS = [
   { key: 'cleanup',   label: 'cleanup'   },
 ];
 
-// 성공률 임계값 — 3종이 카드별로 다른 목적 (CF8 · 통일 강제 아님).
-// 매트릭스 셀 위험도 OK/WARN 90/70 (agent×task 점검 우선순위) · Summary 행 운영 건전성 95/90 · Top N 컷오프 95 (action 진입선).
-// success_rate ∈ [0,1] (매트릭스) · % (Summary) 스케일 차이 주의.
-const SUCCESS_RATE_OK_THRESHOLD   = 0.9;
-const SUCCESS_RATE_WARN_THRESHOLD = 0.7;
-
-// Summary 행 톤 임계 (% 스케일) — 매트릭스 셀 임계와 목적이 달라 별도 상수 (CF8).
-const SUMMARY_SUCCESS_OK_PCT   = 95;
-const SUMMARY_SUCCESS_WARN_PCT = 90;
-
 // revision_count 분포 — server enum 순서 (stacked bar bottom→top).
 const REVISION_BUCKETS = [
   { key: '0',  label: '0',  colorVar: '--ok'   },
@@ -124,7 +114,7 @@ const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opac
 const STICKY_TH_STYLE = window.UI.STICKY_TH_STYLE;
 
 function ScreenAgents() {
-  const { PageHeader, Icon, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [days, setDays] = useStateAg(30);
   const [refreshTick, setRefreshTick] = useStateAg(0);
@@ -133,6 +123,7 @@ function ScreenAgents() {
   // failureState → Summary fail_count 컬럼 client-side merge (failure-patterns 흡수).
   // revisionState + reviewState → 드로어 Quality 섹션과 Instrumentation 타임라인 입력.
   const [summaryState,   setSummaryState]   = useStateAg(INITIAL_FETCH_STATE);
+  const [summaryAsOfAt,  setSummaryAsOfAt]  = useStateAg(null);
   const [latencyState,   setLatencyState]   = useStateAg(INITIAL_FETCH_STATE);
   const [successState,   setSuccessState]   = useStateAg(INITIAL_FETCH_STATE);
   const [revisionState,  setRevisionState]  = useStateAg(INITIAL_FETCH_STATE);
@@ -249,6 +240,8 @@ function ScreenAgents() {
     return () => ctrl.abort();
   }, [drawerAgent, refreshTick]);
 
+  useEffectAg(() => setSummaryAsOfAt((prevAt) => getLastReadAtAg(prevAt, summaryState)), [summaryState]);
+
   // 패널 1개라도 loading → period 토글 비활성 (abort storm 방지).
   const anyLoading = [
     summaryState, latencyState, successState, revisionState,
@@ -277,7 +270,8 @@ function ScreenAgents() {
   );
 
   // 정렬 상태를 화면 레벨로 승격 — 테이블과 드로어 Prev/Next nav 가 동일 정렬 순서를 공유 (AC3).
-  const [sortBy, setSortBy] = useStateAg('name');
+  // Riskiest agents first — the ledger opens on breakages, not the alphabet.
+  const [sortBy, setSortBy] = useStateAg('failures');
 
   // 드로어 nav 가 walk 하는 현재 정렬된 agent 행 — DetailModal 이 rows 위 idx 도출하는 패턴 미러.
   const sortedAgents = useMemoAg(
@@ -322,7 +316,6 @@ function ScreenAgents() {
         <PageHeader
           title="Agents"
           sub="Triage — who is unsafe to route to, and what is breaking"
-          shouldRenderTitle
           right={
             <>
               <div className="seg" aria-label="Time range">
@@ -338,9 +331,7 @@ function ScreenAgents() {
                   </button>
                 ))}
               </div>
-              <span className="text-faint fs-micro" title="Summary payload timestamp">
-                {readyData(summaryState)?.fetched_at ? `as of ${readyData(summaryState).fetched_at}` : 'as of —'}
-              </span>
+              <FreshnessStamp {...getFreshnessInputAg(summaryAsOfAt, summaryState)}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh agent data">
                 <Icon name="refresh" size={14}/>
                 Refresh
@@ -353,6 +344,7 @@ function ScreenAgents() {
       <AgentAlarmLane state={summaryState} onRetry={triggerRefresh}/>
 
       <AgentStatusBand
+        days={days}
         summaryState={summaryState}
         failureState={failureState}
         overageState={overageState}
@@ -496,12 +488,12 @@ function AgentAlarmLane({ state, onRetry }) {
 }
 
 function AgentAlarmRow({ alarm }) {
-  const { Badge } = window.UI;
+  const { Badge, AgentName } = window.UI;
 
   return (
     <div className="flex items-center gap-2">
       <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
-      <span className="font-mono">{alarm.agent}</span>
+      <AgentName name={alarm.agent} className="font-mono"/>
       <span className="text-faint fs-micro">
         {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
@@ -515,7 +507,7 @@ function AgentAlarmRow({ alarm }) {
 
 // Status band — the four fleet questions the first screenful answers. Each tile
 // carries its own payload state so one unloaded source never reads as a zero.
-function AgentStatusBand({ summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
+function AgentStatusBand({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
   const summary = readyData(summaryState);
   const breaker = summary?.meta?.circuit_breaker ?? null;
 
@@ -541,7 +533,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
       <AgentStatusTile
         label="Unsafe to route"
-        sub={breaker && breaker.source === 'loaded' ? `of ${breaker.registry_agents} registered agents` : 'circuit-breaker state'}
+        sub={breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now'}
         unavailableSub={CIRCUIT_BREAKER_UNREADABLE_COPY}
         status={unsafeStatus}
         value={unsafeCount}
@@ -551,7 +543,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Failed or blocked"
-        sub="agents with breakages in the window"
+        sub={`agents with breakages · last ${days}d`}
         status={failureState.status}
         value={breakingCount}
         tone={breakingCount ? 'crit' : 'ok'}
@@ -560,7 +552,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Over tool-use cap"
-        sub="runs that crossed their tool-use budget"
+        sub={`runs that crossed their tool-use budget · last ${days}d`}
         status={overageState.status}
         value={overCapCount}
         tone={overCapCount ? 'warn' : 'ok'}
@@ -569,7 +561,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
       />
       <AgentStatusTile
         label="Needs context"
-        sub="needs_context outcomes — fix the delegation prompt"
+        sub={`needs_context outcomes · last ${days}d — fix the delegation prompt`}
         status={summaryState.status}
         value={needsContextCount}
         tone={needsContextCount ? 'warn' : 'ok'}
@@ -581,7 +573,7 @@ function AgentStatusBand({ summaryState, failureState, overageState, failureByAg
 }
 
 function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, onRetry }) {
-  const { Badge } = window.UI;
+  const { Badge, KpiValue } = window.UI;
 
   return (
     <div className="card h-full flex flex-col min-h-0">
@@ -592,11 +584,7 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
           <ErrorBannerAg title={`Couldn't load ${label.toLowerCase()}`} detail={error} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
-        {status === 'ready' && (
-          <span className="fs-xl font-mono">
-            <Badge role="status" tone={tone} glyph={true}>{value}</Badge>
-          </span>
-        )}
+        {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
         <span className="text-faint fs-micro">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
       </div>
     </div>
@@ -752,19 +740,15 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
   const [isExpanded, setExpanded] = useStateAg(false);
-  const { AgentBadge, StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
+  const { StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
   const nonActionableLabel = isSyntheticAgent ? SYNTHETIC_SENTINEL_LABEL : UNKNOWN_AGENT_LABEL;
   const nonActionableTitle = isSyntheticAgent ? SYNTHETIC_SENTINEL_TITLE : UNKNOWN_AGENT_TITLE;
-  const successPct = Number(agent.success_pct) || 0;
-  const successTone = successRateTone(successPct);
-  // matrix 분모 = runs − needs_context (서버 success_pct 와 동일 semantics) → 'N.N% (x/y)' 재구성.
-  const needsContextCount = Number(agent.needs_context_count) || 0;
-  const successDenominator = Math.max(0, (Number(agent.runs) || 0) - needsContextCount);
-  const successNumerator = Math.round((successPct / 100) * successDenominator);
-  const isLowSample = successDenominator > 0 && successDenominator < LOW_N_MIN;
+  const {
+    successPct, needsContextCount, denominator: successDenominator, numerator: successNumerator, isLowSample, tone: failShareTone,
+  } = getSummaryRateAg(agent);
   const successTitle = successDenominator > 0
     ? `passed ${successNumerator} ÷ denominator ${successDenominator} (done+dwc+blocked+fail) · needs_context ${needsContextCount} excluded${isLowSample ? ` · small sample (n=${successDenominator} < ${LOW_N_MIN})` : ''}`
     : 'no outcomes besides needs_context — success rate undefined';
@@ -781,7 +765,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
   const status = mapStatusToTone(agent.status);
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
-  const trendColor = trendBarColor(agent.status, successPct);
+  const trendColor = trendBarColor(agent.status, failShareTone);
   // 장애 컬럼 — failure-patterns 의 total_breakages (fail+blocked). 미존재 = 0.
   const failCount = failure ? failure.total_breakages : 0;
   const breakageRate = failure ? failure.breakage_rate : 0;
@@ -824,22 +808,26 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, ov
       <td>
         <div className="flex items-center gap-1.5 flex-wrap">
           <StatusDot status={status}/>
-          <AgentBadge a={{ id: agent.agent_id, name: agent.agent_name }}/>
-          <span className="font-medium">{isUnknownAgent ? nonActionableLabel : agent.agent_name}</span>
+          {isUnknownAgent
+            ? <span className="font-medium">{nonActionableLabel}</span>
+            : <AgentName name={agent.agent_name} className="font-medium"/>}
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
       </td>
       <td className="num" title={successTitle}>
-        <span
-          className={successDenominator > 0 ? successTone : 'text-faint'}
-          style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : undefined}>
-          {formatPctWithDenominator(successNumerator, successDenominator)}
+        <span className="inline-flex items-center justify-end gap-1">
+          <FailShareGlyph tone={failShareTone}/>
+          <span
+            className={successDenominator > 0 ? '' : 'text-faint'}
+            style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : undefined}>
+            {formatPctWithDenominator(successNumerator, successDenominator)}
+          </span>
         </span>
         {/* 비례 막대 — % 숫자 옆 즉시-스캔 shape. 측정 불가(분모 0)면 미렌더. */}
         {successDenominator > 0 && (
           <Bar
             value={successPct / 100}
-            tone={barToneFromClass(successTone)}
+            tone={failShareTone || 'neutral'}
             ariaLabel={`success rate ${successPct.toFixed(1)}%`}
           />
         )}
@@ -957,7 +945,6 @@ const LATENCY_LAYERS = [
 ];
 
 function LatencyBars({ agents }) {
-  const { AgentBadge } = window.UI;
   // 동적 max — p99 outlier 가 50배 격차일 수 있으므로 정적 50000ms 대신 적응 normalize.
   const maxMs = agents.reduce((m, a) => Math.max(m, Number(a.p99_ms) || 0), 0) || 1;
 
@@ -970,8 +957,7 @@ function LatencyBars({ agents }) {
         return (
           <div key={a.agent_id} className="fs-body">
             <div className="flex items-center gap-2 mb-1.5">
-              <AgentBadge a={{ id: a.agent_id, name: a.agent_name }} size={18}/>
-              <span className="flex-1 truncate">{a.agent_name}</span>
+              <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
               <span className="font-mono text-faint fs-micro">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
@@ -1012,7 +998,7 @@ function AgentDetailDrawer({
   detailState, blockedState, recentState, trendByAgent, failureByAgent,
   days, onClose, onNav, onRetry, onDeleted,
 }) {
-  const { DetailSurface, AgentBadge, StatusDot } = window.UI;
+  const { DetailSurface, StatusDot, AgentName } = window.UI;
 
   // summary 행에서 선택 agent 도출 — 모든 섹션의 1차 소스. 미발견 시 id 만으로 헤더 표시.
   const agent = (readyData(summaryState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
@@ -1048,8 +1034,7 @@ function AgentDetailDrawer({
 
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
-      <AgentBadge a={{ id: drawerAgent, name: agentName }} size={20}/>
-      {agentName}
+      <AgentName name={agentName}/>
       <StatusDot status={statusTone}/>
       <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}/>
     </span>
@@ -1375,11 +1360,8 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
   const phaseLabel = agent.dual_phase ? 'dual-phase' : 'single-phase';
 
   // 단일 success-rate hero — Performance 의 분모 산식 동일 (needs_context 제외).
-  const successPct = Number(agent.success_pct) || 0;
-  const needsContextCount = Number(agent.needs_context_count) || 0;
-  const successDenominator = Math.max(0, (Number(agent.runs) || 0) - needsContextCount);
-  const successNumerator = Math.round((successPct / 100) * successDenominator);
-  const successTone = successDenominator > 0 ? successRateTone(successPct) : 'text-faint';
+  const { denominator: successDenominator, numerator: successNumerator, tone: failShareTone } = getSummaryRateAg(agent);
+  const successTone = successDenominator > 0 ? '' : 'text-faint';
 
   // 단일 health verdict — buildQualityHealthRanking entry 의 verdict + dominantDriver inline 노출 (R4).
   // R1 low-N 억제: outcome 표본 < LOW_N_MIN → entry 무시하고 기존 "No signal" neutral verdict.
@@ -1399,6 +1381,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         tone={successTone}
         hero
         value={<>
+          <FailShareGlyph tone={failShareTone}/>
           {formatPctWithDenominator(successNumerator, successDenominator)}
         </>}
       />
@@ -1511,7 +1494,6 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
     return <DrawerSectionEmpty message="No performance data for this agent in the window."/>;
   }
 
-  const successPct = Number(agent.success_pct) || 0;
   const needsContextCount = Number(agent.needs_context_count) || 0;
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
 
@@ -1538,7 +1520,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
       <div>
         <div className="fs-meta font-mono text-faint mb-2">7-day trend</div>
         {hasTrend ? (
-          <MiniBars data={trend} w={120} h={28} color={trendBarColor(agent.status, successPct)}/>
+          <MiniBars data={trend} w={120} h={28} color={trendBarColor(agent.status, getSummaryRateAg(agent).tone)}/>
         ) : (
           <DrawerSectionEmpty message="No 7-day daily breakdown."/>
         )}
@@ -2003,7 +1985,7 @@ function SuccessRateMatrixRow({ agent, cells }) {
         title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
         {isUnknownAgent
           ? <span className="text-dim italic">{UNKNOWN_AGENT_LABEL}</span>
-          : agent}
+          : <window.UI.AgentName name={agent}/>}
       </td>
       {TASK_TYPE_COLUMNS.map((c) => (
         <SuccessRateCell key={c.key} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
@@ -2016,9 +1998,8 @@ function SuccessRateLegend() {
   return (
     <div className="flex items-center gap-3 mb-3 fs-meta text-dim flex-shrink-0">
       <span className="font-mono text-faint">Legend</span>
-      <LegendSwatch colorVar="--ok"   label={`≥ ${(SUCCESS_RATE_OK_THRESHOLD * 100).toFixed(0)}%`}/>
-      <LegendSwatch colorVar="--warn" label={`≥ ${(SUCCESS_RATE_WARN_THRESHOLD * 100).toFixed(0)}%`}/>
-      <LegendSwatch colorVar="--crit" label={`< ${(SUCCESS_RATE_WARN_THRESHOLD * 100).toFixed(0)}%`}/>
+      <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
+      <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
     </div>
   );
 }
@@ -2034,9 +2015,8 @@ function LegendSwatch({ colorVar, label }) {
 
 // Tier-scaled highlight — green-bias 매트릭스에서 미달 셀 즉시 식별 (research R1).
 const CELL_HIGHLIGHT_BY_TONE = {
-  '--ok':   { bgOpacity: 0.08, borderAccent: undefined },
-  '--warn': { bgOpacity: 0.18, borderAccent: '1px solid rgb(var(--warn) / 0.35)' },
-  '--crit': { bgOpacity: 0.28, borderAccent: '1px solid rgb(var(--crit) / 0.55)' },
+  '--faint': { bgOpacity: 0.06, borderAccent: undefined },
+  '--crit':  { bgOpacity: 0.28, borderAccent: '1px solid rgb(var(--crit) / 0.55)' },
 };
 
 function SuccessRateCell({ agent, taskType, cell }) {
@@ -2062,16 +2042,18 @@ function SuccessRateCell({ agent, taskType, cell }) {
     );
   }
 
-  const tone = cellTone(cell.pooledRate);
-  const { bgOpacity, borderAccent } = CELL_HIGHLIGHT_BY_TONE[tone.colorVar];
-  const bg = `rgb(var(${tone.colorVar}) / ${bgOpacity})`;
-  const isCrit = tone.colorVar === '--crit';
   const isLowSample = cell.rateDenominator < window.UI.LOW_N_MIN;
+  // rateDenominator = success + failure with reconstructed rows removed — never totalCount.
+  const failShareTone = isLowSample ? null : getFailShareTone(cell.failureCount, cell.rateDenominator);
+  const isCrit = failShareTone === 'crit';
+  const colorVar = isCrit ? '--crit' : '--faint';
+  const { bgOpacity, borderAccent } = CELL_HIGHLIGHT_BY_TONE[colorVar];
+  const bg = `rgb(var(${colorVar}) / ${bgOpacity})`;
   const ariaLabel =
     `${agent} ${taskType} — pooled success rate ${(cell.pooledRate * 100).toFixed(0)}% (${cell.successCount}/${cell.rateDenominator}), ` +
     `${cell.totalCount} total` +
     (isLowSample ? ' (small sample)' : '') +
-    (isCrit ? ' (below threshold — check this pair)' : '');
+    (isCrit ? ` (${getFailShareLabel()} — check this pair)` : '');
 
   return (
     <td
@@ -2080,10 +2062,11 @@ function SuccessRateCell({ agent, taskType, cell }) {
       title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
       <div className="flex flex-col items-center gap-0.5">
-        <SuccessRateSparkline points={cell.points} colorVar={tone.colorVar}/>
+        <SuccessRateSparkline points={cell.points} colorVar={colorVar}/>
         <div className="flex items-center gap-1 fs-micro">
+          <FailShareGlyph tone={failShareTone}/>
           <span
-            style={{ color: `rgb(var(${tone.colorVar}))`, ...(isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : null) }}
+            style={isLowSample ? { fontStyle: 'italic', opacity: 0.75 } : undefined}
             className="font-semibold">
             {(cell.pooledRate * 100).toFixed(0)}%
           </span>
@@ -2178,11 +2161,15 @@ function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) 
     );
   }
 
-  return <TopNFailingAgentsTable pairs={pairs} failureByAgent={failureByAgent}/>;
+  return <TopNFailingAgentsTable pairs={pairs} failureByAgent={failureByAgent} days={days}/>;
 }
 
 // 서버 last_breakage_at(MAX(record_ts), blocked 포함) 우선 · 미존재 시 client event_date 도출 fallback.
 // 서버값은 절대 타임스탬프 → 가시 텍스트는 상대시간(tz-무관) · 툴팁 절대값은 KST 고정, client 도출값은 YYYY-MM-DD 문자열 그대로.
+function getPairOutcomesHref(pair, days) {
+  return `#outcomes?agent=${encodeURIComponent(pair.agent)}&task_type=${encodeURIComponent(pair.task_type)}&days=${days}`;
+}
+
 function resolveLastBreakage(pair, failureByAgent) {
   const serverTs = failureByAgent?.get(pair.agent)?.last_breakage_at;
   if (serverTs) {
@@ -2203,7 +2190,7 @@ const TOPN_FAILING_COLUMNS = [
   { key: 'last',    label: 'Last failure', align: 'right', width: 'w-24',    title: 'Most recent failure per agent — failure-patterns last_breakage_at (fail+blocked) preferred · falls back to success-rate event_date (fail only)' },
 ];
 
-function TopNFailingAgentsTable({ pairs, failureByAgent }) {
+function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
       <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -2226,8 +2213,8 @@ function TopNFailingAgentsTable({ pairs, failureByAgent }) {
             const breakage = resolveLastBreakage(p, failureByAgent);
             return (
               <tr key={`${p.agent}|${p.task_type}`}>
-                <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={p.agent}>
-                  {p.agent}
+                <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
+                  <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
                 </td>
                 <td className="text-left text-dim px-2 py-1.5 border-b border-line">
                   {p.task_type}
@@ -2538,7 +2525,6 @@ function LifecycleStatsTable({ rows, onSelect }) {
 }
 
 function LifecycleStatsRow({ row, onSelect }) {
-  const { AgentBadge } = window.UI;
   const startCount = Number(row.start_count) || 0;
   const completedCount = Number(row.completed_count) || 0;
   const orphanCount = Math.max(0, startCount - completedCount);
@@ -2564,7 +2550,6 @@ function LifecycleStatsRow({ row, onSelect }) {
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
-          <AgentBadge a={{ id: row.agent_type, name: row.agent_type }} size={16}/>
           <span className="truncate">{row.agent_type}</span>
         </span>
       </td>
@@ -2709,6 +2694,15 @@ function readyData(state) {
   return state.status === 'ready' ? state.data : null;
 }
 
+// a refresh resets the summary to loading → keep the last successful read so the stamp survives it
+function getLastReadAtAg(prevAt, state) {
+  return readyData(state)?.fetched_at ?? prevAt;
+}
+
+function getFreshnessInputAg(asOfAt, state) {
+  return { at: asOfAt, loading: state.status === 'loading', failed: state.status === 'error' };
+}
+
 // agent × task_type 매트릭스 build — flat row → { agents, cells } projection.
 // CellAgg = { points: [{date, rate|null}], pooledRate, rateDenominator, totalCount, successCount, failureCount }.
 // pooledRate = 기간 합산 성공/(성공+실패) — 일별 비율 평균(mean-of-daily-rates)은 표본 가중 왜곡으로 금지 (A5).
@@ -2767,12 +2761,6 @@ function buildSuccessRateMatrix(rows) {
     .map(([agent]) => agent);
 
   return { agents, cells: Object.fromEntries(cellMap) };
-}
-
-function cellTone(pooledRate) {
-  if (pooledRate >= SUCCESS_RATE_OK_THRESHOLD)   return { colorVar: '--ok'   };
-  if (pooledRate >= SUCCESS_RATE_WARN_THRESHOLD) return { colorVar: '--warn' };
-  return { colorVar: '--crit' };
 }
 
 // flat row → per-pair stats · threshold 미달만 반환 · pooledRate ASC sort · limit cap.
@@ -3051,11 +3039,39 @@ function mapStatusToTone(status) {
   }
 }
 
-// 성공률 % → 텍스트 톤 클래스 (≥95% ok / ≥90% 무톤 / 미만 warn) — 운영 건전성 목적 (CF8).
-function successRateTone(pct) {
-  if (pct >= SUMMARY_SUCCESS_OK_PCT)   return 'text-ok';
-  if (pct >= SUMMARY_SUCCESS_WARN_PCT) return '';
-  return 'text-warn';
+// One Agents rate scale — the shared breakage crit step over a surface's own failed count; steady state stays neutral.
+// Low-N guard stays at each call site.
+function getFailShareTone(failedCount, denominator) {
+  const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  return outcomeShareTone(failedCount, denominator, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit');
+}
+
+// Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
+function getSummaryRateAg(agent) {
+  const successPct = Number(agent.success_pct) || 0;
+  const needsContextCount = Number(agent.needs_context_count) || 0;
+  const denominator = Math.max(0, (Number(agent.runs) || 0) - needsContextCount);
+  const numerator = Math.round((successPct / 100) * denominator);
+  const isLowSample = denominator > 0 && denominator < window.UI.LOW_N_MIN;
+  const tone = denominator === 0 || isLowSample ? null : getFailShareTone(denominator - numerator, denominator);
+  return { successPct, needsContextCount, denominator, numerator, isLowSample, tone };
+}
+
+function getFailShareLabel() {
+  return `failed or blocked ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
+}
+
+// Tone rides a glyph beside the success numeral, never the numeral itself.
+function FailShareGlyph({ tone }) {
+  if (tone !== 'crit') return null;
+  const { Icon, TONE_ICON } = window.UI;
+
+  return (
+    <span className="text-crit inline-flex items-center" title={getFailShareLabel()}>
+      <span aria-hidden="true"><Icon name={TONE_ICON.crit} size={12}/></span>
+      <span className="sr-only">high failure share</span>
+    </span>
+  );
 }
 
 // P95 응답시간(초) → 톤 (null=faint / >20s crit / >10s warn / 무톤).
@@ -3151,11 +3167,11 @@ const formatDurationSecAg = (sec) => window.UI.formatDuration(sec);
 // latency_ms → 인간화 (<1s "NNNms" · ≥60s "Mm Ss") — 공용 formatDuration('ms') 위임, p50/p95/p99 표시.
 const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
 
-// MiniBars 추세 색상 — error / 성공률 미달 / OK 의 3-단 (rgb literal — Tailwind 외 SVG fill).
+// MiniBars 추세 색상 — error → crit · 그 외 fail-share tone · 미판정 → neutral.
 // 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
 //   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
-function trendBarColor(status, successPct) {
-  const tone = status === 'error' ? 'crit' : successPct < 90 ? 'warn' : 'ok';
+function trendBarColor(status, failShareTone) {
+  const tone = status === 'error' ? 'crit' : failShareTone || 'neutral';
   return window.UI.toneVarColor(tone);
 }
 

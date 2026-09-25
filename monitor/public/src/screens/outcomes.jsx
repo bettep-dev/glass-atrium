@@ -286,7 +286,7 @@ function AttributionBudgetKillListO({ rows }) {
       <div className="flex flex-col gap-0.5">
         {rows.map((r) => (
           <div key={r.agent} className="flex items-center justify-between fs-micro font-mono">
-            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}>{r.agent}</span>
+            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}><window.UI.AgentName name={r.agent}/></span>
             <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
           </div>
         ))}
@@ -395,7 +395,7 @@ const SCREEN_OUTCOMES_CSS = `
 `;
 
 function ScreenOutcomes({ onNav }) {
-  const { PageHeader, Icon, Pill, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   // Filter state — URL hash 초기화 → 북마크 / 직접링크 복원.
   const [filter, setFilter] = useStateO(() => readFilterFromHashO());
@@ -678,7 +678,7 @@ function ScreenOutcomes({ onNav }) {
           sub="Agent task outcomes"
           right={
             <>
-              <AsOfStampO at={asOfAt}/>
+              <FreshnessStamp {...getFreshnessInputO(asOfAt, [searchState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState])}/>
               <WindowSeg value={filter.days} onChange={setWindowDays}/>
               <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh task results">
                 <Icon name="refresh" size={14}/>
@@ -802,18 +802,13 @@ function SilentChannelRowO({ channels }) {
   );
 }
 
-// 한 번도 적재되지 않은 값은 em-dash — 0 으로 읽히면 안 된다 (39578 §D).
-function AsOfStampO({ at }) {
-  const { tzShortLabel, formatKstTime, formatKstFull, getDisplayTimezone } = window.UI;
-  const zone = tzShortLabel(getDisplayTimezone());
-
-  return (
-    <span
-      className="fs-micro font-mono text-faint"
-      title={at ? `Last successful load ${formatKstFull(at)} (${zone})` : 'Nothing has loaded yet'}>
-      As of {at ? `${formatKstTime(at)} ${zone}` : '—'}
-    </span>
-  );
+// stamping panels only → any failed read marks the kept stamp stale, so a partial refresh never claims full freshness
+function getFreshnessInputO(asOfAt, stampStates) {
+  return {
+    at: asOfAt,
+    loading: stampStates.some((st) => st.status === 'loading'),
+    failed: stampStates.some((st) => st.status === 'error'),
+  };
 }
 
 function WindowSeg({ value, onChange }) {
@@ -870,6 +865,9 @@ function loopEventsSummaryO(loopEventsState) {
   return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
 }
 
+// Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
+const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
 // 타일 tone/값 산출 — 임계 판정은 공유 SoT(window.UI.outcomeShareTone) 뿐이고 여기서 두 번째 규칙을 만들지 않는다.
@@ -903,6 +901,7 @@ function buildStatusBandTilesO(data, attentionCount) {
         ? 'neutral'
         : (outcomeShareTone(attentionCount, attentionTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
       hint: 'Records in the window, quarantined included, flagged for review, failed, blocked, or carrying an unclosed caveat',
+      jumpTo: LEDGER_NEEDS_YOU_ID,
     },
     {
       key: 'broken',
@@ -916,7 +915,8 @@ function buildStatusBandTilesO(data, attentionCount) {
     },
     {
       key: 'recorded',
-      label: 'Recorded properly',
+      // 'Recorded properly' = attribution healthy 모집단 전용 라벨 — writer 발신 전체(untraceable 포함)는 다른 이름.
+      label: 'Self-reported',
       count: writerTotal,
       population: total,
       // 누락 보고는 여기 글리프가 유일한 등급 채널 — 레인 행으로 올리지 않는다.
@@ -984,22 +984,38 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
 }
 
 function BandTileO({ tile, windowLabel }) {
-  const { TONE_ICON, formatPctWithDenominator } = window.UI;
+  const { KpiValue, TONE_ICON, formatPctWithDenominator } = window.UI;
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
+  const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const Tag = canJump ? 'button' : 'div';
 
   return (
-    <div className="kpi cursor-default" aria-label={`${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}`} title={tile.hint}>
+    <Tag
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
+      className={canJump ? 'kpi' : 'kpi cursor-default'}
+      aria-label={ariaLabel}
+      title={tile.hint}>
       <div className="kpi-label">
         <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
           <GlyphO name={TONE_ICON[tile.tone]} size={12}/>
         </span>
         {tile.label}
       </div>
-      <div className="kpi-value">{loaded ? formatIntO(tile.count) : '—'}</div>
+      <KpiValue>{loaded ? formatIntO(tile.count) : '—'}</KpiValue>
       <div className="fs-micro font-mono text-faint">{share} · {windowLabel}</div>
-    </div>
+    </Tag>
   );
+}
+
+// 헤딩으로 즉시 스크롤(모션 없음 → reduced-motion 무관) 후 focus — 스크린리더가 도착 지점을 읽는다.
+function focusLedgerSectionO(id, doc = document) {
+  const el = doc.getElementById(id);
+  if (!el) return false;
+  el.scrollIntoView({ block: 'start' });
+  el.focus({ preventScroll: true });
+  return true;
 }
 
 // registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
@@ -1096,7 +1112,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
-              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}>{row.agent}</td>
+              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
@@ -1855,7 +1871,7 @@ function LoopEventsBody({ state, onRetry }) {
                     {window.UI.formatKstDateTime(e.event_ts)}
                   </td>
                   <td className="text-left text-dim px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={e.agent || ''}>
-                    {e.agent || '—'}
+                    <window.UI.AgentName name={e.agent}/>
                   </td>
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
                     <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
@@ -2212,7 +2228,7 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou) {
       + (windowNeedsYou.total > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '')
     : `Needs you · ${formatIntO(needsYouRows.length)} on this page`;
   return [
-    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows },
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, anchorId: LEDGER_NEEDS_YOU_ID },
     { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine },
   ];
 }
@@ -2259,6 +2275,8 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou }
               <React.Fragment key={section.key}>
                 <tr>
                   <th
+                    id={section.anchorId}
+                    tabIndex={section.anchorId ? -1 : undefined}
                     colSpan={6}
                     scope="colgroup"
                     className="text-left fs-micro font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
@@ -2388,12 +2406,12 @@ function ResultTableRow({ row, onRowClick, closure }) {
           onRowClick(row);
         }
       }}
-      aria-label={`${row.agent} ${row.task_type} ${row.result} check ${grader.label} ${row.summary || ''}`}>
+      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} check ${grader.label} ${row.summary || ''}`}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
-        {row.agent}
+        <window.UI.AgentName name={row.agent}/>
       </td>
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>

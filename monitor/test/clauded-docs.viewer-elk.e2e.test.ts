@@ -419,7 +419,7 @@ async function measureDoc(doc: DocFixture): Promise<DocMeasurement> {
 	// 전제 먼저 — logLevel 이 3 을 넘으면 아래 "경고 0건" 이 공허해진다.
 	await assertFallbackWarningVisible(page);
 
-	await page.click(`tr.doc-row[aria-label="Open ${doc.title}"]`, { timeout: 30_000 });
+	await page.click(`tr.doc-row[aria-label="${doc.title}"]`, { timeout: 30_000 });
 	for (const diagram of doc.diagrams) {
 		await page.waitForSelector(`.doc-body-isolation [data-probe="${diagram.probe}"] svg`, {
 			timeout: 30_000,

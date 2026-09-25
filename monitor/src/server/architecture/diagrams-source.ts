@@ -582,7 +582,7 @@ export const CANONICAL_MAP: CanonicalMap = {
 
     classDef focal fill:#383c43,stroke:#60a5fa,stroke-width:2px,color:#fafaf9
     classDef external fill:#332e2a,stroke:#544c47,color:#a09a96
-    classDef security fill:#332e2a,stroke:#fbbf2480,stroke-width:2px,stroke-dasharray:4 4,color:#fafaf9
+    classDef security fill:#332e2a,stroke:#a78bfa80,stroke-width:2px,stroke-dasharray:4 4,color:#fafaf9
     class main_session focal
     class user external
     class hook_pipeline security`,

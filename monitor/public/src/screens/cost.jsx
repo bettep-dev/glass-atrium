@@ -57,12 +57,12 @@ const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
 function ScreenCost({ onNav }) {
-  const { PageHeader, Icon, TypeScaleStyle } = window.UI;
+  const { PageHeader, Icon, TypeScaleStyle, FreshnessStamp } = window.UI;
 
   const [days, setDays] = useStateC(30);
   const [refreshTick, setRefreshTick] = useStateC(0);
-  // "As of" = client receive time of the wave's LATEST successful fetch → one stamp per screen.
-  const [asOfMs, setAsOfMs] = useStateC(null);
+  // "As of" = client receive time of the LATEST successful fetch → one stamp per screen, kept across waves.
+  const [asOfAt, setAsOfAt] = useStateC(null);
 
   // 패널별 fetch state 분리 — 한 fetch 실패가 화면 전체를 blank 시키지 않도록.
   const [kpiState,      setKpiState]      = useStateC({ status: 'loading', data: null, error: null }); // KPI band (고정 윈도우 — days 무관)
@@ -98,9 +98,8 @@ function ScreenCost({ onNav }) {
     setSessionState({ status: 'loading', data: null, error: null });
     setErrorState({ status: 'loading', data: null, error: null });
     setTurnState({ status: 'loading', data: null, error: null });
-    setAsOfMs(null);
 
-    const markReceived = () => setAsOfMs(Date.now());
+    const markReceived = () => setAsOfAt(new Date().toISOString());
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
     // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
@@ -117,8 +116,9 @@ function ScreenCost({ onNav }) {
 
   // 패널 로딩 중 period 토글 비활성화 — 빠른 연타 시 abort 스톰 차단.
   // Every payload counts: a gate reading a subset lets the toggle fire while a panel is still in flight.
-  const anyLoading = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState]
-    .some((st) => st.status === 'loading');
+  const panelStates = [kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState];
+  const freshnessInput = getFreshnessInputC(asOfAt, panelStates);
+  const anyLoading = freshnessInput.loading;
 
   return (
     <div className="cost-screen flex flex-col">
@@ -166,7 +166,7 @@ function ScreenCost({ onNav }) {
                 <Icon name="refresh" size={14}/>
                 Refresh
               </button>
-              <AsOfStampC ms={asOfMs} loading={anyLoading}/>
+              <FreshnessStamp {...freshnessInput}/>
             </>
           }
         />
@@ -214,21 +214,13 @@ function ScreenCost({ onNav }) {
   );
 }
 
-/**
- * One stamp for the whole screen, withheld while a wave is in flight rather than shown stale.
- * A freshness claim must never outlive its measurement.
- */
-function AsOfStampC({ ms, loading }) {
-  const text = getAsOfText(ms, loading);
-
-  return <span className="fs-meta text-faint font-mono whitespace-nowrap">{text}</span>;
-}
-
-// Settled wave with no stamp = every fetch failed → says so rather than claiming a refresh in flight.
-function getAsOfText(ms, loading) {
-  if (loading) return 'refreshing…';
-  if (ms === null) return 'no successful fetch';
-  return `as of ${new Date(ms).toLocaleTimeString()}`;
+// any failed panel → the kept stamp reads stale, so a partial wave never claims full freshness
+function getFreshnessInputC(asOfAt, panelStates) {
+  return {
+    at: asOfAt,
+    loading: panelStates.some((st) => st.status === 'loading'),
+    failed: panelStates.some((st) => st.status === 'error'),
+  };
 }
 
 /**
@@ -530,6 +522,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
 function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+  const { KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
@@ -537,9 +530,9 @@ function CostTileC({ label, status, value, hint, unavailableNote, children }) {
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       <div className="kpi-label">{label}</div>
       {isReady && hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
-      <div className="kpi-value">
+      <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
-      </div>
+      </KpiValue>
       {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
     </div>
   );
@@ -600,7 +593,8 @@ function CostTrendCard({ state, days, onRetry }) {
         title="Cost over time"
         right={
           <button
-            className="btn ghost sm"
+            type="button"
+            className="btn sm"
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
@@ -671,7 +665,7 @@ function CostTrendChart({ rows, bandOn }) {
         <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
         {bandOn && (
           <Area
-            type="monotone"
+            type="linear"
             dataKey="upperBand"
             stroke="none"
             fill="rgb(var(--faint) / 0.18)"
@@ -681,7 +675,7 @@ function CostTrendChart({ rows, bandOn }) {
         )}
         {bandOn && (
           <Area
-            type="monotone"
+            type="linear"
             dataKey="lowerBand"
             stroke="none"
             fill="rgb(var(--elev))"
@@ -691,7 +685,7 @@ function CostTrendChart({ rows, bandOn }) {
         )}
         {bandOn && (
           <Line
-            type="monotone"
+            type="linear"
             dataKey="rollingMean"
             stroke="rgb(var(--dim))"
             strokeDasharray="4 4"
@@ -702,7 +696,7 @@ function CostTrendChart({ rows, bandOn }) {
           />
         )}
         <Line
-          type="monotone"
+          type="linear"
           dataKey="actual"
           stroke="rgb(var(--accent))"
           strokeWidth={2}
@@ -843,7 +837,7 @@ function TokenStackedArea({ points }) {
         {TOKEN_CATEGORIES.map((cat) => (
           <Area
             key={cat.key}
-            type="monotone"
+            type="linear"
             dataKey={cat.key}
             stackId="tokens"
             stroke={`rgb(var(${cat.colorVar}))`}
@@ -1013,8 +1007,8 @@ function ModelCostCard({ state, days, onRetry, onNav }) {
                 <Pill>{fallbackCount} est. rate</Pill>
               </span>
             )}
-            <button className="btn ghost sm" onClick={() => onNav('model-config')}>
-              Models &amp; budgets
+            <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
+              Models &amp; budgets ›
             </button>
           </div>
         }
@@ -1290,7 +1284,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         />
         <Tooltip content={<CacheHitTooltipC/>}/>
         <Line
-          type="monotone"
+          type="linear"
           dataKey="rate_pct"
           stroke="rgb(var(--info))"
           strokeWidth={2}
@@ -1364,6 +1358,7 @@ function SessionDistributionCard({ state, days, onRetry }) {
 
 function SessionDistributionBody({ state, days, onRetry }) {
   const [histogramOpen, setHistogramOpen] = useStateC(false);
+  const [openSession, setOpenSession] = useStateC(null);
 
   // Hooks run before any early return — an unready payload reduces to an empty list.
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1383,33 +1378,57 @@ function SessionDistributionBody({ state, days, onRetry }) {
   return (
     <>
       <div className="space-y-1.5">
-        {rollup.top.map((s) => <SessionRowC key={s.session_id} session={s}/>)}
+        <div className="flex items-center gap-3 fs-meta text-faint pb-1 border-b border-line" aria-hidden="true">
+          <span className="flex-1">Session · model</span>
+          <span>Cost</span>
+          <span className="w-20 text-right">Tokens</span>
+          <span className="w-32 text-right">Last seen</span>
+        </div>
+        {rollup.top.map((s) => (
+          <SessionRowC key={s.session_id} session={s} onOpen={() => setOpenSession(s)}/>
+        ))}
         {rollup.other && (
           <button
             type="button"
             className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+            aria-label={`Other ${rollup.other.count} of ${rollup.total} sessions, ${formatUsdC(rollup.other.cost_usd)} — open the cost distribution`}
             onClick={() => setHistogramOpen(true)}>
             <span className="text-dim flex-1">
               Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
             </span>
             <span className="text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</span>
-            <span className="text-faint">distribution</span>
+            <span className="btn sm" aria-hidden="true">Distribution ›</span>
           </button>
         )}
       </div>
       {histogramOpen && (
         <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
+      {openSession && (
+        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)}/>
+      )}
     </>
   );
 }
 
-function SessionRowC({ session }) {
+function getSessionModelLabel(model) {
+  return !model || isUnattributedModel(model) ? UNATTRIBUTED_MODEL_LABEL : model;
+}
+
+function SessionRowC({ session, onOpen }) {
   const { formatRelativeTime, formatKstFull } = window.UI;
+  const modelLabel = getSessionModelLabel(session.top_model);
 
   return (
-    <div className="flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line">
-      <span className="text-dim truncate flex-1" title={session.session_id}>{session.session_id}</span>
+    <button
+      type="button"
+      className="w-full flex items-center gap-3 fs-meta font-mono py-1.5 border-b border-line text-left"
+      aria-label={`Session ${session.session_id}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
+      onClick={onOpen}>
+      <span className="flex-1 min-w-0 flex items-baseline gap-2">
+        <span className="text-dim truncate" title={session.session_id}>{session.session_id}</span>
+        <span className="text-faint truncate shrink-0 max-w-[45%]">{modelLabel}</span>
+      </span>
       <span className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</span>
       <span className="text-faint w-20 text-right">{formatTokenCompactC(session.total_tokens)}</span>
       {/* last_event_at is a real UTC ISO instant — relative label, absolute day-bucket time on hover. */}
@@ -1418,7 +1437,32 @@ function SessionRowC({ session }) {
         title={session.last_event_at ? formatKstFull(session.last_event_at) : undefined}>
         {session.last_event_at ? formatRelativeTime(session.last_event_at) : '—'}
       </span>
-    </div>
+    </button>
+  );
+}
+
+function SessionDetailDrawerC({ session, onClose }) {
+  const { DetailSurface, formatKstFull } = window.UI;
+  const facts = [
+    ['Session', session.session_id],
+    ['Model', getSessionModelLabel(session.top_model)],
+    ['Cost', formatUsdC(session.total_cost_usd)],
+    ['Tokens', formatTokenCompactC(session.total_tokens)],
+    ['Events', formatIntC(session.event_count)],
+    ['Last seen', session.last_event_at ? formatKstFull(session.last_event_at) : '—'],
+  ];
+
+  return (
+    <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 fs-meta">
+        {facts.map(([term, value]) => (
+          <React.Fragment key={term}>
+            <dt className="text-dim">{term}</dt>
+            <dd className="font-mono text-ink break-all">{value}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </DetailSurface>
   );
 }
 
@@ -1431,7 +1475,27 @@ function SessionHistogramDrawerC({ bins, total, onClose }) {
       <div style={{ width: '100%', height: 260 }}>
         <SessionDistributionChart bins={bins}/>
       </div>
+      <SessionHistogramLegendC/>
     </DetailSurface>
+  );
+}
+
+function SessionHistogramLegendC() {
+  const outlierFloor = SESSION_COST_BINS.find((b) => b.isOutlier)?.min;
+  const items = [
+    { key: 'typical', color: 'rgb(var(--accent) / 0.85)', label: 'Sessions per cost band' },
+    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', label: `Outlier bands — $${outlierFloor} or more per session` },
+  ];
+
+  return (
+    <ul className="flex flex-wrap gap-4 mt-3 fs-meta text-dim" aria-label="Histogram legend">
+      {items.map((item) => (
+        <li key={item.key} className="flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
+          {item.label}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1602,7 +1666,7 @@ function ParseErrorChart({ rows }) {
         </Bar>
         <Line
           yAxisId="ratio"
-          type="monotone"
+          type="linear"
           dataKey="error_ratio_pct"
           stroke="rgb(var(--warn))"
           strokeWidth={1.5}
@@ -1711,6 +1775,7 @@ function TurnStatsBody({ state, days, onRetry }) {
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
+  const sessionPopulation = Number(state.data?.stop_reason_session_count) || 0;
   const turns = state.data?.turns ?? null;
   if (stopReasons.length === 0) {
     return <EmptyStateC message={`No turn events in the last ${days} days.`}/>;
@@ -1724,7 +1789,11 @@ function TurnStatsBody({ state, days, onRetry }) {
     <>
       {/* turns 집계 — 평균/최대/총 턴 (세션당 턴 수). */}
       {turns && <TurnAggregateRow turns={turns}/>}
-      <TurnStopReasonTable rows={stopReasons} maxEvents={maxEvents} totalEvents={totalEvents}/>
+      <TurnStopReasonTable
+        rows={stopReasons}
+        maxEvents={maxEvents}
+        totalEvents={totalEvents}
+        sessionPopulation={sessionPopulation}/>
     </>
   );
 }
@@ -1764,15 +1833,22 @@ function TurnAggregateRow({ turns }) {
 }
 
 // stop_reason 분포 — 4컬럼 테이블 (분류 · 이벤트수+인라인바 · 세션수 · 비중). ≤5컬럼.
-function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
+function getStopReasonSessionShare(sessionCount, population) {
+  return population > 0 ? sessionCount / population : null;
+}
+
+function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
   return (
     <table className="tbl cost-tbl">
+      <caption className="fs-meta text-dim text-left pb-2">
+        {`${formatIntC(sessionPopulation)} sessions with a recorded turn — a session counts under every stop reason it hit, so Sessions does not sum to that total.`}
+      </caption>
       <thead>
         <tr>
           <th>stop_reason</th>
           <th className="num">Events</th>
           <th className="num">Sessions</th>
-          <th className="num">Share</th>
+          <th className="num">Event share</th>
         </tr>
       </thead>
       <tbody>
@@ -1781,6 +1857,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
           const events = Number(r.event_count) || 0;
           const sessions = Number(r.session_count) || 0;
           const pct = totalEvents > 0 ? (events / totalEvents) : 0;
+          const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
           const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
           return (
             <tr key={r.stop_reason}>
@@ -1806,7 +1883,12 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
                   <span className="font-mono">{formatIntC(events)}</span>
                 </div>
               </td>
-              <td className="num">{formatIntC(sessions)}</td>
+              <td className="num">
+                {formatIntC(sessions)}
+                {sessionShare !== null && (
+                  <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+                )}
+              </td>
               <td className="num text-dim">{(pct * 100).toFixed(1)}%</td>
             </tr>
           );

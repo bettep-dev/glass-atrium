@@ -2481,12 +2481,12 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '표식 있음' 으로 균일하게 통과함(실측 — 종전의
 	// stroke 규칙은 classDef 인라인 !important 에 막혀 네 노드에서 안 걸렸는데, 그 자리를 UA 링이
 	// 덮고 있었음). 그래서 토큰에서 기대색을 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 갈라짐.
-	const accent = await getTokenColour("--accent");
-	const wrongColour = focused.filter((n) => n.ringStroke !== accent);
+	const focusRing = await getTokenColour("--focus-ring");
+	const wrongColour = focused.filter((n) => n.ringStroke !== focusRing);
 	assert.deepEqual(
 		wrongColour.map((n) => `${n.id}: ${n.ringStroke}`),
 		[],
-		`every node must mark focus in the accent the screen declares (${accent}) — another colour is the browser's own ring standing in for a rule that did not apply`,
+		`every node must mark focus in the focus-ring colour the screen declares (${focusRing}) — another colour is the browser's own ring standing in for a rule that did not apply`,
 	);
 
 	// 상태 링과 같은 반경 가족이어야 함 — 한 화면에서 굴린 표식과 각진 표식이 섞이면 둘이 다른 뜻으로 읽힘.
@@ -2522,7 +2522,7 @@ test("ADR-20 every node can carry a state ring, whatever classDef or shape it ha
 	);
 	assert.notEqual(
 		crit,
-		await getTokenColour("--accent"),
+		await getTokenColour("--focus-ring"),
 		"the verdict and the focus position must not read as the same colour",
 	);
 

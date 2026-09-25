@@ -12,7 +12,9 @@ const {
 	useMemo: useMI,
 } = React;
 
-const IMPROVEMENT_LIST_URL = "/api/improvement?limit=50";
+// terminal board lanes read this recency slice → their counts carry it as their window
+const BOARD_RECENT_LIMIT = 50;
+const IMPROVEMENT_LIST_URL = `/api/improvement?limit=${BOARD_RECENT_LIMIT}`;
 const IMPROVEMENT_STATS_URL = "/api/improvement/stats";
 // orphan 학습 endpoint surface (canonical learning-aggregator) — 집계 학습 신호만.
 //   learning-log: learning-aggregator 패턴 원천 (화면 CTM/EPM 재유도의 실제 source)
@@ -49,7 +51,7 @@ const TOAST_DURATION_MS = 3200;
 //   Awaiting approval (safety pending/snoozed) · Applied (terminal) · Rejected (terminal).
 // snoozed 는 non-terminal + actionable → safety actionable 컬럼에 라우팅
 // (terminal 컬럼 오염 방지) · 카드에 snoozed 마커.
-// variant — 레인별 카드 밀도 (T1). full = ProposalCardI 전체 카드 · compact =
+// variant — 레인별 카드 밀도 (T1). full = AppliedHistoryRowI 이력 행 · compact =
 // CompactProposalCardI 단일행. applied/safety=full, rejected=compact.
 // rejected.tone='crit' 유지 — 심볼-전용 착색용(✕·count·스파크에만, T7 색상 예약).
 const KANBAN_COLUMNS = [
@@ -148,7 +150,7 @@ const SRC_LABEL_UNIFIED = { t: "ok", s: "✓", x: "Unified endpoint" };
 const SRC_LABEL_LOADING = { t: "info", s: "ℹ", x: "Loading…" };
 
 function ScreenImprovement({ onNav }) {
-	const { Icon, PageHeader, Pill, TypeScaleStyle } = window.UI;
+	const { Icon, PageHeader, Pill, TypeScaleStyle, FreshnessStamp } = window.UI;
 
 	const [listState, setListState] = useSI({
 		status: "loading",
@@ -515,7 +517,6 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
-        .i-row-card:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
         .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
@@ -524,7 +525,6 @@ function ScreenImprovement({ onNav }) {
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
         /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
         .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
-        .i-act-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:1px; }
         /* RC4 in-flight — opacity 둔감화 + pointer-events:none 가 실제 중복 클릭 게이트. */
         .i-act-btn:disabled { opacity:.55; cursor:progress; pointer-events:none; }
         /* 스피너 — 텍스트 글리프(↻)에서 인라인 <svg>(Icon 'refresh')로 교체됨. svg 루트는
@@ -574,16 +574,15 @@ function ScreenImprovement({ onNav }) {
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
           color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); cursor:pointer; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
-        .i-more-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
       `}</style>
 
 			<div className="flex-shrink-0">
 				<PageHeader
 					sub="Self-improvement loop"
-					title="Learning & self-improvement"
+					title="Learning"
 					right={
 						<div className="flex items-center gap-2">
-							<AsOfStampI at={asOf} />
+							<FreshnessStamp {...getFreshnessInputI(asOf, listState)} />
 							<ViewToggleI view={view} onChange={setView} />
 							<button
 								className="btn ghost sm"
@@ -839,16 +838,13 @@ function formatCycleStampI(iso) {
 	});
 }
 
-// as-of 스탬프 — payload 가 착지한 순간. 값이 없으면 시각을 지어내지 않는다.
-function AsOfStampI({ at }) {
-	return (
-		<span
-			className="fs-micro font-mono text-faint"
-			title="When the pattern list last landed — every other card reports its own state"
-		>
-			as of {at ? formatCycleStampI(at) : "—"}
-		</span>
-	);
+// stamp tracks the pattern list only → every other card reports its own state
+function getFreshnessInputI(asOf, listState) {
+	return {
+		at: asOf,
+		loading: listState.status === "loading",
+		failed: listState.status === "error",
+	};
 }
 
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
@@ -1155,7 +1151,10 @@ function KanbanCardI({
 			style={{ maxHeight: "70vh", overflow: "hidden" }}
 		>
 			<div className="flex-shrink-0">
-				<CardHead title="Suggestion board" />
+				<CardHead
+					title="Suggestion board"
+					sub={`Applied and rejected: latest ${BOARD_RECENT_LIMIT} suggestions · awaiting: every open one`}
+				/>
 			</div>
 			{isError ? (
 				<div className="p-4">
@@ -1207,8 +1206,6 @@ function KanbanCardI({
 									loopAggregate={loopAggregate}
 									rejectBuckets={rejectBuckets}
 									onRowClick={onRowClick}
-									onAction={onAction}
-									pendingActionId={pendingActionId}
 								/>
 							),
 						)}
@@ -1275,7 +1272,7 @@ function AwaitingStripI() {
 	);
 }
 
-// 종결 레인 — variant 라우팅(T4): full → ProposalCardI · compact → CompactProposalCardI(폴백 full).
+// 종결 레인 — variant 라우팅(T4): full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
 // 헤더는 레인별 분기(T6 APPLIED hero · Rejected 중립 헤더 + reject 스파크) · Bar 부피막대 폐기(DR-3).
 function KanbanColumnI({
 	column,
@@ -1283,8 +1280,6 @@ function KanbanColumnI({
 	loopAggregate,
 	rejectBuckets,
 	onRowClick,
-	onAction,
-	pendingActionId,
 }) {
 	const { EmptyState } = window.UI;
 	const isCompact = column.variant === "compact";
@@ -1332,18 +1327,40 @@ function KanbanColumnI({
 				) : isCompact ? (
 					<RejectedCompactListI rows={rows} onRowClick={onRowClick} />
 				) : (
-					rows.map((row) => (
-						<ProposalCardI
-							key={row.id}
-							row={row}
-							onClick={() => onRowClick(row)}
-							onAction={onAction}
-							pendingActionId={pendingActionId}
-						/>
-					))
+					<ul className="flex flex-col gap-1">
+						{rows.map((row) => (
+							<li key={row.id}>
+								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
+							</li>
+						))}
+					</ul>
 				)}
 			</div>
 		</div>
+	);
+}
+
+// Applied history — one line (agent · date · pattern); the rationale opens in the drawer.
+function AppliedHistoryRowI({ row, onClick }) {
+	const label =
+		patternLabelI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className="i-row-card bg-elev rounded-md w-full text-left px-2 py-1.5 flex items-center gap-2"
+			title={row.rationale ? String(row.rationale) : undefined}
+			aria-label={`View applied suggestion ${row.id} details`}
+		>
+			<span className="fs-micro font-mono text-dim truncate shrink-0 max-w-[10rem]">
+				{row.target_agent || "—"}
+			</span>
+			<span className="fs-micro font-mono text-faint tnum shrink-0">
+				{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
+			</span>
+			<span className="fs-meta text-ink truncate flex-1 min-w-0">{label}</span>
+			<span className="fs-micro font-mono text-faint shrink-0">{`#${row.id}`}</span>
+		</button>
 	);
 }
 
@@ -1470,11 +1487,12 @@ function RejectedCompactListI({ rows, onRowClick }) {
 
 	return (
 		<React.Fragment>
-			{shown.map((row) => (
-				<CompactProposalCardI
-					key={row.id}
-					row={row}
-					onClick={() => onRowClick(row)}
+			{groupByLabelI(shown).map((group) => (
+				<RejectedGroupI
+					key={group.label}
+					label={group.label}
+					rows={group.rows}
+					onRowClick={onRowClick}
 				/>
 			))}
 			{moreCount > 0 && (
@@ -1504,14 +1522,41 @@ function RejectedCompactListI({ rows, onRowClick }) {
 	);
 }
 
+// Shared pattern label printed once as the group head, not on every declined row.
+function RejectedGroupI({ label, rows, onRowClick }) {
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="fs-micro text-faint truncate" title={label}>
+				{label}
+			</div>
+			{rows.map((row) => (
+				<CompactProposalCardI
+					key={row.id}
+					row={row}
+					onClick={() => onRowClick(row)}
+				/>
+			))}
+		</div>
+	);
+}
+
+// first-seen order kept → the newest group still leads
+function groupByLabelI(rows) {
+	const groups = new Map();
+	for (const row of rows) {
+		const label =
+			patternLabelI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+		if (!groups.has(label)) groups.set(label, []);
+		groups.get(label).push(row);
+	}
+	return [...groups].map(([label, groupRows]) => ({ label, rows: groupRows }));
+}
+
 // T5/T7 — REJECTED 컴팩트 카드. 단일행 · rationale 숨김 · 배지 최소화. 중립 chrome(그레이).
 // --crit 는 ✕ 심볼에만 (배경/테두리는 --line/--elev 중립 — 레인 wash 금지).
 function CompactProposalCardI({ row, onClick }) {
-	const title = row.pattern_label || `Proposal #${row.id}`;
-	// USER: APPLIED 와 동일한 title-faint / content-bright 색 인버전 — rationale(content)이 primary bright(text-ink),
-	//   반복 title 은 faint(text-faint) 로 후퇴 → REJECTED 행도 content-first 로 읽힘. rationale 부재 시
-	//   title 이 primary bright 로 승격(graceful) 하고 하단 demoted 라인은 생략(중복 회피).
-	const primary = row.rationale || title;
+	// group head carries the pattern label → the row leads with its own reason
+	const primary = row.rationale || "No rationale recorded";
 	return (
 		<div className="i-card-shadow bg-elev rounded-md">
 			<button
@@ -1533,16 +1578,6 @@ function CompactProposalCardI({ row, onClick }) {
 						</span>
 					)}
 				</div>
-				{/* 반복 title 을 faint 로 demote — 좌측 정렬 유지. rationale 이 primary 를 채운 경우에만 렌더
-            (rationale 부재 시 title 이 이미 primary → 중복 방지). */}
-				{row.rationale && (
-					<div
-						className="text-faint truncate mt-0.5 text-left"
-						title={String(title)}
-					>
-						{truncateI(title, 80)}
-					</div>
-				)}
 			</button>
 		</div>
 	);
@@ -1582,7 +1617,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 							className="min-w-0 max-w-[10rem]"
 							title={`Target agent: ${row.target_agent}`}
 						>
-							<span className="truncate min-w-0">{row.target_agent}</span>
+							<window.UI.AgentName name={row.target_agent} className="truncate min-w-0" />
 						</Badge>
 					)}
 					<Badge
@@ -1976,11 +2011,11 @@ function LedgerPlainRowsI({ rows }) {
 				<li key={r.id} className="flex items-center gap-2 fs-micro font-mono">
 					<span
 						className="text-ink truncate min-w-0"
-						title={String(r.pattern_signature || "")}
+						title={patternLabelI(r.pattern_signature, r.agent)}
 					>
-						{truncateI(r.pattern_signature, 120)}
+						{truncateI(patternLabelI(r.pattern_signature, r.agent), 120)}
 					</span>
-					<span className="text-dim shrink-0">{r.agent || "—"}</span>
+					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
 					<span className="text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
@@ -2046,9 +2081,9 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 			<thead>
 				<tr className="text-faint uppercase tracking-wider">
 					<th className="text-left py-1.5 pl-1.5">Cause</th>
-					<th className="text-right py-1.5">Agents affected</th>
-					<th className="text-right py-1.5">Cycle days</th>
-					<th className="text-right py-1.5 pr-1.5">Events</th>
+					<th className="text-right py-1.5 pl-4">Agents affected</th>
+					<th className="text-right py-1.5 pl-4">Cycle days</th>
+					<th className="text-right py-1.5 pl-4 pr-1.5">Events</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -2058,13 +2093,13 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 							<div className="text-ink">{b.label}</div>
 							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
 						</td>
-						<td className="text-right py-1.5 text-ink">
+						<td className="text-right py-1.5 pl-4 text-ink">
 							{formatIntI(Number(b.agents ?? 0))}
 						</td>
-						<td className="text-right py-1.5 text-ink">
+						<td className="text-right py-1.5 pl-4 text-ink">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right py-1.5 pr-1.5 text-dim">
+						<td className="text-right py-1.5 pl-4 pr-1.5 text-dim">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2640,12 +2675,13 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 	const freq = Number(pattern.frequency ?? 0);
 	const status = candidateSeverityI(freq, maxFreq);
 	const badge = learningStatusBadgeI(pattern.status);
+	const label = patternLabelI(pattern.pattern_signature, pattern.agent);
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			className="i-card-shadow i-row-card bg-elev rounded-md text-left p-2.5 w-full flex items-center gap-2"
-			aria-label={`Candidate ${rank}: ${String(pattern.pattern_signature || "")} — seen ${freq} times`}
+			aria-label={`Candidate ${rank}: ${label} — seen ${freq} times`}
 		>
 			<span
 				className="fs-micro font-mono text-faint"
@@ -2656,14 +2692,12 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			<StatusDot status={status} />
 			<span
 				className="fs-body text-ink truncate flex-1 min-w-0"
-				title={String(pattern.pattern_signature || "")}
+				title={label}
 			>
-				{truncateI(pattern.pattern_signature, 120)}
+				{truncateI(label, 120)}
 			</span>
 			{pattern.agent && (
-				<span className="fs-micro font-mono text-dim shrink-0">
-					{pattern.agent}
-				</span>
+				<window.UI.AgentName name={pattern.agent} className="fs-micro font-mono text-dim shrink-0" />
 			)}
 			<span
 				className={`fs-micro font-mono shrink-0 ${badge.tone}`}
@@ -2894,6 +2928,13 @@ function formatDateFullI(iso) {
 	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
 	return m ? `${m[1]}/${m[2]}/${m[3]}` : s;
 }
+// signatures are "<label>|<agent>" — the agent already has its own cell
+function patternLabelI(signature, agent) {
+	const text = String(signature ?? "");
+	const suffix = agent ? `|${agent}` : "";
+	return suffix && text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
 function truncateI(s, n) {
 	const str = String(s || "");
 	return str.length > n ? str.slice(0, n - 1) + "…" : str;

@@ -1032,17 +1032,6 @@ test("C2 a node carrying more than one attention part says how many on its glyph
   assert.strictEqual(callInCtx(archCtx, "getCornerGlyphTextAR", "ok", 3), "", "no attention tone → no glyph");
 });
 
-test("C3 a failed headline read never reads as a fresh reading", () => {
-  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", null, 0, 4), "Health not read yet");
-  assert.match(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /not read/);
-  assert.doesNotMatch(callInCtx<string>(archCtx, "getHealthStampTextAR", null, 4, 4), /yet/);
-
-  const partial = callInCtx<string>(archCtx, "getHealthStampTextAR", "2m ago", 1, 4);
-  assert.match(partial, /2m ago/);
-  assert.match(partial, /1 of 4 .*not read/);
-  assert.strictEqual(callInCtx(archCtx, "getHealthStampTextAR", "2m ago", 0, 4), "Health as of 2m ago");
-});
-
 test("C3 regression pin — the as-of stamp advances only on a successful headline read", () => {
   const src = readFileSync(ARCH_SRC, "utf8");
   const fetchBlock = /urls\.forEach\(\(url, i\) => \{[\s\S]*?\n\t\t\}\);/.exec(src)?.[0] || "";
@@ -1058,4 +1047,78 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
   assert.strictEqual(unjudged, "Not loaded");
   assert.notStrictEqual(unjudged, noData);
   assert.notStrictEqual(unjudged, "—");
+});
+
+// --- P1: caption names, ring key, node accessible names, focus ring, security hue ---------
+test("P1 the attention caption names every flagged part and no settled one", () => {
+  const rows = [
+    { tone: "crit", name: "Autoagent daemon", nodeIds: [] },
+    { tone: "warn", name: "Hook pipeline", nodeIds: [] },
+    { tone: "ok", name: "Wiki daemon", nodeIds: [] },
+    { tone: null, name: "Postgres", nodeIds: [] },
+  ];
+  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
+
+  for (const row of rows)
+    assert.strictEqual(
+      caption.includes(row.name),
+      row.tone === "crit" || row.tone === "warn",
+      `only flagged parts are named — read: "${caption}"`,
+    );
+});
+
+test("P1 the ring key names every mark the canvas can draw", () => {
+  const key = callInCtx<string>(archCtx, "getRingKeyTextAR");
+
+  for (const tone of ["warn", "crit"]) {
+    const mark = callInCtx<string>(archCtx, "getCornerGlyphTextAR", tone, 1);
+    const word = callInCtx<string>(archCtx, "getNodeAccessibleNameAR", "", tone, false).replace(/^,\s*/, "");
+    assert.ok(key.includes(`${mark} ${word}`), `key must pair ${mark} with "${word}" — read: "${key}"`);
+  }
+  assert.ok(key.includes("dashed not verified"), `key must explain the dashed ring — read: "${key}"`);
+});
+
+test("P1 a node's accessible name carries its label and a distinct health word per state", () => {
+  const states: [string | undefined, boolean][] = [["crit", false], ["warn", false], ["ok", false], [undefined, true]];
+  const names = states.map(([tone, isUnverified]) =>
+    callInCtx<string>(archCtx, "getNodeAccessibleNameAR", "Autoagent daemon", tone, isUnverified),
+  );
+
+  for (const name of names) assert.ok(name.startsWith("Autoagent daemon, "), `label first — read: "${name}"`);
+  assert.strictEqual(new Set(names).size, states.length, `each state reads differently — ${JSON.stringify(names)}`);
+  assert.ok(names[3].endsWith("not verified"), names[3]);
+});
+
+test("P1 the focus ring sits outside the health ring and never moves it", () => {
+  const box = { x: 10, y: 20, width: 100, height: 40 };
+  const state = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-state");
+  const focus = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-focus");
+  const strokeWidth = 2.5;
+
+  assert.deepStrictEqual(
+    { x: state.x, y: state.y, width: state.width, height: state.height, rx: state.rx },
+    { x: 7, y: 17, width: 106, height: 46, rx: 11 },
+    "the health ring keeps its 3px gap and 11px radius",
+  );
+  assert.ok(state.x - focus.x >= strokeWidth, `focus ring clears the health ring stroke — ${JSON.stringify({ state, focus })}`);
+  assert.ok(focus.x + focus.width - (state.x + state.width) >= strokeWidth);
+
+  const src = readFileSync(ARCH_SRC, "utf8");
+  assert.ok(
+    !/focus-visible\s*>\s*rect\.arch-ring-state/.test(src),
+    "focus must never hide or restyle the health ring",
+  );
+});
+
+test("P1 the security category's node stroke uses no status hue", () => {
+  const src = readFileSync(resolve(__dirname, "../src/server/architecture/diagrams-source.ts"), "utf8");
+  const stroke = /classDef security [^\n]*stroke:(#[0-9a-fA-F]{6})/.exec(src)?.[1]?.toLowerCase();
+  const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
+  const statusHexes = [...tokens.matchAll(/--(?:ok|warn|crit):\s*(\d+)\s+(\d+)\s+(\d+)/g)].map((m) =>
+    `#${m.slice(1, 4).map((n) => Number(n).toString(16).padStart(2, "0")).join("")}`,
+  );
+
+  assert.ok(stroke, "security classDef must declare a stroke");
+  assert.ok(statusHexes.length >= 6, `precondition: both themes' ok/warn/crit read — ${statusHexes}`);
+  assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
 });

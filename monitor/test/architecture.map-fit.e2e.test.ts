@@ -72,6 +72,9 @@ const VIEWPORTS = [
 	{ width: 1920, height: 1080 },
 ];
 
+// 1024 is kept out of VIEWPORTS on purpose — AC-FIT-1024 below pins why.
+const NARROW_VIEWPORT = { width: 1024, height: 768 };
+
 const BOUND_DAEMON = "autoagent";
 
 interface FitReading {
@@ -80,6 +83,8 @@ interface FitReading {
 	scale: number;
 	labelPx: number;
 	boxCount: number;
+	drawnWidthPx: number;
+	drawnHeightPx: number;
 	worstOverflowPx: number;
 	worstId: string;
 }
@@ -164,8 +169,8 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 		const canvasSelector = await page.evaluate(
 			() => (window as never as { ARCH_SELECTORS: { canvas: string } }).ARCH_SELECTORS.canvas,
 		);
-		// fit 은 노드 각인 이후 커밋에서 적용되므로 각인까지 기다린 뒤, 실제 변환행렬이
-		// 붙을 때까지 한 번 더 기다림 — 배율 1(미적용) 상태를 재는 것을 막음.
+		// 미적용 상태는 배율 1 이 아니라 svg-pan-zoom 초기화의 viewBox meet 배율 — 각인 뒤 두 프레임가량 남아
+		// 1024 에서 floor 미만으로 읽힘. 그래서 fit 표식 + 그 배율이 CTM 에 실린 것까지 기다림.
 		await page.waitForSelector(`${canvasSelector} svg g.node[data-arch-node-id]`, {
 			timeout: 30_000,
 		});
@@ -173,11 +178,14 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			(sel) => {
 				const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
 				const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-				return Boolean(m && m.a > 0);
+				const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+				return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < 1e-3);
 			},
 			canvasSelector,
 			{ timeout: 30_000 },
 		);
+		// 배율이 meet 과 같은 뷰포트는 위 대조로 pan 반영을 못 가림 — 라이브러리의 다음 프레임 반영을 한 프레임 넘겨 보장.
+		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
 
 		return await page.evaluate((sel) => {
 			const canvas = document.querySelector(sel) as HTMLElement;
@@ -192,9 +200,14 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
 			let worstOverflowPx = Number.NEGATIVE_INFINITY;
 			let worstId = "";
+			const drawn = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
 			for (const box of boxes) {
 				const r = box.getBoundingClientRect();
 				if (r.width === 0 && r.height === 0) continue;
+				drawn.left = Math.min(drawn.left, r.left);
+				drawn.right = Math.max(drawn.right, r.right);
+				drawn.top = Math.min(drawn.top, r.top);
+				drawn.bottom = Math.max(drawn.bottom, r.bottom);
 				// 네 변 각각이 pane 안쪽으로 얼마나 들어와 있는지 — 음수면 그만큼 밖으로 나감.
 				const inset = Math.min(
 					r.left - pane.left,
@@ -215,6 +228,8 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 				scale,
 				labelPx: declared * scale,
 				boxCount: boxes.length,
+				drawnWidthPx: drawn.right - drawn.left,
+				drawnHeightPx: drawn.bottom - drawn.top,
 				worstOverflowPx,
 				worstId,
 			};
@@ -230,7 +245,7 @@ for (const { width, height } of VIEWPORTS) {
 		// 통과했을 때의 여유를 남김 — 다음 사람이 "얼마나 아슬아슬한가" 를 다시 재지 않아도 됨.
 		t.diagnostic(
 			`pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · scale ${r.scale.toFixed(4)} · ` +
-				`labels ${r.labelPx.toFixed(2)}px · closest box \`${r.worstId}\` clears the edge by ` +
+				`labels ${r.labelPx.toFixed(2)}px · drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · closest box \`${r.worstId}\` clears the edge by ` +
 				`${(-r.worstOverflowPx).toFixed(1)}px`,
 		);
 		assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
@@ -254,3 +269,24 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 }
+
+// The map is width-bound (graph ~3.9:1 against a ~2:1 pane), so it fills ~half the pane height
+// and at 1024 fitting the width needs a scale under the floor. Both would take a relayout, which
+// the standing System map decision forbids, or smaller labels → the floor wins and the overflow pans.
+// A layout that fits at 1024 turns this red → move 1024 into VIEWPORTS.
+test(`AC-FIT-1024 at ${NARROW_VIEWPORT.width}x${NARROW_VIEWPORT.height} the labels stay legible, and containment would need a sub-floor scale`, async (t) => {
+	const r = await readFit(NARROW_VIEWPORT.width, NARROW_VIEWPORT.height);
+	const graphWidthAtOne = r.drawnWidthPx / r.scale;
+	const containScale = r.paneWidth / graphWidthAtOne;
+	t.diagnostic(
+		`pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · scale ${r.scale.toFixed(4)} · ` +
+			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · width-fit would be ${containScale.toFixed(4)}`,
+	);
+	assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
+	assert.ok(r.scale >= LEGIBLE_FIT_FLOOR, `applied scale ${r.scale.toFixed(4)} is under the floor ${LEGIBLE_FIT_FLOOR}`);
+	assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX, `labels render at ${r.labelPx.toFixed(2)}px`);
+	assert.ok(
+		containScale < LEGIBLE_FIT_FLOOR,
+		`width-fit ${containScale.toFixed(4)} now clears the floor — the map fits at 1024, assert AC-FIT-1 there`,
+	);
+});

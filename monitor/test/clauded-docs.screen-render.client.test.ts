@@ -13,6 +13,7 @@ import {
   findNodes,
   loadScreenModule,
   renderScreen,
+  collectText,
 } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,7 +22,6 @@ const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
 // Formatters tag their input so a test can tell which one the screen called.
 const UI_SCALARS: Record<string, unknown> = {
   formatInt: (n: number) => String(n),
-  formatKstTime: (iso: string) => `time(${iso})`,
   formatKstDateTime: (iso: string) => `datetime(${iso})`,
 };
 
@@ -84,13 +84,90 @@ test("a done pill renders its check glyph inside the ok-toned glyph slot and its
   assert.equal(findNodes(glyphSlots[0], (node) => node === labels[0]).length, 0);
 });
 
-test("the header line always leads with the one-word screen name, stamped with a time-only as-of", async () => {
-  const screen = await loadDocsScreen();
-  const asOfSub = screen.asOfSubCD as (asOf: string | null, status: string) => string;
-  const iso = "2026-09-24T12:34:00.000Z";
+const MARK_SYNTAX = /[#*`|>[\]~]/;
 
-  assert.equal(asOfSub(iso, "ready"), `Documents · as of time(${iso})`);
-  for (const status of ["loading", "error"]) {
-    assert.ok(asOfSub(null, status).startsWith("Documents · "), `status ${status}`);
+test("a search snippet reads as plain words: markdown syntax and a leading title echo go, highlights stay balanced", async () => {
+  const screen = await loadDocsScreen();
+  const getSnippetText = screen.getSnippetTextCD as (snippet: string, title: string) => string;
+  const cases = [
+    { title: "Auth rollout plan", snippet: "# <mark>Auth</mark> rollout plan ## Goal | **ship** the <mark>auth</mark> gate ... `code` > quote" },
+    { title: "Other", snippet: "- [link](http://x.y) **bold** <mark>term</mark> | cell" },
+    { title: "Wiki compile", snippet: "Wiki <mark>compile</mark>: — nightly <mark>compile</mark> runs" },
+  ];
+
+  for (const { title, snippet } of cases) {
+    const text = getSnippetText(snippet, title);
+    const bare = text.replace(/<\/?mark>/g, "");
+    assert.doesNotMatch(bare, MARK_SYNTAX, `syntax left in ${JSON.stringify(text)}`);
+    assert.doesNotMatch(bare, /http/, "link targets are not prose");
+    assert.ok(!bare.toLowerCase().startsWith(title.toLowerCase()), `title echoed in ${JSON.stringify(text)}`);
+    assert.match(bare, /^[\p{L}\p{N}]/u, `must start at a word: ${JSON.stringify(text)}`);
+    assert.equal((text.match(/<mark>/g) || []).length, (text.match(/<\/mark>/g) || []).length);
   }
+});
+
+test("the snippet line clamps at two lines", () => {
+  const rule = cssRuleBody(readFileSync(DOCS_SRC, "utf8"), ".doc-snippet");
+  assert.match(rule, /-webkit-line-clamp\s*:\s*2/);
+  assert.match(rule, /overflow\s*:\s*hidden/);
+});
+
+test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
+  const screen = await loadDocsScreen();
+  const getCommonFormat = screen.getCommonFormatCD as (rows: Array<{ format: string }>) => string | null;
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+
+  assert.equal(getCommonFormat([{ format: "md" }, { format: "md" }, { format: "html" }]), "md");
+  assert.equal(getCommonFormat([{ format: "md" }, { format: "html" }]), null);
+  assert.equal(getCommonFormat([]), null);
+
+  const chips = (props: Record<string, unknown>) =>
+    findNodes(renderScreen(DocTagsCell(props)), (n) => n.props.atom === "Badge").map((n) => collectText(n));
+  assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: "md" }), []);
+  assert.deepEqual(chips({ audience: "hidden", format: "html", commonFormat: "md" }), ["agent-only", "html"]);
+  assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
+});
+
+function listCardProps(onSelect: (id: number) => void): Record<string, unknown> {
+  const row = (id: number, extra: Record<string, unknown> = {}) => ({
+    id, title: `Doc ${id}`, doc_status: "open", format: "md", audience: "exposed",
+    author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z", member_count: 1, folder_id: null, ...extra,
+  });
+  const noop = () => undefined;
+  return {
+    state: { status: "ready", data: {} }, rows: [row(11, { supersedes_id: 7 }), row(12)], isSearchMode: false,
+    selectedId: 12, pendingDelete: null, hiddenCount: 0, total: 2, docTotal: 2, groupCounts: null, visibleCount: 2,
+    canLoadMore: false, loadMoreRemaining: 0, isLoadingMore: false, onLoadMore: noop, selectedIds: new Set(),
+    onToggleSelection: noop, onSelectAll: noop, onClearSelection: noop, expandedFolderIds: new Set(), onToggleExpand: noop,
+    onGroupCreate: noop, onUngroup: noop, onExportZip: noop, onReorder: noop, onPickStage: noop, togglingIds: new Set(),
+    optimisticStatusOverrides: new Map(), onSelect, onRetry: noop,
+    inlineFilterProps: { keyword: "", docStatusFilter: "", audienceFilter: "all", onKeywordChange: noop, onDocStatusChange: noop, onAudienceChange: noop },
+  };
+}
+
+test("the ledger is a captioned table with column scopes and one Tab stop, and no row claims the button role", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+
+  assert.equal(findNodes(tree, (n) => n.type === "caption").length, 1);
+  const headCells = findNodes(findNodes(tree, (n) => n.type === "thead")[0], (n) => n.type === "th");
+  assert.ok(headCells.length > 0);
+  for (const th of headCells) assert.equal(th.props.scope, "col");
+
+  const rows = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).includes("doc-row"));
+  assert.equal(rows.length, 2);
+  for (const tr of rows) assert.notEqual(tr.props.role, "button");
+  assert.deepEqual(rows.map((tr) => tr.props.tabIndex), [-1, 0], "the Tab stop sits on the selected row");
+});
+
+test("'rev of #N' is a control that opens the predecessor", async () => {
+  const screen = await loadDocsScreen();
+  const opened: number[] = [];
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps((id) => opened.push(id))));
+
+  const lineage = findNodes(tree, (n) => String(n.props.className).includes("doc-lineage"));
+  assert.equal(lineage.length, 1);
+  assert.equal(lineage[0].type, "button");
+  (lineage[0].props.onClick as (e: unknown) => void)({ stopPropagation: () => undefined });
+  assert.deepEqual(opened, [7]);
 });

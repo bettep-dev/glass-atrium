@@ -1,5 +1,5 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
-const { useEffect, useRef } = React;
+const { useEffect, useRef, useState } = React;
 
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -287,9 +287,21 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
   );
 }
 
+// tone = TONE_GLYPH shape + colour + a word for AT → state survives without colour. Unknown status gets its own mark, not info's.
+const STATUS_DOT_WORD = { ok: 'OK', warn: 'Warning', crit: 'Critical', info: 'Info' };
+
 function StatusDot({ status }) {
-  const map = { ok:'bg-ok', warn:'bg-warn', crit:'bg-crit', info:'bg-info' };
-  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${map[status] || 'bg-faint'} mr-1.5 align-middle`}></span>;
+  const isKnown = Object.hasOwn(STATUS_DOT_WORD, status);
+  const glyph = isKnown ? TONE_GLYPH[status] : '–';
+  const word = isKnown ? STATUS_DOT_WORD[status] : 'Unknown';
+  const toneClass = isKnown ? `text-${status}` : 'text-faint';
+
+  return (
+    <span className={`inline-block fs-micro leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+      <span aria-hidden="true">{glyph}</span>
+      <span className="sr-only">{word}</span>
+    </span>
+  );
 }
 
 // 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —
@@ -318,6 +330,31 @@ function AgentBadge({ a, size=22 }) {
   </span>;
 }
 
+const AGENT_NAME_PREFIX = 'glass-atrium-';
+
+/** Display form of an agent name — the shared install prefix dropped; a missing name → '—'. */
+function getAgentDisplayName(name) {
+  const full = typeof name === 'string' ? name.trim() : '';
+
+  if (!full) return '—';
+  if (!full.startsWith(AGENT_NAME_PREFIX) || full.length === AGENT_NAME_PREFIX.length) return full;
+  return full.slice(AGENT_NAME_PREFIX.length);
+}
+
+// generic span takes no aria-label → full name travels as sr-only text, the short form stays visual only
+function AgentName({ name, className = '' }) {
+  const full = typeof name === 'string' ? name.trim() : '';
+  const short = getAgentDisplayName(name);
+
+  if (short === full || !full) return <span className={className}>{short}</span>;
+  return (
+    <span className={className} title={full}>
+      <span aria-hidden="true">{short}</span>
+      <span className="sr-only">{full}</span>
+    </span>
+  );
+}
+
 // djb2-lite — 시각 팔레트용 결정적 해시 (crypto 불필요)
 function strHash(str) {
   let h = 5381;
@@ -327,12 +364,20 @@ function strHash(str) {
   return h;
 }
 
+// Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
+function KpiValue({ children, unit, tone }) {
+  return <div className="kpi-value">
+    {tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>}
+    {children}{unit && <span className="unit">{unit}</span>}
+  </div>;
+}
+
 // label + 26px mono value + delta + 68×26 inline sparkline
 function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
     {hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
-    <div className="kpi-value">{value}{unit && <span className="unit">{unit}</span>}</div>
+    <KpiValue unit={unit}>{value}</KpiValue>
     {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
   </button>;
@@ -458,23 +503,21 @@ function Tabs({ items, value, onChange }) {
 function CardHead({ title, sub, right }) {
   return <div className="card-head">
     <div className="flex-1 min-w-0">
-      <div className="card-title">{title}</div>
+      <h2 className="card-title">{title}</h2>
       {sub && <div className="card-sub mt-0.5" title={window.UI.titleOf(sub)}>{sub}</div>}
     </div>
     {right && <div className="ml-auto flex items-center gap-2 shrink-0">{right}</div>}
   </div>;
 }
 
-// shouldRenderTitle — opt-in title + sub-line stack; callers without it keep the sub-only eyebrow.
-function PageHeader({ title, sub, right, shouldRenderTitle = false }) {
-  const eyebrow = <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>;
+// title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
+function PageHeader({ title, sub, right }) {
+  const hasSub = sub && sub !== title;
   return <div className="flex items-center gap-3 mb-4">
-    {shouldRenderTitle ? (
-      <div className="min-w-0">
-        <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-        {eyebrow}
-      </div>
-    ) : eyebrow}
+    <div className="min-w-0">
+      <h1 className="fs-display font-semibold leading-tight">{title}</h1>
+      {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
+    </div>
     {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
   </div>;
 }
@@ -585,6 +628,60 @@ function formatKstFull(iso) {
   const p = kstParts(iso);
   if (!p) return iso || '—';
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
+}
+
+const FRESHNESS_STALE_MS = 5 * 60_000;
+const FRESHNESS_TICK_MS = 30_000;
+
+// glyph carries the tone, text stays neutral → state survives without colour
+const FRESHNESS_META = {
+  loading:    { tone: null, word: 'Loading' },
+  'not-read': { tone: 'crit', word: 'Not read' },
+  stale:      { tone: 'warn', word: 'Stale' },
+  fresh:      { tone: 'ok', word: 'Fresh' },
+};
+
+/**
+ * Freshness of the last successful read. Callers pass only successful-read times as `at`,
+ * so a failed read never advances the stamp; `failed` marks the kept stamp stale.
+ */
+function getFreshnessState({ at, loading = false, failed = false, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
+  const readMs = at ? new Date(at).getTime() : NaN;
+
+  if (!Number.isFinite(readMs)) return loading ? 'loading' : 'not-read';
+  if (failed || now - readMs > staleAfterMs) return 'stale';
+  return 'fresh';
+}
+
+/**
+ * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
+ * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ */
+function FreshnessStamp({ at, loading = false, failed = false, staleAfterMs, now }) {
+  const [, setTick] = useState(0);
+  const state = getFreshnessState({ at, loading, failed, staleAfterMs, now });
+  const meta = FRESHNESS_META[state];
+  const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
+  const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
+  const isRead = state === 'fresh' || state === 'stale';
+  const shouldTick = isRead && now === undefined;
+
+  useEffect(() => {
+    if (!shouldTick) return undefined;
+    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
+    return () => clearInterval(intervalId);
+  }, [shouldTick]);
+
+  const text = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
+  const title = isRead ? `${meta.word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : meta.word;
+
+  return (
+    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={loading ? 'true' : undefined}>
+      <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
+      <span className="sr-only">{meta.word}</span>
+      <span data-stamp-text="true">{text}</span>
+    </span>
+  );
 }
 
 // 배지 5-tier canonical taxonomy SoT (T1) — 톤별 pill 토큰 + 기본 라벨 단일 출처.
@@ -895,9 +992,10 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, Modal, Tabs, CardHead, PageHeader,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
+  FreshnessStamp, getFreshnessState,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
