@@ -521,10 +521,12 @@ function ScreenArchitecture(
 
 	// 머리글 넷이 아직 오는 중 — 캔버스가 판정을 다 실은 척하지 않도록 busy 로 냄.
 	// 모집단은 위 표 하나임 — 여기서 목록을 다시 적으면 저장소가 하나 늘 때 한쪽만 조용히 빠짐.
-	const healthRegions = Object.values(headlineHealthStates);
-	const healthPending = healthRegions.some((state) => state.status === "loading");
-	// one region list for the stamp, the Refresh button and the caption's failed-read count
-	const pageRegions = [diagState, liveState, ...healthRegions];
+	const healthPending = Object.keys(HEALTH_STORE_LABELS_AR).some(
+		(key) => headlineHealthStates[key].status === "loading",
+	);
+	// one read list for the stamp, the Refresh button and the page alert
+	const pageReadEntries = getPageReadEntriesAR(diagState, liveState, headlineHealthStates);
+	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
 	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
@@ -532,7 +534,6 @@ function ScreenArchitecture(
 		healthPartRows,
 		healthPending,
 		healthStoreErrors.length,
-		readTally,
 	);
 
 	const handleSelectNode = useCallbackAR(
@@ -570,9 +571,7 @@ function ScreenArchitecture(
 		liveState.status === "ready" ? liveState.data?.governance : null;
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
-	const pageFailure = getPageFailureAR(
-		getPageReadEntriesAR(diagState, liveState, headlineHealthStates),
-	);
+	const pageFailure = getPageFailureAR(pageReadEntries);
 	// the map's own card would repeat the page alert — the alert already names it and carries the Retry
 	const isMapInPageAlert = Boolean(pageFailure?.sources.includes(DIAGRAM_SOURCE_AR));
 
@@ -1345,28 +1344,21 @@ function ArchIconTargetAR() {
 // 값 없음(빈 배열)과 못 읽음을 화면에서 구별하는 유일한 자리임.
 // 머리글이 서 있는 응답 넷만 둠 — 드릴다운 응답(payloadState)은 노드 하나를 연 뒤의 사실이라
 // 여기 들면 행을 펼쳤다는 이유로 지도 전체가 '못 읽음' 이 됨.
+// inSentence — the page alert lists stores mid-sentence, so only the proper noun keeps a capital
 const HEALTH_STORE_LABELS_AR = {
-	daemonState: "Daemons",
-	hookState: "Hook chain",
-	pgState: "PostgreSQL",
-	hookFailState: "Hook failures",
+	daemonState: { name: "Daemons", inSentence: "daemon health" },
+	hookState: { name: "Hook chain", inSentence: "the hook chain" },
+	pgState: { name: "PostgreSQL", inSentence: "PostgreSQL" },
+	hookFailState: { name: "Hook failures", inSentence: "hook failures" },
 };
 
-// the same stores named inside a sentence — the page alert lists them mid-sentence, so only the proper noun keeps a capital
-const HEALTH_STORE_SOURCES_AR = {
-	daemonState: "daemon health",
-	hookState: "the hook chain",
-	pgState: "PostgreSQL",
-	hookFailState: "hook failures",
-};
-
-// every region the page reads, named as the page alert names it
+// every region the page reads, named as the page alert names it — the stamp, Refresh and the alert all read this list
 function getPageReadEntriesAR(diagState, liveState, healthStates) {
 	return [
 		{ source: DIAGRAM_SOURCE_AR, state: diagState },
 		{ source: LIVE_SOURCE_AR, state: liveState },
-		...Object.keys(HEALTH_STORE_SOURCES_AR).map((key) => ({
-			source: HEALTH_STORE_SOURCES_AR[key],
+		...Object.keys(HEALTH_STORE_LABELS_AR).map((key) => ({
+			source: HEALTH_STORE_LABELS_AR[key].inSentence,
 			state: healthStates[key],
 		})),
 	];
@@ -1392,7 +1384,7 @@ function getPageFailureAR(entries) {
 function getHealthStoreErrorsAR(states) {
 	return Object.keys(HEALTH_STORE_LABELS_AR)
 		.filter((key) => states[key] && states[key].status === "error")
-		.map((key) => HEALTH_STORE_LABELS_AR[key]);
+		.map((key) => HEALTH_STORE_LABELS_AR[key].name);
 }
 
 /**
@@ -2119,7 +2111,7 @@ function buildLiveDaemonsByNodeId(daemons) {
  * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
  * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
  */
-function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
+function getHealthCaptionAR(partRows, busy, errored = 0) {
 	const total = partRows.length;
 	if (total === 0)
 		return busy ? "Reading part health…" : "Part health unavailable";
@@ -2137,7 +2129,7 @@ function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
 	// first wave still out → no ok count yet; the early verdicts would read as the whole map
 	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
 	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}${getFailedReadsSuffixAR(errored, reads)}`;
+		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
 
 	return `All ${total} parts ok`;
 }
@@ -2146,12 +2138,6 @@ function getHealthCaptionAR(partRows, busy, errored = 0, reads = null) {
 function getFlaggedNamesSuffixAR(rows) {
 	const names = rows.map((row) => row.name).filter(Boolean);
 	return names.length > 0 ? `: ${names.join(", ")}` : "";
-}
-
-// the stamp's own failed-read tally → caption and stamp count one population, never parts against reads
-function getFailedReadsSuffixAR(errored, reads) {
-	if (errored === 0 || !reads || reads.failedCount === 0) return "";
-	return `, ${reads.failedCount} of ${reads.regionCount} reads failed`;
 }
 
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.

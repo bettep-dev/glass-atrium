@@ -117,25 +117,36 @@ test("the alert names each source mid-sentence, so only a proper noun keeps its 
   }
 });
 
-test("the caption's failed-read count is the stamp's own tally over the same regions", () => {
-  const regions = [HELD, DOWN, HELD, DOWN, HELD, HELD];
-  const tally = sandbox.window.UI.getRegionSummary(regions);
-  const partRows: PartRow[] = [
-    { name: "a", tone: "ok" },
-    { name: "b", tone: "ok" },
-    { name: "c", tone: "ok" },
-    { name: "d", tone: null },
-    { name: "e", tone: null },
-    { name: "f", tone: null },
-    { name: "g", tone: null },
+test("the caption states one population — the part rows — once, leaving read failures to the stamp", () => {
+  const tally = sandbox.window.UI.getRegionSummary([HELD, DOWN, HELD, DOWN, HELD, HELD]);
+  const tones = (...list: Array<string | null>): PartRow[] => list.map((tone, i) => ({ name: `part ${i}`, tone }));
+  const rows: Array<{ name: string; parts: PartRow[]; errored: number }> = [
+    { name: "some ok, the rest unreadable", parts: tones("ok", "ok", "ok", null, null, null, null), errored: 1 },
+    { name: "some ok, the rest not verified", parts: tones("ok", "ok", null), errored: 0 },
+    { name: "a part needs attention", parts: tones("ok", "crit", null), errored: 1 },
+    { name: "every part ok", parts: tones("ok", "ok"), errored: 0 },
   ];
 
-  const caption = sandbox.getHealthCaptionAR(partRows, false, 1, tally);
+  for (const row of rows) {
+    const caption = sandbox.getHealthCaptionAR(row.parts, false, row.errored, tally);
+    const denominators = [...caption.matchAll(/\bof (\d+)\b/g)].map((match) => Number(match[1]));
+    assert.ok(denominators.length <= 1, `${row.name}: "${caption}" states ${denominators.length} populations`);
+    for (const denominator of denominators) assert.strictEqual(denominator, row.parts.length, `${row.name}: "${caption}"`);
+  }
+});
 
-  assert.ok(
-    caption.includes(`${tally.failedCount} of ${tally.regionCount} reads failed`),
-    `caption "${caption}" does not carry the stamp's ${tally.failedCount} of ${tally.regionCount}`,
-  );
+test("every health store the stamp counts is also named by the page alert", () => {
+  const stores = ["daemonState", "hookState", "pgState", "hookFailState"];
+  const baseline = getEntries(HELD, HELD, HELD);
+
+  for (const store of stores) {
+    const health = Object.fromEntries(stores.map((key) => [key, key === store ? FAILED_OVER_HELD : HELD]));
+    const entries = sandbox.getPageReadEntriesAR(HELD, HELD, health);
+    const failure = sandbox.getPageFailureAR(entries);
+    assert.strictEqual(entries.length, baseline.length, store);
+    assert.ok(failure, `${store} failed over held data but raised no page alert`);
+    assert.deepEqual([...failure.sources], [entries.find((entry) => entry.state === FAILED_OVER_HELD)?.source], store);
+  }
 });
 
 test("the stamp names a read time only once the map itself has been read", () => {
