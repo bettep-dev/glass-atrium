@@ -395,3 +395,76 @@ test("tile labels carry no window text — the window is its own field so the he
   const windowed = tiles.filter((t) => (t as Tile & { window?: string }).window === "7 d").map((t) => t.id);
   assert.deepEqual([...windowed], ["outcomes", "fleet"]);
 });
+
+// --- A failed read never reads as a current verdict, and one outage offers one Retry ---
+
+interface FailureHelpers {
+  getTileSharedFailure: (tiles: Tile[]) => { sources: string[]; error: string } | null;
+  getAlarmReadiness: (sources: Record<string, unknown>) => { status: string; unread: string[] };
+}
+const failure = dash as unknown as FailureHelpers;
+
+function held(state: unknown, error: string): unknown {
+  return { ...(state as object), error };
+}
+// a fold the shell built while some harness stores failed their latest read
+function unreadFold(over: Record<string, unknown>): Fold {
+  return { ...HEALTHY, unreadSources: ["daemon status"], error: "HTTP 500", ...over } as Fold;
+}
+
+test("a region whose refresh failed over held data reads last-known and carries the failure", () => {
+  const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
+  const rows = [
+    { name: "fresh reads", error: null, lastKnown: false },
+    { name: "held reads after a failed refresh", error: "HTTP 500", lastKnown: true },
+  ];
+  for (const row of rows) {
+    const wrap = (state: unknown) => (row.error ? held(state, row.error) : state);
+    const tiles = dash.buildTiles({
+      harness: HEALTHY, costState: wrap(kpi(1, 10)), agentsState: wrap(fleet), outcomesState: wrap(ready({})),
+    });
+    for (const id of ["outcomes", "fleet", "spend"]) {
+      const tile = tileOf(tiles, id) as Tile & { error?: string | null };
+      assert.equal(tile.badge === "Last known", row.lastKnown, `${row.name}: ${id} badge`);
+      assert.equal(tile.error ?? null, row.error, `${row.name}: ${id} carries the failure`);
+      assert.equal(tile.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
+      if (row.lastKnown) assert.notEqual(tile.tone, "ok", `${row.name}: ${id} never reads healthy`);
+    }
+  }
+});
+
+test("held failures sharing one cause collapse into the page banner's single Retry", () => {
+  const tiles = dash.buildTiles({
+    harness: HEALTHY,
+    costState: held(kpi(1, 10), "HTTP 500"),
+    agentsState: held(ready({}), "HTTP 500"),
+    outcomesState: held(ready({}), "HTTP 500"),
+  });
+  const shared = failure.getTileSharedFailure(tiles);
+  assert.ok(shared, "held failures join the banner");
+  assert.deepEqual([...shared.sources].sort(), ["task results", "the fleet summary", "today's spend"]);
+});
+
+test("a cold harness outage is an error tile listed in the same banner as the regions", () => {
+  const harness = unreadFold({ status: "unavailable", partsOk: 0, partsChecked: 0 });
+  const tiles = dash.buildTiles({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+  const tile = tileOf(tiles, "harness");
+  assert.equal(tile.status, "error");
+  assert.ok(failure.getTileSharedFailure(tiles)?.sources.includes("harness health"), "the banner names the harness");
+});
+
+test("a partly unread harness never reads healthy, and the lane cannot claim an all-clear", () => {
+  const harness = unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: ["daemon status", "the hook chain"] });
+  const tile = tileOf(
+    dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+    "harness",
+  );
+  assert.notEqual(tile.tone, "ok");
+  assert.notEqual(tile.badge ?? "", "Healthy");
+  assert.match(tile.hint, /daemon status/);
+  assert.equal(tile.canRetry, true, "the harness tile keeps its own Retry when no banner covers it");
+
+  const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });
+  assert.equal(readiness.status, "unknown");
+  assert.ok(readiness.unread.includes("harness health"));
+});
