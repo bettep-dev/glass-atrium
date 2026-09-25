@@ -501,6 +501,55 @@ describe("healthy live fixture", () => {
 		assert.deepEqual(hidden.sort(), ["agents", "export"], `hidden group titles — read: ${JSON.stringify(titles)}`);
 	});
 
+	test("the node drawer is named by the node, reads its kind from its layer and hides an unrecorded path", async () => {
+		const { doc } = await getArchitecture(ctx.app.log);
+		const diagram = doc.diagrams.diagrams.find((d) => d.id === CANONICAL_DIAGRAM_ID) ?? doc.diagrams.diagrams[0];
+		const rendered = new Set(await getStampedNodeIds(ctx.page, ctx.selectors.canvas));
+		const target = diagram.layers
+			.flatMap((layer) => (layer.nodes ?? []).map((node) => ({ node, layer })))
+			.find(({ node }) => !node.path && rendered.has(node.id) && diagram.flows.some((f) => f.from === node.id || f.to === node.id));
+		assert.ok(target, "fixture precondition: a rendered node with connections and no recorded path");
+
+		await ctx.page.locator(`${ctx.selectors.canvas} svg g.node[data-arch-node-id="${target.node.id}"]`).click();
+		const dialog = ctx.page.getByRole("dialog");
+		await dialog.waitFor({ timeout: 10_000 });
+		try {
+			const probe = await dialog.evaluate((el) => ({
+				text: (el as HTMLElement).innerText,
+				sub: el.querySelector(".detail-sub")?.textContent ?? "",
+				brokenWords: [...el.querySelectorAll(".break-all")].length,
+			}));
+			assert.equal(await dialog.getAttribute("aria-labelledby").then((id) => ctx.page.locator(`#${id}`).innerText()), target.node.label);
+			assert.equal(probe.sub, target.layer.label);
+			assert.ok(!/Not recorded|File path/i.test(probe.text), `an unrecorded path renders as a field — read: ${probe.text.slice(0, 300)}`);
+			assert.ok(!/\[[a-z]+_[a-z_]+\]/.test(probe.text), `a raw bracketed edge type renders — read: ${probe.text.slice(0, 300)}`);
+			assert.equal(probe.brokenWords, 0, "drawer text breaks words mid-word");
+		} finally {
+			await ctx.page.keyboard.press("Escape");
+			await dialog.waitFor({ state: "detached", timeout: 10_000 });
+		}
+	});
+
+	test("Tab moves through the map nodes in left-to-right flow order", async () => {
+		// document order of tabindex=0 stops IS the Tab sequence; one inline mapper (tsx __name)
+		const stops = await ctx.page.evaluate((canvas) =>
+			[...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
+				const r = el.getBoundingClientRect();
+				return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, top: r.top, width: r.width };
+			}),
+		ctx.selectors.canvas);
+		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+
+		const minWidth = Math.min(...stops.map((s) => s.width));
+		const leftmost = Math.min(...stops.map((s) => s.cx));
+		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
+		for (let i = 1; i < stops.length; i++) {
+			const [prev, next] = [stops[i - 1], stops[i]];
+			const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
+			assert.ok(sameColumn ? next.top >= prev.top : next.cx > prev.cx, `Tab steps back from ${prev.id} to ${next.id}`);
+		}
+	});
+
 	test("AC-18 no tab controls in the DOM", async () => {
 		const tabCount = await ctx.page.evaluate(
 			(sel) => document.querySelectorAll(sel.tabControl).length,

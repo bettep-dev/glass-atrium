@@ -34,16 +34,6 @@ const PAN_ZOOM_MIN = 0.2;
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
 
-const NODE_TYPE_LABEL = {
-	agent: "Agent",
-	hook: "Hook",
-	script: "Script",
-	daemon: "Background job",
-	store: "Storage",
-	external: "External",
-	gateway: "Gateway",
-};
-
 const EDGE_COLORS = {
 	control_flow: "#94a3b8",
 	data_flow: "#38bdf8",
@@ -981,6 +971,7 @@ function MermaidCanvas({
 			// 접근명은 라벨 그대로 — 화면이 읽은 그 글자여야 스크린리더와 보이는 것이 갈라지지 않음.
 			el.setAttribute("aria-label", labelText.replace(/\s+/g, " ").trim());
 		});
+		setFlowTabOrderAR(root);
 	}, [renderState.status, renderState.svgHtml, nodeByLabel]);
 
 	// 상태 링 — 판정(데몬 ∪ 부품) 하나를 테두리로 냄. 클래스만 켜고, 그리는 것은 심어 둔 사각형임.
@@ -1548,7 +1539,7 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
 				Health ({rows.length + looseDaemons.length})
 			</div>
 			<div className="arch-part-list">
@@ -1588,7 +1579,7 @@ function NodePartHealth({
 							</div>
 
 							{alsoLights.length > 0 && (
-								<div className="fs-micro font-mono text-faint">
+								<div className="fs-meta font-mono text-faint">
 									Also lights: {alsoLights.join(", ")}
 								</div>
 							)}
@@ -1740,8 +1731,7 @@ function DetailModal({
 			/>
 		);
 
-	const sub = info?.type ? NODE_TYPE_LABEL[info.type] || info.type : "—";
-
+	// kind comes from the layer — the node type reads "Agent" for the entry, orchestrator and scheduled jobs
 	const { DetailSurface } = window.UI;
 
 	return (
@@ -1749,8 +1739,8 @@ function DetailModal({
 			open
 			onClose={onClose}
 			variant="drawer"
-			title="Node"
-			sub={sub}
+			title={info ? info.label || info.id : "Node"}
+			sub={info?.layer_label}
 			labelledBy="ar-node-detail-title"
 			bodyClassName="space-y-3"
 		>
@@ -1772,7 +1762,7 @@ function NodeDetailBody({
 	hookState,
 	hookFailState,
 }) {
-	const { Pill } = window.UI;
+	const { DetailField } = window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 가능 (F39).
 	//   판정은 pill 줄이 아니라 아래 health 행이 실음 — 한 노드의 상태를 한 자리에서 읽게 함.
 	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
@@ -1783,11 +1773,6 @@ function NodeDetailBody({
 
 	return (
 		<>
-			<FieldBlock label="Name" value={info.label || info.id} />
-			<div className="flex flex-wrap items-center gap-1.5">
-				{info.type && <Pill>{NODE_TYPE_LABEL[info.type] || info.type}</Pill>}
-				{info.layer_label && <Pill>Layer: {info.layer_label}</Pill>}
-			</div>
 			{/* 순서는 조작자의 물음 순서임 — 무엇인가 · 지금 어떤가 · 무엇에 닿는가 ·
 			    어디를 여는가. 경로와 설명은 그 답을 고른 뒤에야 쓰이므로 뒤로 감. */}
 			<NodePartHealth
@@ -1806,10 +1791,8 @@ function NodeDetailBody({
 				nodeIndex={nodeIndex}
 			/>
 			<OwningScreenLinkAR nodeId={info.id} />
-			<FieldBlock label="File path" value={info.path || "Not recorded for this part"} mono />
-			{info.description && (
-				<FieldBlock label="Description" value={info.description} mono={false} />
-			)}
+			<DetailField label="File path" value={info.path} mono />
+			<DetailField label="Description" value={info.description} />
 		</>
 	);
 }
@@ -1833,27 +1816,12 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
 				Records
 			</div>
 			<a className="fs-body" href={`#${owner.id}`}>
 				Open {owner.label}
 			</a>
-		</div>
-	);
-}
-
-function FieldBlock({ label, value, mono = false }) {
-	return (
-		<div>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
-				{label}
-			</div>
-			<div
-				className={`fs-body ${mono ? "font-mono text-dim" : "text-ink"} break-all`}
-			>
-				{value}
-			</div>
 		</div>
 	);
 }
@@ -1864,7 +1832,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">
+			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
 				Connections ({total})
 			</div>
 			<div className="space-y-2">
@@ -1888,7 +1856,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 }
 
 function FlowList({ title, items, nodeIndex }) {
-	const { Icon } = window.UI;
+	const { Icon, getDisplayName } = window.UI;
 	return (
 		<div>
 			<div className="fs-meta font-mono text-dim mb-0.5">{title}</div>
@@ -1900,11 +1868,11 @@ function FlowList({ title, items, nodeIndex }) {
 					const fromLabel = nodeIndex.get(f.from)?.label || f.from;
 					const toLabel = nodeIndex.get(f.to)?.label || f.to;
 					return (
-						<div key={f.id} className="break-all">
+						<div key={f.id} className="break-words">
 							<span style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
 								●
 							</span>{" "}
-							<span className="text-faint">[{f.edge_type}]</span> {fromLabel}{" "}
+							<span className="text-faint">{getDisplayName("edge", f.edge_type)}:</span> {fromLabel}{" "}
 							<Icon name="arrow-right" size={11} /> {toLabel}
 							{f.label && <span className="text-faint"> · {f.label}</span>}
 						</div>
@@ -2542,6 +2510,31 @@ function getShapeBoxAR(groupEl) {
 	}
 	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
 	return box;
+}
+
+/**
+ * Re-appends the focusable map nodes in flow order so Tab follows the left-to-right flow.
+ * Each node moves only within its own parent group and keeps its transform → nothing moves on screen.
+ */
+function setFlowTabOrderAR(root) {
+	const stops = [...root.querySelectorAll('svg g.node[tabindex="0"]')].map((el) => {
+		const box = el.getBoundingClientRect();
+		return { el, cx: box.left + box.width / 2, top: box.top, width: box.width };
+	});
+	if (stops.length < 2 || stops.some((stop) => !(stop.width > 0))) return;
+	for (const { el } of getFlowOrderAR(stops)) el.parentNode.appendChild(el);
+}
+
+// column by column, top to bottom — a column = centres within half the narrowest node of its first node
+function getFlowOrderAR(stops) {
+	const tolerance = Math.min(...stops.map((stop) => stop.width)) / 2;
+	const columns = [];
+	for (const stop of [...stops].sort((a, b) => a.cx - b.cx)) {
+		const column = columns.at(-1);
+		if (column && stop.cx - column[0].cx <= tolerance) column.push(stop);
+		else columns.push([stop]);
+	}
+	return columns.flatMap((column) => column.sort((a, b) => a.top - b.top));
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).
