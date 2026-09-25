@@ -94,7 +94,7 @@ function ScreenDashboard({ onNav, harness }) {
 
   const waveStates = [costState, agentsState, outcomesState, updateState];
   const alarms = buildAlarms({ harness, costState, installKind });
-  const isAlarmPending = [harness, costState, updateState].some((source) => !source || source.status === 'loading');
+  const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, alarms });
   const sharedFailure = getTileSharedFailure(tiles);
 
@@ -133,7 +133,7 @@ function ScreenDashboard({ onNav, harness }) {
         {sharedFailure && <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>}
         <AlarmLane
           alarms={alarms}
-          isPending={isAlarmPending}
+          readiness={alarmReadiness}
           onNav={onNav}
           updateState={updateState}
           updateJobState={updateJobState}
@@ -153,19 +153,40 @@ function getTileSharedFailure(tiles) {
 // 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
 // polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
 // 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
-function AlarmLane({ alarms, isPending = false, onNav, updateState, updateJobState, onRefetchJob }) {
+function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
   const { LoadingPlaceholder } = window.UI;
   const hasAlarms = alarms.length > 0;
   return (
     <section className="dash-lane" aria-live="polite" aria-label="Alarms">
       {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
         updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-      {!hasAlarms && isPending && <LoadingPlaceholder label="alarms" className="dash-lane-slot"/>}
-      {!hasAlarms && !isPending && (
+      {!hasAlarms && readiness.status === 'loading' && <LoadingPlaceholder label="alarms" className="dash-lane-slot"/>}
+      {!hasAlarms && readiness.status === 'unknown' && (
+        <p className="dash-lane-slot fs-meta text-dim flex items-center">
+          Alarms unknown — couldn't read {readiness.unread.join(' · ')}.
+        </p>
+      )}
+      {!hasAlarms && readiness.status === 'read' && (
         <p className="dash-lane-slot fs-meta text-dim flex items-center">No alarms need you right now.</p>
       )}
     </section>
   );
+}
+
+const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
+const ALARM_SOURCE_LABELS = { harness: 'harness health', costState: "today's spend", updateState: 'install state' };
+
+/**
+ * Whether the lane may claim an all-clear: 'loading' while any source is unsettled,
+ * 'unknown' once one settled without an answer, 'read' only when every source answered.
+ * @returns unread - labels of the sources that settled without an answer
+ */
+function getAlarmReadiness(sources) {
+  const entries = Object.entries(ALARM_SOURCE_LABELS).map(([key, label]) => ({ source: sources[key], label }));
+  if (entries.some(({ source }) => !source || source.status === 'loading')) return ALARM_READINESS_LOADING;
+
+  const unread = entries.filter(({ source }) => source.status !== 'ready').map(({ label }) => label);
+  return { status: unread.length > 0 ? 'unknown' : 'read', unread };
 }
 
 function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {

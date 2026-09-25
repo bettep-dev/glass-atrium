@@ -4,7 +4,7 @@
 //
 // Runner: npx tsx --test test/dashboard.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -232,14 +232,39 @@ test("the status band reflows to two columns until it has room for four", () => 
 });
 
 test("the alarm lane reserves its slot with a status line while alarm sources are still loading", () => {
-  const pending = render("AlarmLane", { alarms: [], isPending: true, onNav: () => {} });
+  const pending = render("AlarmLane", { alarms: [], readiness: { status: "loading", unread: [] }, onNav: () => {} });
   const region = findNodes(pending, (n) => n.props["aria-live"] === "polite")[0];
   assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
 
-  const settled = render("AlarmLane", { alarms: [], isPending: false, onNav: () => {} });
+  const settled = render("AlarmLane", { alarms: [], readiness: { status: "read", unread: [] }, onNav: () => {} });
   assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
   assert.match(collectText(settled), /No alarms/, "a settled empty lane keeps its line instead of collapsing");
 
-  const alarmed = render("AlarmLane", { alarms: [HARNESS_ALARM], isPending: true, onNav: () => {} });
+  const alarmed = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
   assert.equal(findNodes(alarmed, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "a landed alarm replaces the placeholder");
+});
+
+describe("the empty alarm lane shows the all-clear only when every alarm source was read", () => {
+  const READY = { status: "ready", data: {} };
+  const rows = [
+    { name: "every source read → all-clear", sources: { harness: READY, costState: READY, updateState: READY }, status: "read", unread: [] },
+    { name: "a source still loading → loading, even beside a failed one", sources: { harness: { status: "loading" }, costState: { status: "error" }, updateState: READY }, status: "loading", unread: [] },
+    { name: "harness fold unavailable → unknown", sources: { harness: { status: "unavailable" }, costState: READY, updateState: READY }, status: "unknown", unread: ["harness health"] },
+    { name: "spend read failed → unknown", sources: { harness: READY, costState: { status: "error" }, updateState: READY }, status: "unknown", unread: ["today's spend"] },
+    { name: "install read failed → unknown", sources: { harness: READY, costState: READY, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const readiness = (mod.getAlarmReadiness as (s: unknown) => { status: string; unread: string[] })(row.sources);
+      assert.equal(readiness.status, row.status);
+      assert.deepEqual([...readiness.unread], row.unread);
+
+      const text = collectText(render("AlarmLane", { alarms: [], readiness, onNav: () => {} }));
+      assert.equal(/No alarms need you/.test(text), row.status === "read", `all-clear shown only when read: ${text}`);
+      if (row.status === "unknown") {
+        assert.match(text, /Alarms unknown/);
+        for (const source of row.unread) assert.ok(text.includes(source), `names the unread source ${source}`);
+      }
+    });
+  }
 });
