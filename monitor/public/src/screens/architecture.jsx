@@ -11,28 +11,27 @@ const {
 
 // Constants
 
-// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
-const MAP_LABEL_FONT_PX = 30;
-
-// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
-const MAP_LABEL_LINE_PX = 150;
-
-// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
-const MAP_LABEL_WRAP_PX = 320;
-
-// mermaid-config.js fontFamily — the pre-layout measure must use the face mermaid measures with
-const MAP_LABEL_FONT_FAMILY = "Pretendard, system-ui, -apple-system, sans-serif";
+const MAP_LABEL = {
+	// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
+	fontPx: 30,
+	// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
+	linePx: 150,
+	// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
+	wrapPx: 320,
+	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
+	get directive() {
+		return (
+			`%%{init: {"themeVariables": {"fontSize": "${this.fontPx}px"}, ` +
+			`"flowchart": {"wrappingWidth": ${this.wrapPx}}}}%%\n`
+		);
+	},
+};
 
 // smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
 const MIN_RENDERED_LABEL_PX = 12;
 
 // scale floor derived from the two above, so the floor is a rendered size rather than a bare ratio
-const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL_FONT_PX;
-
-// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
-const MAP_LABEL_DIRECTIVE =
-	`%%{init: {"themeVariables": {"fontSize": "${MAP_LABEL_FONT_PX}px"}, ` +
-	`"flowchart": {"wrappingWidth": ${MAP_LABEL_WRAP_PX}}}}%%\n`;
+const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL.fontPx;
 
 // svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
 const PAN_ZOOM_MIN = 0.2;
@@ -667,7 +666,7 @@ function ScreenArchitecture(
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
-					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL_FONT_PX}px; font-weight: 700; pointer-events: none; ` +
+					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; dominant-baseline: central; } " +
 					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > text.arch-ring-glyph, #${ARCH_CANVAS_ID} .arch-zone-live-warn > text.arch-ring-glyph { display: inline; fill: rgb(var(--warn)); } ` +
@@ -940,7 +939,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL_DIRECTIVE + rebreakMapLabelsAR(source, getMapTextWidthAR))))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + buildMeasuredMapSourceAR(source, getMapTextWidthAR))))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -2227,7 +2226,7 @@ const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
  * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
  * A zone title breaks at that same word floor, so the title never widens its zone past the members.
  */
-function rebreakMapLabelsAR(source, measureText) {
+function buildMeasuredMapSourceAR(source, measureText) {
 	const lines = source.split("\n");
 	const zoneFloor = getZoneWordFloorAR(lines, measureText);
 	let zone = "";
@@ -2243,7 +2242,7 @@ function rebreakMapLabelsAR(source, measureText) {
 			if (/^\s*end\s*$/.test(line)) zone = "";
 			const edge = MAP_EDGE_LABEL_RE.exec(line);
 			if (edge) {
-				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL_LINE_PX);
+				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL.linePx);
 				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
 			}
 			const node = MAP_NODE_LINE_RE.exec(line);
@@ -2251,7 +2250,7 @@ function rebreakMapLabelsAR(source, measureText) {
 			const [, head, open, quotedLabel, bareLabel, close] = node;
 			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
 			if (words.length === 0) return line;
-			const limit = Math.max(MAP_LABEL_LINE_PX, zoneFloor.get(zone) || 0);
+			const limit = Math.max(MAP_LABEL.linePx, zoneFloor.get(zone) || 0);
 			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
 		})
 		.join("\n");
@@ -2281,15 +2280,15 @@ function getZoneWordFloorAR(lines, measureText) {
 function getLabelLinesAR(words, measureText, lineTarget) {
 	const widestWord = Math.max(...words.map(measureText));
 	const limit = Math.max(widestWord, lineTarget);
-	const lineCount = fillLinesAR(words, measureText, limit).length;
+	const lineCount = getGreedyLinesAR(words, measureText, limit).length;
 	for (let width = widestWord; width < limit; width += 2) {
-		const lines = fillLinesAR(words, measureText, width);
+		const lines = getGreedyLinesAR(words, measureText, width);
 		if (lines.length <= lineCount) return lines;
 	}
-	return fillLinesAR(words, measureText, limit);
+	return getGreedyLinesAR(words, measureText, limit);
 }
 
-function fillLinesAR(words, measureText, limit) {
+function getGreedyLinesAR(words, measureText, limit) {
 	const lines = [];
 	for (const word of words) {
 		const last = lines[lines.length - 1];
@@ -2305,7 +2304,8 @@ let mapTextContextAR = null;
 function getMapTextWidthAR(text) {
 	if (!mapTextContextAR) {
 		mapTextContextAR = document.createElement("canvas").getContext("2d");
-		mapTextContextAR.font = `${MAP_LABEL_FONT_PX}px ${MAP_LABEL_FONT_FAMILY}`;
+		// same face mermaid lays out with — a copied family drifts and the pre-layout wrap regresses silently
+		mapTextContextAR.font = `${MAP_LABEL.fontPx}px ${window.MERMAID_CONFIG.themeVariables.fontFamily}`;
 	}
 	return mapTextContextAR.measureText(text).width;
 }
@@ -2849,4 +2849,4 @@ function extractMermaidNodeLabelAR(nodeEl) {
 window.ScreenArchitecture = ScreenArchitecture;
 window.ARCH_SELECTORS = ARCH_SELECTORS;
 // the font-parity harness renders its baseline with the same override the canvas measured with
-window.ARCH_MAP_LABEL_DIRECTIVE = MAP_LABEL_DIRECTIVE;
+window.ARCH_MAP_LABEL_DIRECTIVE = MAP_LABEL.directive;
