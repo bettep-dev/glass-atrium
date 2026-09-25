@@ -221,7 +221,7 @@ scope_concerns_exempts_path() {
 #   - bare — any text may follow the value;
 #   - wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`) — the value list must end at end of line, or at
 #     whitespace then a `·` or `|` separator or a grammar key, and no value may end in `.` `:` `;`
-#     `)`: prose or sentence punctuation after it marks a verdict quoting a declaration;
+#     `)`: prose past the value, or one of those four endings, marks a verdict quoting a declaration;
 #   - opening a backtick or `**` wrap that closes at end of line if at all — a wrap closing mid-line
 #     with text after it marks a quoted verdict the same way.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
@@ -230,8 +230,8 @@ scope_concerns_exempts_path() {
 # Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
-#   - a wrapped token whose value list runs into anything else — prose words even behind a glued
-#     `·` or `=` (`a.sh·this was wrong`, `hooks/layout=x was narrow`), a glued `|` (`a.sh|prose`),
+#   - a wrapped token whose value list runs into anything else — prose past a space even behind a
+#     glued `·` or `=` (`a.sh·this was wrong`, `hooks/layout=x was narrow`), a glued `|` (`a.sh|prose`),
 #     a trailing comma, a space-separated path list — or whose value ends in `.` `:` `;` `)`;
 #   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
 #   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
@@ -242,8 +242,11 @@ scope_concerns_exempts_path() {
 #   - a wrapped-token relay whose value closes at a spaced separator or grammar key, with prose in a
 #     later field (`**[SCOPE]** files=a.sh · deliverable=fix — too narrow`): its tail reads as field
 #     text, so it cannot be told from a real declaration;
-#   - a wrapped-token relay whose value glues a `·` to ONE prose word (`` `[SCOPE]` files=a.sh·prose ``):
-#     value text may hold `·`, so it reads like the glued real form `files=a.sh·deliverable=fix`;
+#   - a wrapped-token relay gluing ONE prose word to its value through any character value text may
+#     hold — `·`, `=`, `—`, … (`` `[SCOPE]` files=a.sh·prose ``, `files=hooks/old.sh=wrong`): it reads
+#     like the glued real form `files=a.sh·deliverable=fix`;
+#   - a wrapped-token relay whose value ends in any character but `.` `:` `;` `)` — `!` `?` `…` and
+#     the rest are value text (`**[SCOPE]** files=a.sh!`);
 #   - a line-opening wrap that closes at end of line or never, with prose after the value inside it
 #     (`` `[SCOPE] files=a.sh lists one path `` · `` **[SCOPE] files=`a.sh` lists one path** ``).
 readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
