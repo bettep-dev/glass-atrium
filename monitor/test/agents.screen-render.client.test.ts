@@ -386,7 +386,7 @@ test("the ledger and instrumentation card adopt the shared labels", async () => 
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findNodes(table, (n) => n.type === "th").map((n) => collectText(n));
+  const headers = findAtoms(table, "TableHead").map((n) => collectText(n));
   assert.ok(headers.includes("Failed or blocked"), `ledger headers: ${headers.join(" | ")}`);
   assert.ok(!headers.includes("Breakages"));
 
@@ -673,11 +673,11 @@ test("the drawer breakage badge takes the same crit step as the ledger numeral",
   }
 });
 
-test("a P95 numeral is coloured only past the crit cut, while the glyph keeps every latency tier", async () => {
+test("a P95 numeral is coloured only past the crit cut, and the glyph keeps every tier while amber stays off the routine warn tier", async () => {
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "fast tier", p95_ms: 300_000, numeral: [] as string[], glyph: "text-ok" },
-    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-warn" },
+    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-dim" },
     { name: "crit tier", p95_ms: 1_500_000, numeral: ["text-crit"], glyph: "text-crit" },
   ];
   for (const row of rows) {
@@ -718,7 +718,7 @@ test("the ledger's activity mark names activity under a labelled column, never a
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findNodes(table, (n) => n.type === "th").map((n) => collectText(n));
+  const headers = findAtoms(table, "TableHead").map((n) => collectText(n));
   assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
 
   const rows = [
@@ -783,4 +783,88 @@ test("a compatibility requirement rides a short row tag with the full text on ho
   const badge = findNodes(tree, (n) => n.props?.atom === "Badge")[0];
   assert.equal(badge?.props.title, `Requires: ${requirement}`);
   assert.doesNotMatch(collectText(badge), /…/);
+});
+
+const FS_MICRO = /\bfs-micro\b/;
+
+test("the Agents page never renders text below the 12px meta step", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const trees = [
+    renderLedger(mod),
+    renderLoadRow(mod, "error", "error"),
+    renderScreen(React.createElement(mod.AgentDisclosure as Component, { title: "By task type", sub: "Success rate" })),
+    renderScreen(React.createElement(mod.AgentStatusTile as Component, { label: "Failed or blocked", sub: "last 30 days", status: "ready", value: 3 })),
+  ];
+  for (const tree of trees) {
+    const micro = findNodes(tree, (n) => FS_MICRO.test(String(n.props?.className ?? "")));
+    assert.equal(micro.length, 0, micro.map((n) => collectText(n)).join(" | "));
+  }
+});
+
+test("a disclosure is a page h2 whose control is the shared chevron button, never a text glyph", async () => {
+  const tree = await renderComponent("AgentDisclosure", { title: "Instrumentation", sub: "Is the measuring apparatus intact" });
+  const heading = findNodes(tree, (n) => n.type === "h2")[0];
+  assert.ok(heading, "the disclosure title is an h2");
+  const button = findAtoms(heading, "DisclosureButton")[0];
+  assert.equal(button?.props.isOpen, false, "closed by default");
+  assert.doesNotMatch(collectText(tree), /[▸▾]/);
+});
+
+test("the ledger's row expand uses the shared chevron, never a text glyph", async () => {
+  const mod = await loadAgentsScreen();
+  const tree = renderLedger(mod);
+  assert.equal(findAtoms(tree, "DisclosureChevron").length, LEDGER_AGENTS.length);
+  assert.doesNotMatch(collectText(tree), /[▸▾]/);
+});
+
+test("every ledger and pairs column header comes from the shared header atom", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const pairs = renderScreen(React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [], failureByAgent: new Map(), days: 14 }));
+  for (const [name, tree] of [["ledger", renderLedger(mod)], ["pairs", pairs]] as const) {
+    assert.equal(findNodes(tree, (n) => n.type === "th").length, 0, `${name}: no hand-rolled th`);
+    assert.ok(findAtoms(tree, "TableHead").length > 0, `${name}: TableHead columns`);
+  }
+});
+
+test("a ledger trend chart carries a name a screen reader can announce", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.AgentSummaryRow as Component, {
+      agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", success_pct: 92, runs: 40, needs_context_count: 2, p95_ms: 120_000 },
+      days: 30, isSelected: false, onSelect: () => {}, trend: [0.9, 0.8, 1], failure: null, overage: null,
+      failureStatus: "ready", trendStatus: "ready",
+    }),
+  );
+  assert.match(String(findAtoms(tree, "MiniBars")[0]?.props.label), /dev-react/);
+});
+
+test("a matrix sparkline is a named image rather than an unlabelled drawing", async () => {
+  const tree = await renderComponent("SuccessRateSparkline", { points: [{ rate: 1 }, { rate: 0.5 }], colorVar: "--ok", name: "dev-react feature" });
+  const img = findNodes(tree, (n) => n.props?.role === "img")[0];
+  assert.match(String(img?.props["aria-label"]), /dev-react feature/);
+});
+
+test("drawer section titles are h2 headings under the dialog's own name", async () => {
+  const tree = await renderComponent("AgentDrawerSection", { title: "Reliability" });
+  assert.equal(findAtoms(tree, "SubCard")[0]?.props.labelLevel, 2);
+});
+
+test("the drawer is named by the agent alone, never by the glyphs and pills beside its title", async () => {
+  const idle = { status: "idle", data: null, error: null };
+  const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "dev-shell", status: "active", origin: "system" };
+  const tree = await renderComponent("AgentDetailDrawer", {
+    drawerAgent: agent.agent_id, sortedAgents: [agent], summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+    revisionState: idle, reviewByAgentState: idle, latencyState: idle, successState: idle, failureState: idle, lifecycleState: idle,
+    detailState: idle, blockedState: idle, recentState: idle, trendByAgent: null, failureByAgent: null, days: 30,
+    onClose: () => undefined, onNav: () => undefined, onRetry: () => undefined, onDeleted: () => undefined,
+  });
+  const surface = findAtoms(tree, "DetailSurface")[0];
+  const labelledBy = surface?.props.labelledBy;
+  assert.ok(labelledBy, "the surface points at a name node");
+  // The surface atom is a stub, so its title element is rendered on its own.
+  const nameNode = findNodes(renderScreen(surface.props.title), (n) => n.props?.id === labelledBy)[0];
+  assert.equal(collectText(nameNode), "dev-shell");
 });

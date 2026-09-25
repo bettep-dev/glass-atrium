@@ -434,14 +434,14 @@ function AgentDisclosure({ title, sub, children }) {
 
   return (
     <div className="card mb-4">
-      <button
-        className="w-full text-left px-4 py-2.5 flex items-center gap-2"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={isOpen}>
-        <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-        <span className="font-medium">{title}</span>
-        {sub && <span className="text-faint fs-micro">{sub}</span>}
-      </button>
+      <h2 className="m-0 px-4 py-1 fs-body font-normal">
+        <window.UI.DisclosureButton
+          isOpen={isOpen}
+          onToggle={() => setOpen((v) => !v)}
+          className="w-full text-left gap-2"
+          label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>}
+        />
+      </h2>
       {isOpen && <div className="px-4 pb-4">{children}</div>}
     </div>
   );
@@ -455,7 +455,7 @@ function AgentAlarmLane({ state, onRetry }) {
   if (state.status === 'loading') {
     return (
       <div className="card mb-4" aria-busy="true">
-        <div className="card-body text-faint fs-micro">Checking circuit-breaker state…</div>
+        <div className="card-body text-faint fs-meta">Checking circuit-breaker state…</div>
       </div>
     );
   }
@@ -477,7 +477,7 @@ function AgentAlarmLane({ state, onRetry }) {
       <div className="card mb-4">
         <div className="card-body flex items-center gap-2">
           <Badge role="status" tone="warn">unavailable</Badge>
-          <span className="text-faint fs-micro">{CIRCUIT_BREAKER_UNREADABLE_COPY}</span>
+          <span className="text-faint fs-meta">{CIRCUIT_BREAKER_UNREADABLE_COPY}</span>
         </div>
       </div>
     );
@@ -502,11 +502,11 @@ function AgentAlarmRow({ alarm }) {
     <div className="flex items-center gap-2">
       <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
       <AgentName name={alarm.agent} className="font-mono"/>
-      <span className="text-faint fs-micro">
+      <span className="text-faint fs-meta">
         {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
       </span>
-      <span className="text-faint fs-micro">
+      <span className="text-faint fs-meta">
         {alarm.suspended ? 'stop routing · clear the marker, then edit the body' : 'one more fail suspends it'}
       </span>
     </div>
@@ -586,14 +586,14 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
   return (
     <div className="card h-full flex flex-col min-h-0">
       <div className="card-body flex flex-col gap-1">
-        <span className="text-faint fs-micro">{label}</span>
+        <span className="text-faint fs-meta">{label}</span>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
           <window.UI.RegionUnavailable source={label.toLowerCase()} error={error} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
         {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
-        <span className="text-faint fs-micro">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
+        <span className="text-faint fs-meta">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
       </div>
     </div>
   );
@@ -601,7 +601,7 @@ function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, erro
 
 // Unread payload mark — a dash would read as a loaded zero.
 function NotLoadedMarkAg({ title }) {
-  return <span className="text-faint fs-micro font-mono" title={title}>not loaded</span>;
+  return <span className="text-faint fs-meta" title={title}>not loaded</span>;
 }
 
 function getNotLoadedTitleAg(what, status) {
@@ -712,6 +712,7 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
 const SUMMARY_TABLE_COLSPAN = 6;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+  const { TableHead } = window.UI;
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
@@ -745,12 +746,12 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       <table className="tbl">
         <thead>
           <tr>
-            <th style={STICKY_TH_STYLE}><span className="sr-only">Expand row</span></th>
-            <th style={STICKY_TH_STYLE}>Agent <span className="text-faint">· activity</span></th>
-            <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
-            <th className="num" style={STICKY_TH_STYLE} title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</th>
-            <th className="num" style={STICKY_TH_STYLE} title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</th>
-            <th style={STICKY_TH_STYLE}>Trend</th>
+            <TableHead isSticky><span className="sr-only">Expand row</span></TableHead>
+            <TableHead isSticky>Agent <span className="text-faint">· activity</span></TableHead>
+            <TableHead isSticky isNumeric>Success rate</TableHead>
+            <TableHead isSticky isNumeric><span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span></TableHead>
+            <TableHead isSticky isNumeric><span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span></TableHead>
+            <TableHead isSticky>Trend</TableHead>
           </tr>
         </thead>
         <tbody>
@@ -760,12 +761,12 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
           <tbody>
             <tr>
               <td colSpan={SUMMARY_TABLE_COLSPAN} className="border-t border-line">
-                <button
-                  className="w-full text-left fs-micro font-mono text-faint px-1 py-1.5 hover:text-dim"
-                  onClick={() => setShowPseudo((v) => !v)}
-                  aria-expanded={showPseudo}>
-                  {showPseudo ? '▾' : '▸'} {pseudoRows.length} non-actionable {pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)
-                </button>
+                <window.UI.DisclosureButton
+                  isOpen={showPseudo}
+                  onToggle={() => setShowPseudo((v) => !v)}
+                  className="w-full text-left fs-meta px-1"
+                  label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
+                />
               </td>
             </tr>
             {showPseudo && pseudoRows.map(renderRow)}
@@ -827,11 +828,11 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       <td>
         <button
           {...window.UI.ROW_CONTROL_PROPS}
-          className="btn ghost sm"
+          className="btn ghost icon group"
           onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
           aria-expanded={isExpanded}
           aria-label={`${isExpanded ? 'Collapse' : 'Expand'} counts for ${agent.agent_name}`}>
-          {isExpanded ? '▾' : '▸'}
+          <window.UI.DisclosureChevron isOpen={isExpanded}/>
         </button>
       </td>
       <td>
@@ -905,16 +906,16 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {!isTrendRead ? (
           <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
-          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor}/>
+          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} 7-day success trend`}/>
         ) : (
-          <span className="text-faint fs-micro font-mono" title="no 7-day daily success-rate breakdown">—</span>
+          <span className="text-faint fs-meta font-mono" title="no 7-day daily success-rate breakdown">—</span>
         )}
       </td>
     </tr>
     {isExpanded && (
       <tr className="bg-sunken">
         <td colSpan={SUMMARY_TABLE_COLSPAN}>
-          <div className="flex items-center gap-4 fs-micro font-mono text-dim px-1 py-1.5">
+          <div className="flex items-center gap-4 fs-meta font-mono text-dim px-1 py-1.5">
             <span title="Times the agent finished and reported a result (outcome records)">
               Runs {formatIntAg(agent.runs)}
             </span>
@@ -1006,7 +1007,7 @@ function LatencyBars({ agents }) {
           <div key={a.agent_id} className="fs-body">
             <div className="flex items-center gap-2 mb-1.5">
               <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
-              <span className="font-mono text-faint fs-micro">P95 {formatDurationMsAg(p95)}</span>
+              <span className="font-mono text-faint fs-meta">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
               className="h-2.5 bg-sunken rounded-full relative overflow-hidden"
@@ -1022,7 +1023,7 @@ function LatencyBars({ agents }) {
           </div>
         );
       })}
-      <div className="flex gap-3 mt-2 fs-micro text-faint pt-2 border-t border-line">
+      <div className="flex gap-3 mt-2 fs-meta text-faint pt-2 border-t border-line">
         {LATENCY_LAYERS.slice().reverse().map((layer) => (
           <span key={layer.key} className="flex items-center gap-1">
             <span className="w-2 h-2 bg-info rounded-full" style={{ opacity: layer.opacity }}/>
@@ -1079,9 +1080,11 @@ function AgentDetailDrawer({
   const headerHealthEntry = healthRanking.find((a) => a.agent === drawerAgent) || null;
   const headerHasSignal = !!headerHealthEntry && headerHealthEntry.totalRevisions >= window.UI.LOW_N_MIN;
 
+  const titleId = `agent-drawer-name-${drawerAgent}`;
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
-      <AgentName name={agentName}/>
+      <span id={titleId} className="sr-only">{agentName}</span>
+      <span aria-hidden="true"><AgentName name={agentName}/></span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
       <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}/>
     </span>
@@ -1125,7 +1128,7 @@ function AgentDetailDrawer({
   // 푸터 — confirm 서브상태 진입 전/후로 액션 세트 전환 (nav 는 surface 가 별도 슬롯에 승격).
   const footer = confirming ? (
     <>
-      <div className="fs-meta text-dim font-mono mr-auto">Type the name to delete</div>
+      <div className="fs-meta text-dim mr-auto">Type the name to delete</div>
       <button className="btn ghost sm" onClick={cancelConfirm} disabled={committing} aria-label="Cancel delete">Cancel</button>
       <button
         className="btn danger sm"
@@ -1153,6 +1156,7 @@ function AgentDetailDrawer({
       onClose={onClose}
       variant="drawer"
       title={title}
+      labelledBy={titleId}
       sub={sub}
       nav={confirming ? undefined : { onPrev: () => onNav('prev'), onNext: () => onNav('next'), hasPrev, hasNext }}
       footer={footer}>
@@ -1273,16 +1277,16 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   const breaker = agent ? agent.circuit_breaker : null;
 
   if (summaryState.status === 'loading') {
-    return <div className="text-faint fs-micro mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
+    return <div className="text-faint fs-meta mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
   }
   if (summaryState.status === 'error') {
-    return <div className="text-faint fs-micro mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
+    return <div className="text-faint fs-meta mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
   }
   if (!breaker) {
     return (
       <div className="flex items-center gap-2 mb-2">
         <Badge role="status" tone="warn">unavailable</Badge>
-        <span className="text-faint fs-micro">circuit-breaker state not loaded for this agent</span>
+        <span className="text-faint fs-meta">circuit-breaker state not loaded for this agent</span>
       </div>
     );
   }
@@ -1290,7 +1294,7 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   return (
     <div className="flex items-center gap-2 mb-2">
       <Badge role="status" tone={getBreakerTone(breaker)}>{getBreakerLabel(breaker)}</Badge>
-      <span className="text-faint fs-micro">
+      <span className="text-faint fs-meta">
         {formatConsecutiveFails(breaker.consecutive_fails)}
         {breaker.suspended_at ? ` · suspended ${breaker.suspended_at}` : ''}
       </span>
@@ -1318,7 +1322,7 @@ function AgentDrawerSection({ title, children }) {
   const { SubCard } = window.UI;
   return (
     <section>
-      <SubCard label={title}>{children}</SubCard>
+      <SubCard label={title} labelLevel={2}>{children}</SubCard>
     </section>
   );
 }
@@ -1445,7 +1449,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
       <CompatibilityDetailBlock compatibility={agent.compatibility}/>
 
       {/* config 한 줄 — dual-phase + origin pill. 부재 데이터(origin unknown)는 dashed muted 변형으로
-          present 데이터보다 조용하게 (#4). pill 은 base .pill(11px) 통일 (fs-micro override 제거, #5b). */}
+          present 데이터보다 조용하게 (#4). pill 은 base .pill(11px) 통일 (fs-meta override 제거, #5b). */}
       <div className="flex items-center gap-2 flex-wrap">
         <Pill tone="neutral">{phaseLabel}</Pill>
         {agent.origin ? (
@@ -1649,7 +1653,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
             </Badge>
             {failure.reconstructed > 0 && (
               <span
-                className="fs-micro font-mono"
+                className="fs-meta font-mono"
                 style={{ color: 'rgb(var(--faint))' }}
                 title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
                 ↺ {formatIntAg(failure.reconstructed)} reconstructed
@@ -1795,7 +1799,7 @@ function RecentActivityRow({ row }) {
         <Badge role="status" tone={resultToneAg(row.result)}>{row.result}</Badge>
         <span className="font-mono fs-meta text-dim truncate">{row.task_type}</span>
       </div>
-      <div className="flex items-center gap-2 shrink-0 fs-micro font-mono text-faint tnum">
+      <div className="flex items-center gap-2 shrink-0 fs-meta font-mono text-faint tnum">
         {row.confidence && <span title="confidence">{row.confidence}</span>}
         {revision > 0 && <span title="revision_count" className="text-warn">rev {revision}</span>}
         <span title={row.record_ts}>{formatRelativeTimeAg(row.record_ts)}</span>
@@ -1847,7 +1851,7 @@ function MergedBreakageBody({ merged, days }) {
 
   return (
     <div>
-      <div className="fs-micro font-mono text-dim mb-2">
+      <div className="fs-meta font-mono text-dim mb-2">
         Total {formatIntAg(merged.total)} = <span className="text-crit inline-flex items-center gap-1"><Icon name="x" size={11}/>fail {formatIntAg(merged.failTotal)}</span> + <span className="text-info inline-flex items-center gap-1"><Icon name="info" size={11}/>blocked {formatIntAg(merged.blockedTotal)}</span>
       </div>
       <div className="space-y-2">
@@ -1909,7 +1913,7 @@ function mergeBreakageReasons(failData, blockedData) {
 function DetailMetric({ label, value, tone = '', hero = false }) {
   return (
     <div className="flex flex-col rounded-md p-3 bg-sunken ring-1 ring-line">
-      <div className="fs-micro text-faint min-h-[2.5em] leading-tight">{label}</div>
+      <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
       <div className={`font-mono font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
     </div>
   );
@@ -1985,7 +1989,7 @@ function SuccessRateMatrixTable({ matrix }) {
             <tr>
               <th
                 scope="col"
-                className="text-left text-dim font-medium px-2 py-1.5 border-b border-line"
+                className={`text-left ${TABLE_HEAD_CLASS}`}
                 style={MATRIX_CORNER_TH_STYLE}>
                 Agent
               </th>
@@ -1993,7 +1997,7 @@ function SuccessRateMatrixTable({ matrix }) {
                 <th
                   key={c.key}
                   scope="col"
-                  className="text-center text-dim font-medium px-2 py-1.5 border-b border-line"
+                  className={`text-center ${TABLE_HEAD_CLASS}`}
                   style={MATRIX_HEADER_TH_STYLE}>
                   {c.label}
                 </th>
@@ -2101,8 +2105,8 @@ function SuccessRateCell({ agent, taskType, cell }) {
       title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
       <div className="flex flex-col items-center gap-0.5">
-        <SuccessRateSparkline points={cell.points} colorVar={colorVar}/>
-        <div className="flex items-center gap-1 fs-micro">
+        <SuccessRateSparkline points={cell.points} colorVar={colorVar} name={`${agent} ${taskType}`}/>
+        <div className="flex items-center gap-1 fs-meta">
           <FailShareGlyph tone={failShareTone}/>
           <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
           <span className="text-faint">·</span>
@@ -2113,11 +2117,12 @@ function SuccessRateCell({ agent, taskType, cell }) {
   );
 }
 
-function SuccessRateSparkline({ points, colorVar }) {
+function SuccessRateSparkline({ points, colorVar, name }) {
   const { LineChart, Line, YAxis } = window.Recharts;
 
   // Recharts non-Responsive 사용은 명시 width/height 필요 — matrix 밀도상 ResponsiveContainer 비현실적.
   return (
+    <span role="img" aria-label={`${name} daily success rate`} title={`${name} daily success rate`} className="inline-flex">
     <LineChart
       width={SPARK_WIDTH}
       height={SPARK_HEIGHT}
@@ -2134,14 +2139,18 @@ function SuccessRateSparkline({ points, colorVar }) {
         isAnimationActive={false}
       />
     </LineChart>
+    </span>
   );
 }
 
 // Panel 1b: Top-N failing (agent, task_type) pairs.
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
 
+// Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
+const TABLE_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium px-2 py-1.5 border-b border-line';
+
 function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
-  const { CardHead, Pill } = window.UI;
+  const { CardHead } = window.UI;
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피.
   const { failingPairs, measuredPairs } = useMemoAg(
@@ -2156,9 +2165,6 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
       <CardHead
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingPairs.length, measuredPairs, days)}
-        right={state.status === 'ready' && failingPairs.length > 0
-          ? <Pill tone="crit">{failingPairs.length}</Pill>
-          : null}
       />
       <div className="card-body ag-card-body">
         <TopNFailingAgentsBody state={state} days={days} onRetry={onRetry} pairs={failingPairs} failureByAgent={failureByAgent}/>
@@ -2226,20 +2232,17 @@ const TOPN_FAILING_COLUMNS = [
 ];
 
 function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
+  const { TableHead } = window.UI;
+
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
       <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             {TOPN_FAILING_COLUMNS.map((c) => (
-              <th
-                key={c.key}
-                scope="col"
-                className={`text-${c.align} text-dim font-medium px-2 py-1.5 border-b border-line whitespace-nowrap${c.width ? ' ' + c.width : ''}`}
-                style={STICKY_TH_STYLE}
-                title={c.title}>
-                {c.label}
-              </th>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${TABLE_HEAD_CLASS} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
+                <span title={c.title}>{c.label}</span>
+              </TableHead>
             ))}
           </tr>
         </thead>
@@ -2447,7 +2450,7 @@ function QualityHealthTimelineTooltip({ active, payload }) {
 // revision_count 분포 inline mini-bar — 0/1/2/3/4+ 5색 stacked horizontal bar.
 function RevisionInlineMiniBar({ buckets, total }) {
   if (total === 0) {
-    return <div className="fs-micro text-faint font-mono">no revision data</div>;
+    return <div className="fs-meta text-faint">no revision data</div>;
   }
   return (
     <div
@@ -2533,6 +2536,7 @@ const LIFECYCLE_COLUMNS = [
 ];
 
 function LifecycleStatsTable({ rows, onSelect }) {
+  const { TableHead } = window.UI;
   const [activeIndex, setActiveIndex] = useStateAg(0);
 
   return (
@@ -2541,14 +2545,9 @@ function LifecycleStatsTable({ rows, onSelect }) {
         <thead>
           <tr>
             {LIFECYCLE_COLUMNS.map((c) => (
-              <th
-                key={c.key}
-                scope="col"
-                className={`text-${c.align} text-dim font-medium px-2 py-1.5 border-b border-line`}
-                style={STICKY_TH_STYLE}
-                title={c.title}>
-                {c.label}
-              </th>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${TABLE_HEAD_CLASS}`}>
+                <span title={c.title}>{c.label}</span>
+              </TableHead>
             ))}
           </tr>
         </thead>
@@ -3078,7 +3077,7 @@ const P95_AGENT_CRIT_SEC = 1200;
 function p95LatencyTone(p95Sec) {
   if (p95Sec == null)            return 'text-faint';
   if (p95Sec > P95_AGENT_CRIT_SEC) return 'text-crit';
-  if (p95Sec > P95_AGENT_WARN_SEC) return 'text-warn';
+  if (p95Sec > P95_AGENT_WARN_SEC) return 'text-dim'; // most agents sit here → shape only, amber would bury the crit rows
   return '';
 }
 
