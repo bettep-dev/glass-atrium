@@ -2359,7 +2359,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const sections = buildLedgerSectionsO(rows, closure, needsYou, needsYouCap);
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
-  const rowCount = sections.reduce((sum, section) => sum + section.rows.length, 0);
+  const rowCount = getLedgerDisplayRowsO(sections).length;
 
   return (
     // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
@@ -2419,15 +2419,15 @@ const LEDGER_COLUMN_COUNT = 5;
 
 // Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
 function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
-  const shownCount = section.rows.length + section.hiddenCount;
+  const needsYouTotal = section.rows.length + section.hiddenCount;
   const hasToggle = typeof onToggle === 'function'
-    && (isCapped ? section.hiddenCount > 0 : shownCount > NEEDS_YOU_PAGE_CAP);
+    && (isCapped ? section.hiddenCount > 0 : needsYouTotal > NEEDS_YOU_PAGE_CAP);
   if (!hasToggle) return null;
   return (
     <tr>
       <td colSpan={LEDGER_COLUMN_COUNT} className="px-2 py-1.5 border-b border-line">
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
-          {isCapped ? `Show all ${formatIntO(shownCount)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
+          {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
         </button>
       </td>
     </tr>
@@ -2520,9 +2520,7 @@ function QaScoreDotsO({ qaScore }) {
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
 function ResultTableRow({ row, onRowClick, closure, focusProps }) {
-  const rowClass = 'outcome-row cursor-pointer';
-
-  const ts       = formatTimestampO(row.record_ts);
+  const ts      = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
@@ -2535,7 +2533,7 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
 
   return (
     <tr
-      className={rowClass}
+      className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
       aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} ${row.summary || ''}`}>
@@ -2699,6 +2697,7 @@ function DetailMetadata({ row, detail, recordFields = [] }) {
   const metricType = detail ? detail.metric_type : null;
 
   const grader = graderVerdictMetaO(row?.grader_verdict);
+  const graderNote = getGraderNoteO(row?.grader_verdict);
 
   return (
     <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
@@ -2710,7 +2709,7 @@ function DetailMetadata({ row, detail, recordFields = [] }) {
           <GlyphO name={grader.icon}/>
           {grader.label}
         </div>
-        {getGraderNoteO(row?.grader_verdict) && <div className="text-dim">{getGraderNoteO(row?.grader_verdict)}</div>}
+        {graderNote && <div className="text-dim">{graderNote}</div>}
       </div>
       <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
       <div>
