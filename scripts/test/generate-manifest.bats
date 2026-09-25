@@ -111,6 +111,137 @@ untrack_in_scope() {
   [[ "${recorded}" == "${actual}" ]]
 }
 
+# Row = "<name>|<path>": a path the manifest records verbatim — one per byte class
+# default git output C-quotes, plus the printable bytes bordering the refused control class.
+CARRIED_PATH_ROWS=(
+  "non-ASCII byte|agents/한글-agent.md"
+  "double quote|agents/q\"b.md"
+  "space 0x20|agents/sp ace.md"
+  "tilde 0x7e|agents/til~de.md"
+)
+
+# Track one file per CARRIED_PATH_ROWS path. core.quotePath is pinned to git's default
+# so an ambient `false` cannot hide the non-ASCII row.
+track_carried_paths() {
+  local row
+  git -C "${WORK}" config core.quotePath true
+  for row in "${CARRIED_PATH_ROWS[@]}"; do
+    printf '# %s\n' "${row%%|*}" >"${WORK}/${row#*|}"
+    git -C "${WORK}" add -- "${row#*|}"
+  done
+  git -C "${WORK}" commit -qm 'track carriable paths'
+}
+
+sha256_content() {
+  local out
+  if command -v shasum >/dev/null 2>&1; then
+    out="$(shasum -a 256 <"$1")"
+  else
+    out="$(sha256sum <"$1")"
+  fi
+  printf '%s\n' "${out%% *}"
+}
+
+@test "generate: records every carriable path verbatim, hashed from its content" {
+  track_carried_paths
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  local row name path recorded content mode
+  for row in "${CARRIED_PATH_ROWS[@]}"; do
+    name="${row%%|*}" path="${row#*|}"
+    jq -e --arg f "${path}" 'any(.files[]; . == $f)' "${MANIFEST}" >/dev/null \
+      || {
+        echo "files[] lacks the ${name} path verbatim"
+        return 1
+      }
+    recorded="$(jq -r --arg f "${path}" '.hashes[$f]' "${MANIFEST}")"
+    content="$(sha256_content "${WORK}/${path}")"
+    [[ "${recorded}" == "${content}" ]] \
+      || {
+        echo "hash of the ${name} path is not its content hash"
+        return 1
+      }
+    mode="$(jq -r --arg f "${path}" '.modes[$f]' "${MANIFEST}")"
+    [[ "${mode}" =~ ^[0-7]{3,4}$ ]] || {
+      echo "modes lacks the ${name} path"
+      return 1
+    }
+  done
+}
+
+@test "--check: exit 0 on a generated tree holding every carriable path" {
+  track_carried_paths
+  "${SCRIPT}" >/dev/null
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"manifest matches generated set"* ]] || return 1
+}
+
+# Index-only entry: APFS refuses a non-UTF-8 file name, but git tracks one fine.
+track_index_only() {
+  local blob
+  blob="$(git -C "${WORK}" hash-object -w --stdin </dev/null)"
+  git -C "${WORK}" update-index --add --cacheinfo "100644,${blob},$1"
+}
+
+# Row = "<name>|<path suffix>": one byte class a manifest path cannot carry (exit 8).
+UNCARRIABLE_ROWS=(
+  "backslash|back\\slash.md"
+  "tab|tab"$'\t'"name.md"
+  "newline|new"$'\n'"line.md"
+  "C0 low end 0x01|soh"$'\x01'"name.md"
+  "carriage return|cr"$'\r'"name.md"
+  "escape|esc"$'\x1b'"name.md"
+  "C0 high end 0x1f|us"$'\x1f'"name.md"
+  "DEL 0x7f|del"$'\x7f'"name.md"
+  "non-UTF-8 byte|bad"$'\xe9'"byte.md"
+)
+
+@test "generate: exit 8 names an in-scope path the pipeline cannot carry and leaves the manifest unchanged" {
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm 'baseline manifest'
+  cp -- "${MANIFEST}" "${WORK}/before.json"
+  local row name path quoted
+  for row in "${UNCARRIABLE_ROWS[@]}"; do
+    name="${row%%|*}" path="agents/${row#*|}"
+    printf -v quoted '%q' "${path}"
+    track_index_only "${path}"
+    run "${SCRIPT}"
+    [[ "${status}" -eq 8 ]] || {
+      echo "${name}: exit ${status}, expected 8"
+      return 1
+    }
+    [[ "${output}" == *"${quoted}"* ]] || {
+      echo "${name}: path not named"
+      return 1
+    }
+    cmp -s -- "${WORK}/before.json" "${MANIFEST}" || {
+      echo "${name}: manifest rewritten"
+      return 1
+    }
+    git -C "${WORK}" rm -q --cached -- "${path}"
+  done
+}
+
+@test "generate: an excluded path is dropped whatever bytes it carries" {
+  local row name path
+  for row in "${UNCARRIABLE_ROWS[@]}"; do
+    name="${row%%|*}" path="scripts/lib/archive/${row#*|}"
+    track_index_only "${path}"
+    run "${SCRIPT}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: exit ${status}, expected 0: ${output}"
+      return 1
+    }
+    jq -e 'any(.files[]; test("/archive/")) | not' "${MANIFEST}" >/dev/null || {
+      echo "${name}: excluded path entered files[]"
+      return 1
+    }
+    git -C "${WORK}" rm -q --cached -- "${path}"
+  done
+}
+
 @test "generate: deterministic — two runs produce a byte-identical manifest" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
@@ -313,6 +444,19 @@ ship_lib_a() {
   jq -e '(.modes | has("scripts/lib/a.sh")) | not' "${MANIFEST}" >/dev/null || return 1
 }
 
+@test "retired: a dropped path stays retired when a tracked path splits on a newline into its name" {
+  local shipped
+  shipped="$(ship_lib_a)"
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+  track_index_only "docs/x"$'\n'"scripts/lib/a.sh"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"RETIRED + scripts/lib/a.sh"* ]] || return 1
+  jq -e --arg h "${shipped}" '.retired["scripts/lib/a.sh"] == [$h]' "${MANIFEST}" >/dev/null || return 1
+}
+
 @test "retired: a path that left files[] by exclusion rule or gitignore is NOT retired" {
   # arm 1 — tracked, but the exclusion pattern now claims it. The manifest row is
   # hand-stamped because a path cannot be both listed and excluded by generation.
@@ -339,6 +483,26 @@ ship_lib_a() {
   [[ -f "${WORK}/scripts/lib/b.sh" ]] || return 1
   jq -e '(.retired | has("scripts/lib/archive/old.sh")) | not' "${MANIFEST}" >/dev/null || return 1
   jq -e '(.retired | has("scripts/lib/b.sh")) | not' "${MANIFEST}" >/dev/null || return 1
+}
+
+@test "retired: a still-tracked path git would quote is NOT retired once it leaves the disk" {
+  # The on-disk arm is removed so only the tracked-paths oracle can keep the row out.
+  git -C "${WORK}" config core.quotePath true
+  mkdir -p "${WORK}/scripts/lib/archive"
+  printf '# archived\n' >"${WORK}/scripts/lib/archive/한글.sh"
+  git -C "${WORK}" add scripts/lib/archive/한글.sh
+  git -C "${WORK}" commit -qm 'track an excluded non-ASCII path'
+  "${SCRIPT}" >/dev/null
+  rm -f -- "${WORK}/scripts/lib/archive/한글.sh"
+  jq '.files += ["scripts/lib/archive/한글.sh"]
+      | .hashes["scripts/lib/archive/한글.sh"] = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"' \
+    "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"RETIRED +"* ]] || return 1
+  jq -e '(.retired | has("scripts/lib/archive/한글.sh")) | not' "${MANIFEST}" >/dev/null || return 1
 }
 
 @test "retired: a second drop of the same path appends, dedupes and sorts its hashes" {

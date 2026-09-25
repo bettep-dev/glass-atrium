@@ -88,7 +88,9 @@
 #
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
-# manifest that fails structural validation · 7=apply-spine.sh not found.
+# manifest that fails structural validation · 7=apply-spine.sh not found ·
+# 8=a tracked manifest path carries a backslash, a control byte (0x01-0x1f, DEL)
+# or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -171,7 +173,7 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 # SHA-256 tool — shasum (macOS / perl-backed, also on CI ubuntu) preferred,
-# coreutils sha256sum as the Linux fallback. Both honor `--` end-of-options.
+# coreutils sha256sum as the Linux fallback.
 if command -v shasum >/dev/null 2>&1; then
   readonly -a SHA256_CMD=(shasum -a 256)
 elif command -v sha256sum >/dev/null 2>&1; then
@@ -200,10 +202,10 @@ git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   exit 3
 }
 
-# Echo the lowercase 64-hex SHA-256 of a single file (first whitespace field of
-# the tool output, dropping the trailing filename column).
+# Echo the lowercase 64-hex SHA-256 of a single file. Content goes in on stdin so
+# the digest field never carries a filename-escape prefix.
 sha256_of() {
-  "${SHA256_CMD[@]}" -- "$1" | awk '{print $1}'
+  "${SHA256_CMD[@]}" <"$1" | awk '{print $1}'
 }
 
 # Echo the octal permission mode (e.g. 644 / 755) of a single file. `-L`
@@ -226,12 +228,41 @@ mode_of() {
   fi
 }
 
-# Emit the generated deploy file list, one path per line, sorted.
-# grep exit 1 (= every tracked file excluded) is absorbed so the empty set
-# reaches the named exit-6 guard instead of dying as an opaque pipefail.
+# NUL-delimited paths on stdin → the ones EXCLUDE_RE keeps, one per line. A kept
+# path the line pipeline (tab, newline), JSON (non-UTF-8 byte), a consumer's by-name
+# shasum (backslash → `\`-prefixed digest) or a reader assuming git never emits a
+# raw control byte cannot carry is refused by name (exit 8); an excluded one is
+# dropped whatever its bytes.
+nul_paths_to_lines() {
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ "${path}" =~ ${EXCLUDE_RE} ]]; then continue; fi
+    # shellcheck disable=SC2310  # a false rc is the refusal below, not an error to abort on
+    if ! is_carriable "${path}"; then
+      printf 'generate-manifest: tracked manifest path carries a backslash, control byte or non-UTF-8 byte (unsupported): %q\n' \
+        "${path}" >&2
+      exit 8
+    fi
+    printf '%s\n' "${path}"
+  done
+}
+
+# True when $1 has no backslash, no control byte and is valid UTF-8. C locale pins
+# [[:cntrl:]] to 0x00-0x1f + DEL. jq -R swaps an invalid byte for U+FFFD, so the
+# round trip differs; jq runs only for a path carrying a byte >= 0x80.
+is_carriable() {
+  local LC_ALL=C roundtrip
+  if [[ "$1" == *[[:cntrl:]\\]* ]]; then return 1; fi
+  if [[ "$1" != *[$'\x80'-$'\xff']* ]]; then return 0; fi
+  roundtrip="$(printf '%s' "$1" | jq -Rrj .)"
+  [[ "${roundtrip}" == "$1" ]]
+}
+
+# Emit the generated deploy file list, one path per line, sorted. -z because
+# default ls-files C-quotes a path with a byte >= 0x80, `"` or `\` — naming no file.
 generate_files() {
-  git -C "${GA_ROOT}" ls-files -- "${SCOPE_PATHS[@]}" \
-    | { grep -vE "${EXCLUDE_RE}" || true; } \
+  git -C "${GA_ROOT}" ls-files -z -- "${SCOPE_PATHS[@]}" \
+    | nul_paths_to_lines \
     | LC_ALL=C sort
 }
 
@@ -289,10 +320,14 @@ read_manifest_retired_lines() {
 }
 
 # Every path git tracks anywhere in the repo, sorted — the "the vendor still ships
-# this" oracle. Deliberately unscoped and unfiltered; the rationale is the
-# retired-map contract note in the header.
+# this" oracle. Deliberately unscoped and not EXCLUDE_RE-filtered; the rationale is
+# the retired-map contract note in the header. -z as in generate_files; a newline
+# path is skipped, not refused — never a manifest key, and split it could fake a match.
 raw_tracked_paths() {
-  git -C "${GA_ROOT}" ls-files | LC_ALL=C sort
+  local path
+  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
+    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
+  done | LC_ALL=C sort
 }
 
 # Emit `<path>\t<sha256>` for each committed files[] path the vendor has dropped —

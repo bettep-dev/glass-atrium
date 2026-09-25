@@ -85,6 +85,17 @@ history_hash_lines() {
     | jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"'
 }
 
+# Every path git tracks anywhere in the repo, sorted — the same oracle as the
+# generator's raw_tracked_paths. -z because default ls-files C-quotes a path with a
+# byte >= 0x80, `"`, `\` or a control byte, naming no history key; a newline path is
+# skipped — never a manifest key, and split it could fake a match.
+raw_tracked_paths() {
+  local path
+  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
+    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
+  done | LC_ALL=C sort -u
+}
+
 # Emit the surviving `<path>\t<sha256>` lines — the pairs whose path the vendor no
 # longer ships and no barred family claims.
 #
@@ -104,7 +115,7 @@ seed_lines() {
     kept+="${path}"$'\n'
   done < <(LC_ALL=C comm -23 \
     <(printf '%s\n' "${pairs}" | cut -f1 | LC_ALL=C sort -u) \
-    <(git -C "${GA_ROOT}" ls-files | LC_ALL=C sort -u))
+    <(raw_tracked_paths))
   [[ -n "${kept}" ]] || return 0
   LC_ALL=C join -t "$(printf '\t')" \
     <(printf '%s' "${kept}" | LC_ALL=C sort) \

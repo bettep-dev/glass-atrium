@@ -32,6 +32,18 @@ no() {
 }
 hdr() { printf '\n===== %s =====\n' "$1"; }
 
+# Count manifest files[] entries absent from the git index of repo root $1. ls-files -z
+# keeps a non-ASCII or double-quote path raw like the manifest key; a newline path is
+# skipped so its split halves cannot fake a match.
+untracked_listed_count() {
+  local root="$1" path
+  LC_ALL=C comm -23 \
+    <(jq -r '.files[]' "${root}/manifest.json" | LC_ALL=C sort) \
+    <(git -C "${root}" ls-files -z | while IFS= read -r -d '' path; do
+      if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
+    done | LC_ALL=C sort) | wc -l | tr -d ' '
+}
+
 # --- safety guard snapshot ----------------------------------------------------
 # leak detection (STEP 8) is content-hash + marker-anchored GA-artifact scoped:
 # a whole-dir mtime compare on ~/.claude false-fails whenever the live harness
@@ -130,9 +142,7 @@ tail -2 "${SANDBOX}/manifest-check.log"
 # (gitignored/local-only) entry passes a LOCAL doctor but hard-fails doctor §4
 # on a fresh clone. LC_ALL=C on comm is load-bearing (BSD comm collates by the
 # session locale and mis-diffs C-sorted input otherwise).
-UNTRACKED_LISTED="$(LC_ALL=C comm -23 \
-  <(jq -r '.files[]' "${GA}/manifest.json" | LC_ALL=C sort) \
-  <(git -C "${GA}" ls-files | LC_ALL=C sort) | wc -l | tr -d ' ')"
+UNTRACKED_LISTED="$(untracked_listed_count "${GA}")"
 [[ "${UNTRACKED_LISTED}" -eq 0 ]] \
   && ok "zero manifest entries outside git ls-files (fresh-clone doctor safe)" \
   || no "${UNTRACKED_LISTED} manifest entries are not git-tracked"
