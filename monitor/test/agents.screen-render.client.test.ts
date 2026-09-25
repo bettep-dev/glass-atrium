@@ -868,3 +868,16 @@ test("the drawer is named by the agent alone, never by the glyphs and pills besi
   const nameNode = findNodes(renderScreen(surface.props.title), (n) => n.props?.id === labelledBy)[0];
   assert.equal(collectText(nameNode), "dev-shell");
 });
+
+test("the review-flag total sits under a card title in every state, never as a heading-less tile", async () => {
+  const rows = [
+    { name: "loading", state: { status: "loading", data: null, error: null } },
+    { name: "ready", state: { status: "ready", data: { rows: [{ event_date: "2026-09-24", total_count: 20, review_flagged_count: 3 }] }, error: null } },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("ReviewFlagTimelineCard", { state: row.state, days: 30, onRetry: () => undefined });
+    const cardHead = findAtoms(tree, "CardHead")[0];
+    assert.equal(cardHead?.props.title, "Review flags", row.name);
+    assert.match(String(cardHead?.props.sub), /30 days/, row.name);
+  }
+});

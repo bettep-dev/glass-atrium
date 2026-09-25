@@ -388,11 +388,7 @@ function ScreenAgents() {
       <AgentDisclosure title="Instrumentation" sub="Is the measuring apparatus intact">
         <div className="grid grid-cols-1 gap-4 items-stretch">
           <LifecycleStatsCard state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={regionRetry}/>
-          <div className="card flex flex-col min-h-0">
-            <div className="card-body ag-card-body">
-              <QualityHealthTimeline state={reviewState} onRetry={regionRetry}/>
-            </div>
-          </div>
+          <ReviewFlagTimelineCard state={reviewState} days={days} onRetry={regionRetry}/>
         </div>
       </AgentDisclosure>
       </div>
@@ -2325,6 +2321,20 @@ const QH_TIMELINE_RATIO_AXIS_LABEL = {
   fontSize: 11,
   style: { textAnchor: 'middle' },
 };
+
+// Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
+function ReviewFlagTimelineCard({ state, days, onRetry }) {
+  const { CardHead } = window.UI;
+
+  return (
+    <div className="card flex flex-col min-h-0">
+      <CardHead title="Review flags" sub={`Last ${days} days · flag reasons per day and flagged rate`}/>
+      <div className="card-body ag-card-body">
+        <QualityHealthTimeline state={state} onRetry={onRetry}/>
+      </div>
+    </div>
+  );
+}
 
 function QualityHealthTimeline({ state, onRetry }) {
   if (state.status === 'loading') {
