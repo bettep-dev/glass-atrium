@@ -1,5 +1,5 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
-const { useState: useS, useEffect: useE, useRef: useR } = React;
+const { useState: useS, useEffect: useE, useRef: useR, useCallback: useC } = React;
 
 // NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입
 const NAV = [
@@ -146,11 +146,11 @@ function fetchJson(url) {
 // harness 스토어 초기값 — 'loading' 은 '아직 모름'이고 0 이 아니다(가짜 정상 차단).
 const HARNESS_STORE_INITIAL = { status: "loading", data: null };
 
-// allSettled 결과 → harness 스토어 상태. rejected 는 error 로 남겨 fold 가 미수신을 구분한다.
-function toStoreState(settled) {
-	return settled.status === "fulfilled"
-		? { status: "ready", data: settled.value }
-		: { status: "error", data: null };
+// allSettled 결과 → harness 스토어 상태. 실패한 재폴링은 직전 판독을 유지하고,
+// 한 번도 답하지 않은 스토어만 error 로 남겨 fold 가 미수신을 구분한다.
+function toStoreState(settled, prev) {
+	if (settled.status === "fulfilled") return { status: "ready", data: settled.value };
+	return prev && prev.status === "ready" ? prev : { status: "error", data: null };
 }
 
 // harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
@@ -232,7 +232,7 @@ function App() {
 		const fetchBadges = async () => {
 			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
 			if (cancelled) return;
-			setKpiState(toStoreState(kpiR[0]));
+			setKpiState((prev) => toStoreState(kpiR[0], prev));
 		};
 		fetchBadges();
 		const id = setInterval(fetchBadges, NAV_BADGE_POLL_MS);
@@ -244,28 +244,30 @@ function App() {
 
 	// harness wave — architecture/live + health 를 KPI 와 같은 cadence 로 폴링.
 	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
+	// 같은 폴이 Dashboard 하네스 타일의 Retry → 화면이 두 번째 요청 경로를 갖지 않는다.
+	const isHarnessMountedRef = useR(true);
+	const pollHarness = useC(async () => {
+		const [live, health, hook, hookFail] = await Promise.allSettled([
+			fetchJson("/api/architecture/live"),
+			fetchJson("/api/health"),
+			fetchJson("/api/health/hook-chain"),
+			fetchJson("/api/health/hook-failures?days=30&limit=50"),
+		]);
+		if (!isHarnessMountedRef.current) return;
+		setHealthState((prev) => toStoreState(health, prev));
+		setLiveState((prev) => toStoreState(live, prev));
+		setHookState((prev) => toStoreState(hook, prev));
+		setHookFailState((prev) => toStoreState(hookFail, prev));
+	}, []);
 	useE(() => {
-		let cancelled = false;
-		const pollHarness = async () => {
-			const [live, health, hook, hookFail] = await Promise.allSettled([
-				fetchJson("/api/architecture/live"),
-				fetchJson("/api/health"),
-				fetchJson("/api/health/hook-chain"),
-				fetchJson("/api/health/hook-failures?days=30&limit=50"),
-			]);
-			if (cancelled) return;
-			setHealthState(toStoreState(health));
-			setLiveState(toStoreState(live));
-			setHookState(toStoreState(hook));
-			setHookFailState(toStoreState(hookFail));
-		};
+		isHarnessMountedRef.current = true;
 		pollHarness();
 		const id = setInterval(pollHarness, NAV_BADGE_POLL_MS);
 		return () => {
-			cancelled = true;
+			isHarnessMountedRef.current = false;
 			clearInterval(id);
 		};
-	}, []);
+	}, [pollHarness]);
 
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);
@@ -313,7 +315,7 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} harness={harness} />
+						<Screen onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}

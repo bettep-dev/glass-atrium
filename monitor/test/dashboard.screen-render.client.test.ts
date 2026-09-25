@@ -201,6 +201,36 @@ test("a tile whose outage the page banner already carries offers no Retry of its
   assert.equal(cards[0].props.onRetry, undefined);
 });
 
+test("an unavailable harness tile offers a Retry that re-polls the harness, even beside a page banner", () => {
+  const harnessTile = {
+    id: "harness", label: "Harness health", status: "unavailable", tone: "neutral", value: "—",
+    hint: "Harness readings unavailable.", region: "harness", canRetry: true, target: "architecture", targetLabel: "System map",
+  };
+  for (const isRetryShared of [false, true]) {
+    const retried: string[] = [];
+    const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region), isRetryShared });
+    const buttons = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retry"));
+    assert.equal(buttons.length, 1, `isRetryShared=${isRetryShared}`);
+    (buttons[0].props.onClick as () => void)();
+    assert.deepEqual(retried, ["harness"]);
+  }
+  const readyTree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(readyTree, (n) => n.type === "button").length, 0, "a read tile carries no Retry");
+});
+
+test("a tile Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
+  const polled: string[] = [];
+  const loaded: string[] = [];
+  const retry = (mod.getTileRetry as (load: (r: string) => void, poll: () => void) => (r: string) => void)(
+    (region) => loaded.push(region),
+    () => polled.push("harness"),
+  );
+  retry("harness");
+  retry("cost");
+  assert.deepEqual(polled, ["harness"]);
+  assert.deepEqual(loaded, ["cost"]);
+});
+
 test("a loading tile says so in a status placeholder and reserves the detail slot the loaded tile fills", () => {
   const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
   for (const tile of [loadingTile, READY_TILE]) {

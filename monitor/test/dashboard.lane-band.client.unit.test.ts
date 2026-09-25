@@ -34,6 +34,7 @@ interface Tile {
   hint: string;
   target: string | null;
   badge?: string;
+  canRetry?: boolean;
 }
 interface Fold {
   status: string;
@@ -283,6 +284,7 @@ test("the harness tile is loading exactly while the fold is, and unavailable onl
     assert.equal(tile.status, expected, foldStatus);
     assert.equal(tile.value, "—", `${foldStatus} must not render a count nobody polled`);
     assert.equal(tile.tone, "neutral");
+    assert.equal(tile.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
   }
 });
 

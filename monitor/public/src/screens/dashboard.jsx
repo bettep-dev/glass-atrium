@@ -30,6 +30,8 @@ const DASH_REGION_URLS = {
   updateJob: UPDATE_JOB_ENDPOINT,
 };
 const DASH_WAVE_REGIONS = Object.keys(DASH_REGION_URLS);
+// shell-polled, not a DASH_REGION_URLS entry — its re-read is the shell's harness poll
+const HARNESS_REGION = 'harness';
 
 // 오늘 지출 경보 컷 — 7일 일평균(avg/day)의 1.25배. 규칙 소유는 Cost & usage 계획(clauded-docs/39582);
 // 대시보드는 같은 /api/cost/kpi 를 읽어 그 판정을 소비만 한다 — 두 화면이 같은 분에 다른 답을 내면 안 된다.
@@ -39,7 +41,7 @@ const SPEND_BASELINE_DAYS = 7;
 // severity 우선순위 — 레인 정렬 기준. 높을수록 위험.
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
-function ScreenDashboard({ onNav, harness }) {
+function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
@@ -67,6 +69,7 @@ function ScreenDashboard({ onNav, harness }) {
   }, []);
 
   const triggerRefresh = useCallbackD(() => setRefreshTick((t) => t + 1), []);
+  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, onRetryHarness)(region), [loadRegion, onRetryHarness]);
   const refetchUpdateJob = useCallbackD(() => loadRegion('updateJob'), [loadRegion]);
 
   // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(풋터와 어긋나는 원인).
@@ -139,10 +142,15 @@ function ScreenDashboard({ onNav, harness }) {
           updateJobState={updateJobState}
           onRefetchJob={refetchUpdateJob}
         />
-        <StatusBand tiles={tiles} onNav={onNav} onRetry={loadRegion} isRetryShared={sharedFailure !== null}/>
+        <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} isRetryShared={sharedFailure !== null}/>
       </div>
     </div>
   );
+}
+
+// harness 판독은 셸 소유 → 그 타일의 Retry 는 셸 재폴링, 나머지는 자기 region 재요청
+function getTileRetry(loadRegion, onRetryHarness) {
+  return (region) => (region === HARNESS_REGION ? onRetryHarness?.() : loadRegion(region));
 }
 
 // ≥2 unloaded tiles failing on one cause → one page banner carries the only Retry
@@ -256,6 +264,9 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
           <StatusTileValue tile={tile}/>
           <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
           <div className="fs-meta text-dim dash-tile-hint">{tile.hint}</div>
+          {tile.canRetry && (
+            <button type="button" className="btn sm self-start" onClick={() => onRetry(tile.region)}>Retry</button>
+          )}
           {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
         </>
       )}
@@ -551,12 +562,13 @@ function buildTiles({ harness, costState, agentsState, outcomesState, alarms = [
 
 // 타일 1 — 하네스 파트. 분모는 셸이 실제로 관측한 파트 수: 미관측 파트를 정상으로 세지 않는다.
 function buildHarnessTile(harness) {
-  const base = { id: 'harness', label: 'Harness health', target: 'architecture', targetLabel: 'System map' };
+  const base = { id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', targetLabel: 'System map' };
   if (harness && harness.status === 'loading') {
     return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
   }
   if (!harness || harness.status !== 'ready') {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.' };
+    // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
+    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
   }
   const unchecked = harness.uncheckedNames.length > 0
     ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`

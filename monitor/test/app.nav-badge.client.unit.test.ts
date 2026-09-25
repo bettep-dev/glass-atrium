@@ -53,6 +53,7 @@ interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
   systemsRollup: (harness: HarnessFold | null) => Rollup;
   parseHashScreen: () => string;
+  toStoreState: (settled: PromiseSettledResult<unknown>, prev?: unknown) => { status: string; data: unknown };
 }
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
@@ -263,6 +264,25 @@ test("a rejected harness store is unavailable, not a zero reading", () => {
   assert.equal(fold.daemonsDown, null, "a failed poll reports unknown, never 0 down");
   assert.equal(fold.partsChecked, 2, "only the parts that answered are in the denominator");
   assert.equal(fold.version, null);
+});
+
+test("a failed poll keeps the held reading; only a store that never answered becomes an error", () => {
+  const held = { status: "ready", data: daemonPayload(1) };
+  const rejected: PromiseSettledResult<unknown> = { status: "rejected", reason: new Error("HTTP 503") };
+  const rows = [
+    { name: "held reading survives the failure", prev: held, expected: held },
+    { name: "no prior reading → error", prev: { status: "loading", data: null }, expected: { status: "error", data: null } },
+    { name: "a prior error stays an error", prev: { status: "error", data: null }, expected: { status: "error", data: null } },
+  ];
+  for (const row of rows) {
+    // spread → the vm realm's object prototype drops out of the strict comparison
+    assert.deepEqual({ ...app.toStoreState(rejected, row.prev) }, row.expected, row.name);
+  }
+  assert.deepEqual(
+    { ...app.toStoreState({ status: "fulfilled", value: { ok: 1 } }, held) },
+    { status: "ready", data: { ok: 1 } },
+    "a fresh answer replaces the held one",
+  );
 });
 
 // --- AC-T13(c): the footer and the nav numeral are consumers of that same fold ---
