@@ -967,6 +967,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
+        .doc-col-title { min-width: 394px; }
+        /* <1200px the shell's icon rail leaves a ~900px pane → Tags goes (the viewer still carries it), the title floor drops */
+        @media (max-width: 1199px) {
+          .doc-col-tags { display: none; }
+          .doc-col-title { min-width: 240px; }
+        }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1153,7 +1159,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 function DocTagsCellCD({ audience, format, commonFormat }) {
 	const { Badge } = window.UI;
 	return (
-		<td className="doc-tags-cell">
+		<td className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
@@ -1212,7 +1218,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1426,7 +1432,7 @@ function DocListCardCD({
 				{state.status === "ready" && rows.length > 0 && (
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
-							Documents ledger. Arrow keys move between rows; Enter opens the focused document.
+							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
 						</caption>
 						<thead>
 							<tr>
@@ -1444,19 +1450,16 @@ function DocListCardCD({
 									/>
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
-								{/* 폭 예산 — 카드 폭은 셸 min-width 에 막혀 1010px 아래로 내려가지 않는다.
-                    목록 모드 비-제목 합 613px → 제목이 나머지 397px(본문 상자 343px).
-                    width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
-                    min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
+								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
 								{/* 135px — 최장 stage 라벨 pill 과 그 아래 모델 줄이 들어가는 컬럼 하한. */}
 								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
                     그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
 								<th scope="col" style={{ width: 72, minWidth: 72 }}>ID</th>
-								<th scope="col" style={{ minWidth: 394 }}>Title</th>
+								<th scope="col" className="doc-col-title">Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
-								<th scope="col" style={{ width: 152, minWidth: 152 }}>
+								<th scope="col" className="doc-col-tags" style={{ width: 152, minWidth: 152 }}>
 									Tags
 									{commonFormat && (
 										<span className="doc-th-note">{commonFormat} unless shown</span>
@@ -1523,6 +1526,7 @@ function DocListCardCD({
 												onClick={(e) => e.stopPropagation()}
 											>
 												<DocCheckboxCD
+													isRowControl
 													checked={isSelectedMulti}
 													onChange={() => onToggleSelection(row.id)}
 													ariaLabel={`Select ${row.title}`}
@@ -1531,6 +1535,7 @@ function DocListCardCD({
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											<td>
 													<DocStagePillCD
+														isRowControl
 														docStatus={
 															optimisticStatusOverrides.get(row.id) ?? rowStageCD(row)
 														}
@@ -1554,6 +1559,7 @@ function DocListCardCD({
 														<button
 															type="button"
 															className="doc-lineage"
+															{...ROW_CONTROL_PROPS}
 															title={`Open #${row.supersedes_id}, which this replaces`}
 															onClick={(e) => {
 																e.stopPropagation();
@@ -1574,6 +1580,7 @@ function DocListCardCD({
 															<button
 																type="button"
 																className={`doc-group-toggle ${isExpanded ? "is-expanded" : ""}`}
+																{...ROW_CONTROL_PROPS}
 																onClick={(e) => {
 																	e.stopPropagation();
 																	onToggleExpand(row.folder_id);
@@ -2005,6 +2012,7 @@ function GroupMembersRowsCD({
 			>
 				<td className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
+						isRowControl
 						checked={isSelectedMulti}
 						onChange={() => onToggleSelection(member.id)}
 						ariaLabel={`Select ${member.title}`}
@@ -2015,6 +2023,7 @@ function GroupMembersRowsCD({
 				<td>
 					{member.doc_status ? (
 						<DocStagePillCD
+								isRowControl
 								docStatus={
 									optimisticStatusOverrides.get(member.id) ?? member.doc_status
 								}
@@ -2168,6 +2177,11 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	const { Icon } = window.UI;
 	const isPending = pendingDelete && pendingDelete.id === doc.id;
 	const [isExporting, setIsExporting] = useStateCD(false);
+	const closeRef = useRefCD(null);
+	// DetailSurface's open effect focuses the first control (Delete) → a microtask lands after it, on the least destructive one
+	useEffectCD(() => {
+		Promise.resolve().then(() => closeRef.current?.focus());
+	}, []);
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
@@ -2240,6 +2254,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 			</button>
 			{onClose && (
 				<button
+					ref={closeRef}
 					type="button"
 					className="btn ghost sm icon"
 					onClick={onClose}
@@ -2657,8 +2672,8 @@ function DocMetaPanelCD({
 //   · 종료 keeps today's success tone · every open stage renders neutral (no new colour).
 //   · a token no stage covers renders as unavailable — distinct from a stage and from empty.
 //   · onPickStage 미제공 → read-only 표시 · pending 중 메뉴 차단 (중복 PUT 가드).
-function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
-	const { Icon } = window.UI;
+function DocStagePillCD({ docStatus, onPickStage, isChanging, note, isRowControl = false }) {
+	const { Icon, ROW_CONTROL_PROPS } = window.UI;
 	const [menuOpen, setMenuOpen] = useStateCD(false);
 	const entry = stageEntryCD(docStatus);
 
@@ -2723,6 +2738,7 @@ function DocStagePillCD({ docStatus, onPickStage, isChanging, note }) {
 				aria-expanded={menuOpen}
 				aria-busy={isChanging || undefined}
 				aria-label={`${accessibleName} — change stage`}
+				{...(isRowControl ? ROW_CONTROL_PROPS : null)}
 				title={isChanging ? "Changing stage…" : accessibleName}
 				onClick={(e) => {
 					// row click bubble 차단 — 행 클릭은 뷰어 진입 (의도 충돌).
@@ -2783,8 +2799,9 @@ function DocCheckboxCD({
 	onChange,
 	ariaLabel,
 	onClick,
+	isRowControl = false,
 }) {
-	const { Icon } = window.UI;
+	const { Icon, ROW_CONTROL_PROPS } = window.UI;
 	const inputRef = useRefCD(null);
 
 	// indeterminate 는 HTML attribute 가 아닌 DOM property — ref + useEffect 로 React state 동기화.
@@ -2806,6 +2823,7 @@ function DocCheckboxCD({
 				onChange={onChange}
 				onClick={onClick}
 				aria-label={ariaLabel}
+				{...(isRowControl ? ROW_CONTROL_PROPS : null)}
 				className="appearance-none w-4 h-4 rounded border-2 border-zinc-600 bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-400 checked:bg-emerald-600 checked:border-emerald-600 transition-colors duration-150 cursor-pointer"
 				style={{ margin: 0 }}
 			/>
@@ -3435,19 +3453,24 @@ function getRovingIdCD(rowIds, focusId, selectedId) {
 	return rowIds[0] ?? null;
 }
 
-// Arrow/Home/End move focus between ledger rows; keys pressed inside a row's controls stay with the control.
+// Up/Down/Home/End walk the ledger rows; Right enters a row's controls, Left past the first or Escape returns to the row.
 function moveRowFocusCD(e) {
-	if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-	if (e.target.tagName !== "TR") return;
+	const row = e.target.closest("tr.doc-row");
+	if (!row) return;
+	const controls = Array.from(row.querySelectorAll("[data-row-control]"));
+	const controlIndex = controls.indexOf(e.target);
+	if (e.target !== row && controlIndex < 0) return;
 	const rows = Array.from(e.currentTarget.querySelectorAll("tr.doc-row"));
-	const index = rows.indexOf(e.target);
-	const step = e.key === "ArrowDown" ? 1 : -1;
-	const nextIndex =
-		e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : index + step;
-	const next = rows[nextIndex];
-	if (!next) return;
+	const action = window.UI.getRowKeyAction({
+		key: e.key,
+		rowIndex: rows.indexOf(row),
+		rowCount: rows.length,
+		controlIndex: controlIndex < 0 ? null : controlIndex,
+		controlCount: controls.length,
+	});
+	if (!action || action.activate) return;
 	e.preventDefault();
-	next.focus();
+	(action.focus === "row" ? rows[action.index] : controls[action.index]).focus();
 }
 
 // R6 본문 렌더 helpers — DOMPurify + DOMParser + React 트리.

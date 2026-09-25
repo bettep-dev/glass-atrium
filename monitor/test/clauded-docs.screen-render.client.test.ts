@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/clauded-docs.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -25,13 +25,14 @@ const UI_SCALARS: Record<string, unknown> = {
   formatKstDateTime: (iso: string) => `datetime(${iso})`,
 };
 
-function uiStub(): unknown {
+function uiStub(extra: Record<string, unknown> = {}): unknown {
+  const scalars = { ...UI_SCALARS, ...extra };
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        name in UI_SCALARS
-          ? UI_SCALARS[name]
+        name in scalars
+          ? scalars[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -48,8 +49,12 @@ function uiStub(): unknown {
 
 type Component = (props: unknown) => unknown;
 
-async function loadDocsScreen(): Promise<Record<string, unknown>> {
-  return loadScreenModule(DOCS_SRC, { UI: uiStub(), React: createReactStub() });
+const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+const shippedUi = ui.UI as Record<string, unknown>;
+const ROW_FOCUS_ATOMS = { ROW_CONTROL_PROPS: shippedUi.ROW_CONTROL_PROPS, getRowKeyAction: shippedUi.getRowKeyAction };
+
+async function loadDocsScreen(react: Record<string, unknown> = createReactStub()): Promise<Record<string, unknown>> {
+  return loadScreenModule(DOCS_SRC, { UI: uiStub(ROW_FOCUS_ATOMS), React: react });
 }
 
 function cssRuleBody(source: string, selector: string): string {
@@ -158,6 +163,96 @@ test("the ledger is a captioned table with column scopes and one Tab stop, and n
   assert.equal(rows.length, 2);
   for (const tr of rows) assert.notEqual(tr.props.role, "button");
   assert.deepEqual(rows.map((tr) => tr.props.tabIndex), [-1, 0], "the Tab stop sits on the selected row");
+});
+
+test("every control inside a ledger row leaves the Tab order as a row control, so the row keeps the one Tab stop", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  (props.rows as Array<Record<string, unknown>>)[1] = { ...(props.rows as Array<Record<string, unknown>>)[1], doc_status: "doc_review", member_count: 3, folder_id: 5 };
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const rows = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).includes("doc-row"));
+  const controls = rows.flatMap((tr) => findNodes(tr, (n) => n.type === "button" || n.type === "input"));
+  const names = controls.map((n) => String(n.props["aria-label"] ?? n.props.className));
+  assert.ok(names.some((name) => name.includes("doc-lineage")), "the lineage link is among the controls");
+  assert.ok(names.some((name) => name.startsWith("Expand group")), "the group toggle is among the controls");
+  assert.ok(names.some((name) => name.includes("change stage")), "the stage pill is among the controls");
+  for (const control of controls) {
+    assert.equal(control.props.tabIndex, -1, `${String(control.props["aria-label"] ?? control.props.className)} leaves the Tab order`);
+    assert.equal(control.props["data-row-control"], "", "it is reachable by arrows from its row");
+  }
+});
+
+type FakeNode = { name: string; closest: (s: string) => FakeNode | null; querySelectorAll: (s: string) => FakeNode[]; focus: () => void };
+
+function fakeLedger(focused: string[]) {
+  const make = (name: string): FakeNode => ({ name, closest: () => null, querySelectorAll: () => [], focus: () => focused.push(name) });
+  const rows = ["row-0", "row-1"].map((rowName) => {
+    const row = make(rowName);
+    const controls = ["checkbox", "stage"].map((c) => make(`${rowName}/${c}`));
+    const menuItem = make(`${rowName}/menu-item`);
+    for (const node of [row, ...controls, menuItem]) node.closest = () => row;
+    row.querySelectorAll = () => controls;
+    return { row, controls, menuItem };
+  });
+  const tbody = { querySelectorAll: () => rows.map((r) => r.row) };
+  return { rows, tbody };
+}
+
+describe("ledger keys walk rows and a row's controls, never leaving the ledger for a background control", () => {
+  const cases = [
+    { name: "ArrowRight on a row enters its first control", key: "ArrowRight", at: (l: Ledger) => l.rows[0].row, lands: "row-0/checkbox" },
+    { name: "ArrowRight on a control moves to the next control", key: "ArrowRight", at: (l: Ledger) => l.rows[0].controls[0], lands: "row-0/stage" },
+    { name: "ArrowLeft on the first control returns to its row", key: "ArrowLeft", at: (l: Ledger) => l.rows[1].controls[0], lands: "row-1" },
+    { name: "Escape on a control returns to its row", key: "Escape", at: (l: Ledger) => l.rows[1].controls[1], lands: "row-1" },
+    { name: "ArrowDown on a row moves to the next row", key: "ArrowDown", at: (l: Ledger) => l.rows[0].row, lands: "row-1" },
+    { name: "a key inside the stage menu stays with the menu", key: "ArrowDown", at: (l: Ledger) => l.rows[0].menuItem, lands: null },
+  ];
+  type Ledger = ReturnType<typeof fakeLedger>;
+  for (const row of cases) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const focused: string[] = [];
+      const ledger = fakeLedger(focused);
+      let isPrevented = false;
+      (screen.moveRowFocusCD as (e: unknown) => void)({
+        key: row.key, target: row.at(ledger), currentTarget: ledger.tbody, preventDefault: () => { isPrevented = true; },
+      });
+      assert.deepEqual(focused, row.lands ? [row.lands] : []);
+      assert.equal(isPrevented, row.lands !== null);
+    });
+  }
+});
+
+test("the opened viewer settles focus on Close after the dialog's own first-control focus, never leaving it on Delete", async () => {
+  const effects: Array<() => void> = [];
+  const react = { ...createReactStub(), useEffect: (fn: () => void) => { effects.push(fn); } };
+  const screen = await loadDocsScreen(react);
+  const tree = renderScreen((screen.ViewerActionsCD as Component)({
+    doc: { id: 9, title: "Doc 9" }, pendingDelete: null, onDelete: () => undefined, onClose: () => undefined, showToast: () => undefined,
+  }));
+  const close = findNodes(tree, (n) => n.props["aria-label"] === "Close viewer")[0];
+  const focused: string[] = [];
+  (close.props.ref as { current: unknown }).current = { focus: () => focused.push("close") };
+
+  for (const effect of effects) effect();
+  focused.push("dialog-first-control");
+  await new Promise((settle) => setImmediate(settle));
+
+  assert.deepEqual(focused, ["dialog-first-control", "close"]);
+});
+
+test("below the icon-rail width the ledger drops its Tags column and lets the title column narrow", async () => {
+  const source = readFileSync(DOCS_SRC, "utf8");
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+
+  const tagCells = findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
+  assert.equal(tagCells.length, 3, "the Tags header and both row cells carry the column class");
+  const narrow = source.match(/@media \(max-width: 1199px\) \{([\s\S]*?)\n\s*\}/);
+  assert.ok(narrow, "a narrow-pane rule exists");
+  assert.match(narrow[1], /\.doc-col-tags\s*\{\s*display:\s*none/);
+  assert.match(narrow[1], /\.doc-col-title\s*\{\s*min-width:\s*\d+px/);
 });
 
 test("'rev of #N' is a control that opens the predecessor", async () => {
