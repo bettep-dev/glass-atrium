@@ -114,6 +114,16 @@ const MAP_BORDER_KEY_AR = [
 ];
 // a group whose title only repeats its single box's label — the title is hidden, the box stays
 const ZONE_TITLE_REDUNDANT_CLASS = "arch-zone-title-redundant";
+// drawn zone titles are one word so none stacks a word per line — the full wording copies the canonical source's subgraph titles (diagrams-source.ts), held together by test/architecture.map-fit.e2e
+const ZONE_FULL_TITLE_AR = {
+	entry: "External inputs",
+	daemon: "Scheduled background jobs (daemons)",
+	orch: "Orchestrator (main session)",
+	agents: "Specialist agents",
+	hooks: "Safety checks & tracking",
+	data: "Data layer (PostgreSQL glass_atrium DB)",
+	export: "Document export",
+};
 
 // 링 반경 가족 — 도형 모서리(스타일시트의 r=8)에 링 간격을 더해야 동심으로 읽힘.
 // 두 값을 여기 두고 rx 를 표현 속성으로 찍음: 스타일시트의 `rx: 8px` 가 심은 사각형을 되누르지
@@ -1086,6 +1096,7 @@ function MermaidCanvas({
 		root.querySelectorAll("svg g.cluster").forEach((el) => {
 			el.classList.toggle(ZONE_TITLE_REDUNDANT_CLASS, Boolean(matchZoneIdAR(el.id || "", redundantZoneIds)));
 		});
+		setZoneFullTitlesAR(root);
 		// the member map is a function of source alone — keyed on source, since the plan object changes identity every poll
 		fitZoneBoxesAR(root, zoneRingPlan.zoneIdByMemberId);
 		root.querySelectorAll(`svg g.cluster:not(.${ZONE_TITLE_REDUNDANT_CLASS}) > rect:first-of-type`).forEach((rect) => {
@@ -2696,6 +2707,21 @@ function getPlainLabelAR(label) {
 // mermaid 가 존 g 에 붙이는 id 는 `${renderId}-${zoneId}` 이고 renderId 는 렌더마다 새로 지어짐 —
 // 앞부분을 화면이 모르므로 뒤에서 맞춤. 하이픈 경계를 함께 봐서 `data` 가 `metadata` 를 물지 않게 하고,
 // 가장 긴 일치를 골라 한 존 id 가 다른 존 id 의 꼬리인 경우까지 가름.
+// zone → its full wording as accessible name + hover tooltip; the drawn title stays the one-word display name
+function setZoneFullTitlesAR(root) {
+	const zoneIds = Object.keys(ZONE_FULL_TITLE_AR);
+	root.querySelectorAll("svg g.cluster").forEach((el) => {
+		const zoneId = matchZoneIdAR(el.id || "", zoneIds);
+		if (!zoneId) return;
+
+		const fullTitle = ZONE_FULL_TITLE_AR[zoneId];
+		const titleEl = el.querySelector(":scope > title") ?? el.insertBefore(document.createElementNS(SVG_NS_AR, "title"), el.firstChild);
+		titleEl.textContent = fullTitle;
+		el.setAttribute("role", "group");
+		el.setAttribute("aria-label", fullTitle);
+	});
+}
+
 function matchZoneIdAR(elementId, zoneIds) {
 	let matched = "";
 	for (const zoneId of zoneIds) {

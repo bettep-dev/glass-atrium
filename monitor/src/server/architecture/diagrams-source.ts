@@ -546,33 +546,33 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 소스에는 역할 색만 남음 — classDef 배정은 어느 노드가 초점인지를 말하는 콘텐츠라 설정이 대신할 수 없음.
 	 */
 	mermaid_drawn: `flowchart LR
-    subgraph entry["External inputs"]
+    subgraph entry["Inputs"]
         user[User input]
     end
 
-    subgraph daemon["Scheduled background jobs <br/>(daemons)"]
+    subgraph daemon["Daemons"]
         autoagent_d["Self-improvement <br/>loop daemon"]
         wiki_d[Wiki daemon]
         cron["Scheduled <br/>background jobs"]
     end
 
-    subgraph orch["Orchestrator <br/>(main session)"]
+    subgraph orch["Orchestrator"]
         main_session["Plans the work, <br/>then assigns it"]
     end
 
-    subgraph agents["Specialist agents"]
+    subgraph agents["Agents"]
         agent_layer["23 agents"]
     end
 
-    subgraph hooks["Safety checks <br/>& tracking"]
+    subgraph hooks["Safety"]
         hook_pipeline["Hooks"]
     end
 
-    subgraph data["Data layer <br/>(PostgreSQL <br/>glass_atrium DB)"]
+    subgraph data["Store"]
         pg_db[("PostgreSQL")]
     end
 
-    subgraph export["Document export"]
+    subgraph export["Documents"]
         doc_export["Export via <br/>Chromium"]
     end
 
