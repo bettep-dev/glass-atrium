@@ -83,7 +83,9 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
-Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
+// Installed once → every test sees the same UI, whatever order they run in.
+const PageVerdictStub = () => null;
+Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
 
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
@@ -294,8 +296,6 @@ for (const row of verdictRows) {
 }
 
 test("a failed band payload reads as a failure, never as still loading", () => {
-  const PageVerdictStub = () => null;
-  sandbox.window.UI.PageVerdict = PageVerdictStub;
   const band = sandbox.StatusBandI({
     statsState: { status: "error", data: null, error: "HTTP 500" },
     listState: { status: "ready", data: {} },
@@ -311,8 +311,6 @@ test("a failed band payload reads as a failure, never as still loading", () => {
 });
 
 test("the band states its verdict before the tiles", () => {
-  const PageVerdictStub = () => null;
-  sandbox.window.UI.PageVerdict = PageVerdictStub;
   const elements = collectElements(renderBand({ pending_total: 0, parked: [] }, 2), []);
   const verdictAt = elements.findIndex((el) => el.type === PageVerdictStub);
   const firstTileAt = elements.findIndex((el) => el.props.label === "Awaiting your decision");
