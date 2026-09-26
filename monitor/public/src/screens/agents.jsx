@@ -836,7 +836,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   );
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT_WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
+function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
   const { MiniBars, Bar, BulletBar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
@@ -863,20 +863,22 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const trendColor = trendBarColor(agent.status, failShareTone);
   const runs = Number(agent.runs) || 0;
-  const noRecordCount = invocations == null ? null : Math.max(0, Number(invocations) - runs);
-  const noRecordTitle = noRecordCount == null
+  const noRecord = { count: invocations == null ? null : Math.max(0, Number(invocations) - runs) };
+  noRecord.title = noRecord.count == null
     ? 'no completion record — launches not measured'
     : `no completion record — ${formatIntAg(invocations)} launches − ${formatIntAg(runs)} runs`;
-  const breakageCount = failure ? Number(failure.total_breakages) || 0 : 0;
+  const breakage = {
+    count: failure ? Number(failure.total_breakages) || 0 : 0,
+    rate: failure ? failure.breakage_rate : 0,
+  };
   const failedCount = failure ? Number(failure.fail_count) || 0 : 0;
   const blockedCount = failure ? Number(failure.blocked_count) || 0 : 0;
-  const breakageRate = failure ? failure.breakage_rate : 0;
   // blocked is a compliant halt — only the failed share drives the tone
   const failTone = failureTone(failedCount, getFailedRateAg(failure));
   const isFailureRead = failureStatus === 'ready';
   const isTrendRead = trendStatus === 'ready';
   const failTitle = !isFailureRead ? getNotLoadedTitleAg('breakage data', failureStatus) : failure
-    ? `breakages ${failure.total_breakages} = fail ${failure.fail_count} + blocked ${failure.blocked_count} · rate ${(breakageRate * 100).toFixed(1)}%`
+    ? `breakages ${failure.total_breakages} = fail ${failure.fail_count} + blocked ${failure.blocked_count} · rate ${(breakage.rate * 100).toFixed(1)}%`
     : 'no breakages (fail+blocked)';
 
   const handleClick = () => onSelect(agent.agent_id);
@@ -899,8 +901,8 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         </div>
       </td>
       <td className="num">{formatIntAg(runs)}</td>
-      <td className="num" title={`${noRecordTitle} · ${formatInvocationsTitle(invocations, days)}`}>
-        {noRecordCount == null ? <span className="text-faint">—</span> : formatIntAg(noRecordCount)}
+      <td className="num" title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
+        {noRecord.count == null ? <span className="text-faint">—</span> : formatIntAg(noRecord.count)}
       </td>
       <td className="num" title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
@@ -913,17 +915,17 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {successDenominator > 0 && (
           <BulletBar
             value={getSuccessWindowAg(successPct)}
-            target={SUCCESS_WINDOW_TARGET}
+            target={SUCCESS_WINDOW.TARGET}
             tone={failShareTone || 'neutral'}
             showValue={false}
-            ariaLabel={`success rate ${successPct.toFixed(1)}% · bar spans ${SUCCESS_WINDOW_FLOOR_PCT}–100%, tick at 95%`}
+            ariaLabel={`success rate ${successPct.toFixed(1)}% · bar spans ${SUCCESS_WINDOW.FLOOR_PCT}–100%, tick at 95%`}
           />
         )}
       </td>
       <td className="num" title={failTitle}>
         {!isFailureRead ? (
           <NotLoadedMarkAg title={failTitle}/>
-        ) : breakageCount > 0 ? (
+        ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-1.5">
             <span className={failTone}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
             {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
@@ -932,17 +934,17 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
           <span className="text-faint">—</span>
         )}
         {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
-        {isFailureRead && breakageCount > 0 && (
+        {isFailureRead && breakage.count > 0 && (
           <Bar
-            value={Math.max(breakageRate, 0.01)}
+            value={Math.max(breakage.rate, 0.01)}
             tone={barToneFromClass(failTone)}
-            ariaLabel={`breakage rate ${(breakageRate * 100).toFixed(1)}%`}
+            ariaLabel={`breakage rate ${(breakage.rate * 100).toFixed(1)}%`}
           />
         )}
       </td>
       <td
         className="num"
-        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT_CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
+        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT.CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
         {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
@@ -962,7 +964,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
         {p95Sec != null && (
           <Bar
-            value={Math.min(p95Sec / P95_AGENT_CRIT_SEC, 1)}
+            value={Math.min(p95Sec / P95_AGENT.CRIT_SEC, 1)}
             tone={barToneFromClass(p95Tone)}
             ariaLabel={[`p95 ${formatDurationSecAg(p95Sec)}`, overageNote].filter(Boolean).join(' · ')}
           />
@@ -3118,11 +3120,10 @@ function getFailShareTone(failedCount, denominator) {
 }
 
 // Live rates sit in 94–100%, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
-const SUCCESS_WINDOW_FLOOR_PCT = 90;
-const SUCCESS_WINDOW_TARGET = 0.5;
+const SUCCESS_WINDOW = { FLOOR_PCT: 90, TARGET: 0.5 };
 
 function getSuccessWindowAg(pct) {
-  return Math.min(Math.max((pct - SUCCESS_WINDOW_FLOOR_PCT) / (100 - SUCCESS_WINDOW_FLOOR_PCT), 0), 1);
+  return Math.min(Math.max((pct - SUCCESS_WINDOW.FLOOR_PCT) / (100 - SUCCESS_WINDOW.FLOOR_PCT), 0), 1);
 }
 
 // Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
@@ -3157,9 +3158,7 @@ function FailShareGlyph({ tone }) {
 // 서브에이전트 작업 p95 지연은 분(minute) 도메인 — 라이브 분포 58s~1695s(중앙값 ~11분).
 // 종전 10s/20s 컷은 전 에이전트를 crit 단일 티어로 뭉개 spread 가 0 이었다(웹 p95 도메인 값을 잘못 차용).
 // 작업 지연 기준으로 재조정: warn=fleet p75 컷(하한 10분·600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
-const P95_AGENT_WARN_SEC = 600;
-const P95_AGENT_CRIT_SEC = 1200;
-const P95_WARN_MIN_AGENTS = 4;
+const P95_AGENT = { WARN_SEC: 600, CRIT_SEC: 1200, WARN_MIN_FLEET: 4 };
 
 // Warn cut = fleet p75 of per-agent p95 (nearest rank), floored at 10m → at most a quarter of the fleet warns.
 function getP95WarnSecAg(agents) {
@@ -3167,13 +3166,13 @@ function getP95WarnSecAg(agents) {
     .filter((a) => a && a.p95_ms != null && Number.isFinite(Number(a.p95_ms)))
     .map((a) => Number(a.p95_ms) / 1000)
     .sort((x, y) => x - y);
-  if (secs.length < P95_WARN_MIN_AGENTS) return P95_AGENT_WARN_SEC;
-  return Math.max(P95_AGENT_WARN_SEC, secs[Math.ceil(secs.length * 0.75) - 1]);
+  if (secs.length < P95_AGENT.WARN_MIN_FLEET) return P95_AGENT.WARN_SEC;
+  return Math.max(P95_AGENT.WARN_SEC, secs[Math.ceil(secs.length * 0.75) - 1]);
 }
 
-function p95LatencyTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
+function p95LatencyTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
   if (p95Sec == null)            return 'text-faint';
-  if (p95Sec > P95_AGENT_CRIT_SEC) return 'text-crit';
+  if (p95Sec > P95_AGENT.CRIT_SEC) return 'text-crit';
   if (p95Sec > warnSec) return 'text-dim'; // warn cut = fleet p75 floored at 600s → shape only, amber would bury the crit rows
   return '';
 }
@@ -3181,9 +3180,9 @@ function p95LatencyTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
 // 동일 초-도메인 컷 → TONE_GLYPH KEY. 빠른 구간을 명시적 'ok'(✓)로 매핑한다 —
 // p95LatencyTone 의 '' 무톤은 색 노이즈 회피용이라 barToneFromClass 로는 neutral(ℹ)이 되어
 // "빠름"을 표현하지 못한다. 글리프 인디케이터는 별도로 ok/warn/crit 3키를 직접 산출.
-function p95GlyphTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
+function p95GlyphTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
   if (p95Sec == null)              return 'neutral';
-  if (p95Sec > P95_AGENT_CRIT_SEC) return 'crit';
+  if (p95Sec > P95_AGENT.CRIT_SEC) return 'crit';
   if (p95Sec > warnSec)            return 'warn';
   return 'ok';
 }
