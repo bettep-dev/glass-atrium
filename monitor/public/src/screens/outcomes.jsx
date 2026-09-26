@@ -1,5 +1,5 @@
 // Screen 04 — Outcome 분석 (live data via /api/outcomes/*) · window.ScreenOutcomes.
-// 상단 분석 섹션 + 하단 탐색기 섹션 (필터 사이드바 280px + 결과 표).
+// 상단 분석 섹션 + 하단 탐색기 섹션 (Results 카드 헤드의 Filters 팝오버 + 결과 표).
 // Hooks aliased with O suffix → 모듈 간 window-scope 충돌 회피.
 //
 // SECURITY: MarkdownView 는 DOMPurify 게이트 통과 후에만 HTML 주입 (부재 시 raw pre fallback).
@@ -682,31 +682,31 @@ function ScreenOutcomes({ onNav }) {
 
       {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
       <div className="mt-4">
-      <ResultTableCard
-        state={searchState}
-        rows={rows}
-        totalMatched={totalMatched}
-        page={page}
-        limit={PAGE_LIMIT_DEFAULT}
-        sort={sort}
-        filter={filter}
-        onPageChange={setPage}
-        onSortChange={(v) => { setSort(v); setPage(0); }}
-        onResetFilter={resetFilter}
-        filterControls={{
-          keywordInput,
-          distinctAgents,
-          includeAll,
-          onPatchFilter: patchFilter,
-          onKeywordChange: setKeywordInput,
-          onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
-        }}
-        onRowClick={setDetailRow}
-        onRetry={regionRetry}
-        needsYou={ledgerNeedsYou}
-        needsYouCap={needsYouCap}
-        onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
-        closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
+        <ResultTableCard
+          state={searchState}
+          rows={rows}
+          totalMatched={totalMatched}
+          page={page}
+          limit={PAGE_LIMIT_DEFAULT}
+          sort={sort}
+          filter={filter}
+          onPageChange={setPage}
+          onSortChange={(v) => { setSort(v); setPage(0); }}
+          onResetFilter={resetFilter}
+          filterControls={{
+            keywordInput,
+            distinctAgents,
+            includeAll,
+            onPatchFilter: patchFilter,
+            onKeywordChange: setKeywordInput,
+            onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
+          }}
+          onRowClick={setDetailRow}
+          onRetry={regionRetry}
+          needsYou={ledgerNeedsYou}
+          needsYouCap={needsYouCap}
+          onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
+          closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
@@ -2099,79 +2099,79 @@ function FilterPanelO({
 }) {
   return (
     <div>
-        <FilterAxisGroup label="Agent">
-          <select
-            className="field field-select"
-            value={filter.agent || ''}
-            onChange={(e) => onPatchFilter({ agent: e.target.value })}
-            aria-label="Agent filter">
-            <option value="">All</option>
-            {distinctAgents.map((a) => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
+      <FilterAxisGroup label="Agent">
+        <select
+          className="field field-select"
+          value={filter.agent || ''}
+          onChange={(e) => onPatchFilter({ agent: e.target.value })}
+          aria-label="Agent filter">
+          <option value="">All</option>
+          {distinctAgents.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </FilterAxisGroup>
+
+      {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
+        <FilterAxisGroup key={axis} label={label}>
+          <FilterChipGroupO
+            options={options}
+            value={filter[axis] || ''}
+            onChange={(v) => onPatchFilter({ [axis]: v })}
+            ariaLabel={`${label} filter`}
+          />
         </FilterAxisGroup>
+      ))}
 
-        {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
-          <FilterAxisGroup key={axis} label={label}>
-            <FilterChipGroupO
-              options={options}
-              value={filter[axis] || ''}
-              onChange={(v) => onPatchFilter({ [axis]: v })}
-              ariaLabel={`${label} filter`}
-            />
-          </FilterAxisGroup>
-        ))}
-
-        <details className="mb-3">
-          <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
-            More filters
-          </summary>
-          <div className="pt-2">
-            {MORE_FILTER_AXES.map(({ axis, label, options }) => (
-              <FilterAxisGroup key={axis} label={label}>
-                <FilterChipGroupO
-                  options={options}
-                  value={filter[axis] || ''}
-                  onChange={(v) => onPatchFilter({ [axis]: v })}
-                  ariaLabel={`${label} filter`}
-                />
-              </FilterAxisGroup>
-            ))}
-
-            <FilterAxisGroup label="Sort">
+      <details className="mb-3">
+        <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
+          More filters
+        </summary>
+        <div className="pt-2">
+          {MORE_FILTER_AXES.map(({ axis, label, options }) => (
+            <FilterAxisGroup key={axis} label={label}>
               <FilterChipGroupO
-                options={SORT_OPTIONS}
-                value={sort}
-                onChange={onSortChange}
-                ariaLabel="Sort order"
+                options={options}
+                value={filter[axis] || ''}
+                onChange={(v) => onPatchFilter({ [axis]: v })}
+                ariaLabel={`${label} filter`}
               />
             </FilterAxisGroup>
+          ))}
 
-            {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
-            <FilterAxisGroup label="Record scope">
-              <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={includeAll}
-                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                  aria-label="Show all records including non-registry and de-registered agents"/>
-                <span className={includeAll ? 'text-ink' : 'text-dim'}>
-                  Show all (incl. non-registry)
-                </span>
-              </label>
-            </FilterAxisGroup>
-          </div>
-        </details>
+          <FilterAxisGroup label="Sort">
+            <FilterChipGroupO
+              options={SORT_OPTIONS}
+              value={sort}
+              onChange={onSortChange}
+              ariaLabel="Sort order"
+            />
+          </FilterAxisGroup>
 
-        <div className="mt-3 pt-3 border-t border-line">
-          <button
-            className="btn sm w-full justify-center"
-            onClick={onReset}
-            aria-label="Reset filters">
-            Reset filters
-          </button>
+          {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
+          <FilterAxisGroup label="Record scope">
+            <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeAll}
+                onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                aria-label="Show all records including non-registry and de-registered agents"/>
+              <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                Show all (incl. non-registry)
+              </span>
+            </label>
+          </FilterAxisGroup>
         </div>
+      </details>
+
+      <div className="mt-3 pt-3 border-t border-line">
+        <button
+          className="btn sm w-full justify-center"
+          onClick={onReset}
+          aria-label="Reset filters">
+          Reset filters
+        </button>
+      </div>
     </div>
   );
 }
@@ -2300,8 +2300,8 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
-//   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
+// 활성 필터 → 'Axis: value' 칩 라벨 배열 (빈-상태 echo 전용). 기본값 축은 생략.
+//   축·값 이름 = Filters 팝오버 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
 function buildActiveFilterChipsO(filter) {
   return buildActiveFilterEntriesO(filter).map((entry) => entry.label);
 }
@@ -2328,8 +2328,8 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
-//   래퍼 div 는 정렬 관례가 호출부마다 달라 각 호출부가 소유 → 공용은 배지 map 만.
+// 활성 필터 칩 배지 렌더 — 빈-상태 echo(ResultTableZeroStateO) 전용.
+//   래퍼 div 는 호출부가 소유 → 여기는 배지 map 만.
 function FilterChipsO({ chips }) {
   const { Badge } = window.UI;
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
