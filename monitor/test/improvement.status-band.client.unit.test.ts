@@ -38,6 +38,12 @@ interface BandSandbox {
   }) => RecordedElement;
   StatusTileI: (props: Record<string, unknown>) => RecordedElement;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
+  getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
+  getInstrumentationChipsI: (
+    verdicts: unknown,
+    styleRef: unknown,
+    corpusAuditState: unknown,
+  ) => Array<Record<string, unknown>>;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -186,10 +192,11 @@ test("the applied tile is counted over the same population it names", () => {
     "3",
     "the value must be the cycle count its population denominates, not the proposal count",
   );
-  assert.match(String(applied.props.population), /cycles in the last 7 days/);
+  assert.match(String(applied.props.population), /of 12 cycles/);
+  assert.match(String(applied.props.basis), /last 7 days/);
 });
 
-test("the decision tile carries the warning glyph only while something awaits a decision", () => {
+test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
   const renderAwaiting = (awaiting: number) =>
     collectElements(
       sandbox.StatusBandI({
@@ -207,24 +214,124 @@ test("the decision tile carries the warning glyph only while something awaits a 
   const pending = renderAwaiting(2);
 
   assert.ok(idle && pending, "the band must render the decision tile");
-  assert.equal(idle.props.symbol, null, "a zero count is not a warning");
+  assert.equal(idle.props.symbol, "✓", "an empty decision queue is good news, not a blank");
+  assert.equal(idle.props.tone, "text-ok");
   assert.equal(pending.props.symbol, "⚠");
   assert.equal(pending.props.tone, "text-warn");
 });
 
-test("backlog tiles are counts, not statuses, so they carry no status glyph", () => {
-  const band = sandbox.StatusBandI({
-    statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+const renderBand = (suppression: unknown, awaiting = 0) =>
+  sandbox.StatusBandI({
+    statsState: { status: "ready", data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1 } },
     listState: { status: "ready", data: {} },
     learningLogState: { status: "ready" },
-    suppression: { pending_total: 5, pending_unpromptable: 1, parked: [] },
-    awaiting: 0,
+    suppression,
+    awaiting,
     onRetry: () => {},
   });
-  const backlog = collectElements(band, []).filter((el) =>
-    ["Backlog that can propose", "Held, needs a human"].includes(String(el.props.label)),
+
+test("the backlog tile is a count, not a status, so it carries no status glyph", () => {
+  const backlog = collectElements(
+    renderBand({ pending_total: 5, pending_unpromptable: 1, parked: [] }),
+    [],
+  ).filter((el) => el.props.label === "Backlog that can propose");
+
+  assert.equal(backlog.length, 1);
+  assert.equal(backlog[0].props.symbol, null);
+});
+
+test("the held tile warns only while a held pattern needs a human", () => {
+  const heldTile = (parked: unknown[]) =>
+    collectElements(renderBand({ pending_total: 0, parked }), []).find(
+      (el) => el.props.label === "Held, needs a human",
+    );
+  const byDesign = heldTile([{ cause: "non-promptable", count: 4, agents: 2 }]);
+  const needsHuman = heldTile([{ cause: "repeat-apply-cap", count: 2, agents: 1 }]);
+
+  assert.equal(byDesign?.props.symbol, null, "rows closed by a design decision wait on no one");
+  assert.equal(needsHuman?.props.symbol, "⚠");
+  assert.equal(needsHuman?.props.tone, "text-warn");
+});
+
+const verdictRows = [
+  {
+    name: "nothing waiting on a human reads ok",
+    input: { ready: true, awaiting: 0, applied: 2, heldNeedingHuman: 0 },
+    tone: "ok",
+    mentions: ["2 applied"],
+  },
+  {
+    name: "an awaiting decision warns and is counted",
+    input: { ready: true, awaiting: 3, applied: 0, heldNeedingHuman: 0 },
+    tone: "warn",
+    mentions: ["3 awaiting"],
+  },
+  {
+    name: "a held pattern needing a human warns and is counted",
+    input: { ready: true, awaiting: 0, applied: 1, heldNeedingHuman: 10 },
+    tone: "warn",
+    mentions: ["10 held"],
+  },
+  {
+    name: "a band that has not landed claims no status",
+    input: { ready: false, awaiting: 0, applied: 0, heldNeedingHuman: 0 },
+    tone: "neutral",
+    mentions: [],
+  },
+];
+for (const row of verdictRows) {
+  test(`band verdict: ${row.name}`, () => {
+    const verdict = sandbox.getBandVerdictI(row.input);
+    assert.equal(verdict.tone, row.tone);
+    for (const mention of row.mentions) assert.ok(verdict.sentence.includes(mention), verdict.sentence);
+  });
+}
+
+test("the band states its verdict before the tiles", () => {
+  const PageVerdictStub = () => null;
+  sandbox.window.UI.PageVerdict = PageVerdictStub;
+  const elements = collectElements(renderBand({ pending_total: 0, parked: [] }, 2), []);
+  const verdictAt = elements.findIndex((el) => el.type === PageVerdictStub);
+  const firstTileAt = elements.findIndex((el) => el.props.label === "Awaiting your decision");
+
+  assert.ok(verdictAt >= 0, "the band must render a verdict line");
+  assert.equal(elements[verdictAt].props.tone, "warn");
+  assert.match(String(elements[verdictAt].props.children), /2 awaiting/);
+  assert.ok(verdictAt < firstTileAt, "the verdict is read before the numbers it summarises");
+});
+
+test("instrumentation chips take each verdict from the instrumentation view's own rules", () => {
+  const calls: unknown[][] = [];
+  const latest = { id: 7 };
+  const verdicts = {
+    styleRefGradeBadgeI: (emission: unknown, uncorroborated: unknown) => {
+      calls.push(["style", emission, uncorroborated]);
+      return { symbol: "⚠", tone: "text-warn", label: "warn", hint: "h1" };
+    },
+    getCorpusGrowthVerdictI: (reading: unknown) => {
+      calls.push(["corpus", reading]);
+      return { symbol: "✓", tone: "text-ok", label: "within threshold", hint: "h2" };
+    },
+  };
+  const chips = sandbox.getInstrumentationChipsI(
+    verdicts,
+    { overall_emission_rate: 0.6, overall_uncorroborated_rate: 0.374 },
+    { status: "ready", data: { audits: [latest] } },
   );
 
-  assert.equal(backlog.length, 2);
-  assert.ok(backlog.every((el) => el.props.symbol === null));
+  assert.deepEqual(calls, [["style", 0.6, 0.374], ["corpus", latest]]);
+  // Array.from — the sandbox realm's arrays fail strict deepEqual on prototype alone.
+  assert.deepEqual(Array.from(chips, (c) => c.label), ["warn", "within threshold"]);
+});
+
+test("a gauge whose payload has not landed reads not loaded, never a verdict", () => {
+  const judge = () => {
+    throw new Error("an unloaded gauge must not be judged");
+  };
+  const chips = sandbox.getInstrumentationChipsI(
+    { styleRefGradeBadgeI: judge, getCorpusGrowthVerdictI: judge },
+    null,
+    { status: "loading" },
+  );
+  assert.deepEqual(Array.from(chips, (c) => c.label), ["not loaded", "not loaded"]);
 });

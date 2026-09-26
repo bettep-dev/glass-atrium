@@ -46,6 +46,8 @@ interface Sandbox {
     onRowClick?: unknown;
     onRetry?: unknown;
   }) => RecordedElement | null;
+  LedgerLiveSectionI: unknown;
+  LedgerInertSectionI: unknown;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -107,6 +109,30 @@ Object.assign(sandbox.window.UI, {
   TONE_GLYPH: { ok: "\u2713", warn: "\u26a0", crit: "\u2715", info: "\u2139" },
   titleOf: (value: unknown) => value,
 });
+
+// Pass-through, so text walks still reach the columns; identity lets the split be found.
+function SplitRowStub(props: Record<string, unknown>) {
+  return props.children;
+}
+sandbox.window.UI.SplitRow = SplitRowStub;
+
+// First element of the given type, without rendering any function component.
+function findByType(node: unknown, type: unknown): RecordedElement | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findByType(child, type);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!isElement(node)) return null;
+  if (node.type === type) return node;
+  for (const value of Object.values(node.props)) {
+    const hit = findByType(value, type);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const SUPPRESSION = {
   parked: [
@@ -288,29 +314,37 @@ test("held rows appear under their own cause, window-free", () => {
   );
 });
 
-test("the actionable held group opens and the design-decision group stays closed", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const capGroup = groups.find((g) => textOf(g).includes("cap remedy text"));
-  const designGroup = groups.find((g) => textOf(g).includes("design decision remedy text"));
-  assert.ok(capGroup, "the repeat-apply cap group must be rendered");
-  assert.ok(designGroup, "the design-decision group must be rendered");
-  assert.equal(capGroup?.props.open, true, "a group a human can clear today is not worth a click");
-  assert.notEqual(
-    designGroup?.props.open,
-    true,
-    "opening the group nobody can act on buries the group they can",
+test("every held row list starts folded while each cause's count and remedy stay in view", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const groups = detailsOf(tree, []).filter((g) => /signature/i.test(textOf(g)));
+  assert.equal(groups.length, 2, "each held cause keeps its own row list");
+  assert.ok(
+    groups.every((g) => g.props.open !== true),
+    "row lists fold uniformly, so the largest group is never the one hidden",
   );
+  const folded = groups.map(textOf).join(" ");
+  assert.doesNotMatch(folded, /remedy text/, "a remedy inside a fold is a remedy nobody reads");
+  const text = textOf(tree);
+  assert.match(text, /cap remedy text/);
+  assert.match(text, /design decision remedy text/);
+  assert.match(text, /7 held/, "the largest cause's count reads without opening anything");
 });
 
-test("the recurrence rates sit behind a closed disclosure", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const disclosure = groups.find((g) => textOf(g).includes("roster remedy text"));
-  assert.ok(disclosure, "the per-cycle buckets must be rendered somewhere");
-  assert.notEqual(
-    disclosure?.props.open,
-    true,
-    "a recurrence rate is a rate, not a state change — it does not earn open space",
+test("the recurrence rates render open under the held section", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const folded = detailsOf(tree, []).map(textOf).join(" ");
+  assert.doesNotMatch(folded, /Roster mismatch/, "a loop stalling on one cause is loop health, not a drill-down");
+  assert.match(textOf(tree), /Roster mismatch/);
+});
+
+test("live and inert rows share one split row, with held and recurrence full width below", () => {
+  const split = findByType(
+    sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }),
+    SplitRowStub,
   );
+  assert.ok(split, "the ledger must pair its live and inert lists");
+  const kinds = (split.props.children as RecordedElement[]).map((el) => el.type);
+  assert.deepEqual(kinds, [sandbox.LedgerLiveSectionI, sandbox.LedgerInertSectionI]);
 });
 
 test("the ledger's footer states each figure with its gate", () => {
