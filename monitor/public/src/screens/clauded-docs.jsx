@@ -81,9 +81,9 @@ const FRESH_AGE_DAYS_CD = 3;
 // past this many days an open document reads as stale
 const STALE_AGE_DAYS_CD = 7;
 const AGE_BUCKETS_CD = [
-	{ key: "fresh", label: "Under 3 days" },
-	{ key: "aging", label: "3–7 days" },
-	{ key: "stale", label: "Over 7 days" },
+	{ key: "fresh", label: `Under ${FRESH_AGE_DAYS_CD} days` },
+	{ key: "aging", label: `${FRESH_AGE_DAYS_CD}–${STALE_AGE_DAYS_CD} days` },
+	{ key: "stale", label: `Over ${STALE_AGE_DAYS_CD} days` },
 ];
 const STAGE_HEADLINE_CD = {
 	doc_review: "awaiting doc review",
@@ -92,6 +92,10 @@ const STAGE_HEADLINE_CD = {
 	impl_done: "impl done",
 };
 
+function getAgeLabelCD(days) {
+	return days === 0 ? "today" : `${days}d`;
+}
+
 // Whole days since creation · null when the timestamp is missing or unparseable.
 function getDocAgeCD(iso, nowMs) {
 	const createdMs = iso ? Date.parse(iso) : Number.NaN;
@@ -99,12 +103,17 @@ function getDocAgeCD(iso, nowMs) {
 
 	const days = Math.max(0, Math.floor((nowMs - createdMs) / DAY_MS_CD));
 	const bucket = days < FRESH_AGE_DAYS_CD ? "fresh" : days <= STALE_AGE_DAYS_CD ? "aging" : "stale";
-	return { days, label: days === 0 ? "today" : `${days}d`, bucket, isStale: bucket === "stale" };
+	return { days, label: getAgeLabelCD(days), bucket, isStale: bucket === "stale" };
+}
+
+// Stage entry of an open row (a known stage short of done) · null otherwise.
+function getOpenStageEntryCD(row) {
+	const entry = stageEntryCD(rowStageCD(row));
+	return entry != null && entry.value !== TERMINAL_STAGE_CD ? entry : null;
 }
 
 function isOpenRowCD(row) {
-	const entry = stageEntryCD(rowStageCD(row));
-	return entry != null && entry.value !== TERMINAL_STAGE_CD;
+	return getOpenStageEntryCD(row) != null;
 }
 
 // Open = a known stage short of done · counts are over the rows passed in (the loaded page).
@@ -115,9 +124,10 @@ function getOpenSummaryCD(rows, nowMs) {
 	let openCount = 0;
 	for (const row of rows) {
 		const age = getDocAgeCD(row.created_at, nowMs);
-		if (!isOpenRowCD(row) || !age) continue;
+		const entry = getOpenStageEntryCD(row);
+		if (!entry || !age) continue;
 
-		const stage = stageEntryCD(rowStageCD(row)).value;
+		const stage = entry.value;
 		openCount += 1;
 		stageCounts.set(stage, (stageCounts.get(stage) || 0) + 1);
 		buckets[age.bucket] += 1;
@@ -1505,9 +1515,9 @@ function DocListCardCD({
 						inlineFilterProps={inlineFilterProps}
 					/>
 				)}
-				{state.status === "ready" && rows.length > 0 && hasOpenSummary && (
+				{state.status === "ready" && hasOpenSummary && (
 					<PageVerdict
-						tone={openSummary.oldest && openSummary.oldest.days > STALE_AGE_DAYS_CD ? "warn" : "ok"}
+						tone={openSummary.buckets.stale > 0 ? "warn" : "ok"}
 						className="mx-4 mt-3">
 						{getOpenHeadlineCD(openSummary)}
 					</PageVerdict>
@@ -1807,7 +1817,7 @@ function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
 			</dl>
 			{oldest && (
 				<button type="button" className="btn ghost sm doc-open-oldest" onClick={() => onSelect(oldest.id)}>
-					{`Oldest open #${oldest.id} · ${oldest.days === 0 ? "today" : `${oldest.days}d`}`}
+					{`Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}`}
 				</button>
 			)}
 			{isPartial && <span className="doc-open-summary-note">Loaded rows only</span>}
