@@ -1515,28 +1515,28 @@ function getPageVerdictMC(data) {
 	};
 }
 
-// Each drifted ledger names its rows + jumps to its section; a file state other than in-sync is named last.
+// Each drifted or unread ledger names its rows + jumps to its section; a file state other than in-sync is named last.
 function getVerdictIssuesMC(domains, budgets, sync) {
-	const tiers = domains.filter((d) => d.drift).map((d) => DOMAIN_META_MC[d.domain]?.label ?? d.domain);
-	const caps = budgets.filter((b) => b.drift).map((b) => BUDGET_META_MC[b.domain]?.label ?? b.domain);
-	const issues = [];
+	const tierLedger = { meta: DOMAIN_META_MC, noun: "tier", chip: { label: "Model assignment", targetId: MODELS_SECTION_ID_MC } };
+	const capLedger = { meta: BUDGET_META_MC, noun: "cap", chip: { label: "Budget caps", targetId: BUDGETS_SECTION_ID_MC } };
+	const issues = [...getLedgerIssuesMC(domains, tierLedger), ...getLedgerIssuesMC(budgets, capLedger)];
 
-	if (tiers.length > 0) {
-		issues.push({
-			text: `${countNounMC(tiers.length, "tier")} drifting: ${tiers.join(", ")}`,
-			chip: { label: "Model assignment", targetId: MODELS_SECTION_ID_MC },
-		});
-	}
-	if (caps.length > 0) {
-		issues.push({
-			text: `${countNounMC(caps.length, "cap")} drifting: ${caps.join(", ")}`,
-			chip: { label: "Budget caps", targetId: BUDGETS_SECTION_ID_MC },
-		});
-	}
 	if (sync !== "ok") {
 		issues.push({ text: sync ? `config file: ${SYNC_META_MC[sync]?.label ?? sync}` : "config file state not reported" });
 	}
 	return issues;
+}
+
+// A null actual (unreadable file, missing key) carries drift=false server-side, so it is named apart, never counted as a match.
+function getLedgerIssuesMC(rows, ledger) {
+	const labelOf = (row) => ledger.meta[row.domain]?.label ?? row.domain;
+	const drifted = rows.filter((row) => row.drift).map(labelOf);
+	const unread = rows.filter((row) => !row.drift && row.actual == null).map(labelOf);
+	const texts = [];
+
+	if (drifted.length > 0) texts.push(`${countNounMC(drifted.length, ledger.noun)} drifting: ${drifted.join(", ")}`);
+	if (unread.length > 0) texts.push(`${countNounMC(unread.length, ledger.noun)} not read: ${unread.join(", ")}`);
+	return texts.length > 0 ? [{ text: texts.join(" · "), chip: ledger.chip }] : [];
 }
 
 function countNounMC(n, noun) {

@@ -1342,6 +1342,20 @@ describe("the page verdict is ok exactly when every row matches and the file is 
       names: ["1 cap drifting", "Self-improve + wiki call cap"],
       section: "BudgetsSectionMC",
     },
+    {
+      name: "a tier whose live value was not read is named, never counted as matching",
+      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d)) },
+      tone: "warn",
+      names: ["1 tier not read", "Dev agents"],
+      section: "DomainsSectionMC",
+    },
+    {
+      name: "a cap whose live value was not read is named, never counted as matching",
+      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }] },
+      tone: "warn",
+      names: ["1 cap not read", "Self-improve + wiki call cap"],
+      section: "BudgetsSectionMC",
+    },
     { name: "a missing config file warns even when every row matches", data: { ...clean, daemon_config_sync: "file-missing" }, tone: "warn", names: ["File missing"], section: null },
     { name: "an empty roster claims nothing", data: { daemon_config_sync: "ok", domains: [], budgets: [] }, tone: "neutral", names: [], section: null },
   ];
