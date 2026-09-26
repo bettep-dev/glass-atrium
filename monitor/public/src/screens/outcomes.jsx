@@ -710,18 +710,27 @@ function ScreenOutcomes({ onNav }) {
         />
       </div>
 
-      <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
+      {/* 기록 신뢰 신호는 status — 열린 채로 둔다. 일별 차트·budget-kill 목록 같은 내역만 detail 로 접는다. */}
+      <window.UI.SplitRow ratio="7:5" className="mt-4">
+        <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
+        <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
+          <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
+          <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
+          <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+            <AttributionBreakdownO state={attributionState}/>
+          </window.UI.Disclosure>
+        </window.UI.Disclosure>
+      </window.UI.SplitRow>
 
-      {/* 주간·월간 사실 3종 — 닫힌 채로 바닥에 둔다. 매일 읽는 band/ledger 를 밀어내지 않게. */}
-      <DisclosureO title="Reporting health" summary={reportingHealthSummaryO(channelLivenessState)}>
-        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
-        <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
-      </DisclosureO>
-
-      <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
-        <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
-        <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
-      </DisclosureO>
+      <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
+        <window.UI.SplitRow ratio="1:1">
+          <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
+          <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
+        </window.UI.SplitRow>
+        <window.UI.Disclosure kind="detail" level={3} title="By task type">
+          <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
+        </window.UI.Disclosure>
+      </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
       <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
@@ -1039,7 +1048,7 @@ function AgentFailureTableO({ state, onRetry }) {
   const { CardHead, STICKY_TH_STYLE } = window.UI;
 
   return (
-    <div className="card mt-4">
+    <div className="card">
       <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows"/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
@@ -1187,7 +1196,6 @@ function AttributionHealthBody({ state, onRetry }) {
     return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry}/>;
   }
 
-  const series  = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
   const summary = state.data?.window_summary || null;
   const totalAttributed = Number(summary?.total_attributed) || 0;
 
@@ -1196,14 +1204,9 @@ function AttributionHealthBody({ state, onRetry }) {
     return <EmptyStateO message="No attributed runs in this period."/>;
   }
 
-  // 활동일만 backend 전송 → 최근 ATTRIBUTION_GRID_BARS 일 그리드로 0-fill.
-  const grid = buildAttributionGridO(series, ATTRIBUTION_GRID_BARS);
-
   return (
     <div>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
-      <AttributionDailyChart grid={grid}/>
-      <AttributionLegend/>
       <div className="fs-meta text-faint mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
@@ -1212,8 +1215,26 @@ function AttributionHealthBody({ state, onRetry }) {
           Untraceable: {buildAttributionLossNoteO(summary?.attribution_loss_rate, totalAttributed)}
         </span>
       </div>
-      <AttributionBudgetKillListO rows={summary?.budget_truncation_by_agent}/>
       <AttributionDevScopeO devScope={summary?.dev_scope}/>
+    </div>
+  );
+}
+
+// Reporting health 의 detail 내역 — 로딩·오류·빈 창은 상단 status 카드가 이미 말하므로 여기선 침묵.
+function AttributionBreakdownO({ state }) {
+  const summary = state.status === 'ready' ? state.data?.window_summary : null;
+  if (!summary || !(Number(summary.total_attributed) > 0)) {
+    return <EmptyStateO message="No daily breakdown in this period."/>;
+  }
+
+  // 활동일만 backend 전송 → 최근 ATTRIBUTION_GRID_BARS 일 그리드로 0-fill.
+  const series = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
+
+  return (
+    <div>
+      <AttributionDailyChart grid={buildAttributionGridO(series, ATTRIBUTION_GRID_BARS)}/>
+      <AttributionLegend/>
+      <AttributionBudgetKillListO rows={summary.budget_truncation_by_agent}/>
     </div>
   );
 }
@@ -1607,7 +1628,6 @@ function GraderBreakdownBody({ state, onRetry }) {
         })}
       </div>
       <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
-      <TaskTypeGraderCrosstabO rows={state.data?.overall?.task_type_grader_breakdown}/>
     </>
   );
 }
