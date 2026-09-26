@@ -128,7 +128,7 @@ function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
 }
 
-// 데몬 다운 = effective_status ≠ ok. nav 배지는 fold.daemonsDown 을 읽는다 → 여기가 단일 출처.
+// Daemon down = effective_status ≠ ok → feeds only the footer ISSUES flag (app.jsx); the nav badge reads downNames.
 function countDaemonsDown(livePayload) {
   return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
 }
