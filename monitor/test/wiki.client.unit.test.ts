@@ -389,7 +389,7 @@ test("an index with no dirty flag on record says so in plain words and keeps the
   assert.match(tile.hint ?? "", /dirty flag/i);
 });
 
-// Run table grouping, note-type bars and the proposal anchor the alarm lane opens.
+// Run table grouping, note-type bars and the merge-proposal list's order and item anchors.
 
 interface RunGroup {
   key: string;
@@ -458,13 +458,9 @@ test("the merge-proposal list follows the alarm lane's order", () => {
   );
 });
 
-test("each proposal alarm names its own list item's anchor, and a hashless pair names none", () => {
-  const lane = helpers.buildAlarmLaneModel(ready({}), ready({}), proposalBacklog(["a b/c"]), unchangedCycles(1)).alarms as Array<
-    Alarm & { anchorId?: string | null }
-  >;
+test("a proposal's anchor is a valid element id, and a hashless pair has none", () => {
   const anchor = layoutHelpers.getProposalAnchorIdW("a b/c");
   assert.match(String(anchor), /^[A-Za-z0-9_-]+$/, "the anchor is a valid element id");
-  assert.equal(lane[0].anchorId, anchor);
   assert.equal(layoutHelpers.getProposalAnchorIdW(undefined), null);
 });
 

@@ -263,7 +263,7 @@ test("the merge-proposals disclosure stays in place while loading and after a fa
   }
 });
 
-test("a merge proposal's reasons wrap in full and its item is the anchor its alarm opens", async () => {
+test("a merge proposal's reasons wrap in full and its item carries its own focusable anchor", async () => {
   const mod = await loadWikiScreen();
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
   const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));

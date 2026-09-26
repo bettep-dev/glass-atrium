@@ -428,7 +428,6 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 				: typeof runs === "number"
 					? `${runs} ${runs === 1 ? "run" : "runs"}`
 					: null,
-			anchorId: getProposalAnchorIdW(proposal?.cluster_hash),
 			proposal,
 		};
 	});
@@ -811,7 +810,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 				/>
 			) : null}
 
-			{/* Always present, so the lane's "Open proposal" and the page layout never lose it. */}
+			{/* Always present, so the verdict's proposals chip and the page layout never lose it. */}
 			<WikiDisclosureW
 				id={MERGE_PROPOSALS_ID}
 				label="Merge proposals"
@@ -1033,11 +1032,7 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
-	const p95Label =
-		typeof p95 === "number"
-			? ` · p95 ${window.UI.formatDuration(p95, "ms")}`
-			: "";
-	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
+	return `${model.spanDays} runs · last ${model.newestDate}${describeP95W(p95)}`;
 }
 
 /**
@@ -1270,7 +1265,7 @@ function buildThroughputModel(state) {
 		isMixUniform: isNearUniformMixW(mix),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
-		total: compiledSeries.reduce((sum, v) => sum + v, 0),
+		total: sumCompiledW(state),
 		spanDays: compiledSeries.length,
 	};
 }
