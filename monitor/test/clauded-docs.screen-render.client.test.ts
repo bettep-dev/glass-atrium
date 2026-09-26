@@ -673,7 +673,7 @@ test("the open summary counts only open documents: stage counts and age buckets 
 describe("the sectioned list leads with a headline verdict and an open summary; search and a single-stage filter do not", () => {
   const rows = [
     { name: "open filter → headline and summary", filter: "open", isSearchMode: false, shown: true },
-    { name: "all filter → headline and summary over the open rows", filter: "", isSearchMode: false, shown: true },
+    { name: "all filter, every row loaded → headline and summary over the open rows", filter: "", isSearchMode: false, shown: true },
     { name: "done filter → neither, nothing there is open", filter: "done", isSearchMode: false, shown: false },
     { name: "search → neither, hits are not the pipeline", filter: "open", isSearchMode: true, shown: false },
   ];
@@ -695,6 +695,42 @@ describe("the sectioned list leads with a headline verdict and an open summary; 
       }
     });
   }
+});
+
+describe("with more pages to load, the headline says it covers the loaded rows and names the open total the chip shows", () => {
+  const rows = [
+    { name: "all filter, open total known → loaded share of the open total", filter: "", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
+    { name: "open filter, open total known → loaded share of the open total", filter: "open", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
+    { name: "open total unknown → loaded-rows note without a total", filter: "", groupCounts: null, lead: /^Loaded rows only: / },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      props.rows = pipelineRows();
+      props.canLoadMore = true;
+      props.groupCounts = row.groupCounts;
+      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
+      const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+      const text = collectText(findNodes(tree, (n) => n.props.atom === "PageVerdict")[0]);
+      assert.match(text, row.lead);
+      assert.match(text, /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)$/);
+    });
+  }
+});
+
+test("the ledger table scrolls inside its own column, so the open-summary rail beside it never covers a column", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  props.rows = pipelineRows();
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const tableColumn = findNodes(tree, (n) => n.type === "div" && findNodes(n, (c) => c.type === "table").length > 0
+    && String(n.props.className ?? "").split(" ").includes("flex-1"));
+  assert.equal(tableColumn.length, 1);
+  const classes = String(tableColumn[0].props.className).split(" ");
+  assert.ok(classes.includes("min-w-0") && classes.includes("overflow-x-auto"), `table column classes: ${classes.join(" ")}`);
 });
 
 test("the summary's oldest-open link opens that document", async () => {

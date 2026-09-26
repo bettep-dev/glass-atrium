@@ -137,13 +137,19 @@ function getOpenSummaryCD(rows, nowMs) {
 	return { stages, buckets, oldest, openCount };
 }
 
-function getOpenHeadlineCD(summary) {
+// isPartial → the summary saw the loaded page only · openTotal (chip count, null when unknown) reconciles the two numbers.
+function getOpenHeadlineCD(summary, isPartial = false, openTotal = null) {
 	const parts = summary.stages.map((stage) => `${formatIntCD(stage.count)} ${STAGE_HEADLINE_CD[stage.value]}`);
 	if (summary.oldest) {
 		const { id, days } = summary.oldest;
 		parts.push(`oldest open ${days === 0 ? "since today" : `${formatIntCD(days)} ${days === 1 ? "day" : "days"}`} (#${id})`);
 	}
-	return parts.join(" · ");
+	const headline = parts.join(" · ");
+	if (!isPartial) return headline;
+
+	return typeof openTotal === "number"
+		? `Loaded rows only — ${formatIntCD(summary.openCount)} of ${formatIntCD(openTotal)} open: ${headline}`
+		: `Loaded rows only: ${headline}`;
 }
 
 // format 배지 데이터 — doc.format 실값으로 dual-encode (색 + glyph). html 외 포맷은 agent-only 변종.
@@ -1515,7 +1521,7 @@ function DocListCardCD({
 					<PageVerdict
 						tone={openSummary.buckets.stale > 0 ? "warn" : "ok"}
 						className="mx-4 mt-3">
-						{getOpenHeadlineCD(openSummary)}
+						{getOpenHeadlineCD(openSummary, canLoadMore, groupCounts ? groupCounts.open : null)}
 					</PageVerdict>
 				)}
 				{state.status === "ready" && rows.length > 0 && (
@@ -1523,7 +1529,8 @@ function DocListCardCD({
 					{hasOpenSummary && (
 						<DocOpenSummaryCD summary={openSummary} isPartial={canLoadMore} onSelect={onSelect} />
 					)}
-					<div className="min-w-0 flex-1">
+					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
+					<div className="min-w-0 flex-1 overflow-x-auto">
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
 							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
