@@ -43,7 +43,8 @@ interface Sandbox {
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
   HeldCauseGroupI: Component;
-  LedgerRecurrenceDisclosureI: Component;
+  LedgerRecurrenceSectionI: Component;
+  LedgerLiveSectionI: Component;
   ParkedLoopBannerI: Component;
   DetailBodyI: Component;
 }
@@ -114,6 +115,37 @@ test("a live candidate row names its agent once, never as a label suffix", () =>
   const text = visibleText(sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} }));
   assert.equal(occurrences(text, AGENT), 1, text);
   assert.ok(!text.includes("|"), text);
+});
+
+test("live rows sharing a title print it once, each row led by its agent", () => {
+  const other = "glass-atrium-dev-react";
+  const rows = [
+    { id: 1, pattern_signature: `failure rate|${AGENT}`, agent: AGENT, frequency: 150, status: "identified" },
+    { id: 2, pattern_signature: `failure rate|${other}`, agent: other, frequency: 3, status: "identified" },
+  ];
+  const tree = sandbox.LedgerLiveSectionI({ rows, maxFreq: 150, onRowClick: () => {} });
+  assert.equal(occurrences(visibleText(tree), "Failure rate"), 1, visibleText(tree));
+
+  const rowEls = findAll(tree, (el) => el.type === sandbox.CandidateRowI);
+  assert.equal(rowEls.length, 2);
+  for (const rowEl of rowEls) {
+    const row = expand(rowEl);
+    const ordered = findAll(row, (el) => typeof el.props.name === "string" || el.props.max !== undefined);
+    assert.ok(typeof ordered[0]?.props.name === "string", "the agent is the first thing a row names");
+    assert.ok(!visibleText(row).includes("Failure rate"), "the shared title is not repeated per row");
+  }
+});
+
+test("×N is drawn as a bar scaled to the ledger's largest count", () => {
+  for (const freq of [150, 3]) {
+    const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: freq, status: "identified" };
+    const row = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 150, onClick: () => {} });
+    const bars = findAll(row, (el) => el.props.max !== undefined);
+    assert.equal(bars.length, 1, `×${freq}: one bar per row`);
+    assert.equal(bars[0].props.value, freq);
+    assert.equal(bars[0].props.max, 150);
+    assert.match(visibleText(row), new RegExp(`×\\s*${freq}\\b`), "the count stays printed beside its bar");
+  }
 });
 
 test("the label helper strips only the row's own agent suffix", () => {
@@ -267,9 +299,9 @@ describe("every pattern label on the board and ledger reads as words, never as i
         visibleText(sandbox.LedgerPlainRowsI({ rows: [{ id: 1, pattern_signature: signature, agent: AGENT, discovered_date: "2026-09-10" }] })),
     },
     {
-      name: "live candidate row",
+      name: "live candidate group",
       render: () =>
-        visibleText(sandbox.CandidateRowI({ rank: 1, pattern: { id: 1, pattern_signature: signature, agent: AGENT, frequency: 2 }, maxFreq: 2, onClick: () => {} })),
+        visibleText(sandbox.LedgerLiveSectionI({ rows: [{ id: 1, pattern_signature: signature, agent: AGENT, frequency: 2 }], maxFreq: 2, onRowClick: () => {} })),
     },
     {
       name: "applied history row",
@@ -303,10 +335,10 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       tree: () => sandbox.HeldCauseGroupI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [] }),
     },
     {
-      name: "recurrence disclosure summary",
+      name: "recurrence section head",
       prose: "Recurrence rates",
       tree: () =>
-        sandbox.LedgerRecurrenceDisclosureI({
+        sandbox.LedgerRecurrenceSectionI({
           suppression: { per_cycle: [{ cause: "c", label: "Cause label", hint: "h", agents: 1, cycles: 1, count: 1 }], per_cycle_window_days: 7, per_cycle_window_cycles: 3 },
         }),
     },

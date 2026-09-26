@@ -499,9 +499,12 @@ function ScreenImprovement({ onNav }) {
 							learningLogState={learningLogState}
 							suppression={loopSuppression}
 							awaiting={columnRows.safety.length}
+							styleRef={styleRef}
+							corpusAuditState={corpusAuditState}
+							onOpenInstrumentation={() => setView("instrumentation")}
 							onRetry={regionRetry}
 						/>
-						<div className="flex-1 min-h-0">
+						<div className="flex-1 min-h-0" id="improvement-board">
 							<KanbanCardI
 								state={listState}
 								columnRows={columnRows}
@@ -554,10 +557,15 @@ function StatusBandI({
 	learningLogState,
 	suppression,
 	awaiting,
+	styleRef,
+	corpusAuditState,
+	onOpenInstrumentation,
 	onRetry,
 }) {
+	const { PageVerdict } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
+	const applied = Number(s.cycles_generated_applied_7d ?? 0);
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const promptable = Math.max(
 		0,
@@ -570,46 +578,146 @@ function StatusBandI({
 	const heldNeedingHuman = sumCountsI(
 		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
 	);
+	const isBandReady =
+		[statsState, listState, learningLogState].every((st) => st.status === "ready") &&
+		Boolean(statsState.data) &&
+		Boolean(suppression);
+	const verdict = getBandVerdictI({
+		ready: isBandReady,
+		awaiting,
+		applied,
+		heldNeedingHuman,
+	});
+
 	return (
-		<div className="grid grid-cols-4 gap-3 mb-3">
-			<StatusTileI
-				status={bandTileStatusI(listState, listState.data)}
-				tone={awaiting > 0 ? "text-warn" : "text-faint"}
-				symbol={awaiting > 0 ? "⚠" : null}
-				label="Awaiting your decision"
-				value={formatIntI(awaiting)}
-				owner="suggestion board"
-				population="Safety-tier suggestions, pending or snoozed · no recency bound"
-				onRetry={onRetry}
+		<div className="mb-3 flex flex-col gap-2">
+			<PageVerdict tone={verdict.tone} chips={verdict.chips}>
+				{verdict.sentence}
+			</PageVerdict>
+			<div className="grid grid-cols-4 gap-3">
+				<StatusTileI
+					status={bandTileStatusI(listState, listState.data)}
+					tone={awaiting > 0 ? "text-warn" : "text-ok"}
+					symbol={awaiting > 0 ? "⚠" : "✓"}
+					label="Awaiting your decision"
+					value={formatIntI(awaiting)}
+					owner="suggestion board"
+					population="Safety-tier suggestions, pending or snoozed · no recency bound"
+					onRetry={onRetry}
+				/>
+				<StatusTileI
+					status={statsStatus}
+					tone="text-ok"
+					symbol="✓"
+					label="Applied (7 days)"
+					value={formatIntI(applied)}
+					owner="loop output"
+					population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					onRetry={onRetry}
+				/>
+				<StatusTileI
+					status={bandTileStatusI(learningLogState, suppression)}
+					symbol={null}
+					label="Backlog that can propose"
+					value={formatIntI(promptable)}
+					owner="pattern ledger"
+					population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
+					onRetry={onRetry}
+				/>
+				<StatusTileI
+					status={bandTileStatusI(learningLogState, suppression)}
+					tone={heldNeedingHuman > 0 ? "text-warn" : undefined}
+					symbol={heldNeedingHuman > 0 ? "⚠" : null}
+					label="Held, needs a human"
+					value={formatIntI(heldNeedingHuman)}
+					owner="pattern ledger"
+					population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
+					onRetry={onRetry}
+				/>
+			</div>
+			<InstrumentationStripI
+				styleRef={styleRef}
+				corpusAuditState={corpusAuditState}
+				onOpen={onOpenInstrumentation}
 			/>
-			<StatusTileI
-				status={statsStatus}
-				tone="text-ok"
-				symbol="✓"
-				label="Applied (7 days)"
-				value={formatIntI(Number(s.cycles_generated_applied_7d ?? 0))}
-				owner="loop output"
-				population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
-				onRetry={onRetry}
-			/>
-			<StatusTileI
-				status={bandTileStatusI(learningLogState, suppression)}
-				symbol={null}
-				label="Backlog that can propose"
-				value={formatIntI(promptable)}
-				owner="pattern ledger"
-				population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
-				onRetry={onRetry}
-			/>
-			<StatusTileI
-				status={bandTileStatusI(learningLogState, suppression)}
-				symbol={null}
-				label="Held, needs a human"
-				value={formatIntI(heldNeedingHuman)}
-				owner="pattern ledger"
-				population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
-				onRetry={onRetry}
-			/>
+		</div>
+	);
+}
+
+// 밴드 한 줄 판정 — 사람을 기다리는 것이 하나라도 있으면 warn, 적재 전에는 어떤 상태도 주장하지 않는다.
+function getBandVerdictI({ ready, awaiting, applied, heldNeedingHuman }) {
+	if (!ready) {
+		return { tone: "neutral", sentence: "Loop status has not loaded yet", chips: [] };
+	}
+	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
+	const chips = [];
+	if (awaiting > 0) {
+		parts.push(`${formatIntI(awaiting)} awaiting your decision`);
+		chips.push({ label: "Suggestion board", targetId: "improvement-board" });
+	}
+	if (heldNeedingHuman > 0) {
+		parts.push(`${formatIntI(heldNeedingHuman)} held for a human`);
+		chips.push({ label: "Held patterns", targetId: "improvement-pattern-ledger" });
+	}
+	if (chips.length === 0) parts.push("nothing needs a human");
+	return {
+		tone: chips.length > 0 ? "warn" : "ok",
+		sentence: parts.join(" · "),
+		chips,
+	};
+}
+
+const NOT_LOADED_CHIP_I = Object.freeze({
+	symbol: "ℹ",
+	tone: "text-faint",
+	label: "not loaded",
+	hint: "This gauge's payload has not landed",
+});
+
+// 게이지 판정은 계측 뷰의 규칙을 그대로 읽는다 — 사본을 두면 두 화면이 다른 판정을 말한다.
+function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
+	const audits =
+		corpusAuditState?.status === "ready" ? corpusAuditState.data?.audits : null;
+	const style = styleRef
+		? verdicts.styleRefGradeBadgeI(
+				styleRef.overall_emission_rate ?? null,
+				styleRef.overall_uncorroborated_rate ?? null,
+			)
+		: NOT_LOADED_CHIP_I;
+	const corpus = Array.isArray(audits)
+		? verdicts.getCorpusGrowthVerdictI(audits[0] ?? null)
+		: NOT_LOADED_CHIP_I;
+	return [
+		{ key: "style", name: "Graduation gate", ...style },
+		{ key: "corpus", name: "Corpus growth", ...corpus },
+	];
+}
+
+// 운영 뷰의 계측 건강 줄 — 계측 탭의 경보 상태가 탭 전환 없이도 보인다.
+function InstrumentationStripI({ styleRef, corpusAuditState, onOpen }) {
+	const verdicts = window.ImprovementInstrumentationVerdicts;
+	if (!verdicts) return null;
+	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState);
+	return (
+		<div
+			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
+			data-testid="instrumentation-strip"
+		>
+			<span className="text-dim">Instrumentation</span>
+			{chips.map((chip) => (
+				<span
+					key={chip.key}
+					className="inline-flex items-center gap-1"
+					title={chip.hint}
+				>
+					<SymI s={chip.symbol} className={chip.tone} size={11} />
+					<span className="text-ink">{chip.name}</span>
+					<span className={chip.tone}>{chip.label}</span>
+				</span>
+			))}
+			<button type="button" className="btn ghost sm" onClick={onOpen}>
+				Instrumentation →
+			</button>
 		</div>
 	);
 }
@@ -1735,6 +1843,7 @@ function LedgerHeldSectionI({ suppression }) {
 				basis="all time"
 				count={sumCountsI(buckets)}
 			/>
+			<HeldCauseStripI buckets={buckets} />
 			{buckets.map((b) => (
 				<HeldCauseGroupI
 					key={b.cause}
@@ -1746,17 +1855,48 @@ function LedgerHeldSectionI({ suppression }) {
 	);
 }
 
-// remedy 는 그룹 헤더에 한 번만 — 행마다 반복하면 원인 하나가 여러 원인으로 읽힌다.
-function HeldCauseGroupI({ bucket, rows }) {
-	const agents = Number(bucket.agents ?? 0);
+// 원인별 한 줄 — 보류 수 · 에이전트 수 · 재가동 조건이 목록을 열지 않아도 읽힌다.
+function HeldCauseStripI({ buckets }) {
 	return (
-		<details className="mt-1.5" open={!HELD_DESIGN_DECISION_CAUSES.has(bucket.cause)}>
-			<summary className="fs-meta text-ink cursor-pointer select-none">
-				{bucket.label} — {formatIntI(Number(bucket.count ?? 0))} held across{" "}
-				{formatIntI(agents)} {agents === 1 ? "agent" : "agents"}
+		<ul className="flex flex-col gap-1 mb-1">
+			{buckets.map((b) => {
+				const agents = Number(b.agents ?? 0);
+				const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
+				return (
+					<li
+						key={b.cause}
+						className="fs-meta flex flex-wrap items-baseline gap-x-2"
+					>
+						<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
+							<SymI
+								s={isHumanCause ? "⚠" : "ℹ"}
+								className={isHumanCause ? "text-warn" : "text-faint"}
+								size={11}
+							/>
+						</span>
+						<span className="text-ink">{b.label}</span>
+						<span className="text-ink tnum">
+							{`${formatIntI(Number(b.count ?? 0))} held`}
+						</span>
+						<span className="text-dim tnum">
+							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
+						</span>
+						{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
+						<span className="card-sub is-wrap fs-meta">{b.hint}</span>
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
+// 원인별 행 목록 — 모두 같은 방식으로 접힌다. 상태는 위 줄이 이미 말한다.
+function HeldCauseGroupI({ bucket, rows }) {
+	return (
+		<details className="mt-1.5">
+			<summary className="fs-meta text-dim cursor-pointer select-none">
+				{bucket.label} rows
 			</summary>
-			{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
-			<div className="card-sub is-wrap fs-meta mt-1">{bucket.hint}</div>
 			<LedgerPlainRowsI rows={rows} />
 		</details>
 	);
@@ -1817,27 +1957,23 @@ function LedgerInertSectionI({ rows }) {
 	);
 }
 
-// 재발률 공개 — 접어 둔다. 상태 변화가 아니라 비율이고(admission test 불통과), 이 기전들은
-// lifecycle transition 을 쓰지 않아 같은 행이 매 사이클 다시 세어진다.
-function LedgerRecurrenceDisclosureI({ suppression }) {
+// 재발률 — held 아래에 펼쳐 둔다. 같은 원인으로 매 사이클 멈추는지는 루프 건강 신호다.
+function LedgerRecurrenceSectionI({ suppression }) {
 	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
 	if (buckets.length === 0) return null;
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
-		<details className="px-3 pb-3">
-			<summary className="fs-meta text-dim cursor-pointer select-none">
+		<div className="px-3 pb-3">
+			<div
+				className="fs-meta text-dim mb-1"
+				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
+			>
 				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
 				{formatIntI(windowCycles)} cycle days
-			</summary>
-			<div className="mt-2">
-				<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
-				<div className="card-sub is-wrap fs-meta mt-1">
-					Recurrences, not distinct patterns — these mechanisms write no lifecycle
-					transition, so the same row is re-suppressed on every cycle.
-				</div>
 			</div>
-		</details>
+			<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
+		</div>
 	);
 }
 
@@ -1855,18 +1991,17 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 			</thead>
 			<tbody>
 				{buckets.map((b) => (
-					<tr key={b.cause} className="border-t border-line/50 align-top">
-						<td className="text-left py-1.5 pl-1.5">
-							<div className="text-ink">{b.label}</div>
-							<div className="card-sub is-wrap fs-meta mt-0.5">{b.hint}</div>
+					<tr key={b.cause} className="border-t border-line/50">
+						<td className="text-left py-1 pl-1.5 text-ink" title={b.hint}>
+							{b.label}
 						</td>
-						<td className="text-right py-1.5 pl-4 text-ink tnum">
+						<td className="text-right py-1 pl-4 text-ink tnum">
 							{formatIntI(Number(b.agents ?? 0))}
 						</td>
-						<td className="text-right py-1.5 pl-4 text-ink tnum">
+						<td className="text-right py-1 pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right py-1.5 pl-4 pr-1.5 text-dim tnum">
+						<td className="text-right py-1 pl-4 pr-1.5 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2308,7 +2443,7 @@ function failTrendMetaI(before, after) {
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
 // 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
 function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
-	const { CardHead, LoadingPlaceholder } = window.UI;
+	const { CardHead, LoadingPlaceholder, SplitRow } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
@@ -2359,17 +2494,23 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
+	const liveSection = (
+		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
+	);
+
 	return (
-		<div className="card" data-testid="pattern-ledger">
+		<div className="card" id="improvement-pattern-ledger" data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
-			<LedgerLiveSectionI
-				rows={live}
-				maxFreq={maxFreq}
-				onRowClick={onRowClick}
-			/>
-			<LedgerInertSectionI rows={inert} />
+			{inert.length > 0 ? (
+				<SplitRow ratio="1:1">
+					{liveSection}
+					<LedgerInertSectionI rows={inert} />
+				</SplitRow>
+			) : (
+				liveSection
+			)}
 			<LedgerHeldSectionI suppression={suppression} />
-			<LedgerRecurrenceDisclosureI suppression={suppression} />
+			<LedgerRecurrenceSectionI suppression={suppression} />
 			<LedgerFooterI
 				total={total}
 				declined={declinedAllTime}
@@ -2380,7 +2521,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 }
 
 // 활성 구역 — 제안이 나올 수 있는 행만. 비어도 카드는 남는다: held 는 윈도우가 없어서
-// 활성이 0 이어도 읽을 것이 있다.
+// 활성이 0 이어도 읽을 것이 있다. 같은 제목의 행은 제목 아래 묶고, 행은 에이전트로 시작한다.
 function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	const head = (
 		<LedgerSectionHeadI
@@ -2402,21 +2543,39 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	return (
 		<div className="px-3 pb-3 flex flex-col gap-1.5">
 			{head}
-			{rows.map((p, i) => (
-				<CandidateRowI
-					key={p.id}
-					rank={i + 1}
-					pattern={p}
-					maxFreq={maxFreq}
-					onClick={() => onRowClick({ ...p, kind: "pattern" })}
-				/>
+			{groupLiveRowsI(rows).map((group) => (
+				<div key={group.title} className="flex flex-col gap-1">
+					<div className="fs-meta text-ink truncate" title={group.title}>
+						{truncateI(group.title, 120)}
+					</div>
+					{group.entries.map(({ pattern, rank }) => (
+						<CandidateRowI
+							key={pattern.id}
+							rank={rank}
+							pattern={pattern}
+							maxFreq={maxFreq}
+							onClick={() => onRowClick({ ...pattern, kind: "pattern" })}
+						/>
+					))}
+				</div>
 			))}
 		</div>
 	);
 }
 
+// 공유 제목별 묶음 — 첫 등장 순서 유지, rank 는 전체 빈도 순위 그대로.
+function groupLiveRowsI(rows) {
+	const groups = new Map();
+	rows.forEach((pattern, i) => {
+		const title = patternNameI(pattern.pattern_signature, pattern.agent);
+		if (!groups.has(title)) groups.set(title, []);
+		groups.get(title).push({ pattern, rank: i + 1 });
+	});
+	return [...groups].map(([title, entries]) => ({ title, entries }));
+}
+
 function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
-	const { StatusDot } = window.UI;
+	const { StatusDot, Bar } = window.UI;
 	const freq = Number(pattern.frequency ?? 0);
 	const status = candidateSeverityI(freq, maxFreq);
 	const badge = learningStatusBadgeI(pattern.status);
@@ -2426,7 +2585,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			type="button"
 			onClick={onClick}
 			className="i-card-shadow i-row-card bg-elev rounded-md text-left p-2.5 w-full flex items-center gap-2"
-			aria-label={`Candidate ${rank}: ${label} — seen ${freq} times`}
+			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span
 				className="fs-meta text-faint"
@@ -2435,15 +2594,21 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 				{rank}
 			</span>
 			<StatusDot status={status} />
-			<span
-				className="fs-body text-ink truncate flex-1 min-w-0"
-				title={label}
-			>
-				{truncateI(label, 120)}
+			<span className="shrink-0 truncate" style={{ width: "18ch" }}>
+				{pattern.agent ? (
+					<window.UI.AgentName name={pattern.agent} className="fs-meta text-ink" />
+				) : (
+					<span className="fs-meta text-faint">no agent</span>
+				)}
 			</span>
-			{pattern.agent && (
-				<window.UI.AgentName name={pattern.agent} className="fs-meta text-dim shrink-0" />
-			)}
+			<span className="flex-1 min-w-0" title="Times seen, relative to the most-seen live pattern">
+				<Bar
+					value={freq}
+					max={maxFreq}
+					tone={status}
+					ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`}
+				/>
+			</span>
 			<span
 				className={`fs-meta shrink-0 ${badge.tone}`}
 				title={`Status: ${badge.label}`}
