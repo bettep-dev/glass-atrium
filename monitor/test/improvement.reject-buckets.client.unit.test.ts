@@ -139,8 +139,7 @@ const renderHeader = (props: Partial<HeaderProps>) =>
     ...props,
   });
 
-// The count heads the cause split directly below it, so both must be read over one
-// population or the split fails to add up to the number it breaks down.
+// Header count + cause split below it share one population → the split sums to the count.
 test("the rejected header counts the same day window its cause split breaks down", () => {
   const texts = collectStrings(renderHeader({ summary: MIXED }), []);
   const splitTotal = Object.values(readCounts(sandbox.RejectBucketSplitI({ summary: MIXED })))
