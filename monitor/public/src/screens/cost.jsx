@@ -278,10 +278,10 @@ function InstrumentationTierC({ children }) {
  */
 function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   const rows = [];
+  const hotTone = getHotToneC(hot, latestOutsideBand);
 
-  if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
-    // red only past the stated so-far cut — a projection or one outlier day is a warning, not a breach
-    rows.push({ key: 'hot', tone: hot.isHot ? 'crit' : 'warn', text: getHotAlarmText(hot, latestOutsideBand) });
+  if (hotTone !== null) {
+    rows.push({ key: 'hot', tone: hotTone, text: getHotAlarmText(hot, latestOutsideBand) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -292,6 +292,12 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   }
 
   return rows;
+}
+
+// Hot-trigger tone, or null when none fires — red only past the so-far cut; a projection or one outlier day is a warning
+function getHotToneC(hot, latestOutsideBand) {
+  if (hot.isHot) return 'crit';
+  return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
 }
 
 // The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
@@ -309,12 +315,15 @@ function getSpendVerdictC({ hot, latestOutsideBand, kpiStatus }) {
   if (kpiStatus !== 'ready' || hot.ratio === null) {
     const reason = kpiStatus === 'loading' ? 'Reading today\'s spend.'
       : kpiStatus === 'error' ? 'Today\'s spend is unavailable.' : 'No 7-day cost to compare today against.';
-    return { tone: 'neutral', label: 'No signal', text: reason };
+    return { tone: 'neutral', text: reason };
   }
-  if (hot.isHot) return { tone: 'crit', label: 'Above normal', text: `Today's spend has passed ${cut}.` };
-  if (hot.isPaceHot) return { tone: 'warn', label: 'Above normal', text: `Today is heading past ${cut}.` };
-  if (latestOutsideBand) return { tone: 'warn', label: 'Above normal', text: 'The newest day ran outside its own normal band.' };
-  return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
+
+  const tone = getHotToneC(hot, latestOutsideBand);
+
+  if (tone === null) return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
+  const text = hot.isHot ? `Today's spend has passed ${cut}.`
+    : hot.isPaceHot ? `Today is heading past ${cut}.` : 'The newest day ran outside its own normal band.';
+  return { tone, label: 'Above normal', text };
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
