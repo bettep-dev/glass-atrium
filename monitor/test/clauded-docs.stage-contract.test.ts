@@ -17,6 +17,7 @@ import {
   isCascadeTransition,
   isStatusAction,
   normalizeStoredStage,
+  parseEnumListParam,
 } from "../src/server/routes/clauded-docs.js";
 
 const RETIRED_ALIAS: DocStatusLiteral = "progress";
@@ -144,5 +145,23 @@ test("the open filter is every stage but the terminal one, and the first stage a
     const sql = getDocStatusFilterSql(stage);
     assert.deepEqual(sql.values, [stage], `'${stage}' filters on itself`);
     assert.match(sql.strings.join("?"), /=/);
+  }
+});
+
+test("a multi-value filter parses repeat and comma forms alike, and one unknown token rejects the whole list", () => {
+  const cases: Array<{ raw: string | string[] | undefined; parsed: string[] | null }> = [
+    { raw: undefined, parsed: null },
+    { raw: "", parsed: null },
+    { raw: [" , ", ""], parsed: null },
+    { raw: "implementing", parsed: ["implementing"] },
+    { raw: ["impl_done", "implementing"], parsed: ["impl_done", "implementing"] },
+    { raw: ["open, done", " open ,impl_review"], parsed: ["open", "done", "impl_review"] },
+  ];
+  for (const { raw, parsed } of cases) {
+    assert.deepEqual(parseEnumListParam(raw, DOC_STATUS_READ_FILTERS), parsed, JSON.stringify(raw));
+  }
+
+  for (const raw of ["bogus", "implementing,bogus", ["implementing", "bogus"], "Open"]) {
+    assert.equal(parseEnumListParam(raw, DOC_STATUS_READ_FILTERS), "INVALID", JSON.stringify(raw));
   }
 });
