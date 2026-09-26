@@ -12,8 +12,9 @@
 #        (b) real-then-template  → parse_tier=1, result=done (the LAST match is the invalid
 #            template, so the validity-aware reverse-scan MUST fall back to the earlier valid
 #            block — the regression a naive last-match-only fix would fail).
-#  #35 — qa_score + concerns are in KNOWN_FIELDS, so an emitted `qa_score:`/`concerns:` line
-#        starts its own field instead of folding into the preceding value (white-box parser test).
+#  KNOWN_FIELDS boundaries — parse_completion_body folds any line whose key is outside
+#        KNOWN_FIELDS into the preceding value, so a template key emitted after another field must
+#        start its own field (multi-line and inline) — white-box tests over the real parser.
 #
 # The #25 cases run DB-free: PG is fail-opened via PGHOST and the parse decision is read off the
 # stderr diagnostic channel (the DIAG parse_tier line + the auto-generated record marker carrying
@@ -24,6 +25,8 @@
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
+# The repo and the live install both root rules/glass-atrium/ beside hooks/.
+RULES_DOC="${HOOKS_DIR}/../rules/glass-atrium/core-outcome-record.md"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
@@ -122,26 +125,117 @@ run_hook_dbfree() {
   oc "attribution=completion-synthesized" "${output}" || return 1
 }
 
-@test "#35 qa_score / concerns are KNOWN_FIELDS — a qa_score line does not fold into summary" {
-  # White-box: exec the hook's embedded parser prefix (KNOWN_FIELDS + parse_completion_body live
-  # above the stdin json.load) and assert a qa_score line starts its own field. Reads the ACTUAL
-  # hook source (no duplication) so it tracks the real KNOWN_FIELDS set.
-  run python3 - "${HOOK_SH}" <<'PY'
-import sys, re
+# Execs the hook's embedded parser prefix (KNOWN_FIELDS + _INLINE_DELIM_CLASS +
+# parse_completion_body, all above the stdin json.load) into `ns`, so every check reads the ACTUAL
+# parser rather than a copy. Checks print one line per failure and exit non-zero on any.
+PARSER_PRELUDE="$(
+  cat <<'PY'
+import os, sys, re
 src = open(sys.argv[1], encoding='utf-8').read()
 m = re.search(r"<<'PYEOF'\n(.*?)\nPYEOF", src, re.DOTALL)
 assert m, "PYEOF heredoc not found"
-prefix = m.group(1).split('\ntry:\n    d = json.load(sys.stdin)')[0]
 ns = {}
-exec(compile(prefix, 'embedded', 'exec'), ns)
-parsed = ns['parse_completion_body'](
-    "result: done\nsummary: CLEANSUMMARY\nqa_score: cov=4,ins=4,instr=4,clar=4\nlesson: keep")
-assert parsed.get('summary') == 'CLEANSUMMARY', repr(parsed.get('summary'))
-assert parsed.get('qa_score') == 'cov=4,ins=4,instr=4,clar=4', repr(parsed.get('qa_score'))
-assert 'qa_score' in ns['KNOWN_FIELDS'], 'qa_score not in KNOWN_FIELDS'
-assert 'concerns' in ns['KNOWN_FIELDS'], 'concerns not in KNOWN_FIELDS'
-print('OK')
+exec(compile(m.group(1).split('\ntry:\n    d = json.load(sys.stdin)')[0], 'embedded', 'exec'), ns)
+parse = ns['parse_completion_body']
+
+def report(failures):
+    print('\n'.join(failures) or 'OK')
+    sys.exit(1 if failures else 0)
 PY
-  [ "${status}" -eq 0 ] || return 1
-  [[ "${output}" == *"OK"* ]] || return 1
+)"
+
+# $1 = python check source run after the prelude; the remaining args become sys.argv[2:].
+run_parser_check() {
+  local check_src="${1}"
+  shift
+  run python3 - "${HOOK_SH}" "$@" <<<"${PARSER_PRELUDE}"$'\n'"${check_src}"
+  [ "${status}" -eq 0 ] || {
+    printf '%s\n' "${output}"
+    return 1
+  }
+  oc "OK" "${output}"
+}
+
+@test "a template key emitted after another field never joins that field's value" {
+  local check_src
+  check_src="$(
+    cat <<'PY'
+rows = [
+    ('token_usage then agent_version',
+     'result: done\ntoken_usage: input=5, output=6\nagent_version: 1.0.0',
+     {'token_usage': 'input=5, output=6'}),
+    ('a single relative test path in files then agent_version',
+     'result: done\nfiles: hooks/test/code-based-grader.bats\nagent_version: 1.0.0',
+     {'files': 'hooks/test/code-based-grader.bats'}),
+    ('summary then grader_verdict then downgrade_origin',
+     'result: done\nsummary: parser fix landed\ngrader_verdict: verified_pass\n'
+     'downgrade_origin: writer_false',
+     {'summary': 'parser fix landed'}),
+    ('lesson then agent_version',
+     'result: done\nlesson: register every template key\nagent_version: 1.0.0',
+     {'lesson': 'register every template key'}),
+    ('summary then qa_score then lesson',
+     'result: done\nsummary: review verdict\nqa_score: cov=4,ins=4,instr=4,clar=4\nlesson: keep',
+     {'summary': 'review verdict', 'qa_score': 'cov=4,ins=4,instr=4,clar=4'}),
+]
+failures = []
+for name, block, expected in rows:
+    parsed = parse(block)
+    for field, want in expected.items():
+        if parsed.get(field) != want:
+            failures.append(f'{name}: {field}={parsed.get(field)!r}, want {want!r}')
+report(failures)
+PY
+  )"
+  run_parser_check "${check_src}"
+}
+
+@test "an inline block's template key never joins the preceding field's value" {
+  local check_src
+  # The inline tier's own split: delimiters → newlines, then parse_completion_body.
+  check_src="$(
+    cat <<'PY'
+inline = 'result: done | token_usage: input=5, output=6 | agent_version: 1.0.0'
+parsed = parse(re.sub(ns['_INLINE_DELIM_CLASS'], '\n', inline))
+got = parsed.get('token_usage')
+report([] if got == 'input=5, output=6' else [f'token_usage={got!r}'])
+PY
+  )"
+  run_parser_check "${check_src}"
+}
+
+@test "a template key leading the block leaves every later field clean" {
+  local check_src
+  check_src="$(
+    cat <<'PY'
+parsed = parse('agent_version: 1.0.0\nresult: done\ntoken_usage: input=5, output=6')
+want = {'result': 'done', 'token_usage': 'input=5, output=6'}
+report([f'{k}={parsed.get(k)!r}' for k, v in want.items() if parsed.get(k) != v])
+PY
+  )"
+  run_parser_check "${check_src}"
+}
+
+@test "every key of the [COMPLETION] template is a KNOWN_FIELDS member" {
+  local check_src
+  # Never skips: a missing doc, anchor, fence or key list fails with its own message.
+  check_src="$(
+    cat <<'PY'
+doc = sys.argv[2]
+if not os.path.isfile(doc):
+    report([f'rules doc not found: {doc}'])
+text = open(doc, encoding='utf-8').read()
+anchor = re.search(r'^## Completion Report Output Obligation$', text, re.MULTILINE)
+if not anchor:
+    report([f'anchor "## Completion Report Output Obligation" missing in {doc}'])
+fence = re.search(r'^```[^\n]*\n(.*?)^```', text[anchor.end():], re.DOTALL | re.MULTILINE)
+if not fence:
+    report([f'no fenced block after the anchor in {doc}'])
+keys = set(re.findall(r'^([a-z_]+):', fence.group(1), re.MULTILINE))
+if not keys:
+    report([f'the template fence in {doc} carries no key lines'])
+report([f'template key missing from KNOWN_FIELDS: {k}' for k in sorted(keys - ns['KNOWN_FIELDS'])])
+PY
+  )"
+  run_parser_check "${check_src}" "${RULES_DOC}"
 }
