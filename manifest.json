@@ -1208,7 +1208,7 @@
     "hooks/test/track-outcome-agent-identity.bats": "9eb6351c51ccd496fa2aa3e69437b03369c44fc1bceddb097026025f5ed23734",
     "hooks/test/track-outcome-budget-truncation.bats": "17b79ba53de5eecf0331b691a26884fb6c7b963f41696036cc5c6bbe8506fb60",
     "hooks/test/track-outcome-close-consumer.bats": "c3473ce01f379e920d1ce11420bf3d4b558949f22a5aacd064ae712c73a8cd47",
-    "hooks/test/track-outcome-completion-block-select.bats": "5803cfee3426785d0c75788d3256e60d541e7fc4d478012d160a2258c80f215e",
+    "hooks/test/track-outcome-completion-block-select.bats": "3cdbef84a31b6b13b98e2a450767d526d2d866213bf2a6e148fcbfdaf6af333a",
     "hooks/test/track-outcome-concerns-on-done.bats": "5b25fddace6b86dc55a6b2bd9084607040fb5e34f0afd78f21419c5ec30e8127",
     "hooks/test/track-outcome-correction-crosscheck.bats": "aaf7e6257e12168409074914efcea8566c479ba160f4e08aacc2bbc8695cb1c5",
     "hooks/test/track-outcome-correction-gap.bats": "75acefb4871d38026427c2e3e4925ebacff7af045216223ad2dd55b304612b9b",
