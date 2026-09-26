@@ -650,7 +650,7 @@ function getBandStatusI(states, value) {
 	return states.every((st) => st.status === "ready") && value ? "ready" : "loading";
 }
 
-// 밴드 한 줄 판정 — 사람을 기다리는 것이 하나라도 있으면 warn, 적재 전에는 어떤 상태도 주장하지 않는다.
+// Band one-line verdict — warn when anything awaits a human; no state claimed before payloads land.
 function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 	if (status === "error") {
 		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
@@ -683,7 +683,7 @@ const NOT_LOADED_CHIP_I = Object.freeze({
 	hint: "This gauge's payload has not landed",
 });
 
-// 게이지 판정은 계측 뷰의 규칙을 그대로 읽는다 — 사본을 두면 두 화면이 다른 판정을 말한다.
+// Gauge verdicts read the instrumentation view's rules as-is → a copy would let the two views disagree.
 function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
 	const audits =
 		corpusAuditState?.status === "ready" ? corpusAuditState.data?.audits : null;
@@ -702,7 +702,7 @@ function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
 	];
 }
 
-// 운영 뷰의 계측 건강 줄 — 계측 탭의 경보 상태가 탭 전환 없이도 보인다.
+// Operations-view instrumentation health line — the instrumentation tab's alert state, visible without switching tabs.
 function InstrumentationStripI({ styleRef, corpusAuditState, onOpen }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
 	if (!verdicts) return null;
@@ -1874,7 +1874,7 @@ function LedgerHeldSectionI({ suppression }) {
 	);
 }
 
-// 원인별 한 줄 — 보류 수 · 에이전트 수 · 재가동 조건이 목록을 열지 않아도 읽힌다.
+// One line per cause — held count · agent count · re-arm condition, readable without opening the list.
 function HeldCauseStripI({ buckets }) {
 	return (
 		<ul className="flex flex-col gap-1 mb-1">
@@ -1900,7 +1900,7 @@ function HeldCauseStripI({ buckets }) {
 						<span className="text-dim tnum">
 							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
 						</span>
-						{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
+						{/* is-wrap required — .card-sub clamps to one line, and a clipped remedy leaves only the numbers. */}
 						<span className="card-sub is-wrap fs-meta">{b.hint}</span>
 					</li>
 				);
@@ -1909,7 +1909,7 @@ function HeldCauseStripI({ buckets }) {
 	);
 }
 
-// 원인별 행 목록 — 모두 같은 방식으로 접힌다. 상태는 위 줄이 이미 말한다.
+// Per-cause row list — every group folds the same way; the strip above already states status.
 function HeldCauseGroupI({ bucket, rows }) {
 	return (
 		<details className="mt-1.5">
@@ -1976,7 +1976,7 @@ function LedgerInertSectionI({ rows }) {
 	);
 }
 
-// 재발률 — held 아래에 펼쳐 둔다. 같은 원인으로 매 사이클 멈추는지는 루프 건강 신호다.
+// Recurrence rate, kept open under held — stalling on the same cause every cycle is a loop-health signal.
 function LedgerRecurrenceSectionI({ suppression }) {
 	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
 	if (buckets.length === 0) return null;
@@ -2510,8 +2510,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 	);
 }
 
-// 활성 구역 — 제안이 나올 수 있는 행만. 비어도 카드는 남는다: held 는 윈도우가 없어서
-// 활성이 0 이어도 읽을 것이 있다. 같은 제목의 행은 제목 아래 묶고, 행은 에이전트로 시작한다.
+// Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
 function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	const head = (
 		<LedgerSectionHeadI
@@ -2553,7 +2552,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	);
 }
 
-// 공유 제목별 묶음 — 첫 등장 순서 유지, rank 는 전체 빈도 순위 그대로.
+// Group by shared title — first-appearance order kept, rank stays the overall frequency rank.
 function groupLiveRowsI(rows) {
 	const groups = new Map();
 	rows.forEach((pattern, i) => {
@@ -2826,7 +2825,7 @@ function InstrumentationViewI(props) {
 	return <View {...props} />;
 }
 
-// 계기판 뷰가 소비하는 화면 공용 원자 — 기호(SymI)·신뢰도 배지(confidenceBadgeMetaI) 판정은 이 파일 소유.
+// Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.
 window.ImprovementShared = {
 	SymI,
 	confidenceBadgeMetaI,
