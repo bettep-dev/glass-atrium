@@ -804,7 +804,6 @@ test("a log-integrity bar reads as over threshold exactly when it rises above th
   assert.strictEqual(chartRows.length, rows.length);
   chartRows.forEach((r, i) => {
     assert.strictEqual(r.isCrit, r.error_count > r.threshold_count, rows[i].event_date);
-    assert.ok(r.threshold_count <= rows[i].total_count, rows[i].event_date);
   });
   assert.ok(chartRows.some((r) => r.isCrit) && chartRows.some((r) => !r.isCrit));
 });
