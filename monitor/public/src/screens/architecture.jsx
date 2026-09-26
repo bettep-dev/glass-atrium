@@ -1661,8 +1661,7 @@ function NodePartHealth({
 							)}
 
 							{/* 펼칠 것이 없는 kind(pg · browser)는 아무것도 그리지 않음 — 빈 영역을 여는
-							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 드릴된 데몬이면 바로 폄(트리거로 접힘):
-							    패널이 이미 노드 하나로 좁혀져 있어 접어 둘 비교 대상이 없음. */}
+							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 드릴된 데몬이면 바로 폄(트리거로 접힘). */}
 							{renderDetail && row.daemonName && (
 								<button
 									type="button"
@@ -2414,7 +2413,7 @@ function getPartHealthGroupsAR(partRows) {
 // the drawer's drill target — the node's worst daemon part, so a failing part opens with its runs listed
 function getDrillDaemonAR(partRows, unscopedId) {
 	const bound = partRows.filter((row) => row.daemonName && row.nodeIds.includes(unscopedId));
-	const [worst] = [...bound].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
+	const [worst] = bound.sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
 	return worst?.daemonName || null;
 }
 
@@ -2446,6 +2445,11 @@ function getPartCauseAR(facts) {
 	return null;
 }
 
+// the row's DOM id — the verdict chips focus it, so both sides read it here
+function getPartRowIdAR(row) {
+	return `arch-part-${row.id}`;
+}
+
 // page verdict — worst part tone, flagged parts named with their box as chips that focus their row
 function getPageVerdictAR(partRows, caption, nodeIndex) {
 	const { attention } = getPartHealthGroupsAR(partRows);
@@ -2453,7 +2457,7 @@ function getPageVerdictAR(partRows, caption, nodeIndex) {
 	const isAllOk = judgedCount > 0 && judgedCount === partRows.length;
 	const chips = attention.map((row) => {
 		const box = getPartBoxAR(row, nodeIndex);
-		return { key: row.id, label: box ? `${row.name} · ${box.label}` : row.name, targetId: `arch-part-${row.id}` };
+		return { key: row.id, label: box ? `${row.name} · ${box.label}` : row.name, targetId: getPartRowIdAR(row) };
 	});
 
 	return {
@@ -2509,7 +2513,7 @@ function PartHealthRowAR({ row, nodeIndex, onSelectNode }) {
 		.join(" · ");
 
 	return (
-		<li id={`arch-part-${row.id}`} tabIndex={-1} className="arch-part-row">
+		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
 			<span>{row.name}</span>
 			<span className={row.tone ? `text-${row.tone}` : "text-faint"}>{getPartStatusTextAR(row)}</span>
 			{box ? (

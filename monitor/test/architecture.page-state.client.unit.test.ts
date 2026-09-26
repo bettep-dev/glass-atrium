@@ -215,7 +215,7 @@ test("the part health block holds every part once, flagged parts on the attentio
   const { attention, rest } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
   const rank = (tone: string | null) => ["crit", "warn", null, "info", "ok"].indexOf(tone);
 
-  assert.deepStrictEqual([...[...attention, ...rest].map((row) => row.id)].sort(), MIXED_ROWS.map((row) => row.id).sort());
+  assert.deepStrictEqual([...attention, ...rest].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
   assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");
   assert.ok(rest.every((row) => row.tone !== "crit" && row.tone !== "warn"), "a flagged part sits in the other column");
   for (const group of [attention, rest])
