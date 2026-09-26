@@ -113,16 +113,15 @@ function findSummaryHeading(tree: RenderedNode | string | null, label: string): 
     .find((h2) => collectText(h2) === label);
 }
 
-const RUN_HISTORY_LOADING = {
-  cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
-};
+const RUN_HISTORY_LOADING = { cyclesState: LOADING, summaryState: LOADING, onRetry: () => {} };
+const RUN_TABLE_LOADING = { reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {} };
 
 test("detail sections fold behind an h2 in their summary; status sections render open with a plain h2", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const rows: Array<{ name: string; folds: boolean; element: unknown }> = [
     { name: "Merge proposals", folds: true, element: createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} }) },
-    { name: "Per-run table", folds: true, element: createElement(mod.WikiRunTableSection, RUN_HISTORY_LOADING) },
+    { name: "Per-run table", folds: true, element: createElement(mod.WikiRunTableSection, RUN_TABLE_LOADING) },
     { name: "Run history", folds: false, element: createElement(mod.WikiRunHistorySection, RUN_HISTORY_LOADING) },
     { name: "Notes by type", folds: false, element: createElement(mod.WikiNotesByTypeSection, { state: LOADING, onRetry: () => {} }) },
   ];
@@ -263,13 +262,10 @@ test("the merge-proposals disclosure stays in place while loading and after a fa
   }
 });
 
-test("a merge proposal's reasons wrap in full and its item carries its own focusable anchor", async () => {
+test("a merge proposal's reasons wrap in full", async () => {
   const mod = await loadWikiScreen();
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
   const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
-  const item = findNodes(tree, (n) => n.type === "li")[0];
-  assert.equal(item.props.id, (mod.getProposalAnchorIdW as (h: string) => string)("c1"));
-  assert.equal(item.props.tabIndex, -1, "focus can land on the item without adding a Tab stop");
   for (const node of findNodes(tree, () => true)) {
     assert.doesNotMatch(classOf(node), /\btruncate\b/, "no part of the proposal hides behind a hover title");
   }
@@ -396,6 +392,6 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
 test("the window control rides the per-run table fold and never the open trend", async () => {
   const mod = await loadWikiScreen();
   const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
-  assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_HISTORY_LOADING))).length, 1);
+  assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING))).length, 1);
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
 });

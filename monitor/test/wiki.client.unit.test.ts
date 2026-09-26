@@ -389,7 +389,7 @@ test("an index with no dirty flag on record says so in plain words and keeps the
   assert.match(tile.hint ?? "", /dirty flag/i);
 });
 
-// Run table grouping, note-type bars and the merge-proposal list's order and item anchors.
+// Run table grouping, note-type bars and the merge-proposal list's order.
 
 interface RunGroup {
   key: string;
@@ -400,7 +400,6 @@ interface RunGroup {
 const layoutHelpers = helpers as unknown as {
   groupConstantRunsW: (reports: unknown[]) => RunGroup[];
   buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; count: number; share: number }>;
-  getProposalAnchorIdW: (hash: unknown) => string | null;
   buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => { proposals: Array<{ cluster_hash: string }> };
 };
 
@@ -456,12 +455,6 @@ test("the merge-proposal list follows the alarm lane's order", () => {
     [...list].map((p) => `proposal-${p.cluster_hash}`),
     [...lane].map((a) => a.key),
   );
-});
-
-test("a proposal's anchor is a valid element id, and a hashless pair has none", () => {
-  const anchor = layoutHelpers.getProposalAnchorIdW("a b/c");
-  assert.match(String(anchor), /^[A-Za-z0-9_-]+$/, "the anchor is a valid element id");
-  assert.equal(layoutHelpers.getProposalAnchorIdW(undefined), null);
 });
 
 // Page verdict, tile causes and note-type labels.
@@ -535,15 +528,14 @@ test("the compiled tile names why it reads zero, adds the window total and tints
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle", compiled: 0, waiting: 0, sub: /nothing to compile/i, tone: "neutral" },
-    { name: "stalled", compiled: 0, waiting: 5, sub: /5 originals waiting/, tone: "warn" },
+    { name: "idle", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 30 d$/i, tone: "neutral" },
+    { name: "stalled", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 30 d$/, tone: "warn" },
     { name: "producing", compiled: 4, waiting: 5, sub: /^12 in 30 d$/, tone: "neutral" },
   ];
   for (const row of rows) {
     const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: row.compiled }), backlog(row.waiting), cycles);
     assert.match(tile.sub ?? "", row.sub, `${row.name}: ${tile.sub}`);
     assert.equal(tile.tone, row.tone, row.name);
-    if (row.compiled === 0) assert.match(tile.sub ?? "", /12 in 30 d/, `${row.name} keeps the window total`);
   }
 });
 

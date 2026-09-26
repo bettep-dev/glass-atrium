@@ -331,12 +331,6 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 	);
 }
 
-// Element id of a proposal's list item; a pair without a hash has no stable anchor.
-function getProposalAnchorIdW(hash) {
-	if (typeof hash !== "string" || hash === "") return null;
-	return `wiki-proposal-${hash.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-}
-
 // pending = a feeder is still loading, so "no alarms" cannot yet be told apart from
 // "nothing loaded". An errored feeder is not pending — its group carries the banner.
 function buildAlarmLaneModel(
@@ -1012,9 +1006,7 @@ function describeRunTableW(state, days) {
 	const reports = state.data?.reports || [];
 	if (reports.length === 0) return `No runs in ${days} d`;
 
-	const groups = groupConstantRunsW(
-		[...reports].sort((a, b) => (b.run_date || "").localeCompare(a.run_date || "")),
-	);
+	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) return `${reports.length} runs in ${groups.length} streaks`;
 
 	const [only] = groups;
@@ -1022,6 +1014,13 @@ function describeRunTableW(state, days) {
 	return only.count === 1
 		? `1 ${status} run on ${only.newest.run_date}`
 		: `${only.count} ${status} runs in a row since ${only.oldest.run_date}`;
+}
+
+// The server returns runs ascending by run_date.
+function sortRunsNewestFirstW(reports) {
+	return [...reports].sort((a, b) =>
+		(b.run_date || "").localeCompare(a.run_date || ""),
+	);
 }
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
@@ -1336,11 +1335,7 @@ function MergeSuggestionItem({ proposal }) {
 	const action = proposal.suggested_action || proposal.llm_verdict || "";
 
 	return (
-		<li
-			id={getProposalAnchorIdW(proposal.cluster_hash) || undefined}
-			tabIndex={-1}
-			className="rounded border border-line bg-card px-2.5 py-1.5"
-		>
+		<li className="rounded border border-line bg-card px-2.5 py-1.5">
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
@@ -1379,10 +1374,7 @@ function WikiReportsBody({ state, days, onRetry }) {
 		);
 	}
 
-	// Newest first for the card list (server returns ascending by run_date).
-	const sortedDesc = [...reports].sort((a, b) =>
-		(b.run_date || "").localeCompare(a.run_date || ""),
-	);
+	const sortedDesc = sortRunsNewestFirstW(reports);
 
 	// deadlinks/dedup = 미해결 백로그 스냅샷 (매 실행 동일값 재스탬프, per-cycle delta 아님) → 기간 합산 중복 과산정 방지 위해 최신 1건만 표시.
 	const latestReport = sortedDesc[0];
