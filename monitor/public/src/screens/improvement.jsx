@@ -602,7 +602,8 @@ function StatusBandI({
 					label="Awaiting your decision"
 					value={formatIntI(awaiting)}
 					owner="suggestion board"
-					population="Safety-tier suggestions, pending or snoozed · no recency bound"
+					population="Safety-tier suggestions waiting on you"
+					basis="Pending or snoozed, any age"
 					onRetry={onRetry}
 				/>
 				<StatusTileI
@@ -612,7 +613,8 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
 				<StatusTileI
@@ -621,7 +623,8 @@ function StatusBandI({
 					label="Backlog that can propose"
 					value={formatIntI(promptable)}
 					owner="pattern ledger"
-					population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
+					population={`of ${formatIntI(pendingTotal)} patterns can still propose`}
+					basis="Pending patterns across every agent, counted per pattern label"
 					onRetry={onRetry}
 				/>
 				<StatusTileI
@@ -631,7 +634,8 @@ function StatusBandI({
 					label="Held, needs a human"
 					value={formatIntI(heldNeedingHuman)}
 					owner="pattern ledger"
-					population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
+					population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns`}
+					basis="Held patterns of any age that no cycle will re-arm on its own"
 					onRetry={onRetry}
 				/>
 			</div>
@@ -736,7 +740,7 @@ function bandTileStatusI(state, value) {
 	return status === "error" ? "announced" : status;
 }
 
-function StatusTileI({ status, tone, symbol, label, value, population, owner, onRetry }) {
+function StatusTileI({ status, tone, symbol, label, value, population, basis, owner, onRetry }) {
 	const { KPI } = window.UI;
 	if (status !== "ready") {
 		return (
@@ -757,7 +761,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, owner, on
 				</span>
 			}
 			value={value}
-			hint={population}
+			hint={basis ? <span title={basis}>{population}</span> : population}
 		/>
 	);
 }
@@ -847,7 +851,7 @@ function TrendCardI({ state, aggregate }) {
 		return (
 			<div className="card">
 				<CardHead title="Verified vs rejected (trend)" />
-				<div className="p-3">
+				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
 			</div>
@@ -860,43 +864,60 @@ function TrendCardI({ state, aggregate }) {
 		return (
 			<div className="card">
 				<CardHead title="Verified vs rejected (trend)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						Not enough days to plot a trend
-					</div>
+				<div className="px-5 pb-4">
+					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
 			</div>
 		);
 	}
 
-	const charts = [
-		["Verified cycles per day", "ok", "verified", aggregate.verifiedTotal],
-		["Rejected cycles per day", "warn", "reject", aggregate.rejectTotal],
-	];
+	// verified + rejected share one axis as the rejected share of scored cycles; unscored day → gap
+	const points = series.map((d) => {
+		const scored = d.verified + d.reject;
+		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
+	});
 	return (
 		<div className="card">
 			<CardHead
 				title="Verified vs rejected (trend)"
 				sub={getLoopBasisI(aggregate)}
+				right={<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />}
 			/>
-			<div className="px-3 pb-3 flex flex-col gap-3">
-				{charts.map(([label, tone, key, total]) => (
-					<div key={key}>
-						<div className="fs-meta text-faint mb-1">
-							{label} · {formatIntI(total)} in range
-						</div>
-						<TrendChart
-							label={label}
-							tone={tone}
-							h={48}
-							points={series.map((d) => ({ label: d.date, value: d[key] }))}
-						/>
-					</div>
-				))}
+			<div className="px-5 pb-4">
+				<div className="fs-meta text-faint mb-1">
+					{`Share of scored cycles rejected, per day · ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
+				</div>
+				<TrendChart
+					label="Share of scored cycles rejected, per day"
+					tone="warn"
+					h={64}
+					maxTicks={5}
+					formatValue={(v) => `${Math.round(v * 100)}% rejected`}
+					points={points}
+				/>
 			</div>
 		</div>
+	);
+}
+
+// recent-half count leads; the earlier half rides as "(was …)" so no percentage implies precision
+function getRejectRatePhraseI(before, after) {
+	if (!after || !after.total) return "No scored cycles yet";
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected`;
+	if (!before || !before.total) return recent;
+	return `${recent} (was ${formatIntI(before.count)} of ${formatIntI(before.total)})`;
+}
+
+function RejectRateHeadlineI({ before, after }) {
+	const { LowSampleMark, isLowSample } = window.UI;
+	const trend = failTrendMetaI(before, after);
+	const isMuted = isLowSample(after?.total);
+	return (
+		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
+			<SymI s={trend.symbol} className={trend.tone} size={12} />
+			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
+			<LowSampleMark n={after?.total} />
+		</span>
 	);
 }
 
@@ -979,7 +1000,7 @@ function CycleDecompositionRowI({ stats }) {
 
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
-		<div className="flex items-center gap-2.5 mt-2 flex-wrap">
+		<div className="flex items-center gap-2.5 mt-2 px-5 flex-wrap">
 			<span className="fs-meta text-faint uppercase tracking-wider">
 				Run breakdown (7 days)
 			</span>
@@ -1159,7 +1180,8 @@ function KanbanColumnI({
 				) : (
 					<React.Fragment>
 						<RejectedHeaderI
-							count={rows.length}
+							rowCount={rows.length}
+							summary={rejectBuckets}
 							label={column.label}
 							symbol={column.symbol}
 							trend={loopAggregate?.trend}
@@ -1198,9 +1220,10 @@ function AppliedHistoryRowI({ row, onClick }) {
 			ariaLabel={`View applied suggestion ${row.id} details`}
 			lead={
 				<>
-					<span className="font-mono text-dim truncate shrink-0 max-w-[10rem]">
-						{row.target_agent || "—"}
-					</span>
+					<window.UI.AgentName
+						name={row.target_agent}
+						className="font-mono text-dim truncate shrink-0 max-w-[10rem]"
+					/>
 					<span className="font-mono text-faint tnum shrink-0">
 						{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
 					</span>
@@ -1251,15 +1274,28 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 
 // T5/T6/T7 — REJECTED 중립 헤더. --crit 는 ✕ 심볼·count·스파크에만, 라벨 chrome 은 그레이(--dim).
 // reject 스파크는 헤더 우측(loopAggregate.trend reject 계열 · stroke --crit/0.6 ≠ --warn).
-function RejectedHeaderI({ count, label, symbol, trend }) {
+// count + cause split share the server day window; the fetched rows count only when no window came back
+function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
+	const hasSpark = Array.isArray(trend) && trend.length >= 2;
+	const windowDays = Number(summary?.window_days);
+	const windowTotal = Number(summary?.total);
+	const hasWindow = Number.isFinite(windowDays) && Number.isFinite(windowTotal);
+	const count = hasWindow ? windowTotal : rowCount;
+	const basis = hasWindow
+		? `last ${formatIntI(windowDays)} days`
+		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
 		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-crit tnum">{formatIntI(count)}</span>
-			<span className="ml-auto flex items-center">
-				<RejectSparkI trend={trend} />
-			</span>
+			<span className="text-faint normal-case tracking-normal">{basis}</span>
+			{hasSpark ? (
+				<span className="ml-auto flex items-center gap-1">
+					<RejectSparkI trend={trend} />
+					<span className="text-faint normal-case tracking-normal">rejections per day</span>
+				</span>
+			) : null}
 		</div>
 	);
 }
@@ -1288,13 +1324,11 @@ function RejectBucketSplitI({ summary }) {
 			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
 		],
 	];
-	const windowDays = Number(summary.window_days);
+	// the header above names the day window → the split only names its axis
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
 			{[
-				Number.isFinite(windowDays) ? (
-					<span key="basis" className="text-faint">{`Last ${formatIntI(windowDays)} days, by cause`}</span>
-				) : null,
+				<span key="basis" className="text-faint">By cause</span>,
 				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
@@ -2277,7 +2311,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
-				<div className="p-4">
+				<div className="px-5 pb-4">
 					<ErrorBannerI
 						source="loop events"
 						error={state.error}
@@ -2291,7 +2325,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
-				<div className="p-3">
+				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
 			</div>
@@ -2305,7 +2339,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -2316,24 +2350,13 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		);
 	}
 
-	// T-IMP-6 — before/after fail_rate text (denominator 표기 · 분모 0 → '—').
-	const failBeforeText = window.UI.formatPctWithDenominator(
-		failBefore.count,
-		failBefore.total,
-	);
-	const failAfterText = window.UI.formatPctWithDenominator(
-		failAfter.count,
-		failAfter.total,
-	);
-	const failTrend = failTrendMetaI(failBefore, failAfter);
-
 	return (
 		<div className="card">
 			<CardHead
 				title="Self-improvement changes (applied)"
 				sub={getLoopBasisI(aggregate)}
 			/>
-			<div className="px-3 pt-3 flex items-center gap-2 flex-wrap">
+			<div className="px-5 pt-3 flex items-center gap-2 flex-wrap">
 				<span className="fs-meta text-faint uppercase tracking-wider">
 					Lines changed
 				</span>
@@ -2352,30 +2375,12 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 					<span>{formatIntI(removed)} removed</span>
 				</span>
 			</div>
-			<div className="grid grid-cols-2 gap-2 p-3">
-				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
-						<SymI s="ℹ" className="text-info" size={12} />
-						<span>Reject rate — earlier half</span>
-					</div>
-					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-						{failBeforeText}
-					</div>
+			<div className="px-5 pt-2 pb-4">
+				<div className="fs-meta text-faint uppercase tracking-wider">
+					Reject rate, recent half of cycles
 				</div>
-				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
-						<SymI s={failTrend.symbol} className={failTrend.tone} size={12} />
-						<span>Reject rate — recent half</span>
-					</div>
-					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-						{failAfterText}
-					</div>
-					<div
-						className="card-sub fs-meta mt-1"
-						title={window.UI.titleOf(failTrend.hint)}
-					>
-						{failTrend.hint}
-					</div>
+				<div className="mt-1">
+					<RejectRateHeadlineI before={failBefore} after={failAfter} />
 				</div>
 			</div>
 		</div>
@@ -2709,14 +2714,14 @@ function deriveLoopAggregateI(data) {
 	};
 }
 
-// loop-events carries no day window → the basis is the newest rows up to the fetch cap
+// loop-events carries no day window → the basis is the newest rows up to the request limit
 function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
 	const span =
 		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
 	if (eventCount >= LOOP_EVENTS_LIMIT)
-		return `Latest ${formatIntI(eventCount)} cycles (fetch cap)${span}`;
+		return `Latest ${formatIntI(eventCount)} cycles${span}`;
 	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
 }
 

@@ -192,7 +192,8 @@ test("the applied tile is counted over the same population it names", () => {
     "3",
     "the value must be the cycle count its population denominates, not the proposal count",
   );
-  assert.match(String(applied.props.population), /cycles in the last 7 days/);
+  assert.match(String(applied.props.population), /of 12 cycles/);
+  assert.match(String(applied.props.basis), /last 7 days/);
 });
 
 test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
