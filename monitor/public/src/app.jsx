@@ -114,6 +114,7 @@ function Sidebar({ active, onNav, harness }) {
 										key={i}
 										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
 										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
+										title={b.title}
 									>
 										{b.badge}
 									</span>
@@ -128,7 +129,12 @@ function Sidebar({ active, onNav, harness }) {
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
-						<span className="rail-hide font-mono text-dim">{systems.label}</span>
+						{systems.glyph && (
+							<span aria-hidden="true" className="rail-hide font-mono text-crit">
+								{systems.glyph}
+							</span>
+						)}
+						<span className={`rail-hide font-mono ${systems.tone === "crit" ? "text-crit" : "text-dim"}`}>{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -191,19 +197,23 @@ function getHarness(stores) {
 	};
 }
 
-// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
+// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 다운 파트)이
 // 한 fold 에서 같이 나오므로 소스별 병합이 필요 없다 — 재폴링이 서로를 덮을 수 없음.
 // 키 존재 = polled 계약 유지: fold 가 아직 아무것도 관측 못 했으면 키 자체를 내지 않는다.
 function harnessToNavBadges(harness) {
 	if (!harness || harness.status !== "ready") return {};
 
 	const badges = [];
-	if (harness.failCount1h > 0) {
-		badges.push({ badge: String(harness.failCount1h), badgeTone: "warn", source: "kpi" });
+	const failCount = harness.failCount1h;
+	if (failCount > 0) {
+		const title = `${failCount} failed ${failCount === 1 ? "task" : "tasks"} in the last hour`;
+		badges.push({ badge: String(failCount), badgeTone: "warn", source: "kpi", title });
 	}
-	if (harness.daemonsDown > 0) {
-		// a down daemon is crit on its Dashboard alarm → the badge follows the worst severity
-		badges.push({ badge: String(harness.daemonsDown), badgeTone: "crit", source: "daemon" });
+	// downNames = the Dashboard lane's harness-alarm set (crit) → numeral + tone match the page, daemons or not
+	const downCount = harness.downNames.length;
+	if (downCount > 0) {
+		const title = `${downCount} harness ${downCount === 1 ? "part" : "parts"} down: ${harness.downNames.join(" · ")}`;
+		badges.push({ badge: String(downCount), badgeTone: "crit", source: "down", title });
 	}
 	return { architecture: badges.length > 0 ? { badges } : null };
 }
@@ -217,8 +227,13 @@ function systemsRollup(harness) {
 	}
 
 	const isReady = harness.status === "ready";
-	const issues =
-		isReady && (harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0);
+	const downCount = isReady ? harness.downNames.length : 0;
+	// tone = worst alarm severity: a down part is the lane's crit harness alarm
+	if (downCount > 0) {
+		const label = `${downCount} ${downCount === 1 ? "PART" : "PARTS"} DOWN`;
+		return { tone: "crit", dotClass: "bg-crit", glyph: "✕", label };
+	}
+	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
 	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 	// an unread source could hide a fault → unknown, never ALL SYSTEMS
 	if (!isReady || harness.unreadSources?.length > 0) {
