@@ -357,10 +357,11 @@ function ScreenAgents() {
         onRetry={regionRetry}
       />
 
-      {/* Failing pairs — relocated directly under the band: which agent × task type to stop delegating. */}
-      <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
+      {/* Both "which agent is broken" lists side by side at xl, stacked below it. */}
+      <window.UI.SplitRow ratio="1:1" className="mb-4">
         <TopNFailingAgentsCard state={successState} days={days} onRetry={regionRetry} failureByAgent={failureByAgent}/>
-      </div>
+        <LifecycleStatsCard state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={regionRetry}/>
+      </window.UI.SplitRow>
 
       {/* Row 1 — 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
       <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
@@ -384,12 +385,7 @@ function ScreenAgents() {
         <SuccessRateMatrixCard state={successState} days={days} onRetry={regionRetry}/>
       </AgentDisclosure>
 
-      <AgentDisclosure title="Instrumentation" sub="Is the measuring apparatus intact">
-        <div className="grid grid-cols-1 gap-4 items-stretch">
-          <LifecycleStatsCard state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={regionRetry}/>
-          <ReviewFlagTimelineCard state={reviewState} days={days} onRetry={regionRetry}/>
-        </div>
-      </AgentDisclosure>
+      <InstrumentationFold lifecycleState={lifecycleState} reviewState={reviewState} days={days} onRetry={regionRetry}/>
       </div>
 
       {/* 행 클릭 시에만 마운트 (로드 시 자동 열림 없음). DetailSurface variant=drawer — focus-trap/scroll-lock/3 닫기 상속. */}
@@ -420,8 +416,44 @@ function ScreenAgents() {
   );
 }
 
-// AgentSummary — 5 기본 컬럼 · 행 클릭 → 드로어 · 확장 행이 Runs/Launches/no-record 흡수.
+// AgentSummary — row click → drawer · Runs and No record ride their own columns.
 // 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
+
+const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
+
+// Status fold — open by default, the head carries the verdict so a closed fold still answers.
+function InstrumentationFold({ lifecycleState, reviewState, days, onRetry }) {
+  const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState);
+
+  return (
+    <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
+      <ReviewFlagTimelineCard state={reviewState} days={days} onRetry={onRetry}/>
+    </window.UI.Disclosure>
+  );
+}
+
+// One clause per loaded source — an unread source adds nothing rather than a zero.
+function getInstrumentationVerdict(lifecycleState, reviewState) {
+  const parts = [];
+  let tone = 'neutral';
+
+  if (lifecycleState.status === 'ready') {
+    const orphans = getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []);
+    parts.push(`${formatIntAg(orphans)} runs with no completion record`);
+    tone = orphans > 0 ? 'warn' : 'ok';
+  }
+  if (reviewState.status === 'ready') {
+    const rows = readyData(reviewState)?.rows ?? [];
+    const flagged = rows.reduce((s, r) => s + (Number(r.review_flagged_count) || 0), 0);
+    const total = rows.reduce((s, r) => s + (Number(r.total_count) || 0), 0);
+    if (total > 0) parts.push(`${((flagged / total) * 100).toFixed(1)}% flagged`);
+  }
+  return { tone, sub: parts.length > 0 ? parts.join(' · ') : INSTRUMENTATION_QUESTION };
+}
+
+function getOrphanTotalAg(rows) {
+  return rows.reduce((s, r) => s + Math.max(0, (Number(r.start_count) || 0) - (Number(r.completed_count) || 0)), 0);
+}
 
 // Closed-by-default disclosure — second-reader material stays off the first screenful.
 function AgentDisclosure({ title, sub, children }) {
@@ -521,9 +553,9 @@ function AgentStatusBand({ days, summaryState, failureState, overageState, failu
     ? breaker.suspended_count + breaker.streak_count
     : null;
 
-  const breakingCount = failureState.status === 'ready'
-    ? Array.from(failureByAgent.values()).filter((row) => row.total_breakages > 0).length
-    : null;
+  const failureRows = failureState.status === 'ready' ? Array.from(failureByAgent.values()) : null;
+  const failedCount = failureRows ? failureRows.filter((row) => Number(row.fail_count) > 0).length : null;
+  const blockedCount = failureRows ? failureRows.filter((row) => Number(row.blocked_count) > 0).length : null;
   // budget_overages keys agent_type by per-run agent id → this counts runs, not registry agents.
   const overCapCount = overageState.status === 'ready'
     ? Array.from(overageByAgent.values()).filter((row) => row.overage_count > 0).length
@@ -545,11 +577,13 @@ function AgentStatusBand({ days, summaryState, failureState, overageState, failu
         onRetry={onRetry}
       />
       <AgentStatusTile
-        label="Failed or blocked"
-        sub={`agents with breakages · last ${days}d`}
+        label="Failed"
+        sub={blockedCount
+          ? `agents with a failed run · ${blockedCount} blocked (a compliant halt, not a defect) · last ${days}d`
+          : `agents with a failed run · last ${days}d`}
         status={failureState.status}
-        value={breakingCount}
-        tone={breakingCount ? 'crit' : 'ok'}
+        value={failedCount}
+        tone={failedCount ? 'crit' : 'ok'}
         error={failureState.error}
         onRetry={onRetry}
       />
@@ -607,7 +641,7 @@ const SUMMARY_SORT_OPTIONS = [
   { value: 'name',     label: 'Name (A–Z)' },
   { value: 'runs',     label: 'Most runs' },
   { value: 'success',  label: 'Success rate'   },
-  { value: 'failures', label: 'Most breakages'    },
+  { value: 'failures', label: 'Most failures'    },
   { value: 'p95',      label: 'P95 ↓'      },
 ];
 
@@ -703,8 +737,8 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, on
   );
 }
 
-// Footer/expand colSpan — expand affordance · Agent · Success · Failed or blocked · P95 · Trend.
-const SUMMARY_TABLE_COLSPAN = 6;
+// Footer colSpan — Agent · Runs · No record · Success · Failed or blocked · P95 · Trend.
+const SUMMARY_TABLE_COLSPAN = 7;
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const { TableHead } = window.UI;
@@ -741,8 +775,9 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       <table className="tbl">
         <thead>
           <tr>
-            <TableHead isSticky><span className="sr-only">Expand row</span></TableHead>
             <TableHead isSticky>Agent <span className="text-faint">· activity</span></TableHead>
+            <TableHead isSticky isNumeric><span title="Times the agent finished and reported a result (outcome records)">Runs</span></TableHead>
+            <TableHead isSticky isNumeric><span title="Launches minus runs — spawned but never reported a result">No record</span></TableHead>
             <TableHead isSticky isNumeric>Success rate</TableHead>
             <TableHead isSticky isNumeric><span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span></TableHead>
             <TableHead isSticky isNumeric><span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span></TableHead>
@@ -773,7 +808,6 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
 }
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
-  const [isExpanded, setExpanded] = useStateAg(false);
   const { MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
@@ -799,10 +833,17 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const trendColor = trendBarColor(agent.status, failShareTone);
-  // 장애 컬럼 — failure-patterns 의 total_breakages (fail+blocked). 미존재 = 0.
-  const failCount = failure ? failure.total_breakages : 0;
+  const runs = Number(agent.runs) || 0;
+  const noRecordCount = invocations == null ? null : Math.max(0, Number(invocations) - runs);
+  const noRecordTitle = noRecordCount == null
+    ? 'no completion record — launches not measured'
+    : `no completion record — ${formatIntAg(invocations)} launches − ${formatIntAg(runs)} runs`;
+  const breakageCount = failure ? Number(failure.total_breakages) || 0 : 0;
+  const failedCount = failure ? Number(failure.fail_count) || 0 : 0;
+  const blockedCount = failure ? Number(failure.blocked_count) || 0 : 0;
   const breakageRate = failure ? failure.breakage_rate : 0;
-  const failTone = failureTone(failCount, breakageRate);
+  // blocked is a compliant halt — only the failed share drives the tone
+  const failTone = failureTone(failedCount, getFailedRateAg(failure));
   const isFailureRead = failureStatus === 'ready';
   const isTrendRead = trendStatus === 'ready';
   const failTitle = !isFailureRead ? getNotLoadedTitleAg('breakage data', failureStatus) : failure
@@ -812,7 +853,6 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   const handleClick = () => onSelect(agent.agent_id);
 
   return (
-    <>
     <tr
       {...focusProps}
       onClick={handleClick}
@@ -821,16 +861,6 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
       <td>
-        <button
-          {...window.UI.ROW_CONTROL_PROPS}
-          className="btn ghost icon group"
-          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
-          aria-expanded={isExpanded}
-          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} counts for ${agent.agent_name}`}>
-          <window.UI.DisclosureChevron isOpen={isExpanded}/>
-        </button>
-      </td>
-      <td>
         <div className="flex items-center gap-1.5 flex-wrap">
           <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
           {isUnknownAgent
@@ -838,6 +868,10 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
             : <AgentName name={agent.agent_name} className="font-medium"/>}
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
+      </td>
+      <td className="num">{formatIntAg(runs)}</td>
+      <td className="num" title={`${noRecordTitle} · ${formatInvocationsTitle(invocations, days)}`}>
+        {noRecordCount == null ? <span className="text-faint">—</span> : formatIntAg(noRecordCount)}
       </td>
       <td className="num" title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
@@ -857,11 +891,18 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         )}
       </td>
       <td className="num" title={failTitle}>
-        {isFailureRead
-          ? <span className={failTone}>{failCount > 0 ? formatIntAg(failCount) : '—'}</span>
-          : <NotLoadedMarkAg title={failTitle}/>}
-        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = numeral tone. */}
-        {isFailureRead && failCount > 0 && (
+        {!isFailureRead ? (
+          <NotLoadedMarkAg title={failTitle}/>
+        ) : breakageCount > 0 ? (
+          <span className="inline-flex items-baseline justify-end gap-1.5">
+            <span className={failTone}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
+            {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
+        )}
+        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
+        {isFailureRead && breakageCount > 0 && (
           <Bar
             value={Math.max(breakageRate, 0.01)}
             tone={barToneFromClass(failTone)}
@@ -907,26 +948,6 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         )}
       </td>
     </tr>
-    {isExpanded && (
-      <tr className="bg-sunken">
-        <td colSpan={SUMMARY_TABLE_COLSPAN}>
-          <div className="flex items-center gap-4 fs-meta font-mono text-dim px-1 py-1.5">
-            <span title="Times the agent finished and reported a result (outcome records)">
-              Runs {formatIntAg(agent.runs)}
-            </span>
-            <span title={formatInvocationsTitle(invocations, days)}>
-              Launches <span className={invocationsTone(invocations, days)}>
-                {invocations == null ? '—' : formatIntAg(invocations)}
-              </span>
-            </span>
-            <span title={`needs_context ${needsContextCount} — excluded from success rate`}>
-              Needs info {needsContextCount > 0 ? formatIntAg(needsContextCount) : '—'}
-            </span>
-          </div>
-        </td>
-      </tr>
-    )}
-    </>
   );
 }
 
@@ -2501,7 +2522,7 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
 
   const rows = readyData(state)?.rows ?? [];
   const totalOrphans = state.status === 'ready'
-    ? rows.reduce((s, r) => s + Math.max(0, (Number(r.start_count) || 0) - (Number(r.completed_count) || 0)), 0)
+    ? getOrphanTotalAg(rows)
     : 0;
 
   return (
@@ -3119,16 +3140,6 @@ function barToneFromClass(cls) {
   return 'neutral';
 }
 
-// agent_events SubagentStart window 상대 카운트 톤.
-// null = outcomes-only agent (orchestrator 등 spawn 대상 아님) → faint.
-// window 비례 임계 미만 = 저활용 (informational flag) → warn.
-// 정상 빈도 → 무톤 (시각 노이즈 회피).
-function invocationsTone(count, days) {
-  if (count == null) return 'text-faint';
-  if (count < lowInvocationThresholdForWindow(days)) return 'text-warn';
-  return '';
-}
-
 // 호출 컬럼 hover title — null vs 0 vs >0 분기 명시 (시각만으로는 ambiguous).
 function formatInvocationsTitle(count, days) {
   const threshold = lowInvocationThresholdForWindow(days);
@@ -3238,17 +3249,28 @@ const AGENT_SUMMARY_COMPARATORS = {
 
 function sortAgentSummary(agents, sortBy, failureByAgent) {
   if (sortBy === 'failures' && failureByAgent) {
-    // failure-patterns row 미존재 = 0 정렬 sentinel.
+    // failed count → failed rate → breakages; blocked alone never outranks a failure
     return agents.slice().sort((a, b) => {
-      const aFail = failureByAgent.get(a.agent_id);
-      const bFail = failureByAgent.get(b.agent_id);
-      const aCount = aFail ? aFail.total_breakages : 0;
-      const bCount = bFail ? bFail.total_breakages : 0;
-      return bCount - aCount;
+      const aKey = getFailureSortKeyAg(failureByAgent.get(a.agent_id));
+      const bKey = getFailureSortKeyAg(failureByAgent.get(b.agent_id));
+      return (bKey[0] - aKey[0]) || (bKey[1] - aKey[1]) || (bKey[2] - aKey[2]);
     });
   }
   const comparator = AGENT_SUMMARY_COMPARATORS[sortBy] ?? AGENT_SUMMARY_COMPARATORS.runs;
   return agents.slice().sort(comparator);
+}
+
+function getFailureSortKeyAg(failure) {
+  if (!failure) return [0, 0, 0];
+  return [Number(failure.fail_count) || 0, getFailedRateAg(failure), Number(failure.total_breakages) || 0];
+}
+
+// breakage_rate = breakages / outcomes → failed share of the same population.
+function getFailedRateAg(failure) {
+  const breakages = failure ? Number(failure.total_breakages) || 0 : 0;
+  const rate = failure ? Number(failure.breakage_rate) || 0 : 0;
+  if (breakages <= 0 || rate <= 0) return 0;
+  return (rate * (Number(failure.fail_count) || 0)) / breakages;
 }
 
 window.ScreenAgents = ScreenAgents;
