@@ -523,7 +523,7 @@ function describeSnapshotAgeW(runDate) {
 }
 
 // Four-tile band — last run · compiled last cycle · search index · library totals.
-// Steady state carries no status word and no tint; only an actionable state tints.
+// Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
 
 function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, onRetry }) {
 	const { RegionUnavailable } = window.UI;
