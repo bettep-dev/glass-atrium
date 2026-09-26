@@ -717,6 +717,10 @@
 	position: relative;
 	display: inline-flex;
 }
+/* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
+.card:has(.popover-panel) {
+	overflow: visible;
+}
 .popover-panel {
 	position: absolute;
 	top: calc(100% + 4px);
