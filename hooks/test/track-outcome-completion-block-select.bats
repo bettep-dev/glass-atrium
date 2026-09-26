@@ -13,7 +13,7 @@
 #            template, so the validity-aware reverse-scan MUST fall back to the earlier valid
 #            block — the regression a naive last-match-only fix would fail).
 #  KNOWN_FIELDS boundaries — white-box tests over the real parser
-#        - key outside KNOWN_FIELDS → folds into the preceding field's value
+#        - key outside KNOWN_FIELDS → folds into the preceding field's value (multi-line + inline)
 #        - template key after another field → starts its own field (multi-line + inline)
 #
 # The #25 cases run DB-free: PG is fail-opened via PGHOST and the parse decision is read off the
@@ -203,6 +203,32 @@ PY
   run_parser_check "${check_src}"
 }
 
+@test "a line whose key is outside KNOWN_FIELDS folds into the preceding field's value" {
+  local check_src
+  check_src="$(
+    cat <<'PY'
+rows = [
+    ('multi-line colon-less prose line',
+     'result: done\nsummary: first line\nsecond prose line',
+     'first line second prose line'),
+    ('multi-line non-template key line, then prose',
+     'result: done\nsummary: first line\nNote: extra line\nsecond prose line',
+     'first line Note: extra line second prose line'),
+    ('inline non-template key segment',
+     re.sub(ns['_INLINE_DELIM_CLASS'], '\n', 'result: done | summary: a | Note: b'),
+     'a Note: b'),
+]
+failures = []
+for name, block, want in rows:
+    parsed = parse(block)
+    if parsed != {'result': 'done', 'summary': want}:
+        failures.append(f'{name}: parsed={parsed!r}, want summary={want!r}')
+report(failures)
+PY
+  )"
+  run_parser_check "${check_src}"
+}
+
 @test "a template key leading the block leaves every later field clean" {
   local check_src
   check_src="$(
@@ -227,9 +253,10 @@ text = open(doc, encoding='utf-8').read()
 anchor = re.search(r'^## Completion Report Output Obligation$', text, re.MULTILINE)
 if not anchor:
     report([f'anchor "## Completion Report Output Obligation" missing in {doc}'])
-fence = re.search(r'^```[^\n]*\n(.*?)^```', text[anchor.end():], re.DOTALL | re.MULTILINE)
+section = re.split(r'^## ', text[anchor.end():], maxsplit=1, flags=re.MULTILINE)[0]
+fence = re.search(r'^```[^\n]*\n(.*?)^```', section, re.DOTALL | re.MULTILINE)
 if not fence:
-    report([f'no fenced block after the anchor in {doc}'])
+    report([f'no fenced block inside the anchor section in {doc}'])
 keys = set(re.findall(r'^([a-z_]+):', fence.group(1), re.MULTILINE))
 if not keys:
     report([f'the template fence in {doc} carries no key lines'])
