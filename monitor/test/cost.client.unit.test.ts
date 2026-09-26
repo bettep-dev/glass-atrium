@@ -142,6 +142,17 @@ interface CostHelpers {
     rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
   ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
   getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
+  getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
+  computeTokenShares: (
+    points: readonly Record<string, number>[],
+  ) => ReadonlyArray<{ key: string; label: string; total: number; share: number }> | null;
+  getTokenStackOrder: (
+    shares: ReadonlyArray<{ key: string; total: number }>,
+  ) => ReadonlyArray<{ key: string; total: number }>;
+  getTurnHeadline: (
+    turns: { avg_turns_per_session?: number; turn_session_count?: number },
+    sessionPopulation: number,
+  ) => { value: string | null; note: string };
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -823,4 +834,77 @@ test("the hit-rate strip names its no-data days, and says nothing when every day
     assert.ok(label, name);
     assert.match(label, new RegExp(`^${gaps} of ${rates.length} days? no data$`), name);
   }
+});
+
+const TOKEN_UNIT: Record<string, number> = { "": 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+
+test("every tick on one token axis carries one unit, fits the axis, and reads back as its own value", () => {
+  // Recharts rounds its top tick up past the data max, so each row's ticks reach beyond it.
+  const axes = [
+    { name: "hundreds of millions", max: 8.7e8, ticks: [0, 2.5e8, 5e8, 7.5e8, 1e9] },
+    { name: "tens of billions", max: 3.6e10, ticks: [0, 1e10, 2e10, 3e10, 4e10] },
+    { name: "a single-digit lead needs one decimal", max: 1.5e9, ticks: [0, 4e8, 8e8, 1.2e9, 1.6e9] },
+    { name: "thousands", max: 8000, ticks: [0, 2500, 5000, 7500, 10000] },
+    { name: "below a thousand", max: 60, ticks: [0, 15, 30, 45, 60] },
+  ];
+  for (const { name, max, ticks } of axes) {
+    const format = cost.getTokenAxisFormatter(max);
+    const labels = ticks.map((t) => format(t));
+    const suffixes = new Set(labels.filter((l) => l !== "0").map((l) => l.replace(/[\d.]/g, "")));
+    assert.strictEqual(suffixes.size, 1, `${name}: ${labels.join(" ")}`);
+    labels.forEach((label, i) => {
+      // the 48px axis at 12px mono holds five characters
+      assert.ok(label.length <= 5, `${name}: ${label}`);
+      const digits = label.replace(/[^\d.]/g, "");
+      const unit = TOKEN_UNIT[label.replace(/[\d.]/g, "")]!;
+      const step = unit * 10 ** -((digits.split(".")[1] ?? "").length);
+      assert.ok(Math.abs(Number(digits) * unit - ticks[i]!) <= step / 2, `${name}: ${label} vs ${ticks[i]}`);
+    });
+  }
+});
+
+test("token shares split the window total by category and sum to the whole", () => {
+  const points = [
+    { input_tokens: 1_000, output_tokens: 5_000, cache_read_tokens: 900_000, cache_creation_tokens: 20_000 },
+    { input_tokens: 3_000, output_tokens: 1_000, cache_read_tokens: 700_000, cache_creation_tokens: 0 },
+  ];
+  const shares = cost.computeTokenShares(points);
+  assert.ok(shares);
+  const total = points.reduce((s, p) => s + Object.values(p).reduce((a, b) => a + b, 0), 0);
+  for (const row of shares) {
+    const expected = points.reduce((s, p) => s + (p[row.key as keyof typeof p] ?? 0), 0);
+    assert.strictEqual(row.total, expected, row.key);
+    assert.ok(Math.abs(row.share - expected / total) < 1e-12, row.key);
+  }
+  assert.ok(Math.abs(shares.reduce((s, r) => s + r.share, 0) - 1) < 1e-12);
+  assert.strictEqual(cost.computeTokenShares([{ input_tokens: 0, output_tokens: 0 }]), null, "a zero window has no share");
+});
+
+test("the stack draws the largest category last, so the top edge carries that series' own stroke", () => {
+  const rows = [
+    { name: "cache read dominates", totals: { cache_creation_tokens: 2e7, cache_read_tokens: 9e8, input_tokens: 1e6, output_tokens: 6e6 } },
+    { name: "output dominates", totals: { cache_creation_tokens: 10, cache_read_tokens: 20, input_tokens: 30, output_tokens: 400 } },
+  ];
+  for (const { name, totals } of rows) {
+    const shares = Object.entries(totals).map(([key, total]) => ({ key, total }));
+    const order = [...cost.getTokenStackOrder(shares)];
+    assert.deepStrictEqual(order.map((r) => r.key).sort(), Object.keys(totals).sort(), name);
+    order.slice(1).forEach((r, i) => assert.ok(r.total >= order[i]!.total, `${name}: ${order.map((o) => o.key).join(" ")}`));
+  }
+});
+
+test("the turn headline states one per-session figure and reconciles its session count with the population", () => {
+  const rows = [
+    { name: "fewer sessions logged a turn count", counted: 257, population: 582 },
+    { name: "every session logged a turn count", counted: 582, population: 582 },
+  ];
+  for (const { name, counted, population } of rows) {
+    const { value, note } = cost.getTurnHeadline({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
+    assert.strictEqual(value, "91.3", name);
+    const numbers = note.match(/\d+/g) ?? [];
+    assert.deepStrictEqual([...new Set(numbers)].sort(), [...new Set([String(counted), String(population)])].sort(), `${name}: ${note}`);
+    assert.strictEqual(numbers.length, new Set(numbers).size, `${name}: each count stated once — ${note}`);
+  }
+  const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
+  assert.strictEqual(none.value, null, "no counted session has no average");
 });

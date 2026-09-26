@@ -24,7 +24,7 @@ const COST_PERIODS = [
   { value: 90, label: '90d' },
 ];
 
-// Token categories (bottom→top stacking) — --cat-1~4 단일 토큰셋.
+// Token categories (legend order; the chart stacks by window total) — --cat-1~4 단일 토큰셋.
 // ModelCostCard 의 cost_cache_creation→--cat-1 … cost_output→--cat-4 매핑과 1:1 정렬
 // → 원장 카테고리 행 · Token volume 스택 · 모델 sub-bar 간 legend 색상 일관성.
 const TOKEN_CATEGORIES = [
@@ -968,15 +968,9 @@ function TokenStackedBody({ state, days, onRetry }) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
 
-  const totalTokens = points.reduce(
-    (s, p) =>
-      s +
-      (Number(p.input_tokens) || 0) +
-      (Number(p.output_tokens) || 0) +
-      (Number(p.cache_read_tokens) || 0) +
-      (Number(p.cache_creation_tokens) || 0),
-    0,
-  );
+  const shares = computeTokenShares(points);
+  const totalTokens = (shares ?? []).reduce((s, r) => s + r.total, 0);
+  const order = shares ? getTokenStackOrder(shares) : TOKEN_CATEGORIES;
 
   return (
     <>
@@ -988,9 +982,10 @@ function TokenStackedBody({ state, days, onRetry }) {
           <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
         </div>
       </div>
+      {shares && <TokenShareRowC shares={shares}/>}
       {/* 7d = stacked column · 30d/90d = stacked area. */}
       <div style={{ width: '100%', height: 280 }}>
-        {days === 7 ? <TokenStackedColumn points={points}/> : <TokenStackedArea points={points}/>}
+        {days === 7 ? <TokenStackedColumn points={points} order={order}/> : <TokenStackedArea points={points} order={order}/>}
       </div>
     </>
   );
@@ -1010,10 +1005,63 @@ function toTokenChartRows(points) {
   }));
 }
 
-function TokenStackedArea({ points }) {
+const TOKEN_AXIS_UNITS = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+
+// Unit + decimals fixed by the data max → one unit per axis, ≤5 chars inside the 48px axis.
+function getTokenAxisFormatter(maxValue) {
+  const [unit, suffix] = TOKEN_AXIS_UNITS.find(([u]) => maxValue >= u) || [1, ''];
+  const decimals = maxValue / unit >= 10 ? 0 : 1;
+  return (value) => {
+    const n = Number(value) || 0;
+    return n === 0 ? '0' : (n / unit).toFixed(decimals) + suffix;
+  };
+}
+
+function getTokenStackMax(rows) {
+  return rows.reduce((m, r) => Math.max(m, TOKEN_CATEGORIES.reduce((s, cat) => s + r[cat.key], 0)), 0);
+}
+
+// Window total + share per category, legend order; null when the window holds no token.
+function computeTokenShares(points) {
+  const totals = TOKEN_CATEGORIES.map((cat) => ({
+    ...cat,
+    total: points.reduce((s, p) => s + (Number(p[cat.key]) || 0), 0),
+  }));
+  const sum = totals.reduce((s, r) => s + r.total, 0);
+  if (sum <= 0) return null;
+  return totals.map((r) => ({ ...r, share: r.total / sum }));
+}
+
+// Ascending by total → the dominant series stacks last, so the top edge carries its own stroke
+// rather than a near-zero series' stroke drawn over it.
+function getTokenStackOrder(shares) {
+  return shares.slice().sort((a, b) => a.total - b.total);
+}
+
+function formatTokenShareC(share) {
+  const pct = share * 100;
+  return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;
+}
+
+// Input/Output are invisible against cache read on the shared axis → their shares stated as text.
+function TokenShareRowC({ shares }) {
+  return (
+    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-3">
+      {shares.map((r) => (
+        <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
+          {r.label} <span className="font-mono">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TokenStackedArea({ points, order }) {
   const { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   const rows = toTokenChartRows(points);
+  const formatAxis = getTokenAxisFormatter(getTokenStackMax(rows));
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -1034,14 +1082,14 @@ function TokenStackedArea({ points }) {
           tickLine={false}
         />
         <YAxis
-          tickFormatter={formatTokenCompactC}
+          tickFormatter={formatAxis}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
         />
         <Tooltip content={<TokenTooltipC/>}/>
-        {TOKEN_CATEGORIES.map((cat) => (
+        {order.map((cat) => (
           <Area
             key={cat.key}
             type="linear"
@@ -1058,10 +1106,11 @@ function TokenStackedArea({ points }) {
   );
 }
 
-function TokenStackedColumn({ points }) {
+function TokenStackedColumn({ points, order }) {
   const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   const rows = toTokenChartRows(points);
+  const formatAxis = getTokenAxisFormatter(getTokenStackMax(rows));
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -1074,14 +1123,14 @@ function TokenStackedColumn({ points }) {
           tickLine={false}
         />
         <YAxis
-          tickFormatter={formatTokenCompactC}
+          tickFormatter={formatAxis}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
         />
         <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
-        {TOKEN_CATEGORIES.map((cat) => (
+        {order.map((cat) => (
           <Bar
             key={cat.key}
             dataKey={cat.key}
@@ -2112,7 +2161,7 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable, SplitRow } = window.UI;
+  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
 
   if (state.status === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
@@ -2132,48 +2181,60 @@ function TurnStatsBody({ state, days, onRetry }) {
   const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
+  // Stacked, never split: the card is the 3fr side of a pair at xl → a table column beside the
+  // aggregates would sit below the table's own minimum width.
   return (
-    <SplitRow ratio="2:1">
-      {turns && <TurnAggregateRow turns={turns}/>}
+    <>
+      {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
         maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
-    </SplitRow>
+    </>
   );
+}
+
+/**
+ * Headline per-session average + one phrase reconciling its session count with the population.
+ * turn_session_count = sessions with a logged turn count, a subset of every session with a turn event.
+ */
+function getTurnHeadline(turns, sessionPopulation) {
+  const counted = Number(turns.turn_session_count) || 0;
+  if (counted === 0) {
+    return { value: null, note: 'No session in this window logged a turn count.' };
+  }
+  const value = (Number(turns.avg_turns_per_session) || 0).toFixed(1);
+  const note = counted >= sessionPopulation
+    ? `turns per session, across ${formatIntC(counted)} sessions`
+    : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
+  return { value, note };
 }
 
 // 주 지표 = 세션당 턴 (SUM per session → AVG, 서버 집계) — maxTurns 예산 산정용 (F29).
 // 이벤트당 평균은 skew-sensitive 보조 지표로 격하.
-function TurnAggregateRow({ turns }) {
-  const avgPerSession = Number(turns.avg_turns_per_session) || 0;
-  const sessionCount = Number(turns.turn_session_count) || 0;
-  const avgPerEvent = Number(turns.avg_turns) || 0;
-  const maxTurns = Number(turns.max_turns) || 0;
-  const totalTurns = Number(turns.total_turns) || 0;
+function TurnAggregateRow({ turns, sessionPopulation }) {
+  const headline = getTurnHeadline(turns, sessionPopulation);
+  const secondary = [
+    { label: 'Avg turns per logged event', value: (Number(turns.avg_turns) || 0).toFixed(2) },
+    { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
+    { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
+  ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 content-start">
-      <div>
-        <div className="fs-meta text-dim">Avg turns/session</div>
-        <div className="font-mono fs-stat font-semibold tracking-tight">
-          {sessionCount > 0 ? avgPerSession.toFixed(2) : '—'}
-        </div>
-        {sessionCount > 0 && <div className="fs-meta text-dim font-normal mt-0.5">· {formatIntC(sessionCount)} sessions</div>}
+    <div className="mb-4">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
+        <span className="fs-meta text-dim">{headline.note}</span>
       </div>
-      <div>
-        <div className="fs-meta text-dim">Avg turns/event</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{avgPerEvent.toFixed(2)}</div>
-      </div>
-      <div>
-        <div className="fs-meta text-dim">Max turns</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{formatIntC(maxTurns)}</div>
-      </div>
-      <div>
-        <div className="fs-meta text-dim">Total turns</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{formatIntC(totalTurns)}</div>
-      </div>
+      <dl className="grid grid-cols-3 gap-3 mt-2">
+        {secondary.map((item) => (
+          <div key={item.label} className="min-w-0">
+            <dt className="fs-meta text-dim">{item.label}</dt>
+            <dd className="font-mono fs-stat text-dim tracking-tight">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
@@ -2189,7 +2250,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
   return (
     <table className="tbl cost-tbl">
       <caption className="fs-meta text-dim text-left pb-2">
-        {`${formatIntC(sessionPopulation)} sessions with a recorded turn — a session counts under every stop reason it hit, so Sessions does not sum to that total.`}
+        {`A session counts under every stop reason it hit, so Sessions sums past the ${formatIntC(sessionPopulation)} sessions in this window.`}
       </caption>
       <thead>
         <tr>

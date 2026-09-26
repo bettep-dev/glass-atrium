@@ -121,9 +121,19 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       total_count: 100,
     })),
   }));
+  // Every stop reason with its described label → the table at its widest real content.
   app.get("/api/cost/turn-stats", async () => ({
-    stop_reasons: [{ stop_reason: "end_turn", event_count: 40 }],
-    turns: { total_turns: 40, avg_turns: 4 },
+    stop_reasons: [
+      { stop_reason: "no_assistant_in_turn", event_count: 12840, session_count: 412 },
+      { stop_reason: "end_turn", event_count: 9310, session_count: 560 },
+      { stop_reason: "tool_use", event_count: 1204, session_count: 188 },
+      { stop_reason: "unknown", event_count: 96, session_count: 31 },
+    ],
+    stop_reason_session_count: 582,
+    turns: {
+      total_turns: 23450, avg_turns: 4, max_turns: 212,
+      avg_turns_per_session: 91.25, turn_session_count: 257,
+    },
   }));
   // The app shell polls endpoints this screen does not own; an empty payload keeps those
   // panels quiet instead of letting a 404 banner enter the structure under test.
@@ -337,6 +347,28 @@ describe("calm fixture — nothing is running hot", () => {
       await ctx.page.setViewportSize({ width: 1024, height: 768 });
       for (const [i, gap] of (await measure()).entries()) {
         assert.ok(gap > 0, `${pairs[i]!.join(" | ")} stack at 1024; top gap ${gap}px`);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("no card content reaches past its own card's edges at xl", async () => {
+    const measureOverflow = () =>
+      ctx.page.evaluate(() =>
+        Array.from(document.querySelectorAll(".cost-screen .card")).flatMap((card) => {
+          const box = card.getBoundingClientRect();
+          return Array.from(card.querySelectorAll("*"))
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ r }) => r.width > 0 && (r.right > box.right + 1 || r.left < box.left - 1))
+            .map(({ el, r }) => `${el.tagName.toLowerCase()} [${Math.round(r.left)}, ${Math.round(r.right)}] outside card [${Math.round(box.left)}, ${Math.round(box.right)}]`);
+        }),
+      );
+    try {
+      for (const width of [1440, 1280]) {
+        await ctx.page.setViewportSize({ width, height: 900 });
+        const overflow = await measureOverflow();
+        assert.deepStrictEqual(overflow, [], `at ${width}: ${overflow.slice(0, 3).join(" · ")}`);
       }
     } finally {
       await ctx.page.setViewportSize({ width: 1440, height: 900 });
