@@ -96,11 +96,10 @@ trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
-# Every [COMPLETION] template key is listed (template ⊆ KNOWN_FIELDS, drift-guarded in
-# track-outcome-completion-block-select.bats): parse_completion_body folds any line whose `key:`
-# is NOT in this set into the current field's value. agent_version / grader_verdict /
-# downgrade_origin are boundaries only — no reader; the grader columns come from GRADER_VERDICT /
-# DOWNGRADE_ORIGIN, never from this dict.
+# template ⊆ KNOWN_FIELDS — drift test in track-outcome-completion-block-select.bats
+# unlisted `key:` line → folds into the current field's value
+# agent_version / grader_verdict / downgrade_origin → boundaries only, never read from `completion`
+# grader columns ← GRADER_VERDICT / DOWNGRADE_ORIGIN shell vars
 KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms', 'agent_version', 'grader_verdict', 'downgrade_origin'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
@@ -632,9 +631,8 @@ if parse_tier == 0:
         # known fields (result/task_type/metric_pass/confidence) bind before a summary value that
         # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
         inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
-        # Guard: require >=1 CORE field so prose merely mentioning [COMPLETION] with a stray
-        # delimiter does NOT match (parse_completion_body drops an unknown key only BEFORE the
-        # first known key; after it, the key folds into that field's value).
+        # Guard: >=1 CORE field → prose merely mentioning [COMPLETION] with a stray delimiter never matches
+        # unknown key → dropped before the first known key, else folded into the current field's value
         if _INLINE_CORE_FIELDS & set(inline_fields):
             parse_tier = 1
             completion = inline_fields

@@ -12,9 +12,9 @@
 #        (b) real-then-template  → parse_tier=1, result=done (the LAST match is the invalid
 #            template, so the validity-aware reverse-scan MUST fall back to the earlier valid
 #            block — the regression a naive last-match-only fix would fail).
-#  KNOWN_FIELDS boundaries — parse_completion_body folds any line whose key is outside
-#        KNOWN_FIELDS into the preceding value, so a template key emitted after another field must
-#        start its own field (multi-line and inline) — white-box tests over the real parser.
+#  KNOWN_FIELDS boundaries — white-box tests over the real parser
+#        - key outside KNOWN_FIELDS → folds into the preceding field's value
+#        - template key after another field → starts its own field (multi-line + inline)
 #
 # The #25 cases run DB-free: PG is fail-opened via PGHOST and the parse decision is read off the
 # stderr diagnostic channel (the DIAG parse_tier line + the auto-generated record marker carrying
@@ -125,9 +125,8 @@ run_hook_dbfree() {
   oc "attribution=completion-synthesized" "${output}" || return 1
 }
 
-# Execs the hook's embedded parser prefix (KNOWN_FIELDS + _INLINE_DELIM_CLASS +
-# parse_completion_body, all above the stdin json.load) into `ns`, so every check reads the ACTUAL
-# parser rather than a copy. Checks print one line per failure and exit non-zero on any.
+# embedded parser prefix (pre-json.load) exec'd into `ns` → checks read the real parser, never a copy
+# report(): one line per failure, non-zero exit on any
 PARSER_PRELUDE="$(
   cat <<'PY'
 import os, sys, re
