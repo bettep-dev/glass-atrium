@@ -76,6 +76,70 @@ function sortRowsByStageCD(rows) {
 		.map((entry) => entry.row);
 }
 
+const DAY_MS_CD = 86_400_000;
+const FRESH_AGE_DAYS_CD = 3;
+// past this many days an open document reads as stale
+const STALE_AGE_DAYS_CD = 7;
+const AGE_BUCKETS_CD = [
+	{ key: "fresh", label: "Under 3 days" },
+	{ key: "aging", label: "3–7 days" },
+	{ key: "stale", label: "Over 7 days" },
+];
+const STAGE_HEADLINE_CD = {
+	doc_review: "awaiting doc review",
+	implementing: "implementing",
+	impl_review: "awaiting impl review",
+	impl_done: "impl done",
+};
+
+// Whole days since creation · null when the timestamp is missing or unparseable.
+function getDocAgeCD(iso, nowMs) {
+	const createdMs = iso ? Date.parse(iso) : Number.NaN;
+	if (Number.isNaN(createdMs)) return null;
+
+	const days = Math.max(0, Math.floor((nowMs - createdMs) / DAY_MS_CD));
+	const bucket = days < FRESH_AGE_DAYS_CD ? "fresh" : days <= STALE_AGE_DAYS_CD ? "aging" : "stale";
+	return { days, label: days === 0 ? "today" : `${days}d`, bucket, isStale: bucket === "stale" };
+}
+
+function isOpenRowCD(row) {
+	const entry = stageEntryCD(rowStageCD(row));
+	return entry != null && entry.value !== TERMINAL_STAGE_CD;
+}
+
+// Open = a known stage short of done · counts are over the rows passed in (the loaded page).
+function getOpenSummaryCD(rows, nowMs) {
+	const stageCounts = new Map();
+	const buckets = { fresh: 0, aging: 0, stale: 0 };
+	let oldest = null;
+	let openCount = 0;
+	for (const row of rows) {
+		const age = getDocAgeCD(row.created_at, nowMs);
+		if (!isOpenRowCD(row) || !age) continue;
+
+		const stage = stageEntryCD(rowStageCD(row)).value;
+		openCount += 1;
+		stageCounts.set(stage, (stageCounts.get(stage) || 0) + 1);
+		buckets[age.bucket] += 1;
+		if (!oldest || age.days > oldest.days) oldest = { id: row.id, days: age.days };
+	}
+	const stages = DOC_STAGES_CD.filter((stage) => stageCounts.has(stage.value)).map((stage) => ({
+		value: stage.value,
+		label: stage.label,
+		count: stageCounts.get(stage.value),
+	}));
+	return { stages, buckets, oldest, openCount };
+}
+
+function getOpenHeadlineCD(summary) {
+	const parts = summary.stages.map((stage) => `${formatIntCD(stage.count)} ${STAGE_HEADLINE_CD[stage.value]}`);
+	if (summary.oldest) {
+		const { id, days } = summary.oldest;
+		parts.push(`oldest open ${days === 0 ? "since today" : `${formatIntCD(days)} ${days === 1 ? "day" : "days"}`} (#${id})`);
+	}
+	return parts.join(" · ");
+}
+
 // format 배지 데이터 — doc.format 실값으로 dual-encode (색 + glyph). html 외 포맷은 agent-only 변종.
 const DOC_FORMAT_BADGE_CD = {
 	html: {
@@ -1014,7 +1078,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
-        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
+        .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
+        @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
+        .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; font-size: var(--fs-meta); }
+        .doc-open-summary-group dt { color: rgb(var(--dim)); font-weight: 600; }
+        .doc-open-summary-group dd { margin: 0; color: rgb(var(--ink)); }
+        .doc-open-summary-group dd.is-stale { color: rgb(var(--warn)); font-weight: 600; }
+        .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
@@ -1211,7 +1284,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, PageVerdict } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1220,10 +1293,6 @@ function DocListCardCD({
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
 	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
-	// the stage chips count groups → their label names that unit only while a count is shown
-	const hasStageCounts =
-		groupCounts != null &&
-		DOC_STATUS_OPTIONS_CD.some((opt) => typeof groupCounts[opt.countKey] === "number");
 	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
 	const rowCount = visibleCount + hiddenCount;
 	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
@@ -1231,7 +1300,7 @@ function DocListCardCD({
 		state.status !== "ready"
 			? null
 			: !isSearchMode && docTotal != null
-				? `${formatIntCD(total)} groups${docTotal !== total ? ` · ${formatIntCD(docTotal)} documents` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+				? `${formatIntCD(total)} documents${docTotal !== total ? ` · ${formatIntCD(docTotal)} with revisions` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
 				: hiddenCount > 0
 					? `${formatIntCD(visibleCount)} of ${formatIntCD(isSearchMode ? rowCount : total)} shown${hitsLabel}`
 					: `${formatIntCD(isSearchMode ? rowCount : total)} matched${hitsLabel}`;
@@ -1253,15 +1322,23 @@ function DocListCardCD({
 		(inlineFilterProps.docStatusFilter === "" ||
 			inlineFilterProps.docStatusFilter === "open");
 	const orderedRows = isSectioned ? sortRowsByStageCD(rows) : rows;
+	const nowMs = Date.now();
+	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
+	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
+	// sections already name the stage → the column holds the meter only
+	const statusColumnWidth = isSectioned ? 96 : 135;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
 	const hasTagsColumn = orderedRows.some((row) => hasOwnTagCD(row, commonFormat, commonAudience));
 	const columnCount = hasTagsColumn ? LEDGER_COLUMN_COUNT_CD : LEDGER_COLUMN_COUNT_CD - 1;
-	// shared tag values → said once beside the count, never per row nor under the header
-	const sharedTagsLabel = [commonAudience === "hidden" && "agent-only", commonFormat]
-		.filter(Boolean)
-		.join(" · ");
+	// shared tag values in words → said once beside the count, never per row nor under the header
+	const sharedTagsLabel =
+		commonAudience === "hidden"
+			? `agent records${commonFormat ? ` in ${commonFormat}` : ""}`
+			: commonFormat
+				? `${commonFormat} format`
+				: "";
 	// 섹션 건수는 page-scoped — chip 의 corpus-scoped 수치와 단위가 다르다.
 	const sectionCounts = new Map();
 	for (const row of orderedRows) {
@@ -1319,7 +1396,7 @@ function DocListCardCD({
 							aria-label="Search documents"
 						/>
 					</div>
-					<span className="doc-filter-label">{hasStageCounts ? "Groups by stage" : "Stage"}</span>
+					<span className="doc-filter-label">Show</span>
 					{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores */}
 					{isSearchMode ? (
 						<span className="doc-search-stage-note fs-meta" style={{ color: "rgb(var(--dim))" }}>
@@ -1428,7 +1505,19 @@ function DocListCardCD({
 						inlineFilterProps={inlineFilterProps}
 					/>
 				)}
+				{state.status === "ready" && rows.length > 0 && hasOpenSummary && (
+					<PageVerdict
+						tone={openSummary.oldest && openSummary.oldest.days > STALE_AGE_DAYS_CD ? "warn" : "ok"}
+						className="mx-4 mt-3">
+						{getOpenHeadlineCD(openSummary)}
+					</PageVerdict>
+				)}
 				{state.status === "ready" && rows.length > 0 && (
+					<div className="flex flex-col xl:flex-row-reverse xl:items-start">
+					{hasOpenSummary && (
+						<DocOpenSummaryCD summary={openSummary} isPartial={canLoadMore} onSelect={onSelect} />
+					)}
+					<div className="min-w-0 flex-1">
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
 							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
@@ -1450,8 +1539,7 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								{/* 135px — 최장 stage 라벨 pill 과 그 아래 모델 줄이 들어가는 컬럼 하한. */}
-								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
+								<th scope="col" style={{ width: statusColumnWidth, minWidth: statusColumnWidth }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
                     그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
@@ -1478,6 +1566,8 @@ function DocListCardCD({
 									isGroupRoot && expandedFolderIds.has(row.folder_id);
 								const storedStage = rowStageCD(row);
 								const shownStage = optimisticStatusOverrides.get(row.id) ?? storedStage;
+								const age = getDocAgeCD(row.created_at, nowMs);
+								const isStaleRow = age?.isStale === true && isOpenRowCD(row);
 								const snippetText =
 									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
@@ -1486,6 +1576,7 @@ function DocListCardCD({
 									isSelectedMulti && "is-multi-selected",
 									isPending && "is-pending-delete",
 									isGroupRoot && "is-group-root",
+									isStaleRow && "is-stale",
 								]
 									.filter(Boolean)
 									.join(" ");
@@ -1633,12 +1724,7 @@ function DocListCardCD({
 												/>
 											)}
 											<DocAuthorCellCD author={row.author} />
-											<td
-												className="doc-meta-text-mono"
-												style={{ color: "rgb(var(--dim))" }}
-											>
-												{formatDateCD(row.created_at)}
-												</td>
+											<DocAgeCellCD createdAt={row.created_at} age={age} isStale={isStaleRow} />
 										</tr>
 										{isExpanded && (
 											<GroupMembersRowsCD
@@ -1665,6 +1751,8 @@ function DocListCardCD({
 							})}
 						</tbody>
 					</table>
+					</div>
+					</div>
 				)}
 				{/* Load More 버튼.
             · canLoadMore = !isSearchMode AND ready AND rows.length < total
@@ -1691,6 +1779,52 @@ function DocListCardCD({
 				)}
 			</div>
 		</div>
+	);
+}
+
+// Pipeline shape at a glance — a right rail from xl, a one-line strip above the table below it.
+function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
+	const { oldest } = summary;
+	return (
+		<aside
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[272px] xl:shrink-0 xl:sticky xl:top-0 xl:py-3"
+			aria-label="Open documents summary">
+			<dl className="doc-open-summary-group">
+				<dt>Open by stage</dt>
+				{summary.stages.map((stage) => (
+					<dd key={stage.value}>
+						{stage.label} <span className="font-mono">{formatIntCD(stage.count)}</span>
+					</dd>
+				))}
+			</dl>
+			<dl className="doc-open-summary-group">
+				<dt>Age</dt>
+				{AGE_BUCKETS_CD.map((bucket) => (
+					<dd key={bucket.key} className={bucket.key === "stale" && summary.buckets.stale > 0 ? "is-stale" : undefined}>
+						{bucket.label} <span className="font-mono">{formatIntCD(summary.buckets[bucket.key])}</span>
+					</dd>
+				))}
+			</dl>
+			{oldest && (
+				<button type="button" className="btn ghost sm doc-open-oldest" onClick={() => onSelect(oldest.id)}>
+					{`Oldest open #${oldest.id} · ${oldest.days === 0 ? "today" : `${oldest.days}d`}`}
+				</button>
+			)}
+			{isPartial && <span className="doc-open-summary-note">Loaded rows only</span>}
+		</aside>
+	);
+}
+
+// Relative age leads · the absolute KST date stays one hover away.
+function DocAgeCellCD({ createdAt, age, isStale }) {
+	return (
+		<td
+			className="doc-age-cell doc-meta-text-mono"
+			style={{ color: "rgb(var(--dim))" }}
+			title={`Created ${formatDateCD(createdAt)}`}>
+			{age ? age.label : "—"}
+			{isStale && <div className="doc-age-flag">stale</div>}
+		</td>
 	);
 }
 

@@ -23,6 +23,7 @@ const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
 const UI_SCALARS: Record<string, unknown> = {
   formatInt: (n: number) => String(n),
   formatKstDateTime: (iso: string) => `datetime(${iso})`,
+  formatKstDate: (iso: string) => `date(${iso})`,
 };
 
 function uiStub(extra: Record<string, unknown> = {}): unknown {
@@ -318,7 +319,7 @@ test("a read in flight over held rows keeps them on screen, dimmed and busy, wit
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1, `${row.name}: held rows stay`);
     assert.equal(tables[0].props["aria-busy"], row.status ? "true" : undefined, row.name);
-    assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 groups/, `${row.name}: held count stays`);
+    assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 documents/, `${row.name}: held count stays`);
 
     const inline = findNodes(tree, (n) => n.props.role === "status" && String(n.props.className).includes("doc-list-busy"));
     assert.deepEqual(inline.map((n) => collectText(n)), row.status ? [row.status] : [], row.name);
@@ -362,7 +363,7 @@ describe("the ledger names the Tags column only when a row differs, and states a
   const tagCellsOf = (tree: ReturnType<typeof renderScreen>) =>
     findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
   const rows = [
-    { name: "every row agent-only md → no column, 'agent-only' said once", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent-only" },
+    { name: "every row agent-only md → no column, the audience said once in words", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent records" },
     { name: "one row in another format → the column stays", patch: [{ format: "html" }, {}], cells: 3, onceText: null },
     { name: "one agent-only row among public rows → the column stays", patch: [{ audience: "hidden" }, {}], cells: 3, onceText: null },
   ];
@@ -466,17 +467,17 @@ test("stage and audience filters are two separately labelled pressed-chip groups
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the stage chips name their count unit, and it is the unit the caption leads with", async () => {
+test("the filter label reads Show, and the caption counts documents, naming revisions as their own unit", async () => {
   const screen = await loadDocsScreen();
-  const stageLabel = (tree: ReturnType<typeof renderScreen>) =>
+  const filterLabel = (tree: ReturnType<typeof renderScreen>) =>
     collectText(findNodes(tree, (n) => n.props.className === "doc-filter-label")[0]);
 
   const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
-  const unit = stageLabel(counted).match(/\b(groups|documents)\b/i);
-  assert.ok(unit, "the stage label names what its counts count");
-  assert.match(collectText(counted), new RegExp(`\\b3 ${unit[1].toLowerCase()} · 5 documents`));
+  assert.equal(filterLabel(counted), "Show");
+  assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
+  assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
 
-  assert.doesNotMatch(stageLabel(renderListCard(screen, {})), /groups|documents/i, "no unit claimed while no count is shown");
+  assert.equal(filterLabel(renderListCard(screen, {})), "Show");
 });
 
 describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
@@ -615,4 +616,129 @@ test("while searching, the stage filter visibly steps aside for all stages, and 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   assert.doesNotMatch(collectText(empty), /status:/);
   assert.match(collectText(empty), /“plan”/);
+});
+
+const DAY_MS = 86_400_000;
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+// the screen runs in its own vm realm → compare its objects by value
+const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+type DocAge = { days: number; label: string; bucket: string; isStale: boolean };
+type OpenSummary = {
+  stages: Array<{ value: string; label: string; count: number }>;
+  buckets: Record<string, number>;
+  oldest: { id: number; days: number } | null;
+  openCount: number;
+};
+
+describe("a document's age reads relative to now, buckets it, and past seven days marks it stale", () => {
+  const rows = [
+    { name: "created today → under 3 days, not stale", days: 0, label: "today", bucket: "fresh", isStale: false },
+    { name: "2 days → under 3 days", days: 2, label: "2d", bucket: "fresh", isStale: false },
+    { name: "3 days → 3-7 days", days: 3, label: "3d", bucket: "aging", isStale: false },
+    { name: "7 days → still 3-7 days, not stale", days: 7, label: "7d", bucket: "aging", isStale: false },
+    { name: "8 days → over 7 days and stale", days: 8, label: "8d", bucket: "stale", isStale: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const age = (screen.getDocAgeCD as (iso: string, nowMs: number) => DocAge)(daysAgo(row.days), Date.now());
+      assert.deepEqual(plain(age), { days: row.days, label: row.label, bucket: row.bucket, isStale: row.isStale });
+    });
+  }
+});
+
+function pipelineRows() {
+  const base = { format: "md", audience: "exposed", author: "a", member_count: 1, folder_id: null };
+  return [
+    { ...base, id: 11, title: "Doc 11", doc_status: "doc_review", created_at: daysAgo(15) },
+    { ...base, id: 12, title: "Doc 12", doc_status: "doc_review", created_at: daysAgo(1) },
+    { ...base, id: 13, title: "Doc 13", doc_status: "implementing", created_at: daysAgo(4) },
+    { ...base, id: 14, title: "Doc 14", doc_status: "done", created_at: daysAgo(40) },
+  ];
+}
+
+test("the open summary counts only open documents: stage counts and age buckets each add up to the open total", async () => {
+  const screen = await loadDocsScreen();
+  const summary = (screen.getOpenSummaryCD as (rows: unknown[], nowMs: number) => OpenSummary)(pipelineRows(), Date.now());
+
+  assert.equal(summary.openCount, 3, "the done document is not open");
+  assert.deepEqual(plain(summary.stages.map((s) => [s.label, s.count])), [["Doc review", 2], ["Implementing", 1]]);
+  assert.equal(summary.stages.reduce((sum, s) => sum + s.count, 0), summary.openCount);
+  assert.deepEqual(plain(summary.buckets), { fresh: 1, aging: 1, stale: 1 });
+  assert.deepEqual(plain(summary.oldest), { id: 11, days: 15 }, "the oldest open document, never the older done one");
+  assert.equal((screen.getOpenHeadlineCD as (s: OpenSummary) => string)(summary),
+    "2 awaiting doc review · 1 implementing · oldest open 15 days (#11)");
+});
+
+describe("the sectioned list leads with a headline verdict and an open summary; search and a single-stage filter do not", () => {
+  const rows = [
+    { name: "open filter → headline and summary", filter: "open", isSearchMode: false, shown: true },
+    { name: "all filter → headline and summary over the open rows", filter: "", isSearchMode: false, shown: true },
+    { name: "done filter → neither, nothing there is open", filter: "done", isSearchMode: false, shown: false },
+    { name: "search → neither, hits are not the pipeline", filter: "open", isSearchMode: true, shown: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      props.rows = pipelineRows();
+      props.isSearchMode = row.isSearchMode;
+      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
+      const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+      const verdicts = findNodes(tree, (n) => n.props.atom === "PageVerdict");
+      assert.equal(verdicts.length, row.shown ? 1 : 0);
+      assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("doc-open-summary")).length, row.shown ? 1 : 0);
+      if (row.shown) {
+        assert.equal(verdicts[0].props.tone, "warn", "an open document past seven days needs attention");
+        assert.match(collectText(verdicts[0]), /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)/);
+      }
+    });
+  }
+});
+
+test("the summary's oldest-open link opens that document", async () => {
+  const screen = await loadDocsScreen();
+  const opened: number[] = [];
+  const props = listCardProps((id) => opened.push(id));
+  props.rows = pipelineRows();
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const links = findNodes(tree, (n) => n.type === "button" && String(n.props.className ?? "").includes("doc-open-oldest"));
+  assert.equal(links.length, 1);
+  assert.match(collectText(links[0]), /#11/);
+  (links[0].props.onClick as () => void)();
+  assert.deepEqual(opened, [11]);
+});
+
+test("Created shows relative age with the date in a tooltip, and only an open row past seven days is tinted with a text label", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  props.rows = pipelineRows();
+  (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = "";
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const docRows = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).includes("doc-row"));
+  const stale = docRows.filter((tr) => String(tr.props.className).includes("is-stale")).map((tr) => tr.props["aria-label"]);
+  assert.deepEqual(stale, ["Doc 11"], "the 40-day done row is not stale");
+
+  const ageCells = findNodes(tree, (n) => n.type === "td" && String(n.props.className ?? "").includes("doc-age-cell"));
+  assert.equal(ageCells.length, 4);
+  const staleCell = ageCells.find((td) => /15d/.test(collectText(td)));
+  assert.ok(staleCell, "age is the primary value");
+  assert.match(String(staleCell.props.title), /^Created date\(/);
+  assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
+});
+
+test("the Status column narrows to the meter inside stage sections and keeps room for the stage name in a flat list", async () => {
+  const screen = await loadDocsScreen();
+  const statusWidth = (overrides: Record<string, unknown>) => {
+    const tree = renderListCard(screen, overrides);
+    const th = findNodes(tree, (n) => n.type === "th" && collectText(n) === "Status")[0];
+    return (th.props.style as { width: number }).width;
+  };
+  const sectioned = statusWidth({});
+  const flat = statusWidth({ isSearchMode: true });
+  assert.ok(sectioned < flat, `sectioned ${sectioned} < flat ${flat}`);
 });
