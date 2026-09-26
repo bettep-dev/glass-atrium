@@ -674,3 +674,21 @@ describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, 
     });
   }
 });
+
+describe("AttributionBreakdownO: only a landed window may say it has no breakdown", () => {
+  const silentRows = [
+    { name: "loading renders nothing", state: { status: "loading", data: null } },
+    { name: "an error renders nothing", state: { status: "error", data: null, error: "HTTP 500" } },
+  ];
+  for (const row of silentRows) {
+    test(row.name, () => {
+      assert.equal(rendered.AttributionBreakdownO({ state: row.state }), null);
+    });
+  }
+
+  test("a landed but empty window says so", () => {
+    const empty = rendered.AttributionBreakdownO({ state: { status: "ready", data: { window_summary: { total_attributed: 0 } } } });
+    assert.equal(empty?.type, rendered.EmptyStateO);
+    assert.match(String(empty?.props.message), /No daily breakdown/);
+  });
+});

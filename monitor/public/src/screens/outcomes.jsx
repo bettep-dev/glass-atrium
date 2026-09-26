@@ -1310,7 +1310,9 @@ function AttributionHealthBody({ state, onRetry }) {
 
 // Reporting health 의 detail 내역 — 로딩·오류·빈 창은 상단 status 카드가 이미 말하므로 여기선 침묵.
 function AttributionBreakdownO({ state }) {
-  const summary = state.status === 'ready' ? state.data?.window_summary : null;
+  if (state.status !== 'ready') return null;
+
+  const summary = state.data?.window_summary;
   if (!summary || !(Number(summary.total_attributed) > 0)) {
     return <EmptyStateO message="No daily breakdown in this period."/>;
   }
