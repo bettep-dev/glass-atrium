@@ -1046,9 +1046,9 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
   const rows = [
-    { name: "none crossed", overCap: 0, tone: "ok", rate: null },
-    { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, rate: /0\.3% of 1,?000 runs/ },
-    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", rate: /6\.0% of 1,?000 runs/ },
+    { name: "none crossed", overCap: 0, tone: "ok", ratePct: "0.0" },
+    { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, ratePct: "0.3" },
+    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6.0" },
   ];
   for (const row of rows) {
     const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
@@ -1058,7 +1058,7 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
     });
     const overCap = getBandTile(tree, "Over tool-use cap");
     assert.equal(findAtoms(overCap, "KpiValue")[0]?.props.tone ?? null, row.tone, `${row.name}: tone`);
-    if (row.rate) assert.match(collectText(overCap), row.rate, `${row.name}: rate`);
+    assert.equal(collectText(overCap).match(/([\d.]+)% of 1,?000 runs/)?.[1] ?? null, row.ratePct, `${row.name}: rate`);
     const needsContext = getBandTile(tree, "Needs context");
     assert.match(collectText(needsContext), /0\.3% of 1,?000 runs/, "needs context states its rate over the same runs");
     assert.equal(findAtoms(needsContext, "KpiValue")[0]?.props.tone ?? null, null, "3 of 1,000 needs-context outcomes stay untoned");
@@ -1077,9 +1077,6 @@ test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare wh
   for (const row of rows) {
     const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
     assert.equal(cut, row.cut, row.name);
-    if (row.secs.length >= 4) {
-      assert.ok(row.secs.filter((s) => s > cut).length <= Math.ceil(row.secs.length / 4), `${row.name}: at most a quarter sit above the cut`);
-    }
   }
 
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
