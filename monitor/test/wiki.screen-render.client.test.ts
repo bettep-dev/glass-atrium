@@ -113,27 +113,44 @@ function findSummaryHeading(tree: RenderedNode | string | null, label: string): 
     .find((h2) => collectText(h2) === label);
 }
 
-test("each wiki section names itself with an h2 inside the summary that toggles its disclosure", async () => {
+const RUN_HISTORY_LOADING = {
+  cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
+};
+
+test("detail sections fold behind an h2 in their summary; status sections render open with a plain h2", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
-  const rows: Array<{ name: string; element: unknown }> = [
-    { name: "Merge proposals", element: createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} }) },
-    {
-      name: "Run history",
-      element: createElement(mod.WikiRunHistorySection, {
-        cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
-      }),
-    },
-    { name: "Notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: LOADING, onRetry: () => {} }) },
+  const rows: Array<{ name: string; folds: boolean; element: unknown }> = [
+    { name: "Merge proposals", folds: true, element: createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} }) },
+    { name: "Per-run table", folds: true, element: createElement(mod.WikiRunTableSection, RUN_HISTORY_LOADING) },
+    { name: "Run history", folds: false, element: createElement(mod.WikiRunHistorySection, RUN_HISTORY_LOADING) },
+    { name: "Notes by type", folds: false, element: createElement(mod.WikiNotesByTypeSection, { state: LOADING, onRetry: () => {} }) },
   ];
 
   for (const row of rows) {
     const tree = renderScreen(row.element);
-    const heading = findSummaryHeading(tree, row.name);
-    assert.ok(heading, `${row.name} renders as an h2 inside its summary`);
+    const heading = findNodes(tree, (n) => n.type === "h2").find((h2) => collectText(h2) === row.name);
+    assert.ok(heading, `${row.name} names itself with an h2`);
+    if (!row.folds) {
+      assert.equal(findNodes(tree, (n) => n.type === "details").length, 0, `${row.name} is open, never behind a click`);
+      continue;
+    }
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
+    assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
     assert.equal((summary?.children[0] as RenderedNode).props["aria-hidden"], "true", `${row.name} keeps the chevron first`);
   }
+});
+
+test("the run-history trend and notes by type share one split row, the trend on the wider side", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiStatusRow as Component, {
+    cyclesState: LOADING, summaryState: LOADING, indexState: LOADING, onRetry: () => {},
+  }));
+  const split = findNodes(tree, (n) => n.props.atom === "SplitRow");
+  assert.equal(split.length, 1);
+  assert.equal(split[0].props.ratio, "2:1");
+  const headings = findNodes(split[0], (n) => n.type === "h2").map((h) => collectText(h));
+  assert.deepEqual(headings, ["Run history", "Notes by type"]);
 });
 
 test("one polite live region announces a wave in flight as loading", async () => {
@@ -258,7 +275,7 @@ test("a merge proposal's reasons wrap in full and its item is the anchor its ala
   }
 });
 
-test("only the proposal alarm renders as a type=button control; other alarms stay plain rows", async () => {
+test("the alarm lane keeps actionable rows only; waiting proposals ride the verdict line instead", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const tree = renderScreen(
@@ -270,11 +287,27 @@ test("only the proposal alarm renders as a type=button control; other alarms sta
     }),
   );
   const rows = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
-  assert.equal(rows.length, 2, "the dirty index and the waiting proposal");
-  const buttons = findNodes(tree, (n) => n.type === "button");
-  assert.equal(buttons.length, 1, "two alarms, one waiting proposal → one button");
-  assert.equal(buttons[0].props.type, "button");
-  assert.equal(typeof buttons[0].props.onClick, "function");
+  assert.equal(rows.length, 1, "the dirty index only");
+  assert.doesNotMatch(collectText(tree), /Merge proposal/);
+  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
+});
+
+test("the page opens on one verdict line with the proposals chip pointing at the merge-proposals fold", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const verdict = findNodes(tree, (n) => n.props.atom === "PageVerdict");
+  assert.equal(verdict.length, 1);
+  assert.equal(verdict[0].props.tone, "neutral", "nothing loaded yet → no signal");
+
+  const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
+  const details = findNodes(fold, (n) => n.type === "details")[0];
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const chip = (mod.buildWikiVerdictW as (...states: unknown[]) => { chips: Array<{ targetId: string }> })(
+    ready({}), ready({}), READY_BACKLOG, ready({ cycles: [] }),
+  ).chips[0];
+  assert.ok(details.props.id, "the fold carries an id");
+  assert.equal(chip.targetId, details.props.id, "the chip's target is the fold itself");
+  assert.equal(typeof details.props.onFocus, "function", "focus from the chip opens the fold");
 });
 
 test("constant runs render as one row naming the range and the run count", async () => {
@@ -298,12 +331,13 @@ test("alarms are flat hairline rows whose tone rides a leading glyph, with no st
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const lane = renderScreen(
     mod.React.createElement(mod.WikiAlarmLane as Component, {
-      summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }),
+      summaryState: ready({ hours_since_last_cycle: 40, last_run_date: "2026-09-20" }),
+      indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }),
       backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
   const rows = findNodes(lane, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
-  assert.equal(rows.length, 2, "the dirty index and the waiting proposal");
+  assert.equal(rows.length, 2, "the dirty index and the missed cycle");
   for (const row of rows) {
     assert.ok(row.props["data-tone"], "each row names its tone");
     assert.equal(findNodes(row, (n) => /\balarm-row-glyph\b/.test(classOf(n))).length, 1);
@@ -342,7 +376,7 @@ test("wiki text never drops below the 12px step and words are never set in mono"
   assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
-test("cyan tints no wiki text: the proposal action reads as a link, the similarity as a figure", async () => {
+test("cyan tints no wiki text: the similarity reads as a figure and the lane stays uncoloured", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], similarity_score: 1 };
@@ -353,22 +387,15 @@ test("cyan tints no wiki text: the proposal action reads as a link, the similari
     }),
   );
   const sim = findNodes(item, (n) => n.children.includes("sim ")).pop();
-  const open = findNodes(lane, (n) => n.type === "button")[0];
-  assert.ok(sim && open, "the similarity and the proposal action render");
-  assert.match(classOf(open), /\btext-accent\b/, "the action carries the link colour");
+  assert.ok(sim, "the similarity renders");
   for (const tree of [item, lane]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
   }
 });
 
-test("the per-run table is introduced by an h3 under the Run history h2", async () => {
+test("the window control rides the per-run table fold and never the open trend", async () => {
   const mod = await loadWikiScreen();
-  const tree = renderScreen(
-    mod.React.createElement(mod.WikiRunHistorySection as Component, {
-      cyclesState: LOADING, summaryState: LOADING, reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {},
-    }),
-  );
-  const label = findNodes(tree, (n) => n.props.atom === "SectionLabel" && collectText(n).includes("Per-run table"))[0];
-  assert.ok(label, "the table label is the shared SectionLabel");
-  assert.equal(label.props.level, 3);
+  const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
+  assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_HISTORY_LOADING))).length, 1);
+  assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
 });
