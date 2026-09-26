@@ -504,6 +504,12 @@ interface SuppressionBucketDbRow {
   agents: bigint;
 }
 
+// Per-cycle buckets add cycle coverage: the daemon stamps loop events per UTC day.
+interface CycleSuppressionBucketDbRow extends SuppressionBucketDbRow {
+  cycles: bigint;
+  window_cycles: bigint;
+}
+
 interface PendingSplitDbRow {
   unpromptable: bigint;
   total: bigint;
@@ -1449,10 +1455,15 @@ async function handleLearningLog(
       // are emitted precisely BECAUSE the agent is not a real roster stem, so the
       // gate would zero out the one bucket that reports them and the count would
       // silently exclude its own subject.
-      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+      prisma.$queryRaw<CycleSuppressionBucketDbRow[]>`
         SELECT eval_result AS cause,
                COUNT(*)::bigint AS count,
-               COUNT(DISTINCT agent)::bigint AS agents
+               COUNT(DISTINCT agent)::bigint AS agents,
+               COUNT(DISTINCT date_trunc('day', event_ts AT TIME ZONE 'UTC'))::bigint AS cycles,
+               (SELECT COUNT(DISTINCT date_trunc('day', e.event_ts AT TIME ZONE 'UTC'))
+                FROM core.autoagent_loop_events e
+                WHERE e.event_ts >= now() - make_interval(days => ${SUPPRESSION_WINDOW_DAYS})
+               )::bigint AS window_cycles
         FROM core.autoagent_loop_events
         WHERE event_ts >= now() - make_interval(days => ${SUPPRESSION_WINDOW_DAYS})
           AND eval_result IN (${Prisma.join([...SUPPRESSION_EVAL_RESULTS])})
@@ -1491,10 +1502,13 @@ async function handleLearningLog(
     const loopSuppressionState: ImprovementLoopSuppressionState = {
       parked,
       parked_patterns: parkedPatternRows.map(rowToParkedPattern),
-      per_cycle: cycleBucketRows.map((row) =>
-        suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
-      ),
+      per_cycle: cycleBucketRows.map((row) => ({
+        ...suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+        cycles: bigintToNumber(row.cycles),
+      })),
       per_cycle_window_days: SUPPRESSION_WINDOW_DAYS,
+      per_cycle_window_cycles:
+        cycleBucketRows[0] === undefined ? 0 : bigintToNumber(cycleBucketRows[0].window_cycles),
       pending_unpromptable:
         pendingSplitRow === undefined ? 0 : bigintToNumber(pendingSplitRow.unpromptable),
       pending_total:

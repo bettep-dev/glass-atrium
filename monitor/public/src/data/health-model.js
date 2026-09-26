@@ -163,7 +163,7 @@ function foldHarness(states = {}) {
   const down = checked.filter((p) => p.ok === false);
 
   return {
-    status: checked.length === 0 ? 'unavailable' : 'ready',
+    status: resolveFoldStatus(checked.length, cardStates),
     partsOk: checked.length - down.length,
     partsChecked: checked.length,
     partsTotal: parts.length,
@@ -173,6 +173,12 @@ function foldHarness(states = {}) {
     failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
     version: readReady(states.healthState, (d) => d?.version || null),
   };
+}
+
+// Nothing checked + a store still pending → first-poll wait, not a lost reading (tile skeleton ↔ footer CHECKING…).
+function resolveFoldStatus(checkedCount, cardStates) {
+  if (checkedCount > 0) return 'ready';
+  return Object.values(cardStates).some((state) => state.status === 'loading') ? 'loading' : 'unavailable';
 }
 
 window.HealthModel = {

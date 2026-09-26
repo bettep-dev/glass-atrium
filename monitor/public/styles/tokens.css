@@ -13,6 +13,10 @@
   --ok:        5 150 105;
   /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
   --info:      8 145 178;
+  /* focus ring — theme-owned, not the tweak-driven --accent → ≥3:1 on surface/elev/sunken whatever accent is picked */
+  --focus-ring:       37  99 235;
+  --focus-ring-width:  2px;
+  --focus-ring-offset: 2px;
   /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
   --cat-1:   124  58 237;
   --cat-2:    13 148 136;
@@ -55,6 +59,29 @@
   /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
   --radius-badge: 6px;
 
+  /* type steps — whole px, 12px meta floor (ui.jsx TypeScaleStyle still repeats the on-floor values) */
+  --fs-display: 22px;
+  --fs-stat:    18px;
+  --fs-title:   15px;
+  --fs-body:    14px;
+  --fs-control: 13px;
+  --fs-meta:    12px;
+
+  /* radius by role — inline glyph/pip < control < tile < card/overlay */
+  --radius-inline:   4px;
+  --radius-control:  6px;
+  --radius-tile:     8px;
+  --radius-card:    12px;
+
+  /* minimum hit height for every interactive atom */
+  --ctl-min-h: 32px;
+
+  /* one filled selected state — pressed toggles, active segments, selected tabs */
+  --selected-fill:  28  25  23;
+  --selected-ink:  250 250 249;
+  /* empty stage pip — ≥3:1 on surface/elev/sunken */
+  --pip-empty:     138 132 127;
+
   /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
      overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
      confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그
@@ -79,6 +106,10 @@
   --ok:       52 211 153;
   /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
   --info:     34 211 238;
+  --focus-ring:   96 165 250;
+  --selected-fill: 214 211 209;
+  --selected-ink:   12  10   9;
+  --pip-empty:     120 113 108;
   /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
   --cat-1:   167 139 250;
   --cat-2:    45 212 191;
@@ -114,7 +145,7 @@ body {
 
 /* Reusable atoms (used across screens) */
 .kbd {
-  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta);
   background: rgb(var(--elev)); border: 1px solid rgb(var(--line));
   padding: 1px 5px; border-radius: 4px; color: rgb(var(--faint));
 }

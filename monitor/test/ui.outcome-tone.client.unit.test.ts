@@ -111,9 +111,9 @@ test("getWriterOpenCount falls back to the closure-only open count on a legacy r
 });
 
 test("open count is count minus closed across the whole input class", () => {
-  for (const [count, closed] of [[10, 0], [10, 3], [10, 10], [0, 0], [5, 9]]) {
+  for (const [count, closed, open] of [[10, 0, 10], [10, 3, 7], [10, 10, 0], [0, 0, 0], [5, 9, 0]]) {
     const row = { result: "done_with_concerns", count, closed_count: closed };
-    assert.equal(ui.getOutcomeOpenCount(row), Math.max(0, count - closed));
+    assert.equal(ui.getOutcomeOpenCount(row), open);
   }
   assert.equal(ui.getOutcomeOpenCount(undefined), 0, "a missing row is 0 open, never NaN");
 });

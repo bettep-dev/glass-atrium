@@ -310,3 +310,71 @@ test("every held row renders under exactly one cause group", () => {
   const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
   assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });
+
+type AnyFn = (props: Record<string, unknown>) => unknown;
+const screenFns = sandbox as unknown as Record<string, AnyFn>;
+
+// Walks the tree, invoking function components; `stopAt` types are collected, not entered.
+function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: unknown[] = []): RecordedElement[] {
+  const out: RecordedElement[] = [];
+  const walk = (n: unknown): void => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (typeof n !== "object" || n === null || !("props" in n) || !("type" in n)) return;
+    const el = n as RecordedElement;
+    if (pick(el)) out.push(el);
+    if (stopAt.includes(el.type)) return;
+    if (typeof el.type === "function") return walk((el.type as AnyFn)(el.props));
+    Object.values(el.props).forEach(walk);
+  };
+  walk(node);
+  return out;
+}
+
+test("report surfaces keep neutral chrome — no tinted border, no hued diff chip", async () => {
+  const row = sandbox.BucketRowI({
+    state: { status: "ready" },
+    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
+  });
+  const tinted = collect(row, (el) => {
+    const style = el.props.style as Record<string, unknown> | undefined;
+    return Boolean(style && ("borderLeft" in style || "borderColor" in style));
+  });
+  assert.deepEqual(tinted, [], "the learning-memory tiles carry no tone border");
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(IMPROVEMENT_SRC, "utf8");
+  assert.doesNotMatch(src, /diff-line--(add|del)/, "the added/removed chips must not hue their text");
+});
+
+test("a failed stats payload raises one banner at the loop output group", () => {
+  const ErrorBannerI = screenFns.ErrorBannerI;
+  const group = screenFns.LoopOutputGroupI({
+    statsState: { status: "error", data: null, error: "boom" },
+    loopEventsState: { status: "loading", data: null, error: null },
+    loopAggregate: null,
+    listState: { status: "error", data: null, error: "boom" },
+    buckets: null,
+    onNav: () => {},
+    onRetry: () => {},
+  });
+  const banners = collect(group, (el) => el.type === ErrorBannerI, [ErrorBannerI]);
+  assert.equal(banners.length, 1);
+});
+
+test("the status band never announces a failure the owning group already announces", () => {
+  const failed = { status: "error", data: null, error: "boom" };
+  const band = screenFns.StatusBandI({
+    statsState: failed,
+    listState: failed,
+    learningLogState: failed,
+    suppression: null,
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const buttons = collect(band, (el) => el.type === "button");
+  assert.equal(buttons.length, 0, "a retry per tile repeats the group's banner");
+  const pointers = collect(band, (el) => {
+    const kids = ([] as unknown[]).concat(el.props.children);
+    return kids.some((k) => typeof k === "string" && k.includes("Not loaded — see the"));
+  });
+  assert.equal(pointers.length, 4, "each tile points at its owning group");
+});

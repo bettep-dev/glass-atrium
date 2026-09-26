@@ -1,5 +1,11 @@
 /* Component classes — light wrappers over Tailwind */
 
+/* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
+:focus-visible {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+
 /* ── Tier 3 — neue elevation/glass surfaces (§3.3, Tier 2 만 소비) ─────
    .glass-surface 는 transient(모달 backdrop·flyout) 전용 — 상시 표면 금지(§6.3). */
 .glass-surface {
@@ -12,7 +18,7 @@
 	background: rgb(var(--surface-raised));
 	box-shadow: var(--shadow-raised);
 	border: 1px solid rgb(var(--line));
-	border-radius: 12px;
+	border-radius: var(--radius-card);
 }
 .elev-overlay {
 	background: rgb(var(--surface-overlay));
@@ -30,7 +36,7 @@
 .card {
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
-	border-radius: 12px;
+	border-radius: var(--radius-card);
 	overflow: hidden;
 	box-shadow: var(--shadow-raised);
 }
@@ -61,7 +67,7 @@
 	border-bottom: 1px solid rgb(var(--line));
 }
 .card-title {
-	font-size: 13px;
+	font-size: var(--fs-title, 15px);
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
@@ -100,8 +106,9 @@
 	align-items: center;
 	gap: 6px;
 	padding: 6px 12px;
-	border-radius: 6px;
-	font-size: 12.5px;
+	min-height: var(--ctl-min-h);
+	border-radius: var(--radius-control);
+	font-size: var(--fs-control);
 	font-weight: 500;
 	border: 1px solid rgb(var(--line));
 	background: rgb(var(--elev));
@@ -135,13 +142,13 @@
 }
 .btn.sm {
 	padding: 4px 9px;
-	font-size: 11.5px;
+	font-size: var(--fs-meta);
 }
-/* 라벨 없는 아이콘 전용 버튼 — 정사각 24px 로 WCAG 2.2 §2.5.8 최소 타깃 확보 (.sm 뒤 = 패딩 override 순서 의존). */
+/* 라벨 없는 아이콘 전용 버튼 — 정사각 --ctl-min-h 로 WCAG 2.2 §2.5.8 최소 타깃 확보 (.sm 뒤 = 패딩 override 순서 의존). */
 .btn.icon {
 	padding: 0;
-	width: 24px;
-	height: 24px;
+	width: var(--ctl-min-h);
+	height: var(--ctl-min-h);
 	justify-content: center;
 }
 .btn:disabled {
@@ -160,14 +167,14 @@
 	box-sizing: border-box;
 	min-height: 22px;
 	padding: 3px 8px;
-	font-size: var(--fs-micro, 11px);
+	font-size: var(--fs-meta);
 	font-weight: 500;
 	line-height: 1;
 	border-radius: var(--radius-badge);
 	background: rgb(var(--sunken));
 	color: rgb(var(--dim));
 	border: 1px solid rgb(var(--line));
-	font-family: "JetBrains Mono", monospace;
+	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
 	white-space: nowrap;
 }
 /* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). canonical FORM 상속. */
@@ -182,6 +189,7 @@
 	text-transform: lowercase;
 }
 .pill--count {
+	font-family: "JetBrains Mono", monospace;
 	font-variant-numeric: tabular-nums;
 }
 /* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
@@ -191,20 +199,15 @@
 	height: auto;
 	min-height: var(--ctl-h);
 }
-/* interactive variant — Badge interactive=true 시 <button> 렌더. min-height 27px 로 .btn 패밀리와 정합(height rhythm)
-   · min-width 24px 는 WCAG 2.2 §2.5.8 최소 타깃 유지 + UA button reset(appearance/margin) + focus-visible ring
-   (ring-offset 은 surface 색 2px gap). canonical FORM 유지. */
+/* interactive variant — Badge interactive=true 시 <button> 렌더. min-height --ctl-min-h 로 .btn 패밀리와 정합(height rhythm)
+   · min-width 24px 는 WCAG 2.2 §2.5.8 최소 타깃 유지 + UA button reset(appearance/margin) · focus ring = global :focus-visible. canonical FORM 유지. */
 .pill--interactive {
 	height: auto;
-	min-height: 27px;
+	min-height: var(--ctl-min-h);
 	min-width: 24px;
 	appearance: none;
 	margin: 0;
 	cursor: pointer;
-}
-.pill--interactive:focus-visible {
-	outline: none;
-	box-shadow: 0 0 0 2px rgb(var(--surface)), 0 0 0 4px rgb(var(--accent));
 }
 /* icon-only variant — 정사각(label 텍스트 부재), glyph 중앙 정렬. 의미는 aria-label/title 로 운반(absent-text 규칙). */
 .pill--icon-only {
@@ -217,7 +220,7 @@
    발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
    ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */
 .sub-card {
-	border-radius: 8px;
+	border-radius: var(--radius-tile);
 	padding: 16px;
 	box-shadow: 0 0 0 1px rgb(var(--line));
 }
@@ -227,7 +230,7 @@
 /* 섹션 라벨 — 대문자 --dim, multi-section 뷰의 구획 헤더 (10.5px, letter-spacing). */
 .sub-card-label,
 .section-label {
-	font-size: 10.5px;
+	font-size: var(--fs-meta);
 	font-weight: 600;
 	color: rgb(var(--dim));
 	text-transform: uppercase;
@@ -297,34 +300,31 @@
 	padding: 3px;
 	background: rgb(var(--sunken));
 	border: 1px solid rgb(var(--line));
-	border-radius: 7px;
+	border-radius: var(--radius-control);
 	gap: 2px;
 }
 .tab {
 	padding: 4px 11px;
+	min-height: var(--ctl-min-h);
 	font-size: 12px;
 	border: none;
 	background: none;
 	color: rgb(var(--dim));
-	border-radius: 5px;
+	border-radius: var(--radius-inline);
 	font-weight: 500;
 	cursor: pointer;
-}
-.tab.active {
-	background: rgb(var(--elev));
-	color: rgb(var(--ink));
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .seg {
 	display: inline-flex;
 	border: 1px solid rgb(var(--line));
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	overflow: hidden;
 	background: rgb(var(--elev));
 }
 .seg button {
 	padding: 5px 10px;
+	min-height: var(--ctl-min-h);
 	font-size: 12px;
 	background: none;
 	border: none;
@@ -335,16 +335,27 @@
 .seg button:last-child {
 	border-right: none;
 }
-.seg button.active {
-	background: rgb(var(--sunken));
-	color: rgb(var(--ink));
+.btn[aria-pressed="true"],
+.btn[aria-pressed="true"]:hover,
+.seg button.active,
+.seg button[aria-pressed="true"],
+.tab.active,
+.tab[aria-selected="true"],
+.pill--interactive[aria-pressed="true"] {
+	background: rgb(var(--selected-fill));
+	color: rgb(var(--selected-ink));
+	border-color: rgb(var(--selected-fill));
 	font-weight: 500;
+}
+/* inset ring — .seg clips its children (overflow: hidden) */
+.seg button:focus-visible {
+	outline-offset: calc(var(--focus-ring-width) * -1);
 }
 
 .kpi {
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
-	border-radius: 12px;
+	border-radius: var(--radius-card);
 	padding: 14px 16px;
 	position: relative;
 	cursor: pointer;
@@ -357,7 +368,7 @@
 	border-color: rgb(var(--faint));
 }
 .kpi-label {
-	font-size: 11.5px;
+	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 	font-weight: 500;
 	display: flex;
@@ -385,7 +396,7 @@
 	font-family: "Pretendard Variable", sans-serif;
 }
 .kpi-delta {
-	font-size: 11.5px;
+	font-size: var(--fs-meta);
 	font-family: "JetBrains Mono", monospace;
 	display: inline-flex;
 	align-items: center;
@@ -409,12 +420,67 @@
 	pointer-events: none;
 }
 
+/* skip link — off-canvas until keyboard focus lands on it (first Tab stop) */
+.skip-link {
+	position: absolute;
+	top: -48px;
+	left: 12px;
+	z-index: 100;
+	padding: 8px 12px;
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-control);
+	background: rgb(var(--elev));
+	color: rgb(var(--ink));
+	font-size: 13px;
+}
+.skip-link:focus {
+	top: 12px;
+}
+
+.shell-sidebar {
+	width: 220px;
+}
+
+/* < 1200px → icon rail; labels clipped, not removed → nav buttons keep their accessible name */
+@media (max-width: 1199px) {
+	.shell-sidebar {
+		width: 56px;
+	}
+	.shell-sidebar .shell-brand {
+		padding-left: 0;
+		padding-right: 0;
+	}
+	.shell-sidebar .shell-brand > div {
+		justify-content: center;
+	}
+	.shell-sidebar .rail-hide,
+	.shell-sidebar .nav-badge ~ .nav-badge {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+	.shell-sidebar .nav-item {
+		position: relative;
+		justify-content: center;
+		padding: 8px 0;
+	}
+	.shell-sidebar .nav-badge {
+		position: absolute;
+		top: 0;
+		right: 0;
+		margin-left: 0;
+	}
+}
+
 .nav-item {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	padding: 6px 10px;
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
 	font-size: 13px;
 	cursor: pointer;
@@ -435,7 +501,7 @@
 }
 .nav-num {
 	font-family: "JetBrains Mono", monospace;
-	font-size: 10.5px;
+	font-size: var(--fs-meta);
 	color: rgb(var(--faint));
 	width: 20px;
 	flex-shrink: 0;
@@ -446,7 +512,7 @@
 .nav-badge {
 	margin-left: auto;
 	font-family: "JetBrains Mono", monospace;
-	font-size: 10.5px;
+	font-size: var(--fs-meta);
 	background: rgb(var(--sunken));
 	border: 1px solid rgb(var(--line));
 	padding: 1px 6px;
@@ -478,6 +544,40 @@
 	opacity: 0.5;
 }
 
+/* flat hairline alarm row — tone rides on the leading glyph, never a stripe or tinted fill */
+.alarm-row {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	gap: 12px;
+	align-items: start;
+	padding: 12px 16px;
+	border-bottom: 1px solid rgb(var(--line));
+}
+.alarm-row:last-child {
+	border-bottom: none;
+}
+.alarm-row-glyph {
+	display: inline-flex;
+	padding-top: 2px;
+	line-height: 1;
+}
+.alarm-row[data-tone="crit"] .alarm-row-glyph { color: rgb(var(--crit)); }
+.alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
+.alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
+.alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
+
+/* stage pip — empty pips ≥3:1 on every surface, filled pips take the ink */
+.stage-pip {
+	width: 8px;
+	height: 8px;
+	flex-shrink: 0;
+	border-radius: 50%;
+	background: rgb(var(--pip-empty));
+}
+.stage-pip.is-filled {
+	background: rgb(var(--ink));
+}
+
 .modal-backdrop {
 	position: fixed;
 	inset: 0;
@@ -499,7 +599,7 @@
 }
 .modal {
 	background: rgb(var(--surface-overlay)); /* 오버레이 불투명 면 (텍스트 4.5:1 보장, §7.8) */
-	border-radius: 12px;
+	border-radius: var(--radius-card);
 	width: min(560px, 92vw);
 	max-height: 86vh;
 	box-shadow: var(--shadow-overlay);
@@ -583,7 +683,7 @@
 .detail-confirm .detail-panel {
 	width: min(560px, 92vw);
 	max-height: 86vh;
-	border-radius: 12px;
+	border-radius: var(--radius-card);
 	animation: detailPop 180ms ease-out;
 }
 
@@ -596,7 +696,7 @@
 	flex-shrink: 0;
 }
 .detail-title { font-weight: 600; font-size: var(--fs-title, 13px); color: rgb(var(--ink)); }
-.detail-sub { margin-top: 2px; font-size: var(--fs-meta, 11px); color: rgb(var(--faint)); }
+.detail-sub { margin-top: 2px; font-size: var(--fs-meta); color: rgb(var(--faint)); }
 .detail-body { padding: 18px 20px; overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
 .detail-body--bare { padding: 0; }
@@ -632,7 +732,7 @@
 .placeholder {
 	padding: 28px;
 	border: 1px dashed rgb(var(--faint) / 0.5);
-	border-radius: 8px;
+	border-radius: var(--radius-tile);
 	color: rgb(var(--faint));
 	text-align: center;
 	font-family: "JetBrains Mono", monospace;
@@ -640,14 +740,14 @@
 }
 
 .alert-detail {
-	font-size: 12.5px;
+	font-size: var(--fs-control);
 }
 .alert-detail .detail-row {
 	margin-bottom: 8px;
 }
 .alert-detail .detail-row-label {
 	font-family: "JetBrains Mono", monospace;
-	font-size: 10.5px;
+	font-size: var(--fs-meta);
 	color: rgb(var(--faint));
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
@@ -743,19 +843,20 @@
 
 /* 폼컨트롤 박스 치수 SoT — .field(<select>)와 .pill--ctl-h(height-match 배지)가 공유.
    한 곳만 바꾸면 SAVED TARGET <select> 와 MODEL ASSIGNMENT 메타 배지가 같은 높이로 움직임(lockstep).
-   --ctl-h = .field 외곽 박스 높이(border-box): font×line + pad-y×2 + border 2px ≈ 29.5px. */
+   --ctl-h = .field 외곽 박스 최소 높이(border-box) = --ctl-min-h(32px). */
 :root {
 	--ctl-pad-y: 5px;
 	--ctl-pad-x: 9px;
-	--ctl-font: 12.5px;
+	--ctl-font: var(--fs-control);
 	--ctl-line: 1.4;
-	--ctl-radius: 6px;
-	--ctl-h: calc(var(--ctl-font) * var(--ctl-line) + var(--ctl-pad-y) * 2 + 2px);
+	--ctl-radius: var(--radius-control);
+	--ctl-h: var(--ctl-min-h);
 }
 
 .field {
 	width: 100%;
 	box-sizing: border-box;
+	min-height: var(--ctl-h);
 	padding: var(--ctl-pad-y) var(--ctl-pad-x);
 	font-size: var(--ctl-font);        /* .btn 본문과 동일 — fs-body 계열 */
 	line-height: var(--ctl-line);
@@ -780,13 +881,10 @@
 	border-color: rgb(var(--faint));
 }
 
-/* focus-visible — accent border + 2px accent/0.2 ring (doc-filter-input:focus 미러).
-   :focus-visible 사용 → 마우스 클릭 시 ring 억제, 키보드 탐색 시 노출 (접근성). */
+/* focus — accent border only; the ring is the global :focus-visible outline. */
 .field:focus-visible,
 .field:focus {
-	outline: none;
 	border-color: rgb(var(--accent));
-	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
 }
 
 /* disabled — .btn:disabled 정합 */
@@ -803,7 +901,6 @@
 .field.is-error:focus-visible,
 .field.is-error:focus {
 	border-color: rgb(var(--crit));
-	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
 }
 
 /* ── select — native <select> 유지 + 토큰 색 chevron ─────────────────────────
@@ -837,17 +934,20 @@
 	box-sizing: border-box;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	transition: border-color 0.12s, box-shadow 0.12s;
 	padding-left: 9px;                 /* affix 좌측 gutter — input 자체 좌패딩은 제거 */
 }
 .field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
 	border-color: rgb(var(--accent));
-	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
+}
+.field-affix:has(:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
 }
 .field-affix__sym {
-	font-size: 12.5px;
+	font-size: var(--fs-control);
 	color: rgb(var(--dim));            /* 기존 "$" span 의 text-dim 정합 */
 	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 	user-select: none;
@@ -862,12 +962,11 @@
 	width: 100%;
 }
 .field-affix .field:focus-visible,
-.field-affix .field:focus { box-shadow: none; border: none; }
+.field-affix .field:focus { box-shadow: none; border: none; outline: none; }
 /* affix error — wrapper hue 교체 (input 은 그대로 borderless) */
 .field-affix.is-error { border-color: rgb(var(--crit)); }
 .field-affix.is-error:focus-within {
 	border-color: rgb(var(--crit));
-	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
 }
 
 /* reduced-motion — transition 제거 (base.css §8.4 계약 정합). 색 변화는 즉시 적용. */
@@ -934,7 +1033,7 @@
 	bottom: 24px;
 	right: 24px;
 	padding: 10px 14px;
-	border-radius: 8px;
+	border-radius: var(--radius-tile);
 	font-size: var(--fs-body, 13px);
 	box-shadow: var(--shadow-overlay);
 	z-index: var(--z-toast);

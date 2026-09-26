@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/wiki.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -52,7 +52,11 @@ interface WikiHelpers {
     backlogState: FetchState,
     cyclesState: FetchState,
   ) => LaneModel;
-  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean };
+  buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
+  buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
+  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
+  describeNotesByTypeW: (state: FetchState) => string;
+  describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
 
@@ -138,6 +142,29 @@ test("loading, error and unreported each read as themselves, never as a value", 
   }
 });
 
+// State contract: loading and failure never share a token, and a failed payload is announced once at its group.
+
+test("notes by type reads loading, failure and a count as three different tokens", () => {
+  const tokens = [
+    helpers.describeNotesByTypeW(loading),
+    helpers.describeNotesByTypeW(errored),
+    helpers.describeNotesByTypeW(ready({ by_type: [{ note_type: "concept", count: 3 }] })),
+  ];
+  assert.equal(new Set(tokens).size, 3, `tokens must differ: ${tokens.join(" / ")}`);
+  assert.equal(tokens[2], "1 types");
+});
+
+test("a failed band feeder is named once for the group, never per tile", () => {
+  const tiles = [...helpers.buildTileBandModel(errored, errored, ready({ backlog: null }))];
+  for (const tile of tiles) {
+    assert.equal(tile.state, "error");
+    assert.doesNotMatch(tile.sub || "", /Couldn't load/, `tile ${tile.key} repeats the banner`);
+  }
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, errored)], ["daily cycle summary", "search index"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(errored, ready({}))], ["daily cycle summary"]);
+  assert.deepEqual([...helpers.readTileBandFailuresW(loading, ready({}))], []);
+});
+
 // The alarm lane: a check that could not run is never silence.
 
 test("every feeder that errored is named unchecked, and none is named when all answer", () => {
@@ -187,17 +214,43 @@ test("a first-seen date drives the waiting age and the parked threshold", () => 
   ).alarms[0] as Alarm;
   assert.equal(fresh.parked, false);
   assert.match(fresh.detail, /Waiting 2 days \(since \d{4}-\d{2}-\d{2}\)/);
+});
 
-  // The 30-run streak would park this pair if the run fallback were still in charge.
-  const parked = helpers.buildAlarmLaneModel(
+test("each waiting proposal gets its own lane row and age, parked rows last", () => {
+  // Server order puts the long-parked pair first; the lane must not let its age speak for the others.
+  const alarms = helpers.buildAlarmLaneModel(
     ready({}),
     ready({}),
-    proposalBacklog(["h1", "h2"], { h1: isoDaysAgo(20), h2: isoDaysAgo(1) }),
+    proposalBacklog(["old", "new", "mid"], {
+      old: isoDaysAgo(77),
+      new: isoDaysAgo(1),
+      mid: isoDaysAgo(3),
+    }),
     unchangedCycles(30),
-  ).alarms[0] as Alarm;
-  assert.equal(parked.parked, true);
-  // The oldest waiting pair sets the age, not the newest.
-  assert.match(parked.detail, /Waiting 20 days/);
+  ).alarms.map((a) => ({ ...a })) as Alarm[];
+  const lane = [...alarms];
+
+  assert.equal(alarms.length, 3, "one row per proposal");
+  assert.equal(new Set(alarms.map((a) => a.key)).size, 3, "row keys must be unique");
+  assert.deepEqual(
+    lane.map((a) => a.detail.match(/Waiting (\d+) day/)?.[1]),
+    ["1", "3", "77"],
+  );
+  assert.deepEqual(lane.map((a) => a.parked), [false, false, true]);
+});
+
+test("a parked proposal drops to the neutral tone while a waiting one stays a warning", () => {
+  const alarms = helpers.buildAlarmLaneModel(
+    ready({}),
+    ready({}),
+    proposalBacklog(["old", "new"], { old: isoDaysAgo(77), new: isoDaysAgo(1) }),
+    unchangedCycles(30),
+  ).alarms as Alarm[];
+
+  for (const alarm of alarms) {
+    assert.equal(alarm.tone, alarm.parked ? "neutral" : "warn", alarm.label);
+  }
+  assert.deepEqual([...alarms].map((a) => a.parked).sort(), [false, true], "both states are exercised");
 });
 
 test("without a first-seen map the age falls back to the unchanged-run count", () => {
@@ -293,3 +346,122 @@ test("a backlog built without a first-seen map carries an empty map, never undef
 function dedup(hashes: string[]) {
   return { dedup_proposals: { proposals: hashes.map((h) => ({ cluster_hash: h })) } };
 }
+
+// The cycle p95 is demoted to the run-history summary line, not dropped.
+
+test("the run-history summary carries the cycle p95 exactly when the server reports one", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const cycles = unchangedCycles(3);
+  const model = helpers.buildThroughputModel(cycles);
+  assert.ok(model.rows.length > 0, "fixture must yield run rows");
+
+  const reported = helpers.describeRunHistoryW(cycles, model, ready({ cycle_p95_ms: 4200 }));
+  assert.match(reported, /p95 4200ms/);
+
+  for (const summary of [ready({ cycle_p95_ms: null }), loading, errored]) {
+    assert.doesNotMatch(helpers.describeRunHistoryW(cycles, model, summary), /p95/);
+  }
+  helpers.window.UI.formatDuration = originalFormat;
+});
+
+// Broken links ride the library tile's caption, not a line of their own.
+test("the library tile's caption carries the broken-link count, and says so when the backlog omits it", () => {
+  const index = ready({ notes_total: 40 });
+  const rows = [
+    { name: "none found", deadlinks: [], expected: /0 broken links/ },
+    { name: "one found", deadlinks: [{ from: "a", to: "b" }], expected: /1 broken link\b/ },
+    { name: "not reported", deadlinks: undefined, expected: /broken links not reported/ },
+  ];
+  for (const row of rows) {
+    const backlog = ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 0, deadlink_dryrun: row.deadlinks } });
+    const library = helpers.buildTileBandModel(ready({}), index, backlog).find((tile) => tile.key === "library");
+    assert.match(library?.sub ?? "", row.expected, `${row.name}: ${library?.sub}`);
+  }
+});
+
+test("an index with no dirty flag on record explains itself instead of showing a dash", () => {
+  const tile = helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null }));
+  assert.equal(tile.state, "unavailable");
+  assert.notEqual(tile.value, "—");
+  assert.match(tile.sub ?? "", /no dirty flag/i);
+});
+
+// Run table grouping, note-type bars and the proposal anchor the alarm lane opens.
+
+interface RunGroup {
+  key: string;
+  count: number;
+  newest: { run_date: string };
+  oldest: { run_date: string };
+}
+const layoutHelpers = helpers as unknown as {
+  groupConstantRunsW: (reports: unknown[]) => RunGroup[];
+  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; count: number; share: number }>;
+  getProposalAnchorIdW: (hash: unknown) => string | null;
+  buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => { proposals: Array<{ cluster_hash: string }> };
+};
+
+function runs(statuses: Array<[string, number, number]>): unknown[] {
+  return statuses.map(([status, deadlinks_count, dedup_count], i) => ({
+    run_date: isoDaysAgo(i),
+    status,
+    deadlinks_count,
+    dedup_count,
+  }));
+}
+
+describe("consecutive runs sharing status and backlog collapse into one dated range", () => {
+  const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
+  const rows = [
+    { name: "27 identical runs read as one row of 27", reports: runs(same), counts: [27] },
+    { name: "a status change splits the streak around it", reports: runs([["ok", 0, 3], ["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]), counts: [2, 1, 1] },
+    { name: "a backlog change splits the streak", reports: runs([["ok", 0, 3], ["ok", 1, 3], ["ok", 1, 3]]), counts: [1, 2] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const groups = layoutHelpers.groupConstantRunsW(row.reports);
+      assert.deepEqual([...groups].map((g) => g.count), row.counts);
+      assert.equal(groups[0].newest.run_date, isoDaysAgo(0), "newest first");
+      const last = groups[groups.length - 1];
+      assert.equal(last.oldest.run_date, isoDaysAgo(row.reports.length - 1), "the oldest run closes the last range");
+    });
+  }
+});
+
+test("each note type's bar is its count's share of the largest type, and an all-zero index draws none", () => {
+  const rows = layoutHelpers.buildNoteTypeRowsW([
+    { note_type: "concept", count: 40 },
+    { note_type: "source", count: 10 },
+    { note_type: "empty", count: 0 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.share), [100, 25, 0]);
+  assert.deepEqual(
+    layoutHelpers.buildNoteTypeRowsW([{ note_type: "a", count: 0 }]).map((r) => r.share),
+    [0],
+  );
+});
+
+test("the merge-proposal list follows the alarm lane's order", () => {
+  const backlog = proposalBacklog(["old", "new", "mid"], {
+    old: isoDaysAgo(77),
+    new: isoDaysAgo(1),
+    mid: isoDaysAgo(3),
+  });
+  const lane = helpers.buildAlarmLaneModel(ready({}), ready({}), backlog, unchangedCycles(30)).alarms;
+  const list = layoutHelpers.buildMaintenanceModel(backlog, unchangedCycles(30)).proposals;
+  assert.deepEqual(
+    [...list].map((p) => `proposal-${p.cluster_hash}`),
+    [...lane].map((a) => a.key),
+  );
+});
+
+test("each proposal alarm names its own list item's anchor, and a hashless pair names none", () => {
+  const lane = helpers.buildAlarmLaneModel(ready({}), ready({}), proposalBacklog(["a b/c"]), unchangedCycles(1)).alarms as Array<
+    Alarm & { anchorId?: string | null }
+  >;
+  const anchor = layoutHelpers.getProposalAnchorIdW("a b/c");
+  assert.match(String(anchor), /^[A-Za-z0-9_-]+$/, "the anchor is a valid element id");
+  assert.equal(lane[0].anchorId, anchor);
+  assert.equal(layoutHelpers.getProposalAnchorIdW(undefined), null);
+});

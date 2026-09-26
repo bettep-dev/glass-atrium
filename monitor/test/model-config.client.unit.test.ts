@@ -18,13 +18,15 @@
 // cross-verifies the surviving client constant mirrors against the server SoT
 // (model-config-consts: free-text regex + budget regex/bounds).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
+
+import { buildUiSandbox } from "./client-sandbox.js";
 
 import {
   FREE_TEXT_MODEL_PATTERN,
@@ -471,6 +473,9 @@ function findAllMc(nodes: McNode[], match: (node: McTag) => boolean): McTag[] {
 const tagsMc = (nodes: McNode[], tag: string): McTag[] => findAllMc(nodes, (n) => n.tag === tag);
 const textsMc = (nodes: McTag[]): string[] => nodes.map((n) => textMc(n.children));
 
+// Pure region/error helpers come from the real ui.jsx; its components stay stubbed so their props are readable.
+const realUiMc = await buildUiSandbox<Record<string, unknown>>();
+
 async function loadMcScreens(
   overrides: { react?: Record<string, unknown>; fetch?: unknown } = {},
 ): Promise<Record<string, unknown>> {
@@ -495,9 +500,24 @@ async function loadMcScreens(
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: (p: Record<string, unknown>) => hMc("div", { className: "card-head" }, p.title, p.right),
+    SectionLabel: (p: Record<string, unknown>) =>
+      hMc(p.level === 3 ? "h3" : "h2", { className: "section-label" }, p.children),
     DetailSurface: (p: Record<string, unknown>) =>
       hMc("div", { role: "dialog" }, p.title, p.children, p.footer),
     titleOf: (v: unknown) => v,
+    FreshnessStamp: () => null,
+    RefreshButton: (p: Record<string, unknown>) => hMc("button", { ...p, "data-atom": "RefreshButton" }, "Refresh"),
+    RegionUnavailable: (p: Record<string, unknown>) =>
+      hMc("div", { ...p, "data-atom": "RegionUnavailable" }, String(p.source)),
+    SkeletonRows: (p: Record<string, unknown>) =>
+      Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
+    TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
+    INITIAL_REGION_STATE: realUiMc.INITIAL_REGION_STATE,
+    putRegionRequest: realUiMc.putRegionRequest,
+    putRegionData: realUiMc.putRegionData,
+    putRegionFailure: realUiMc.putRegionFailure,
+    getErrorCopy: realUiMc.getErrorCopy,
+    getFetchError: realUiMc.getFetchError,
   };
   const ctx: Record<string, unknown> = {
     window: { UI: uiStub, addEventListener: () => {}, removeEventListener: () => {} },
@@ -607,16 +627,27 @@ function budgetsPropsMc(budgets: unknown[] = BUDGET_ROW_FIXTURE_MC): Record<stri
 const tonedMc = (nodes: McNode[], tone: string): McTag[] =>
   findAllMc(nodes, (n) => n.props["data-tone"] === tone);
 
-test("both ledgers carry the same four columns — no Sync or Enforcement column survives", () => {
+test("both ledgers carry the same three columns — timing is stated once per section, not per row", () => {
   for (const [name, props] of [
     ["DomainsSectionMC", domainsPropsMc()],
     ["BudgetsSectionMC", budgetsPropsMc()],
   ] as const) {
     const headers = textsMc(tagsMc(renderComponentMc(screens[name], props), "th"));
-    assert.strictEqual(headers.length, 4, `${name}: four columns`);
-    assert.deepStrictEqual(headers.slice(2), ["Live", "Takes effect"], `${name}: live + timing`);
-    for (const gone of ["Sync", "Enforcement", "Actual"]) {
+    assert.strictEqual(headers.length, 3, `${name}: three columns`);
+    assert.deepStrictEqual(headers.slice(2), ["Live"], `${name}: live last`);
+    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect"]) {
       assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
+    }
+  }
+});
+
+test("every ledger column header goes through the shared TableHead atom, so it carries scope=col", () => {
+  for (const name of ["DomainsSectionMC", "BudgetsSectionMC"] as const) {
+    const props = name === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
+    const headers = tagsMc(renderComponentMc(screens[name], props), "th");
+    assert.ok(headers.length > 0, `${name}: headers rendered`);
+    for (const th of headers) {
+      assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
     }
   }
 });
@@ -634,10 +665,7 @@ test("a row in its steady state spends no tone; only a drifted row raises one wa
   assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
 });
 
-test("the takes-effect column reads the payload's apply_mode, unknown modes included", () => {
-  const known = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
-  assert.ok(textMc(known).includes("Next spawn"), "next-spawn labelled");
-
+test("an apply_mode the screen does not map is stated verbatim as the take-effect mode", () => {
   const unknown = renderComponentMc(
     screens.DomainsSectionMC,
     domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], apply_mode: "some-future-mode" }]),
@@ -717,9 +745,15 @@ test("section headers survive every state, and a non-ready body never reads as z
     );
     assert.ok(label.length > 0, `${name}: section header present when ready`);
 
+    const ready = renderComponentMc(screens[name], { ...props, state: "ready" });
     const loading = renderComponentMc(screens[name], { ...props, state: "loading" });
-    assert.strictEqual(textMc(loading), label, `${name}: header text unchanged while loading`);
-    assert.strictEqual(tagsMc(loading, "table").length, 0, "no table while loading");
+    const columnsOf = (tree: McNode[]) => textsMc(tagsMc(tagsMc(tree, "thead"), "th"));
+    assert.ok(textMc(loading).startsWith(label), `${name}: section header unchanged while loading`);
+    assert.deepStrictEqual(
+      columnsOf(loading),
+      columnsOf(ready),
+      `${name}: the skeleton sits under the real column headers, so nothing shifts when rows land`,
+    );
     assert.ok(
       findAllMc(loading, (n) => n.props["aria-busy"] === "true").length === 1,
       `${name}: loading is announced as busy, not as empty`,
@@ -731,21 +765,18 @@ test("section headers survive every state, and a non-ready body never reads as z
   }
 });
 
-test("the header sync token answers once per state and stamps when it was read", () => {
-  const readAt = Date.UTC(2026, 0, 2, 3, 4, 5);
+test("the header sync token answers once per state and leaves the as-of stamp to the shared atom", () => {
   const ready = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "ok",
-    receivedAt: readAt,
   });
   assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
-  assert.ok(textMc(ready).includes("as of"), "the reading carries its as-of stamp");
-  assert.strictEqual(tagsMc(ready, "i").length, 0, "an ok state spends no glyph");
+  assert.ok(!textMc(ready).includes("as of"), "the header freshness atom owns the stamp, not the token");
+  assert.strictEqual(tagsMc(ready, "i").length, 0, "the freshness stamp owns the one tick, so the steady state spends no glyph");
 
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "drift",
-    receivedAt: readAt,
   });
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
 
@@ -796,6 +827,44 @@ test("save results surface only when a surface did not write cleanly", () => {
   assert.ok(textMc(disclosures[0].children).includes("daemon-config.json"), "ok row still listed");
 });
 
+describe("a save-result row reads as words: status in plain words, mono only on the surface id", () => {
+  const rows = [
+    { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written", reason: null },
+    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped", reason: "session not running" },
+    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed", reason: "permission denied" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: row.result });
+      const text = textMc(tree);
+      const surface = row.result.surface ?? row.result.file;
+      const mono = findAllMc(tree, (n) => String(n.props.className ?? "").includes("font-mono"));
+
+      assert.ok(text.includes(row.word), `status reads "${row.word}"`);
+      assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
+      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [surface], "mono covers the surface id alone");
+      const reasons = findAllMc(tree, (n) => String(n.props.className ?? "").includes("text-faint")).map((n) => textMc(n.children));
+      assert.deepStrictEqual(reasons, row.reason === null ? [] : [row.reason], "the reason shows exactly when the row carries one");
+    });
+  }
+
+  test("a result missing its surface and status renders no placeholder", () => {
+    const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: { reason: "no target resolved" } });
+    assert.ok(!textMc(tree).includes("—"), "no dash stands in for an empty field");
+    assert.ok(textMc(tree).includes("no target resolved"), "the reason still shows");
+  });
+});
+
+test("a read-only model row with no saved value renders no placeholder badge", () => {
+  const readOnly = [{ ...DOMAIN_ROW_FIXTURE_MC[0], desired: "", actual: null, editable: false }];
+  const props = domainsPropsMc(readOnly);
+  (props.form as { models: Record<string, string> }).models["model.dev"] = "";
+  const tree = renderComponentMc(screens.DomainsSectionMC, props);
+  const modelCell = tagsMc(tree, "td")[1];
+
+  assert.strictEqual(textMc(modelCell.children), "", "the empty model cell stays empty");
+});
+
 test("the unsaved-changes count equals the field count the partial PUT sends", () => {
   const count = sandboxFnMc<(p: unknown) => number>("countChangesMC");
   const baseline = {
@@ -813,44 +882,170 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
   assert.strictEqual(count(payload), fields, "count tracks the payload, not the row total");
 });
 
-
-// The header token renders its stamp only under `receivedAt`, so a load path that omits it
-// leaves every Refresh unstamped — the relationship pinned here is GET → stamped reading.
-test("a completed GET stamps the reading with its receive time", async () => {
-  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
-  const states: Record<string, unknown>[] = [];
+// Drives the screen's load effect once with hook state kept in cells, so the landed values are readable.
+async function runScreenLoadMc(fetchImpl: unknown): Promise<unknown[]> {
+  const cells: Array<{ value: unknown }> = [];
   const live = await loadMcScreens({
-    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => fixture }),
+    fetch: fetchImpl,
     react: {
       useEffect: (fn: () => unknown) => {
         fn();
       },
-      useState: (init: unknown) => [
-        typeof init === "function" ? (init as () => unknown)() : init,
-        (next: unknown) => {
-          if (next !== null && typeof next === "object" && "status" in (next as object)) {
-            states.push(next as Record<string, unknown>);
-          }
-        },
-      ],
+      useState: (init: unknown) => {
+        const cell = { value: typeof init === "function" ? (init as () => unknown)() : init };
+        cells.push(cell);
+        return [cell.value, (next: unknown) => {
+          cell.value = typeof next === "function" ? (next as (prev: unknown) => unknown)(cell.value) : next;
+        }];
+      },
     },
   });
-
-  const before = Date.now();
   renderComponentMc(live.ScreenModelConfig, {});
   await new Promise((resolve) => setTimeout(resolve, 0));
+  return cells.map((cell) => cell.value);
+}
 
-  const ready = states.filter((s) => s.status === "ready");
-  assert.strictEqual(ready.length, 1, "the resolved GET produced one ready reading");
-  const receivedAt = ready[0]?.receivedAt;
-  assert.ok(
-    typeof receivedAt === "number" && receivedAt >= before,
-    "the ready reading carries the time it was received",
+const isRegionMc = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && "pendingRequest" in v;
+
+test("a completed GET lands the config and stamps the header with its receive time", async () => {
+  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
+  const before = Date.now();
+  const values = await runScreenLoadMc(() =>
+    Promise.resolve({ ok: true, status: 200, json: async () => fixture }),
   );
-  const token = textMc(
-    renderComponentMc(live.SyncTokenMC, { state: "ready", sync: "ok", receivedAt }),
+
+  const config = values.find(isRegionMc);
+  assert.strictEqual(config?.status, "ready", "the read landed");
+  assert.strictEqual(config?.busy, false, "nothing is in flight once it landed");
+  assert.deepStrictEqual(sameRealm(config?.data), fixture, "the region holds the read");
+  const stamps = values.filter((v) => typeof v === "number" && v >= before);
+  assert.strictEqual(stamps.length, 1, "the header stamp carries the time the read was received");
+});
+
+test("a failed GET keeps the region out of ready and never advances the stamp", async () => {
+  const before = Date.now();
+  const values = await runScreenLoadMc(() =>
+    Promise.resolve({ ok: false, status: 500, statusText: "Internal Server Error", text: async () => "boom" }),
   );
-  assert.ok(token.includes("as of"), "that stamp is what the header token renders");
+
+  const config = values.find(isRegionMc);
+  assert.strictEqual(config?.status, "error", "no data was ever read");
+  assert.ok(String(config?.error).startsWith("HTTP 500"), "the failure keeps its cause for Details");
+  assert.strictEqual(values.filter((v) => typeof v === "number" && v >= before).length, 0, "no stamp from a failure");
+});
+
+test("a refresh keeps every unsaved edit and takes every untouched field from the new read", () => {
+  type FormMc = { models: Record<string, string>; budgets: Record<string, string> };
+  const getRefreshedForm = sandboxFnMc<(form: FormMc | null, prevData: unknown, data: unknown) => FormMc>(
+    "getRefreshedFormMC",
+  );
+  const readOf = (dev: string, dp: string, worker: string) => ({
+    domains: [
+      { domain: "model.dev", desired: dev },
+      { domain: "model.dp", desired: dp },
+    ],
+    budgets: [{ domain: "budget.worker_max_usd", desired: worker }],
+  });
+  const prevRead = readOf("claude-opus-4-8", "claude-sonnet-4-6", "10.00");
+  const nextRead = readOf("claude-opus-5", "claude-haiku-4-5", "12.00");
+  const edited: FormMc = {
+    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-sonnet-4-6" },
+    budgets: { "budget.worker_max_usd": "3.00" },
+  };
+
+  assert.deepStrictEqual(sameRealm(getRefreshedForm(edited, prevRead, nextRead)), {
+    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-haiku-4-5" },
+    budgets: { "budget.worker_max_usd": "3.00" },
+  });
+  assert.deepStrictEqual(
+    sameRealm(getRefreshedForm(null, null, nextRead)),
+    { models: { "model.dev": "claude-opus-5", "model.dp": "claude-haiku-4-5" }, budgets: { "budget.worker_max_usd": "12.00" } },
+    "the first read has no buffer to keep",
+  );
+});
+
+test("a read in flight keeps the header Refresh busy until the first answer lands", async () => {
+  const fixture = { domains: [], budgets: [], known_models: [], daemon_config_sync: "ok" };
+  const cells: unknown[] = [];
+  let hookIndex = 0;
+  let isMounted = false;
+  let land: (res: unknown) => void = () => {};
+  const live = await loadMcScreens({
+    fetch: () => new Promise((resolve) => (land = resolve)),
+    react: {
+      // hook cells persist across renders by call order → each render reads the state the last one left
+      useState: (init: unknown) => {
+        const i = hookIndex++;
+        if (!(i in cells)) cells[i] = typeof init === "function" ? (init as () => unknown)() : init;
+        return [cells[i], (next: unknown) => {
+          cells[i] = typeof next === "function" ? (next as (prev: unknown) => unknown)(cells[i]) : next;
+        }];
+      },
+      useEffect: (fn: () => unknown) => {
+        if (!isMounted) fn();
+      },
+    },
+  });
+  const getRefresh = () => {
+    hookIndex = 0;
+    const tree = renderComponentMc(live.ScreenModelConfig, {});
+    isMounted = true;
+    return findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton")[0]?.props;
+  };
+
+  getRefresh();
+  const inFlight = getRefresh();
+  assert.strictEqual(inFlight?.isBusy, true, "first read in flight → the atom is busy");
+  assert.strictEqual(inFlight?.hasRead, false, "nothing read yet → the atom says Loading");
+
+  land({ ok: true, status: 200, json: async () => fixture });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const landed = getRefresh();
+  assert.strictEqual(landed?.isBusy, false, "the answer landed → Refresh is pressable again");
+  assert.strictEqual(landed?.hasRead, true, "a read landed → the atom stops saying Loading");
+});
+
+describe("a failed config read carries the shared error card with one Retry that reloads the config", () => {
+  const error = "HTTP 500 Internal Server Error — boom";
+  const rows = [
+    { name: "cold — nothing was ever read", state: { status: "error", data: null, error, busy: false } },
+    { name: "warm — a refresh failed after an earlier read", state: { status: "ready", data: {}, error, busy: false } },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const failed = { ...(realUiMc.INITIAL_REGION_STATE as object), ...row.state };
+      const failedScreens = await loadMcScreens({
+        react: {
+          useState: (init: unknown) => [init === realUiMc.INITIAL_REGION_STATE ? failed : init, () => {}],
+        },
+      });
+      const tree = renderComponentMc(failedScreens.ScreenModelConfig, {});
+      const refresh = findAllMc(tree, (n) => n.props["data-atom"] === "RefreshButton");
+      const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+      const cards = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
+
+      assert.strictEqual(refresh[0]?.props.isBusy, false, "a settled failure leaves Refresh pressable");
+      assert.strictEqual(cards.length, 1, "the failed load is announced once, as the shared card");
+      assert.strictEqual(typeof cards[0].props.onRetry, "function", "the card carries its Retry");
+      assert.strictEqual(cards[0].props.onRetry, refresh[0]?.props.onRefresh, "Retry performs the same reload as Refresh");
+      assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 0, "no second, page-local Retry");
+    });
+  }
+});
+
+test("a failed save names the next step and keeps the server's raw answer behind Details", () => {
+  const raw = "HTTP 422 Unprocessable Entity — budget.worker_max_usd must be between 0.05 and 50.00";
+  const tree = renderComponentMc(screens.ErrorBannerMC, { title: "Couldn't save changes", detail: raw, onRetry: () => {} });
+
+  const details = tagsMc(tree, "details");
+  assert.strictEqual(details.length, 1, "one Details toggle");
+  assert.ok(textMc(details).includes(raw), "the raw answer stays reachable");
+  const visible = textMc(tree).replace(textMc(details), "");
+  assert.ok(!visible.includes("HTTP 422"), "no raw status in the visible copy");
+  assert.ok(visible.includes("Open Details"), "a refused request points at Details");
+  assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 1, "one Retry for the save");
 });
 
 test("the drift banner triggers on any drifted row, not on the file state alone", () => {
@@ -928,4 +1123,182 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
     onResync: () => {},
   });
   assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
+});
+
+test("an empty roster never reads as in sync, whatever the file state says", () => {
+  const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
+  for (const fileSync of ["ok", "drift", "file-missing"]) {
+    const sync = headerSync({ daemon_config_sync: fileSync, domains: [], budgets: [] });
+    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }));
+    assert.ok(!token.includes("In sync"), `${fileSync}: an empty roster is not 'In sync'`);
+    assert.ok(token.includes("Nothing to sync"), `${fileSync}: the empty roster is named`);
+  }
+  const populated = headerSync({ daemon_config_sync: "ok", domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
+  assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
+});
+
+// Live cell of the first body row — the third column in both ledgers.
+function liveCellMc(tree: McNode[]): McTag {
+  const bodyRow = tagsMc(tagsMc(tree, "tbody")[0].children, "tr")[0];
+  return tagsMc(bodyRow.children, "td")[2];
+}
+
+test("Live repeats nothing in the steady state and shows the value only when it differs", () => {
+  for (const [name, props, drifted] of [
+    ["DomainsSectionMC", domainsPropsMc(), domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }])],
+    ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
+  ] as const) {
+    const steady = liveCellMc(renderComponentMc(screens[name], props));
+    assert.strictEqual(textMc([steady]), "Matches saved", `${name}: a matching live value says so in words`);
+
+    const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
+    assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
+    assert.ok(/claude-sonnet-5|\$12\.00/.test(differs), `${name}: the differing value is shown`);
+  }
+});
+
+test("an inherit live value names what it inherits from, never a bare 'inherit'", () => {
+  for (const [actual, source] of [
+    ["inherit", "session model"],
+    ["inherit (settings.json)", "settings.json model"],
+  ] as const) {
+    const tree = renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual, drift: true }]),
+    );
+    const live = textMc([liveCellMc(tree)]);
+    assert.ok(live.includes(source), `${actual}: names the ${source}`);
+    assert.notStrictEqual(live.replace(/\s*drift$/, ""), actual, `${actual}: not shown raw`);
+  }
+});
+
+test("both ledgers sit on one column grid, so their Live columns line up", () => {
+  const gridOf = (tree: McNode[]): string =>
+    JSON.stringify(tagsMc(tree, "col").map((c) => c.props.style ?? c.props.width));
+  const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
+  assert.strictEqual(tagsMc(domains, "col").length, tagsMc(domains, "th").length, "one col per ledger column");
+  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
+  for (const tree of [domains, budgets]) {
+    const style = tagsMc(tree, "table")[0].props.style as Record<string, unknown> | undefined;
+    assert.strictEqual(style?.tableLayout, "fixed", "widths come from the grid, not the content");
+  }
+});
+
+const THREE_TIERS_MC = ["model.dev", "model.research", "model.meta"].map((domain) => ({
+  ...DOMAIN_ROW_FIXTURE_MC[0],
+  domain,
+}));
+
+test("each ledger is an h2 section with a captioned table, so the outline never skips h1 to h3", () => {
+  for (const [name, props, title] of [
+    ["DomainsSectionMC", domainsPropsMc(), "Model assignment"],
+    ["BudgetsSectionMC", budgetsPropsMc(), "Per-call budget caps"],
+  ] as const) {
+    const tree = renderComponentMc(screens[name], props);
+    assert.deepStrictEqual(textsMc(tagsMc(tree, "h2")), [title], `${name}: one h2 naming the section`);
+    assert.strictEqual(textsMc(tagsMc(tree, "caption")).length, 1, `${name}: the table is named by a caption`);
+  }
+});
+
+test("tier descriptions sit behind one section disclosure, not one per row", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
+  assert.strictEqual(tagsMc(tree, "details").length, 1, "one disclosure for three described tiers");
+  assert.ok(textMc(tree).includes("glass-atrium-meta-agent"), "every description stays reachable");
+});
+
+test("no ledger text drops below the 12px type floor", () => {
+  const overridden = {
+    ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]),
+    baseline: { models: { "model.dev": "claude-sonnet-5" }, budgets: {} },
+  };
+  const tree = renderComponentMc(screens.DomainsSectionMC, overridden);
+  const micro = findAllMc(tree, (n) => String(n.props.className ?? "").includes("fs-micro"));
+  assert.strictEqual(micro.length, 0, "no fs-micro (11px) text");
+});
+
+test("the saved-value line keeps its slot whether or not the field differs, so an edit never grows the row", () => {
+  const slotsOf = (baselineValue: string): number => {
+    const tree = renderComponentMc(screens.DomainsSectionMC, {
+      ...domainsPropsMc(),
+      baseline: { models: { "model.dev": baselineValue }, budgets: {} },
+    });
+    return findAllMc(tree, (n) => n.props["data-slot"] === "saved-line").length;
+  };
+  assert.strictEqual(slotsOf("claude-opus-4-8"), 1, "slot reserved while the field matches");
+  assert.strictEqual(slotsOf("claude-sonnet-5"), 1, "the same slot carries the saved value once it differs");
+});
+
+test("Cost & usage is linked once per ledger, and an unpriced tier says why its cost is a fallback", () => {
+  for (const pricingKnown of [true, false]) {
+    const tree = renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, pricing_known: pricingKnown }))),
+    );
+    const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one section link for three tiers`);
+    assert.strictEqual(
+      textMc(tree).includes("No price listed"),
+      !pricingKnown,
+      `pricing_known=${pricingKnown}: the fallback note follows pricing_known`,
+    );
+  }
+});
+
+const countMc = (text: string, needle: string): number => text.split(needle).length - 1;
+
+test("a take-effect mode shared by every row is stated once, and a row that differs names its own", () => {
+  const uniform = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC)));
+  assert.strictEqual(countMc(uniform, "Next spawn"), 1, "three next-spawn rows → stated once");
+
+  const mixed = THREE_TIERS_MC.map((d, i) => (i === 2 ? { ...d, apply_mode: "next-cycle" } : d));
+  const text = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(mixed)));
+  assert.strictEqual(countMc(text, "Next spawn"), 1, "the shared mode stays stated once");
+  assert.strictEqual(countMc(text, "Next cycle"), 1, "the differing row names its own mode");
+});
+
+test("the per-file list groups files under each model, so every model value is shown whole once", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([
+      {
+        ...DOMAIN_ROW_FIXTURE_MC[0],
+        actual: "mixed",
+        drift: true,
+        files: [
+          { file: "agents/a.md", model: "claude-opus-4-8" },
+          { file: "agents/b.md", model: "claude-opus-4-8" },
+          { file: "agents/c.md", model: "claude-sonnet-5" },
+        ],
+      },
+    ]),
+  );
+  const [details] = tagsMc(tree, "details").filter((d) => textMc(d.children).includes("agents/a.md"));
+  const listed = textMc(details.children);
+  assert.strictEqual(countMc(listed, "claude-opus-4-8"), 1, "a model shared by two files is named once");
+  assert.strictEqual(countMc(listed, "claude-sonnet-5"), 1, "each model gets its group");
+  const truncatedModel = findAllMc(details.children, (n) =>
+    String(n.props.className ?? "").includes("truncate") && textMc(n.children).includes("claude-"));
+  assert.strictEqual(truncatedModel.length, 0, "no model value is cut off");
+});
+
+test("an invalid cap shows its reason and aria-invalid as soon as it is invalid, not only after blur", () => {
+  const props = budgetsPropsMc();
+  const tree = renderComponentMc(screens.BudgetsSectionMC, {
+    ...props,
+    form: { models: {}, budgets: { "budget.worker_max_usd": "-5" } },
+    errors: { "budget.worker_max_usd": "Must be between $0.05 and $50.00" },
+  });
+  const [input] = tagsMc(tree, "input");
+  assert.strictEqual(input.props["aria-invalid"], "true", "the field is marked invalid");
+  const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+  assert.ok(textsMc(alerts).some((t) => t.includes("Must be between")), "the reason sits beside the field");
+});
+
+test("a live value the payload does not carry is left out, never shown as a placeholder dash", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
+  );
+  assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
 });

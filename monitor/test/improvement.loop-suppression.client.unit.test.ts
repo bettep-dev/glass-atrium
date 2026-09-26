@@ -153,6 +153,7 @@ const SUPPRESSION = {
       label: "Non-promptable signal",
       count: 147,
       agents: 25,
+      cycles: 7,
       hint: "non-promptable remedy text",
     },
     {
@@ -160,10 +161,12 @@ const SUPPRESSION = {
       label: "Roster mismatch",
       count: 30,
       agents: 5,
+      cycles: 3,
       hint: "roster remedy text",
     },
   ],
   per_cycle_window_days: 7,
+  per_cycle_window_cycles: 7,
   pending_unpromptable: 28,
   pending_total: 47,
   off_registry_parked: 0,
@@ -277,10 +280,10 @@ test("the per-cycle window is shown with its counts", () => {
 
 test("held rows appear under their own cause, window-free", () => {
   const text = ledger(SUPPRESSION);
-  assert.match(text, /capped signature/, "the parked rows are the held section's whole content");
+  assert.match(text, /Capped signature/, "the parked rows are the held section's whole content");
   assert.match(
     text,
-    /design-decision signature/,
+    /Design decision signature/,
     "a park older than the discovery window is exactly the one waiting on a human",
   );
 });
@@ -337,7 +340,7 @@ test("the suppression sections stay silent while the payload is unavailable", ()
     "rendering an empty held section during load would report a healthy loop that was never measured",
   );
   assert.doesNotMatch(text, /agent-registry\.json/, "no gate note without the figures it gates");
-  assert.match(text, /live signature/, "the ledger itself still renders — only the join is missing");
+  assert.match(text, /Live signature/, "the ledger itself still renders — only the join is missing");
 });
 
 test("the ledger reports its own payload's loading and error states distinctly", () => {
@@ -348,4 +351,26 @@ test("the ledger reports its own payload's loading and error states distinctly",
   );
   const loading = sandbox.PatternLedgerCardI({ state: { status: "loading", data: null }, suppression: null });
   assert.doesNotMatch(textOf(loading), /No candidate patterns/, "loading is not emptiness");
+});
+
+test("every ledger section header states its window and its count", () => {
+  const text = ledger(SUPPRESSION).replace(/\s+/g, " ");
+  assert.match(text, /Live — can propose · discovered in the last 7 days[^(]*\( 1 \)/);
+  assert.match(text, /Inert — [^(]*· discovered in the last 7 days[^(]*\( 1 \)/);
+  // 1 + 7 held rows across the two parked buckets — the untruncated bucket total.
+  assert.match(text, /Held — terminal rows · all time[^(]*\( 8 \)/);
+  assert.match(text, /×N = times seen, all time/, "a ×N figure needs its population");
+});
+
+test("recurrence rows lead with agents affected and cycle coverage, not event volume", () => {
+  const text = ledger(SUPPRESSION).replace(/\s+/g, " ");
+  assert.match(text, /7 cycle days/, "the disclosure names its cycle denominator");
+  const agentsAt = text.indexOf("Agents affected");
+  const cyclesAt = text.indexOf("Cycle days");
+  const eventsAt = text.indexOf("Events");
+  assert.ok(agentsAt >= 0 && cyclesAt > agentsAt && eventsAt > cyclesAt, "events trail the population columns");
+  for (const [coverage, events] of [["7 of 7", " 147 "], ["3 of 7", " 30 "]]) {
+    const at = text.indexOf(coverage);
+    assert.ok(at >= 0 && text.indexOf(events, at) > at, `${coverage} precedes its event count`);
+  }
 });

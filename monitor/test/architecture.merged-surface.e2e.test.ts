@@ -530,11 +530,11 @@ test("AC-T17 the map renders no About this diagram prose section", async () => {
 	);
 });
 
-// 범례 표면 셀렉터 — 컴포넌트가 붙이던 클래스 전부. 하나라도 남으면 UI 가 살아 있음.
+// 걷어낸 대화형 범례의 표면 셀렉터 — 하나라도 남으면 그 UI 가 살아 있음.
+// 캡션의 정적 스와치 범례(.arch-legend-item)는 현행이라 대상 밖.
 const LEGEND_SELECTORS = [
 	".arch-legend-details",
 	".arch-legend-grid",
-	".arch-legend-item",
 	".arch-legend-swatch-box",
 	".arch-legend-swatch-line",
 ];
@@ -542,7 +542,7 @@ const LEGEND_SELECTORS = [
 // 분류별 흐림이 노드에 남기던 클래스 — 캔버스의 legend-focus, 대상 노드의 legend-hit.
 const NODE_DIM_SELECTOR = ".legend-focus, .legend-hit";
 
-test("AC-T19 the map renders no legend surface", async () => {
+test("the map renders no surface of the retired interactive legend", async () => {
 	await openMap(getLiveFixture());
 
 	const present = await page.evaluate(
@@ -556,7 +556,7 @@ test("AC-T19 the map renders no legend surface", async () => {
 	assert.deepEqual(
 		present.map(([sel]) => sel),
 		[],
-		`legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
+		`retired legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
 	);
 });
 
@@ -1338,6 +1338,7 @@ interface ClusterVisual {
 	rxComputed: string;
 	rectBox: ProbeRect | null;
 	labelBox: ProbeRect | null;
+	isTitleShown: boolean;
 	firstNodeTop: number | null;
 	scale: number;
 }
@@ -1408,6 +1409,8 @@ async function getVisualProbe(): Promise<VisualProbe> {
 				rxComputed: rcs ? rcs.rx : "",
 				rectBox: box ? (box.toJSON() as ProbeRect) : null,
 				labelBox: label ? (label.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				// a dropped title collapses to a 0×0 box at the origin, so its clearance is not measurable
+				isTitleShown: label ? getComputedStyle(label.closest(".cluster-label") || label).display !== "none" : false,
 				firstNodeTop,
 				scale: rect ? (rect.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
 			};
@@ -1555,7 +1558,12 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 
 	// 측정 조건의 실측치 — 같은 소스를 캔버스 CSS 밖(document.body)에 렌더하면 mermaid 자신의
 	// 스타일만 걸린 라벨이 나온다. 그것이 mermaid 가 상자 크기를 잰 서체다.
-	await getRenderProbe(page, "d52-font-baseline", CANONICAL_MAP.mermaid_drawn);
+	// the canvas renders with its map-only label override → the baseline must too, or the parity is against another font
+	const directive = await page.evaluate(
+		() => (window as never as { ARCH_MAP_LABEL_DIRECTIVE?: string }).ARCH_MAP_LABEL_DIRECTIVE ?? "",
+	);
+	assert.ok(directive.startsWith("%%{init"), "the screen no longer exposes its label directive");
+	await getRenderProbe(page, "d52-font-baseline", directive + CANONICAL_MAP.mermaid_drawn);
 	const baseline = await page.evaluate(() => {
 		const label = document.querySelector("#probe-host-d52-font-baseline .nodeLabel") as HTMLElement | null;
 		if (!label) return null;
@@ -1578,12 +1586,15 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 	);
 });
 
-test("P0-2-fix zone titles clear the zone edge and the first box below", async () => {
+test("every shown zone title clears the zone edge and the first box below", async () => {
 	await openMap(getLiveFixture());
 	const probe = await getVisualProbe();
+	const titled = probe.clusters.filter((c) => c.isTitleShown);
+
+	assert.ok(titled.length > 0, "no zone shows its title — the clearance claim is empty");
 
 	// 여백은 확대율과 무관한 주장이므로 사용자 단위로 판정하고 화면 px 은 기록만 한다.
-	const crowded = probe.clusters
+	const crowded = titled
 		.map((c) => {
 			const rect = c.rectBox;
 			const title = c.labelBox;
@@ -2481,12 +2492,12 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '표식 있음' 으로 균일하게 통과함(실측 — 종전의
 	// stroke 규칙은 classDef 인라인 !important 에 막혀 네 노드에서 안 걸렸는데, 그 자리를 UA 링이
 	// 덮고 있었음). 그래서 토큰에서 기대색을 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 갈라짐.
-	const accent = await getTokenColour("--accent");
-	const wrongColour = focused.filter((n) => n.ringStroke !== accent);
+	const focusRing = await getTokenColour("--focus-ring");
+	const wrongColour = focused.filter((n) => n.ringStroke !== focusRing);
 	assert.deepEqual(
 		wrongColour.map((n) => `${n.id}: ${n.ringStroke}`),
 		[],
-		`every node must mark focus in the accent the screen declares (${accent}) — another colour is the browser's own ring standing in for a rule that did not apply`,
+		`every node must mark focus in the focus-ring colour the screen declares (${focusRing}) — another colour is the browser's own ring standing in for a rule that did not apply`,
 	);
 
 	// 상태 링과 같은 반경 가족이어야 함 — 한 화면에서 굴린 표식과 각진 표식이 섞이면 둘이 다른 뜻으로 읽힘.
@@ -2522,7 +2533,7 @@ test("ADR-20 every node can carry a state ring, whatever classDef or shape it ha
 	);
 	assert.notEqual(
 		crit,
-		await getTokenColour("--accent"),
+		await getTokenColour("--focus-ring"),
 		"the verdict and the focus position must not read as the same colour",
 	);
 
@@ -2927,9 +2938,9 @@ test("AC-B2-6f a daemon part with no response carries no verdict, never a fabric
 
 	const unread = await getDaemonRowVerdicts();
 	assert.deepEqual(
-		unread.filter((row) => row.tone !== null || row.status !== "—"),
+		unread.filter((row) => row.tone !== null || row.status !== "Not loaded"),
 		[],
-		"a daemon part whose response never arrived must carry no tone and no status word — either one is an invented verdict",
+		"a daemon part whose response never arrived must carry no tone and read 'Not loaded' — a tone or a verdict word would be invented",
 	);
 
 	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.

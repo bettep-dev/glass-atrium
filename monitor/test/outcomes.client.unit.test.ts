@@ -16,12 +16,13 @@
 // not a drift-prone copy. NO render harness / component / interaction assertions
 // (the monitor has no jsdom/testing-library; see the plan Task Decomposition preamble).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
+import { buildScreenSandbox, buildUiSandbox } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -58,6 +59,20 @@ interface OutcomesHelpers {
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
   buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
+  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
+  getDetailValueLabelO: (axis: string, value: unknown) => string;
+  splitLessonO: (markdown: string) => { lesson: string; body: string };
+  formatToolUseO: (value: string) => string;
+  buildFilterChipsO: (
+    options: Array<{ value: string; label: string }>,
+    value: string,
+  ) => Array<{ key: string; label: string; isPressed: boolean }>;
+  getFilterChipValueO: (key: string) => string;
+  getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
+  getBandTileGlyphO: (tone: string) => string | null;
+  getGraderTileKeysO: (breakdown: Record<string, unknown>) => string[];
+  getStackedDayReadoutO: (point: Record<string, unknown>) => string;
+  getStackedChartLabelO: (grid: Array<Record<string, unknown>>) => string;
   window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
@@ -119,6 +134,9 @@ const outcomes = (await loadScreen(OUTCOMES_SRC, { window: { UI: {} } })) as unk
 // agents.jsx reads `window.UI.STICKY_TH_STYLE` at module top level → provide a
 // non-empty UI object so the eval does not throw (the value itself is unused here).
 const agents = (await loadScreen(AGENTS_SRC, { window: { UI: {} } })) as unknown as AgentsHelpers;
+// The real ui.jsx result names — the drawer title, chip and ledger cell all read these.
+const ui = await buildUiSandbox<{ resolveResultMeta: (result: string, closedAt: unknown) => { label: string } }>();
+outcomes.window.UI.resolveResultMeta = ui.resolveResultMeta;
 
 // Helper return arrays originate in the vm realm; re-materialize into this realm
 // before deep-equality (cross-realm prototype mismatch otherwise).
@@ -318,4 +336,295 @@ test("buildSummaryFlagO: review reasons come from the shared SoT and land in the
   const flag = outcomes.buildSummaryFlagO({ review_flag: true });
   assert.strictEqual(flag?.tone, "warn");
   assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
+});
+
+// --- buildActiveFilterChipsO: a chip reads like the filter control that set it ---
+
+describe("buildActiveFilterChipsO: each chip names its axis and value as the filter controls do", () => {
+  const rows = [
+    { name: "the default period adds no chip", filter: { days: 30 }, chips: [] },
+    { name: "another period names its window", filter: { days: 7 }, chips: ["Period: 7d"] },
+    { name: "a result names its label, not its enum", filter: { days: 30, result: "done_with_concerns" }, chips: ["Result: Done with caveats"] },
+    { name: "a flagged filter names its option", filter: { days: 30, review_flag: "false" }, chips: ["Flagged: Clear"] },
+    { name: "a task type keeps its canonical token", filter: { days: 30, task_type: "bug-fix" }, chips: ["Task type: bug-fix"] },
+    { name: "a missing confidence reads None", filter: { days: 30, confidence: "null" }, chips: ["Confidence: None"] },
+    { name: "a self-check names Pass", filter: { days: 30, metric_pass: "true" }, chips: ["Self-check: Pass"] },
+    { name: "an attribution names its short label", filter: { days: 30, attribution_source: "budget-truncation" }, chips: ["Attribution: budget-kill"] },
+    { name: "a keyword is quoted and shortened", filter: { days: 30, q: "a keyword longer than eighteen" }, chips: ['Keyword: "a keyword longer …"'] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
+    });
+  }
+});
+
+// --- Drawer values: one value, one name across chip, ledger cell and drawer ---
+
+describe("getDetailValueLabelO: a drawer value reads as the filter chip for the same value", () => {
+  const rows = [
+    { name: "a high confidence", axis: "confidence", value: "high", chipValue: "high" },
+    { name: "a low confidence", axis: "confidence", value: "low", chipValue: "low" },
+    { name: "a missing confidence", axis: "confidence", value: null, chipValue: "null" },
+    { name: "a passed self-check", axis: "metric_pass", value: true, chipValue: "true" },
+    { name: "a failed self-check", axis: "metric_pass", value: false, chipValue: "false" },
+    { name: "a missing self-check", axis: "metric_pass", value: null, chipValue: "null" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chip = sameRealm(outcomes.buildActiveFilterChipsO({ days: 30, [row.axis]: row.chipValue }))[0];
+      assert.strictEqual(`${chip.split(": ")[0]}: ${outcomes.getDetailValueLabelO(row.axis, row.value)}`, chip);
+    });
+  }
+});
+
+describe("splitLessonO: the body's Lesson section moves out so the drawer prints it once", () => {
+  const body = "# Outcome Record\n\n- **Agent**: a\n\n## Summary\n\nDid it.\n\n## Lesson\n\nDerive the reader from the writer.\n\n## Concerns\n\nNone.\n";
+
+  test("the lesson text comes out and no Lesson heading stays in the body", () => {
+    const split = outcomes.splitLessonO(body);
+    assert.strictEqual(split.lesson, "Derive the reader from the writer.");
+    assert.doesNotMatch(split.body, /Lesson/);
+  });
+
+  test("the sections around the lesson survive in order", () => {
+    assert.match(outcomes.splitLessonO(body).body, /## Summary\n\nDid it\.\n\n## Concerns\n\nNone\./);
+  });
+
+  test("a trailing lesson section ends at the end of the body", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n\n## Lesson\n\nLast words.\n");
+    assert.strictEqual(split.lesson, "Last words.");
+    assert.doesNotMatch(split.body, /Last words/);
+  });
+
+  test("a body without a lesson is returned unchanged", () => {
+    const split = outcomes.splitLessonO("## Summary\n\nx\n");
+    assert.deepEqual({ ...split }, { lesson: "", body: "## Summary\n\nx\n" });
+  });
+});
+
+describe("formatToolUseO: the recorded tool-use count reads as words, not key=value", () => {
+  const rows = [
+    { name: "an actual count alone", value: "actual=44", readable: "44 tool calls" },
+    { name: "an actual count with its estimate", value: "actual=44 declared=30", readable: "44 tool calls · 30 estimated" },
+    { name: "a single call reads singular", value: "actual=1 declared=3", readable: "1 tool call · 3 estimated" },
+    { name: "zero calls read plural", value: "actual=0", readable: "0 tool calls" },
+    { name: "an unrecognised shape passes through", value: "unknown", readable: "unknown" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(outcomes.formatToolUseO(row.value), row.readable);
+    });
+  }
+});
+
+// --- region fetch waves: held data survives a refresh, and only the newest request settles ---
+
+interface RegionState {
+  status: string;
+  data: unknown;
+  error: string | null;
+  busy: boolean;
+}
+type RegionSetter = (next: RegionState | ((prev: RegionState) => RegionState)) => void;
+interface RegionSandbox {
+  fetch: (url: string, init: { signal: AbortSignal }) => Promise<unknown>;
+  AbortController: typeof AbortController;
+  window: { UI: { INITIAL_REGION_STATE: RegionState; putRegionRequest: (s: RegionState, key: string, req: object) => RegionState } };
+  runRegionFetchO: (setter: RegionSetter, url: string, options?: { mapData?: (d: unknown) => unknown; onData?: () => void }) => () => void;
+  putSearchFailureO: (state: RegionState, request: object, err: unknown, elapsedMs: number) => RegionState;
+}
+
+const region = await buildScreenSandbox<RegionSandbox>(OUTCOMES_SRC);
+region.AbortController = AbortController;
+
+function createRegionStore(initial: RegionState) {
+  const store = { state: initial };
+  const setter: RegionSetter = (next) => {
+    store.state = typeof next === "function" ? next(store.state) : next;
+  };
+  return { store, setter };
+}
+
+// Fetch stub whose answers the test releases; an aborted signal rejects the way a browser does.
+function createDeferredFetch() {
+  const pending: Array<{ resolve: (res: unknown) => void }> = [];
+  region.fetch = (_url, { signal }) => new Promise((resolve, reject) => {
+    pending.push({ resolve });
+    signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+  return pending;
+}
+
+const okResponse = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+// Top-level consts stay lexical in the vm realm, so the 30 s outage threshold is restated here.
+const OUTAGE_MS = 30_000;
+const HELD = { status: "ready", data: { rows: ["held"] }, error: null, busy: false } as RegionState;
+
+describe("runRegionFetchO: a refresh never blanks what the page already shows", () => {
+  test("held data stays on screen while the refresh is in flight, then the new answer replaces it", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    assert.deepEqual(sameRealm({ status: store.state.status, data: store.state.data, busy: store.state.busy }), {
+      status: "ready", data: { rows: ["held"] }, busy: true,
+    });
+
+    pending[0].resolve(okResponse({ rows: ["new"] }));
+    await settle();
+    assert.deepEqual(sameRealm({ data: store.state.data, busy: store.state.busy }), { data: { rows: ["new"] }, busy: false });
+  });
+
+  test("a failed refresh keeps the held data and records the failure for the stamp", async () => {
+    region.fetch = async () => ({ ok: false, status: 500, statusText: "Internal Server Error", text: async () => "pg: down" });
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    region.runRegionFetchO(setter, "/api/x");
+    await settle();
+    assert.deepEqual(sameRealm(store.state.data), { rows: ["held"] });
+    assert.match(String(store.state.error), /^HTTP 500 Internal Server Error/);
+  });
+
+  test("aborting the wave ends the busy state without an error and keeps the held data", async () => {
+    createDeferredFetch();
+    const { store, setter } = createRegionStore({ ...region.window.UI.INITIAL_REGION_STATE, ...HELD });
+
+    const abort = region.runRegionFetchO(setter, "/api/x");
+    abort();
+    await settle();
+    assert.deepEqual(sameRealm({ busy: store.state.busy, error: store.state.error, data: store.state.data }), {
+      busy: false, error: null, data: { rows: ["held"] },
+    });
+  });
+
+  test("a wave superseded by a window change never lands and never advances the stamp", async () => {
+    const pending = createDeferredFetch();
+    const { store, setter } = createRegionStore(region.window.UI.INITIAL_REGION_STATE);
+    let landedCount = 0;
+    const onData = () => { landedCount += 1; };
+
+    const abortFirst = region.runRegionFetchO(setter, "/api/x?days=7", { onData });
+    abortFirst();
+    region.runRegionFetchO(setter, "/api/x?days=30", { onData });
+    pending[0].resolve(okResponse({ window: 7 }));
+    pending[1].resolve(okResponse({ window: 30 }));
+    await settle();
+
+    assert.deepEqual(sameRealm(store.state.data), { window: 30 });
+    assert.strictEqual(landedCount, 1, "only the landed read advances the stamp time");
+  });
+});
+
+describe("putSearchFailureO: only a sustained first-load failure reads as an outage", () => {
+  const rows = [
+    { name: "a first-load failure under the threshold is a region error", held: false, elapsed: 0, expected: "error" },
+    { name: "a first-load failure past the threshold is an outage", held: false, elapsed: 1, expected: "blocked" },
+    { name: "a failure over held rows keeps the rows even past the threshold", held: true, elapsed: 1, expected: "ready" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const request = {};
+      const base = row.held ? { ...region.window.UI.INITIAL_REGION_STATE, ...HELD } : region.window.UI.INITIAL_REGION_STATE;
+      const started = region.window.UI.putRegionRequest(base, "/api/search", request);
+      const elapsedMs = row.elapsed * OUTAGE_MS;
+      assert.strictEqual(region.putSearchFailureO(started, request, new Error("HTTP 500"), elapsedMs).status, row.expected);
+    });
+  }
+
+  test("a superseded request's failure leaves the newer request's state untouched", () => {
+    const started = region.window.UI.putRegionRequest(region.window.UI.INITIAL_REGION_STATE, "/api/search", {});
+    assert.strictEqual(region.putSearchFailureO(started, {}, new Error("HTTP 500"), OUTAGE_MS), started);
+  });
+});
+
+describe("buildFilterChipsO: the shared chip toolbar selects the same filter value the option carries", () => {
+  const options = [
+    { value: "", label: "All" },
+    { value: "done", label: "Done" },
+    { value: "fail", label: "Failed" },
+  ];
+
+  test("every chip's key maps back to its option's value, so a toggle sets exactly that filter", () => {
+    const chips = sameRealm(outcomes.buildFilterChipsO(options, ""));
+    assert.deepEqual(chips.map((chip) => outcomes.getFilterChipValueO(chip.key)), options.map((opt) => opt.value));
+    assert.equal(new Set(chips.map((chip) => chip.key)).size, options.length);
+  });
+
+  test("exactly the chip holding the current value is pressed, for every value", () => {
+    for (const option of options) {
+      const pressed = sameRealm(outcomes.buildFilterChipsO(options, option.value)).filter((chip) => chip.isPressed);
+      assert.deepEqual(pressed.map((chip) => chip.label), [option.label], `value "${option.value}"`);
+    }
+  });
+});
+
+describe("getLedgerRowStartsO: ledger rows share one roving sequence across the section headings", () => {
+  const rows = [
+    { name: "both sections filled", counts: [2, 3] },
+    { name: "an empty first section", counts: [0, 4] },
+    { name: "an empty last section", counts: [3, 0] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sections = row.counts.map((count) => ({ rows: Array.from({ length: count }, (_, i) => i) }));
+      const starts = sameRealm(outcomes.getLedgerRowStartsO(sections));
+      const indexes = sections.flatMap((section, s) => section.rows.map((_, i) => starts[s] + i));
+      const total = row.counts.reduce((sum, count) => sum + count, 0);
+      assert.deepEqual(indexes, Array.from({ length: total }, (_, i) => i));
+    });
+  }
+});
+
+describe("getBandTileGlyphO: a status tile shows a glyph only when its tone claims a problem", () => {
+  const rows = [
+    { name: "ok carries no glyph, so a quiet Failed tile never shows a check", tone: "ok", glyph: null },
+    { name: "neutral carries no glyph", tone: "neutral", glyph: null },
+    { name: "warn shows the warning glyph", tone: "warn", glyph: "warn" },
+    { name: "crit shows the cross glyph", tone: "crit", glyph: "x" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(outcomes.getBandTileGlyphO(row.tone), row.glyph);
+    });
+  }
+});
+
+describe("getGraderTileKeysO: the legacy tile appears only when it counts something", () => {
+  const measured = ["verified_pass", "unverified", "verified_fail"];
+
+  test("a zero legacy count drops its tile and keeps every measured tile", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 3, unverified: 0, verified_fail: 1, not_measured: 0 }));
+    assert.deepEqual(keys, measured);
+  });
+
+  test("a non-zero legacy count keeps its tile after the measured ones", () => {
+    const keys = sameRealm(outcomes.getGraderTileKeysO({ verified_pass: 0, unverified: 0, verified_fail: 0, not_measured: 7 }));
+    assert.deepEqual(keys, [...measured, "not_measured"]);
+  });
+});
+
+describe("getStackedDayReadoutO: the chart readout names the day's total and every present category", () => {
+  test("each non-zero category appears with its count, and zero categories are left out", () => {
+    const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });
+    assert.match(readout, /12 records/);
+    assert.match(readout, /Recorded properly 9/);
+    assert.match(readout, /Missing report 1/);
+    assert.match(readout, /Reconstructed 2/);
+    assert.doesNotMatch(readout, /Untraceable/);
+  });
+
+  test("an empty day says whether it was read or fell before the data window", () => {
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0 }), /No records/);
+    assert.match(outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 0, outOfRange: true }), /Not read/);
+  });
+});
+
+describe("getStackedChartLabelO: the chart's accessible name summarises the range", () => {
+  test("the name states the day count and the summed record total", () => {
+    const label = outcomes.getStackedChartLabelO([{ day: "a", total: 4 }, { day: "b", total: 0 }, { day: "c", total: 6 }]);
+    assert.match(label, /3 days/);
+    assert.match(label, /10 records/);
+  });
 });

@@ -487,3 +487,55 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
     await deleteDoc(app, pred.id);
   }
 });
+
+test("every search hit names its revision chain's root, so revisions of one document can collapse into one row", async () => {
+  // letters-only token → one lexeme under the 'simple' parser, unique to this run
+  const word = randomUUID().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]);
+  const created: number[] = [];
+  try {
+    let supersedesId: number | undefined;
+    for (const label of ["root", "rev1", "rev2"]) {
+      const title = `${makeTitle(label)} ${word}`;
+      const res = await postCreate(app, {
+        title,
+        prefix: "계획",
+        doc_status: "progress",
+        author: "tester",
+        html_body: makeHtmlBody(`${title}-body`),
+        ...(supersedesId === undefined ? {} : { supersedes_id: supersedesId }),
+      });
+      assert.strictEqual(res.status, 201, `${label} POST 201`);
+      supersedesId = (res.body as { id: number }).id;
+      created.push(supersedesId);
+    }
+    const loneTitle = `${makeTitle("lone")} ${word}`;
+    const lone = await postCreate(app, {
+      title: loneTitle,
+      prefix: "계획",
+      doc_status: "progress",
+      author: "tester",
+      html_body: makeHtmlBody(`${loneTitle}-body`),
+    });
+    assert.strictEqual(lone.status, 201, "lone POST 201");
+    const loneId = (lone.body as { id: number }).id;
+    created.push(loneId);
+
+    const res = await app.inject({ method: "GET", url: `/api/clauded-docs/search?q=${word}&limit=50` });
+    assert.strictEqual(res.statusCode, 200);
+    const hits = (res.json() as { rows: Array<{ id: number; chain_root_id: number; supersedes_id: number | null }> }).rows;
+    const byId = new Map(hits.map((h) => [h.id, h]));
+    const [rootId, rev1Id, rev2Id] = created;
+
+    assert.deepEqual(
+      [rootId, rev1Id, rev2Id, loneId].map((id) => byId.get(id)?.chain_root_id),
+      [rootId, rootId, rootId, loneId],
+      "each revision points at the chain root; a document with no predecessor is its own root",
+    );
+    assert.deepEqual(
+      [rootId, rev1Id, rev2Id].map((id) => byId.get(id)?.supersedes_id),
+      [null, rootId, rev1Id],
+    );
+  } finally {
+    for (const id of created.reverse()) await deleteDoc(app, id);
+  }
+});

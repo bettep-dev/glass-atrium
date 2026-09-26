@@ -275,3 +275,138 @@ test("GET /api/cost/kpi: KPI band shape + invariants (R09)", async () => {
   assert.strictEqual(body.day_bucket_timezone, DAY_BUCKET_TIMEZONE);
   assert.ok(/\d{4}-\d{2}-\d{2}T/.test(body.fetched_at), "fetched_at is ISO");
 });
+
+// Seeds one session run on two models plus a model-less event, so both P8 relationships hold on real rows.
+const P8_SESSION_A = `p8-top-model-a-${process.pid}`;
+const P8_SESSION_B = `p8-top-model-b-${process.pid}`;
+
+async function seedP8Events(): Promise<void> {
+  const prisma = getPrisma();
+  const events: Array<[string, string | null, number, string]> = [
+    [P8_SESSION_A, "model-cheap", 1, "end_turn"],
+    [P8_SESSION_A, "model-dear", 3, "tool_use"],
+    [P8_SESSION_A, null, 0.5, "end_turn"],
+    [P8_SESSION_B, "model-cheap", 2, "end_turn"],
+  ];
+  for (const [i, [session, model, cost, reason]] of events.entries()) {
+    await prisma.$executeRaw`
+      INSERT INTO core.cost_events
+        (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
+         cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
+         stop_reason, model, parse_error)
+      VALUES (CURRENT_DATE, '12:00:00', ${session}, 'turn', ${`${session}-${i}`}, 10, 10, 0, 0,
+              ${cost}, 0, 1, ${reason}, ${model}, false)
+    `;
+  }
+}
+
+async function clearP8Events(): Promise<void> {
+  await getPrisma().$executeRaw`
+    DELETE FROM core.cost_events WHERE session_id IN (${P8_SESSION_A}, ${P8_SESSION_B})
+  `;
+}
+
+test("GET /api/cost/session-distribution: each row's top_model is the model carrying most of that session's cost", async (t) => {
+  await seedP8Events();
+  t.after(clearP8Events);
+  const res = await app.inject({ method: "GET", url: "/api/cost/session-distribution?days=30" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as { rows: Array<{ session_id: string; top_model: string | null }> };
+
+  const prisma = getPrisma();
+  const oracle = await prisma.$queryRaw<Array<{ session_id: string; model: string | null; cost: number }>>`
+    SELECT session_id, model, COALESCE(SUM(cost_usd), 0)::float8 AS cost
+    FROM core.cost_events
+    WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+    GROUP BY session_id, model
+  `;
+  const seeded = body.rows.find((r) => r.session_id === P8_SESSION_A);
+  assert.strictEqual(seeded?.top_model, "model-dear", "the dearer model labels the seeded session");
+  for (const row of body.rows) {
+    assert.ok("top_model" in row, "every row carries top_model");
+    const models = oracle.filter((o) => o.session_id === row.session_id && o.model !== null);
+    if (models.length === 0) {
+      assert.strictEqual(row.top_model, null, "a session with no recorded model has no top_model");
+      continue;
+    }
+    const topCost = Math.max(...models.map((m) => m.cost));
+    const labelled = models.find((m) => m.model === row.top_model);
+    assert.ok(labelled !== undefined, `top_model ${String(row.top_model)} ran in session ${row.session_id}`);
+    assert.strictEqual(labelled.cost, topCost, "no other model in the session cost more");
+  }
+});
+
+// The cost hook stamps event_date + event_time as the host's day-bucket wall-clock, with no zone.
+const LAST_EVENT_SESSION = `last-event-instant-${process.pid}`;
+
+function getBucketWallClock(instant: Date): { date: string; time: string } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: DAY_BUCKET_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(instant)
+      .map((part) => [part.type, part.value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}`,
+  };
+}
+
+async function seedLastEvent(instant: Date): Promise<void> {
+  const { date, time } = getBucketWallClock(instant);
+  await getPrisma().$executeRaw`
+    INSERT INTO core.cost_events
+      (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
+       cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
+       stop_reason, model, parse_error)
+    VALUES (${date}::date, ${time}::time, ${LAST_EVENT_SESSION}, 'turn', ${`${LAST_EVENT_SESSION}-0`},
+            10, 10, 0, 0, 9999, 0, 1, 'end_turn', 'model-cheap', false)
+  `;
+}
+
+for (const processTimezone of ["UTC", "America/Los_Angeles"]) {
+  test(`GET /api/cost/session-distribution: last_event_at is the instant the day-bucket wall-clock names, whatever the process TZ (${processTimezone})`, async (t) => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = processTimezone;
+    t.after(async () => {
+      // env assignment stringifies → an unset TZ must be deleted, not assigned undefined
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+      await getPrisma().$executeRaw`DELETE FROM core.cost_events WHERE session_id = ${LAST_EVENT_SESSION}`;
+    });
+    const instant = new Date(Math.floor(Date.now() / 1000) * 1000 - 3_600_000);
+    await seedLastEvent(instant);
+
+    const res = await app.inject({ method: "GET", url: "/api/cost/session-distribution?days=30" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as { rows: Array<{ session_id: string; last_event_at: string }> };
+    const seeded = body.rows.find((r) => r.session_id === LAST_EVENT_SESSION);
+    assert.strictEqual(seeded?.last_event_at, instant.toISOString());
+  });
+}
+
+test("GET /api/cost/turn-stats: stop_reason_session_count is the distinct session population behind the stop reasons", async (t) => {
+  await seedP8Events();
+  t.after(clearP8Events);
+  const res = await app.inject({ method: "GET", url: "/api/cost/turn-stats?days=30" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as {
+    stop_reasons: Array<{ session_count: number }>;
+    stop_reason_session_count: number;
+  };
+  assert.ok(Number.isInteger(body.stop_reason_session_count), "population is an integer");
+  const perReason = body.stop_reasons.map((r) => r.session_count);
+  const columnSum = perReason.reduce((a, b) => a + b, 0);
+  assert.ok(body.stop_reason_session_count < columnSum, "a multi-reason session makes the column overcount");
+  // A session can hit several reasons: population sits between the largest bucket and the column sum.
+  assert.ok(body.stop_reason_session_count >= Math.max(0, ...perReason), "population >= largest bucket");
+  assert.ok(body.stop_reason_session_count <= columnSum, "population <= column sum");
+});

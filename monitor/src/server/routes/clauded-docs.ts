@@ -328,6 +328,47 @@ const CLAUDED_DOC_SELECT_COLUMNS: Prisma.Sql = Prisma.sql`
   doc_status::text AS doc_status, last_status_model, folder_id, display_order
 `;
 
+// Search hit + its revision lineage → the FE collapses revisions of one document into one row.
+// ponytail: route-local until SearchClaudedDocHit in types/clauded-docs.ts carries both fields.
+interface SearchClaudedDocChainHit extends SearchClaudedDocHit {
+  supersedes_id: number | null;
+  chain_root_id: number;
+}
+
+interface ChainLinkDbRow {
+  id: bigint;
+  supersedes_id: bigint | null;
+  root_id: bigint;
+}
+
+const CHAIN_DEPTH_MAX = 1000;
+
+/** Walks each id's supersedes chain to its root in one recursive query (depth-capped against a corrupt cycle). */
+async function getChainLinks(ids: bigint[]): Promise<Map<number, { supersedesId: number | null; rootId: number }>> {
+  const links = new Map<number, { supersedesId: number | null; rootId: number }>();
+  if (ids.length === 0) return links;
+
+  const rows = await getPrisma().$queryRaw<ChainLinkDbRow[]>`
+    WITH RECURSIVE lineage AS (
+      SELECT id AS hit_id, id, supersedes_id, supersedes_id AS hit_supersedes_id, 0 AS depth
+      FROM monitor.documents WHERE id = ANY(${ids}::bigint[])
+      UNION ALL
+      SELECT l.hit_id, d.id, d.supersedes_id, l.hit_supersedes_id, l.depth + 1
+      FROM lineage l JOIN monitor.documents d ON d.id = l.supersedes_id
+      WHERE l.depth < ${CHAIN_DEPTH_MAX}
+    )
+    SELECT hit_id AS id, hit_supersedes_id AS supersedes_id, id AS root_id
+    FROM lineage WHERE supersedes_id IS NULL
+  `;
+  for (const row of rows) {
+    links.set(bigintToNumber(row.id), {
+      supersedesId: row.supersedes_id === null ? null : bigintToNumber(row.supersedes_id),
+      rootId: bigintToNumber(row.root_id),
+    });
+  }
+  return links;
+}
+
 interface SearchHitDbRow {
   id: bigint;
   title: string;
@@ -2104,18 +2145,24 @@ async function handleSearch(
       throw new Error("count query returned no row");
     }
     const total = bigintToNumber(totalRow.total);
+    const chainLinks = await getChainLinks(hits.map((hit) => hit.id));
 
-    const rows: SearchClaudedDocHit[] = hits.flatMap((hit) => {
+    const rows: SearchClaudedDocChainHit[] = hits.flatMap((hit) => {
+      const id = bigintToNumber(hit.id);
+      const link = chainLinks.get(id);
       // Response `rank` = lexical + bigm sum — FE uses it as the sort key. Both
       // components being 0 (no match) is unreachable (already filtered by WHERE).
       const combinedRank = hit.lexical_rank + hit.bigm_rank;
       return [
         {
-          id: bigintToNumber(hit.id),
+          id,
           title: hit.title,
           author: hit.author,
           created_at: hit.created_at.toISOString(),
           rank: combinedRank,
+          // a hit whose lineage walk found no root (deleted mid-read) stands alone
+          supersedes_id: link?.supersedesId ?? null,
+          chain_root_id: link?.rootId ?? id,
           snippet: hit.snippet,
           // list-row parity fields — same derivation as the handleList SELECT, so
           // status toggle · agent badge · audience filter all work in search mode too.

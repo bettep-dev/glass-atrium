@@ -120,3 +120,11 @@ test("an absent summary renders nothing at all", () => {
   assert.equal(sandbox.RejectBucketSplitI({ summary: undefined }), null);
   assert.equal(sandbox.RejectBucketSplitI({ summary: null }), null);
 });
+
+// The lane header counts the rows on the board; the split counts the server window.
+// Without its own basis the split reads as a breakdown of the header and fails to add up.
+test("the split names the day window its counts were taken over", () => {
+  const texts = collectStrings(sandbox.RejectBucketSplitI({ summary: MIXED }), []);
+
+  assert.ok(texts.some((text) => /last 30 days/i.test(text)), texts.join(" | "));
+});
