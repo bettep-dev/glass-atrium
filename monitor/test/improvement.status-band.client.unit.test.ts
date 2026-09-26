@@ -256,27 +256,33 @@ test("the held tile warns only while a held pattern needs a human", () => {
 const verdictRows = [
   {
     name: "nothing waiting on a human reads ok",
-    input: { ready: true, awaiting: 0, applied: 2, heldNeedingHuman: 0 },
+    input: { status: "ready", awaiting: 0, applied: 2, heldNeedingHuman: 0 },
     tone: "ok",
     mentions: ["2 applied"],
   },
   {
     name: "an awaiting decision warns and is counted",
-    input: { ready: true, awaiting: 3, applied: 0, heldNeedingHuman: 0 },
+    input: { status: "ready", awaiting: 3, applied: 0, heldNeedingHuman: 0 },
     tone: "warn",
     mentions: ["3 awaiting"],
   },
   {
     name: "a held pattern needing a human warns and is counted",
-    input: { ready: true, awaiting: 0, applied: 1, heldNeedingHuman: 10 },
+    input: { status: "ready", awaiting: 0, applied: 1, heldNeedingHuman: 10 },
     tone: "warn",
     mentions: ["10 held"],
   },
   {
     name: "a band that has not landed claims no status",
-    input: { ready: false, awaiting: 0, applied: 0, heldNeedingHuman: 0 },
+    input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
     tone: "neutral",
-    mentions: [],
+    mentions: ["not loaded yet"],
+  },
+  {
+    name: "a band whose payload failed says so and makes no loading claim",
+    input: { status: "error", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
+    tone: "neutral",
+    mentions: ["could not load"],
   },
 ];
 for (const row of verdictRows) {
@@ -286,6 +292,23 @@ for (const row of verdictRows) {
     for (const mention of row.mentions) assert.ok(verdict.sentence.includes(mention), verdict.sentence);
   });
 }
+
+test("a failed band payload reads as a failure, never as still loading", () => {
+  const PageVerdictStub = () => null;
+  sandbox.window.UI.PageVerdict = PageVerdictStub;
+  const band = sandbox.StatusBandI({
+    statsState: { status: "error", data: null, error: "HTTP 500" },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "loading" },
+    suppression: null,
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
+
+  assert.match(String(verdict?.props.children), /could not load/);
+  assert.doesNotMatch(String(verdict?.props.children), /not loaded yet/);
+});
 
 test("the band states its verdict before the tiles", () => {
   const PageVerdictStub = () => null;

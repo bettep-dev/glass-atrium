@@ -578,12 +578,8 @@ function StatusBandI({
 	const heldNeedingHuman = sumCountsI(
 		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
 	);
-	const isBandReady =
-		[statsState, listState, learningLogState].every((st) => st.status === "ready") &&
-		Boolean(statsState.data) &&
-		Boolean(suppression);
 	const verdict = getBandVerdictI({
-		ready: isBandReady,
+		status: getBandStatusI([statsState, listState, learningLogState], statsState.data && suppression),
 		awaiting,
 		applied,
 		heldNeedingHuman,
@@ -648,9 +644,18 @@ function StatusBandI({
 	);
 }
 
+// Any failed payload → error, never "still loading" · ready only once every payload and value has landed.
+function getBandStatusI(states, value) {
+	if (states.some((st) => st.status === "error")) return "error";
+	return states.every((st) => st.status === "ready") && value ? "ready" : "loading";
+}
+
 // 밴드 한 줄 판정 — 사람을 기다리는 것이 하나라도 있으면 warn, 적재 전에는 어떤 상태도 주장하지 않는다.
-function getBandVerdictI({ ready, awaiting, applied, heldNeedingHuman }) {
-	if (!ready) {
+function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
+	if (status === "error") {
+		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
+	}
+	if (status !== "ready") {
 		return { tone: "neutral", sentence: "Loop status has not loaded yet", chips: [] };
 	}
 	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
