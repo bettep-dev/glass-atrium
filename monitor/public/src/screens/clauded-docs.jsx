@@ -112,10 +112,6 @@ function getOpenStageEntryCD(row) {
 	return entry != null && entry.value !== TERMINAL_STAGE_CD ? entry : null;
 }
 
-function isOpenRowCD(row) {
-	return getOpenStageEntryCD(row) != null;
-}
-
 // Open = a known stage short of done · counts are over the rows passed in (the loaded page).
 function getOpenSummaryCD(rows, nowMs) {
 	const stageCounts = new Map();
@@ -1577,7 +1573,7 @@ function DocListCardCD({
 								const storedStage = rowStageCD(row);
 								const shownStage = optimisticStatusOverrides.get(row.id) ?? storedStage;
 								const age = getDocAgeCD(row.created_at, nowMs);
-								const isStaleRow = age?.isStale === true && isOpenRowCD(row);
+								const isStaleRow = age?.isStale === true && getOpenStageEntryCD(row) != null;
 								const snippetText =
 									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
