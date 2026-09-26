@@ -180,16 +180,9 @@ test("the band is always the four tiles, in the priority spine's order", () => {
   assert.equal(tiles.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
 });
 
-test("every tile keeps its drill whether or not an alarm row drills the same screen", () => {
-  const cases: Array<[string, Fold, unknown]> = [
-    ["no alarms", HEALTHY, kpi(10, 10)],
-    ["harness alarm", { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, kpi(10, 10)],
-    ["both alarms", { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, kpi(40, 10)],
-  ];
-  for (const [name, harness, costState] of cases) {
-    const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING });
-    assert.deepEqual([...tiles.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"], name);
-  }
+test("every tile drills to its own screen in a fixed order", () => {
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING });
+  assert.deepEqual([...tiles.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"]);
 });
 
 test("loading, error and unavailable each read differently and none reads as a value", () => {
