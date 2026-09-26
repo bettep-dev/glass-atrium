@@ -1198,7 +1198,7 @@ function AgentFailureRateCellO({ row }) {
       className="px-3 py-1.5 border-b border-line"
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
       <span className="flex items-center gap-2">
-        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{pct.toFixed(1)}%</span>
+        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${row.isLowSample ? '--faint' : '--crit'}))` }}/>
         </span>
@@ -1824,7 +1824,7 @@ function CrosstabCard({ state, onRetry }) {
     <div className="card mb-4">
       <CardHead
         title={confidentFailed
-          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${(confidentFailed.share * 100).toFixed(1)}%)`
+          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
           : 'Confident but failed'}
         sub="High stated confidence, own check failed · empty rows hidden"
         right={

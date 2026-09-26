@@ -958,12 +958,12 @@ describe("Confidence vs. reality: the headline counts confident failures and emp
   };
   test("confident but failed = the high-confidence fail cell over all records", () => {
     assert.deepStrictEqual(
-      JSON.parse(JSON.stringify(helpers.getConfidentFailedO({ total: 200, byCell }))),
+      sameRealm(helpers.getConfidentFailedO({ total: 200, byCell })),
       { count: 12, share: 0.06 },
     );
     assert.strictEqual(helpers.getConfidentFailedO(null), null, "no crosstab → no headline");
   });
   test("a confidence row with no record in any column is dropped", () => {
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(helpers.getCrosstabVisibleRowsO(byCell))), ["high", "medium", "low"]);
+    assert.deepStrictEqual(sameRealm(helpers.getCrosstabVisibleRowsO(byCell)), ["high", "medium", "low"]);
   });
 });
