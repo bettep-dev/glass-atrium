@@ -1078,10 +1078,15 @@ test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare wh
     const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
     assert.equal(cut, row.cut, row.name);
   }
+});
 
+test("every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph", async () => {
+  const mod = await loadAgentsScreen();
+  const slowFleetSecs = [300, 700, 800, 900, 1000, 1100, 1150, 1190];
+  const agents = slowFleetSecs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
-    agents: toAgents(rows[0].secs), pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
   }));
   const cuts = findNodes(table, (n) => n.type === "AgentSummaryRow").map((n) => n.props.p95WarnSec);
   assert.deepEqual(Array.from(new Set(cuts)), [1100], "every ledger row reads the fleet cut");
@@ -1111,7 +1116,7 @@ test("the success bar reads a 90-100% window with the 95% target at its midpoint
   }
 });
 
-test("solid failing pairs rank above small samples, which sit below a divider, and the subtitle counts the rows shown", async () => {
+test("the failing-pairs limit keeps a solid signal over a worse small sample while the total still counts both", async () => {
   const mod = await loadAgentsScreen();
   const buildTopNFailing = mod.buildTopNFailing as (rows: unknown[], t: number, l: number) => { failingPairs: Array<{ task_type: string }>; failingTotal: number; measuredPairs: number };
   const day = (task_type: string, success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
@@ -1119,13 +1124,19 @@ test("solid failing pairs rank above small samples, which sit below a divider, a
   const out = buildTopNFailing(rows, 0.95, 1);
   assert.deepEqual(Array.from(out.failingPairs, (p) => p.task_type), ["solid"], "the limit keeps the solid signal over a worse small sample");
   assert.equal(out.failingTotal, 2);
+});
 
+test("the failing-pairs subtitle counts the rows shown and claims a cap only when some are hidden", async () => {
+  const mod = await loadAgentsScreen();
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
   const sub = getSub("ready", 7, 7, 40, 30);
   assert.match(sub, /^7 of 40 pairs below 95%/);
   assert.doesNotMatch(sub, /top \d/, "no cap is claimed when every failing pair is shown");
   assert.match(getSub("ready", 8, 11, 40, 30), /showing 8 of 11/);
+});
 
+test("the failing-pairs table ranks solid pairs above a divider that names the low-sample group", async () => {
+  const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const pair = (task_type: string, successCount: number, rateDenominator: number) =>
     ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
