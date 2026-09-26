@@ -863,7 +863,7 @@ test("the status band counts failed agents in red and carries blocked-only agent
   }
 });
 
-test("the default sort puts failures before compliant halts, then the higher failure rate", async () => {
+test("the failures sort puts agents with failures before compliant halts, then the higher failure rate", async () => {
   const mod = await loadAgentsScreen();
   const sort = mod.sortAgentSummary as (a: unknown[], by: string, m: Map<string, unknown>) => Array<{ agent_id: string }>;
   const failureByAgent = new Map([
