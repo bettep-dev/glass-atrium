@@ -130,7 +130,7 @@ test("paired cards sit side by side in one split row", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const rows = [
     { name: "per-agent table beside Reporting health", ratio: "split-row--7-5", titles: ["Failed or blocked by agent", "Reporting health"] },
-    { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confidence vs. reality"] },
+    { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
   ];
 
   for (const row of rows) {

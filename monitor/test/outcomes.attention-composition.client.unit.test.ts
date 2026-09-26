@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/outcomes.attention-composition.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
@@ -74,7 +74,11 @@ interface OutcomesHelpers {
   buildAgentFailureRowsO: (
     agentStack: unknown,
     byAgentTop?: unknown,
-  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number }[];
+  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number; rate: number; isLowSample: boolean }[];
+  getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
+  getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
+  getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
+  buildNeedsYouReasonsO: (data: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
@@ -369,10 +373,12 @@ test("buildAttentionParamsO: emits a needs_attention literal the route's parser 
 
 // --- by-agent failures: the table exists to name who broke, so silent rows never render ---
 
-test("buildAgentFailureRowsO: keeps only rows with a failure and orders them worst-first", () => {
+test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample agents sink below them", () => {
   const stack: AgentStackEntry[] = [
     { agent: "dev-react", total: 40, byResult: { done: 40 } },
     { agent: "dev-node", total: 30, byResult: { done: 27, fail: 3 } },
+    { agent: "dev-shell", total: 100, byResult: { done: 80, fail: 20 } },
+    { agent: "dev-python", total: 60, byResult: { done: 54, fail: 3, blocked: 3 } },
     { agent: "qa-code-reviewer", total: 20, byResult: { done: 12, fail: 5, blocked: 3 } },
     { agent: "intel-planner", total: 10, byResult: { done: 9, blocked: 1 } },
   ];
@@ -380,10 +386,27 @@ test("buildAgentFailureRowsO: keeps only rows with a failure and orders them wor
 
   assert.deepStrictEqual(
     rows.map((r) => r.agent),
-    ["qa-code-reviewer", "dev-node", "intel-planner"],
-    "clean agents drop out; the rest sort by failed+blocked descending",
+    ["dev-shell", "dev-python", "dev-node", "qa-code-reviewer", "intel-planner"],
+    "clean agents drop out; rate descending, an equal rate breaks on the larger count, a 40% rate over 20 runs never outranks a sampled agent",
   );
-  for (const row of rows) assert.ok(row.failed + row.blocked > 0, `${row.agent} earns its row`);
+  for (const row of rows) {
+    assert.strictEqual(row.rate, (row.failed + row.blocked) / row.total, `${row.agent}: rate is failed+blocked over its own runs`);
+    assert.strictEqual(row.isLowSample, row.total < 30, `${row.agent}: low-sample follows the shared LOW_N_MIN floor`);
+  }
+});
+
+test("buildNeedsYouReasonsO: the hero tile's reasons come from the window, and an unsent count stays unknown", () => {
+  const data = { ...aboveFloor({ done: 180, fail: 8, blocked: 4 }), overall: { total: 200, writer_open_count: 17 } };
+  const reasons = sameRealm(helpers.buildNeedsYouReasonsO(data));
+  assert.deepStrictEqual(
+    reasons.map((r) => [r.key, r.count]),
+    [["broken", 12], ["open", 17]],
+    "failed+blocked and unclosed caveats, each with its own count",
+  );
+  assert.strictEqual(reasons[0].tone, "crit", "12 of 200 breaches the 5% breakage threshold");
+
+  const legacy = sameRealm(helpers.buildNeedsYouReasonsO(aboveFloor({ done: 190 })));
+  assert.strictEqual(legacy.find((r) => r.key === "open")!.count, null, "no writer_open_count → unknown, never a resolved zero");
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
@@ -914,4 +937,33 @@ test("ledger row: the needs-you reason is written on the row and in its accessib
   assert.match(textOf(rendered), /flagged: overconfident/);
   assert.match(String(rendered.props!["aria-label"]), /flagged: overconfident/);
   assert.ok(flattenNodes(rendered).some((n) => typeof n.type === "function" && (n.type as { name: string }).name === "SummaryFlagSlotO"), "the glyph slot stays");
+});
+
+describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
+  test("checked = passed + failed, out of every graded record", () => {
+    assert.strictEqual(
+      helpers.getGraderSentenceO({ verified_pass: 58, unverified: 9106, verified_fail: 10, not_measured: 3, graded_total: 9174 }),
+      "Checked 68 of 9,174 records: 58 passed, 10 failed",
+    );
+  });
+  test("no breakdown → no sentence, never a sentence of zeros", () => {
+    assert.strictEqual(helpers.getGraderSentenceO(null), null);
+  });
+});
+
+describe("Confidence vs. reality: the headline counts confident failures and empty rows are hidden", () => {
+  const byCell = {
+    "high|true": { count: 80 }, "high|false": { count: 12 }, "medium|true": { count: 100 },
+    "low|true": { count: 8 }, "null|true": { count: 0 }, "null|false": { count: 0 },
+  };
+  test("confident but failed = the high-confidence fail cell over all records", () => {
+    assert.deepStrictEqual(
+      JSON.parse(JSON.stringify(helpers.getConfidentFailedO({ total: 200, byCell }))),
+      { count: 12, share: 0.06 },
+    );
+    assert.strictEqual(helpers.getConfidentFailedO(null), null, "no crosstab → no headline");
+  });
+  test("a confidence row with no record in any column is dropped", () => {
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(helpers.getCrosstabVisibleRowsO(byCell))), ["high", "medium", "low"]);
+  });
 });

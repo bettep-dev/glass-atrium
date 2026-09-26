@@ -100,10 +100,10 @@ const GRADER_BREAKDOWN_META = {
 // (작성자 pass 주장 ↔ grader 불일치)가 가장 actionable. not_recorded(레거시 NULL)는 disagreement 아님 → muted.
 const DOWNGRADE_BREAKDOWN_ORDER = ['writer_true_downgraded', 'writer_false', 'synthesized', 'not_recorded'];
 const DOWNGRADE_BREAKDOWN_META = {
-  writer_true_downgraded: { label: 'Writer/grader disagreement', icon: 'warn',   colorVar: '--warn'  },
-  writer_false:           { label: 'Writer self-reported fail',  icon: 'minus',  colorVar: '--dim'   },
-  synthesized:            { label: 'Harness-reconstructed',      icon: 'circle', colorVar: '--faint' },
-  not_recorded:           { label: 'Pre-provenance (legacy)',    icon: 'minus',  colorVar: '--faint' },
+  writer_true_downgraded: { label: 'Agent claimed pass, check disagreed', icon: 'warn',   colorVar: '--warn'  },
+  writer_false:           { label: 'Agent reported its own failure',      icon: 'minus',  colorVar: '--dim'   },
+  synthesized:            { label: 'Rebuilt by the harness, no report',   icon: 'circle', colorVar: '--faint' },
+  not_recorded:           { label: 'Older record, source not tracked',    icon: 'minus',  colorVar: '--faint' },
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
@@ -941,17 +941,19 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   const windowLabel = `${windowDays}d`;
 
   const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
+  const heroTile = tiles.find((tile) => tile.key === 'attention');
+  const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
 
   return (
     <div className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
-        {tiles.map((tile) => (
-          <BandTileO
-            key={tile.key}
-            tile={tile}
-            windowLabel={windowLabel}
-            unloadedText={tile.key === 'attention' ? getUnloadedSummaryO(attentionState.status) : undefined}/>
-        ))}
+        <BandTileO
+          tile={heroTile}
+          windowLabel={windowLabel}
+          unloadedText={getUnloadedSummaryO(attentionState.status)}
+          reasons={buildNeedsYouReasonsO(analyticsState.data)}
+          className="col-span-3"/>
+        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
         <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry}/>
@@ -961,21 +963,19 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
 }
 
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
-function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
-  const { KpiValue, formatPctWithDenominator } = window.UI;
+function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
+  const { KpiValue, TileSplit, formatPctWithDenominator } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
   const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
-  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const reasonText = reasons
+    ? ` — reasons: ${reasons.map((r) => `${r.label} ${r.count === null ? 'not loaded' : r.count}`).join(', ')}`
+    : '';
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
   const Tag = canJump ? 'button' : 'div';
-
-  return (
-    <Tag
-      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
-      className={canJump ? 'kpi' : 'kpi cursor-default'}
-      aria-label={ariaLabel}
-      title={tile.hint}>
+  const lead = (
+    <>
       <div className="kpi-label">
         {glyph && (
           <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
@@ -986,7 +986,65 @@ function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
       </div>
       <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
       <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+    </>
+  );
+
+  return (
+    <Tag
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
+      className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
+      aria-label={ariaLabel}
+      title={tile.hint}>
+      {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
     </Tag>
+  );
+}
+
+// broken reuses the band's own breakage tone; open is null when the payload predates writer_open_count
+function buildNeedsYouReasonsO(data) {
+  const brokenTile = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken');
+  const writerOpen = Number(data?.overall?.writer_open_count);
+  return [
+    { key: 'broken', label: 'Failed or blocked', count: brokenTile.count, tone: brokenTile.tone },
+    { key: 'open', label: 'Caveat still open', count: Number.isFinite(writerOpen) ? Math.max(0, writerOpen) : null, tone: 'neutral' },
+  ];
+}
+
+function NeedsYouReasonsO({ reasons }) {
+  return (
+    <span className="block fs-meta">
+      <span className="block text-faint">Reasons · one record can carry several</span>
+      {reasons.map((reason) => {
+        const glyph = getBandTileGlyphO(reason.tone);
+        return (
+          <span key={reason.key} className="flex items-center gap-1 text-dim">
+            {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
+            {reason.label}
+            <span className="ml-auto font-mono text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
+function VolumeTilesO({ tiles, windowLabel }) {
+  const { formatPctWithDenominator } = window.UI;
+  return (
+    <div className="kpi cursor-default fs-meta" role="group" aria-label={`Volume · ${windowLabel}`}>
+      {tiles.map((tile) => {
+        const glyph = getBandTileGlyphO(tile.tone);
+        return (
+          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim" title={tile.hint}>
+            {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
+            {tile.label}
+            <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
+            <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1020,15 +1078,31 @@ function buildAgentFailureRowsO(agentStack, byAgentTop) {
   const rows = Array.isArray(agentStack) ? agentStack : [];
   const openByAgent = buildAgentOpenCaveatMapO(byAgentTop);
   return rows
-    .map((entry) => ({
-      agent: entry.agent,
-      failed: entry.byResult?.fail || 0,
-      blocked: entry.byResult?.blocked || 0,
-      openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
-      total: entry.total || 0,
-    }))
+    .map((entry) => buildAgentFailureRowO(entry, openByAgent))
     .filter((row) => row.failed + row.blocked > 0)
-    .sort((a, b) => (b.failed + b.blocked) - (a.failed + a.blocked));
+    .sort(compareAgentFailureRowsO);
+}
+
+function buildAgentFailureRowO(entry, openByAgent) {
+  const failed = entry.byResult?.fail || 0;
+  const blocked = entry.byResult?.blocked || 0;
+  const total = entry.total || 0;
+  return {
+    agent: entry.agent,
+    failed,
+    blocked,
+    openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
+    total,
+    rate: total > 0 ? (failed + blocked) / total : 0,
+    isLowSample: window.UI.isLowSample(total),
+  };
+}
+
+// low-sample rows sink below sampled ones → 3 of 5 runs failing never outranks a measured rate
+function compareAgentFailureRowsO(a, b) {
+  if (a.isLowSample !== b.isLowSample) return a.isLowSample ? 1 : -1;
+  if (b.rate !== a.rate) return b.rate - a.rate;
+  return (b.failed + b.blocked) - (a.failed + a.blocked);
 }
 
 function AgentFailureTableO({ state, onRetry }) {
@@ -1036,7 +1110,7 @@ function AgentFailureTableO({ state, onRetry }) {
 
   return (
     <div className="card">
-      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows"/>
+      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
       </div>
@@ -1046,6 +1120,7 @@ function AgentFailureTableO({ state, onRetry }) {
 
 const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Agent', align: 'left' },
+  { label: 'Failure rate', align: 'left' },
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
@@ -1102,6 +1177,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
               <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
+              <AgentFailureRateCellO row={row}/>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
@@ -1111,6 +1187,24 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function AgentFailureRateCellO({ row }) {
+  const { LowSampleMark } = window.UI;
+  const pct = row.rate * 100;
+  return (
+    <td
+      className="px-3 py-1.5 border-b border-line"
+      title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
+      <span className="flex items-center gap-2">
+        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{pct.toFixed(1)}%</span>
+        <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
+          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${row.isLowSample ? '--faint' : '--crit'}))` }}/>
+        </span>
+        <LowSampleMark n={row.total}/>
+      </span>
+    </td>
   );
 }
 
@@ -1546,22 +1640,11 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
 function GraderBreakdownCard({ state, onRetry }) {
-  const { CardHead, Badge } = window.UI;
-
-  const breakdown   = state.status === 'ready' ? state.data?.overall?.grader_breakdown : null;
-  const gradedTotal = breakdown ? (Number(breakdown.graded_total) || 0) : 0;
+  const { CardHead } = window.UI;
 
   return (
     <div className="card mb-4">
-      <CardHead
-        title="Automatic check results"
-        sub=""
-        right={
-          state.status === 'ready' && breakdown && (
-            <Badge role="metadata">Checked records: {formatIntO(gradedTotal)}</Badge>
-          )
-        }
-      />
+      <CardHead title="Automatic check results" sub=""/>
       <div className="card-body">
         <GraderBreakdownBody state={state} onRetry={onRetry}/>
       </div>
@@ -1592,6 +1675,8 @@ function GraderBreakdownBody({ state, onRetry }) {
 
   return (
     <>
+      <p className="fs-body text-ink mb-2">{getGraderSentenceO(breakdown)}</p>
+      <window.UI.Disclosure kind="detail" title="Check breakdown" sub="Each verdict, and where it came from" level={3}>
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
         {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
@@ -1615,8 +1700,18 @@ function GraderBreakdownBody({ state, onRetry }) {
         })}
       </div>
       <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
+      </window.UI.Disclosure>
     </>
   );
+}
+
+// checked = a definite verdict (pass or fail) — Auto-check N/A records were graded but not checkable
+function getGraderSentenceO(breakdown) {
+  if (!breakdown) return null;
+  const passed = Number(breakdown.verified_pass) || 0;
+  const failed = Number(breakdown.verified_fail) || 0;
+  const graded = Number(breakdown.graded_total) || 0;
+  return `Checked ${formatIntO(passed + failed)} of ${formatIntO(graded)} records: ${formatIntO(passed)} passed, ${formatIntO(failed)} failed`;
 }
 
 // downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
@@ -1630,7 +1725,7 @@ function DowngradeBreakdownRowO({ breakdown }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-meta font-mono">
-      <span className="text-faint uppercase tracking-wider">downgrade origin</span>
+      <span className="text-faint">Where each verdict came from</span>
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
         return (
@@ -1723,12 +1818,15 @@ function CrosstabCard({ state, onRetry }) {
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const polarPct   = crosstab && crosstab.total > 0 ? (polarTotal / crosstab.total * 100) : 0;
+  const confidentFailed = getConfidentFailedO(crosstab);
 
   return (
     <div className="card mb-4">
       <CardHead
-        title="Confidence vs. reality (polar mismatch)"
-        sub=""
+        title={confidentFailed
+          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${(confidentFailed.share * 100).toFixed(1)}%)`
+          : 'Confident but failed'}
+        sub="High stated confidence, own check failed · empty rows hidden"
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
@@ -1775,7 +1873,7 @@ function CrosstabBody({ state, onRetry }) {
             </tr>
           </thead>
           <tbody>
-            {CROSSTAB_CONFIDENCE_ROWS.map((rowKey) => (
+            {getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
               <CrosstabRow key={rowKey} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
             ))}
           </tbody>
@@ -1849,6 +1947,17 @@ function CrosstabTotalRow({ byCell, total }) {
       <td className="text-right text-ink font-semibold px-2 py-1.5">{formatIntO(total)}</td>
     </tr>
   );
+}
+
+function getConfidentFailedO(crosstab) {
+  if (!crosstab || !(crosstab.total > 0)) return null;
+  const count = crosstab.byCell?.['high|false']?.count || 0;
+  return { count, share: count / crosstab.total };
+}
+
+function getCrosstabVisibleRowsO(byCell) {
+  return CROSSTAB_CONFIDENCE_ROWS.filter((rowKey) =>
+    CROSSTAB_METRIC_COLS.some((col) => (byCell[`${rowKey}|${col.key}`]?.count || 0) > 0));
 }
 
 // byCell 맵의 최대 셀 카운트 — 음영 정규화 분모.
