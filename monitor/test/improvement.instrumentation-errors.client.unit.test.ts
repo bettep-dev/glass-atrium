@@ -29,6 +29,7 @@ interface ViewSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown>; ImprovementShared?: Record<string, unknown> };
   ImprovementInstrumentationViewI: (props: Record<string, unknown>) => RecordedElement;
+  [card: string]: unknown;
 }
 
 const PAYLOADS = ["statsState", "listState", "correctionState", "corpusAuditState"] as const;
@@ -167,4 +168,27 @@ test("while every payload loads, each card announces itself through the status-r
     assert.equal(placeholders.length, 1, "each loading card carries exactly one announced placeholder");
     assert.match(String(placeholders[0]?.props.label ?? ""), /\w/, "the placeholder names what is loading");
   }
+});
+
+// Paired gauges share one split row so both read in one eye span, each card in its own column.
+test("the measurement gauges render as side-by-side pairs, one card per column", () => {
+  const props: Record<string, unknown> = { onRetry: () => {} };
+  for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
+  const pairs: unknown[][] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!isElement(node)) return;
+    if (node.type === sandbox.window.UI.SplitRow) {
+      pairs.push(([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => c.type));
+      return;
+    }
+    walk(node.props.children);
+  };
+
+  walk(sandbox.ImprovementInstrumentationViewI(props));
+
+  assert.deepEqual(pairs, [
+    [sandbox.CorpusGrowthCardI, sandbox.CorrectionSignalsCardI],
+    [sandbox.ProseOnlyAddCardI, sandbox.ConfidenceDistCardI],
+  ]);
 });
