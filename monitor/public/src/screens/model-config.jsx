@@ -1490,7 +1490,6 @@ function resyncPayloadMC(data, edits) {
 	return Object.keys(payload).length > 0 ? payload : null;
 }
 
-// Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
 // Page verdict — answers "does what I saved run?" once, before any row is read.
 function getPageVerdictMC(data) {
 	const domains = data?.domains || [];
@@ -1562,6 +1561,7 @@ function getModelMixMC(models) {
 	return [...counts].map(([family, n]) => `${family} ×${n}`).join(" · ");
 }
 
+// Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
 function headerSyncMC(data) {
 	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
 	if (rows.length === 0) return "empty";
