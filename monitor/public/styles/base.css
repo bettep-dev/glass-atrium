@@ -681,6 +681,37 @@
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
 
+/* Page verdict (PageVerdict) — glyph carries the tone colour, the word and sentence stay ink for contrast */
+.page-verdict {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 12px;
+}
+.page-verdict-tone {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.page-verdict--ok .page-verdict-glyph { color: rgb(var(--ok)); }
+.page-verdict--warn .page-verdict-glyph { color: rgb(var(--warn)); }
+.page-verdict--crit .page-verdict-glyph { color: rgb(var(--crit)); }
+.page-verdict--info .page-verdict-glyph { color: rgb(var(--info)); }
+.page-verdict--neutral .page-verdict-glyph { color: rgb(var(--faint)); }
+.page-verdict-chips {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+/* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
+.low-sample {
+	font-style: italic;
+	color: rgb(var(--faint));
+}
+
 /* Popover — non-modal panel under its card-head trigger; one layer below modal surfaces so a DetailSurface still covers it */
 .popover-root {
 	position: relative;

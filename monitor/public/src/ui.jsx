@@ -1683,6 +1683,53 @@ function getWorstTone(tones) {
 // crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
 const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info' };
 
+// default verdict word per tone — the glyph never stands alone.
+const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };
+
+/**
+ * One-line page headline: tone glyph + word, one sentence (children), optional chips.
+ * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
+ */
+function PageVerdict({ tone = 'neutral', label, children, chips = [], className = '' }) {
+  const toneKey = VERDICT_TONE_LABEL[tone] ? tone : 'neutral';
+
+  return <div className={`page-verdict page-verdict--${toneKey} ${className}`.trim()}>
+    <span className="page-verdict-tone">
+      <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
+      {label || VERDICT_TONE_LABEL[toneKey]}
+    </span>
+    {children && <span className="page-verdict-text">{children}</span>}
+    {chips.length > 0 && <span className="page-verdict-chips">
+      {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
+    </span>}
+  </div>;
+}
+
+function VerdictChip({ chip }) {
+  if (chip.href) return <a className="btn ghost sm" href={chip.href}>{chip.label}</a>;
+  return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
+}
+
+// instant scroll (no smooth) → nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
+function putCardFocus(id) {
+  const card = id ? document.getElementById(id) : null;
+  if (!card) return;
+
+  if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
+  card.scrollIntoView({ block: 'start' });
+  card.focus({ preventScroll: true });
+}
+
+function isLowSample(n) {
+  return Number.isFinite(n) && n >= 0 && n < LOW_N_MIN;
+}
+
+// Small-n rate marker — the caller mutes the rate itself, this names the sample size.
+function LowSampleMark({ n }) {
+  if (!isLowSample(n)) return null;
+  return <span className="low-sample" title={`Low sample: fewer than ${LOW_N_MIN}, read as a hint`}>(n={formatInt(n)})</span>;
+}
+
 // 불투명 sticky thead 스타일 SoT (S1) — 다수 화면(.tbl)이 미러하므로 단일 출처화.
 // 불투명 --elev fill 유지(§7.5 row blur 금지) — 스크롤 시 헤더가 본문 위에 떠도 가려지지 않음.
 const STICKY_TH_STYLE = { position: 'sticky', top: 0, background: 'rgb(var(--elev))', zIndex: 1 };
@@ -1775,7 +1822,7 @@ window.UI = {
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, PageVerdict, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
