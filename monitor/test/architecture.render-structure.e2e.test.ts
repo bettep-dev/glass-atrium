@@ -472,7 +472,7 @@ describe("healthy live fixture", () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
 		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
