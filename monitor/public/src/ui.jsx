@@ -745,6 +745,56 @@ function DisclosureButton({ isOpen, onToggle, label, controls, className = '' })
   </button>;
 }
 
+const DISCLOSURE_ALERT_TONES = new Set(['warn', 'crit']);
+let disclosureSeq = 0;
+
+// Status cards start open; detail folds start collapsed unless they hold a warn/crit item.
+function getDisclosureOpen(kind, tone) {
+  return kind === 'status' || DISCLOSURE_ALERT_TONES.has(tone);
+}
+
+/**
+ * Card-level fold carrying the one status/detail rule every page shares.
+ * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
+ * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
+ */
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, className = '' }) {
+  const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
+  const idRef = useRef(null);
+  const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
+  const Heading = `h${level}`;
+
+  if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
+  useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
+
+  return <div className={`card ${className}`.trim()}>
+    <Heading className="m-0 px-4 py-1 fs-body font-normal">
+      <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
+        className="w-full text-left gap-2"
+        label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
+    </Heading>
+    {isOpen && <div id={idRef.current} className="px-4 pb-4">{children}</div>}
+  </div>;
+}
+
+// ratio preset → base.css modifier; stacked below xl, side by side at xl.
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
+
+// Two cards (or two in-card columns) side by side at xl in a ratio preset.
+function SplitRow({ ratio = '1:1', children, className = '' }) {
+  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+
+  return <div className={`split-row split-row--${modifier} ${className}`.trim()}>{children}</div>;
+}
+
+// Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
+function TileSplit({ lead, detail, className = '' }) {
+  return <div className={`tile-split ${className}`.trim()}>
+    <div className="tile-split-lead">{lead}</div>
+    {detail && <div className="tile-split-detail">{detail}</div>}
+  </div>;
+}
+
 const ROVING_KEY_STEP = {
   horizontal: { ArrowLeft: -1, ArrowRight: 1 },
   vertical: { ArrowUp: -1, ArrowDown: 1 },
@@ -1628,6 +1678,7 @@ function resolveOutcomeRate(data) {
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,

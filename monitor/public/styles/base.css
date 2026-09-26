@@ -245,6 +245,34 @@
 .space-cards > * + * { margin-top: 16px; }
 .space-sections > * + * { margin-top: 24px; }
 
+/* Split row (SplitRow) — one stacked column below xl; ratio-preset columns from xl (1280px, Tailwind xl) */
+.split-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 16px;
+}
+
+/* Tile split (TileSplit) — value + badge over detail by default; lead | detail columns from 641px to below xl */
+.tile-split {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 4px 16px;
+	align-items: start;
+}
+.tile-split-lead,
+.tile-split-detail { min-width: 0; }
+
+@media (min-width: 641px) and (max-width: 1279px) {
+	.tile-split { grid-template-columns: auto minmax(0, 1fr); }
+}
+
+@media (min-width: 1280px) {
+	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.split-row--7-5 { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+	.split-row--3-2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+}
+
 .tbl {
 	width: 100%;
 	border-collapse: collapse;
