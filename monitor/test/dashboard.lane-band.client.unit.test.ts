@@ -54,7 +54,6 @@ interface DashHelpers {
     costState: unknown;
     agentsState: unknown;
     outcomesState: unknown;
-    alarms?: Alarm[];
   }) => Tile[];
 }
 
@@ -179,9 +178,6 @@ test("the band is always the four tiles, in the priority spine's order", () => {
   });
   assert.equal(tiles.length, 4);
   assert.equal(tiles.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
-  for (const tile of tiles) {
-    assert.ok(tile.target, `${tile.id} must route somewhere while no alarm drills there`);
-  }
 });
 
 test("every tile keeps its drill whether or not an alarm row drills the same screen", () => {
@@ -191,8 +187,7 @@ test("every tile keeps its drill whether or not an alarm row drills the same scr
     ["both alarms", { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, kpi(40, 10)],
   ];
   for (const [name, harness, costState] of cases) {
-    const alarms = dash.buildAlarms({ harness, costState, installKind: "hidden" });
-    const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING, alarms });
+    const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING });
     assert.deepEqual([...tiles.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"], name);
   }
 });
